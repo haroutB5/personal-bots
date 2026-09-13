@@ -1,10 +1,10 @@
 import type { JSX, ReactNode } from "react";
+import { memo } from "react";
 
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 
 import { cn } from "~/lib/utils";
-import { useThreadDetail } from "~/state/entities";
 
 import { BotAvatar } from "./BotAvatar";
 import { type BotSummary, providerLine } from "./botSummaries";
@@ -17,20 +17,15 @@ const ROW_CLASS =
 
 /**
  * First non-empty line of the newest user/assistant message, else the thread
- * title. A turn the task service wrote previews as its system-row text.
+ * title. A turn the task service wrote previews as its system-row text. The
+ * message comes with `personalBots.list`, so the list opens no thread
+ * subscription per row; the list refreshes when a thread's shell updates.
  */
-function usePreview(
-  environmentId: EnvironmentId,
-  summary: BotSummary,
-  describeTurn: (turn: ServerTurn) => string,
-): string {
+function previewOf(summary: BotSummary, describeTurn: (turn: ServerTurn) => string): string {
   const thread = summary.newestThread;
-  const detail = useThreadDetail(thread === null ? null : { environmentId, threadId: thread.id });
   if (thread === null) return "No chats yet";
-  const messages = detail?.messages ?? [];
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]!;
-    if (message.role === "system") continue;
+  const message = summary.newestMessage;
+  if (message !== null) {
     const turn = readServerTurn(message);
     if (turn !== null) return describeTurn(turn);
     const line = message.text
@@ -52,7 +47,7 @@ function usePreview(
  * starts its first one. A bot whose provider cannot run and has no chat yet
  * links to its editor instead, so the row is always actionable.
  */
-export function BotRow({
+export const BotRow = memo(function BotRow({
   environmentId,
   summary,
   now,
@@ -63,7 +58,7 @@ export function BotRow({
   now: number;
   describeTurn: (turn: ServerTurn) => string;
 }): JSX.Element {
-  const preview = usePreview(environmentId, summary, describeTurn);
+  const preview = previewOf(summary, describeTurn);
   const { bot, newestThread, provider, live, rateLimited, waitingFor, lastActivityMs } = summary;
   const { start, starting } = useStartBotChat(environmentId, bot.botId);
 
@@ -157,4 +152,4 @@ export function BotRow({
       {content}
     </button>
   );
-}
+});

@@ -24,7 +24,12 @@ import { ChevronLeft, Ellipsis } from "lucide-react";
 import { buildRunningThreadTurnInterruptInput } from "~/components/ChatView.logic";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
-import { derivePhase, deriveTimelineEntries, deriveWorkLogEntries } from "~/session-logic";
+import {
+  derivePhase,
+  deriveTimelineEntriesWithState,
+  deriveWorkLogEntries,
+  type TimelineEntriesProjection,
+} from "~/session-logic";
 import { useProject, useThreadDetail, useThreadStatus } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { threadEnvironment, useEnvironmentThread } from "~/state/threads";
@@ -194,10 +199,23 @@ export function ConversationScreen({
   const activities = thread?.activities ?? EMPTY_ACTIVITIES;
   const proposedPlans = thread?.proposedPlans ?? EMPTY_PLANS;
   const workEntries = useMemo(() => deriveWorkLogEntries(activities), [activities]);
-  const baseItems = useMemo(
-    () => buildConversationItems(deriveTimelineEntries(messages, proposedPlans, workEntries)),
-    [messages, proposedPlans, workEntries],
-  );
+  // Incremental projection, as upstream ChatView does: a streaming delta
+  // extends the previous timeline instead of re-folding and re-sorting it.
+  const projectionRef = useRef<{
+    threadId: ThreadId;
+    projection: TimelineEntriesProjection;
+  } | null>(null);
+  const baseItems = useMemo(() => {
+    const previous = projectionRef.current;
+    const projection = deriveTimelineEntriesWithState(
+      messages,
+      proposedPlans,
+      workEntries,
+      previous?.threadId === threadId ? previous.projection : null,
+    );
+    projectionRef.current = { threadId, projection };
+    return buildConversationItems(projection.entries);
+  }, [threadId, messages, proposedPlans, workEntries]);
   const items = useMemo(() => placeDelegationCards(baseItems, children), [baseItems, children]);
   const describeTurn = useCallback(
     (turn: ServerTurn) => serverTurnLabel(turn, resolveTurnChildren(turn, tasks), nameOf),

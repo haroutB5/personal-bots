@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerConfig from "../../config.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
@@ -58,6 +59,14 @@ interface Harness {
   readonly messages: Map<string, Array<ProjectionThreadMessage>>;
   sequence: number;
 }
+
+const optionOf = <A>(value: A | undefined): Option.Option<A> =>
+  value === undefined ? Option.none() : Option.some(value);
+
+const compareNewestFirst = (
+  left: { readonly createdAt: string; readonly messageId: string },
+  right: { readonly createdAt: string; readonly messageId: string },
+) => right.createdAt.localeCompare(left.createdAt) || right.messageId.localeCompare(left.messageId);
 
 const makeHarness = (): Harness => ({
   dispatched: [],
@@ -105,6 +114,49 @@ const makeLayer = (harness: Harness, dbPath?: string) =>
       Layer.succeed(ProjectionThreadMessageRepository, {
         listByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
           Effect.sync(() => harness.messages.get(threadId) ?? []),
+        getByMessageId: ({ messageId }: { readonly messageId: MessageId }) =>
+          Effect.sync(() => {
+            for (const list of harness.messages.values()) {
+              const found = list.find((message) => message.messageId === messageId);
+              if (found !== undefined) return Option.some(found);
+            }
+            return Option.none();
+          }),
+        // Same order as the SQL: newest by (created_at, message_id), one row.
+        getLatestAssistantMessageForTurn: ({
+          threadId,
+          turnId,
+        }: {
+          readonly threadId: ThreadId;
+          readonly turnId: TurnId;
+        }) =>
+          Effect.sync(() =>
+            optionOf(
+              (harness.messages.get(threadId) ?? [])
+                .filter((message) => message.role === "assistant" && message.turnId === turnId)
+                .toSorted(compareNewestFirst)[0],
+            ),
+          ),
+        getLatestAssistantMessageAfter: ({
+          threadId,
+          afterCreatedAt,
+          afterMessageId,
+        }: {
+          readonly threadId: ThreadId;
+          readonly afterCreatedAt: string;
+          readonly afterMessageId: MessageId;
+        }) =>
+          Effect.sync(() => {
+            // The harness appends in thread order under a frozen TestClock, so
+            // "after the anchor" is positional here, as the real ORDER BY
+            // (created_at, message_id) makes it in the database.
+            const list = harness.messages.get(threadId) ?? [];
+            const anchor = list.findIndex((message) => message.messageId === afterMessageId);
+            void afterCreatedAt;
+            return optionOf(
+              list.slice(anchor + 1).findLast((message) => message.role === "assistant"),
+            );
+          }),
       } as unknown as ProjectionThreadMessageRepositoryShape),
     ),
     Layer.provideMerge(
@@ -817,5 +869,34 @@ it.effect("subscribe replays current tasks as upserts", () => {
     expect([...events].map((event) => [event.type, event.task.taskId])).toEqual([
       ["upsert", root.taskId],
     ]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("the replay keeps every unfinished task and only the newest finished ones", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const repository = yield* PersonalTaskRepository.PersonalTaskRepository;
+    const sql = yield* SqlClient.SqlClient;
+    const older = yield* createRoot("replay-older");
+    const newer = yield* createRoot("replay-newer");
+    const running = yield* createRoot("replay-running");
+    yield* sql`
+      UPDATE personal_tasks SET status = 'completed', created_at = '2026-09-01T00:00:00.000Z'
+      WHERE task_id = ${older.taskId}
+    `;
+    yield* sql`
+      UPDATE personal_tasks SET status = 'completed', created_at = '2026-09-02T00:00:00.000Z'
+      WHERE task_id = ${newer.taskId}
+    `;
+    yield* sql`
+      UPDATE personal_tasks SET status = 'running', created_at = '2026-08-01T00:00:00.000Z'
+      WHERE task_id = ${running.taskId}
+    `;
+    const replay = yield* repository.listForReplay(1);
+    // Newest first; the old running task is kept even though it is the oldest row.
+    expect(replay.map((task) => task.taskId)).toEqual([newer.taskId, running.taskId]);
+    const all = yield* repository.listTasks({});
+    expect(all.length).toBe(3);
   }).pipe(Effect.provide(makeLayer(harness)));
 });

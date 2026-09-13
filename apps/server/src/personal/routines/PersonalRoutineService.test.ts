@@ -71,6 +71,9 @@ const makeLayer = (dbPath?: string) => {
     Layer.provideMerge(
       Layer.succeed(ProjectionThreadMessageRepository, {
         listByThreadId: () => Effect.succeed([]),
+        getByMessageId: () => Effect.succeed(Option.none()),
+        getLatestAssistantMessageForTurn: () => Effect.succeed(Option.none()),
+        getLatestAssistantMessageAfter: () => Effect.succeed(Option.none()),
       } as unknown as ProjectionThreadMessageRepositoryShape),
     ),
     Layer.provideMerge(
@@ -367,4 +370,47 @@ it.effect("create rejects an unknown time zone and a one-off in the past", () =>
     );
     expect(past.message).toContain("already passed");
   }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("prunes ancient occurrence rows on tick and lists only the recent window", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T06:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    yield* routines.create({
+      routineId: PersonalRoutineId.make("prune"),
+      botId: BOT,
+      title: "Prune me",
+      prompt: "Go.",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const sql = yield* SqlClient.SqlClient;
+    // 200 days old: beyond retention, must be deleted by the next tick.
+    yield* sql`
+      INSERT INTO personal_routine_occurrences
+        (routine_id, local_occurrence, due_utc, task_id, status, error_message, created_at)
+      VALUES ('prune', '2026-02-26T09:00', '2026-02-26T09:00:00.000Z', NULL, 'skipped', NULL,
+        '2026-02-26T09:00:00.000Z')
+    `;
+    // 60 days old: kept in the table, but outside the 30-day list window.
+    yield* sql`
+      INSERT INTO personal_routine_occurrences
+        (routine_id, local_occurrence, due_utc, task_id, status, error_message, created_at)
+      VALUES ('prune', '2026-07-16T09:00', '2026-07-16T09:00:00.000Z', NULL, 'skipped', NULL,
+        '2026-07-16T09:00:00.000Z')
+    `;
+    yield* setNow("2026-09-14T08:00:05Z");
+    yield* tickAndDrain;
+    const rows = yield* occurrences("prune");
+    expect(rows.map((row) => row.localOccurrence).toSorted()).toEqual([
+      "2026-07-16T09:00",
+      "2026-09-14T09:00",
+    ]);
+    const listed = yield* routines.list();
+    expect(
+      listed.occurrences
+        .filter((row) => row.routineId === "prune")
+        .map((row) => row.localOccurrence),
+    ).toEqual(["2026-09-14T09:00"]);
+  }).pipe(Effect.scoped, Effect.provide(makeLayer()), Effect.provide(NodeServices.layer)),
 );

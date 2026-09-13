@@ -16,6 +16,9 @@ import {
   PersonalBotThread,
   ThreadId,
   type ModelSelection as ModelSelectionType,
+  MessageId,
+  OrchestrationMessageContext,
+  OrchestrationMessageRole,
 } from "@t3tools/contracts";
 
 import {
@@ -197,6 +200,24 @@ const PersonalBotThreadRawDbRow = Schema.Struct({
   archivedAt: Schema.Unknown,
 });
 
+// The list carries each thread's newest non-system message so the chats list
+// can show a preview without a live thread subscription per row.
+const PersonalBotThreadListDbRow = Schema.Struct({
+  ...PersonalBotThreadDbRow.fields,
+  newestMessageId: Schema.NullOr(MessageId),
+  newestRole: Schema.NullOr(OrchestrationMessageRole),
+  newestText: Schema.NullOr(Schema.String),
+  newestContext: Schema.NullOr(Schema.fromJsonString(OrchestrationMessageContext)),
+});
+
+const PersonalBotThreadListRawDbRow = Schema.Struct({
+  ...PersonalBotThreadRawDbRow.fields,
+  newestMessageId: Schema.Unknown,
+  newestRole: Schema.Unknown,
+  newestText: Schema.Unknown,
+  newestContext: Schema.Unknown,
+});
+
 const PersonalMetaDbRow = Schema.Struct({
   value: Schema.String,
 });
@@ -228,6 +249,7 @@ const decodePersonalThreadAttachmentsDbRow = Schema.decodeUnknownOption(
 
 const decodePersonalBotDbRow = Schema.decodeUnknownEffect(PersonalBotDbRow);
 const decodePersonalBotThreadDbRow = Schema.decodeUnknownEffect(PersonalBotThreadDbRow);
+const decodePersonalBotThreadListDbRow = Schema.decodeUnknownEffect(PersonalBotThreadListDbRow);
 
 function toPersonalBot(row: typeof PersonalBotDbRow.Type): PersonalBot {
   return {
@@ -253,6 +275,21 @@ function toPersonalBotThread(row: typeof PersonalBotThreadDbRow.Type): PersonalB
     createdAt: row.createdAt,
     archivedAt: row.archivedAt,
   };
+}
+
+function toPersonalBotThreadWithPreview(
+  row: typeof PersonalBotThreadListDbRow.Type,
+): PersonalBotThread {
+  const newestMessage =
+    row.newestMessageId === null || row.newestRole === null || row.newestText === null
+      ? null
+      : {
+          id: row.newestMessageId,
+          role: row.newestRole,
+          text: row.newestText,
+          ...(row.newestContext !== null ? { context: row.newestContext } : {}),
+        };
+  return { ...toPersonalBotThread(row), newestMessage };
 }
 
 function toPersistenceSqlOrDecodeError(
@@ -448,18 +485,32 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  // One indexed point lookup per link for the newest non-system message
+  // (idx_projection_thread_messages_thread_created_id); the preview text is
+  // capped at the length the list can show.
   const listThreadLinkRows = SqlSchema.findAll({
     Request: Schema.Void,
-    Result: PersonalBotThreadRawDbRow,
+    Result: PersonalBotThreadListRawDbRow,
     execute: () =>
       sql`
         SELECT
-          bot_id AS "botId",
-          thread_id AS "threadId",
-          created_at AS "createdAt",
-          archived_at AS "archivedAt"
-        FROM personal_bot_threads
-        ORDER BY created_at ASC, thread_id ASC
+          t.bot_id AS "botId",
+          t.thread_id AS "threadId",
+          t.created_at AS "createdAt",
+          t.archived_at AS "archivedAt",
+          m.message_id AS "newestMessageId",
+          m.role AS "newestRole",
+          substr(m.text, 1, 400) AS "newestText",
+          m.context_json AS "newestContext"
+        FROM personal_bot_threads t
+        LEFT JOIN projection_thread_messages m ON m.message_id = (
+          SELECT n.message_id
+          FROM projection_thread_messages n
+          WHERE n.thread_id = t.thread_id AND n.role <> 'system'
+          ORDER BY n.created_at DESC, n.message_id DESC
+          LIMIT 1
+        )
+        ORDER BY t.created_at ASC, t.thread_id ASC
       `,
   });
 
@@ -517,6 +568,7 @@ export const make = Effect.gen(function* () {
         WHERE m.attachments_json IS NOT NULL
           AND m.attachments_json <> '[]'
         ORDER BY m.created_at DESC, m.message_id DESC
+        LIMIT 200
       `,
   });
 
@@ -665,14 +717,14 @@ export const make = Effect.gen(function* () {
       ),
       Effect.flatMap((rows) =>
         Effect.forEach(rows, (row) =>
-          decodePersonalBotThreadDbRow(row).pipe(
+          decodePersonalBotThreadListDbRow(row).pipe(
             Effect.mapError((cause) =>
               PersistenceDecodeError.fromSchemaError(
                 "PersonalBotRepository.listThreadLinks:decodeRows",
                 cause,
               ),
             ),
-            Effect.map(toPersonalBotThread),
+            Effect.map(toPersonalBotThreadWithPreview),
           ),
         ),
       ),

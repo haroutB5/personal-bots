@@ -15,6 +15,8 @@ import {
   ProjectionThreadMessageRepository,
   type ProjectionThreadMessageRepositoryShape,
   DeleteProjectionThreadMessagesInput,
+  GetLatestAssistantMessageAfterInput,
+  GetLatestAssistantMessageForTurnInput,
   ListProjectionThreadMessagesInput,
   ProjectionThreadMessage,
 } from "../Services/ProjectionThreadMessages.ts";
@@ -204,6 +206,57 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       `,
   });
 
+  const getLatestAssistantMessageForTurnRow = SqlSchema.findOneOption({
+    Request: GetLatestAssistantMessageForTurnInput,
+    Result: ProjectionThreadMessageDbRowSchema,
+    execute: ({ threadId, turnId }) =>
+      sql`
+        SELECT
+          message_id AS "messageId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          role,
+          text,
+          attachments_json AS "attachments",
+          context_json AS "context",
+          is_streaming AS "isStreaming",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt"
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId} AND turn_id = ${turnId} AND role = 'assistant'
+        ORDER BY created_at DESC, message_id DESC
+        LIMIT 1
+      `,
+  });
+
+  const getLatestAssistantMessageAfterRow = SqlSchema.findOneOption({
+    Request: GetLatestAssistantMessageAfterInput,
+    Result: ProjectionThreadMessageDbRowSchema,
+    execute: ({ threadId, afterCreatedAt, afterMessageId }) =>
+      sql`
+        SELECT
+          message_id AS "messageId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          role,
+          text,
+          attachments_json AS "attachments",
+          context_json AS "context",
+          is_streaming AS "isStreaming",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt"
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId}
+          AND role = 'assistant'
+          AND (
+            created_at > ${afterCreatedAt}
+            OR (created_at = ${afterCreatedAt} AND message_id > ${afterMessageId})
+          )
+        ORDER BY created_at DESC, message_id DESC
+        LIMIT 1
+      `,
+  });
+
   const listProjectionThreadMessageRows = SqlSchema.findAll({
     Request: ListProjectionThreadMessagesInput,
     Result: ProjectionThreadMessageDbRowSchema,
@@ -279,6 +332,28 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
         Effect.map((row) => row.exists === 1),
       );
 
+  const getLatestAssistantMessageForTurn: ProjectionThreadMessageRepositoryShape["getLatestAssistantMessageForTurn"] =
+    (input) =>
+      getLatestAssistantMessageForTurnRow(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError(
+            "ProjectionThreadMessageRepository.getLatestAssistantMessageForTurn:query",
+          ),
+        ),
+        Effect.map(Option.map(toProjectionThreadMessage)),
+      );
+
+  const getLatestAssistantMessageAfter: ProjectionThreadMessageRepositoryShape["getLatestAssistantMessageAfter"] =
+    (input) =>
+      getLatestAssistantMessageAfterRow(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError(
+            "ProjectionThreadMessageRepository.getLatestAssistantMessageAfter:query",
+          ),
+        ),
+        Effect.map(Option.map(toProjectionThreadMessage)),
+      );
+
   const listByThreadId: ProjectionThreadMessageRepositoryShape["listByThreadId"] = (input) =>
     listProjectionThreadMessageRows(input).pipe(
       Effect.mapError(
@@ -310,6 +385,8 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
     getByMessageId,
     hasAssistantMessageForTurn,
     listByThreadId,
+    getLatestAssistantMessageForTurn,
+    getLatestAssistantMessageAfter,
     getLatestUserMessageAt,
     deleteByThreadId,
   } satisfies ProjectionThreadMessageRepositoryShape;

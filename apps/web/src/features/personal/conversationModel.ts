@@ -134,14 +134,28 @@ function formatter(timeZone: string, options: Intl.DateTimeFormatOptions): Intl.
   return cached;
 }
 
+// `formatToParts` costs microseconds and runs twice per entry per rebuild;
+// keyed on a 15-minute UTC bucket plus zone it is a lookup for everything
+// but new buckets.
+const DAY_KEY_CACHE = new Map<string, string>();
+const DAY_KEY_CACHE_LIMIT = 1_000;
+
 function dayKey(date: Date, timeZone: string): string {
+  // Every real zone offset is a multiple of 15 minutes, so all instants in
+  // one 15-minute UTC bucket fall on the same local day.
+  const cacheKey = `${timeZone}|${Math.floor(date.getTime() / 900_000)}`;
+  const cached = DAY_KEY_CACHE.get(cacheKey);
+  if (cached !== undefined) return cached;
   const parts = formatter(timeZone, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   }).formatToParts(date);
   const part = (type: string) => parts.find((entry) => entry.type === type)?.value ?? "";
-  return `${part("year")}-${part("month")}-${part("day")}`;
+  const key = `${part("year")}-${part("month")}-${part("day")}`;
+  if (DAY_KEY_CACHE.size >= DAY_KEY_CACHE_LIMIT) DAY_KEY_CACHE.clear();
+  DAY_KEY_CACHE.set(cacheKey, key);
+  return key;
 }
 
 function previousDayKey(key: string): string {
@@ -295,14 +309,17 @@ export function placeDelegationCards(
   items: ReadonlyArray<ConversationItem>,
   children: ReadonlyArray<PersonalTask>,
 ): ConversationItem[] {
+  if (children.length === 0) return [...items];
   const placed = [...items];
+  // Times are parsed once per item, not once per item per child.
+  const times = items.map(itemTimeMs);
   for (const task of children.toSorted(
     (left, right) => taskCreatedMs(left) - taskCreatedMs(right),
   )) {
     const createdMs = taskCreatedMs(task);
     let anchor = -1;
     for (let index = 0; index < placed.length; index += 1) {
-      const at = itemTimeMs(placed[index]!);
+      const at = times[index]!;
       if (Number.isFinite(at) && at <= createdMs) anchor = index;
     }
     let end = anchor;
@@ -310,6 +327,7 @@ export function placeDelegationCards(
       while (end + 1 < placed.length && !isTurnBoundary(placed[end + 1]!)) end += 1;
     }
     placed.splice(end + 1, 0, { kind: "delegation", id: `delegation:${task.taskId}`, task });
+    times.splice(end + 1, 0, createdMs);
   }
   return placed;
 }

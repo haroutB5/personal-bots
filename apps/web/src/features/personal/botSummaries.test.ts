@@ -178,3 +178,25 @@ describe("buildBotSummaries", () => {
     expect(filterBotSummaries(summaries, "  ")).toHaveLength(3);
   });
 });
+
+describe("buildBotSummaries previews", () => {
+  it("takes the newest message of the newest thread from the list, never a subscription", () => {
+    const newest = { id: "m2", role: "assistant" as const, text: "Done." };
+    const summaries = buildBotSummaries({
+      bots: [bot("assistant", "Assistant", "codex", 0)],
+      links: [
+        { ...link("assistant", "t-old"), newestMessage: { id: "m1", role: "user", text: "Hi" } },
+        { ...link("assistant", "t-new"), newestMessage: newest },
+        { ...link("assistant", "t-none") },
+      ] as unknown as PersonalBotThread[],
+      shells: [
+        shell("t-old", "2026-09-13T08:00:00.000Z"),
+        shell("t-new", "2026-09-13T09:00:00.000Z"),
+        shell("t-none", "2026-09-13T07:00:00.000Z"),
+      ],
+      providers: [provider("codex")],
+    });
+    expect(summaries[0]?.newestThread?.id).toBe("t-new");
+    expect(summaries[0]?.newestMessage).toEqual(newest);
+  });
+});

@@ -111,6 +111,41 @@ const makeLayer = (harness: Harness) =>
       Layer.succeed(ProjectionThreadMessageRepository, {
         listByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
           Effect.sync(() => harness.messages.get(threadId) ?? []),
+        getByMessageId: ({ messageId }: { readonly messageId: MessageId }) =>
+          Effect.sync(() => {
+            for (const list of harness.messages.values()) {
+              const found = list.find((message) => message.messageId === messageId);
+              if (found !== undefined) return Option.some(found);
+            }
+            return Option.none();
+          }),
+        getLatestAssistantMessageForTurn: ({
+          threadId,
+          turnId,
+        }: {
+          readonly threadId: ThreadId;
+          readonly turnId: TurnId;
+        }) =>
+          Effect.sync(() => {
+            const hit = (harness.messages.get(threadId) ?? [])
+              .filter((message) => message.role === "assistant" && message.turnId === turnId)
+              .at(-1);
+            return hit === undefined ? Option.none() : Option.some(hit);
+          }),
+        getLatestAssistantMessageAfter: ({
+          threadId,
+          afterMessageId,
+        }: {
+          readonly threadId: ThreadId;
+          readonly afterCreatedAt: string;
+          readonly afterMessageId: MessageId;
+        }) =>
+          Effect.sync(() => {
+            const list = harness.messages.get(threadId) ?? [];
+            const anchor = list.findIndex((message) => message.messageId === afterMessageId);
+            const hit = list.slice(anchor + 1).findLast((message) => message.role === "assistant");
+            return hit === undefined ? Option.none() : Option.some(hit);
+          }),
       } as unknown as ProjectionThreadMessageRepositoryShape),
     ),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-secrets-" })),

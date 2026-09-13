@@ -4,6 +4,7 @@ import {
   isProviderAvailable,
   type PersonalBot,
   type PersonalBotThread,
+  type PersonalBotThreadNewestMessage,
   type ServerProvider,
 } from "@t3tools/contracts";
 
@@ -20,6 +21,8 @@ export interface BotSummary {
   readonly provider: BotProviderStatus;
   /** Most recently updated, non-archived thread linked to the bot. */
   readonly newestThread: EnvironmentThreadShell | null;
+  /** That thread's newest user/assistant message, from `personalBots.list`. */
+  readonly newestMessage: PersonalBotThreadNewestMessage | null;
   readonly threadTitles: ReadonlyArray<string>;
   /** A linked thread has a turn or session running right now (not stuck on a rate limit). */
   readonly live: boolean;
@@ -99,7 +102,9 @@ export function buildBotSummaries(input: {
 }): BotSummary[] {
   const shellsById = new Map(input.shells.map((shell) => [shell.id as string, shell] as const));
   const shellsByBot = new Map<string, EnvironmentThreadShell[]>();
+  const newestMessageByThread = new Map<string, PersonalBotThreadNewestMessage>();
   for (const link of input.links) {
+    if (link.newestMessage != null) newestMessageByThread.set(link.threadId, link.newestMessage);
     if (link.archivedAt !== null) continue;
     const shell = shellsById.get(link.threadId);
     if (shell === undefined || shell.archivedAt !== null) continue;
@@ -120,6 +125,8 @@ export function buildBotSummaries(input: {
       bot,
       provider: resolveBotProvider(bot.modelSelection.instanceId, input.providers),
       newestThread,
+      newestMessage:
+        newestThread === null ? null : (newestMessageByThread.get(newestThread.id) ?? null),
       threadTitles: shells.map((shell) => shell.title),
       live: shells.some(isThreadLive),
       rateLimited: shells.some(isThreadRateLimited),

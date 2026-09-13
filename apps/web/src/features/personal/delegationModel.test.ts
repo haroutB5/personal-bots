@@ -420,3 +420,37 @@ describe("placeDelegationCards", () => {
     ]);
   });
 });
+
+describe("placeDelegationCards with several children", () => {
+  const item = (id: string, role: "user" | "assistant", createdAt: string) =>
+    ({
+      id,
+      kind: "message",
+      createdAt,
+      message: { id, role, text: id, createdAt, streaming: false } as unknown as ChatMessage,
+    }) as unknown as Parameters<typeof buildConversationItems>[0][number];
+
+  it("puts each card at the end of the turn that created it, in creation order", () => {
+    const items = buildConversationItems([
+      item("u1", "user", "2026-09-13T10:00:00.000Z"),
+      item("a1", "assistant", "2026-09-13T10:00:10.000Z"),
+      item("u2", "user", "2026-09-13T10:05:00.000Z"),
+      item("a2", "assistant", "2026-09-13T10:05:10.000Z"),
+    ]);
+    const children = [
+      task({ taskId: "c-late", createdAt: "2026-09-13T10:05:05.000Z" }),
+      task({ taskId: "c-first", createdAt: "2026-09-13T10:00:03.000Z" }),
+      task({ taskId: "c-second", createdAt: "2026-09-13T10:00:04.000Z" }),
+    ];
+    expect(placeDelegationCards(items, children).map((entry) => entry.id)).toEqual([
+      "divider:2026-09-13T10:00:00.000Z",
+      "u1",
+      "a1",
+      "delegation:c-first",
+      "delegation:c-second",
+      "u2",
+      "a2",
+      "delegation:c-late",
+    ]);
+  });
+});

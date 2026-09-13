@@ -21,9 +21,18 @@ export const personalTasksFeed = createEnvironmentRpcSubscriptionAtomFamily(conn
   tag: WS_METHODS.personalTasksSubscribe,
   transform: (stream) =>
     stream.pipe(
+      // The replay arrives as one event per task; folding it per event would
+      // copy the map n times (O(n^2)) and re-render every consumer n times.
+      // Chunks bound that to one copy per batch while live upserts still
+      // land within 50ms.
+      Stream.groupedWithin(256, "50 millis"),
       Stream.scan(
         new Map<string, PersonalTask>() as ReadonlyMap<string, PersonalTask>,
-        (tasks, event) => new Map(tasks).set(event.task.taskId, event.task),
+        (tasks, events) => {
+          const next = new Map(tasks);
+          for (const event of events) next.set(event.task.taskId, event.task);
+          return next;
+        },
       ),
     ),
 });

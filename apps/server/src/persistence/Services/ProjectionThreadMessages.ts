@@ -53,6 +53,21 @@ export const GetProjectionThreadMessageInput = Schema.Struct({
 });
 export type GetProjectionThreadMessageInput = typeof GetProjectionThreadMessageInput.Type;
 
+export const GetLatestAssistantMessageForTurnInput = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+});
+export type GetLatestAssistantMessageForTurnInput =
+  typeof GetLatestAssistantMessageForTurnInput.Type;
+
+export const GetLatestAssistantMessageAfterInput = Schema.Struct({
+  threadId: ThreadId,
+  /** Exclusive lower bound in the thread's (created_at, message_id) order. */
+  afterCreatedAt: IsoDateTime,
+  afterMessageId: MessageId,
+});
+export type GetLatestAssistantMessageAfterInput = typeof GetLatestAssistantMessageAfterInput.Type;
+
 export const HasProjectionThreadAssistantMessageInput = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
@@ -106,6 +121,16 @@ export interface ProjectionThreadMessageRepositoryShape {
   readonly listByThreadId: (
     input: ListProjectionThreadMessagesInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
+
+  /** Newest assistant message of a turn, or none. Bounded: one row. */
+  readonly getLatestAssistantMessageForTurn: (
+    input: GetLatestAssistantMessageForTurnInput,
+  ) => Effect.Effect<Option.Option<ProjectionThreadMessage>, ProjectionRepositoryError>;
+
+  /** Newest assistant message strictly after an anchor message. Bounded: one row. */
+  readonly getLatestAssistantMessageAfter: (
+    input: GetLatestAssistantMessageAfterInput,
+  ) => Effect.Effect<Option.Option<ProjectionThreadMessage>, ProjectionRepositoryError>;
 
   /** Read the latest user-message timestamp without loading message bodies. */
   readonly getLatestUserMessageAt: (

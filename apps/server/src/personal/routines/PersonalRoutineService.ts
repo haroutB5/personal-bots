@@ -82,6 +82,9 @@ const ROUTINE_COLUMNS = `
   updated_at AS "updatedAt"
 `;
 
+/** Occurrence rows older than this are pruned each tick; the list window is shorter. */
+const OCCURRENCE_RETENTION_DAYS = 180;
+const OCCURRENCE_LIST_WINDOW_DAYS = 30;
 const OCCURRENCE_COLUMNS = `
   routine_id AS "routineId",
   local_occurrence AS "localOccurrence",
@@ -339,6 +342,16 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const now = yield* DateTime.now;
         const nowIso = DateTime.formatIso(now);
+        // The occurrence table is the dedupe guard for recent slots only; a
+        // slot this old can never be recomputed as due, so its row is dead
+        // weight. One bounded DELETE per tick keeps the table small.
+        const pruneBefore = DateTime.formatIso(
+          DateTime.subtract(now, { days: OCCURRENCE_RETENTION_DAYS }),
+        );
+        yield* sql`
+          DELETE FROM personal_routine_occurrences
+          WHERE created_at < ${pruneBefore}
+        `;
         const rows = yield* sql`
           SELECT ${sql.literal(ROUTINE_COLUMNS)} FROM personal_routines
           WHERE enabled = 1 AND next_due_utc IS NOT NULL AND next_due_utc <= ${nowIso}
@@ -364,12 +377,18 @@ export const make = Effect.gen(function* () {
         SELECT ${sql.literal(ROUTINE_COLUMNS)} FROM personal_routines
         ORDER BY created_at ASC, routine_id ASC
       `;
+      // The window function ranks only recent rows (indexed on routine_id,
+      // created_at); the list shows the last 10 per routine anyway.
+      const since = DateTime.formatIso(
+        DateTime.subtract(yield* DateTime.now, { days: OCCURRENCE_LIST_WINDOW_DAYS }),
+      );
       const occurrenceRows = yield* sql`
         SELECT ${sql.literal(OCCURRENCE_COLUMNS)} FROM (
           SELECT *, ROW_NUMBER() OVER (
             PARTITION BY routine_id ORDER BY created_at DESC, local_occurrence DESC
           ) AS position
           FROM personal_routine_occurrences
+          WHERE created_at >= ${since}
         )
         WHERE position <= 10
         ORDER BY created_at DESC, local_occurrence DESC

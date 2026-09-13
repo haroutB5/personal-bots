@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
@@ -65,10 +65,11 @@ export function ChatsScreen(): JSX.Element {
     tasks,
     refresh: list.refresh,
   });
-  const nameOf = useCallback(
-    (botId: string) => list.data?.bots.find((entry) => entry.botId === botId)?.name ?? null,
+  const namesById = useMemo(
+    () => new Map((list.data?.bots ?? []).map((entry) => [entry.botId as string, entry.name])),
     [list.data],
   );
+  const nameOf = useCallback((botId: string) => namesById.get(botId) ?? null, [namesById]);
   const waitingByThread = useMemo(() => waitingLabelsByThread(tasks, nameOf), [tasks, nameOf]);
   const describeTurn = useCallback(
     (turn: ServerTurn) => serverTurnLabel(turn, resolveTurnChildren(turn, tasks), nameOf),
@@ -87,6 +88,20 @@ export function ChatsScreen(): JSX.Element {
           }),
     [list.data, providers, shells, waitingByThread],
   );
+  // Previews ride on `personalBots.list`; a message landing on a bot's newest
+  // thread bumps that shell's updatedAt (already live), which refetches the
+  // list once instead of every row holding a full thread subscription.
+  const previewKey = summaries.map((summary) => summary.newestThread?.updatedAt ?? "").join("|");
+  const previewKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (previewKeyRef.current === null) {
+      previewKeyRef.current = previewKey;
+      return;
+    }
+    if (previewKeyRef.current === previewKey) return;
+    previewKeyRef.current = previewKey;
+    list.refresh();
+  }, [list, previewKey]);
   const visible = useMemo(() => filterBotSummaries(summaries, query), [query, summaries]);
   const attention = useMemo(() => collectAttentionThreads(summaries), [summaries]);
   const runningCount = summaries.filter((summary) => summary.live).length;

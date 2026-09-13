@@ -1,7 +1,14 @@
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { ModelSelection } from "./orchestration.ts";
+import {
+  MessageId,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
+import { OrchestrationMessageContext } from "./composerContext.ts";
+import { ModelSelection, OrchestrationMessageRole } from "./orchestration.ts";
 
 export const PersonalBotId = TrimmedNonEmptyString.pipe(Schema.brand("PersonalBotId"));
 export type PersonalBotId = typeof PersonalBotId.Type;
@@ -40,11 +47,26 @@ export const PersonalBot = Schema.Struct({
 });
 export type PersonalBot = typeof PersonalBot.Type;
 
+/**
+ * The newest user/assistant message of a linked thread, for the chats list
+ * preview. Text is capped server-side; `context` lets the client recognise
+ * turns the task service wrote.
+ */
+export const PersonalBotThreadNewestMessage = Schema.Struct({
+  id: MessageId,
+  role: OrchestrationMessageRole,
+  text: Schema.String,
+  context: Schema.optional(OrchestrationMessageContext),
+});
+export type PersonalBotThreadNewestMessage = typeof PersonalBotThreadNewestMessage.Type;
+
 export const PersonalBotThread = Schema.Struct({
   botId: PersonalBotId,
   threadId: ThreadId,
   createdAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  /** Only on `personalBots.list`; absent on create/archive results. */
+  newestMessage: Schema.optional(Schema.NullOr(PersonalBotThreadNewestMessage)),
 });
 export type PersonalBotThread = typeof PersonalBotThread.Type;
 

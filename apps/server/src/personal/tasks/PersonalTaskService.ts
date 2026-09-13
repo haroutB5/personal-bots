@@ -45,7 +45,11 @@ import {
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
-import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
+import {
+  ProjectionThreadMessageRepository,
+  type ProjectionThreadMessage,
+} from "../../persistence/Services/ProjectionThreadMessages.ts";
+import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
@@ -212,6 +216,9 @@ const sessionIsAlive = (session: OrchestrationSession | null | undefined) =>
   session.status !== "error";
 
 const isTerminal = (status: PersonalTaskStatus) => PERSONAL_TASK_TERMINAL_STATUSES.includes(status);
+
+/** Finished tasks replayed to a new subscriber; older ones stay in `list`. */
+const TASK_REPLAY_TERMINAL_LIMIT = 200;
 
 const minutesFrom = (now: DateTime.Utc, minutes: number) => DateTime.add(now, { minutes });
 
@@ -785,12 +792,38 @@ export const make = Effect.gen(function* () {
     // Everything after this attempt's own user message belongs to it; a
     // session state or reply from an earlier attempt on the same thread does
     // not. Ordering by the anchor, not by clock, keeps equal timestamps safe.
-    const threadMessages = yield* messages.listByThreadId({ threadId });
-    const anchor = threadMessages.findIndex(
-      (message) => message.messageId === attemptMessageId(attempt),
-    );
-    const anchorMessage = anchor === -1 ? undefined : threadMessages[anchor];
+    // Two bounded lookups: this runs per message event and per 30s sweep,
+    // and node:sqlite is synchronous, so loading the whole thread here
+    // blocked the event loop in proportion to the thread's length.
+    const anchorRow = yield* messages.getByMessageId({ messageId: attemptMessageId(attempt) });
+    const anchorMessage =
+      Option.isSome(anchorRow) && anchorRow.value.threadId === threadId
+        ? anchorRow.value
+        : undefined;
     const observed = attempt.turnId !== null;
+    // Newest assistant reply: by the observed turn id when it has one, else
+    // the newest reply written after the anchor. Two bounded lookups replace
+    // loading every message of the thread on each event and 30s sweep.
+    const latestReply = (): Effect.Effect<
+      ProjectionThreadMessage | undefined,
+      ProjectionRepositoryError
+    > =>
+      Effect.gen(function* () {
+        if (observed && attempt.turnId !== null) {
+          const byTurn = yield* messages.getLatestAssistantMessageForTurn({
+            threadId,
+            turnId: attempt.turnId,
+          });
+          if (Option.isSome(byTurn)) return byTurn.value;
+        }
+        if (anchorMessage === undefined) return undefined;
+        const afterAnchor = yield* messages.getLatestAssistantMessageAfter({
+          threadId,
+          afterCreatedAt: anchorMessage.createdAt,
+          afterMessageId: anchorMessage.messageId,
+        });
+        return Option.getOrUndefined(afterAnchor);
+      });
     const fresh =
       anchorMessage !== undefined &&
       Date.parse(session.updatedAt) >= Date.parse(anchorMessage.createdAt);
@@ -799,17 +832,7 @@ export const make = Effect.gen(function* () {
         if (!observed && !fresh) {
           return;
         }
-        const byTurn = observed
-          ? threadMessages.filter(
-              (message) => message.role === "assistant" && message.turnId === attempt.turnId,
-            )
-          : [];
-        const afterAnchor =
-          anchor === -1
-            ? []
-            : threadMessages.slice(anchor + 1).filter((message) => message.role === "assistant");
-        const candidates = byTurn.length > 0 ? byTurn : afterAnchor;
-        const last = candidates.at(-1);
+        const last = yield* latestReply();
         // Unobserved turn: only a fresh reply proves the turn ran. Observed
         // turn: wait until the final message stops streaming.
         if ((!observed && last === undefined) || last?.isStreaming === true) {
@@ -1091,7 +1114,7 @@ export const make = Effect.gen(function* () {
                   input.brief.constraints ?? "",
                   input.brief.acceptanceCriteria ?? "",
                   input.brief.expectedOutput ?? "",
-                ].join(" "),
+                ].join(" "),
               )
               .digest("hex")
               .slice(0, 24)}`;
@@ -1348,7 +1371,11 @@ export const make = Effect.gen(function* () {
   const subscribe: PersonalTaskService["Service"]["subscribe"] = Stream.unwrap(
     Effect.gen(function* () {
       const subscription = yield* PubSub.subscribe(upserts);
-      const current = yield* repository.listTasks({}).pipe(toPublic("subscribe"));
+      // A phone PWA reconnects constantly; replaying every task ever would
+      // grow without bound, so finished history is capped here.
+      const current = yield* repository
+        .listForReplay(TASK_REPLAY_TERMINAL_LIMIT)
+        .pipe(toPublic("subscribe"));
       return Stream.concat(
         Stream.fromIterable(current),
         Stream.fromSubscription(subscription),

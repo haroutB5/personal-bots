@@ -18,15 +18,30 @@ function summaryLabel(entries: ReadonlyArray<WorkLogEntry>, live: boolean): stri
  * (ui-spec: activity lives behind a "details" disclosure). Every row is a real
  * work-log entry; the live marker only shows while the turn is still running.
  */
+interface ToolDetailsProps {
+  entries: ReadonlyArray<WorkLogEntry>;
+  live: boolean;
+  workspaceRoot: string | undefined;
+}
+
+// The conversation builder allocates a fresh `entries` array on every
+// rebuild, so identity never matches; compare the entries themselves (their
+// objects are stable between rebuilds unless a step actually changed).
+function sameToolDetails(previous: ToolDetailsProps, next: ToolDetailsProps): boolean {
+  if (previous.live !== next.live || previous.workspaceRoot !== next.workspaceRoot) return false;
+  if (previous.entries === next.entries) return true;
+  if (previous.entries.length !== next.entries.length) return false;
+  for (let index = 0; index < next.entries.length; index += 1) {
+    if (previous.entries[index] !== next.entries[index]) return false;
+  }
+  return true;
+}
+
 export const ToolDetails = memo(function ToolDetails({
   entries,
   live,
   workspaceRoot,
-}: {
-  entries: ReadonlyArray<WorkLogEntry>;
-  live: boolean;
-  workspaceRoot: string | undefined;
-}): JSX.Element {
+}: ToolDetailsProps): JSX.Element {
   return (
     <details className="group max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)]">
       <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-3.5 text-sm text-[var(--personal-text-secondary)] outline-none select-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] [&::-webkit-details-marker]:hidden">
@@ -73,4 +88,4 @@ export const ToolDetails = memo(function ToolDetails({
       </ol>
     </details>
   );
-});
+}, sameToolDetails);

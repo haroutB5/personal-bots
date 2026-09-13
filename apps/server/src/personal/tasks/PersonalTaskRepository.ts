@@ -22,6 +22,7 @@ import {
   type PersonalTask,
   type PersonalTaskAttempt,
   type PersonalTaskListInput,
+  PERSONAL_TASK_TERMINAL_STATUSES,
 } from "@t3tools/contracts";
 
 import { PersistenceDecodeError, PersistenceSqlError } from "../../persistence/Errors.ts";
@@ -157,6 +158,14 @@ export class PersonalTaskRepository extends Context.Service<
     ) => Effect.Effect<Option.Option<PersonalTask>, PersonalTaskRepositoryError>;
     readonly listTasks: (
       filter: PersonalTaskListInput,
+    ) => Effect.Effect<ReadonlyArray<PersonalTask>, PersonalTaskRepositoryError>;
+    /**
+     * The subscribe replay: every non-terminal task plus the newest
+     * `terminalLimit` finished ones, newest first. Older history stays
+     * reachable through `listTasks`.
+     */
+    readonly listForReplay: (
+      terminalLimit: number,
     ) => Effect.Effect<ReadonlyArray<PersonalTask>, PersonalTaskRepositoryError>;
     /** Every task below `taskId`, following parent links by task id. */
     readonly listDescendants: (
@@ -350,6 +359,25 @@ export const make = Effect.gen(function* () {
       `,
     ).pipe(Effect.flatMap((rows) => decodeTasks("listTasks", rows)));
   };
+
+  const listForReplay: PersonalTaskRepository["Service"]["listForReplay"] = (terminalLimit) =>
+    query(
+      "listForReplay",
+      sql`
+        SELECT ${sql.literal(TASK_COLUMNS)} FROM (
+          SELECT *, rowid AS row_order FROM personal_tasks
+          WHERE NOT (${sql.in("status", PERSONAL_TASK_TERMINAL_STATUSES)})
+          UNION ALL
+          SELECT * FROM (
+            SELECT *, rowid AS row_order FROM personal_tasks
+            WHERE ${sql.in("status", PERSONAL_TASK_TERMINAL_STATUSES)}
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT ${terminalLimit}
+          )
+        )
+        ORDER BY created_at DESC, row_order DESC
+      `,
+    ).pipe(Effect.flatMap((rows) => decodeTasks("listForReplay", rows)));
 
   const listDescendants: PersonalTaskRepository["Service"]["listDescendants"] = (taskId) =>
     query(
@@ -621,6 +649,7 @@ export const make = Effect.gen(function* () {
     getTask,
     getTaskByIdempotencyKey,
     listTasks,
+    listForReplay,
     listDescendants,
     countTasksInRoot,
     writeTask,
