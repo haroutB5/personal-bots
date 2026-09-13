@@ -704,12 +704,9 @@ export const make = Effect.gen(function* () {
           "PersonalBotRepository.getInstructionsForThread:decodeRow",
         ),
       ),
-      Effect.map(
-        Option.flatMap((row) => {
-          const trimmed = row.instructions.trim();
-          return trimmed.length > 0 ? Option.some(row.instructions) : Option.none();
-        }),
-      ),
+      // Some for every thread linked to a live bot, even with blank
+      // instructions: the caller still owes that thread the app rules.
+      Effect.map(Option.map((row) => row.instructions)),
     );
 
   const listThreadAttachments: PersonalBotRepository["Service"]["listThreadAttachments"] = () =>

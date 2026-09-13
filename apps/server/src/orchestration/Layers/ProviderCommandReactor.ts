@@ -34,6 +34,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
+import { personalBotSystemInstructions } from "../../personal/personalBotInstructions.ts";
 import * as PersonalMemoryService from "../../personal/memory/PersonalMemoryService.ts";
 import {
   ProviderAdapterRequestError,
@@ -342,7 +343,9 @@ const make = Effect.gen(function* () {
   const personalMemory = yield* Effect.serviceOption(PersonalMemoryService.PersonalMemoryService);
   const personalBotInstructions = (threadId: ThreadId) =>
     personalBots.getInstructionsForThread({ threadId }).pipe(
-      Effect.map(Option.getOrUndefined),
+      Effect.map((instructions) =>
+        Option.getOrUndefined(Option.map(instructions, personalBotSystemInstructions)),
+      ),
       Effect.catchCause((cause) =>
         Effect.logDebug("personal bot instructions lookup failed; continuing without them", {
           threadId,
