@@ -208,8 +208,45 @@ export class PersonalTaskRepository extends Context.Service<
     readonly listHandoffsByParent: (
       parentTaskId: PersonalTaskId,
     ) => Effect.Effect<ReadonlyArray<PersonalHandoff>, PersonalTaskRepositoryError>;
+    /** The most recently created task that ran on `threadId`. */
+    readonly latestTaskForThread: (
+      threadId: ThreadId,
+    ) => Effect.Effect<Option.Option<PersonalTask>, PersonalTaskRepositoryError>;
+    readonly insertResumeNote: (
+      note: PersonalTaskResumeNote,
+    ) => Effect.Effect<void, PersonalTaskRepositoryError>;
+    readonly listUndeliveredNotes: (
+      taskId: PersonalTaskId,
+    ) => Effect.Effect<ReadonlyArray<PersonalTaskResumeNote>, PersonalTaskRepositoryError>;
+    readonly markNotesDelivered: (
+      taskId: PersonalTaskId,
+      now: DateTime.Utc,
+    ) => Effect.Effect<void, PersonalTaskRepositoryError>;
+    /** waiting_for_user tasks that have an undelivered resume note. */
+    readonly listTasksAwaitingResume: () => Effect.Effect<
+      ReadonlyArray<PersonalTask>,
+      PersonalTaskRepositoryError
+    >;
   }
 >()("t3/personal/tasks/PersonalTaskRepository") {}
+
+/** Text a task's next turn opens with; `restartSession` waits for a fresh provider process. */
+export interface PersonalTaskResumeNote {
+  readonly noteId: string;
+  readonly taskId: PersonalTaskId;
+  readonly text: string;
+  readonly restartSession: boolean;
+  readonly createdAt: DateTime.Utc;
+}
+
+const ResumeNoteDbRow = Schema.Struct({
+  noteId: Schema.String,
+  taskId: PersonalTaskId,
+  text: Schema.String,
+  restartSession: Schema.Number,
+  createdAt: Schema.DateTimeUtcFromString,
+});
+const decodeResumeNoteRow = Schema.decodeUnknownEffect(ResumeNoteDbRow);
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
@@ -492,6 +529,92 @@ export const make = Effect.gen(function* () {
       `,
     ).pipe(Effect.flatMap((rows) => decodeHandoffs("listHandoffsByParent", rows)));
 
+  const latestTaskForThread: PersonalTaskRepository["Service"]["latestTaskForThread"] = (
+    threadId,
+  ) =>
+    query(
+      "latestTaskForThread",
+      sql`
+        SELECT ${sql.literal(TASK_COLUMNS)}
+        FROM personal_tasks
+        WHERE thread_id = ${threadId}
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT 1
+      `,
+    ).pipe(Effect.flatMap((rows) => firstTask("latestTaskForThread", rows)));
+
+  const insertResumeNote: PersonalTaskRepository["Service"]["insertResumeNote"] = (note) =>
+    query(
+      "insertResumeNote",
+      sql`
+        INSERT INTO personal_task_resume_notes (
+          note_id, task_id, text, restart_session, created_at, delivered_at
+        )
+        VALUES (
+          ${note.noteId}, ${note.taskId}, ${note.text}, ${note.restartSession ? 1 : 0},
+          ${iso(note.createdAt)}, NULL
+        )
+        ON CONFLICT(note_id) DO NOTHING
+      `,
+    ).pipe(Effect.asVoid);
+
+  const listUndeliveredNotes: PersonalTaskRepository["Service"]["listUndeliveredNotes"] = (
+    taskId,
+  ) =>
+    query(
+      "listUndeliveredNotes",
+      sql`
+        SELECT
+          note_id AS "noteId",
+          task_id AS "taskId",
+          text AS "text",
+          restart_session AS "restartSession",
+          created_at AS "createdAt"
+        FROM personal_task_resume_notes
+        WHERE task_id = ${taskId}
+          AND delivered_at IS NULL
+        ORDER BY created_at ASC, rowid ASC
+      `,
+    ).pipe(
+      Effect.flatMap((rows) =>
+        Effect.forEach(rows, (row) =>
+          decodeResumeNoteRow(row).pipe(
+            Effect.mapError(decodeError("listUndeliveredNotes")),
+            Effect.map((decoded) => ({ ...decoded, restartSession: decoded.restartSession === 1 })),
+          ),
+        ),
+      ),
+    );
+
+  const markNotesDelivered: PersonalTaskRepository["Service"]["markNotesDelivered"] = (
+    taskId,
+    now,
+  ) =>
+    query(
+      "markNotesDelivered",
+      sql`
+        UPDATE personal_task_resume_notes
+        SET delivered_at = ${iso(now)}
+        WHERE task_id = ${taskId}
+          AND delivered_at IS NULL
+      `,
+    ).pipe(Effect.asVoid);
+
+  const listTasksAwaitingResume: PersonalTaskRepository["Service"]["listTasksAwaitingResume"] =
+    () =>
+      query(
+        "listTasksAwaitingResume",
+        sql`
+          SELECT ${sql.literal(TASK_COLUMNS)}
+          FROM personal_tasks
+          WHERE status = 'waiting_for_user'
+            AND task_id IN (
+              SELECT task_id FROM personal_task_resume_notes WHERE delivered_at IS NULL
+            )
+          ORDER BY created_at ASC, rowid ASC
+        `,
+      ).pipe(Effect.flatMap((rows) => decodeTasks("listTasksAwaitingResume", rows)));
+
   return {
     transaction,
     insertTask,
@@ -511,6 +634,11 @@ export const make = Effect.gen(function* () {
     writeHandoff,
     getHandoffByChild,
     listHandoffsByParent,
+    latestTaskForThread,
+    insertResumeNote,
+    listUndeliveredNotes,
+    markNotesDelivered,
+    listTasksAwaitingResume,
   } satisfies PersonalTaskRepository["Service"];
 });
 

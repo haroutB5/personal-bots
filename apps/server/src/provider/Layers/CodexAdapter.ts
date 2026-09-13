@@ -2274,7 +2274,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(mcpSession
             ? {
                 environment: {
-                  ...McpProviderSession.withAgentDeviceEnvironment(
+                  ...McpProviderSession.withProviderSessionEnvironment(
                     options?.environment ?? process.env,
                     mcpSession,
                   ),

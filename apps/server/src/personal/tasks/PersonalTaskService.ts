@@ -35,6 +35,7 @@ import {
   type PersonalTaskSource,
   type PersonalTaskStatus,
   type PersonalTaskStreamEvent,
+  type TurnId,
 } from "@t3tools/contracts";
 
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
@@ -108,6 +109,41 @@ export class PersonalTaskService extends Context.Service<
     readonly sweep: Effect.Effect<void>;
     /** Resolves when every queued dispatcher step has finished. */
     readonly drain: Effect.Effect<void>;
+    /**
+     * The task a bot's MCP call acts for: the task whose active attempt owns
+     * `threadId`, or else a new root task (source "user") that adopts the
+     * thread's running turn as its first attempt, so the dispatcher settles
+     * it when that turn ends. Idempotent per thread and turn.
+     */
+    readonly resolveCallerTask: (input: {
+      readonly threadId: ThreadId;
+      readonly botId: PersonalBotId;
+      readonly turnId: TurnId;
+    }) => Effect.Effect<PersonalTask, PersonalTasksError>;
+    /** Root of the task tree `threadId` works in: its active task, else its latest task. */
+    readonly rootTaskIdForThread: (
+      threadId: ThreadId,
+    ) => Effect.Effect<Option.Option<PersonalTaskId>, PersonalTasksError>;
+    /** Parks a running task until the user acts (the turn's attempt still ends normally). */
+    readonly waitForUser: (input: {
+      readonly taskId: PersonalTaskId;
+    }) => Effect.Effect<PersonalTask, PersonalTasksError>;
+    /**
+     * Re-queues a waiting_for_user task with `note` as its next turn's
+     * opening. `restartSession` first stops the thread's provider session and
+     * queues only once it is gone, so the next turn runs in a fresh process.
+     */
+    readonly resumeFromUser: (input: {
+      readonly taskId: PersonalTaskId;
+      readonly noteId: string;
+      readonly note: string;
+      readonly restartSession: boolean;
+    }) => Effect.Effect<PersonalTask, PersonalTasksError>;
+    /** Fails a waiting_for_user task with `message` and reports it to its parent. */
+    readonly failWaitingForUser: (input: {
+      readonly taskId: PersonalTaskId;
+      readonly message: string;
+    }) => Effect.Effect<PersonalTask, PersonalTasksError>;
   }
 >()("t3/personal/tasks/PersonalTaskService") {}
 
@@ -130,7 +166,15 @@ type WorkItem =
       readonly threadId: ThreadId;
       readonly session: OrchestrationSession;
     }
-  | { readonly type: "settle"; readonly threadId: ThreadId };
+  | { readonly type: "settle"; readonly threadId: ThreadId }
+  | { readonly type: "resume"; readonly threadId: ThreadId };
+
+/** A session that still has a provider process behind it. */
+const sessionIsAlive = (session: OrchestrationSession | null | undefined) =>
+  session !== null &&
+  session !== undefined &&
+  session.status !== "stopped" &&
+  session.status !== "error";
 
 const isTerminal = (status: PersonalTaskStatus) => PERSONAL_TASK_TERMINAL_STATUSES.includes(status);
 
@@ -180,6 +224,8 @@ export const make = Effect.gen(function* () {
   const lock = yield* Semaphore.make(1);
   // Provider threads with an active attempt; filters the hot event stream.
   const activeThreadIds = new Set<string>();
+  // Threads whose waiting task queues once their provider session is gone.
+  const resumingThreadIds = new Set<string>();
 
   const fail = (message: string, cause?: unknown) =>
     new PersonalTasksError({ message, ...(cause === undefined ? {} : { cause }) });
@@ -395,6 +441,7 @@ export const make = Effect.gen(function* () {
     task: PersonalTask,
     attemptNumber: number,
     delivered: ReadonlyArray<PersonalHandoff>,
+    notes: ReadonlyArray<string>,
   ) {
     if (delivered.length > 0) {
       const results = yield* Effect.forEach(delivered, (handoff) =>
@@ -411,7 +458,16 @@ export const make = Effect.gen(function* () {
       return [
         "[Task continuation] Your delegated tasks have finished. Their results:",
         ...results,
+        ...notes,
         "Continue the task below with these results and give your final answer.",
+        ...taskSections(task, null),
+      ].join("\n\n");
+    }
+    if (notes.length > 0) {
+      return [
+        "[Task continuation]",
+        ...notes,
+        "Continue the task below.",
         ...taskSections(task, null),
       ].join("\n\n");
     }
@@ -443,8 +499,9 @@ export const make = Effect.gen(function* () {
     task: PersonalTask,
     attempt: PersonalTaskAttempt,
     delivered: ReadonlyArray<PersonalHandoff>,
+    notes: ReadonlyArray<string>,
   ) {
-    const text = yield* buildTurnText(task, attempt.attempt, delivered);
+    const text = yield* buildTurnText(task, attempt.attempt, delivered, notes);
     yield* bots.createThread({ botId: task.botId, threadId: attempt.providerThreadId });
     yield* engine.dispatch({
       type: "thread.turn.start",
@@ -503,7 +560,11 @@ export const make = Effect.gen(function* () {
           (handoff) => repository.writeHandoff({ ...handoff, status: "delivered", updatedAt: now }),
           { discard: true },
         );
-        return { task: running, attempt, delivered };
+        const notes = yield* repository.listUndeliveredNotes(task.taskId);
+        if (notes.length > 0) {
+          yield* repository.markNotesDelivered(task.taskId, now);
+        }
+        return { task: running, attempt, delivered, notes: notes.map((note) => note.text) };
       }),
     );
     if (claimed !== null) {
@@ -533,7 +594,7 @@ export const make = Effect.gen(function* () {
       if (claimed === null) {
         continue;
       }
-      yield* startTurn(claimed.task, claimed.attempt, claimed.delivered).pipe(
+      yield* startTurn(claimed.task, claimed.attempt, claimed.delivered, claimed.notes).pipe(
         Effect.catchCause((cause) => {
           if (Cause.hasInterruptsOnly(cause)) {
             return Effect.failCause(cause);
@@ -557,6 +618,52 @@ export const make = Effect.gen(function* () {
   ) {
     const active = yield* repository.listActiveAttempts();
     return active.find((attempt) => attempt.providerThreadId === threadId) ?? null;
+  });
+
+  const readSession = (threadId: ThreadId) =>
+    snapshots.getThreadShellById(threadId).pipe(
+      Effect.map((shell) => (Option.isSome(shell) ? shell.value.session : null)),
+      Effect.mapError((cause) => fail("Personal tasks could not read the thread session.", cause)),
+    );
+
+  // A waiting task with an undelivered resume note queues once its notes
+  // allow: a note that needs a fresh provider process waits until the
+  // thread's session is gone, so the next turn starts a new process (which
+  // is when provider environments are built).
+  const tryResume = Effect.fn("PersonalTaskService.tryResume")(function* (
+    changed: Changed,
+    task: PersonalTask,
+  ) {
+    if (task.status !== "waiting_for_user") {
+      return;
+    }
+    const notes = yield* repository.listUndeliveredNotes(task.taskId);
+    if (notes.length === 0) {
+      return;
+    }
+    if (task.threadId !== null && notes.some((note) => note.restartSession)) {
+      if (sessionIsAlive(yield* readSession(task.threadId))) {
+        resumingThreadIds.add(task.threadId);
+        return;
+      }
+    }
+    if (task.threadId !== null) {
+      resumingThreadIds.delete(task.threadId);
+    }
+    yield* writeTask(changed, task, { status: "queued", errorCategory: null, errorMessage: null });
+  });
+
+  const resumeWaiting = Effect.fn("PersonalTaskService.resumeWaiting")(function* (
+    threadId: ThreadId | null,
+  ) {
+    const changed: Changed = [];
+    const waiting = yield* repository.listTasksAwaitingResume();
+    for (const task of waiting) {
+      if (threadId === null || task.threadId === threadId) {
+        yield* tryResume(changed, task);
+      }
+    }
+    yield* publish(changed);
   });
 
   // Decides whether the attempt's turn has ended, reading the projected
@@ -668,6 +775,9 @@ export const make = Effect.gen(function* () {
       }
       yield* settle(attempt.providerThreadId);
     }
+    // Also covers a restart: provider sessions do not survive one, so a task
+    // that was waiting for its session to stop can resume now.
+    yield* resumeWaiting(null);
     yield* pump();
   });
 
@@ -686,6 +796,9 @@ export const make = Effect.gen(function* () {
               break;
             case "settle":
               yield* settle(item.threadId);
+              break;
+            case "resume":
+              yield* resumeWaiting(item.threadId);
               break;
           }
           yield* pump();
@@ -714,14 +827,17 @@ export const make = Effect.gen(function* () {
 
   const ingestDomainEvent: PersonalTaskService["Service"]["ingestDomainEvent"] = (event) => {
     switch (event.type) {
-      case "thread.session-set":
-        return activeThreadIds.has(event.payload.threadId)
-          ? worker.enqueue({
-              type: "session",
-              threadId: event.payload.threadId,
-              session: event.payload.session,
-            })
+      case "thread.session-set": {
+        const threadId = event.payload.threadId;
+        // Settle the attempt first, then see whether a waiting task resumes.
+        const session = activeThreadIds.has(threadId)
+          ? worker.enqueue({ type: "session", threadId, session: event.payload.session })
           : Effect.void;
+        const resume = resumingThreadIds.has(threadId)
+          ? worker.enqueue({ type: "resume", threadId })
+          : Effect.void;
+        return Effect.andThen(session, resume);
+      }
       case "thread.message-sent":
         // Only completed assistant messages: deltas would flood the worker.
         return event.payload.role === "assistant" &&
@@ -1067,6 +1183,217 @@ export const make = Effect.gen(function* () {
     }),
   );
 
+  const resolveCallerTask: PersonalTaskService["Service"]["resolveCallerTask"] = (input) =>
+    lock
+      .withPermit(
+        Effect.gen(function* () {
+          const active = yield* activeAttemptForThread(input.threadId);
+          if (active !== null) {
+            const owner = yield* repository.getTask(active.taskId);
+            if (Option.isSome(owner) && !isTerminal(owner.value.status)) {
+              return owner.value;
+            }
+          }
+          // No task owns this turn (the user is chatting directly): adopt the
+          // running turn as attempt 1 of a new root, keyed by thread and turn
+          // so every tool call in this turn resolves to the same root.
+          const idempotencyKey = `thread-turn:${input.threadId}:${input.turnId}`;
+          const existing = yield* repository.getTaskByIdempotencyKey(idempotencyKey);
+          if (Option.isSome(existing)) {
+            return existing.value;
+          }
+          yield* requireLiveBot(input.botId);
+          const threadMessages = yield* messages
+            .listByThreadId({ threadId: input.threadId })
+            .pipe(
+              Effect.mapError((cause) => fail("Personal tasks could not read the thread.", cause)),
+            );
+          const lastUserText =
+            threadMessages.findLast((message) => message.role === "user")?.text.trim() ?? "";
+          const objective =
+            lastUserText.length > 0
+              ? lastUserText.slice(0, 4_000)
+              : "Continue the conversation in this thread.";
+          const title = (objective.split("\n")[0] ?? "").trim().slice(0, 80) || "Chat request";
+          const now = yield* DateTime.now;
+          const taskId = PersonalTaskId.make(NodeCrypto.randomUUID());
+          const task: PersonalTask = {
+            taskId,
+            rootTaskId: taskId,
+            parentTaskId: null,
+            botId: input.botId,
+            threadId: input.threadId,
+            title,
+            objective,
+            acceptanceCriteria: "",
+            expectedOutput: "",
+            status: "running",
+            source: "user",
+            idempotencyKey,
+            depth: 0,
+            maxDepth: PERSONAL_TASKS_DEFAULT_MAX_DEPTH,
+            maxChildren: PERSONAL_TASKS_DEFAULT_MAX_CHILDREN,
+            result: null,
+            errorCategory: null,
+            errorMessage: null,
+            availableAt: null,
+            createdAt: now,
+            updatedAt: now,
+            startedAt: now,
+            completedAt: null,
+          };
+          const attempt: PersonalTaskAttempt = {
+            taskId,
+            attempt: 1,
+            providerThreadId: input.threadId,
+            turnId: input.turnId,
+            leaseOwner,
+            leaseExpiresAt: minutesFrom(now, LEASE_MINUTES),
+            heartbeatAt: now,
+            startedAt: now,
+            endedAt: null,
+            errorCategory: null,
+            resumable: false,
+          };
+          const inserted = yield* repository.transaction(
+            Effect.gen(function* () {
+              const insertedTask = yield* repository.insertTask(task);
+              if (insertedTask) {
+                yield* repository.insertAttempt(attempt);
+              }
+              return insertedTask;
+            }),
+          );
+          const stored = yield* repository.getTaskByIdempotencyKey(idempotencyKey);
+          if (Option.isNone(stored)) {
+            return yield* fail("Personal task could not be read after creation.");
+          }
+          if (inserted) {
+            activeThreadIds.add(input.threadId);
+            yield* publish([stored.value]);
+          }
+          return stored.value;
+        }),
+      )
+      .pipe(toPublic("resolveCallerTask"));
+
+  const rootTaskIdForThread: PersonalTaskService["Service"]["rootTaskIdForThread"] = (threadId) =>
+    Effect.gen(function* () {
+      const active = yield* activeAttemptForThread(threadId);
+      const task =
+        active !== null
+          ? yield* repository.getTask(active.taskId)
+          : yield* repository.latestTaskForThread(threadId);
+      return Option.map(task, (value) => value.rootTaskId);
+    }).pipe(toPublic("rootTaskIdForThread"));
+
+  const waitForUser: PersonalTaskService["Service"]["waitForUser"] = (input) =>
+    lock
+      .withPermit(
+        Effect.gen(function* () {
+          const task = yield* requireTask(input.taskId);
+          if (task.status === "waiting_for_user") {
+            return task;
+          }
+          if (task.status !== "running") {
+            return yield* fail(
+              `Task '${task.taskId}' is ${task.status}; only a running task can wait for the user.`,
+            );
+          }
+          const changed: Changed = [];
+          const waiting = yield* writeTask(changed, task, { status: "waiting_for_user" });
+          if (waiting === null) {
+            return yield* fail("The task changed while it was being parked; try again.");
+          }
+          yield* publish(changed);
+          return waiting;
+        }),
+      )
+      .pipe(toPublic("waitForUser"));
+
+  const resumeFromUser: PersonalTaskService["Service"]["resumeFromUser"] = (input) =>
+    lock
+      .withPermit(
+        Effect.gen(function* () {
+          const task = yield* requireTask(input.taskId);
+          if (task.status !== "waiting_for_user") {
+            return yield* fail(
+              `Task '${task.taskId}' is ${task.status}; it is not waiting for you.`,
+            );
+          }
+          const now = yield* DateTime.now;
+          if (input.restartSession && task.threadId !== null) {
+            if (sessionIsAlive(yield* readSession(task.threadId))) {
+              // The environment is fixed when a provider process starts; stop
+              // it and queue on the "stopped" session event (tryResume).
+              resumingThreadIds.add(task.threadId);
+              yield* engine
+                .dispatch({
+                  type: "thread.session.stop",
+                  commandId: CommandId.make(
+                    `personal-task:${task.taskId}:resume:${input.noteId}:session.stop`,
+                  ),
+                  threadId: task.threadId,
+                  createdAt: DateTime.formatIso(now),
+                })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    fail("Could not restart the bot's provider session.", cause),
+                  ),
+                );
+            }
+          }
+          yield* repository.insertResumeNote({
+            noteId: input.noteId,
+            taskId: task.taskId,
+            text: input.note,
+            restartSession: input.restartSession,
+            createdAt: now,
+          });
+          const changed: Changed = [];
+          yield* tryResume(changed, task);
+          yield* publish(changed);
+          yield* worker.enqueue({ type: "pump" });
+          return yield* requireTask(task.taskId);
+        }),
+      )
+      .pipe(toPublic("resumeFromUser"));
+
+  const failWaitingForUser: PersonalTaskService["Service"]["failWaitingForUser"] = (input) =>
+    lock
+      .withPermit(
+        Effect.gen(function* () {
+          const task = yield* requireTask(input.taskId);
+          if (task.status !== "waiting_for_user") {
+            return yield* fail(
+              `Task '${task.taskId}' is ${task.status}; it is not waiting for you.`,
+            );
+          }
+          const changed: Changed = [];
+          yield* repository.transaction(
+            Effect.gen(function* () {
+              const ended = yield* writeTask(changed, task, {
+                status: "failed",
+                availableAt: null,
+                errorCategory: "user_cancelled",
+                errorMessage: input.message,
+                completedAt: yield* DateTime.now,
+              });
+              if (ended !== null) {
+                yield* returnToParent(changed, ended);
+              }
+            }),
+          );
+          if (task.threadId !== null) {
+            resumingThreadIds.delete(task.threadId);
+          }
+          yield* publish(changed);
+          yield* worker.enqueue({ type: "pump" });
+          return yield* requireTask(task.taskId);
+        }),
+      )
+      .pipe(toPublic("failWaitingForUser"));
+
   const start: PersonalTaskService["Service"]["start"] = Effect.fn("PersonalTaskService.start")(
     function* () {
       const events = yield* engine.subscribeDomainEvents;
@@ -1092,6 +1419,11 @@ export const make = Effect.gen(function* () {
     ingestDomainEvent,
     sweep: worker.enqueue({ type: "sweep" }),
     drain: worker.drain,
+    resolveCallerTask,
+    rootTaskIdForThread,
+    waitForUser,
+    resumeFromUser,
+    failWaitingForUser,
   } satisfies PersonalTaskService["Service"];
 });
 
