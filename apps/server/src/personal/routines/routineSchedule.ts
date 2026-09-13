@@ -79,6 +79,16 @@ export function dueRoutineSlots(
   nextDueMs: number,
   nowMs: number,
 ): { readonly latest: RoutineSlot; readonly count: number } | null {
+  // Elapsed-hour schedules can catch up arithmetically. Enumerating every
+  // missed hour wastes work and the scan cap used to discard the latest runs.
+  if (schedule.kind === "interval") {
+    const first = nextRoutineSlot(schedule, timeZone, nextDueMs - 1);
+    if (first === null || first.dueMs > nowMs) return null;
+    const step = schedule.everyHours * HOUR_MS;
+    const count = Math.floor((nowMs - first.dueMs) / step) + 1;
+    const dueMs = first.dueMs + (count - 1) * step;
+    return { latest: { localKey: formatLocalWithOffset(dueMs, timeZone), dueMs }, count };
+  }
   let slot = nextRoutineSlot(schedule, timeZone, nextDueMs - 1);
   let latest: RoutineSlot | null = null;
   let count = 0;

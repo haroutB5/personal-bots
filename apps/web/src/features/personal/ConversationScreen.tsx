@@ -52,7 +52,7 @@ import {
 } from "./delegationModel";
 import { MessageList, type PendingOutgoingMessage } from "./MessageList";
 import { PersonalComposer } from "./PersonalComposer";
-import { useLaptopOffline } from "./PersonalOfflineBanner";
+import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { useStartBotChat } from "./startBotChat";
 import { usePersonalTasks } from "./usePersonalAutomation";
 import {
@@ -176,6 +176,7 @@ export function ConversationScreen({
   const [respondingIds, setRespondingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [actionError, setActionError] = useState<string | null>(null);
   const laptopOffline = useLaptopOffline();
+  const connectionPhase = usePersonalConnectionPhase();
 
   // Delegation state comes from the live task feed (personalTasks.subscribe).
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
@@ -311,7 +312,9 @@ export function ConversationScreen({
       : null;
   // Offline: sending is blocked and the draft stays in this device's draft store.
   const disabledReason = laptopOffline
-    ? "Your laptop is offline. This draft is saved on this device and has not been sent."
+    ? connectionPhase === "offline" || connectionPhase === "error"
+      ? "Your laptop is offline. This draft is saved on this device and has not been sent."
+      : "Connecting to your laptop. Your draft is saved on this device."
     : provider !== null && bot !== null && !provider.available
       ? `${provider.label} can't run right now, so ${bot.name} can't reply. Fix it on your computer or edit the bot.`
       : null;

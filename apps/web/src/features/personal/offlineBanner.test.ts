@@ -13,11 +13,13 @@ describe("offlineBannerText", () => {
   it("is silent while connected and on the first cold connect", () => {
     expect(offlineBannerText("connected", NOW - 5_000, NOW)).toBeNull();
     expect(offlineBannerText("connecting", null, NOW)).toBeNull();
+    expect(offlineBannerText("connecting", NOW - 60_000, NOW)).toBeNull();
+    expect(offlineBannerText("available", NOW - 60_000, NOW)).toBeNull();
   });
 
   it("states the last contact once the laptop is unreachable", () => {
     expect(offlineBannerText("reconnecting", NOW - 5 * 60_000, NOW)).toBe(
-      "Laptop offline · last contact 5m ago",
+      "Reconnecting to your laptop…",
     );
     expect(offlineBannerText("offline", NOW - 10_000, NOW)).toBe(
       "Laptop offline · last contact just now",
@@ -42,6 +44,8 @@ describe("service worker gating", () => {
   it("accepts only same-origin paths from the worker", () => {
     expect(isNavigablePath("/tasks/abc")).toBe(true);
     expect(isNavigablePath("//evil.example/x")).toBe(false);
+    expect(isNavigablePath("/\\evil.example/x")).toBe(false);
+    expect(isNavigablePath("/\n/evil.example/x")).toBe(false);
     expect(isNavigablePath("https://evil.example/x")).toBe(false);
     expect(isNavigablePath(42)).toBe(false);
   });

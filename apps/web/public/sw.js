@@ -3,7 +3,7 @@
  * origins (see src/features/personal/serviceWorker.ts).
  *
  * Caching is an allowlist: hashed build assets (/assets/*) cache-first, and
- * the last good app-shell HTML as an offline fallback for navigations. Nothing
+ * the last good app-shell HTML for instant personal-app navigations. Nothing
  * else is ever cached: no API, WebSocket, auth, MCP, attachments, downloads or
  * pairing responses. Every other request is left to the network untouched.
  */
@@ -49,6 +49,25 @@ function isCacheableResponse(response) {
   return !/attachment/i.test(disposition) && !/no-store|private/i.test(cacheControl);
 }
 
+// Storage can be unavailable or full on a phone. It must never turn a
+// successful network response into a failed navigation or script load.
+async function cachedResponse(key) {
+  try {
+    return await caches.match(key, { cacheName: CACHE_NAME });
+  } catch {
+    return undefined;
+  }
+}
+
+async function cacheResponse(key, response) {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(key, response);
+  } catch {
+    // The response can still be used without an offline copy.
+  }
+}
+
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET" || request.headers.has("range")) return;
@@ -57,27 +76,39 @@ self.addEventListener("fetch", (event) => {
   if (NEVER_CACHE.some((pattern) => pattern.test(url.pathname))) return;
 
   if (request.mode === "navigate") {
-    // Network first; the cached shell only answers when the network fails.
+    // Reopen the installed app without waiting for a tunnel round trip for
+    // static HTML. Refresh the shell in the background for the next launch.
+    // Auth and live data still go directly to the server.
+    const personalPath = /^\/(?:bots|tasks)(?:\/|$)|^\/(?:files|computer)\/?$/.test(url.pathname);
     event.respondWith(
       (async () => {
-        try {
-          const response = await fetch(request);
-          const type = response.headers.get("Content-Type") || "";
-          if (
-            response.ok &&
-            response.type === "basic" &&
-            !response.redirected &&
-            type.includes("text/html")
-          ) {
-            const cache = await caches.open(CACHE_NAME);
-            await cache.put(SHELL_KEY, response.clone());
+        const reload =
+          request.isReloadNavigation || request.cache === "reload" || request.cache === "no-cache";
+        const cached = personalPath && !reload ? await cachedResponse(SHELL_KEY) : undefined;
+        const network = (async () => {
+          try {
+            const response = await fetch(request);
+            const type = response.headers.get("Content-Type") || "";
+            if (
+              response.ok &&
+              response.type === "basic" &&
+              !response.redirected &&
+              type.includes("text/html")
+            ) {
+              event.waitUntil(cacheResponse(SHELL_KEY, response.clone()));
+            }
+            return response;
+          } catch (error) {
+            const cached = await cachedResponse(SHELL_KEY);
+            if (cached) return cached;
+            throw error;
           }
-          return response;
-        } catch (error) {
-          const cached = await caches.match(SHELL_KEY, { cacheName: CACHE_NAME });
-          if (cached) return cached;
-          throw error;
+        })();
+        if (cached) {
+          event.waitUntil(network.catch(() => undefined));
+          return cached;
         }
+        return network;
       })(),
     );
     return;
@@ -87,11 +118,12 @@ self.addEventListener("fetch", (event) => {
     // Content-hashed file names: a cached copy is always the right bytes.
     event.respondWith(
       (async () => {
-        const cache = await caches.open(CACHE_NAME);
-        const cached = await cache.match(request);
+        const cached = await cachedResponse(request);
         if (cached) return cached;
         const response = await fetch(request);
-        if (isCacheableResponse(response)) await cache.put(request, response.clone());
+        if (isCacheableResponse(response)) {
+          event.waitUntil(cacheResponse(request, response.clone()));
+        }
         return response;
       })(),
     );
@@ -101,7 +133,7 @@ self.addEventListener("fetch", (event) => {
 self.addEventListener("push", (event) => {
   let data = {};
   try {
-    data = event.data ? event.data.json() : {};
+    data = (event.data ? event.data.json() : null) ?? {};
   } catch {
     data = {};
   }
@@ -136,11 +168,12 @@ self.addEventListener("notificationclick", (event) => {
         if (new URL(client.url).origin !== self.location.origin) continue;
         await client.focus();
         // Client.postMessage has no targetOrigin; the client is same-origin (checked above).
-        // eslint-disable-next-line unicorn/require-post-message-target-origin
+        /* eslint-disable unicorn/require-post-message-target-origin */
         client.postMessage({
           type: "bots:navigate",
           url: new URL(href).pathname + new URL(href).search,
         });
+        /* eslint-enable unicorn/require-post-message-target-origin */
         return;
       }
       await self.clients.openWindow(href);

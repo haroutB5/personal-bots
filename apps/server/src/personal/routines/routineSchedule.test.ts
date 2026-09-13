@@ -93,4 +93,18 @@ describe("Europe/London wall-clock slots", () => {
     );
     expect(nextRoutineSlot(schedule, LONDON, at("2026-09-14T09:00:00Z"))).toBeNull();
   });
+
+  it("coalesces long interval backlogs to the actual latest run", () => {
+    const schedule = {
+      kind: "interval",
+      everyHours: 1,
+      anchorAt: "2020-01-01T00:00:00.000Z",
+    } as const;
+    const first = at(schedule.anchorAt);
+    const now = first + 25_000 * 3_600_000;
+    const due = dueRoutineSlots(schedule, LONDON, first, now);
+    expect(due?.count).toBe(25_001);
+    expect(due?.latest.dueMs).toBe(now);
+    expect(dueRoutineSlots(schedule, LONDON, now + 3_600_000, now)).toBeNull();
+  });
 });

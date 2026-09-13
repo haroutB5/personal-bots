@@ -16,10 +16,10 @@ export function usePersonalConnectionPhase(): EnvironmentConnectionPhase {
   return environment?.connection.phase ?? "available";
 }
 
-/** True once the laptop is known to be unreachable (drafts must stay local). */
+/** Drafts stay local until the connection is ready to accept a message. */
 export function useLaptopOffline(): boolean {
   const phase = usePersonalConnectionPhase();
-  return phase === "offline" || phase === "error" || phase === "reconnecting";
+  return phase !== "connected";
 }
 
 /**
@@ -30,19 +30,27 @@ export function PersonalOfflineBanner(): JSX.Element | null {
   const environmentId = usePersonalEnvironmentId();
   const phase = usePersonalConnectionPhase();
   const [now, setNow] = useState(() => Date.now());
+  const [banner, setBanner] = useState({ phase, visible: false });
+  if (banner.phase !== phase) setBanner({ phase, visible: false });
+
+  useEffect(() => {
+    if (phase !== "reconnecting") return;
+    // Brief wakeups should not insert a banner and shift the whole screen.
+    const timer = window.setTimeout(() => setBanner({ phase, visible: true }), 1_500);
+    return () => window.clearTimeout(timer);
+  }, [phase]);
 
   useEffect(() => {
     if (environmentId === null) return;
     if (phase === "connected") {
-      // Stamp now and every minute while connected, and once more on the way
-      // out, so a sudden drop reads the true last contact.
+      // Never stamp on cleanup: after iOS suspends the page, cleanup may
+      // happen much later than the last successful contact.
       writeLastContact(environmentId, Date.now());
       const interval = window.setInterval(
         () => writeLastContact(environmentId, Date.now()),
         60_000,
       );
       return () => {
-        writeLastContact(environmentId, Date.now());
         window.clearInterval(interval);
       };
     }
@@ -52,6 +60,7 @@ export function PersonalOfflineBanner(): JSX.Element | null {
   }, [environmentId, phase]);
 
   if (environmentId === null) return null;
+  if (phase === "reconnecting" && (banner.phase !== phase || !banner.visible)) return null;
   const text = offlineBannerText(phase, readLastContact(environmentId), now);
   if (text === null) return null;
   return (

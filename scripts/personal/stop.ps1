@@ -16,6 +16,11 @@ param()
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $paths = Get-PbPaths -Root dev
+# The supervisor clears server.json while waiting to restart a crashed
+# server. Record the stop even in that gap, or it will restart after we exit.
+if (Test-Path -LiteralPath $paths.RunDir -PathType Container) {
+    Set-Content -LiteralPath $paths.StopMarker -Value (Get-Date).ToString('o') -Encoding ASCII
+}
 $state = Read-PbServerState -Paths $paths
 if ($null -eq $state) {
     Write-Host 'Personal Bots is not running (no run\server.json).'

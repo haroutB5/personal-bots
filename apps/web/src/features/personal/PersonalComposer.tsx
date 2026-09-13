@@ -108,7 +108,6 @@ export function PersonalComposer({
   const addFiles = useComposerDraftStore((store) => store.addFiles);
   const removeImage = useComposerDraftStore((store) => store.removeImage);
   const removeFile = useComposerDraftStore((store) => store.removeFile);
-  const clearComposerContent = useComposerDraftStore((store) => store.clearComposerContent);
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -117,6 +116,9 @@ export function PersonalComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  const [preparing, setPreparing] = useState(false);
+  const preparingRef = useRef(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -133,7 +135,7 @@ export function PersonalComposer({
       serverConfig?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null,
   });
   const hasContent = prompt.trim().length > 0 || attachments.length > 0;
-  const canSend = hasContent && !sending && !working && disabledReason === null;
+  const canSend = hasContent && !sending && !preparing && !working && disabledReason === null;
 
   // Grows with the draft (including drafts restored from storage) up to ~5 lines.
   useLayoutEffect(() => {
@@ -144,70 +146,86 @@ export function PersonalComposer({
     const picked = Array.from(event.target.files ?? []);
     event.target.value = "";
     if (picked.length === 0) return;
+    if (sendingRef.current || preparingRef.current) return;
+    preparingRef.current = true;
+    setPreparing(true);
     let slots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - attachments.length;
     const images: ComposerImageAttachment[] = [];
     const files: ComposerFileAttachment[] = [];
-    let problem: string | null = null;
-    for (const file of picked) {
-      if (slots <= 0) {
-        problem = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`;
-        break;
-      }
-      const kind = classifyComposerAttachmentFile(file);
-      if (kind === "unsupported-image") {
-        problem = `'${file.name}' is not a supported image type.`;
-        continue;
-      }
-      if (kind === "image") {
-        const prepared = await prepareImageForAttachment(
-          normalizeComposerImageFileMimeType(file),
-          PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-        );
-        if (!prepared.ok) {
-          problem = `'${file.name}' could not be attached.`;
+    try {
+      let problem: string | null = null;
+      for (const file of picked) {
+        if (slots <= 0) {
+          problem = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`;
+          break;
+        }
+        const kind = classifyComposerAttachmentFile(file);
+        if (kind === "unsupported-image") {
+          problem = `'${file.name}' is not a supported image type.`;
           continue;
         }
-        images.push({
-          type: "image",
-          id: randomUUID(),
-          name: prepared.file.name || "image",
-          mimeType: prepared.file.type,
-          sizeBytes: prepared.file.size,
-          previewUrl: URL.createObjectURL(prepared.file),
-          file: prepared.file,
-        });
-      } else {
-        if (fileLimit === null) {
-          problem = "Your computer isn't accepting file attachments right now.";
-          continue;
+        if (kind === "image") {
+          const prepared = await prepareImageForAttachment(
+            normalizeComposerImageFileMimeType(file),
+            PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+          );
+          if (!prepared.ok) {
+            problem = `'${file.name}' could not be attached.`;
+            continue;
+          }
+          images.push({
+            type: "image",
+            id: randomUUID(),
+            name: prepared.file.name || "image",
+            mimeType: prepared.file.type,
+            sizeBytes: prepared.file.size,
+            previewUrl: URL.createObjectURL(prepared.file),
+            file: prepared.file,
+          });
+        } else {
+          if (fileLimit === null) {
+            problem = "Your computer isn't accepting file attachments right now.";
+            continue;
+          }
+          if (file.size <= 0 || file.size > fileLimit) {
+            problem = `'${file.name}' is empty or too large to attach.`;
+            continue;
+          }
+          files.push({
+            type: "file",
+            id: randomUUID(),
+            name: file.name || "file",
+            mimeType: file.type || "application/octet-stream",
+            sizeBytes: file.size,
+            file,
+          });
         }
-        if (file.size <= 0 || file.size > fileLimit) {
-          problem = `'${file.name}' is empty or too large to attach.`;
-          continue;
+        slots -= 1;
+      }
+      const acceptedImages = new Set(images.length > 0 ? addImages(threadRef, images) : []);
+      const acceptedFiles = new Set(files.length > 0 ? addFiles(threadRef, files) : []);
+      for (const image of images) {
+        if (!acceptedImages.has(image.id)) URL.revokeObjectURL(image.previewUrl);
+      }
+      // Start uploading right away so sending doesn't wait on the whole transfer.
+      for (const attachment of [...images, ...files]) {
+        if (acceptedImages.has(attachment.id) || acceptedFiles.has(attachment.id)) {
+          startAttachmentUpload({ environmentId, image: attachment, draftTarget: threadRef });
         }
-        files.push({
-          type: "file",
-          id: randomUUID(),
-          name: file.name || "file",
-          mimeType: file.type || "application/octet-stream",
-          sizeBytes: file.size,
-          file,
-        });
       }
-      slots -= 1;
-    }
-    const acceptedImages = new Set(images.length > 0 ? addImages(threadRef, images) : []);
-    const acceptedFiles = new Set(files.length > 0 ? addFiles(threadRef, files) : []);
-    for (const image of images) {
-      if (!acceptedImages.has(image.id)) URL.revokeObjectURL(image.previewUrl);
-    }
-    // Start uploading right away so sending doesn't wait on the whole transfer.
-    for (const attachment of [...images, ...files]) {
-      if (acceptedImages.has(attachment.id) || acceptedFiles.has(attachment.id)) {
-        startAttachmentUpload({ environmentId, image: attachment, draftTarget: threadRef });
+      setError(problem);
+    } catch {
+      const current = useComposerDraftStore.getState().getComposerDraft(threadRef);
+      for (const image of images) {
+        if (!current?.images.some((entry) => entry.id === image.id)) {
+          URL.revokeObjectURL(image.previewUrl);
+        }
       }
+      setError("Couldn't prepare those attachments. Try selecting them again.");
+    } finally {
+      preparingRef.current = false;
+      setPreparing(false);
     }
-    setError(problem);
   };
 
   const removeAttachment = (attachment: ComposerImageAttachment | ComposerFileAttachment) => {
@@ -220,78 +238,85 @@ export function PersonalComposer({
   };
 
   const send = async () => {
-    if (!canSend) return;
+    if (!canSend || sendingRef.current || preparingRef.current) return;
+    sendingRef.current = true;
     const text = prompt.trim();
     const snapshot = [...attachments];
+    const messageId = newMessageId();
     setSending(true);
     setError(null);
-
-    for (const attachment of snapshot) {
-      startAttachmentUpload({ environmentId, image: attachment, draftTarget: threadRef });
-    }
-    await awaitAttachmentUploads(snapshot.map((attachment) => attachment.id));
-    const uploaded =
-      snapshot.length === 0 ? [] : getUploadedAttachments({ environmentId, images: snapshot });
-    if (uploaded === null) {
-      setSending(false);
-      setError("An attachment didn't upload. Remove it or try again.");
-      return;
-    }
-
-    const messageId = newMessageId();
-    const createdAt = new Date().toISOString();
-    const titleSeed = truncate(
-      text ||
-        (snapshot[0]
-          ? `${snapshot[0].type === "image" ? "Image" : "File"}: ${snapshot[0].name}`
-          : "New chat"),
-    );
-    onPendingChange((pending) => [
-      ...pending,
-      {
-        id: messageId,
-        text,
-        createdAt,
-        attachments: snapshot.map((attachment) => ({ id: attachment.id, name: attachment.name })),
-      },
-    ]);
-    clearComposerContent(threadRef);
-
-    // First message names the chat, like the upstream composer does.
-    if (thread.messages.length === 0) {
-      await updateMetadata({ environmentId, input: { threadId, title: titleSeed } });
-    }
-    const result = await startTurn({
-      environmentId,
-      input: {
-        threadId,
-        message: {
-          messageId,
-          role: "user",
-          text: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-          attachments: uploaded,
-        },
-        modelSelection:
-          botModelSelection !== null &&
-          botModelSelection.instanceId === thread.modelSelection.instanceId
-            ? botModelSelection
-            : thread.modelSelection,
-        titleSeed,
-        runtimeMode: thread.runtimeMode,
-        interactionMode: thread.interactionMode,
-        createdAt,
-      },
-    });
-    setSending(false);
-    if (result._tag === "Failure") {
-      onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
-      // Hand the words back so nothing typed is lost, unless a new draft began.
-      const currentPrompt =
-        useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt ?? "";
-      if (text.length > 0 && currentPrompt.length === 0) {
-        setPrompt(threadRef, text);
+    try {
+      for (const attachment of snapshot) {
+        startAttachmentUpload({ environmentId, image: attachment, draftTarget: threadRef });
       }
-      setError(`${botName ?? "The bot"} didn't get that message. Try sending it again.`);
+      await awaitAttachmentUploads(snapshot.map((attachment) => attachment.id));
+      const uploaded =
+        snapshot.length === 0 ? [] : getUploadedAttachments({ environmentId, images: snapshot });
+      if (uploaded === null) {
+        setSending(false);
+        setError("An attachment didn't upload. Remove it or try again.");
+        return;
+      }
+
+      const createdAt = new Date().toISOString();
+      const titleSeed = truncate(
+        text ||
+          (snapshot[0]
+            ? `${snapshot[0].type === "image" ? "Image" : "File"}: ${snapshot[0].name}`
+            : "New chat"),
+      );
+      onPendingChange((pending) => [
+        ...pending,
+        {
+          id: messageId,
+          text,
+          createdAt,
+          attachments: snapshot.map((attachment) => ({ id: attachment.id, name: attachment.name })),
+        },
+      ]);
+
+      // First message names the chat, like the upstream composer does.
+      if (thread.messages.length === 0) {
+        await updateMetadata({ environmentId, input: { threadId, title: titleSeed } });
+      }
+      const result = await startTurn({
+        environmentId,
+        input: {
+          threadId,
+          message: {
+            messageId,
+            role: "user",
+            text: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+            attachments: uploaded,
+          },
+          modelSelection:
+            botModelSelection !== null &&
+            botModelSelection.instanceId === thread.modelSelection.instanceId
+              ? botModelSelection
+              : thread.modelSelection,
+          titleSeed,
+          runtimeMode: thread.runtimeMode,
+          interactionMode: thread.interactionMode,
+          createdAt,
+        },
+      });
+      setSending(false);
+      if (result._tag === "Failure") {
+        onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
+        setError(`${botName ?? "The bot"} didn't get that message. Try sending it again.`);
+      } else {
+        // Keep the draft (including attachments) until the server accepts it.
+        // Only consume the submitted content, preserving edits made during upload.
+        const current = useComposerDraftStore.getState().getComposerDraft(threadRef);
+        if (current?.prompt === prompt) setPrompt(threadRef, "");
+        for (const attachment of snapshot) removeAttachment(attachment);
+      }
+    } catch {
+      onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
+      setError("Couldn't send that message. Your draft is still saved; try again.");
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
     }
   };
 
@@ -341,6 +366,7 @@ export function PersonalComposer({
               <button
                 type="button"
                 onClick={() => removeAttachment(attachment)}
+                disabled={sending}
                 aria-label={`Remove ${attachment.name}`}
                 className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
               >
@@ -356,7 +382,7 @@ export function PersonalComposer({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              disabled={disabledReason !== null}
+              disabled={disabledReason !== null || sending || preparing}
               aria-label="Add photos or files"
               className={`${ROUND_BUTTON} border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[var(--personal-text)] disabled:opacity-40`}
             >

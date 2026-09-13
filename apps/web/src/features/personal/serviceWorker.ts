@@ -20,7 +20,13 @@ export function shouldRegisterServiceWorker(environment: ServiceWorkerEnvironmen
 
 /** Deep links the worker may ask the page to open: same-origin paths only. */
 export function isNavigablePath(value: unknown): value is string {
-  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//");
+  return (
+    typeof value === "string" &&
+    value.startsWith("/") &&
+    !value.startsWith("//") &&
+    !value.includes("\\") &&
+    !Array.from(value).some((character) => character.charCodeAt(0) <= 32)
+  );
 }
 
 /**

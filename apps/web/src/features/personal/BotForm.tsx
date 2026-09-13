@@ -131,7 +131,9 @@ function BotForm({
   const selectableProviders = useMemo(() => providers.filter(isSelectable), [providers]);
   const [rawDraft, setDraft] = useState<BotDraft>(() => {
     if (bot !== null) return draftFromBot(bot);
-    const first = selectableProviders[0];
+    const first =
+      selectableProviders.find((provider) => provider.driver === "claudeAgent") ??
+      selectableProviders[0];
     return {
       name: "",
       title: "",

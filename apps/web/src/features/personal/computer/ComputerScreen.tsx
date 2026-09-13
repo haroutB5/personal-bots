@@ -44,7 +44,7 @@ import {
 } from "react";
 
 import { useEnvironmentQuery } from "~/state/query";
-import { usePrimaryEnvironmentId } from "~/state/environments";
+import { usePersonalEnvironmentId } from "../usePersonalBots";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import {
@@ -117,7 +117,7 @@ function usePageVisible(): boolean {
 }
 
 export function ComputerScreen({ onBackToChat }: ComputerScreenProps) {
-  const environmentId = usePrimaryEnvironmentId();
+  const environmentId = usePersonalEnvironmentId();
   const { feed, error, loading } = useComputerFeed(environmentId);
   const [segment, setSegment] = useState<"browser" | "files">("browser");
   const state = describeComputerState({

@@ -31,8 +31,8 @@ export function offlineBannerText(
   lastContact: number | null,
   now: number,
 ): string | null {
-  if (phase === "connected") return null;
-  if (phase === "connecting" && lastContact === null) return null;
+  if (phase === "connected" || phase === "connecting" || phase === "available") return null;
+  if (phase === "reconnecting") return "Reconnecting to your laptop…";
   if (lastContact === null) return "Laptop offline";
   const relative = formatRelativeTime(lastContact, now);
   return `Laptop offline · last contact ${relative === "Now" ? "just now" : relative.endsWith("m") || relative.endsWith("h") ? `${relative} ago` : relative}`;

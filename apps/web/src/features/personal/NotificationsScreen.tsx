@@ -81,7 +81,9 @@ export function NotificationsScreen(): JSX.Element {
         setEndpoint(existing?.endpoint ?? null);
         setSupport("ready");
       }
-    })();
+    })().catch(() => {
+      if (!cancelled) setSupport("no-worker");
+    });
     return () => {
       cancelled = true;
     };
@@ -141,13 +143,21 @@ export function NotificationsScreen(): JSX.Element {
     if (environmentId === null || endpoint === null) return;
     setBusy(true);
     setMessage(null);
-    const registration = await readyServiceWorker();
-    await (await registration?.pushManager.getSubscription())?.unsubscribe().catch(() => false);
-    const result = await unsubscribe({ environmentId, input: { endpoint } });
-    setBusy(false);
-    const failure = commandFailureMessage(result, "Could not turn off notifications.");
-    if (failure === null) setEndpoint(null);
-    setMessage(failure);
+    try {
+      // Remove the server registration first so a failed RPC leaves this
+      // device's working subscription available for a retry.
+      const result = await unsubscribe({ environmentId, input: { endpoint } });
+      const failure = commandFailureMessage(result, "Could not turn off notifications.");
+      setMessage(failure);
+      if (failure !== null) return;
+      setEndpoint(null);
+      const registration = await readyServiceWorker();
+      await (await registration?.pushManager.getSubscription())?.unsubscribe();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not turn off notifications.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const test = async () => {

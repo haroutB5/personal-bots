@@ -60,6 +60,7 @@ import {
 } from "./desktopLocal";
 import { connectionStorageLayer } from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
+import { subscribeBrowserWakeups } from "./browserWakeups";
 
 let nextObservedRpcRequestId = 0;
 
@@ -92,21 +93,17 @@ const connectivityLayer = Connectivity.layer({
 
 const wakeupsLayer = Wakeups.layer({
   changes: Stream.merge(
-    Stream.callback<"application-active">((queue) =>
+    Stream.callback<Wakeups.ConnectionWakeup>((queue) =>
       Effect.acquireRelease(
-        Effect.sync(() => {
-          const listener = () => {
-            if (document.visibilityState === "visible") {
-              Queue.offerUnsafe(queue, "application-active");
-            }
-          };
-          document.addEventListener("visibilitychange", listener);
-          return listener;
-        }),
-        (listener) =>
-          Effect.sync(() => {
-            document.removeEventListener("visibilitychange", listener);
-          }),
+        Effect.sync(() =>
+          subscribeBrowserWakeups(
+            (reason) => {
+              Queue.offerUnsafe(queue, reason);
+            },
+            window.desktopBridge === undefined && window.matchMedia("(pointer: coarse)").matches,
+          ),
+        ),
+        (unsubscribe) => Effect.sync(unsubscribe),
       ).pipe(Effect.asVoid),
     ),
     managedRelayAccountChanges(appAtomRegistry).pipe(
