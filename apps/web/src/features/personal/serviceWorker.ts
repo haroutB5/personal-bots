@@ -42,13 +42,16 @@ export function registerPersonalServiceWorker(navigate: (path: string) => void):
     const data = event.data as { type?: unknown; url?: unknown } | null;
     if (data?.type === "bots:navigate" && isNavigablePath(data.url)) navigate(data.url);
   });
-  window.addEventListener("load", () => {
+  const register = () => {
     void navigator.serviceWorker
       .register(`/sw.js?v=${encodeURIComponent(APP_VERSION)}`, { scope: "/" })
       .catch(() => {
         // A failed registration only costs offline shell + push; the app works.
       });
-  });
+  };
+  // The entry chunk imports main lazily, so `load` has usually fired already.
+  if (document.readyState === "complete") register();
+  else window.addEventListener("load", register, { once: true });
 }
 
 /** True when running as an installed PWA (Home Screen / standalone window). */
@@ -57,11 +60,20 @@ export function isStandaloneDisplay(): boolean {
   return iosStandalone || window.matchMedia("(display-mode: standalone)").matches;
 }
 
-/** The active worker registration, if this build registered one. */
-export async function readyServiceWorker(): Promise<ServiceWorkerRegistration | null> {
+/**
+ * The active worker registration, if this build registered one. A first launch
+ * may still be installing it, so wait a few seconds before giving up.
+ */
+export async function readyServiceWorker(
+  timeoutMs = 5000,
+): Promise<ServiceWorkerRegistration | null> {
   if (!("serviceWorker" in navigator)) return null;
   const registration = await navigator.serviceWorker.getRegistration("/");
-  return registration === undefined ? null : navigator.serviceWorker.ready;
+  if (registration?.active) return registration;
+  return Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+  ]);
 }
 
 /** VAPID base64url public key -> the bytes pushManager.subscribe expects. */
