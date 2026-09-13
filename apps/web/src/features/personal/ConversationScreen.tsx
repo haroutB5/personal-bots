@@ -14,6 +14,7 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import {
   type ApprovalRequestId,
+  type PersonalTask,
   type ProviderApprovalDecision,
   ThreadId,
 } from "@t3tools/contracts";
@@ -34,15 +35,26 @@ import { BotAvatar } from "./BotAvatar";
 import { resolveBotProvider } from "./botSummaries";
 import {
   buildConversationItems,
+  CONVERSATION_STATE_LABEL,
   type ConversationState,
   conversationStateLabel,
   deriveConversationState,
+  placeDelegationCards,
   resolveConversationHeaderName,
 } from "./conversationModel";
+import { DelegationCard } from "./DelegationCard";
+import {
+  delegatedChildren,
+  resolveTurnChildren,
+  type ServerTurn,
+  serverTurnLabel,
+  waitingLabelsByThread,
+} from "./delegationModel";
 import { MessageList, type PendingOutgoingMessage } from "./MessageList";
 import { PersonalComposer } from "./PersonalComposer";
 import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { useStartBotChat } from "./startBotChat";
+import { usePersonalTasks } from "./usePersonalAutomation";
 import {
   personalBotArchiveThread,
   usePersonalBotsList,
@@ -56,6 +68,8 @@ const STATE_DOT: Record<ConversationState, string> = {
   idle: "bg-[var(--personal-text-tertiary)]",
   working: "bg-[var(--personal-live)]",
   waiting: "bg-[var(--personal-review)]",
+  // Parked on another bot's work: not working itself, not needing the user.
+  delegating: "bg-[var(--personal-text-tertiary)]",
   rate_limited: "bg-[var(--personal-review)]",
   retrying: "bg-[var(--personal-review)]",
   error: "bg-[#b3261e]",
@@ -163,13 +177,49 @@ export function ConversationScreen({
   const [actionError, setActionError] = useState<string | null>(null);
   const laptopOffline = useLaptopOffline();
 
+  // Delegation state comes from the live task feed (personalTasks.subscribe).
+  const { tasks: taskFeed } = usePersonalTasks(environmentId);
+  const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
+  const botsById = useMemo(
+    () => new Map((list.data?.bots ?? []).map((entry) => [entry.botId as string, entry] as const)),
+    [list.data],
+  );
+  const nameOf = useCallback((id: string) => botsById.get(id)?.name ?? null, [botsById]);
+  const waitingLabels = useMemo(() => waitingLabelsByThread(tasks, nameOf), [tasks, nameOf]);
+  const waitingLabel = waitingLabels.get(threadId) ?? null;
+  const children = useMemo(() => delegatedChildren(threadId, tasks), [threadId, tasks]);
+
   const messages = (thread?.messages as ReadonlyArray<ChatMessage> | undefined) ?? EMPTY_MESSAGES;
   const activities = thread?.activities ?? EMPTY_ACTIVITIES;
   const proposedPlans = thread?.proposedPlans ?? EMPTY_PLANS;
   const workEntries = useMemo(() => deriveWorkLogEntries(activities), [activities]);
-  const items = useMemo(
+  const baseItems = useMemo(
     () => buildConversationItems(deriveTimelineEntries(messages, proposedPlans, workEntries)),
     [messages, proposedPlans, workEntries],
+  );
+  const items = useMemo(() => placeDelegationCards(baseItems, children), [baseItems, children]);
+  const describeTurn = useCallback(
+    (turn: ServerTurn) => serverTurnLabel(turn, resolveTurnChildren(turn, tasks), nameOf),
+    [tasks, nameOf],
+  );
+  const renderDelegation = useCallback(
+    (task: PersonalTask) => {
+      const childBot = botsById.get(task.botId) ?? null;
+      return (
+        <DelegationCard
+          environmentId={environmentId!}
+          task={task}
+          bot={childBot}
+          providerLabel={
+            childBot === null
+              ? null
+              : resolveBotProvider(childBot.modelSelection.instanceId, providers).label
+          }
+          waitingFor={task.threadId === null ? null : (waitingLabels.get(task.threadId) ?? null)}
+        />
+      );
+    },
+    [botsById, environmentId, providers, waitingLabels],
   );
   const { approvals, userInputs } = useMemo(() => derivePendingRequests(activities), [activities]);
   const conversationState = deriveConversationState({
@@ -177,6 +227,7 @@ export function ConversationScreen({
     latestTurn: thread?.latestTurn ?? null,
     pendingApprovals: approvals,
     pendingUserInputs: userInputs,
+    waitingForAgent: waitingLabel !== null,
   });
   const phase = derivePhase(thread?.session ?? null);
   // Stop depends on the thread alone, never on the bots list.
@@ -187,7 +238,10 @@ export function ConversationScreen({
   const providerWait = conversationState === "rate_limited" || conversationState === "retrying";
   const turnBusy =
     working || (providerWait && thread?.session !== null && thread?.session?.status !== "error");
-  const stateLabel = conversationStateLabel(conversationState, thread?.session ?? null, now);
+  const stateLabel =
+    conversationState === "delegating"
+      ? (waitingLabel ?? CONVERSATION_STATE_LABEL.delegating)
+      : conversationStateLabel(conversationState, thread?.session ?? null, now);
   const provider =
     bot === null ? null : resolveBotProvider(bot.modelSelection.instanceId, providers);
 
@@ -311,7 +365,13 @@ export function ConversationScreen({
                   <span aria-hidden="true">·</span>
                 </>
               ) : null}
-              <span className={providerWait ? "min-w-0 truncate" : "shrink-0"}>
+              <span
+                className={
+                  providerWait || conversationState === "delegating"
+                    ? "min-w-0 truncate"
+                    : "shrink-0"
+                }
+              >
                 {provider !== null ? `${provider.label} · ${stateLabel}` : stateLabel}
               </span>
             </p>
@@ -379,6 +439,8 @@ export function ConversationScreen({
             errorText={actionError ?? sessionError}
             loadEarlier={loadEarlier}
             now={now}
+            describeTurn={describeTurn}
+            renderDelegation={renderDelegation}
           />
           <PersonalComposer
             environmentId={environmentId}
