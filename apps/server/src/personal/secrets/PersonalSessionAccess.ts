@@ -84,23 +84,42 @@ export const make = Effect.gen(function* () {
       }
       const botId = link.value.botId;
       const fulfilled = yield* secrets.listByStatus("fulfilled");
-      const names = new Set(
-        fulfilled
-          .filter((entry) => entry.botId === botId || entry.shared)
-          .map((entry) => entry.name),
-      );
+      // One env var per name: the bot's own row wins over a shared one when
+      // both exist, so an unshared value is never shadowed by a shared one.
+      const byName = new Map<string, (typeof fulfilled)[number]>();
+      for (const entry of fulfilled) {
+        if (entry.botId !== botId && !entry.shared) continue;
+        const previous = byName.get(entry.name);
+        if (previous === undefined || (entry.botId === botId && previous.botId !== botId)) {
+          byName.set(entry.name, entry);
+        }
+      }
       const environment: Record<string, string> = {};
-      for (const name of names) {
-        const value = yield* store.get(personalSecretStoreKey(name)).pipe(
-          Effect.catch(() =>
-            // The name only: the value is never logged.
-            Effect.logWarning("personal secret unreadable; starting the session without it", {
-              name,
-            }).pipe(Effect.as(Option.none<Uint8Array>())),
-          ),
-        );
+      for (const entry of byName.values()) {
+        const value = yield* store
+          .get(
+            personalSecretStoreKey({
+              name: entry.name,
+              botId: entry.botId,
+              shared: entry.shared,
+            }),
+          )
+          .pipe(
+            Effect.flatMap((found) =>
+              // Secrets fulfilled before scoping live at the legacy name-only key.
+              Option.isSome(found)
+                ? Effect.succeed(found)
+                : store.get(personalSecretStoreKey(entry.name)),
+            ),
+            Effect.catch(() =>
+              // The name only: the value is never logged.
+              Effect.logWarning("personal secret unreadable; starting the session without it", {
+                name: entry.name,
+              }).pipe(Effect.as(Option.none<Uint8Array>())),
+            ),
+          );
         if (Option.isSome(value)) {
-          environment[personalSecretEnvVar(name)] = decoder.decode(value.value);
+          environment[personalSecretEnvVar(entry.name)] = decoder.decode(value.value);
         }
       }
       const systemInstructions = yield* instructionsForThread(threadId);

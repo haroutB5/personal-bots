@@ -735,7 +735,10 @@ export const make = (options: PersonalBrowserOptions) =>
           }
           case "evaluate": {
             const input = request.input as PreviewAutomationEvaluateInput;
-            return { tab, result: yield* attempt({}, () => performEvaluate(tab.page, input)) };
+            return {
+              tab,
+              result: yield* attempt({}, () => performEvaluate(tab.page, input, timeoutMs)),
+            };
           }
           case "waitFor": {
             const input = request.input as PreviewAutomationWaitForInput;
@@ -829,7 +832,24 @@ export const make = (options: PersonalBrowserOptions) =>
         return Effect.sync(() => statusOf(tabForRequest(request)));
       const execute = Effect.gen(function* () {
         const startedAt = yield* nowIso;
-        const exit = yield* Effect.exit(Effect.andThen(ensureLaunched, runOperation(request)));
+        // Belt and braces: no operation may outlive its own budget while
+        // holding the lease, even one whose driver call ignores timeouts.
+        // (Effect.timeoutFail does not exist in this Effect version; a
+        // timeoutOption mapped to the broker's timeout tag is equivalent.)
+        const bounded = runOperation(request).pipe(
+          Effect.timeoutOption(request.timeoutMs + 1_000),
+          Effect.flatMap((result) =>
+            Option.isSome(result)
+              ? Effect.succeed(result.value)
+              : Effect.fail(
+                  new HostOperationError(
+                    "PreviewAutomationTimeoutError",
+                    `Browser operation timed out after ${request.timeoutMs}ms.`,
+                  ),
+                ),
+          ),
+        );
+        const exit = yield* Effect.exit(Effect.andThen(ensureLaunched, bounded));
         const tab = Exit.isSuccess(exit) ? exit.value.tab : tabForRequest(request);
         const completedAt = yield* nowIso;
         if (tab !== undefined) {

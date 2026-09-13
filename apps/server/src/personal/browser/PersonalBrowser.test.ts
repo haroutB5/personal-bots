@@ -60,7 +60,9 @@ class FakePage implements BrowserPage {
   async waitForLocator() {}
   async waitForText() {}
   async waitForUrlIncludes() {}
-  async evaluate() {
+  evaluateImpl: ((expression: string) => Promise<unknown>) | null = null;
+  async evaluate(expression: string) {
+    if (this.evaluateImpl !== null) return this.evaluateImpl(expression);
     return null;
   }
   async screenshotPng() {
@@ -138,12 +140,13 @@ let requestSequence = 0;
 const request = (
   operation: PreviewAutomationRequest["operation"],
   input: unknown = {},
+  timeoutMs = 15_000,
 ): PreviewAutomationRequest => ({
   requestId: `request-${requestSequence++}`,
   threadId,
   operation,
   input,
-  timeoutMs: 15_000,
+  timeoutMs,
 });
 
 describe("PersonalBrowser", () => {
@@ -179,6 +182,28 @@ describe("PersonalBrowser", () => {
       const done = (yield* Fiber.join(navigate)) as PreviewAutomationStatus;
       expect(done).toMatchObject({ tabId: during.tabId, url: "https://example.com/" });
       expect(fake.state.launches).toBe(1);
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  it.effect("a wedged evaluate times out and releases the browser for the next op", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      // `new Promise(() => {})`: settles never, so without a bound this op
+      // would hold the shared-browser lock until a server restart.
+      fake.state.page.evaluateImpl = () => new Promise<unknown>(() => {});
+      const error = yield* browser
+        .handleAutomationRequest(request("evaluate", { expression: "new Promise(() => {})" }, 50))
+        .pipe(Effect.asVoid, Effect.flip);
+      expect(error.tag).toBe("PreviewAutomationTimeoutError");
+
+      // The lock was released: the next op settles instead of timing out.
+      fake.state.page.evaluateImpl = (expression) => Promise.resolve(`ran:${expression}`);
+      const next = yield* browser.handleAutomationRequest(
+        request("evaluate", { expression: "document.title" }, 5_000),
+      );
+      expect(next).toBe("ran:document.title");
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 

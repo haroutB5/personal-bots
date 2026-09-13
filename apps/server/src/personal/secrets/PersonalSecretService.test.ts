@@ -314,7 +314,11 @@ describe("personal secret requests", () => {
         expect(second.message).toBe("Secret request is already fulfilled.");
 
         const stored = yield* store.get(
-          PersonalSecretService.personalSecretStoreKey("GITHUB_TOKEN"),
+          PersonalSecretService.personalSecretStoreKey({
+            name: "GITHUB_TOKEN",
+            botId: botId("assistant"),
+            shared: false,
+          }),
         );
         expect(Option.map(stored, (bytes) => new TextDecoder().decode(bytes))).toEqual(
           Option.some(SECRET_VALUE),
@@ -492,6 +496,122 @@ describe("personal secret requests", () => {
           "DEV_ONLY",
           "GITHUB_TOKEN",
         ]);
+      }),
+    ),
+  );
+
+  it.effect("unshared secrets with the same name stay per bot", () =>
+    withLayer((harness) =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const bots = yield* PersonalBotService.PersonalBotService;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+        const store = yield* ServerSecretStore.ServerSecretStore;
+        const assistant = yield* runningTask(harness, "token-a", "assistant");
+        const developer = yield* runningTask(harness, "token-b", "developer");
+        yield* bots.createThread({ botId: botId("assistant"), threadId: assistant.threadId });
+        yield* bots.createThread({ botId: botId("developer"), threadId: developer.threadId });
+
+        const requestSecret = (task: PersonalTask, threadId: ThreadId, bot: string) =>
+          secrets.request({
+            task,
+            threadId,
+            botId: botId(bot),
+            name: "TOKEN",
+            label: "Token",
+            purpose: "Test.",
+          });
+        const requestedA = yield* requestSecret(assistant.task, assistant.threadId, "assistant");
+        expect(requestedA.status).toBe("pending");
+        yield* secrets.fulfill({
+          requestId: requestedA.request.requestId,
+          value: Redacted.make("value-a"),
+        });
+
+        // A's unshared fulfil must not answer B's request.
+        const requestedB = yield* requestSecret(developer.task, developer.threadId, "developer");
+        expect(requestedB.status).toBe("pending");
+        yield* secrets.fulfill({
+          requestId: requestedB.request.requestId,
+          value: Redacted.make("value-b"),
+        });
+
+        // B's fulfil must not have overwritten A's stored value.
+        const storedA = yield* store.get(
+          PersonalSecretService.personalSecretStoreKey({
+            name: "TOKEN",
+            botId: botId("assistant"),
+            shared: false,
+          }),
+        );
+        expect(Option.map(storedA, (bytes) => new TextDecoder().decode(bytes))).toEqual(
+          Option.some("value-a"),
+        );
+        expect((yield* access.forThread(assistant.threadId)).environment).toEqual({
+          PB_SECRET_TOKEN: "value-a",
+        });
+        expect((yield* access.forThread(developer.threadId)).environment).toEqual({
+          PB_SECRET_TOKEN: "value-b",
+        });
+      }),
+    ),
+  );
+
+  it.effect("secrets fulfilled before scoping still load from the legacy key", () =>
+    withLayer((harness) =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const bots = yield* PersonalBotService.PersonalBotService;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        const repository = yield* PersonalSecretRepository.PersonalSecretRepository;
+        const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+        const store = yield* ServerSecretStore.ServerSecretStore;
+        const { task, threadId } = yield* runningTask(harness, "legacy", "assistant");
+        yield* bots.createThread({ botId: botId("assistant"), threadId });
+
+        // A row fulfilled before scoping: unshared, but the value sits at the
+        // legacy name-only key.
+        const requestId = PersonalSecretRequestId.make("request-legacy");
+        yield* repository.insertRequest({
+          requestId,
+          taskId: task.taskId,
+          rootTaskId: task.rootTaskId,
+          threadId,
+          botId: botId("assistant"),
+          name: "TOKEN",
+          label: "token",
+          purpose: "Test.",
+          status: "pending",
+          shared: false,
+          createdAt: yield* DateTime.now,
+          fulfilledAt: null,
+        });
+        yield* repository.writeStatus({
+          requestId,
+          expectedStatus: "pending",
+          status: "fulfilled",
+          shared: false,
+          fulfilledAt: yield* DateTime.now,
+        });
+        yield* store.set(
+          PersonalSecretService.personalSecretStoreKey("TOKEN"),
+          new TextEncoder().encode("legacy-value"),
+        );
+
+        expect((yield* access.forThread(threadId)).environment).toEqual({
+          PB_SECRET_TOKEN: "legacy-value",
+        });
+        // A fresh request from the same bot sees it as already answered.
+        const again = yield* secrets.request({
+          task: yield* reload(task.taskId),
+          threadId,
+          botId: botId("assistant"),
+          name: "TOKEN",
+          label: "token",
+          purpose: "Test.",
+        });
+        expect(again.status).toBe("fulfilled");
       }),
     ),
   );

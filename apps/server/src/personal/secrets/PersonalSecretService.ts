@@ -26,8 +26,30 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
 
-/** Server secret store key of a fulfilled secret. `name` is UPPER_SNAKE-validated. */
-export const personalSecretStoreKey = (name: string) => `personal-secret-${name}`;
+/**
+ * Server secret store key of a fulfilled secret. `name` is UPPER_SNAKE-validated.
+ *
+ * Unshared secrets are scoped by owning bot so one bot's value can never
+ * overwrite another bot's value of the same name. Shared secrets keep the
+ * legacy name-only key, so values fulfilled before scoping still resolve.
+ */
+export const personalSecretStoreKey = (
+  input:
+    | string
+    | { readonly name: string; readonly botId: PersonalBotId; readonly shared?: boolean },
+): string => {
+  if (typeof input === "string" || input.shared === true) {
+    return `personal-secret-${typeof input === "string" ? input : input.name}`;
+  }
+  return `personal-secret-${input.botId}-${input.name}`;
+};
+
+/** Request rows carry the owner scope; the store key is derived from them. */
+interface SecretOwnerScope {
+  readonly name: string;
+  readonly botId: PersonalBotId;
+  readonly shared: boolean;
+}
 
 /** The continuation a task resumes with once its secrets are in; names only, never values. */
 export const secretAvailableNote = (names: ReadonlyArray<string>) =>
@@ -105,11 +127,20 @@ export const make = Effect.gen(function* () {
     return request.value;
   });
 
-  const isStored = (name: string) =>
-    store.get(personalSecretStoreKey(name)).pipe(
-      Effect.map(Option.isSome),
-      Effect.mapError((cause) => fail("Could not read the secret store.", cause)),
-    );
+  const getStored = (row: SecretOwnerScope) =>
+    store
+      .get(personalSecretStoreKey({ name: row.name, botId: row.botId, shared: row.shared }))
+      .pipe(
+        Effect.flatMap((found) =>
+          // Secrets fulfilled before scoping live at the legacy name-only key.
+          Option.isSome(found)
+            ? Effect.succeed(found)
+            : store.get(personalSecretStoreKey(row.name)),
+        ),
+        Effect.mapError((cause) => fail("Could not read the secret store.", cause)),
+      );
+
+  const isStored = (row: SecretOwnerScope) => getStored(row).pipe(Effect.map(Option.isSome));
 
   const request: PersonalSecretService["Service"]["request"] = Effect.fn(
     "PersonalSecretService.request",
@@ -118,7 +149,7 @@ export const make = Effect.gen(function* () {
     const answered = fulfilled.find(
       (entry) => entry.name === input.name && (entry.botId === input.botId || entry.shared),
     );
-    if (answered !== undefined && (yield* isStored(input.name))) {
+    if (answered !== undefined && (yield* isStored(answered))) {
       return { request: answered, status: "fulfilled" as const };
     }
     const pending = yield* db("lookup", repository.listByTask(input.task.taskId));
@@ -202,10 +233,10 @@ export const make = Effect.gen(function* () {
     if (bytes.byteLength > PERSONAL_SECRET_MAX_VALUE_BYTES) {
       return yield* fail(`Secret value must be at most ${PERSONAL_SECRET_MAX_VALUE_BYTES} bytes.`);
     }
-    yield* store
-      .set(personalSecretStoreKey(pending.name), bytes)
-      .pipe(Effect.mapError((cause) => fail("Could not store the secret.", cause)));
     const shared = input.shared ?? false;
+    yield* store
+      .set(personalSecretStoreKey({ name: pending.name, botId: pending.botId, shared }), bytes)
+      .pipe(Effect.mapError((cause) => fail("Could not store the secret.", cause)));
     const fulfilledAt = yield* DateTime.now;
     const written = yield* db(
       "fulfill",
@@ -288,10 +319,28 @@ export const make = Effect.gen(function* () {
   const remove: PersonalSecretService["Service"]["remove"] = Effect.fn(
     "PersonalSecretService.remove",
   )(function* (input) {
-    const stored = yield* isStored(input.name);
-    yield* store
-      .remove(personalSecretStoreKey(input.name))
-      .pipe(Effect.mapError((cause) => fail("Could not delete the secret.", cause)));
+    // `remove` is per name, but values are per owner: drop the scoped key of
+    // every fulfilled row of that name, plus the legacy name-only key (shared
+    // secrets and values fulfilled before scoping live there).
+    const fulfilled = yield* db("lookup", repository.listByStatus("fulfilled"));
+    const keys = new Set<string>([personalSecretStoreKey(input.name)]);
+    for (const entry of fulfilled) {
+      if (entry.name !== input.name) continue;
+      keys.add(
+        personalSecretStoreKey({ name: entry.name, botId: entry.botId, shared: entry.shared }),
+      );
+    }
+    let stored = false;
+    for (const key of keys) {
+      const existed = yield* store.get(key).pipe(
+        Effect.map(Option.isSome),
+        Effect.mapError((cause) => fail("Could not read the secret store.", cause)),
+      );
+      stored = stored || existed;
+      yield* store
+        .remove(key)
+        .pipe(Effect.mapError((cause) => fail("Could not delete the secret.", cause)));
+    }
     const rows = yield* db("delete", repository.deleteFulfilledByName(input.name));
     return { deleted: stored || rows > 0 };
   });

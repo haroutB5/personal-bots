@@ -3,6 +3,7 @@
  * desktop host (`apps/desktop/src/preview/Manager.ts` snapshot/click/type) but
  * uses Playwright locators directly instead of injected selector engines.
  */
+// @effect-diagnostics globalTimers:off -- performEvaluate races a non-Effect Playwright promise against a plain timer and clears it in `finally` on every path.
 import type {
   PreviewAutomationActionEvent,
   PreviewAutomationClickInput,
@@ -215,8 +216,26 @@ export async function performScroll(
 export function performEvaluate(
   page: BrowserPage,
   input: PreviewAutomationEvaluateInput,
+  timeoutMs: number,
 ): Promise<unknown> {
-  return page.evaluate(input.expression);
+  // Playwright's `page.evaluate` takes no timeout and resolves the page's
+  // own promise, so a never-settling expression would wedge the shared
+  // browser's op lock forever. Race it against a rejecting timer that throws
+  // the same error shape the other ops use for timeouts.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new HostOperationError(
+          "PreviewAutomationTimeoutError",
+          `Evaluate timed out after ${timeoutMs}ms.`,
+        ),
+      );
+    }, timeoutMs);
+  });
+  return Promise.race([page.evaluate(input.expression), timeout]).finally(() => {
+    clearTimeout(timer);
+  });
 }
 
 /** All provided conditions must hold; they wait concurrently inside one timeout. */
