@@ -1,16 +1,13 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { Laptop } from "lucide-react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
-import { PersonalEmptyTab } from "~/features/personal/PersonalEmptyTab";
+import { ComputerScreen } from "~/features/personal/computer/ComputerScreen";
 
 function ComputerRouteView() {
+  const navigate = useNavigate();
   return (
-    <PersonalEmptyTab
-      title="Computer"
-      heading="No browser connected yet"
-      description="When a bot uses a browser on your computer, you can watch and take control here."
-      icon={Laptop}
-    />
+    <div className="flex min-h-0 flex-1 flex-col">
+      <ComputerScreen onBackToChat={() => void navigate({ to: "/bots" })} />
+    </div>
   );
 }
 
