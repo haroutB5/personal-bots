@@ -8,7 +8,8 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export type McpCapability = "preview" | "device" | "pull-requests";
+/** "bots" is granted only to personal-bot threads (delegation and secret requests). */
+export type McpCapability = "preview" | "device" | "pull-requests" | "bots";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;

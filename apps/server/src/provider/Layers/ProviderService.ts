@@ -86,6 +86,7 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as PersonalSessionAccess from "../../personal/secrets/PersonalSessionAccess.ts";
 const isModelSelection = Schema.is(ModelSelection);
 const encodePromptJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -482,6 +483,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const projectionQuery = yield* Effect.serviceOption(
     ProjectionSnapshotQuery.ProjectionSnapshotQuery,
   );
+  // Optional: without it (provider-only runtimes, most tests) no thread is a
+  // personal bot's, so none gets the "bots" capability or secret variables.
+  const personalSessions = yield* Effect.serviceOption(PersonalSessionAccess.PersonalSessionAccess);
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -905,11 +909,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const agentAccessCapabilities = Effect.fn("ProviderService.agentAccessCapabilities")(function* (
     threadId: ThreadId,
+    personalBotThread: boolean,
   ) {
     const capabilities = new Set<McpInvocationContext.McpCapability>(["pull-requests"]);
     const access = yield* agentAccessSettings(threadId);
     if (access.browser) capabilities.add("preview");
     if (access.device) capabilities.add("device");
+    if (personalBotThread) capabilities.add("bots");
     return capabilities;
   });
 
@@ -942,16 +948,31 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     Effect.gen(function* () {
-      const capabilities = yield* agentAccessCapabilities(threadId);
+      // Read once per session start: the capability and the secret variables
+      // both come from the thread's personal-bot link. A session that started
+      // before a secret was saved does not see it; the task dispatcher
+      // restarts the session before resuming a task that waited for one.
+      const personal = Option.isSome(personalSessions)
+        ? yield* personalSessions.value.forThread(threadId)
+        : null;
+      const capabilities = yield* agentAccessCapabilities(
+        threadId,
+        personal !== null && personal.botId !== null,
+      );
       const credential = yield* issueMcpCredential({ threadId, providerInstanceId, capabilities });
       if (credential) {
         const deviceEnvironment = capabilities.has("device")
           ? yield* agentDeviceEnvironment
           : undefined;
+        const secretEnvironment =
+          personal !== null && Object.keys(personal.environment).length > 0
+            ? personal.environment
+            : undefined;
         yield* Effect.sync(() =>
           McpProviderSession.setMcpProviderSession({
             ...credential.config,
             ...(deviceEnvironment ? { agentDeviceEnvironment: deviceEnvironment } : {}),
+            ...(secretEnvironment ? { personalSecretEnvironment: secretEnvironment } : {}),
           }),
         );
       }

@@ -78,6 +78,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as PersonalSessionAccess from "../../personal/secrets/PersonalSessionAccess.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const defaultServerSettingsLayer = ServerSettings.ServerSettingsService.layerTest();
@@ -4899,7 +4900,11 @@ describe("agent browser access", () => {
     access: boolean | { readonly browser: boolean; readonly device: boolean },
     threadId: ThreadId,
     projectOverride?: boolean | { readonly browser?: boolean; readonly device?: boolean },
-    options?: { readonly withoutOrchestration?: boolean },
+    options?: {
+      readonly withoutOrchestration?: boolean;
+      /** Provides PersonalSessionAccess, answering whether the thread is a personal bot's. */
+      readonly personalBotThread?: boolean;
+    },
   ) =>
     Effect.gen(function* () {
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
@@ -4975,6 +4980,22 @@ describe("agent browser access", () => {
         Layer.provide(directoryLayer),
         Layer.provide(options?.withoutOrchestration ? Layer.empty : projectionLayer),
         Layer.provide(
+          options?.personalBotThread === undefined
+            ? Layer.empty
+            : Layer.succeed(PersonalSessionAccess.PersonalSessionAccess, {
+                forThread: () =>
+                  Effect.succeed(
+                    options.personalBotThread
+                      ? {
+                          botId:
+                            "bot-personal" as PersonalSessionAccess.PersonalSessionGrant["botId"],
+                          environment: { PB_SECRET_TEST: "value" },
+                        }
+                      : { botId: null, environment: {} },
+                  ),
+              }),
+        ),
+        Layer.provide(
           ServerSettings.ServerSettingsService.layerTest({
             enableAgentBrowserAccess,
             enableAgentDeviceAccess,
@@ -5028,6 +5049,28 @@ describe("agent browser access", () => {
       const issued = yield* startSessionWith(false, threadId);
 
       assert.deepEqual(issued, [{ threadId, capabilities: ["pull-requests"] }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("grants the bots capability only to personal-bot threads", () =>
+    Effect.gen(function* () {
+      const personalThread = asThreadId("thread-personal-bot");
+      const plainThread = asThreadId("thread-not-personal");
+
+      const personal = yield* startSessionWith(false, personalThread, undefined, {
+        personalBotThread: true,
+      });
+      const plain = yield* startSessionWith(false, plainThread, undefined, {
+        personalBotThread: false,
+      });
+      // Without the service at all (provider-only runtimes) nothing is personal.
+      const absent = yield* startSessionWith(false, plainThread);
+
+      assert.deepEqual(personal, [
+        { threadId: personalThread, capabilities: ["bots", "pull-requests"] },
+      ]);
+      assert.deepEqual(plain, [{ threadId: plainThread, capabilities: ["pull-requests"] }]);
+      assert.deepEqual(absent, [{ threadId: plainThread, capabilities: ["pull-requests"] }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
