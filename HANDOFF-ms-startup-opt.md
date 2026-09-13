@@ -76,3 +76,10 @@
   post-paint.
 - Kept immediate: profile query (greeting name, tiny) and the list query itself.
   `useRefreshBotsForTaskThreads` untouched — no-op on empty tasks, resumes after arm.
+
+## Ship
+
+- Committed `2713c38f7` on `personal-bots/main`, pushed to origin. Post-commit
+  re-run (pre-commit `vp fmt` hook touched staged files): 13/13 touched tests
+  pass, lint clean, working tree clean.
+- NOT done: no deploy, no `app-version.txt` bump (orchestrator owns both).
