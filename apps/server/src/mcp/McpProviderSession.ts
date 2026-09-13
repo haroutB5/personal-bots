@@ -15,6 +15,28 @@ export interface McpProviderSessionConfig {
    * already pointed at the server's daemon; the agent never handles a token.
    */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+  /**
+   * `PB_SECRET_<NAME>` values for a personal bot's thread (see
+   * `PersonalSessionAccess`). Read from the secret store when the session is
+   * prepared and applied when the provider process starts; never logged.
+   */
+  readonly personalSecretEnvironment?: Readonly<Record<string, string>>;
+}
+
+/**
+ * Everything a session config adds to the provider process env: the device
+ * variables, then the personal secrets. Claude and Codex use this.
+ */
+export function withProviderSessionEnvironment(
+  base: NodeJS.ProcessEnv,
+  config:
+    | Pick<McpProviderSessionConfig, "agentDeviceEnvironment" | "personalSecretEnvironment">
+    | undefined,
+): NodeJS.ProcessEnv {
+  const withDevice = withAgentDeviceEnvironment(base, config);
+  const secrets = config?.personalSecretEnvironment;
+  if (!secrets || Object.keys(secrets).length === 0) return withDevice;
+  return { ...withDevice, ...secrets };
 }
 
 /** Provider env with the device variables applied over `base`, or `base` untouched. */

@@ -29,6 +29,7 @@ export * from "./pullRequest.ts";
 export * from "./orchestration.ts";
 export * from "./personalBots.ts";
 export * from "./personalTasks.ts";
+export * from "./personalSecrets.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";

@@ -273,6 +273,15 @@ import {
   PersonalTasksError,
   PersonalTaskStreamEvent,
 } from "./personalTasks.ts";
+import {
+  PersonalSecretFulfillInput,
+  PersonalSecretNameInput,
+  PersonalSecretRequest,
+  PersonalSecretRequestIdInput,
+  PersonalSecretsError,
+  PersonalSecretsListPendingResult,
+  PersonalSecretsListResult,
+} from "./personalSecrets.ts";
 import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
@@ -437,6 +446,13 @@ export const WS_METHODS = {
   personalTasksCancel: "personalTasks.cancel",
   personalTasksRetry: "personalTasks.retry",
   personalTasksSubscribe: "personalTasks.subscribe",
+
+  // Personal secrets methods (values are write-only: no method returns one)
+  personalSecretsListPending: "personalSecrets.listPending",
+  personalSecretsFulfill: "personalSecrets.fulfill",
+  personalSecretsCancel: "personalSecrets.cancel",
+  personalSecretsList: "personalSecrets.list",
+  personalSecretsDelete: "personalSecrets.delete",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -951,6 +967,39 @@ const WsPersonalTasksSubscribeRpc = Rpc.make(WS_METHODS.personalTasksSubscribe, 
   success: PersonalTaskStreamEvent,
   error: PersonalTasksRpcError,
   stream: true,
+});
+
+const PersonalSecretsRpcError = Schema.Union([PersonalSecretsError, EnvironmentAuthorizationError]);
+
+const WsPersonalSecretsListPendingRpc = Rpc.make(WS_METHODS.personalSecretsListPending, {
+  payload: Schema.Struct({}),
+  success: PersonalSecretsListPendingResult,
+  error: PersonalSecretsRpcError,
+});
+
+const WsPersonalSecretsFulfillRpc = Rpc.make(WS_METHODS.personalSecretsFulfill, {
+  payload: PersonalSecretFulfillInput,
+  // The request row, never the value.
+  success: PersonalSecretRequest,
+  error: PersonalSecretsRpcError,
+});
+
+const WsPersonalSecretsCancelRpc = Rpc.make(WS_METHODS.personalSecretsCancel, {
+  payload: PersonalSecretRequestIdInput,
+  success: PersonalSecretRequest,
+  error: PersonalSecretsRpcError,
+});
+
+const WsPersonalSecretsListRpc = Rpc.make(WS_METHODS.personalSecretsList, {
+  payload: Schema.Struct({}),
+  success: PersonalSecretsListResult,
+  error: PersonalSecretsRpcError,
+});
+
+const WsPersonalSecretsDeleteRpc = Rpc.make(WS_METHODS.personalSecretsDelete, {
+  payload: PersonalSecretNameInput,
+  success: Schema.Struct({ deleted: Schema.Boolean }),
+  error: PersonalSecretsRpcError,
 });
 
 const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
@@ -1483,6 +1532,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsPersonalTasksCancelRpc,
   WsPersonalTasksRetryRpc,
   WsPersonalTasksSubscribeRpc,
+  WsPersonalSecretsListPendingRpc,
+  WsPersonalSecretsFulfillRpc,
+  WsPersonalSecretsCancelRpc,
+  WsPersonalSecretsListRpc,
+  WsPersonalSecretsDeleteRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,

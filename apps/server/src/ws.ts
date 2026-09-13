@@ -163,6 +163,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
+import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -627,6 +628,7 @@ const makeWsRpcLayer = (
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const personalBots = yield* PersonalBotService.PersonalBotService;
       const personalTasks = yield* PersonalTaskService.PersonalTaskService;
+      const personalSecrets = yield* PersonalSecretService.PersonalSecretService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -2386,6 +2388,28 @@ const makeWsRpcLayer = (
           observeRpcStream(WS_METHODS.personalTasksSubscribe, personalTasks.subscribe, {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalSecretsListPending]: (_input) =>
+          observeRpcEffect(WS_METHODS.personalSecretsListPending, personalSecrets.listPending(), {
+            "rpc.aggregate": "server",
+          }),
+        // The payload value is Redacted once decoded and is written only to
+        // the secret store; the response is the request row, never the value.
+        [WS_METHODS.personalSecretsFulfill]: (input) =>
+          observeRpcEffect(WS_METHODS.personalSecretsFulfill, personalSecrets.fulfill(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalSecretsCancel]: (input) =>
+          observeRpcEffect(WS_METHODS.personalSecretsCancel, personalSecrets.cancel(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalSecretsList]: (_input) =>
+          observeRpcEffect(WS_METHODS.personalSecretsList, personalSecrets.list(), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalSecretsDelete]: (input) =>
+          observeRpcEffect(WS_METHODS.personalSecretsDelete, personalSecrets.remove(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
@@ -3130,6 +3154,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const pullRequests = yield* PullRequestService.PullRequestService;
     // Server-lifetime: the dispatcher, its lock and the upsert stream are shared by every client.
     const personalTasks = yield* PersonalTaskService.PersonalTaskService;
+    const personalSecrets = yield* PersonalSecretService.PersonalSecretService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3172,6 +3197,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
                 PersonalBotService.layer.pipe(Layer.provide(PersonalBotRepository.layer)),
               ),
               Layer.provide(Layer.succeed(PersonalTaskService.PersonalTaskService, personalTasks)),
+              Layer.provide(
+                Layer.succeed(PersonalSecretService.PersonalSecretService, personalSecrets),
+              ),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
