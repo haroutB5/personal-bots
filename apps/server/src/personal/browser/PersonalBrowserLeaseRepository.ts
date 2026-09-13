@@ -20,6 +20,8 @@ export const BrowserLeaseRow = Schema.Struct({
   heartbeatAt: Schema.NullOr(Schema.String),
   /** Agents expire when idle; human control never expires on its own. */
   expiresAt: Schema.NullOr(Schema.String),
+  /** Last http(s) page the agent had open; NULL when nothing restorable was recorded. */
+  lastUrl: Schema.NullOr(Schema.String),
 });
 export type BrowserLeaseRow = typeof BrowserLeaseRow.Type;
 
@@ -57,7 +59,8 @@ export const make = Effect.gen(function* () {
           owner_id AS "ownerId",
           generation AS "generation",
           heartbeat_at AS "heartbeatAt",
-          expires_at AS "expiresAt"
+          expires_at AS "expiresAt",
+          last_url AS "lastUrl"
         FROM personal_browser_leases
         WHERE profile_id = ${profileId}
       `,
@@ -68,18 +71,19 @@ export const make = Effect.gen(function* () {
     execute: (row) =>
       sql`
         INSERT INTO personal_browser_leases (
-          profile_id, owner_type, owner_id, generation, heartbeat_at, expires_at
+          profile_id, owner_type, owner_id, generation, heartbeat_at, expires_at, last_url
         )
         VALUES (
           ${row.profileId}, ${row.ownerType}, ${row.ownerId}, ${row.generation},
-          ${row.heartbeatAt}, ${row.expiresAt}
+          ${row.heartbeatAt}, ${row.expiresAt}, ${row.lastUrl}
         )
         ON CONFLICT(profile_id) DO UPDATE SET
           owner_type = excluded.owner_type,
           owner_id = excluded.owner_id,
           generation = excluded.generation,
           heartbeat_at = excluded.heartbeat_at,
-          expires_at = excluded.expires_at
+          expires_at = excluded.expires_at,
+          last_url = excluded.last_url
       `,
   });
 

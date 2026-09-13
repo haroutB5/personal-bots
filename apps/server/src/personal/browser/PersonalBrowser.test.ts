@@ -9,6 +9,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 
@@ -124,16 +125,64 @@ const makeFakeDriver = () => {
   return { driver, state };
 };
 
-const makeLayer = (driver: BrowserDriver) =>
+const baseLayer = <RepositoryError, RepositoryContext>(
+  driver: BrowserDriver,
+  repository: Layer.Layer<
+    PersonalBrowserLeaseRepository.PersonalBrowserLeaseRepository,
+    RepositoryError,
+    RepositoryContext
+  >,
+) =>
   PersonalBrowser.makeLayer({ driver, headless: true, executablePath: undefined }).pipe(
     Layer.provideMerge(BrowserLease.layer),
-    Layer.provideMerge(PersonalBrowserLeaseRepository.layer),
+    Layer.provideMerge(repository),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(PreviewManager.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-browser-" })),
     Layer.provideMerge(NodeServices.layer),
   );
+
+const makeLayer = (driver: BrowserDriver) =>
+  baseLayer(driver, PersonalBrowserLeaseRepository.layer);
+
+/** A repository pre-seeded with one persisted row, recording every save. */
+const stubRepository = (
+  row: PersonalBrowserLeaseRepository.BrowserLeaseRow,
+  saved: PersonalBrowserLeaseRepository.BrowserLeaseRow[] = [],
+) =>
+  Layer.succeed(
+    PersonalBrowserLeaseRepository.PersonalBrowserLeaseRepository,
+    PersonalBrowserLeaseRepository.PersonalBrowserLeaseRepository.of({
+      load: () => Effect.succeed(Option.some(row)),
+      save: (next) =>
+        Effect.sync(() => {
+          saved.push(next);
+        }),
+    }),
+  );
+
+const persistedAgentRow = (
+  lastUrl: string | null,
+): PersonalBrowserLeaseRepository.BrowserLeaseRow => ({
+  profileId: "default",
+  ownerType: "agent",
+  ownerId: "thread-a",
+  generation: 4,
+  heartbeatAt: "2026-01-01T00:00:00.000Z",
+  expiresAt: "2026-01-01T00:01:30.000Z",
+  lastUrl,
+});
+
+/** The boot restore runs on a background fiber; wait for its effects, bounded. */
+const awaitCondition = <R>(check: Effect.Effect<boolean, never, R>) =>
+  Effect.gen(function* () {
+    for (let turn = 0; turn < 1_000; turn++) {
+      if (yield* check) return;
+      yield* Effect.yieldNow;
+    }
+    return yield* Effect.die(new Error("condition never became true"));
+  });
 
 const threadId = ThreadId.make("thread-a");
 let requestSequence = 0;
@@ -267,6 +316,65 @@ describe("PersonalBrowser", () => {
         }),
       );
     }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  it.effect("records the agent's page so a later restart can reopen it", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      const lease = yield* BrowserLease.BrowserLease;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      expect((yield* lease.view).lastUrl).toBe("https://example.com/");
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  it.effect("reopens the agent's last page at boot and re-attaches the lease", () => {
+    const fake = makeFakeDriver();
+    const saved: PersonalBrowserLeaseRepository.BrowserLeaseRow[] = [];
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      // The restore runs on a background fiber at boot; wait for its effects.
+      yield* awaitCondition(Effect.sync(() => fake.state.page.gotos.length > 0));
+      expect(fake.state.launches).toBe(1);
+      expect(fake.state.page.gotos).toEqual(["https://example.com/"]);
+      const status = yield* browser.status("session-1");
+      expect(status.controller).toEqual({
+        _tag: "Agent",
+        threadId,
+        botId: null,
+        botName: null,
+      });
+      expect(status.page?.url).toBe("https://example.com/");
+      // Boot normalization persisted the extended lease.
+      expect(saved.length).toBeGreaterThan(0);
+    }).pipe(
+      Effect.provide(
+        baseLayer(fake.driver, stubRepository(persistedAgentRow("example.com"), saved)),
+      ),
+    );
+  });
+
+  it.effect("a failed boot restore degrades to a clean None instead of crashing boot", () => {
+    const saved: PersonalBrowserLeaseRepository.BrowserLeaseRow[] = [];
+    const broken: BrowserDriver = {
+      launch: async () => {
+        throw new Error("no chrome");
+      },
+    };
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      const lease = yield* BrowserLease.BrowserLease;
+      yield* awaitCondition(Effect.map(lease.view, (view) => view.ownerId === null));
+      // Boot completed and the lease is clean; the launch failure is still
+      // reported through the usual browser state.
+      const status = yield* browser.status("session-1");
+      expect(status.controller).toEqual({ _tag: "None" });
+      expect(saved.at(-1)).toMatchObject({ ownerType: "agent", ownerId: null });
+    }).pipe(
+      Effect.provide(
+        baseLayer(broken, stubRepository(persistedAgentRow("https://example.com/"), saved)),
+      ),
+    );
   });
 
   it.effect("screencasts only while at least one viewer is attached", () => {

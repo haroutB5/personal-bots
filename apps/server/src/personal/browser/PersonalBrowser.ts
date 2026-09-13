@@ -151,6 +151,7 @@ interface TabEntry {
 }
 
 const RECENT_ACTIVITY_LIMIT = 30;
+const RESTORE_NAVIGATE_TIMEOUT_MS = 30_000;
 const TIMELINE_LIMIT = 20;
 const PAGE_INFO_REFRESH_MS = 1_500;
 const MAX_LISTED_FILES = 300;
@@ -632,7 +633,15 @@ export const make = (options: PersonalBrowserOptions) =>
               !page.isClosed() &&
               (page.url() === "about:blank" || page.url().startsWith("chrome://newtab")),
           );
-        const page = blank ?? (yield* attempt({}, () => context.newPage()));
+        // Compensate the preview registration when the page never materializes,
+        // or every retry would orphan another row in the preview manager.
+        const page =
+          blank ??
+          (yield* attempt({}, () => context.newPage()).pipe(
+            Effect.tapError(() =>
+              previewManager.close({ threadId, tabId: snapshot.tabId }).pipe(Effect.ignore),
+            ),
+          ));
         const tab: TabEntry = { tabId: snapshot.tabId, threadId, page, title: "", timeline: [] };
         runtime.tabs.set(tab.tabId, tab);
         page.onClose(() => runFork(onTabPageClosed(tab)));
@@ -872,6 +881,12 @@ export const make = (options: PersonalBrowserOptions) =>
           threadId: request.threadId,
           botName: bot?.name ?? null,
         });
+        // Remember the page for a post-restart reopen. Only real pages count:
+        // about:blank and chrome:// URLs would restore to nothing useful.
+        if (Exit.isSuccess(exit) && openPage(exit.value.tab.page)) {
+          const current = exit.value.tab.page.url();
+          if (/^https?:\/\//i.test(current)) yield* lease.recordPageUrl(current);
+        }
         return yield* Exit.match(exit, {
           onSuccess: ({ result }) => Effect.succeed(result as unknown),
           onFailure: (cause) => Effect.failCause(cause),
@@ -1060,6 +1075,51 @@ export const make = (options: PersonalBrowserOptions) =>
           yield* rejectInput(viewer, error instanceof Error ? error.message : "Input failed.");
         }
       });
+
+    /**
+     * Reopens the page the agent had open before the restart so the phone keeps
+     * showing "<bot> is using the browser" with the right Back-to-chat target.
+     * Runs once in the background at boot: it never blocks startup, never
+     * throws, and never retries — a failed restore releases the lease to a
+     * clean None while the browser keeps whatever offline/locked state the
+     * launch reported. With no saved page there is nothing to reopen, so the
+     * browser stays lazily offline and the (already restored) lease simply
+     * applies to the next op.
+     */
+    const restoreAfterRestart = Effect.gen(function* () {
+      const restored = yield* lease.view;
+      if (restored.ownerType !== "agent" || restored.ownerId === null) return;
+      if (restored.lastUrl === null) return;
+      const target = resolveBrowserUrl(restored.lastUrl);
+      if (!target.ok) return;
+      const threadId = ThreadId.make(restored.ownerId);
+      // Serialized like any other agent op: an op racing boot either runs
+      // first (and the restore then reuses its tab) or waits behind the
+      // restore, so the two can never open competing tabs.
+      yield* lease.runAgentOp(
+        { threadId: restored.ownerId, operation: "navigate" },
+        Effect.gen(function* () {
+          const tab = yield* createTab(threadId, target.url);
+          yield* navigateTab(tab, target.url, "load", RESTORE_NAVIGATE_TIMEOUT_MS);
+          yield* setActive(tab);
+          yield* syncPreviewStatus(tab);
+        }),
+      );
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning(
+            "Personal browser session could not be restored after restart.",
+            {
+              cause,
+            },
+          );
+          yield* lease.releaseAgentLease;
+        }),
+      ),
+    );
+
+    yield* restoreAfterRestart.pipe(Effect.forkScoped);
 
     return PersonalBrowser.of({
       status,

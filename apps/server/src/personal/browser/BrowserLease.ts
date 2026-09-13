@@ -22,6 +22,7 @@ import {
   type BrowserLeaseRow,
   PersonalBrowserLeaseRepository,
 } from "./PersonalBrowserLeaseRepository.ts";
+import { resolveBrowserUrl } from "./urlPolicy.ts";
 
 export const PERSONAL_BROWSER_PROFILE_ID = "default";
 /** An agent lease lapses after this long without an op; the next op re-acquires. */
@@ -55,6 +56,8 @@ export interface LeaseView {
   readonly agentActive: boolean;
   readonly inFlightThreadId: string | null;
   readonly takeoverPending: boolean;
+  /** Last http(s) page the agent had open; used to reopen it after a restart. */
+  readonly lastUrl: string | null;
 }
 
 interface InFlight {
@@ -78,19 +81,27 @@ export class BrowserLease extends Context.Service<
     ) => Effect.Effect<A, E | BrowserLeaseRejected, R>;
     readonly takeControl: (sessionId: string) => Effect.Effect<LeaseView>;
     readonly returnToAgent: Effect.Effect<LeaseView>;
+    /**
+     * Records the page the agent currently has open. Only sticks while an
+     * agent holds the lease; a no-op under human control or when released.
+     */
+    readonly recordPageUrl: (url: string) => Effect.Effect<void>;
+    /** Drops a live agent lease back to released; used when boot restore fails. */
+    readonly releaseAgentLease: Effect.Effect<LeaseView>;
     readonly isHumanController: (sessionId: string) => Effect.Effect<boolean>;
     readonly view: Effect.Effect<LeaseView>;
     readonly changes: Stream.Stream<LeaseView>;
   }
 >()("t3/personal/browser/BrowserLease") {}
 
-const releasedRow = (generation: number): BrowserLeaseRow => ({
+const releasedRow = (generation: number, lastUrl: string | null = null): BrowserLeaseRow => ({
   profileId: PERSONAL_BROWSER_PROFILE_ID,
   ownerType: "agent",
   ownerId: null,
   generation,
   heartbeatAt: null,
   expiresAt: null,
+  lastUrl,
 });
 
 const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
@@ -104,6 +115,28 @@ const agentLeaseLive = (row: BrowserLeaseRow, now: number) =>
 const humanControlMessage =
   "The user has taken control of the shared browser. Wait until they return control, then take a fresh snapshot.";
 
+export type BrowserRestoreDecision =
+  | { readonly _tag: "RestoreAgent"; readonly threadId: string; readonly url: string | null }
+  | { readonly _tag: "ClearHuman" }
+  | { readonly _tag: "Noop" };
+
+/**
+ * Pure boot decision for a persisted lease row. Agent leases (thread id +
+ * last page) are restored; human leases point at an auth session id that died
+ * with the previous process, so they are cleared instead of restored. A saved
+ * URL that no longer passes the navigation policy restores the lease without
+ * a page rather than blocking the restore.
+ */
+export const decideBrowserRestore = (row: BrowserLeaseRow): BrowserRestoreDecision => {
+  if (row.ownerType === "human") {
+    return row.ownerId === null ? { _tag: "Noop" } : { _tag: "ClearHuman" };
+  }
+  if (row.ownerId === null) return { _tag: "Noop" };
+  if (row.lastUrl === null) return { _tag: "RestoreAgent", threadId: row.ownerId, url: null };
+  const resolved = resolveBrowserUrl(row.lastUrl);
+  return { _tag: "RestoreAgent", threadId: row.ownerId, url: resolved.ok ? resolved.url : null };
+};
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const repository = yield* PersonalBrowserLeaseRepository;
@@ -114,8 +147,26 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.as(Option.none<BrowserLeaseRow>())),
     ),
   );
+  // A restart ends every session the row could point at: a human lease names
+  // an auth session id that died with the previous process (clear it), while
+  // an agent lease names a durable thread (keep it, extended from boot — a
+  // restart always outlasts the idle TTL, so without the refresh the restored
+  // controller would read as lapsed immediately).
+  const bootRow = Option.getOrElse(loaded, () => releasedRow(0));
+  const bootDecision = decideBrowserRestore(bootRow);
+  const bootNow = yield* Clock.currentTimeMillis;
+  const initialRow =
+    bootDecision._tag === "ClearHuman"
+      ? { ...releasedRow(bootRow.generation + 1, bootRow.lastUrl), heartbeatAt: iso(bootNow) }
+      : bootDecision._tag === "RestoreAgent"
+        ? {
+            ...bootRow,
+            heartbeatAt: iso(bootNow),
+            expiresAt: iso(bootNow + AGENT_LEASE_TTL_MS),
+          }
+        : bootRow;
   const state = yield* Ref.make<LeaseState>({
-    row: Option.getOrElse(loaded, () => releasedRow(0)),
+    row: initialRow,
     inFlight: null,
     takeoverPending: false,
     freshSnapshotRequired: false,
@@ -132,7 +183,18 @@ export const make = Effect.gen(function* () {
     agentActive: agentLeaseLive(current.row, now),
     inFlightThreadId: current.inFlight?.threadId ?? null,
     takeoverPending: current.takeoverPending,
+    lastUrl: current.row.lastUrl,
   });
+
+  if (bootDecision._tag !== "Noop") {
+    yield* repository
+      .save(initialRow)
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Personal browser lease could not be normalized at boot.", { cause }),
+        ),
+      );
+  }
 
   const view = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
@@ -281,10 +343,42 @@ export const make = Effect.gen(function* () {
     const row = yield* Ref.modify(state, (latest) => {
       if (latest.row.ownerType !== "human") return [null, latest] as const;
       const next: BrowserLeaseRow = {
-        ...releasedRow(latest.row.generation + 1),
+        ...releasedRow(latest.row.generation + 1, latest.row.lastUrl),
         heartbeatAt: iso(now),
       };
       return [next, { ...latest, row: next, freshSnapshotRequired: true }] as const;
+    });
+    if (row !== null) {
+      yield* persist(row);
+      yield* publish;
+    }
+    return yield* view;
+  });
+
+  const recordPageUrl: BrowserLease["Service"]["recordPageUrl"] = (url) =>
+    Effect.gen(function* () {
+      const row = yield* Ref.modify(state, (current) => {
+        if (current.row.ownerType !== "agent" || current.row.ownerId === null) {
+          return [null, current] as const;
+        }
+        if (current.row.lastUrl === url) return [null, current] as const;
+        const next = { ...current.row, lastUrl: url };
+        return [next, { ...current, row: next }] as const;
+      });
+      if (row !== null) yield* persist(row);
+    });
+
+  const releaseAgentLease: BrowserLease["Service"]["releaseAgentLease"] = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const row = yield* Ref.modify(state, (latest) => {
+      if (latest.row.ownerType !== "agent" || latest.row.ownerId === null) {
+        return [null, latest] as const;
+      }
+      const next: BrowserLeaseRow = {
+        ...releasedRow(latest.row.generation + 1, latest.row.lastUrl),
+        heartbeatAt: iso(now),
+      };
+      return [next, { ...latest, row: next }] as const;
     });
     if (row !== null) {
       yield* persist(row);
@@ -304,6 +398,8 @@ export const make = Effect.gen(function* () {
     runAgentOp,
     takeControl,
     returnToAgent,
+    recordPageUrl,
+    releaseAgentLease,
     isHumanController,
     view,
     changes: Stream.fromPubSub(changesPubSub),

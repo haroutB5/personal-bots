@@ -171,17 +171,121 @@ describe("BrowserLease", () => {
     }).pipe(Effect.provide(leaseLayer)),
   );
 
-  it.effect("human control survives a restart until it is explicitly returned", () =>
+  it.effect(
+    "a persisted human lease is cleared at boot: its session id died with the restart",
+    () =>
+      Effect.gen(function* () {
+        const lease = yield* BrowserLease.BrowserLease;
+        const taken = yield* lease.takeControl("session-1");
+        // A fresh coordinator over the same table is what a server restart sees.
+        const restarted = yield* BrowserLease.make;
+        const view = yield* restarted.view;
+        expect(view).toMatchObject({ ownerType: "agent", ownerId: null });
+        expect(view.generation).toBe(taken.generation + 1);
+        expect(yield* restarted.isHumanController("session-1")).toBe(false);
+        // The clearing was persisted, not just in memory.
+        const reread = yield* BrowserLease.make;
+        expect(yield* reread.view).toMatchObject({ ownerType: "agent", ownerId: null });
+        // And agents are no longer told a (dead) user is holding the browser.
+        yield* restarted.runAgentOp({ threadId: "thread-a", operation: "snapshot" }, Effect.void);
+        expect((yield* restarted.view).agentActive).toBe(true);
+      }).pipe(Effect.provide(leaseLayer)),
+  );
+
+  it.effect("a persisted agent lease is extended at boot and keeps its page", () =>
     Effect.gen(function* () {
       const lease = yield* BrowserLease.BrowserLease;
-      const taken = yield* lease.takeControl("session-1");
-      // A fresh coordinator over the same table is what a server restart sees.
+      yield* lease.runAgentOp({ threadId: "thread-a", operation: "navigate" }, Effect.void);
+      yield* lease.recordPageUrl("https://example.com/");
+      const before = yield* lease.view;
+      // A fresh coordinator over the same table is what a server restart sees:
+      // the TTL the previous process was counting down is renewed from boot,
+      // without a generation bump (ownership never changed hands).
       const restarted = yield* BrowserLease.make;
       const view = yield* restarted.view;
-      expect(view).toMatchObject({ ownerType: "human", ownerId: "session-1" });
-      expect(view.generation).toBe(taken.generation);
-      expect(yield* restarted.isHumanController("session-1")).toBe(true);
-      expect(yield* restarted.isHumanController("session-2")).toBe(false);
+      expect(view).toMatchObject({
+        ownerType: "agent",
+        ownerId: "thread-a",
+        lastUrl: "https://example.com/",
+        agentActive: true,
+      });
+      expect(view.generation).toBe(before.generation);
+      const reread = yield* BrowserLease.make;
+      expect(yield* reread.view).toMatchObject({ lastUrl: "https://example.com/" });
     }).pipe(Effect.provide(leaseLayer)),
   );
+
+  it.effect("recordPageUrl only sticks while an agent holds the lease", () =>
+    Effect.gen(function* () {
+      const lease = yield* BrowserLease.BrowserLease;
+      // Released: nothing to attach a page to.
+      yield* lease.recordPageUrl("https://example.com/");
+      expect((yield* lease.view).lastUrl).toBeNull();
+      // Human control: the human's browsing is not the agent's restore page.
+      yield* lease.takeControl("session-1");
+      yield* lease.recordPageUrl("https://example.org/");
+      expect((yield* lease.view).lastUrl).toBeNull();
+      yield* lease.returnToAgent;
+      // Agent op: sticks, and repeats of the same URL are idempotent.
+      yield* lease.runAgentOp({ threadId: "thread-a", operation: "navigate" }, Effect.void);
+      yield* lease.recordPageUrl("https://example.com/");
+      yield* lease.recordPageUrl("https://example.com/");
+      expect((yield* lease.view).lastUrl).toBe("https://example.com/");
+    }).pipe(Effect.provide(leaseLayer)),
+  );
+
+  describe("decideBrowserRestore", () => {
+    const row = (
+      ownerType: "agent" | "human",
+      ownerId: string | null,
+      lastUrl: string | null,
+    ): PersonalBrowserLeaseRepository.BrowserLeaseRow => ({
+      profileId: BrowserLease.PERSONAL_BROWSER_PROFILE_ID,
+      ownerType,
+      ownerId,
+      generation: 4,
+      heartbeatAt: null,
+      expiresAt: null,
+      lastUrl,
+    });
+
+    it.effect("restores an agent lease with its normalized page", () =>
+      Effect.gen(function* () {
+        expect(BrowserLease.decideBrowserRestore(row("agent", "thread-a", "example.com"))).toEqual({
+          _tag: "RestoreAgent",
+          threadId: "thread-a",
+          url: "https://example.com/",
+        });
+      }),
+    );
+
+    it.effect("restores an agent lease without a page when there is nothing usable", () =>
+      Effect.gen(function* () {
+        expect(BrowserLease.decideBrowserRestore(row("agent", "thread-a", null))).toEqual({
+          _tag: "RestoreAgent",
+          threadId: "thread-a",
+          url: null,
+        });
+        // A saved URL that fails the navigation policy restores the lease but
+        // never navigates, rather than blocking the restore.
+        expect(
+          BrowserLease.decideBrowserRestore(row("agent", "thread-a", "javascript:alert(1)")),
+        ).toEqual({ _tag: "RestoreAgent", threadId: "thread-a", url: null });
+      }),
+    );
+
+    it.effect("clears a human lease and leaves a released lease alone", () =>
+      Effect.gen(function* () {
+        expect(BrowserLease.decideBrowserRestore(row("human", "session-1", null))).toEqual({
+          _tag: "ClearHuman",
+        });
+        expect(BrowserLease.decideBrowserRestore(row("agent", null, null))).toEqual({
+          _tag: "Noop",
+        });
+        expect(BrowserLease.decideBrowserRestore(row("human", null, null))).toEqual({
+          _tag: "Noop",
+        });
+      }),
+    );
+  });
 });
