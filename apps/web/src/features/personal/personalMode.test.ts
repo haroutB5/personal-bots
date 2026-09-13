@@ -3,15 +3,24 @@ import { describe, expect, it } from "vite-plus/test";
 import { activeTabFor, isPersonalPath } from "./personalMode";
 
 describe("isPersonalPath", () => {
-  it("claims the four tabs and everything under /bots", () => {
-    for (const path of ["/bots", "/bots/", "/bots/new", "/bots/b1/edit", "/tasks", "/files"]) {
+  it("claims the four tabs and everything under /bots and /tasks", () => {
+    for (const path of [
+      "/bots",
+      "/bots/",
+      "/bots/new",
+      "/bots/b1/edit",
+      "/tasks",
+      "/tasks/t1",
+      "/tasks/routines/r1",
+      "/files",
+    ]) {
       expect(isPersonalPath(path)).toBe(true);
     }
     expect(isPersonalPath("/computer")).toBe(true);
   });
 
   it("leaves upstream routes alone", () => {
-    for (const path of ["/", "/settings", "/botsy", "/env/thread", "/tasks/extra"]) {
+    for (const path of ["/", "/settings", "/botsy", "/env/thread", "/tasksy"]) {
       expect(isPersonalPath(path)).toBe(false);
     }
   });
@@ -24,5 +33,12 @@ describe("activeTabFor", () => {
     expect(activeTabFor("/computer")).toBe("computer");
     expect(activeTabFor("/bots/new")).toBeNull();
     expect(activeTabFor("/bots/b1/edit")).toBeNull();
+  });
+
+  it("keeps the Tasks tab on task and routine detail, not on the routine editor", () => {
+    expect(activeTabFor("/tasks/t1")).toBe("tasks");
+    expect(activeTabFor("/tasks/routines/r1")).toBe("tasks");
+    expect(activeTabFor("/tasks/routines/new")).toBeNull();
+    expect(activeTabFor("/tasks/routines/r1/edit")).toBeNull();
   });
 });

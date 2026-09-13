@@ -1,19 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { CircleCheck } from "lucide-react";
 
-import { PersonalEmptyTab } from "~/features/personal/PersonalEmptyTab";
+import { parseTaskListFilter, type TaskListFilter } from "~/features/personal/taskPresentation";
+import { TasksScreen } from "~/features/personal/TasksScreen";
+
+interface TasksSearch {
+  readonly view?: TaskListFilter;
+}
 
 function TasksRouteView() {
-  return (
-    <PersonalEmptyTab
-      title="Tasks"
-      heading="No tasks yet"
-      description="Routines and scheduled work from your bots will show up here."
-      icon={CircleCheck}
-    />
-  );
+  const { view } = Route.useSearch();
+  return <TasksScreen view={parseTaskListFilter(view)} />;
 }
 
 export const Route = createFileRoute("/_personal/tasks")({
+  // Optional, so the tab bar can link to /tasks without a search param.
+  validateSearch: (raw: Record<string, unknown>): TasksSearch =>
+    raw.view === "waiting" || raw.view === "scheduled" || raw.view === "completed"
+      ? { view: raw.view }
+      : {},
   component: TasksRouteView,
 });
