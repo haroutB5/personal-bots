@@ -246,6 +246,10 @@ export function PersonalSettingsScreen(): JSX.Element {
             strokeWidth={1.75}
           />
         </button>
+        <p className="mt-2 px-1 text-[13px] text-[var(--personal-text-secondary)]">
+          Bots only use their built-in tools and this app&apos;s tools. Your Claude Code add-ons and
+          claude.ai connectors, and your Codex plugins and connectors, are not shared with bots.
+        </p>
       </section>
     </div>
   );

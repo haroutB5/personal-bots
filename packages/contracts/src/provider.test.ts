@@ -49,6 +49,12 @@ describe("ProviderSessionStartInput", () => {
     expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
   });
 
+  it("carries the personal-bot flag only when a producer sets it", () => {
+    const base = { threadId: "thread-1", provider: "codex", runtimeMode: "full-access" };
+    expect(decodeProviderSessionStartInput(base).personalBot).toBeUndefined();
+    expect(decodeProviderSessionStartInput({ ...base, personalBot: true }).personalBot).toBe(true);
+  });
+
   it("rejects payloads without runtime mode", () => {
     expect(() =>
       decodeProviderSessionStartInput({

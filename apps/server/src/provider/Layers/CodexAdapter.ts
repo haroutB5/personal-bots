@@ -70,7 +70,7 @@ import {
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
-import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { PERSONAL_BOT_CODEX_APP_SERVER_ARGS, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
   type CodexRateLimitSnapshot,
   codexRateLimitsToUpdate,
@@ -2256,6 +2256,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        const appServerArgs = [
+          ...(mcpSession
+            ? [
+                "-c",
+                `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
+                "-c",
+                'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+              ]
+            : []),
+          ...(input.personalBot === true ? PERSONAL_BOT_CODEX_APP_SERVER_ARGS : []),
+        ];
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
@@ -2281,15 +2292,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   ),
                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
                 },
-                appServerArgs: [
-                  "-c",
-                  `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
-                  "-c",
-                  'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
-                ],
                 mcpCapabilities: mcpSession.capabilities,
               }
             : {}),
+          ...(appServerArgs.length > 0 ? { appServerArgs } : {}),
         };
         const turnTokenUsage = makeCodexTurnTokenUsageState();
         // Codex reports a usage-limit stop as OpenAI's own sentence, which on a

@@ -913,14 +913,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const agentAccessCapabilities = Effect.fn("ProviderService.agentAccessCapabilities")(function* (
     threadId: ThreadId,
-    personalBotThread: boolean,
+    personal: { readonly botGrant: boolean; readonly linked: boolean },
   ) {
     const capabilities = new Set<McpInvocationContext.McpCapability>(["pull-requests"]);
     const access = yield* agentAccessSettings(threadId);
     if (access.browser) capabilities.add("preview");
     if (access.device) capabilities.add("device");
-    if (personalBotThread) capabilities.add("bots");
-    if (yield* isPersonalBotThread(threadId)) capabilities.add("personal");
+    if (personal.botGrant) capabilities.add("bots");
+    if (personal.linked) capabilities.add("personal");
+    // Bots start without the owner's user-level MCP servers (see personalBot
+    // on the session start input), so the server-owned shared browser is their
+    // only browser, whatever the managed project's browser setting says.
+    if (personal.botGrant || personal.linked) capabilities.add("preview");
     return capabilities;
   });
 
@@ -971,10 +975,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const personal = Option.isSome(personalSessions)
         ? yield* personalSessions.value.forThread(threadId)
         : null;
-      const capabilities = yield* agentAccessCapabilities(
-        threadId,
-        personal !== null && personal.botId !== null,
-      );
+      const botGrant = personal !== null && personal.botId !== null;
+      const linked = yield* isPersonalBotThread(threadId);
+      const capabilities = yield* agentAccessCapabilities(threadId, { botGrant, linked });
       const credential = yield* issueMcpCredential({ threadId, providerInstanceId, capabilities });
       if (credential) {
         const deviceEnvironment = capabilities.has("device")
@@ -992,7 +995,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           }),
         );
       }
-      return credential;
+      // Decided here, where the thread's personal-bot link is already read,
+      // so adapters never re-query it. It narrows the toolset and is set even
+      // when no MCP credential could be issued, so isolation never fails open.
+      return { personalBot: botGrant || linked };
     });
   const clearMcpSession = (threadId: ThreadId) =>
     McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
@@ -1306,7 +1312,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
-      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
+      const { personalBot } = yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
       const resumed = yield* adapter
         .startSession({
           threadId: input.binding.threadId,
@@ -1316,6 +1322,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           runtimeMode: input.binding.runtimeMode ?? "full-access",
+          ...(personalBot ? { personalBot: true } : {}),
         })
         .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
       if (resumed.provider !== adapter.provider) {
@@ -1537,13 +1544,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
-        yield* prepareMcpSession(threadId, resolvedInstanceId);
+        const { personalBot } = yield* prepareMcpSession(threadId, resolvedInstanceId);
         const session = yield* adapter
           .startSession({
             ...input,
             providerInstanceId: resolvedInstanceId,
             ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
             ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
+            ...(personalBot ? { personalBot: true } : {}),
           })
           .pipe(Effect.onError(() => clearMcpSession(threadId)));
 

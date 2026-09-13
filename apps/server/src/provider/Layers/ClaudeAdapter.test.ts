@@ -38,6 +38,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
@@ -467,6 +468,102 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(createInput?.options.permissionMode, undefined);
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, undefined);
     }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  const setT3McpSession = (threadId: ThreadId) =>
+    McpProviderSession.setMcpProviderSession({
+      environmentId: "env-test" as McpProviderSession.McpProviderSessionConfig["environmentId"],
+      threadId,
+      providerSessionId: "mcp-session-test",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      endpoint: "http://127.0.0.1:9999/mcp",
+      authorizationHeader: "Bearer test-token",
+      capabilities: new Set(["preview", "personal"]),
+    });
+
+  it.effect("starts personal-bot sessions with only built-ins and the t3-code server", () => {
+    const threadId = ThreadId.make("thread-personal-bot-claude");
+    const harness = makeHarness({ environment: { PATH: "/usr/bin" } });
+    setT3McpSession(threadId);
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        personalBot: true,
+      });
+
+      const options = harness.getLastCreateQueryInput()?.options;
+      // No user/project/local settings files: no CLAUDE.md, skills, hooks or plugins.
+      assert.deepEqual(options?.settingSources, []);
+      // Only T3's MCP server; user, project and plugin servers are ignored.
+      assert.equal(options?.strictMcpConfig, true);
+      assert.deepEqual(Object.keys(options?.mcpServers ?? {}), ["t3-code"]);
+      // Auto-memory and claude.ai connectors sit outside settingSources.
+      assert.deepEqual(options?.settings, {
+        autoMemoryEnabled: false,
+        disableClaudeAiConnectors: true,
+      });
+      assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "1");
+      assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
+      assert.equal(options?.env?.PATH, "/usr/bin");
+      // Built-in tools are not narrowed.
+      assert.equal(options?.tools, undefined);
+      assert.equal(options?.allowedTools, undefined);
+      assert.equal(options?.disallowedTools, undefined);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps a personal bot's MCP config strict and empty without a T3 credential", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: ThreadId.make("thread-personal-bot-no-mcp"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        personalBot: true,
+      });
+
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.deepEqual(options?.settingSources, []);
+      assert.equal(options?.strictMcpConfig, true);
+      assert.deepEqual(options?.mcpServers, {});
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("leaves normal threads on the upstream settings and MCP config", () => {
+    const threadId = ThreadId.make("thread-normal-claude");
+    const harness = makeHarness({ environment: { PATH: "/usr/bin" } });
+    setT3McpSession(threadId);
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.deepEqual(options?.settingSources, ["user", "project", "local"]);
+      assert.equal(options?.strictMcpConfig, undefined);
+      assert.deepEqual(Object.keys(options?.mcpServers ?? {}), ["t3-code"]);
+      assert.equal(options?.settings, undefined);
+      assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, undefined);
+      assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, undefined);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );

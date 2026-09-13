@@ -36,6 +36,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
@@ -296,6 +297,101 @@ validationLayer("CodexAdapterLive validation", (it) => {
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
+    }),
+  );
+
+  it.effect("turns off connectors, plugins and Codex memories for personal-bot sessions", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-personal-bot-codex");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: "env-test" as McpProviderSession.McpProviderSessionConfig["environmentId"],
+        threadId,
+        providerSessionId: "mcp-session-test",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:9999/mcp",
+        authorizationHeader: "Bearer test-token",
+        capabilities: new Set(["preview", "personal"]),
+      });
+
+      yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+          personalBot: true,
+        })
+        .pipe(
+          Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+        );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-personal-bot-codex-no-mcp"),
+        runtimeMode: "full-access",
+        personalBot: true,
+      });
+
+      const [withMcp, withoutMcp] = validationRuntimeFactory.factory.mock.calls.map(
+        ([options]) => options,
+      );
+      NodeAssert.deepStrictEqual(withMcp?.appServerArgs, [
+        "-c",
+        "mcp_servers.t3-code.url=http://127.0.0.1:9999/mcp",
+        "-c",
+        'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        "-c",
+        "features.apps=false",
+        "-c",
+        "features.plugins=false",
+        "-c",
+        "features.memories=false",
+      ]);
+      NodeAssert.deepStrictEqual(withoutMcp?.appServerArgs, [
+        "-c",
+        "features.apps=false",
+        "-c",
+        "features.plugins=false",
+        "-c",
+        "features.memories=false",
+      ]);
+    }),
+  );
+
+  it.effect("leaves normal Codex sessions with only the t3-code overrides", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-normal-codex");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: "env-test" as McpProviderSession.McpProviderSessionConfig["environmentId"],
+        threadId,
+        providerSessionId: "mcp-session-test",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:9999/mcp",
+        authorizationHeader: "Bearer test-token",
+        capabilities: new Set(["preview"]),
+      });
+
+      yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+        })
+        .pipe(
+          Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+        );
+
+      NodeAssert.deepStrictEqual(
+        validationRuntimeFactory.factory.mock.calls[0]?.[0].appServerArgs,
+        [
+          "-c",
+          "mcp_servers.t3-code.url=http://127.0.0.1:9999/mcp",
+          "-c",
+          'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        ],
+      );
     }),
   );
 });

@@ -71,6 +71,13 @@ export const ProviderSessionStartInput = Schema.Struct({
    * visible message, which this must not be prepended into.
    */
   systemInstructions: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Set by the server when the thread belongs to a personal bot. Adapters
+   * then start the provider with an app-owned toolset: built-in tools plus
+   * T3's own MCP server, without the machine owner's user-level settings,
+   * plugins, connectors or native memory. Absent means upstream behaviour.
+   */
+  personalBot: Schema.optional(Schema.Boolean),
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
