@@ -42,7 +42,9 @@ if ($existing -and (Test-PbServerProcess -ProcessId ([int]$existing.pid) -BinPat
     exit 0
 }
 
-$release = Get-PbRelease -Paths $paths -Release $Release
+# Not $release: PowerShell names are case-insensitive, so it would be the
+# [string]$Release parameter and coerce the release object to a string.
+$releaseInfo = Get-PbRelease -Paths $paths -Release $Release
 $nodeExe = Resolve-NodeExe -Node $Node
 $null = Import-RepoDotEnv
 Clear-DevOriginEnv
@@ -65,19 +67,19 @@ function Write-PbLog([string]$Message) {
 function Start-PbServerOnce {
     Assert-DataRootFree
     $script:logFile = Join-Path $paths.LogsDir ('server-{0}.log' -f (Get-Date -Format 'yyyyMMdd'))
-    Write-PbLog ("start release {0} root {1} base {2}" -f $release.Name, $Root, $paths.BaseDir)
+    Write-PbLog ("start release {0} root {1} base {2}" -f $releaseInfo.Name, $Root, $paths.BaseDir)
     Remove-PbOldFiles -Directory $paths.LogsDir -Filter 'server-*.log' -Keep 7
     if (Test-Path -LiteralPath $paths.StopMarker) { Remove-Item -LiteralPath $paths.StopMarker -Force }
 
     $launchedAt = Get-Date
-    $proc = Start-PbServeProcess -NodeExe $nodeExe -BinPath $release.Bin -BaseDir $paths.BaseDir `
+    $proc = Start-PbServeProcess -NodeExe $nodeExe -BinPath $releaseInfo.Bin -BaseDir $paths.BaseDir `
         -LogFile $script:logFile -WorkingDirectory $paths.WorkDir -Port $Port
     $state = [ordered]@{
         pid        = $proc.Id
         root       = $Root
         baseDir    = $paths.BaseDir
-        binPath    = $release.Bin
-        release    = $release.Name
+        binPath    = $releaseInfo.Bin
+        release    = $releaseInfo.Name
         logFile    = $script:logFile
         startedAt  = $launchedAt.ToUniversalTime().ToString('o')
         supervised = [bool]$Wait
@@ -95,7 +97,7 @@ function Start-PbServerOnce {
         }
         $runtime = Read-PbRuntimeState -BaseDir $paths.BaseDir
         if ($runtime -and $runtime.startedAt -and ([datetime]$runtime.startedAt) -ge $launchedAt.AddSeconds(-2)) {
-            Write-Host ("Personal Bots started: pid {0}, {1}, root {2}, release {3}" -f $proc.Id, $runtime.origin, $Root, $release.Name)
+            Write-Host ("Personal Bots started: pid {0}, {1}, root {2}, release {3}" -f $proc.Id, $runtime.origin, $Root, $releaseInfo.Name)
             return $proc
         }
         Start-Sleep -Milliseconds 500

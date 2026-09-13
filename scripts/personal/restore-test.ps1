@@ -36,7 +36,8 @@ if (-not (Test-Path -LiteralPath (Join-Path $backupDir 'state.sqlite') -PathType
     throw "$backupDir has no state.sqlite."
 }
 
-$release = Get-PbRelease -Paths $paths -Release $Release
+# Not $release: that is the [string]$Release parameter (names are case-insensitive).
+$releaseInfo = Get-PbRelease -Paths $paths -Release $Release
 $nodeExe = Resolve-NodeExe -Node $Node
 
 $tempBase = [System.IO.Path]::GetTempPath()
@@ -57,7 +58,7 @@ $proc = $null
 $ok = $false
 $descriptor = $null
 try {
-    $proc = Start-PbServeProcess -NodeExe $nodeExe -BinPath $release.Bin -BaseDir $tempRoot `
+    $proc = Start-PbServeProcess -NodeExe $nodeExe -BinPath $releaseInfo.Bin -BaseDir $tempRoot `
         -LogFile $logFile -WorkingDirectory $tempRoot -Port $port -HostName '127.0.0.1'
     $deadline = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $deadline -and -not $proc.HasExited) {
