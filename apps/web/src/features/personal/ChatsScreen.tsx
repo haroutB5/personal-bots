@@ -20,6 +20,7 @@ import { greetingLine, teamStatusLine } from "./greeting";
 import { SwipeToDelete } from "./SwipeToDelete";
 import { useDeleteBot } from "./useDeleteBot";
 import { usePersonalTasks } from "./usePersonalAutomation";
+import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import {
   usePersonalBotsList,
   usePersonalEnvironmentId,
@@ -58,6 +59,11 @@ export function ChatsScreen(): JSX.Element {
   );
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
   const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
+  useRefreshBotsForTaskThreads({
+    links: list.data?.threads ?? null,
+    tasks,
+    refresh: list.refresh,
+  });
   const nameOf = useCallback(
     (botId: string) => list.data?.bots.find((entry) => entry.botId === botId)?.name ?? null,
     [list.data],

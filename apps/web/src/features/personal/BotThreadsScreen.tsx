@@ -13,6 +13,8 @@ import { BotAvatar } from "./BotAvatar";
 import { isThreadLive, isThreadRateLimited, threadNeedsAttention } from "./botSummaries";
 import { formatRelativeTime } from "./relativeTime";
 import { useStartBotChat } from "./startBotChat";
+import { usePersonalTasks } from "./usePersonalAutomation";
+import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import {
   personalBotArchiveThread,
   usePersonalBotsList,
@@ -125,6 +127,13 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   const bot = list.data?.bots.find((candidate) => candidate.botId === botId) ?? null;
   const { start, starting } = useStartBotChat(environmentId, bot?.botId ?? null);
   const [now] = useState(() => Date.now());
+  const { tasks: taskFeed } = usePersonalTasks(environmentId);
+  const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
+  useRefreshBotsForTaskThreads({
+    links: list.data?.threads ?? null,
+    tasks,
+    refresh: list.refresh,
+  });
 
   const rows = useMemo(
     () =>
