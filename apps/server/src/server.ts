@@ -84,6 +84,9 @@ import {
   personalBrowserFilesRouteLayer,
   personalBrowserStreamRouteLayer,
 } from "./personal/browser/routes.ts";
+import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
+import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
+import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -484,6 +487,35 @@ const PersonalTasksDispatcherLive = Layer.effectDiscard(
   }),
 );
 
+// Routine catch-up (startup + every 30s), task-summary memory and the push
+// sender. All park on ServerActivation like the task dispatcher.
+const PersonalReactorsLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    yield* (yield* PersonalRoutineService.PersonalRoutineService).start();
+    yield* (yield* PersonalMemoryService.PersonalMemoryService).start();
+    yield* (yield* PersonalPushService.PersonalPushService).start();
+  }),
+);
+
+// Every personal service, consumers first (each step feeds requirements
+// opened by earlier steps). SqlClient, orchestration and providers come from
+// the runtime layers the whole group is merged above.
+const PersonalLayerLive = PersonalReactorsLive.pipe(
+  Layer.provideMerge(
+    PersonalPushService.layer.pipe(
+      Layer.provide(PersonalPushService.transportLive),
+      Layer.provide(ServerSecretStore.layer),
+    ),
+  ),
+  Layer.provideMerge(PersonalMemoryService.layer),
+  Layer.provideMerge(PersonalRoutineService.layer),
+  Layer.provideMerge(PersonalTasksDispatcherLive),
+  Layer.provideMerge(PersonalTaskService.layerLive),
+  Layer.provideMerge(PersonalBotsSeedLive),
+  Layer.provideMerge(PersonalBotService.layer),
+  Layer.provideMerge(PersonalBotRepository.layer),
+);
+
 const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const installation = yield* AntigravityInstallation;
@@ -530,6 +562,8 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(PersonalBotsSeedLive),
   Layer.provideMerge(PersonalBotService.layer),
   Layer.provideMerge(PersonalBotRepository.layer),
+  // consume the bot service and repository.
+  Layer.provideMerge(PersonalLayerLive),
   Layer.provideMerge(AntigravityInstallationRefreshLive),
   Layer.provideMerge(ProviderAuthServiceLive),
   // Split into a second pipe: a single pipe accepts at most 20 steps. The

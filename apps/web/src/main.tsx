@@ -13,11 +13,15 @@ import {
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+import { registerPersonalServiceWorker } from "./features/personal/serviceWorker";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
 const history = isElectron ? createHashHistory() : createBrowserHistory();
 
 const router = getRouter(history);
+
+// Production builds on secure origins only: offline app shell + push clicks.
+registerPersonalServiceWorker((path) => router.history.push(path));
 
 if (isElectron) {
   syncDocumentElectronPlatformClasses(navigator.platform);

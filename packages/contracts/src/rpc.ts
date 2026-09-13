@@ -290,6 +290,36 @@ import {
   PersonalBrowserStatus,
   PersonalBrowserStreamItem,
 } from "./personalBrowser.ts";
+import {
+  PersonalRoutine,
+  PersonalRoutineCreateInput,
+  PersonalRoutineIdInput,
+  PersonalRoutineListResult,
+  PersonalRoutineRunNowInput,
+  PersonalRoutineRunNowResult,
+  PersonalRoutinesError,
+  PersonalRoutineUpdateInput,
+} from "./personalRoutines.ts";
+import {
+  PersonalMemoryDeleteInput,
+  PersonalMemoryEntry,
+  PersonalMemoryError,
+  PersonalMemoryListInput,
+  PersonalMemoryListResult,
+  PersonalMemorySearchInput,
+  PersonalMemoryUpdateInput,
+} from "./personalMemory.ts";
+import {
+  PersonalPushEndpointInput,
+  PersonalPushError,
+  PersonalPushPreferences,
+  PersonalPushPublicKeyResult,
+  PersonalPushSettings,
+  PersonalPushSubscribeInput,
+  PersonalPushSubscribeResult,
+  PersonalPushTestInput,
+  PersonalPushTestResult,
+} from "./personalPush.ts";
 import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
@@ -469,6 +499,28 @@ export const WS_METHODS = {
   personalBrowserReturnToAgent: "personalBrowser.returnToAgent",
   personalBrowserListFiles: "personalBrowser.listFiles",
   personalBrowserActivity: "personalBrowser.activity",
+  // Personal routines methods
+  personalRoutinesList: "personalRoutines.list",
+  personalRoutinesCreate: "personalRoutines.create",
+  personalRoutinesUpdate: "personalRoutines.update",
+  personalRoutinesDelete: "personalRoutines.delete",
+  personalRoutinesPause: "personalRoutines.pause",
+  personalRoutinesResume: "personalRoutines.resume",
+  personalRoutinesRunNow: "personalRoutines.runNow",
+
+  // Personal memory methods
+  personalMemoryList: "personalMemory.list",
+  personalMemorySearch: "personalMemory.search",
+  personalMemoryUpdate: "personalMemory.update",
+  personalMemoryDelete: "personalMemory.delete",
+
+  // Personal Web Push methods
+  personalPushPublicKey: "personalPush.publicKey",
+  personalPushGetSettings: "personalPush.getSettings",
+  personalPushSubscribe: "personalPush.subscribe",
+  personalPushUnsubscribe: "personalPush.unsubscribe",
+  personalPushTest: "personalPush.test",
+  personalPushSetPreferences: "personalPush.setPreferences",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -1058,6 +1110,117 @@ const WsPersonalBrowserActivityRpc = Rpc.make(WS_METHODS.personalBrowserActivity
   stream: true,
 });
 
+const PersonalRoutinesRpcError = Schema.Union([
+  PersonalRoutinesError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsPersonalRoutinesListRpc = Rpc.make(WS_METHODS.personalRoutinesList, {
+  payload: Schema.Struct({}),
+  success: PersonalRoutineListResult,
+  error: PersonalRoutinesRpcError,
+});
+
+const WsPersonalRoutinesCreateRpc = Rpc.make(WS_METHODS.personalRoutinesCreate, {
+  payload: PersonalRoutineCreateInput,
+  success: PersonalRoutine,
+  error: PersonalRoutinesRpcError,
+});
+
+const WsPersonalRoutinesUpdateRpc = Rpc.make(WS_METHODS.personalRoutinesUpdate, {
+  payload: PersonalRoutineUpdateInput,
+  success: PersonalRoutine,
+  error: PersonalRoutinesRpcError,
+});
+
+const WsPersonalRoutinesDeleteRpc = Rpc.make(WS_METHODS.personalRoutinesDelete, {
+  payload: PersonalRoutineIdInput,
+  success: Schema.Struct({}),
+  error: PersonalRoutinesRpcError,
+});
+
+const WsPersonalRoutinesPauseRpc = Rpc.make(WS_METHODS.personalRoutinesPause, {
+  payload: PersonalRoutineIdInput,
+  success: PersonalRoutine,
+  error: PersonalRoutinesRpcError,
+});
+
+const WsPersonalRoutinesResumeRpc = Rpc.make(WS_METHODS.personalRoutinesResume, {
+  payload: PersonalRoutineIdInput,
+  success: PersonalRoutine,
+  error: PersonalRoutinesRpcError,
+});
+
+const WsPersonalRoutinesRunNowRpc = Rpc.make(WS_METHODS.personalRoutinesRunNow, {
+  payload: PersonalRoutineRunNowInput,
+  success: PersonalRoutineRunNowResult,
+  error: PersonalRoutinesRpcError,
+});
+
+const PersonalMemoryRpcError = Schema.Union([PersonalMemoryError, EnvironmentAuthorizationError]);
+
+const WsPersonalMemoryListRpc = Rpc.make(WS_METHODS.personalMemoryList, {
+  payload: PersonalMemoryListInput,
+  success: PersonalMemoryListResult,
+  error: PersonalMemoryRpcError,
+});
+
+const WsPersonalMemorySearchRpc = Rpc.make(WS_METHODS.personalMemorySearch, {
+  payload: PersonalMemorySearchInput,
+  success: PersonalMemoryListResult,
+  error: PersonalMemoryRpcError,
+});
+
+const WsPersonalMemoryUpdateRpc = Rpc.make(WS_METHODS.personalMemoryUpdate, {
+  payload: PersonalMemoryUpdateInput,
+  success: PersonalMemoryEntry,
+  error: PersonalMemoryRpcError,
+});
+
+const WsPersonalMemoryDeleteRpc = Rpc.make(WS_METHODS.personalMemoryDelete, {
+  payload: PersonalMemoryDeleteInput,
+  success: Schema.Struct({}),
+  error: PersonalMemoryRpcError,
+});
+
+const PersonalPushRpcError = Schema.Union([PersonalPushError, EnvironmentAuthorizationError]);
+
+const WsPersonalPushPublicKeyRpc = Rpc.make(WS_METHODS.personalPushPublicKey, {
+  payload: Schema.Struct({}),
+  success: PersonalPushPublicKeyResult,
+  error: PersonalPushRpcError,
+});
+
+const WsPersonalPushGetSettingsRpc = Rpc.make(WS_METHODS.personalPushGetSettings, {
+  payload: Schema.Struct({}),
+  success: PersonalPushSettings,
+  error: PersonalPushRpcError,
+});
+
+const WsPersonalPushSubscribeRpc = Rpc.make(WS_METHODS.personalPushSubscribe, {
+  payload: PersonalPushSubscribeInput,
+  success: PersonalPushSubscribeResult,
+  error: PersonalPushRpcError,
+});
+
+const WsPersonalPushUnsubscribeRpc = Rpc.make(WS_METHODS.personalPushUnsubscribe, {
+  payload: PersonalPushEndpointInput,
+  success: Schema.Struct({}),
+  error: PersonalPushRpcError,
+});
+
+const WsPersonalPushTestRpc = Rpc.make(WS_METHODS.personalPushTest, {
+  payload: PersonalPushTestInput,
+  success: PersonalPushTestResult,
+  error: PersonalPushRpcError,
+});
+
+const WsPersonalPushSetPreferencesRpc = Rpc.make(WS_METHODS.personalPushSetPreferences, {
+  payload: PersonalPushPreferences,
+  success: PersonalPushPreferences,
+  error: PersonalPushRpcError,
+});
+
 const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   payload: ProjectSearchEntriesInput,
   success: ProjectSearchEntriesResult,
@@ -1600,6 +1763,23 @@ export const WsRpcGroup = RpcGroup.make(
   WsPersonalBrowserReturnToAgentRpc,
   WsPersonalBrowserListFilesRpc,
   WsPersonalBrowserActivityRpc,
+  WsPersonalRoutinesListRpc,
+  WsPersonalRoutinesCreateRpc,
+  WsPersonalRoutinesUpdateRpc,
+  WsPersonalRoutinesDeleteRpc,
+  WsPersonalRoutinesPauseRpc,
+  WsPersonalRoutinesResumeRpc,
+  WsPersonalRoutinesRunNowRpc,
+  WsPersonalMemoryListRpc,
+  WsPersonalMemorySearchRpc,
+  WsPersonalMemoryUpdateRpc,
+  WsPersonalMemoryDeleteRpc,
+  WsPersonalPushPublicKeyRpc,
+  WsPersonalPushGetSettingsRpc,
+  WsPersonalPushSubscribeRpc,
+  WsPersonalPushUnsubscribeRpc,
+  WsPersonalPushTestRpc,
+  WsPersonalPushSetPreferencesRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,

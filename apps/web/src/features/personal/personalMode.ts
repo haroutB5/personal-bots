@@ -33,6 +33,7 @@ export function isPersonalPath(pathname: string): boolean {
     path === "/bots" ||
     path.startsWith("/bots/") ||
     path === "/tasks" ||
+    path.startsWith("/tasks/") ||
     path === "/computer" ||
     path === "/files"
   );
@@ -42,10 +43,17 @@ export function isPersonalPath(pathname: string): boolean {
 export function activeTabFor(pathname: string): PersonalTab | null {
   const path = normalizePath(pathname);
   if (path === "/bots" || path === "/bots/settings") return "chats";
-  if (path === "/tasks") return "tasks";
+  // Task and routine detail keep the tab bar; the routine editor is focused.
+  if (path === "/tasks" || (path.startsWith("/tasks/") && !isRoutineEditorPath(path))) {
+    return "tasks";
+  }
   if (path === "/computer") return "computer";
   if (path === "/files") return "files";
   return null;
+}
+
+function isRoutineEditorPath(path: string): boolean {
+  return path === "/tasks/routines/new" || /^\/tasks\/routines\/[^/]+\/edit$/.test(path);
 }
 
 export function readDeveloperView(): boolean {

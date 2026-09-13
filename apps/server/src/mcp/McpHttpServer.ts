@@ -34,6 +34,8 @@ import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handler
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import { BotsToolkitHandlersLive } from "./toolkits/bots/handlers.ts";
 import { BotsToolkit } from "./toolkits/bots/tools.ts";
+import { PersonalToolkitHandlersLive } from "./toolkits/personal/handlers.ts";
+import { PersonalToolkit } from "./toolkits/personal/tools.ts";
 import {
   DeviceScreenshotToolkitHandlersLive,
   DeviceStandardToolkitHandlersLive,
@@ -621,6 +623,10 @@ export const BotsToolkitRegistrationLive = McpServer.toolkit(BotsToolkit).pipe(
   Layer.provide(PersonalBotRepository.layer),
 );
 
+export const PersonalToolkitRegistrationLive = McpServer.toolkit(PersonalToolkit).pipe(
+  Layer.provide(PersonalToolkitHandlersLive),
+);
+
 const DeviceStandardToolkitRegistrationLive = McpServer.toolkit(DeviceStandardToolkit).pipe(
   Layer.provide(DeviceStandardToolkitHandlersLive),
 );
@@ -645,5 +651,6 @@ export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   BotsToolkitRegistrationLive,
+  PersonalToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

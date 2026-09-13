@@ -52,6 +52,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { appendUserInputAttachmentPaths } from "../userInputAttachments.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -486,6 +487,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   // Optional: without it (provider-only runtimes, most tests) no thread is a
   // personal bot's, so none gets the "bots" capability or secret variables.
   const personalSessions = yield* Effect.serviceOption(PersonalSessionAccess.PersonalSessionAccess);
+  // Only for the personal-bot thread check below; provider-only runtimes and
+  // tests without SQLite simply never grant the "personal" toolset.
+  const personalSql = yield* Effect.serviceOption(SqlClient.SqlClient);
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -916,8 +920,20 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     if (access.browser) capabilities.add("preview");
     if (access.device) capabilities.add("device");
     if (personalBotThread) capabilities.add("bots");
+    if (yield* isPersonalBotThread(threadId)) capabilities.add("personal");
     return capabilities;
   });
+
+  /** Routines and memory tools belong to personal-bot threads only. */
+  const isPersonalBotThread = (threadId: ThreadId) =>
+    Option.match(personalSql, {
+      onNone: () => Effect.succeed(false),
+      onSome: (sql) =>
+        sql`SELECT 1 AS "present" FROM personal_bot_threads WHERE thread_id = ${threadId} LIMIT 1`.pipe(
+          Effect.map((rows) => rows.length > 0),
+          Effect.orElseSucceed(() => false),
+        ),
+    });
 
   /** Install only the local CLI here. device_open supplies a separate config for each host. */
   const hostPlatform = yield* HostProcessPlatform;

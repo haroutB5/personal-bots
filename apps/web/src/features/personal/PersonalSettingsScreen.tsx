@@ -1,10 +1,10 @@
 import type { FormEvent, JSX } from "react";
-import { useMemo, useState } from "react";
+import { cloneElement, useMemo, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChevronRight, SquareTerminal } from "lucide-react";
+import { Bell, Brain, CalendarClock, ChevronRight, SquareTerminal } from "lucide-react";
 
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -24,6 +24,8 @@ const SECTION_TITLE =
   "mb-2 px-1 text-[13px] font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase";
 const CARD =
   "overflow-hidden rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)]";
+const SETTINGS_ROW =
+  "flex min-h-14 items-center gap-3 px-4 py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]";
 
 function DisplayNameForm({
   environmentId,
@@ -153,6 +155,66 @@ export function PersonalSettingsScreen(): JSX.Element {
               New bot
             </Link>
           </li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="settings-automation">
+        <h2 id="settings-automation" className={SECTION_TITLE}>
+          Routines, memory and notifications
+        </h2>
+        <ul className={`${CARD} divide-y divide-[var(--personal-border)]`}>
+          {(
+            [
+              {
+                key: "routines",
+                icon: CalendarClock,
+                label: "Routines",
+                hint: "Scheduled work for your bots",
+                link: <Link to="/tasks" search={{ view: "scheduled" }} className={SETTINGS_ROW} />,
+              },
+              {
+                key: "memory",
+                icon: Brain,
+                label: "Memory",
+                hint: "What bots remember, and deleting it",
+                link: <Link to="/bots/settings/memory" className={SETTINGS_ROW} />,
+              },
+              {
+                key: "notifications",
+                icon: Bell,
+                label: "Notifications",
+                hint: "Alerts on this phone when bots finish or need you",
+                link: <Link to="/bots/settings/notifications" className={SETTINGS_ROW} />,
+              },
+            ] as const
+          ).map((entry) => (
+            <li key={entry.key}>
+              {cloneElement(
+                entry.link,
+                undefined,
+                <>
+                  <entry.icon
+                    aria-hidden="true"
+                    className="size-5 shrink-0 text-[var(--personal-text)]"
+                    strokeWidth={1.75}
+                  />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="text-[15px] font-semibold text-[var(--personal-text)]">
+                      {entry.label}
+                    </span>
+                    <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
+                      {entry.hint}
+                    </span>
+                  </span>
+                  <ChevronRight
+                    aria-hidden="true"
+                    className="size-5 shrink-0 text-[var(--personal-text-secondary)]"
+                    strokeWidth={1.75}
+                  />
+                </>,
+              )}
+            </li>
+          ))}
         </ul>
       </section>
 
