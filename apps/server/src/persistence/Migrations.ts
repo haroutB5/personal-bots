@@ -71,6 +71,7 @@ import Migration0056 from "./Migrations/056_PersonalBrowserLeases.ts";
 import Migration0057 from "./Migrations/057_PersonalRoutines.ts";
 import Migration0058 from "./Migrations/058_PersonalMemory.ts";
 import Migration0059 from "./Migrations/059_PersonalNotifications.ts";
+import Migration0060 from "./Migrations/060_ProjectionThreadSessionProviderRetry.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -142,6 +143,9 @@ const migrationEntries = [
   [57, "PersonalRoutines", Migration0057],
   [58, "PersonalMemory", Migration0058],
   [59, "PersonalNotifications", Migration0059],
+  [60, "ProjectionThreadSessionProviderRetry", Migration0060],
+  // Ids 052+ are contiguous. The migrator runs any id above the latest applied
+  // one, so a new migration must take the next free id; never deploy a gap.
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

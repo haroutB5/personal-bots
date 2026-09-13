@@ -802,6 +802,123 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBeNull();
   });
 
+  it("carries a provider wait on the session until output resumes", async () => {
+    const harness = await createHarness();
+    const base = {
+      provider: ProviderDriverKind.make("claudeAgent"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-wait"),
+    };
+    harness.emit({
+      ...base,
+      type: "turn.started",
+      eventId: asEventId("evt-wait-turn"),
+      createdAt: "2026-09-13T03:47:09.000Z",
+    });
+    // The shape the Claude adapter emits for the observed 429 api_retry.
+    harness.emit({
+      ...base,
+      type: "session.state.changed",
+      eventId: asEventId("evt-wait-retry"),
+      createdAt: "2026-09-13T03:47:16.087Z",
+      payload: {
+        state: "running",
+        reason: "api_retry:1/300",
+        retry: {
+          kind: "rate_limited",
+          retryAt: "2026-09-13T09:47:16.087Z",
+          attempt: 1,
+          maxAttempts: 300,
+          reason: "HTTP 429 rate_limit",
+        },
+      },
+    });
+
+    const waiting = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.providerRetry?.kind === "rate_limited",
+    );
+    expect(waiting.session?.status).toBe("running");
+    expect(waiting.session?.activeTurnId).toBe("turn-wait");
+    expect(waiting.session?.providerRetry).toEqual({
+      kind: "rate_limited",
+      retryAt: "2026-09-13T09:47:16.087Z",
+      attempt: 1,
+      maxAttempts: 300,
+      reason: "HTTP 429 rate_limit",
+      provider: "claudeAgent",
+      observedAt: "2026-09-13T03:47:16.087Z",
+    });
+    // The shell stream re-reads the persisted session row; it carries the wait too.
+    expect((await harness.readThreadShell()).session?.providerRetry?.retryAt).toBe(
+      "2026-09-13T09:47:16.087Z",
+    );
+
+    harness.emit({
+      ...base,
+      type: "content.delta",
+      eventId: asEventId("evt-wait-output"),
+      itemId: asItemId("wait-text"),
+      createdAt: "2026-09-13T09:47:20.000Z",
+      payload: { streamKind: "assistant_text", delta: "Back again." },
+    });
+    const resumed = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session !== null && entry.session.providerRetry === undefined,
+    );
+    expect(resumed.session?.status).toBe("running");
+    expect(resumed.session?.activeTurnId).toBe("turn-wait");
+    expect((await harness.readThreadShell()).session?.providerRetry).toBeUndefined();
+  });
+
+  it("keeps a rate limit on the turn that failed on it and clears it on the next turn", async () => {
+    const harness = await createHarness();
+    const base = { provider: ProviderDriverKind.make("codex"), threadId: asThreadId("thread-1") };
+    harness.emit({
+      ...base,
+      type: "turn.started",
+      eventId: asEventId("evt-limit-turn"),
+      createdAt: "2026-09-13T10:00:00.000Z",
+      turnId: asTurnId("turn-limit"),
+    });
+    harness.emit({
+      ...base,
+      type: "turn.completed",
+      eventId: asEventId("evt-limit-failed"),
+      createdAt: "2026-09-13T10:00:05.000Z",
+      turnId: asTurnId("turn-limit"),
+      payload: {
+        state: "failed",
+        errorMessage: "Codex usage limit reached.",
+        retry: {
+          kind: "rate_limited",
+          retryAt: "2026-09-13T15:00:00.000Z",
+          reason: "usageLimitExceeded",
+        },
+      },
+    });
+    const failed = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "error" && entry.session.providerRetry !== undefined,
+    );
+    expect(failed.session?.lastError).toBe("Codex usage limit reached.");
+    expect(failed.session?.providerRetry?.retryAt).toBe("2026-09-13T15:00:00.000Z");
+
+    harness.emit({
+      ...base,
+      type: "turn.started",
+      eventId: asEventId("evt-next-turn"),
+      createdAt: "2026-09-13T15:01:00.000Z",
+      turnId: asTurnId("turn-next"),
+    });
+    const next = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.activeTurnId === "turn-next",
+    );
+    expect(next.session?.status).toBe("running");
+    expect(next.session?.providerRetry).toBeUndefined();
+  });
+
   it("clears active turn when provider session becomes ready", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

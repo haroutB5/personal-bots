@@ -531,6 +531,28 @@ export const OrchestrationSessionStatus = Schema.Literals([
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
+/**
+ * What an adapter knows about a provider-side wait: a rate limit, or a
+ * transport retry the provider runs on its own. `retryAt` is only set when the
+ * provider reported a delay or reset time; absent means "not reported", never
+ * a guess.
+ */
+export const ProviderRetryInfo = Schema.Struct({
+  kind: Schema.Literals(["rate_limited", "retrying"]),
+  retryAt: Schema.optional(IsoDateTime),
+  attempt: Schema.optional(NonNegativeInt),
+  maxAttempts: Schema.optional(NonNegativeInt),
+  reason: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProviderRetryInfo = typeof ProviderRetryInfo.Type;
+
+export const OrchestrationSessionProviderRetry = Schema.Struct({
+  ...ProviderRetryInfo.fields,
+  provider: TrimmedNonEmptyString,
+  observedAt: IsoDateTime,
+});
+export type OrchestrationSessionProviderRetry = typeof OrchestrationSessionProviderRetry.Type;
+
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
@@ -539,6 +561,8 @@ export const OrchestrationSession = Schema.Struct({
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
+  /** Set while the provider is rate limited or retrying; absent otherwise and on old events. */
+  providerRetry: Schema.optional(OrchestrationSessionProviderRetry),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;

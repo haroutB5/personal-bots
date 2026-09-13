@@ -220,15 +220,40 @@ export function codexUsageLimitMessage(
   atIso: string,
 ): string {
   const atMs = Date.parse(atIso);
+  const latest = latestExhaustedReset(snapshot, atMs);
+  const reset =
+    latest === null
+      ? ""
+      : ` The ${latest.kind} limit resets in ${formatCodexUsageLimitWait(latest.resetMs - atMs)}.`;
+  return `Codex usage limit reached.${reset}${codexUsageLimitNextStep(snapshot?.rateLimitReachedType)}`;
+}
+
+/** When the exhausted window behind a usage-limit stop resets, if Codex reported it. */
+export function codexUsageLimitResetAt(
+  snapshot: CodexRateLimitSnapshot | undefined,
+  atIso: string,
+): string | undefined {
+  const latest = latestExhaustedReset(snapshot, Date.parse(atIso));
+  if (latest === null) return undefined;
+  const dt = DateTime.make(latest.resetMs);
+  return Option.isSome(dt) ? DateTime.formatIso(dt.value) : undefined;
+}
+
+function latestExhaustedReset(
+  snapshot: CodexRateLimitSnapshot | undefined,
+  atMs: number,
+): { readonly kind: ServerProviderUsageWindow["kind"]; readonly resetMs: number } | null {
   const windows = snapshot && Number.isFinite(atMs) ? codexRateLimitsToWindows(snapshot) : [];
-  let reset = "";
-  let latestResetMs = Number.NEGATIVE_INFINITY;
+  let latest: {
+    readonly kind: ServerProviderUsageWindow["kind"];
+    readonly resetMs: number;
+  } | null = null;
   for (const window of windows) {
     if (window.usedPercent < 100 || !window.resetsAt) continue;
     const resetMs = Date.parse(window.resetsAt);
-    if (!Number.isFinite(resetMs) || resetMs <= atMs || resetMs <= latestResetMs) continue;
-    latestResetMs = resetMs;
-    reset = ` The ${window.kind} limit resets in ${formatCodexUsageLimitWait(resetMs - atMs)}.`;
+    if (!Number.isFinite(resetMs) || resetMs <= atMs || resetMs <= (latest?.resetMs ?? -Infinity))
+      continue;
+    latest = { kind: window.kind, resetMs };
   }
-  return `Codex usage limit reached.${reset}${codexUsageLimitNextStep(snapshot?.rateLimitReachedType)}`;
+  return latest;
 }

@@ -7,6 +7,8 @@ import {
   buildBotSummaries,
   collectAttentionThreads,
   filterBotSummaries,
+  isThreadLive,
+  isThreadRateLimited,
   providerLine,
   resolveBotProvider,
 } from "./botSummaries";
@@ -120,6 +122,35 @@ describe("buildBotSummaries", () => {
     const planner = summaries.find((summary) => summary.bot.name === "Planner")!;
     expect(planner.newestThread).toBeNull();
     expect(planner.lastActivityMs).toBeNull();
+  });
+
+  it("shows a thread parked on a rate limit as rate limited, not live", () => {
+    const wait = (kind: "rate_limited" | "retrying") => ({
+      kind,
+      provider: "claudeAgent",
+      observedAt: "2026-09-13T03:47:16.087Z",
+    });
+    const limited = shell("t-wait", "2026-09-13T09:00:00.000Z", {
+      latestTurn: { state: "running" },
+      session: { status: "running", providerRetry: wait("rate_limited") },
+    });
+    const [summary] = buildBotSummaries({
+      bots: [bots[0]!],
+      links: [link("assistant", "t-wait")],
+      shells: [limited],
+      providers: [provider("codex")],
+    });
+    expect([summary!.live, summary!.rateLimited]).toEqual([false, true]);
+
+    // A failed turn keeps its rate limit; a transport retry is still work in progress.
+    const failed = shell("t-failed", "2026-09-13T09:00:00.000Z", {
+      session: { status: "error", providerRetry: wait("rate_limited") },
+    });
+    const retrying = shell("t-retry", "2026-09-13T09:00:00.000Z", {
+      session: { status: "running", providerRetry: wait("retrying") },
+    });
+    expect([isThreadLive(failed), isThreadRateLimited(failed)]).toEqual([false, true]);
+    expect([isThreadLive(retrying), isThreadRateLimited(retrying)]).toEqual([true, false]);
   });
 
   it("searches bot names and thread titles", () => {

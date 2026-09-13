@@ -93,6 +93,15 @@ checkpoints but cannot roll back its conversation. The [checkpoint boundary](./o
 therefore rejects revert before touching files. Native permission and question option IDs must
 also survive normalization; a display label is not necessarily a valid reply.
 
+A rate-limited turn can look like a running one for hours: Claude's SDK retries a 429 in place
+(`system/api_retry`, observed at 6 h) and a rejected usage window parks the turn with no further
+messages. Adapters therefore normalize provider waits to `retry` on `session.state.changed` (or on
+a failed `turn.completed`, as Codex usage limits do), and ingestion projects it onto the thread
+session as `providerRetry`. `retryAt` comes only from a delay or reset the provider reported;
+leave it unset rather than estimating. Clients read thread shells through a per-event re-read of
+`projection_thread_sessions`, so a new session field needs its column in every session `SELECT`,
+not just the event payload.
+
 ## Attachments and stored history
 
 Attachments live outside the project workspace. [ProviderService](../../apps/server/src/provider/Layers/ProviderService.ts)

@@ -5,8 +5,10 @@ import type { TimelineEntry } from "~/session-logic";
 
 import {
   buildConversationItems,
+  conversationStateLabel,
   deriveConversationState,
   formatDayDivider,
+  resolveConversationHeaderName,
 } from "./conversationModel";
 
 const session = (status: OrchestrationSession["status"]) =>
@@ -55,6 +57,118 @@ describe("deriveConversationState", () => {
         ...none,
       }),
     ).toBe("idle");
+  });
+});
+
+describe("provider waits", () => {
+  const none = { pendingApprovals: [], pendingUserInputs: [] };
+  const waiting = (
+    status: OrchestrationSession["status"],
+    kind: "rate_limited" | "retrying",
+    retryAt?: string,
+  ) =>
+    ({
+      status,
+      providerRetry: {
+        kind,
+        provider: "claudeAgent",
+        observedAt: "2026-09-13T03:47:16.087Z",
+        ...(retryAt === undefined ? {} : { retryAt }),
+      },
+    }) as unknown as OrchestrationSession;
+  // Sunday 13 Sep 2026, 05:00 in London (BST).
+  const now = new Date("2026-09-13T04:00:00.000Z");
+
+  it("says rate limited instead of working, with the reported retry in London time", () => {
+    const limited = waiting("running", "rate_limited", "2026-09-13T09:47:16.087Z");
+    const state = deriveConversationState({
+      session: limited,
+      latestTurn: turn("running"),
+      ...none,
+    });
+    expect(state).toBe("rate_limited");
+    expect(conversationStateLabel(state, limited, now)).toBe("Rate limited · retry ~10:47");
+  });
+
+  it("never invents a reset time", () => {
+    const limited = waiting("running", "rate_limited");
+    expect(conversationStateLabel("rate_limited", limited, now)).toBe(
+      "Rate limited · reset not reported",
+    );
+  });
+
+  it("names the day when the retry is not today", () => {
+    const limited = waiting("running", "rate_limited", "2026-09-13T23:30:00.000Z");
+    expect(conversationStateLabel("rate_limited", limited, now)).toBe(
+      "Rate limited · retry ~Mon 00:30",
+    );
+  });
+
+  it("keeps the rate limit on a turn that failed on it; other waits end with the turn", () => {
+    expect(
+      deriveConversationState({
+        session: waiting("error", "rate_limited", "2026-09-13T09:47:16.087Z"),
+        latestTurn: turn("error"),
+        ...none,
+      }),
+    ).toBe("rate_limited");
+    expect(
+      deriveConversationState({
+        session: waiting("error", "retrying", "2026-09-13T09:47:16.087Z"),
+        latestTurn: null,
+        ...none,
+      }),
+    ).toBe("error");
+    expect(
+      deriveConversationState({
+        session: waiting("ready", "rate_limited"),
+        latestTurn: turn("completed"),
+        ...none,
+      }),
+    ).toBe("idle");
+  });
+
+  it("shows a pending transport retry and drops the time once it has passed", () => {
+    const retrying = waiting("running", "retrying", "2026-09-13T04:02:00.000Z");
+    const state = deriveConversationState({ session: retrying, latestTurn: null, ...none });
+    expect(state).toBe("retrying");
+    expect(conversationStateLabel(state, retrying, now)).toBe("Retrying · next ~05:02");
+    expect(conversationStateLabel(state, retrying, new Date("2026-09-13T04:05:00.000Z"))).toBe(
+      "Retrying",
+    );
+  });
+
+  it("still asks the user first", () => {
+    expect(
+      deriveConversationState({
+        session: waiting("running", "rate_limited"),
+        latestTurn: null,
+        pendingApprovals: [{ requestId: "r1" } as never],
+        pendingUserInputs: [],
+      }),
+    ).toBe("waiting");
+  });
+});
+
+describe("resolveConversationHeaderName", () => {
+  it("is a skeleton until the bots list loads, never the thread title", () => {
+    expect(resolveConversationHeaderName({ botName: null, botsLoaded: false })).toEqual({
+      status: "loading",
+    });
+  });
+
+  it("names the bot once it is known", () => {
+    expect(resolveConversationHeaderName({ botName: "Assistant", botsLoaded: true })).toEqual({
+      status: "ready",
+      name: "Assistant",
+    });
+  });
+
+  it("falls back to a neutral name for a bot that no longer exists", () => {
+    expect(resolveConversationHeaderName({ botName: null, botsLoaded: true })).toEqual({
+      status: "ready",
+      name: "Chat",
+    });
   });
 });
 

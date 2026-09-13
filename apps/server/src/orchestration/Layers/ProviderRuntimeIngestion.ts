@@ -5,6 +5,7 @@ import {
   MessageId,
   type OrchestrationEvent,
   OrchestrationProposedPlanId,
+  type OrchestrationSessionProviderRetry,
   CheckpointRef,
   classifyTaskAgentKind,
   EventId,
@@ -1606,6 +1607,17 @@ const make = Effect.gen(function* () {
               : status === "ready" || status === "interrupted"
                 ? null
                 : (thread.session?.lastError ?? null);
+        // The adapter's wait (rate limit / retry) rides on the session. A
+        // rate-limited turn that then fails keeps it, so the error state can
+        // still say when the limit resets; anything else moving the thread on
+        // clears it.
+        const providerRetry: OrchestrationSessionProviderRetry | undefined =
+          (event.type === "session.state.changed" || event.type === "turn.completed") &&
+          event.payload.retry !== undefined
+            ? { ...event.payload.retry, provider: event.provider, observedAt: now }
+            : event.type === "turn.completed" && status === "error"
+              ? (thread.session?.providerRetry ?? undefined)
+              : undefined;
 
         if (shouldApplyThreadLifecycle) {
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
@@ -1642,11 +1654,39 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
+              ...(providerRetry !== undefined ? { providerRetry } : {}),
               updatedAt: now,
             },
             createdAt: now,
           });
         }
+      }
+
+      // Output after a retry means the provider got through: clear the wait
+      // now instead of leaving "Rate limited" up until the turn ends.
+      if (
+        event.type === "content.delta" &&
+        thread.session?.providerRetry != null &&
+        thread.session.status === "running"
+      ) {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.session.set",
+          commandId: yield* providerCommandId(event, "thread-session-retry-cleared"),
+          threadId: thread.id,
+          session: {
+            threadId: thread.id,
+            status: "running",
+            providerName: event.provider,
+            ...(event.providerInstanceId !== undefined
+              ? { providerInstanceId: event.providerInstanceId }
+              : {}),
+            runtimeMode: thread.session.runtimeMode,
+            activeTurnId: thread.session.activeTurnId,
+            lastError: thread.session.lastError,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
       }
 
       const assistantDelta =

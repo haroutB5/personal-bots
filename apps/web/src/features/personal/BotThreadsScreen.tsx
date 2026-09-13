@@ -10,7 +10,7 @@ import { useThreadShells } from "~/state/entities";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatar } from "./BotAvatar";
-import { isThreadLive, threadNeedsAttention } from "./botSummaries";
+import { isThreadLive, isThreadRateLimited, threadNeedsAttention } from "./botSummaries";
 import { formatRelativeTime } from "./relativeTime";
 import { useStartBotChat } from "./startBotChat";
 import {
@@ -62,6 +62,11 @@ function ThreadRowContent({ row, now }: { row: BotThreadRow; now: number }) {
         <span className="flex shrink-0 items-center gap-1.5 text-[13px] text-[var(--personal-text-secondary)]">
           <span aria-hidden="true" className="size-2 rounded-full bg-[var(--personal-review)]" />
           Needs you
+        </span>
+      ) : isThreadRateLimited(row.shell) ? (
+        <span className="flex shrink-0 items-center gap-1.5 text-[13px] text-[var(--personal-text-secondary)]">
+          <span aria-hidden="true" className="size-2 rounded-full bg-[var(--personal-review)]" />
+          Rate limited
         </span>
       ) : live ? (
         <span className="flex shrink-0 items-center gap-1.5 text-[13px] text-[var(--personal-text-secondary)]">

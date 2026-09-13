@@ -140,6 +140,7 @@ const makeSession = (input: {
   readonly status: OrchestrationSession["status"];
   readonly activeTurnId: TurnId | null;
   readonly lastError?: string;
+  readonly providerRetry?: OrchestrationSession["providerRetry"];
   readonly updatedAt: string;
 }): OrchestrationSession => ({
   threadId: input.threadId,
@@ -148,6 +149,7 @@ const makeSession = (input: {
   runtimeMode: "full-access",
   activeTurnId: input.activeTurnId,
   lastError: input.lastError ?? null,
+  ...(input.providerRetry !== undefined ? { providerRetry: input.providerRetry } : {}),
   updatedAt: input.updatedAt,
 });
 
@@ -198,7 +200,11 @@ const endTurn = (
   threadId: ThreadId,
   turnId: TurnId,
   reply: string,
-  end: { readonly status?: OrchestrationSession["status"]; readonly lastError?: string } = {},
+  end: {
+    readonly status?: OrchestrationSession["status"];
+    readonly lastError?: string;
+    readonly providerRetry?: OrchestrationSession["providerRetry"];
+  } = {},
 ) =>
   Effect.gen(function* () {
     const now = DateTime.formatIso(yield* DateTime.now);
@@ -222,6 +228,7 @@ const endTurn = (
         status: end.status ?? "ready",
         activeTurnId: null,
         ...(end.lastError === undefined ? {} : { lastError: end.lastError }),
+        ...(end.providerRetry === undefined ? {} : { providerRetry: end.providerRetry }),
         updatedAt: now,
       }),
     );
@@ -231,7 +238,11 @@ const runTurn = (
   harness: Harness,
   threadId: ThreadId,
   reply: string,
-  end: { readonly status?: OrchestrationSession["status"]; readonly lastError?: string } = {},
+  end: {
+    readonly status?: OrchestrationSession["status"];
+    readonly lastError?: string;
+    readonly providerRetry?: OrchestrationSession["providerRetry"];
+  } = {},
 ) =>
   Effect.gen(function* () {
     const turnId = yield* beginTurn(harness, threadId);
@@ -604,6 +615,128 @@ it.effect("rate limits back off 1m, 5m, 15m and then fail the task", () => {
     const failed = yield* reload(root.taskId);
     expect([failed.status, failed.errorCategory]).toEqual(["failed", "rate_limited"]);
     expect((yield* service.get({ taskId: root.taskId })).attempts.length).toBe(4);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+/** A provider wait as the adapter reports it; `waitMs` null = no reset reported. */
+const providerWait = (
+  kind: "rate_limited" | "retrying",
+  now: DateTime.Utc,
+  waitMs: number | null,
+): NonNullable<OrchestrationSession["providerRetry"]> => ({
+  kind,
+  provider: "claudeAgent",
+  observedAt: DateTime.formatIso(now),
+  ...(waitMs === null
+    ? {}
+    : { retryAt: DateTime.formatIso(DateTime.add(now, { milliseconds: waitMs })) }),
+  reason: kind === "rate_limited" ? "HTTP 429 rate_limit" : "HTTP 502 api_error",
+});
+
+/** Re-sends the running session with a wait on it, like an api_retry heartbeat. */
+const waitOnProvider = (
+  harness: Harness,
+  threadId: ThreadId,
+  turnId: TurnId,
+  retry: NonNullable<OrchestrationSession["providerRetry"]>,
+) =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    yield* setSession(
+      harness,
+      makeSession({
+        threadId,
+        status: "running",
+        activeTurnId: turnId,
+        providerRetry: retry,
+        updatedAt: now,
+      }),
+    );
+  });
+
+it.effect(
+  "a long provider wait interrupts the turn, frees its slot and waits for the reset",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const limited = yield* createRoot("wait-limited", "assistant");
+      yield* createRoot("wait-busy", "developer");
+      const queued = yield* createRoot("wait-queued", "researcher");
+      expect(queued.status).toBe("queued");
+
+      const thread = threadOf(limited);
+      const turnId = yield* beginTurn(harness, thread);
+      const now = yield* DateTime.now;
+      const retry = providerWait("rate_limited", now, 6 * 60 * 60_000);
+      yield* waitOnProvider(harness, thread, turnId, retry);
+
+      const paused = yield* reload(limited.taskId);
+      expect([paused.status, paused.errorCategory]).toEqual(["rate_limited", "rate_limited"]);
+      expect(DateTime.toEpochMillis(paused.availableAt!)).toBe(Date.parse(retry.retryAt!));
+      expect(paused.errorMessage).toContain("HTTP 429 rate_limit");
+      const interrupt = interrupts(harness).at(-1)!;
+      expect([interrupt.threadId, interrupt.turnId]).toEqual([thread, turnId]);
+      const detail = yield* service.get({ taskId: limited.taskId });
+      expect(
+        detail.attempts.map((attempt) => [attempt.endedAt !== null, attempt.resumable]),
+      ).toEqual([[true, true]]);
+      // The freed slot goes to the queued task.
+      expect((yield* reload(queued.taskId)).status).toBe("running");
+
+      // Later heartbeats for the paused turn change nothing.
+      const interruptCount = interrupts(harness).length;
+      yield* waitOnProvider(harness, thread, turnId, retry);
+      expect(interrupts(harness).length).toBe(interruptCount);
+
+      // Not claimable after the 1 minute unreported-limit backoff: it waits for the reset.
+      yield* TestClock.adjust("5 minutes");
+      yield* service.sweep;
+      yield* service.drain;
+      expect((yield* reload(limited.taskId)).status).toBe("rate_limited");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("short retries stay with the provider; unreported limits back off", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("wait-short");
+    const thread = threadOf(root);
+    const turnId = yield* beginTurn(harness, thread);
+    const now = yield* DateTime.now;
+
+    yield* waitOnProvider(harness, thread, turnId, providerWait("retrying", now, 30_000));
+    yield* waitOnProvider(harness, thread, turnId, providerWait("rate_limited", now, 90_000));
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    expect(interrupts(harness)).toEqual([]);
+
+    yield* waitOnProvider(harness, thread, turnId, providerWait("rate_limited", now, null));
+    const paused = yield* reload(root.taskId);
+    expect(paused.status).toBe("rate_limited");
+    expect(DateTime.toEpochMillis(paused.availableAt!) - DateTime.toEpochMillis(now)).toBe(60_000);
+    expect(paused.errorMessage).toContain("did not report");
+    expect(interrupts(harness).length).toBe(1);
+
+    // The retried turn fails on a limit the adapter recognised (Codex usage
+    // limit): the task waits for the reset it reported, not the backoff.
+    yield* TestClock.adjust("1 minute");
+    yield* service.sweep;
+    yield* service.drain;
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    const later = yield* DateTime.now;
+    const limit = providerWait("rate_limited", later, 3 * 60 * 60_000);
+    yield* runTurn(harness, thread, "", {
+      status: "error",
+      lastError: "Codex usage limit reached.",
+      providerRetry: limit,
+    });
+    const waiting = yield* reload(root.taskId);
+    expect(waiting.status).toBe("rate_limited");
+    expect(DateTime.toEpochMillis(waiting.availableAt!)).toBe(Date.parse(limit.retryAt!));
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 

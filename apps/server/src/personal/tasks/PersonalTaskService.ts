@@ -63,6 +63,33 @@ const RATE_LIMIT_PATTERN =
 export const classifyProviderError = (message: string | null): "rate_limited" | "provider_error" =>
   message !== null && RATE_LIMIT_PATTERN.test(message) ? "rate_limited" : "provider_error";
 
+/** A provider wait longer than this gives the task's slot back instead of holding it. */
+export const PERSONAL_TASKS_LONG_PROVIDER_WAIT_MS = 2 * 60_000;
+
+export interface ProviderWaitPause {
+  readonly retry: NonNullable<OrchestrationSession["providerRetry"]>;
+  /** The provider's reported next attempt / reset; null = not reported (use the backoff). */
+  readonly retryAtMs: number | null;
+}
+
+/**
+ * Whether a running task turn should stop waiting on its provider. A reported
+ * wait (rate limit or retry) pauses when it is more than two minutes out; a
+ * rate limit that reports no reset always pauses. Short retries are left to
+ * the provider.
+ */
+export const providerWaitPause = (
+  retry: OrchestrationSession["providerRetry"],
+  nowMs: number,
+): ProviderWaitPause | null => {
+  if (retry === undefined) return null;
+  const retryAtMs = retry.retryAt === undefined ? Number.NaN : Date.parse(retry.retryAt);
+  if (!Number.isFinite(retryAtMs)) {
+    return retry.kind === "rate_limited" ? { retry, retryAtMs: null } : null;
+  }
+  return retryAtMs - nowMs > PERSONAL_TASKS_LONG_PROVIDER_WAIT_MS ? { retry, retryAtMs } : null;
+};
+
 export interface PersonalTaskCreateOptions extends PersonalTaskCreateInput {
   readonly source?: PersonalTaskSource;
   readonly maxDepth?: number;
@@ -158,6 +185,8 @@ type AttemptOutcome =
       readonly kind: "failed";
       readonly category: "rate_limited" | "provider_error" | "dispatch_failed";
       readonly message: string | null;
+      /** A reset the provider reported; replaces the 1/5/15 min backoff. */
+      readonly availableAt?: DateTime.Utc;
     };
 
 type WorkItem =
@@ -407,6 +436,20 @@ export const make = Effect.gen(function* () {
           return;
         }
         if (outcome.kind === "failed" && outcome.category === "rate_limited") {
+          // A reported reset is honest about the wait, so it is used as-is
+          // rather than spending the unreported-limit backoff budget.
+          if (
+            outcome.availableAt !== undefined &&
+            DateTime.toEpochMillis(outcome.availableAt) > DateTime.toEpochMillis(now)
+          ) {
+            yield* writeTask(changed, task.value, {
+              status: "rate_limited",
+              availableAt: outcome.availableAt,
+              errorCategory: "rate_limited",
+              errorMessage: outcome.message,
+            });
+            return;
+          }
           const attempts = yield* repository.listAttempts(attempt.taskId);
           let consecutive = 0;
           for (const entry of attempts.toReversed()) {
@@ -724,29 +767,99 @@ export const make = Effect.gen(function* () {
         }
         yield* finishAttempt(attempt, { kind: "interrupted", message: session.lastError });
         return;
-      case "error":
+      case "error": {
         if (!observed && !fresh) {
           return;
         }
+        // A turn that failed on a rate limit the adapter recognised waits for
+        // the reset it reported (Codex usage limits), not a pattern guess.
+        const limit =
+          session.providerRetry?.kind === "rate_limited" ? session.providerRetry : undefined;
+        const now = yield* DateTime.now;
+        const resetMs = limit?.retryAt === undefined ? Number.NaN : Date.parse(limit.retryAt);
         yield* finishAttempt(attempt, {
           kind: "failed",
-          category: classifyProviderError(session.lastError),
+          category: limit !== undefined ? "rate_limited" : classifyProviderError(session.lastError),
           message: session.lastError,
+          ...(Number.isFinite(resetMs)
+            ? {
+                availableAt: DateTime.add(now, {
+                  milliseconds: resetMs - DateTime.toEpochMillis(now),
+                }),
+              }
+            : {}),
         });
         return;
+      }
       default:
         return;
     }
+  });
+
+  // Gives the slot back when the attempt's turn is stuck on a provider wait:
+  // the outcome is written first, so the "interrupted" session that follows
+  // settles nothing, then the turn is interrupted by its own thread and turn.
+  const pauseForProviderWait = Effect.fn("PersonalTaskService.pauseForProviderWait")(function* (
+    attempt: PersonalTaskAttempt,
+    pause: ProviderWaitPause,
+    now: DateTime.Utc,
+  ) {
+    const { retry, retryAtMs } = pause;
+    const what = retry.kind === "rate_limited" ? "rate limited" : "retrying";
+    const detail = retry.reason === undefined ? "" : ` (${retry.reason})`;
+    const message =
+      retryAtMs === null
+        ? `The provider is ${what}${detail} and did not report when the limit resets.`
+        : `The provider is ${what}${detail}; its next attempt is at ${DateTime.formatIso(DateTime.makeUnsafe(retryAtMs))}.`;
+    yield* finishAttempt(attempt, {
+      kind: "failed",
+      category: "rate_limited",
+      message,
+      ...(retryAtMs === null
+        ? {}
+        : {
+            availableAt: DateTime.add(now, {
+              milliseconds: retryAtMs - DateTime.toEpochMillis(now),
+            }),
+          }),
+    });
+    yield* engine
+      .dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make(
+          `personal-task:${attempt.taskId}:${attempt.attempt}:provider-wait`,
+        ),
+        threadId: attempt.providerThreadId,
+        ...(attempt.turnId !== null ? { turnId: attempt.turnId } : {}),
+        createdAt: DateTime.formatIso(now),
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("personal task could not interrupt a turn waiting on its provider", {
+            taskId: attempt.taskId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
   });
 
   const observeSession = Effect.fn("PersonalTaskService.observeSession")(function* (
     threadId: ThreadId,
     session: OrchestrationSession,
   ) {
-    if (session.status === "running" && session.activeTurnId !== null) {
-      const attempt = yield* activeAttemptForThread(threadId);
-      if (attempt !== null && attempt.turnId === null) {
-        yield* repository.writeAttempt({ ...attempt, turnId: session.activeTurnId });
+    if (session.status === "running") {
+      let attempt = yield* activeAttemptForThread(threadId);
+      if (attempt !== null && attempt.turnId === null && session.activeTurnId !== null) {
+        attempt = { ...attempt, turnId: session.activeTurnId };
+        yield* repository.writeAttempt(attempt);
+      }
+      if (attempt !== null) {
+        const now = yield* DateTime.now;
+        const pause = providerWaitPause(session.providerRetry, DateTime.toEpochMillis(now));
+        if (pause !== null) {
+          yield* pauseForProviderWait(attempt, pause, now);
+          return;
+        }
       }
     }
     yield* settle(threadId);

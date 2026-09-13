@@ -76,6 +76,7 @@ import {
   codexRateLimitsToUpdate,
   codexUsageLimitMessage,
   mergeCodexRateLimits,
+  codexUsageLimitResetAt,
 } from "./codexUsageLimits.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
@@ -2374,6 +2375,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
             let usageLimitError: ProviderRuntimeEvent | undefined;
             let usageLimitMessage: string | undefined;
+            let usageLimitRetry:
+              | {
+                  readonly kind: "rate_limited";
+                  readonly retryAt?: string;
+                  readonly reason: string;
+                }
+              | undefined;
             if (event.method === "turn/completed") {
               const completedPayload = readPayload(
                 EffectCodexSchema.V2TurnCompletedNotification,
@@ -2385,6 +2393,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   : undefined;
               if (turnError?.codexErrorInfo === "usageLimitExceeded") {
                 usageLimitMessage = codexUsageLimitMessage(rateLimits, event.createdAt);
+                const resetAt = codexUsageLimitResetAt(rateLimits, event.createdAt);
+                usageLimitRetry = {
+                  kind: "rate_limited",
+                  ...(resetAt !== undefined ? { retryAt: resetAt } : {}),
+                  reason: "usageLimitExceeded",
+                };
                 usageLimitError = {
                   ...runtimeEventBase(event, event.threadId),
                   type: "runtime.error",
@@ -2404,6 +2418,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   payload: {
                     ...runtimeEvent.payload,
                     ...(usageLimitMessage ? { errorMessage: usageLimitMessage } : {}),
+                    ...(usageLimitRetry ? { retry: usageLimitRetry } : {}),
                     tokenUsage: completeCodexTurnTokenUsage(
                       turnTokenUsage,
                       String(runtimeEvent.turnId),
