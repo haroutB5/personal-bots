@@ -4904,6 +4904,8 @@ describe("agent browser access", () => {
       readonly withoutOrchestration?: boolean;
       /** Provides PersonalSessionAccess, answering whether the thread is a personal bot's. */
       readonly personalBotThread?: boolean;
+      /** Receives each input the adapter's startSession was called with. */
+      readonly startInputs?: Array<unknown>;
     },
   ) =>
     Effect.gen(function* () {
@@ -5036,6 +5038,7 @@ describe("agent browser access", () => {
         });
       }).pipe(Effect.provide(providerLayer));
 
+      options?.startInputs?.push(...codex.startSession.mock.calls.map(([input]) => input));
       return issued;
     });
 
@@ -5067,11 +5070,44 @@ describe("agent browser access", () => {
       const absent = yield* startSessionWith(false, plainThread);
 
       assert.deepEqual(personal, [
-        { threadId: personalThread, capabilities: ["bots", "pull-requests"] },
+        { threadId: personalThread, capabilities: ["bots", "preview", "pull-requests"] },
       ]);
       assert.deepEqual(plain, [{ threadId: plainThread, capabilities: ["pull-requests"] }]);
       assert.deepEqual(absent, [{ threadId: plainThread, capabilities: ["pull-requests"] }]);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // Bots start without the owner's user-level MCP servers, so the shared
+  // browser must reach them even when the project has browser access off.
+  it.effect(
+    "gives personal-bot threads preview and the isolated toolset regardless of browser access",
+    () =>
+      Effect.gen(function* () {
+        const personalThread = asThreadId("thread-personal-bot-preview");
+        const plainThread = asThreadId("thread-plain-no-browser");
+        const personalStarts: Array<unknown> = [];
+        const plainStarts: Array<unknown> = [];
+
+        const personal = yield* startSessionWith(false, personalThread, false, {
+          personalBotThread: true,
+          startInputs: personalStarts,
+        });
+        const plain = yield* startSessionWith(false, plainThread, false, {
+          personalBotThread: false,
+          startInputs: plainStarts,
+        });
+
+        assert.include(personal[0]?.capabilities ?? [], "preview");
+        assert.notInclude(plain[0]?.capabilities ?? [], "preview");
+        assert.deepEqual(
+          personalStarts.map((input) => (input as { personalBot?: boolean }).personalBot),
+          [true],
+        );
+        assert.deepEqual(
+          plainStarts.map((input) => (input as { personalBot?: boolean }).personalBot),
+          [undefined],
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("issues a credential with preview when agent browser access is on", () =>

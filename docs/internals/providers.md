@@ -30,6 +30,16 @@ its user-global skill directories under that profile, so the profile links those
 back to the user's real `~/.gemini`; MCP servers, hooks, and rules there stay out of the profile.
 See [profile isolation](../../apps/server/src/provider/antigravityAuthSupport.ts).
 
+Personal-bot threads must not inherit the machine owner's provider customisations.
+[ProviderService](../../apps/server/src/provider/Layers/ProviderService.ts) marks their session
+start with `personalBot`. Claude then loads no settings files and only T3's MCP server. Claude
+still reads auto-memory and claude.ai connectors outside `settingSources`, so both need their own
+switch. Codex has no equivalent of `settingSources`. Its `-c` overrides deep-merge tables, so an
+empty `mcp_servers` table leaves the owner's servers in place. Only boolean features (connectors,
+plugins, memories) can be switched off per process. See the
+[Claude](../../apps/server/src/provider/Layers/ClaudeAdapter.ts) and
+[Codex](../../apps/server/src/provider/Layers/codexLaunchArgs.ts) switches.
+
 The [Antigravity installer](../../apps/server/src/provider/AntigravityInstallation.ts) outlives
 client connections and provider-instance rebuilds. Releases are immutable, with an atomic pointer
 selecting the version for new processes. Running processes hold leases on their version. Updates

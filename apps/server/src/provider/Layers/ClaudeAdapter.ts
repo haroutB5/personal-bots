@@ -1452,6 +1452,22 @@ const CLAUDE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
+/**
+ * Personal-bot sessions (`personalBot` on the start input) load no settings
+ * files (`settingSources: []`), which also drops CLAUDE.md, skills, hooks and
+ * `enabledPlugins`, and use `strictMcpConfig` so only T3's server is loaded.
+ * Auto-memory and claude.ai connectors are read regardless of settingSources,
+ * so both are switched off by setting and by env var. Built-in tools stay.
+ */
+const PERSONAL_BOT_CLAUDE_SETTINGS = {
+  autoMemoryEnabled: false,
+  disableClaudeAiConnectors: true,
+} as const;
+const PERSONAL_BOT_CLAUDE_ENVIRONMENT = {
+  CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+  ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+} as const;
+
 function buildPromptText(
   input: ProviderSendTurnInput,
   boundInstanceId: ProviderInstanceId,
@@ -4711,6 +4727,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         (launchArgSkipPermissions === null || launchArgSkipPermissions === "true"
           ? "bypassPermissions"
           : runtimeModeToPermission[input.runtimeMode]);
+      const personalBot = input.personalBot === true;
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
@@ -4718,8 +4735,27 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(claudeSettings.autoCompactWindow
           ? { autoCompactWindow: Number(claudeSettings.autoCompactWindow) }
           : {}),
+        ...(personalBot ? PERSONAL_BOT_CLAUDE_SETTINGS : {}),
       };
+      const settingSources: Array<SettingSource> = personalBot ? [] : [...CLAUDE_SETTING_SOURCES];
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+      const sessionEnvironment = McpProviderSession.withProviderSessionEnvironment(
+        claudeEnvironment,
+        mcpSession,
+      );
+      const mcpServers: ClaudeQueryOptions["mcpServers"] = mcpSession
+        ? {
+            "t3-code": {
+              type: "http",
+              url: mcpSession.endpoint,
+              headers: {
+                Authorization: mcpSession.authorizationHeader,
+              },
+            },
+          }
+        : personalBot
+          ? {}
+          : undefined;
       // The attachments dir grant lets the agent Read/copy pasted images at
       // the paths ProviderService injects into the turn text, without an
       // approval prompt. It is a leaf directory holding only attachment
@@ -4742,7 +4778,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             input.systemInstructions,
           ),
         },
-        settingSources: [...CLAUDE_SETTING_SOURCES],
+        settingSources,
         // `ultracode` is a Claude Code setting, not an API effort level. It is
         // normalized to `xhigh` above and paired with `settings.ultracode`.
         ...(effectiveEffort
@@ -4761,22 +4797,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
-        env: McpProviderSession.withProviderSessionEnvironment(claudeEnvironment, mcpSession),
+        env: personalBot
+          ? { ...sessionEnvironment, ...PERSONAL_BOT_CLAUDE_ENVIRONMENT }
+          : sessionEnvironment,
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
-        ...(mcpSession
-          ? {
-              mcpServers: {
-                "t3-code": {
-                  type: "http",
-                  url: mcpSession.endpoint,
-                  headers: {
-                    Authorization: mcpSession.authorizationHeader,
-                  },
-                },
-              },
-            }
-          : {}),
+        ...(mcpServers ? { mcpServers } : {}),
+        ...(personalBot ? { strictMcpConfig: true } : {}),
       };
 
       yield* Effect.annotateCurrentSpan({
@@ -4798,7 +4825,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.session_id": newSessionId ?? "",
         "claude.query.include_partial_messages": true,
         "claude.query.additional_directories": additionalDirectories,
-        "claude.query.setting_sources": [...CLAUDE_SETTING_SOURCES],
+        "claude.query.setting_sources": settingSources,
+        "claude.query.personal_bot": personalBot,
         "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
         "claude.query.extra_args_json": encodeJsonStringForDiagnostics(extraArgs) ?? "",
         "claude.query.path_to_executable": claudeBinaryPath,

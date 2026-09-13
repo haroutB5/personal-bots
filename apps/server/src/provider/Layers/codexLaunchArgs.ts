@@ -38,6 +38,23 @@ export const codexExecLaunchArgs = (launchArgs?: string) => {
   return execArgs;
 };
 
+/**
+ * Codex features a personal bot's app-server never gets: ChatGPT connectors
+ * (`apps`), the owner's installed plugins and the MCP servers they bundle
+ * (`plugins`), and Codex's own cross-session memories (`memories`); bots use
+ * the app's memory tools instead. Feature flags are plain booleans, so the
+ * override replaces them. `mcp_servers` from the owner's config.toml cannot be
+ * cleared this way: Codex deep-merges `-c` tables, so an empty table is a no-op.
+ */
+export const PERSONAL_BOT_CODEX_APP_SERVER_ARGS: ReadonlyArray<string> = [
+  "-c",
+  "features.apps=false",
+  "-c",
+  "features.plugins=false",
+  "-c",
+  "features.memories=false",
+];
+
 export const codexSessionAppServerArgs = (
   appServerArgs: ReadonlyArray<string> | undefined,
   launchArgs: string | undefined,
