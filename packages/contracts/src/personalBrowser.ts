@@ -1,0 +1,214 @@
+import * as Schema from "effect/Schema";
+
+import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PersonalBotId } from "./personalBots.ts";
+
+/**
+ * Lifecycle of the server-owned persistent Chrome shared by bots and the user.
+ * `offline` means not launched yet (it launches on the first agent op or on
+ * Take control); `locked` means another process holds the profile directory.
+ */
+export const PersonalBrowserState = Schema.Literals([
+  "offline",
+  "starting",
+  "connected",
+  "waiting_for_login",
+  "crashed",
+  "locked",
+]);
+export type PersonalBrowserState = typeof PersonalBrowserState.Type;
+
+export const PersonalBrowserController = Schema.Union([
+  Schema.TaggedStruct("None", {}),
+  Schema.TaggedStruct("Agent", {
+    threadId: ThreadId,
+    botId: Schema.NullOr(PersonalBotId),
+    botName: Schema.NullOr(Schema.String),
+  }),
+  Schema.TaggedStruct("Human", {
+    /** True when the requesting session is the one holding control. */
+    self: Schema.Boolean,
+    /** Whether the controlling session currently has a viewer attached. */
+    connected: Schema.Boolean,
+  }),
+]);
+export type PersonalBrowserController = typeof PersonalBrowserController.Type;
+
+export const PersonalBrowserPage = Schema.Struct({
+  url: Schema.String,
+  title: Schema.String,
+});
+export type PersonalBrowserPage = typeof PersonalBrowserPage.Type;
+
+export const PersonalBrowserStatus = Schema.Struct({
+  state: PersonalBrowserState,
+  /** Human-readable reason for crashed/locked states, e.g. "Locked by pid 4312". */
+  detail: Schema.NullOr(Schema.String),
+  lockedByPid: Schema.NullOr(Schema.Int),
+  controller: PersonalBrowserController,
+  /** Bumped on every control change; stale agent ops are rejected against it. */
+  generation: Schema.Int,
+  /** The page the viewport shows, or null before any page exists. */
+  page: Schema.NullOr(PersonalBrowserPage),
+  viewers: Schema.Int,
+});
+export type PersonalBrowserStatus = typeof PersonalBrowserStatus.Type;
+
+export const PersonalBrowserActivityKind = Schema.Literals([
+  "open",
+  "navigate",
+  "snapshot",
+  "click",
+  "type",
+  "press",
+  "scroll",
+  "evaluate",
+  "waitFor",
+  "resize",
+  "setColorScheme",
+  "screenshot",
+  "download",
+  "control",
+]);
+export type PersonalBrowserActivityKind = typeof PersonalBrowserActivityKind.Type;
+
+/** One real host event: an agent tool op, a saved file, or a control change. */
+export const PersonalBrowserActivityEvent = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  kind: PersonalBrowserActivityKind,
+  summary: Schema.String,
+  status: Schema.Literals(["succeeded", "failed"]),
+  /** ISO-8601 UTC instant from the host clock. */
+  at: Schema.String,
+  threadId: Schema.NullOr(ThreadId),
+  botName: Schema.NullOr(Schema.String),
+});
+export type PersonalBrowserActivityEvent = typeof PersonalBrowserActivityEvent.Type;
+
+/** `personalBrowser.activity` emits recent history first, then live items. */
+export const PersonalBrowserStreamItem = Schema.Union([
+  Schema.TaggedStruct("Recent", { events: Schema.Array(PersonalBrowserActivityEvent) }),
+  Schema.TaggedStruct("Activity", { event: PersonalBrowserActivityEvent }),
+  Schema.TaggedStruct("Status", { status: PersonalBrowserStatus }),
+]);
+export type PersonalBrowserStreamItem = typeof PersonalBrowserStreamItem.Type;
+
+export const PersonalBrowserFile = Schema.Struct({
+  /** Opaque id; resolved server-side against the artifacts directory listing. */
+  id: TrimmedNonEmptyString,
+  name: Schema.String,
+  kind: Schema.Literals(["screenshot", "download", "recording", "other"]),
+  sizeBytes: Schema.Int,
+  modifiedAt: Schema.String,
+});
+export type PersonalBrowserFile = typeof PersonalBrowserFile.Type;
+
+export const PersonalBrowserFilesResult = Schema.Struct({
+  files: Schema.Array(PersonalBrowserFile),
+});
+export type PersonalBrowserFilesResult = typeof PersonalBrowserFilesResult.Type;
+
+export class PersonalBrowserError extends Schema.TaggedError<PersonalBrowserError>()(
+  "PersonalBrowserError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+/** HTTP upgrade route for the live viewport (binary JPEG frames + JSON control). */
+export const PERSONAL_BROWSER_STREAM_PATH = "/api/personal/browser/stream";
+/** `GET <prefix>/<fileId>` downloads one artifact listed by `personalBrowser.listFiles`. */
+export const PERSONAL_BROWSER_FILES_ROUTE_PREFIX = "/api/personal/browser/files";
+
+const ViewportCoordinate = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(-10_000)).check(
+  Schema.isLessThanOrEqualTo(100_000),
+);
+const InputModifiers = Schema.optional(
+  Schema.Array(Schema.Literals(["Alt", "Control", "Meta", "Shift"])),
+);
+
+/**
+ * Client -> server JSON messages on the viewport socket. Coordinates are CSS
+ * pixels of the remote viewport (the client maps its displayed frame onto
+ * `Meta.width/height`). Accepted only from the session holding human control.
+ */
+export const PersonalBrowserInputMessage = Schema.Union([
+  Schema.TaggedStruct("Pointer", {
+    action: Schema.Literals(["tap", "move", "down", "up"]),
+    x: ViewportCoordinate,
+    y: ViewportCoordinate,
+  }),
+  Schema.TaggedStruct("Wheel", {
+    x: ViewportCoordinate,
+    y: ViewportCoordinate,
+    deltaX: Schema.Finite,
+    deltaY: Schema.Finite,
+  }),
+  Schema.TaggedStruct("Key", {
+    key: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(32)),
+    modifiers: InputModifiers,
+  }),
+  Schema.TaggedStruct("InsertText", {
+    text: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(4000)),
+  }),
+  Schema.TaggedStruct("Navigate", {
+    url: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(2048)),
+  }),
+  Schema.TaggedStruct("Back", {}),
+  Schema.TaggedStruct("Forward", {}),
+  Schema.TaggedStruct("Reload", {}),
+]);
+export type PersonalBrowserInputMessage = typeof PersonalBrowserInputMessage.Type;
+
+/** Server -> client JSON text messages; binary messages are viewport frames. */
+export const PersonalBrowserViewerMessage = Schema.Union([
+  Schema.TaggedStruct("InputRejected", { reason: Schema.String }),
+]);
+export type PersonalBrowserViewerMessage = typeof PersonalBrowserViewerMessage.Type;
+
+/**
+ * Binary viewport frame: an 8-byte big-endian header (u16 CSS width, u16 CSS
+ * height, u16 deviceScaleFactor x100, u16 version) followed by JPEG bytes.
+ * Carrying the size on every frame means a dropped frame can never leave the
+ * client mapping taps against a stale viewport size.
+ */
+export const PERSONAL_BROWSER_FRAME_HEADER_BYTES = 8;
+const PERSONAL_BROWSER_FRAME_VERSION = 1;
+
+export interface PersonalBrowserFrameMeta {
+  readonly width: number;
+  readonly height: number;
+  readonly deviceScaleFactor: number;
+}
+
+const toUint16 = (value: number) => Math.min(65_535, Math.max(0, Math.round(value)));
+
+export function encodePersonalBrowserFrame(
+  jpeg: Uint8Array,
+  meta: PersonalBrowserFrameMeta,
+): Uint8Array {
+  const frame = new Uint8Array(PERSONAL_BROWSER_FRAME_HEADER_BYTES + jpeg.length);
+  const header = new DataView(frame.buffer, 0, PERSONAL_BROWSER_FRAME_HEADER_BYTES);
+  header.setUint16(0, toUint16(meta.width));
+  header.setUint16(2, toUint16(meta.height));
+  header.setUint16(4, toUint16(meta.deviceScaleFactor * 100));
+  header.setUint16(6, PERSONAL_BROWSER_FRAME_VERSION);
+  frame.set(jpeg, PERSONAL_BROWSER_FRAME_HEADER_BYTES);
+  return frame;
+}
+
+export function decodePersonalBrowserFrame(
+  frame: Uint8Array,
+): { readonly meta: PersonalBrowserFrameMeta; readonly jpeg: Uint8Array } | null {
+  if (frame.length <= PERSONAL_BROWSER_FRAME_HEADER_BYTES) return null;
+  const header = new DataView(frame.buffer, frame.byteOffset, PERSONAL_BROWSER_FRAME_HEADER_BYTES);
+  if (header.getUint16(6) !== PERSONAL_BROWSER_FRAME_VERSION) return null;
+  const width = header.getUint16(0);
+  const height = header.getUint16(2);
+  if (width === 0 || height === 0) return null;
+  return {
+    meta: { width, height, deviceScaleFactor: header.getUint16(4) / 100 || 1 },
+    jpeg: frame.subarray(PERSONAL_BROWSER_FRAME_HEADER_BYTES),
+  };
+}

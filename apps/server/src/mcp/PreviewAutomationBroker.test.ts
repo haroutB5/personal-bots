@@ -1105,3 +1105,72 @@ it.effect("accepts responses only from the host that received the request", () =
     }),
   ),
 );
+
+it.effect("routes to the in-process server host unless a desktop host is focused", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connectionIds = new Map<string, string>();
+      const answerAs = (host: PreviewAutomationHost) =>
+        Effect.gen(function* () {
+          const requests = requestsFrom(yield* broker.connect(host), (connectionId) =>
+            connectionIds.set(host.clientId, connectionId),
+          );
+          yield* Stream.runForEach(requests, (request) =>
+            broker.respond({
+              clientId: host.clientId,
+              connectionId: request.connectionId,
+              requestId: request.requestId,
+              ok: true,
+              result: host.clientId,
+            }),
+          ).pipe(Effect.forkScoped);
+        });
+      // The server host connects first and the desktop host second with an
+      // equally large operation set, so only the server preference (not
+      // recency or capability size) can make the server host win.
+      yield* answerAs(
+        makeHost({
+          clientId: "server-browser",
+          kind: "server",
+          supportedOperations: [
+            "status",
+            "open",
+            "navigate",
+            "snapshot",
+            "click",
+            "type",
+            "press",
+            "scroll",
+            "evaluate",
+            "waitFor",
+            "resize",
+            "setColorScheme",
+          ],
+        }),
+      );
+      yield* answerAs(makeHost({ clientId: "desktop" }));
+      yield* Effect.yieldNow;
+
+      const sessionA = { ...scope, providerSessionId: "provider-session-a" };
+      const sessionB = { ...scope, providerSessionId: "provider-session-b" };
+      expect(
+        yield* broker.invoke<string>({ scope: sessionA, operation: "status", input: {} }),
+      ).toBe("server-browser");
+
+      yield* broker.focusHost({
+        clientId: "desktop",
+        environmentId: scope.environmentId,
+        connectionId: connectionIds.get("desktop")!,
+        focused: true,
+      });
+      expect(
+        yield* broker.invoke<string>({ scope: sessionB, operation: "status", input: {} }),
+      ).toBe("desktop");
+      // A session already pinned to the server host stays there.
+      expect(yield* broker.invoke<string>({ scope: sessionA, operation: "click", input: {} })).toBe(
+        "server-browser",
+      );
+    }),
+  ),
+);

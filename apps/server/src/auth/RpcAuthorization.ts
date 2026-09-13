@@ -115,6 +115,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalSecretsFulfill]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalSecretsCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalSecretsDelete]: AuthOrchestrationOperateScope,
+  // personal browser
+  [WS_METHODS.personalBrowserStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalBrowserTakeControl]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalBrowserReturnToAgent]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalBrowserListFiles]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalBrowserActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsListEntries]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsReadFile]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsSearchContents]: AuthOrchestrationReadScope,

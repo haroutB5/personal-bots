@@ -152,6 +152,8 @@ import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+// personal browser
+import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -928,6 +930,10 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mergeAll(
+          // personal browser: never launches Chrome in server tests
+          Layer.mock(PersonalBrowser.PersonalBrowser)({
+            handleAutomationRequest: () => Effect.die("PersonalBrowser not stubbed in this test"),
+          }),
           Layer.mock(PreviewManager.PreviewManager)({
             open: () => Effect.die("PreviewManager not stubbed in this test"),
             navigate: () => Effect.die("PreviewManager not stubbed in this test"),

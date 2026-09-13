@@ -75,6 +75,15 @@ import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalSessionAccess from "./personal/secrets/PersonalSessionAccess.ts";
+// personal browser
+import * as PersonalBrowserLease from "./personal/browser/BrowserLease.ts";
+import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
+import * as PersonalBrowserLeaseRepository from "./personal/browser/PersonalBrowserLeaseRepository.ts";
+import * as PersonalBrowserHost from "./personal/browser/ServerBrowserHost.ts";
+import {
+  personalBrowserFilesRouteLayer,
+  personalBrowserStreamRouteLayer,
+} from "./personal/browser/routes.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -503,6 +512,12 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
 );
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+  // personal browser: the service needs the lease (-> its repository ->
+  // SqlClient), PreviewManager and PersonalBotRepository, all provided by
+  // later steps below.
+  Layer.provideMerge(PersonalBrowser.layer),
+  Layer.provideMerge(PersonalBrowserLease.layer),
+  Layer.provideMerge(PersonalBrowserLeaseRepository.layer),
   // Personal bots. Order matters: each step's output feeds requirements
   // opened by EARLIER steps, so consumers come first — the seed needs the
   // service, the service needs the repository, the repository needs SqlClient
@@ -517,64 +532,71 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(PersonalBotRepository.layer),
   Layer.provideMerge(AntigravityInstallationRefreshLive),
   Layer.provideMerge(ProviderAuthServiceLive),
-  // Core Services
-  Layer.provideMerge(ServerSettingsLayerLive),
-  Layer.provideMerge(CheckpointingLayerLive),
-  Layer.provideMerge(
-    Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive),
-  ),
-  Layer.provideMerge(GitLayerLive),
-  Layer.provideMerge(VcsLayerLive),
-  Layer.provideMerge(ProviderRuntimeLayerLive),
-  Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, DeviceLayerLive)),
-  Layer.provideMerge(PersistenceLayerLive),
-  // Both read a user-owned file out of the state directory and stream changes
-  // to clients; neither depends on the other.
-  Layer.provideMerge(
-    Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
-  ),
-  Layer.provideMerge(ProviderRegistryLive),
-  // The instance registry is the new routing keystone — text generation,
-  // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
-  // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
-  // `providerInstances` hydration merges `settings.providers.<kind>`
-  // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-).pipe(
-  Layer.provideMerge(AntigravityInstallation.layer),
-  // Shared native/canonical NDJSON writers used by both the per-instance
-  // drivers (native stream, written from inside each `<X>Adapter`) and
-  // `ProviderService` (canonical stream, written after event normalization).
-  // Provided once at the runtime level so every consumer sees the same
-  // logger instances.
-  // `ModelManifest.layer` is the legacy-model classification data, refreshed
-  // from the repo's `model-manifest.json` on `main` and applied by the
-  // Codex/Claude drivers.
-  Layer.provideMerge(
-    Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer, CodexResetCredit.layer),
-  ),
-  // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
-  // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
-  // the rewritten registry reads snapshots off the instance registry and
-  // no longer transitively provides it. Exposing it at the runtime level
-  // keeps a single Live for all opencode consumers.
-  Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
-  Layer.provideMerge(WorkspaceLayerLive),
-  Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, ProjectFaviconResolverLayerLive)),
-  Layer.provideMerge(RepositoryIdentityResolver.layer),
-  Layer.provideMerge(ServerEnvironmentLayerLive),
-  Layer.provideMerge(AuthLayerLive),
-  Layer.provideMerge(ServerSecretStore.layer),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      CloudCliTokenManager.layer.pipe(
-        Layer.provide(ServerSecretStore.layer),
-        Layer.provide(ExternalLauncher.layer),
-      ),
-      CloudManagedEndpointRuntimeLive,
+  // Split into a second pipe: a single pipe accepts at most 20 steps. The
+  // order is unchanged, so provideMerge still feeds earlier steps first.
+)
+  .pipe(
+    // Core Services
+    Layer.provideMerge(ServerSettingsLayerLive),
+    Layer.provideMerge(CheckpointingLayerLive),
+    Layer.provideMerge(
+      Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive),
     ),
-  ),
-);
+    Layer.provideMerge(GitLayerLive),
+    Layer.provideMerge(VcsLayerLive),
+    Layer.provideMerge(ProviderRuntimeLayerLive),
+    Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, DeviceLayerLive)),
+    Layer.provideMerge(PersistenceLayerLive),
+    // Both read a user-owned file out of the state directory and stream changes
+    // to clients; neither depends on the other.
+    Layer.provideMerge(
+      Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
+    ),
+    Layer.provideMerge(ProviderRegistryLive),
+    // The instance registry is the new routing keystone — text generation,
+    // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
+    // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
+    // `providerInstances` hydration merges `settings.providers.<kind>`
+    // with explicit `providerInstances` entries on boot.
+    Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  )
+  .pipe(
+    Layer.provideMerge(AntigravityInstallation.layer),
+    // Shared native/canonical NDJSON writers used by both the per-instance
+    // drivers (native stream, written from inside each `<X>Adapter`) and
+    // `ProviderService` (canonical stream, written after event normalization).
+    // Provided once at the runtime level so every consumer sees the same
+    // logger instances.
+    // `ModelManifest.layer` is the legacy-model classification data, refreshed
+    // from the repo's `model-manifest.json` on `main` and applied by the
+    // Codex/Claude drivers.
+    Layer.provideMerge(
+      Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer, CodexResetCredit.layer),
+    ),
+    // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
+    // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
+    // the rewritten registry reads snapshots off the instance registry and
+    // no longer transitively provides it. Exposing it at the runtime level
+    // keeps a single Live for all opencode consumers.
+    Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+    Layer.provideMerge(WorkspaceLayerLive),
+    Layer.provideMerge(
+      Layer.mergeAll(NativeAppIconResolver.layer, ProjectFaviconResolverLayerLive),
+    ),
+    Layer.provideMerge(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(ServerEnvironmentLayerLive),
+    Layer.provideMerge(AuthLayerLive),
+    Layer.provideMerge(ServerSecretStore.layer),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        CloudCliTokenManager.layer.pipe(
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provide(ExternalLauncher.layer),
+        ),
+        CloudManagedEndpointRuntimeLive,
+      ),
+    ),
+  );
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   // Misc.
@@ -611,6 +633,11 @@ export const makeRoutesLayer = Layer.mergeAll(
     assetRouteLayer,
     attachmentUploadRouteLayer,
     deviceHubProxyRouteLayer,
+    // personal browser (routes + in-process preview automation host; the host
+    // shares the single PreviewAutomationBroker provided below)
+    personalBrowserStreamRouteLayer,
+    personalBrowserFilesRouteLayer,
+    PersonalBrowserHost.layer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
