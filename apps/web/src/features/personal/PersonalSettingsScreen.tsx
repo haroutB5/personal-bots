@@ -11,6 +11,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatar } from "./BotAvatar";
 import { PersonalPageHeader } from "./BotForm";
+import { PersonalUsageSection } from "./PersonalUsageSection";
 import { providerLine, resolveBotProvider } from "./botSummaries";
 import { setDeveloperView } from "./personalMode";
 import {
@@ -157,6 +158,8 @@ export function PersonalSettingsScreen(): JSX.Element {
           </li>
         </ul>
       </section>
+
+      <PersonalUsageSection />
 
       <section aria-labelledby="settings-automation">
         <h2 id="settings-automation" className={SECTION_TITLE}>

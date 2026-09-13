@@ -1,0 +1,165 @@
+import type { ServerProvider, ServerProviderUsageWindow } from "@t3tools/contracts";
+import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimits";
+
+/** Drivers surfaced as cards, in display order. */
+export const USAGE_CARD_DRIVERS = ["claudeAgent", "codex"] as const;
+export type UsageCardDriver = (typeof USAGE_CARD_DRIVERS)[number];
+
+export const USAGE_CARD_TITLES: Record<UsageCardDriver, string> = {
+  claudeAgent: "Claude",
+  codex: "GPT",
+};
+
+function clampPercent(value: number): number {
+  return Math.round(Math.max(0, Math.min(100, value)));
+}
+
+export interface UsageWindowRow {
+  readonly id: string;
+  readonly label: string;
+  /** Share of quota spent, 0..100 — bars and labels show what is used. */
+  readonly usedPercent: number;
+  /** Human countdown from `resetsAt`, or null when the window names no reset. */
+  readonly resetLabel: string | null;
+}
+
+export type UsageCardStatus =
+  /** Bars to draw. Individual missing rows still read "not reported". */
+  | "ready"
+  /** API-key style account that can never report windows. */
+  | "unavailable"
+  /** Probe failed, or the provider reported no windows at all. */
+  | "not-reported";
+
+export interface UsageCard {
+  readonly driver: UsageCardDriver;
+  readonly title: string;
+  /** Plan label from provider auth, when the server names one. */
+  readonly plan: string | undefined;
+  readonly status: UsageCardStatus;
+  /** Why there are no bars (unavailable message or probe notice). */
+  readonly notice: string | null;
+  readonly session: UsageWindowRow | null;
+  readonly weekly: UsageWindowRow | null;
+  /** Epoch millis the snapshot was checked, or null when unknown. */
+  readonly checkedAt: number | null;
+}
+
+/**
+ * "resets in 2h 13m" from an ISO reset instant. Null when the instant is
+ * missing or unparseable; "resets now" once the clock has passed it.
+ * (`relativeTime.ts` only formats the past, so the future lives here.)
+ */
+export function formatResetCountdown(resetsAt: string | undefined, now: number): string | null {
+  if (resetsAt === undefined) return null;
+  const at = Date.parse(resetsAt);
+  if (!Number.isFinite(at)) return null;
+  if (at <= now) return "resets now";
+  return `resets in ${formatDuration(at - now)}`;
+}
+
+function toRow(window: ServerProviderUsageWindow, now: number): UsageWindowRow {
+  return {
+    id: window.id,
+    label: window.label,
+    usedPercent: clampPercent(window.usedPercent),
+    resetLabel: formatResetCountdown(window.resetsAt, now),
+  };
+}
+
+/**
+ * Pick the 5-hour session row: the first `session` window, else a window
+ * whose id names the five-hour bucket (Claude's `five_hour`).
+ */
+function pickSession(
+  windows: ReadonlyArray<ServerProviderUsageWindow>,
+  now: number,
+): UsageWindowRow | null {
+  const direct = windows.find((window) => window.kind === "session");
+  const fallback = windows.find((window) => window.id.toLowerCase().includes("five_hour"));
+  const match = direct ?? fallback;
+  return match ? toRow(match, now) : null;
+}
+
+/**
+ * Pick the weekly row: the first `weekly` window, else a window whose id
+ * names a seven-day bucket (Claude's `seven_day_opus`).
+ */
+function pickWeekly(
+  windows: ReadonlyArray<ServerProviderUsageWindow>,
+  now: number,
+): UsageWindowRow | null {
+  const direct = windows.find((window) => window.kind === "weekly");
+  const fallback = windows.find((window) => {
+    const id = window.id.toLowerCase();
+    return id.includes("seven_day") || id.includes("week");
+  });
+  const match = direct ?? fallback;
+  return match ? toRow(match, now) : null;
+}
+
+function parseCheckedAt(value: string | undefined): number | null {
+  if (value === undefined) return null;
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? at : null;
+}
+
+/** Newest usable snapshot wins when several instances share a driver. */
+function newestInstance(
+  providers: ReadonlyArray<ServerProvider>,
+  driver: UsageCardDriver,
+): ServerProvider | null {
+  let best: ServerProvider | null = null;
+  let bestAt = Number.NEGATIVE_INFINITY;
+  for (const provider of providers) {
+    if (provider.driver !== driver || !provider.enabled || !provider.installed) continue;
+    const at = parseCheckedAt(provider.usageLimits?.checkedAt) ?? Number.NEGATIVE_INFINITY;
+    if (best === null || at > bestAt) {
+      best = provider;
+      bestAt = at;
+    }
+  }
+  return best;
+}
+
+/**
+ * One card per driver (Claude, GPT) from the providers the config stream
+ * already publishes. Drivers with no configured instance get no card;
+ * everything else degrades to `unavailable` or `not-reported`, never 0%.
+ */
+export function selectUsageCards(
+  providers: ReadonlyArray<ServerProvider>,
+  now: number,
+): readonly UsageCard[] {
+  const cards: UsageCard[] = [];
+  for (const driver of USAGE_CARD_DRIVERS) {
+    const provider = newestInstance(providers, driver);
+    if (!provider) continue;
+    const limits = provider.usageLimits;
+    const notice = limits ? limitsNotice(limits) : null;
+    if (!limits || notice !== null) {
+      cards.push({
+        driver,
+        title: USAGE_CARD_TITLES[driver],
+        plan: provider.auth.label,
+        status: limits?.unavailable?.reason === "unsupported" ? "unavailable" : "not-reported",
+        notice,
+        session: null,
+        weekly: null,
+        checkedAt: parseCheckedAt(limits?.checkedAt),
+      });
+      continue;
+    }
+    cards.push({
+      driver,
+      title: USAGE_CARD_TITLES[driver],
+      plan: provider.auth.label,
+      status: "ready",
+      notice: null,
+      session: pickSession(limits.windows, now),
+      weekly: pickWeekly(limits.windows, now),
+      checkedAt: parseCheckedAt(limits.checkedAt),
+    });
+  }
+  return cards;
+}
