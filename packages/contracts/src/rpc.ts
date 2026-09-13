@@ -263,6 +263,16 @@ import {
   PersonalProfile,
   PersonalProfileSetInput,
 } from "./personalBots.ts";
+import {
+  PersonalTask,
+  PersonalTaskCreateInput,
+  PersonalTaskDetail,
+  PersonalTaskIdInput,
+  PersonalTaskListInput,
+  PersonalTaskListResult,
+  PersonalTasksError,
+  PersonalTaskStreamEvent,
+} from "./personalTasks.ts";
 import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
@@ -419,6 +429,14 @@ export const WS_METHODS = {
   personalBotsArchiveThread: "personalBots.archiveThread",
   personalBotsGetProfile: "personalBots.getProfile",
   personalBotsSetProfile: "personalBots.setProfile",
+
+  // Personal tasks methods
+  personalTasksList: "personalTasks.list",
+  personalTasksGet: "personalTasks.get",
+  personalTasksCreate: "personalTasks.create",
+  personalTasksCancel: "personalTasks.cancel",
+  personalTasksRetry: "personalTasks.retry",
+  personalTasksSubscribe: "personalTasks.subscribe",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -894,6 +912,45 @@ const WsPersonalBotsSetProfileRpc = Rpc.make(WS_METHODS.personalBotsSetProfile, 
   payload: PersonalProfileSetInput,
   success: PersonalProfile,
   error: PersonalBotsRpcError,
+});
+
+const PersonalTasksRpcError = Schema.Union([PersonalTasksError, EnvironmentAuthorizationError]);
+
+const WsPersonalTasksListRpc = Rpc.make(WS_METHODS.personalTasksList, {
+  payload: PersonalTaskListInput,
+  success: PersonalTaskListResult,
+  error: PersonalTasksRpcError,
+});
+
+const WsPersonalTasksGetRpc = Rpc.make(WS_METHODS.personalTasksGet, {
+  payload: PersonalTaskIdInput,
+  success: PersonalTaskDetail,
+  error: PersonalTasksRpcError,
+});
+
+const WsPersonalTasksCreateRpc = Rpc.make(WS_METHODS.personalTasksCreate, {
+  payload: PersonalTaskCreateInput,
+  success: PersonalTask,
+  error: PersonalTasksRpcError,
+});
+
+const WsPersonalTasksCancelRpc = Rpc.make(WS_METHODS.personalTasksCancel, {
+  payload: PersonalTaskIdInput,
+  success: PersonalTask,
+  error: PersonalTasksRpcError,
+});
+
+const WsPersonalTasksRetryRpc = Rpc.make(WS_METHODS.personalTasksRetry, {
+  payload: PersonalTaskIdInput,
+  success: PersonalTask,
+  error: PersonalTasksRpcError,
+});
+
+const WsPersonalTasksSubscribeRpc = Rpc.make(WS_METHODS.personalTasksSubscribe, {
+  payload: Schema.Struct({}),
+  success: PersonalTaskStreamEvent,
+  error: PersonalTasksRpcError,
+  stream: true,
 });
 
 const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
@@ -1420,6 +1477,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsPersonalBotsArchiveThreadRpc,
   WsPersonalBotsGetProfileRpc,
   WsPersonalBotsSetProfileRpc,
+  WsPersonalTasksListRpc,
+  WsPersonalTasksGetRpc,
+  WsPersonalTasksCreateRpc,
+  WsPersonalTasksCancelRpc,
+  WsPersonalTasksRetryRpc,
+  WsPersonalTasksSubscribeRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,

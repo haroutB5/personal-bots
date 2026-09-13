@@ -162,6 +162,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
+import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -625,6 +626,7 @@ const makeWsRpcLayer = (
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const personalBots = yield* PersonalBotService.PersonalBotService;
+      const personalTasks = yield* PersonalTaskService.PersonalTaskService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -2360,6 +2362,30 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalBotsSetProfile, personalBots.setProfile(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalTasksList]: (input) =>
+          observeRpcEffect(WS_METHODS.personalTasksList, personalTasks.list(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalTasksGet]: (input) =>
+          observeRpcEffect(WS_METHODS.personalTasksGet, personalTasks.get(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalTasksCreate]: (input) =>
+          observeRpcEffect(WS_METHODS.personalTasksCreate, personalTasks.createTask(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalTasksCancel]: (input) =>
+          observeRpcEffect(WS_METHODS.personalTasksCancel, personalTasks.cancel(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalTasksRetry]: (input) =>
+          observeRpcEffect(WS_METHODS.personalTasksRetry, personalTasks.retry(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalTasksSubscribe]: (_input) =>
+          observeRpcStream(WS_METHODS.personalTasksSubscribe, personalTasks.subscribe, {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
@@ -3102,6 +3128,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         ),
     });
     const pullRequests = yield* PullRequestService.PullRequestService;
+    // Server-lifetime: the dispatcher, its lock and the upsert stream are shared by every client.
+    const personalTasks = yield* PersonalTaskService.PersonalTaskService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3143,6 +3171,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provide(
                 PersonalBotService.layer.pipe(Layer.provide(PersonalBotRepository.layer)),
               ),
+              Layer.provide(Layer.succeed(PersonalTaskService.PersonalTaskService, personalTasks)),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
