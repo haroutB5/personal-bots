@@ -1,0 +1,157 @@
+import * as Schema from "effect/Schema";
+
+import type { BotAvatarColor, BotAvatarShape } from "@t3tools/contracts";
+import {
+  BotAvatarColor as BotAvatarColorSchema,
+  BotAvatarShape as BotAvatarShapeSchema,
+} from "@t3tools/contracts";
+
+import {
+  getLocalStorageItem,
+  removeLocalStorageItem,
+  setLocalStorageItem,
+} from "~/hooks/useLocalStorage";
+
+/**
+ * Cold-start snapshot for the Chats list. After each successful
+ * `personalBots.list` the screen persists just enough to paint instantly on
+ * the next launch: identity, avatar, provider label and the one-line preview
+ * already shown in the row. Live state (working dots, rate limits, review
+ * row) is deliberately absent — it needs live data and stays neutral until
+ * the list arrives. Never message bodies, never secrets.
+ */
+export const ChatsSnapshotRow = Schema.Struct({
+  botId: Schema.String,
+  name: Schema.String,
+  avatarShape: BotAvatarShapeSchema,
+  avatarColor: BotAvatarColorSchema,
+  providerLabel: Schema.String,
+  /** One-line preview text, already trimmed to {@link MAX_SNAPSHOT_PREVIEW_CHARS}. */
+  preview: Schema.String,
+  previewAtMs: Schema.NullOr(Schema.Finite),
+  threadId: Schema.NullOr(Schema.String),
+  threadTitle: Schema.NullOr(Schema.String),
+});
+export type ChatsSnapshotRow = typeof ChatsSnapshotRow.Type;
+
+export const ChatsSnapshot = Schema.Struct({
+  version: Schema.Literal(1),
+  environmentId: Schema.String,
+  savedAtMs: Schema.Finite,
+  rows: Schema.Array(ChatsSnapshotRow),
+});
+export type ChatsSnapshot = typeof ChatsSnapshot.Type;
+
+const ChatsSnapshotEnvelope = Schema.Struct({
+  environmentId: Schema.String,
+  snapshot: ChatsSnapshot,
+});
+
+const STORAGE_KEY = "t3code:chats-snapshot:v1";
+/** Phone-first lists are short; beyond this the snapshot stops paying for itself. */
+export const MAX_SNAPSHOT_ROWS = 30;
+export const MAX_SNAPSHOT_PREVIEW_CHARS = 140;
+const MAX_SNAPSHOT_NAME_CHARS = 80;
+const MAX_SNAPSHOT_LABEL_CHARS = 80;
+const MAX_SNAPSHOT_TITLE_CHARS = 120;
+/** Hard byte budget for the stored snapshot; least-recent rows drop first. */
+export const MAX_SNAPSHOT_BYTES = 64_000;
+
+export interface ChatsSnapshotRowInput {
+  readonly botId: string;
+  readonly name: string;
+  readonly avatarShape: BotAvatarShape;
+  readonly avatarColor: BotAvatarColor;
+  readonly providerLabel: string;
+  /** Full preview line; the builder keeps the first line and trims it. */
+  readonly preview: string;
+  readonly previewAtMs: number | null;
+  readonly threadId: string | null;
+  readonly threadTitle: string | null;
+}
+
+function firstLine(value: string, maxChars: number): string {
+  return value.split("\n", 1)[0]?.trim().slice(0, maxChars) ?? "";
+}
+
+function snapshotBytes(environmentId: string, snapshot: ChatsSnapshot): number {
+  const json = JSON.stringify({ environmentId, snapshot });
+  return new TextEncoder().encode(json).length;
+}
+
+/**
+ * Pure builder: sanitizes inputs (single-line, capped), keeps the most
+ * recent rows first, and drops trailing rows until the byte budget holds.
+ * Rows arrive ordered by latest activity, so the tail is the cheapest to lose.
+ */
+export function buildChatsSnapshot(input: {
+  readonly environmentId: string;
+  readonly savedAtMs: number;
+  readonly rows: ReadonlyArray<ChatsSnapshotRowInput>;
+}): ChatsSnapshot {
+  const sanitized = input.rows.slice(0, MAX_SNAPSHOT_ROWS).map((row): ChatsSnapshotRow => ({
+    botId: row.botId,
+    name: firstLine(row.name, MAX_SNAPSHOT_NAME_CHARS),
+    avatarShape: row.avatarShape,
+    avatarColor: row.avatarColor,
+    providerLabel: firstLine(row.providerLabel, MAX_SNAPSHOT_LABEL_CHARS),
+    preview: firstLine(row.preview, MAX_SNAPSHOT_PREVIEW_CHARS),
+    previewAtMs: row.previewAtMs,
+    threadId: row.threadId,
+    threadTitle:
+      row.threadTitle === null ? null : firstLine(row.threadTitle, MAX_SNAPSHOT_TITLE_CHARS),
+  }));
+  const rows = [...sanitized];
+  const probe: ChatsSnapshot = {
+    version: 1 as const,
+    environmentId: input.environmentId,
+    savedAtMs: input.savedAtMs,
+    rows,
+  };
+  while (rows.length > 1 && snapshotBytes(input.environmentId, probe) > MAX_SNAPSHOT_BYTES) {
+    rows.pop();
+  }
+  return probe;
+}
+
+function removeQuietly(): void {
+  try {
+    removeLocalStorageItem(STORAGE_KEY);
+  } catch {
+    // Best effort: a stale or corrupt entry must never break the render path.
+  }
+}
+
+/**
+ * Reads the snapshot for an environment. Returns null when there is none,
+ * when it belongs to another environment (clearing the stale entry), or when
+ * storage fails or holds corrupt data. Never throws.
+ */
+export function readChatsSnapshot(environmentId: string | null): ChatsSnapshot | null {
+  if (environmentId === null) return null;
+  let envelope: typeof ChatsSnapshotEnvelope.Type | null;
+  try {
+    envelope = getLocalStorageItem(STORAGE_KEY, ChatsSnapshotEnvelope);
+  } catch {
+    removeQuietly();
+    return null;
+  }
+  if (envelope === null) return null;
+  if (envelope.environmentId !== environmentId) {
+    removeQuietly();
+    return null;
+  }
+  return envelope.snapshot;
+}
+
+/**
+ * Persists a snapshot. Quota or encode failures drop the cache instead of
+ * surfacing: the list simply paints from skeletons next launch. Never throws.
+ */
+export function writeChatsSnapshot(environmentId: string, snapshot: ChatsSnapshot): void {
+  try {
+    setLocalStorageItem(STORAGE_KEY, { environmentId, snapshot }, ChatsSnapshotEnvelope);
+  } catch {
+    removeQuietly();
+  }
+}

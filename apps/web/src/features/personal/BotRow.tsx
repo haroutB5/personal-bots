@@ -12,7 +12,7 @@ import { readServerTurn, type ServerTurn } from "./delegationModel";
 import { formatRelativeTime } from "./relativeTime";
 import { useStartBotChat } from "./startBotChat";
 
-const ROW_CLASS =
+export const ROW_CLASS =
   "flex w-full min-w-0 items-center gap-[18px] py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]";
 
 /**
@@ -21,7 +21,7 @@ const ROW_CLASS =
  * message comes with `personalBots.list`, so the list opens no thread
  * subscription per row; the list refreshes when a thread's shell updates.
  */
-function previewOf(summary: BotSummary, describeTurn: (turn: ServerTurn) => string): string {
+export function previewOf(summary: BotSummary, describeTurn: (turn: ServerTurn) => string): string {
   const thread = summary.newestThread;
   if (thread === null) return "No chats yet";
   const message = summary.newestMessage;

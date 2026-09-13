@@ -1,0 +1,213 @@
+import { PersonalBot } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { ChatsScreen } from "./ChatsScreen";
+import { buildChatsSnapshot, writeChatsSnapshot } from "./chatsSnapshot";
+
+const decodeBot = Schema.decodeUnknownSync(PersonalBot);
+
+const state = vi.hoisted(() => ({
+  environmentId: "env-1" as string | null,
+  listData: null as { bots: unknown[]; threads: unknown[]; personalProjectId: null } | null,
+  refresh: vi.fn(),
+  tasksCalls: [] as Array<string | null>,
+  rafQueue: [] as Array<FrameRequestCallback>,
+  timeouts: new Map<number, () => void>(),
+  nextTimeoutId: 1,
+}));
+
+function createLocalStorageStub(): Storage {
+  const store = new Map<string, string>();
+  return {
+    getItem: (key) => store.get(key) ?? null,
+    setItem: (key, value) => {
+      store.set(key, value);
+    },
+    removeItem: (key) => {
+      store.delete(key);
+    },
+    clear: () => {
+      store.clear();
+    },
+    key: (index) => [...store.keys()][index] ?? null,
+    get length() {
+      return store.size;
+    },
+  };
+}
+
+function stubWindow() {
+  const localStorage = createLocalStorageStub();
+  vi.stubGlobal("window", {
+    localStorage,
+    setInterval: () => 0,
+    clearInterval: () => undefined,
+    requestAnimationFrame: (callback: FrameRequestCallback) => {
+      state.rafQueue.push(callback);
+      return state.rafQueue.length;
+    },
+    cancelAnimationFrame: () => undefined,
+    setTimeout: (callback: () => void) => {
+      const id = state.nextTimeoutId++;
+      state.timeouts.set(id, callback);
+      return id;
+    },
+    clearTimeout: (id: number) => {
+      state.timeouts.delete(id);
+    },
+  });
+  vi.stubGlobal("localStorage", localStorage);
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+}
+
+vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
+vi.mock("~/state/entities", () => ({ useThreadShells: () => [] }));
+vi.mock("~/state/server", () => ({ primaryServerProvidersAtom: {} }));
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
+}));
+vi.mock("./usePersonalBots", () => ({
+  usePersonalEnvironmentId: () => state.environmentId,
+  usePersonalBotsList: () => ({ data: state.listData, error: null, refresh: state.refresh }),
+  usePersonalProfile: () => ({ data: null }),
+}));
+vi.mock("./usePersonalAutomation", () => ({
+  usePersonalTasks: (environmentId: string | null) => {
+    state.tasksCalls.push(environmentId);
+    return { tasks: null, error: null };
+  },
+}));
+vi.mock("./useRefreshBotsForTaskThreads", () => ({ useRefreshBotsForTaskThreads: () => {} }));
+vi.mock("./useDeleteBot", () => ({ useDeleteBot: () => async () => {} }));
+vi.mock("./startBotChat", () => ({
+  useStartBotChat: () => ({ start: vi.fn(), starting: false }),
+}));
+vi.mock("./appVersion", () => ({ useAppVersion: () => "v9.9.9-test" }));
+
+let renderer: ReactTestRenderer | undefined;
+
+async function flushRaf() {
+  await act(async () => {
+    const queue = [...state.rafQueue];
+    state.rafQueue.length = 0;
+    for (const callback of queue) callback(16);
+  });
+}
+
+function seedSnapshot() {
+  writeChatsSnapshot(
+    "env-1",
+    buildChatsSnapshot({
+      environmentId: "env-1",
+      savedAtMs: 1_757_800_000_000,
+      rows: [
+        {
+          botId: "bot-cached",
+          name: "Cached Ada",
+          avatarShape: "blob",
+          avatarColor: "#1A73E8",
+          providerLabel: "Claude Code",
+          preview: "cached preview line",
+          previewAtMs: 1_757_800_000_000,
+          threadId: "thread-cached",
+          threadTitle: "Cached thread",
+        },
+      ],
+    }),
+  );
+}
+
+function bot(botId: string, name: string) {
+  return decodeBot({
+    botId,
+    name,
+    title: "",
+    description: "",
+    instructions: "",
+    avatarShape: "pill",
+    avatarColor: "#E8711A",
+    modelSelection: { instanceId: "someRuntime", model: "some-model" },
+    enabled: true,
+    sortOrder: 0,
+    createdAt: "2026-09-01T10:00:00.000Z",
+    updatedAt: "2026-09-01T10:00:00.000Z",
+  });
+}
+
+afterEach(async () => {
+  await act(async () => renderer?.unmount());
+  renderer = undefined;
+  state.environmentId = "env-1";
+  state.listData = null;
+  state.tasksCalls.length = 0;
+  state.rafQueue.length = 0;
+  state.timeouts.clear();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+describe("ChatsScreen cold start", () => {
+  it("shows skeletons with aria-busy and holds the tasks feed until paint", async () => {
+    stubWindow();
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+
+    const status = renderer!.root.findByProps({ role: "status" });
+    expect(String(status.props["aria-busy"])).toBe("true");
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Loading your bots");
+    // Subscription not armed: nothing scheduled, nothing subscribed.
+    expect(state.tasksCalls).toEqual([null]);
+    await flushRaf();
+    expect(state.tasksCalls).toEqual([null]);
+  });
+
+  it("paints the snapshot instantly with neutral indicators, then arms tasks", async () => {
+    stubWindow();
+    seedSnapshot();
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+
+    const json = JSON.stringify(renderer!.toJSON());
+    expect(json).toContain("Cached Ada");
+    expect(json).toContain("Claude Code");
+    expect(json).toContain("cached preview line");
+    // Neutral live state: no working dot, no review row.
+    expect(json).not.toContain("working");
+    expect(json).not.toContain("needs your review");
+    // Tasks feed held back on first paint…
+    expect(state.tasksCalls).toEqual([null]);
+    // …and armed after paint frames.
+    await flushRaf();
+    await flushRaf();
+    expect(state.tasksCalls).toEqual([null, "env-1"]);
+    // Footer pins to the bottom instead of floating mid-screen.
+    expect(json).toContain("mt-auto");
+  });
+
+  it("replaces the snapshot seamlessly when live data arrives", async () => {
+    stubWindow();
+    seedSnapshot();
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Cached Ada");
+
+    await act(async () => {
+      state.listData = {
+        bots: [bot("bot-live", "Live Ada")],
+        threads: [],
+        personalProjectId: null,
+      };
+      renderer!.update(<ChatsScreen />);
+    });
+
+    const json = JSON.stringify(renderer!.toJSON());
+    expect(json).toContain("Live Ada");
+    expect(json).not.toContain("Cached Ada");
+    expect(json).not.toContain("Loading your bots");
+  });
+});

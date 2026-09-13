@@ -2,14 +2,28 @@ import type { JSX } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
+import type { PersonalBotId, ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { ChevronRight, Plus, Search, Settings } from "lucide-react";
 
 import { useThreadShells } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 
-import { BotRow } from "./BotRow";
-import { buildBotSummaries, collectAttentionThreads, filterBotSummaries } from "./botSummaries";
+import { BotAvatar } from "./BotAvatar";
+import { BotRow, previewOf, ROW_CLASS } from "./BotRow";
+import {
+  buildBotSummaries,
+  collectAttentionThreads,
+  filterBotSummaries,
+  providerLine,
+} from "./botSummaries";
+import {
+  buildChatsSnapshot,
+  readChatsSnapshot,
+  writeChatsSnapshot,
+  type ChatsSnapshot,
+  type ChatsSnapshotRowInput,
+} from "./chatsSnapshot";
 import {
   resolveTurnChildren,
   type ServerTurn,
@@ -27,6 +41,7 @@ import {
   usePersonalEnvironmentId,
   usePersonalProfile,
 } from "./usePersonalBots";
+import { formatRelativeTime } from "./relativeTime";
 
 const MINUTE_MS = 60_000;
 
@@ -43,6 +58,93 @@ export function useMinuteClock(): number {
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]";
 
+/**
+ * Cold-start placeholder: static muted rows shown only when there is no live
+ * data and no snapshot (first launch). Deliberately not animated — continuous
+ * repaints peg the GPU on high-refresh displays.
+ */
+function ChatsSkeletonRows(): JSX.Element {
+  return (
+    <div role="status" aria-busy="true" className="mt-3 border-y border-[var(--personal-border)]">
+      {[0, 1, 2, 3].map((index) => (
+        <div
+          key={index}
+          aria-hidden="true"
+          className="flex min-w-0 items-center gap-[18px] border-b border-[var(--personal-border)] py-4 last:border-b-0"
+        >
+          <div className="size-14 shrink-0 rounded-full bg-[var(--personal-fill-muted)]" />
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <div className="h-[17px] w-2/5 rounded-full bg-[var(--personal-fill-muted)]" />
+            <div className="h-3 w-1/3 rounded-full bg-[var(--personal-fill-muted)]" />
+            <div className="h-3 w-4/5 rounded-full bg-[var(--personal-fill-muted)]" />
+          </div>
+        </div>
+      ))}
+      <span className="sr-only">Loading your bots…</span>
+    </div>
+  );
+}
+
+/**
+ * Instant cold-start paint from the persisted snapshot. Every live-state
+ * indicator stays neutral — no working dots, no rate-limit or waiting labels,
+ * no review row — because those need live data. The live list replaces this
+ * seamlessly the moment it arrives.
+ */
+function SnapshotBotRows({ snapshot, now }: { snapshot: ChatsSnapshot; now: number }): JSX.Element {
+  return (
+    <ul
+      aria-label="Your bots"
+      className="mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)]"
+    >
+      {snapshot.rows.map((row) => {
+        const content = (
+          <>
+            <BotAvatar shape={row.avatarShape} color={row.avatarColor} size={56} label={row.name} />
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="flex min-w-0 items-center">
+                <span className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
+                  {row.name}
+                </span>
+                {row.previewAtMs !== null ? (
+                  <time
+                    dateTime={new Date(row.previewAtMs).toISOString()}
+                    className="ml-auto shrink-0 pl-3 text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]"
+                  >
+                    {formatRelativeTime(row.previewAtMs, now)}
+                  </time>
+                ) : null}
+              </span>
+              <span className="truncate text-sm leading-5 text-[var(--personal-text-secondary)]">
+                {row.providerLabel}
+              </span>
+              <span className="truncate text-sm leading-5 text-[#3a3a3a]">{row.preview}</span>
+            </span>
+          </>
+        );
+        return (
+          <li key={row.botId}>
+            {row.threadId !== null ? (
+              <Link
+                to="/bots/$botId/$threadId"
+                params={{
+                  botId: row.botId as PersonalBotId,
+                  threadId: row.threadId as ThreadId,
+                }}
+                className={ROW_CLASS}
+              >
+                {content}
+              </Link>
+            ) : (
+              <div className={ROW_CLASS}>{content}</div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /** ui-spec Screen 1: header, greeting, search, bot rows, review row. */
 export function ChatsScreen(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
@@ -58,7 +160,50 @@ export function ChatsScreen(): JSX.Element {
     () => allShells.filter((shell) => shell.environmentId === environmentId),
     [allShells, environmentId],
   );
-  const { tasks: taskFeed } = usePersonalTasks(environmentId);
+
+  // Cold-start snapshot: read synchronously on first mount so the list paints
+  // before auth + websocket + `personalBots.list` complete. Re-read when the
+  // environment changes (a miss then clears the other environment's entry).
+  const [snapshot, setSnapshot] = useState<ChatsSnapshot | null>(() =>
+    readChatsSnapshot(environmentId),
+  );
+  const snapshotEnv = useRef(environmentId);
+  useEffect(() => {
+    if (snapshotEnv.current === environmentId) return;
+    snapshotEnv.current = environmentId;
+    setSnapshot(readChatsSnapshot(environmentId));
+  }, [environmentId]);
+
+  // The tasks feed replays every task over the same socket the first list
+  // fetch needs, with O(n) map copies per 50ms batch. Arm it a frame after the
+  // first paint (snapshot, skeleton or live list) so it cannot contend with
+  // that paint; the timeout covers background tabs where rAF never fires.
+  const loaded = list.data !== null;
+  const showingSnapshot = !loaded && snapshot !== null && snapshot.rows.length > 0;
+  const firstPaintReady = loaded || showingSnapshot || list.error !== null;
+  const [tasksArmed, setTasksArmed] = useState(false);
+  useEffect(() => {
+    if (tasksArmed || !firstPaintReady) return;
+    let cancelled = false;
+    let outer = 0;
+    let inner = 0;
+    const arm = () => {
+      if (!cancelled) setTasksArmed(true);
+    };
+    if (typeof window.requestAnimationFrame === "function") {
+      outer = window.requestAnimationFrame(() => {
+        inner = window.requestAnimationFrame(arm);
+      });
+    }
+    const fallback = window.setTimeout(arm, 1_500);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(outer);
+      window.cancelAnimationFrame(inner);
+      window.clearTimeout(fallback);
+    };
+  }, [tasksArmed, firstPaintReady]);
+  const { tasks: taskFeed } = usePersonalTasks(tasksArmed ? environmentId : null);
   const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
   useRefreshBotsForTaskThreads({
     bots: list.data?.bots ?? null,
@@ -106,7 +251,6 @@ export function ChatsScreen(): JSX.Element {
   const visible = useMemo(() => filterBotSummaries(summaries, query), [query, summaries]);
   const attention = useMemo(() => collectAttentionThreads(summaries), [summaries]);
   const runningCount = summaries.filter((summary) => summary.live).length;
-  const loaded = list.data !== null;
   const firstAttention = attention[0] ?? null;
   const versionLabel = useAppVersion();
   const firstAttentionBot =
@@ -115,8 +259,37 @@ export function ChatsScreen(): JSX.Element {
       : (summaries.find((summary) => summary.attentionThreads.includes(firstAttention))?.bot ??
         null);
 
+  // Persist the render snapshot after each successful list fetch. The effect
+  // only writes when the row content actually changed, so task-feed updates
+  // that leave the rows alone cost nothing.
+  const snapshotRows = useMemo<ChatsSnapshotRowInput[] | null>(() => {
+    if (environmentId === null || list.data === null) return null;
+    return summaries.map((summary) => ({
+      botId: summary.bot.botId,
+      name: summary.bot.name,
+      avatarShape: summary.bot.avatarShape,
+      avatarColor: summary.bot.avatarColor,
+      providerLabel: providerLine(summary.provider),
+      preview: previewOf(summary, describeTurn),
+      previewAtMs: summary.lastActivityMs,
+      threadId: summary.newestThread === null ? null : (summary.newestThread.id as string),
+      threadTitle: summary.newestThread === null ? null : summary.newestThread.title,
+    }));
+  }, [environmentId, list.data, summaries, describeTurn]);
+  const snapshotKey = snapshotRows === null ? null : JSON.stringify(snapshotRows);
+  const lastPersistedKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (environmentId === null || snapshotRows === null || snapshotKey === null) return;
+    if (lastPersistedKey.current === snapshotKey) return;
+    lastPersistedKey.current = snapshotKey;
+    writeChatsSnapshot(
+      environmentId,
+      buildChatsSnapshot({ environmentId, savedAtMs: Date.now(), rows: snapshotRows }),
+    );
+  }, [environmentId, snapshotRows, snapshotKey]);
+
   return (
-    <div className="flex min-w-0 flex-col px-5 pb-6">
+    <div className="flex min-h-full min-w-0 flex-col px-5 pb-6">
       <header className="flex h-14 items-center justify-between">
         <h1 className="text-[28px] leading-none font-bold text-[var(--personal-text)]">Bots</h1>
         <div className="flex items-center gap-4">
@@ -261,10 +434,18 @@ export function ChatsScreen(): JSX.Element {
         </>
       ) : null}
 
+      {loaded ? null : showingSnapshot && snapshot !== null ? (
+        <SnapshotBotRows snapshot={snapshot} now={now} />
+      ) : list.error === null ? (
+        <ChatsSkeletonRows />
+      ) : null}
+
       {versionLabel !== null ? (
-        <p className="mt-8 text-center text-[11px] leading-4 text-[var(--personal-text-secondary)]">
-          Bots {versionLabel}
-        </p>
+        <div className="mt-auto pt-8">
+          <p className="text-center text-[11px] leading-4 text-[var(--personal-text-secondary)]">
+            Bots {versionLabel}
+          </p>
+        </div>
       ) : null}
     </div>
   );
