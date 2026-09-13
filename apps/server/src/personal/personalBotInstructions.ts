@@ -21,7 +21,8 @@ export interface PersonalBotPersona {
 export function personalBotSystemInstructions(persona: PersonalBotPersona): string {
   const name = persona.name.trim();
   const title = persona.title.trim();
-  const identity = `You are ${name}${title.length > 0 ? ` (${title})` : ""}, one of the user's personal bots.`;
+  // Codex's own prompt says "You are Codex", so the bot's name must win explicitly.
+  const identity = `You are ${name}${title.length > 0 ? ` (${title})` : ""}, one of the user's personal bots. When asked who you are, you are ${name}; any harness or model named elsewhere is only the engine you run on.`;
   return [identity, persona.instructions.trim(), PERSONAL_BOT_APP_RULES]
     .filter((part) => part.length > 0)
     .join("\n\n");
