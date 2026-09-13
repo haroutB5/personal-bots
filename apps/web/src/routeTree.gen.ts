@@ -44,6 +44,8 @@ import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$e
 import { Route as PersonalBotsBotIdIndexRouteImport } from './routes/_personal.bots_.$botId.index'
 import { Route as PersonalTasksRoutinesNewRouteImport } from './routes/_personal.tasks_.routines_.new'
 import { Route as PersonalTasksRoutinesRoutineIdRouteImport } from './routes/_personal.tasks_.routines_.$routineId'
+import { Route as PersonalBotsSettingsNotificationsRouteImport } from './routes/_personal.bots_.settings_.notifications'
+import { Route as PersonalBotsSettingsMemoryRouteImport } from './routes/_personal.bots_.settings_.memory'
 import { Route as PersonalBotsBotIdEditRouteImport } from './routes/_personal.bots_.$botId.edit'
 import { Route as PersonalBotsBotIdThreadIdRouteImport } from './routes/_personal.bots_.$botId.$threadId'
 import { Route as PersonalTasksRoutinesRoutineIdEditRouteImport } from './routes/_personal.tasks_.routines_.$routineId_.edit'
@@ -225,6 +227,18 @@ const PersonalTasksRoutinesRoutineIdRoute =
     path: '/tasks/routines/$routineId',
     getParentRoute: () => PersonalRoute,
   } as any)
+const PersonalBotsSettingsNotificationsRoute =
+  PersonalBotsSettingsNotificationsRouteImport.update({
+    id: '/bots_/settings_/notifications',
+    path: '/bots/settings/notifications',
+    getParentRoute: () => PersonalRoute,
+  } as any)
+const PersonalBotsSettingsMemoryRoute =
+  PersonalBotsSettingsMemoryRouteImport.update({
+    id: '/bots_/settings_/memory',
+    path: '/bots/settings/memory',
+    getParentRoute: () => PersonalRoute,
+  } as any)
 const PersonalBotsBotIdEditRoute = PersonalBotsBotIdEditRouteImport.update({
   id: '/bots_/$botId/edit',
   path: '/bots/$botId/edit',
@@ -276,6 +290,8 @@ export interface FileRoutesByFullPath {
   '/tasks/$taskId': typeof PersonalTasksTaskIdRoute
   '/bots/$botId/$threadId': typeof PersonalBotsBotIdThreadIdRoute
   '/bots/$botId/edit': typeof PersonalBotsBotIdEditRoute
+  '/bots/settings/memory': typeof PersonalBotsSettingsMemoryRoute
+  '/bots/settings/notifications': typeof PersonalBotsSettingsNotificationsRoute
   '/tasks/routines/$routineId': typeof PersonalTasksRoutinesRoutineIdRoute
   '/tasks/routines/new': typeof PersonalTasksRoutinesNewRoute
   '/bots/$botId/': typeof PersonalBotsBotIdIndexRoute
@@ -314,6 +330,8 @@ export interface FileRoutesByTo {
   '/tasks/$taskId': typeof PersonalTasksTaskIdRoute
   '/bots/$botId/$threadId': typeof PersonalBotsBotIdThreadIdRoute
   '/bots/$botId/edit': typeof PersonalBotsBotIdEditRoute
+  '/bots/settings/memory': typeof PersonalBotsSettingsMemoryRoute
+  '/bots/settings/notifications': typeof PersonalBotsSettingsNotificationsRoute
   '/tasks/routines/$routineId': typeof PersonalTasksRoutinesRoutineIdRoute
   '/tasks/routines/new': typeof PersonalTasksRoutinesNewRoute
   '/bots/$botId': typeof PersonalBotsBotIdIndexRoute
@@ -355,6 +373,8 @@ export interface FileRoutesById {
   '/_personal/tasks_/$taskId': typeof PersonalTasksTaskIdRoute
   '/_personal/bots_/$botId/$threadId': typeof PersonalBotsBotIdThreadIdRoute
   '/_personal/bots_/$botId/edit': typeof PersonalBotsBotIdEditRoute
+  '/_personal/bots_/settings_/memory': typeof PersonalBotsSettingsMemoryRoute
+  '/_personal/bots_/settings_/notifications': typeof PersonalBotsSettingsNotificationsRoute
   '/_personal/tasks_/routines_/$routineId': typeof PersonalTasksRoutinesRoutineIdRoute
   '/_personal/tasks_/routines_/new': typeof PersonalTasksRoutinesNewRoute
   '/_personal/bots_/$botId/': typeof PersonalBotsBotIdIndexRoute
@@ -395,6 +415,8 @@ export interface FileRouteTypes {
     | '/tasks/$taskId'
     | '/bots/$botId/$threadId'
     | '/bots/$botId/edit'
+    | '/bots/settings/memory'
+    | '/bots/settings/notifications'
     | '/tasks/routines/$routineId'
     | '/tasks/routines/new'
     | '/bots/$botId/'
@@ -433,6 +455,8 @@ export interface FileRouteTypes {
     | '/tasks/$taskId'
     | '/bots/$botId/$threadId'
     | '/bots/$botId/edit'
+    | '/bots/settings/memory'
+    | '/bots/settings/notifications'
     | '/tasks/routines/$routineId'
     | '/tasks/routines/new'
     | '/bots/$botId'
@@ -473,6 +497,8 @@ export interface FileRouteTypes {
     | '/_personal/tasks_/$taskId'
     | '/_personal/bots_/$botId/$threadId'
     | '/_personal/bots_/$botId/edit'
+    | '/_personal/bots_/settings_/memory'
+    | '/_personal/bots_/settings_/notifications'
     | '/_personal/tasks_/routines_/$routineId'
     | '/_personal/tasks_/routines_/new'
     | '/_personal/bots_/$botId/'
@@ -738,6 +764,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PersonalTasksRoutinesRoutineIdRouteImport
       parentRoute: typeof PersonalRoute
     }
+    '/_personal/bots_/settings_/notifications': {
+      id: '/_personal/bots_/settings_/notifications'
+      path: '/bots/settings/notifications'
+      fullPath: '/bots/settings/notifications'
+      preLoaderRoute: typeof PersonalBotsSettingsNotificationsRouteImport
+      parentRoute: typeof PersonalRoute
+    }
+    '/_personal/bots_/settings_/memory': {
+      id: '/_personal/bots_/settings_/memory'
+      path: '/bots/settings/memory'
+      fullPath: '/bots/settings/memory'
+      preLoaderRoute: typeof PersonalBotsSettingsMemoryRouteImport
+      parentRoute: typeof PersonalRoute
+    }
     '/_personal/bots_/$botId/edit': {
       id: '/_personal/bots_/$botId/edit'
       path: '/bots/$botId/edit'
@@ -788,6 +828,8 @@ interface PersonalRouteChildren {
   PersonalTasksTaskIdRoute: typeof PersonalTasksTaskIdRoute
   PersonalBotsBotIdThreadIdRoute: typeof PersonalBotsBotIdThreadIdRoute
   PersonalBotsBotIdEditRoute: typeof PersonalBotsBotIdEditRoute
+  PersonalBotsSettingsMemoryRoute: typeof PersonalBotsSettingsMemoryRoute
+  PersonalBotsSettingsNotificationsRoute: typeof PersonalBotsSettingsNotificationsRoute
   PersonalTasksRoutinesRoutineIdRoute: typeof PersonalTasksRoutinesRoutineIdRoute
   PersonalTasksRoutinesNewRoute: typeof PersonalTasksRoutinesNewRoute
   PersonalBotsBotIdIndexRoute: typeof PersonalBotsBotIdIndexRoute
@@ -804,6 +846,9 @@ const PersonalRouteChildren: PersonalRouteChildren = {
   PersonalTasksTaskIdRoute: PersonalTasksTaskIdRoute,
   PersonalBotsBotIdThreadIdRoute: PersonalBotsBotIdThreadIdRoute,
   PersonalBotsBotIdEditRoute: PersonalBotsBotIdEditRoute,
+  PersonalBotsSettingsMemoryRoute: PersonalBotsSettingsMemoryRoute,
+  PersonalBotsSettingsNotificationsRoute:
+    PersonalBotsSettingsNotificationsRoute,
   PersonalTasksRoutinesRoutineIdRoute: PersonalTasksRoutinesRoutineIdRoute,
   PersonalTasksRoutinesNewRoute: PersonalTasksRoutinesNewRoute,
   PersonalBotsBotIdIndexRoute: PersonalBotsBotIdIndexRoute,
