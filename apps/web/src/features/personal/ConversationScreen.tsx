@@ -40,6 +40,7 @@ import {
 } from "./conversationModel";
 import { MessageList, type PendingOutgoingMessage } from "./MessageList";
 import { PersonalComposer } from "./PersonalComposer";
+import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { useStartBotChat } from "./startBotChat";
 import {
   personalBotArchiveThread,
@@ -139,6 +140,7 @@ export function ConversationScreen({
   const [pending, setPending] = useState<ReadonlyArray<PendingOutgoingMessage>>([]);
   const [respondingIds, setRespondingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [actionError, setActionError] = useState<string | null>(null);
+  const laptopOffline = useLaptopOffline();
 
   const messages = (thread?.messages as ReadonlyArray<ChatMessage> | undefined) ?? EMPTY_MESSAGES;
   const activities = thread?.activities ?? EMPTY_ACTIVITIES;
@@ -222,8 +224,10 @@ export function ConversationScreen({
   const name = bot?.name ?? shell?.title ?? "Chat";
   const sessionError =
     conversationState === "error" ? (thread?.session?.lastError ?? "The last turn failed.") : null;
-  const disabledReason =
-    provider !== null && !provider.available
+  // Offline: sending is blocked and the draft stays in this device's draft store.
+  const disabledReason = laptopOffline
+    ? "Your laptop is offline. This draft is saved on this device and has not been sent."
+    : provider !== null && !provider.available
       ? `${provider.label} can't run right now, so ${name} can't reply. Fix it on your computer or edit the bot.`
       : null;
 
