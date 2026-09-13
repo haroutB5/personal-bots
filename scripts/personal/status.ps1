@@ -49,7 +49,7 @@ if ($state -and $state.release) {
 if ($release) {
     Write-Host "  Release:    $($release.Name)"
     if (Test-Path -LiteralPath $release.VersionFile) {
-        Get-Content -LiteralPath $release.VersionFile | Where-Object { $_ -match '^(sha|branch|builtAt|t3)=' } |
+        Get-Content -LiteralPath $release.VersionFile | Where-Object { $_ -match '^(sha|branch|builtAt|cli)=' } |
             ForEach-Object { Write-Host "              $_" }
     }
 } else {

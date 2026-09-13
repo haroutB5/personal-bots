@@ -111,7 +111,7 @@ $version = @(
     "branch=$branch",
     "dirty=$dirty",
     "builtAt=$builtAt",
-    "t3=$($cliVersion.Trim())",
+    "cli=$($cliVersion.Trim())",
     "node=$($nodeVersion.Trim())",
     "repo=$PbRepoRoot"
 )
@@ -123,7 +123,7 @@ if (-not $NoActivate) {
 
 Write-Host ''
 Write-Host "Release staged: $releaseDir"
-Write-Host "  t3 $($cliVersion.Trim()), $branch@$sha, built $builtAt"
+Write-Host "  $($cliVersion.Trim()), $branch@$sha, built $builtAt"
 if ($NoActivate) {
     Write-Host "  Not activated. Activate with: restart.ps1 -Release $releaseName"
 } else {
