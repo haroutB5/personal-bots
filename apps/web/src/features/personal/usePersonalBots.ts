@@ -78,6 +78,12 @@ export const personalBotArchiveThread = createEnvironmentRpcCommand(connectionAt
   onSuccess: refreshBotsList,
 });
 
+export const personalBotDeleteThread = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-bots:delete-thread",
+  tag: WS_METHODS.personalBotsDeleteThread,
+  onSuccess: refreshBotsList,
+});
+
 export const personalProfileSet = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-bots:set-profile",
   tag: WS_METHODS.personalBotsSetProfile,

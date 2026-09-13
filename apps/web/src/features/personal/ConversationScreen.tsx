@@ -66,6 +66,8 @@ import {
   usePersonalBotsList,
   usePersonalEnvironmentId,
 } from "./usePersonalBots";
+import { useWrapupChat } from "./wrapupChat";
+import { useDeleteChat } from "./useDeleteChat";
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -287,6 +289,24 @@ export function ConversationScreen({
     }
   };
 
+  const { send: sendWrapup, sending: wrapupSending } = useWrapupChat(
+    environmentId,
+    thread,
+    bot?.modelSelection ?? null,
+  );
+  const onWrapup = async () => {
+    const started = await sendWrapup();
+    if (!started) setActionError("Couldn't start the wrapup. Try again.");
+  };
+
+  const deleteChat = useDeleteChat(environmentId);
+  const onDeleteChat = async () => {
+    const deleted = await deleteChat(threadId);
+    if (deleted) {
+      await navigate({ to: "/bots/$botId", params: { botId }, replace: true });
+    }
+  };
+
   const loadEarlier =
     environmentId !== null && threadHasOlderTurns(threadState)
       ? {
@@ -410,8 +430,17 @@ export function ConversationScreen({
             <MenuItem onClick={() => void navigate({ to: "/bots/$botId", params: { botId } })}>
               All chats
             </MenuItem>
+            <MenuItem
+              disabled={disabledReason !== null || turnBusy || wrapupSending || thread === null}
+              onClick={() => void onWrapup()}
+            >
+              Wrapup chat
+            </MenuItem>
             <MenuSeparator />
             <MenuItem onClick={() => void onArchive()}>Archive chat</MenuItem>
+            <MenuItem variant="destructive" onClick={() => void onDeleteChat()}>
+              Delete chat
+            </MenuItem>
           </MenuPopup>
         </Menu>
       </header>

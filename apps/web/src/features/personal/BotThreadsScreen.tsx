@@ -3,16 +3,18 @@ import { useMemo, useState } from "react";
 
 import type { EnvironmentId, PersonalBot, PersonalBotThread } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Pencil, Plus } from "lucide-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { ChevronLeft, NotebookPen, Pencil, Plus } from "lucide-react";
 
-import { useThreadShells } from "~/state/entities";
+import { useThreadDetail, useThreadShells } from "~/state/entities";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatar } from "./BotAvatar";
 import { isThreadLive, isThreadRateLimited, threadNeedsAttention } from "./botSummaries";
 import { formatRelativeTime } from "./relativeTime";
 import { useStartBotChat } from "./startBotChat";
+import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { usePersonalTasks } from "./usePersonalAutomation";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import {
@@ -20,6 +22,8 @@ import {
   usePersonalBotsList,
   usePersonalEnvironmentId,
 } from "./usePersonalBots";
+import { useWrapupChat } from "./wrapupChat";
+import { useDeleteChat } from "./useDeleteChat";
 
 const ICON_LINK =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -96,6 +100,7 @@ function ArchivedRow({
   now: number;
 }) {
   const archiveThread = useAtomCommand(personalBotArchiveThread);
+  const deleteChat = useDeleteChat(environmentId);
   const [busy, setBusy] = useState(false);
   return (
     <li className="flex min-h-12 items-center gap-3 py-1">
@@ -115,6 +120,18 @@ function ArchivedRow({
       >
         Restore
       </button>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          await deleteChat(row.link.threadId);
+          setBusy(false);
+        }}
+        className="h-11 shrink-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3 text-sm font-medium text-[#B3261E] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+      >
+        Delete
+      </button>
     </li>
   );
 }
@@ -122,11 +139,14 @@ function ArchivedRow({
 /** /bots/$botId: the bot's chats, newest first, with "New chat" and archived chats. */
 export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
+  const navigate = useNavigate();
+  const laptopOffline = useLaptopOffline();
   const list = usePersonalBotsList(environmentId);
   const shells = useThreadShells();
   const bot = list.data?.bots.find((candidate) => candidate.botId === botId) ?? null;
   const { start, starting } = useStartBotChat(environmentId, bot?.botId ?? null);
   const [now] = useState(() => Date.now());
+  const [wrapupError, setWrapupError] = useState<string | null>(null);
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
   const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
   useRefreshBotsForTaskThreads({
@@ -147,6 +167,39 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
           ),
     [bot, environmentId, list.data, shells],
   );
+
+  // Wrapup acts on the most recent non-archived chat (rows.active is newest
+  // first): the same chat "New chat" would supersede.
+  const newestThreadId = rows.active[0]?.link.threadId ?? null;
+  const wrapupThreadRef = useMemo(
+    () =>
+      environmentId === null || newestThreadId === null
+        ? null
+        : scopeThreadRef(environmentId, newestThreadId),
+    [environmentId, newestThreadId],
+  );
+  const wrapupThread = useThreadDetail(wrapupThreadRef);
+  const { send: sendWrapup, sending: wrapupSending } = useWrapupChat(
+    environmentId,
+    wrapupThread,
+    bot?.modelSelection ?? null,
+  );
+  const wrapupDisabled =
+    newestThreadId === null || laptopOffline || wrapupThread === null || wrapupSending;
+
+  const onWrapup = async () => {
+    if (newestThreadId === null || bot === null || wrapupDisabled) return;
+    setWrapupError(null);
+    const started = await sendWrapup();
+    if (started) {
+      await navigate({
+        to: "/bots/$botId/$threadId",
+        params: { botId: bot.botId, threadId: newestThreadId },
+      });
+    } else {
+      setWrapupError("Couldn't start the wrapup. Try again.");
+    }
+  };
 
   return (
     <div className="flex min-w-0 flex-col px-5 pb-8">
@@ -202,6 +255,21 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
             <Plus aria-hidden="true" className="size-5" strokeWidth={1.75} />
             New chat
           </button>
+          <button
+            type="button"
+            onClick={() => void onWrapup()}
+            disabled={wrapupDisabled}
+            aria-busy={wrapupSending}
+            className="mt-3 flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[15px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 disabled:opacity-40"
+          >
+            <NotebookPen aria-hidden="true" className="size-5" strokeWidth={1.75} />
+            Wrapup
+          </button>
+          {wrapupError !== null ? (
+            <p role="alert" className="mt-2 text-center text-sm text-[#B3261E]">
+              {wrapupError}
+            </p>
+          ) : null}
 
           {rows.active.length === 0 ? (
             <p className="mt-6 text-center text-[15px] text-[var(--personal-text-secondary)]">
