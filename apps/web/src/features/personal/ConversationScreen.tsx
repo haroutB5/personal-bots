@@ -447,6 +447,7 @@ export function ConversationScreen({
             threadId={threadId}
             thread={thread}
             botName={botName}
+            botModelSelection={bot?.modelSelection ?? null}
             disabledReason={disabledReason}
             working={turnBusy}
             canInterrupt={interruptInput !== null}

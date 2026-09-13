@@ -4,6 +4,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   type EnvironmentId,
+  type ModelSelection,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ThreadId,
@@ -70,6 +71,7 @@ export function PersonalComposer({
   threadId,
   thread,
   botName,
+  botModelSelection = null,
   disabledReason,
   working,
   canInterrupt,
@@ -81,6 +83,12 @@ export function PersonalComposer({
   thread: Thread;
   /** Null while the bot is still loading (a cold deep link). */
   botName: string | null;
+  /**
+   * The bot's current model settings (model, effort). Sent with each turn so
+   * edits to the bot reach its existing chats; ignored if the bot moved to a
+   * different provider, which only applies to new chats.
+   */
+  botModelSelection?: ModelSelection | null;
   /** Why sending is impossible right now (e.g. provider unavailable), or null. */
   disabledReason: string | null;
   working: boolean;
@@ -263,7 +271,11 @@ export function PersonalComposer({
           text: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
           attachments: uploaded,
         },
-        modelSelection: thread.modelSelection,
+        modelSelection:
+          botModelSelection !== null &&
+          botModelSelection.instanceId === thread.modelSelection.instanceId
+            ? botModelSelection
+            : thread.modelSelection,
         titleSeed,
         runtimeMode: thread.runtimeMode,
         interactionMode: thread.interactionMode,

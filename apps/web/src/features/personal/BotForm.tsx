@@ -8,12 +8,18 @@ import {
   type ModelSelection,
   type PersonalBot,
   PersonalBotId,
+  type SelectProviderOptionDescriptor,
   type ServerProvider,
 } from "@t3tools/contracts";
+import {
+  getModelSelectionStringOptionValue,
+  getProviderOptionDescriptors,
+} from "@t3tools/shared/model";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 
 import { randomUUID } from "~/lib/utils";
+import { getProviderModelCapabilities } from "~/providerModels";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -56,7 +62,12 @@ interface BotDraft {
   avatarColor: string;
   instanceId: string;
   model: string;
+  /** Reasoning effort option id; "" keeps the model's default. */
+  effort: string;
 }
+
+/** Claude calls the option `effort`, Codex `reasoningEffort`. */
+const EFFORT_OPTION_IDS = ["effort", "reasoningEffort"];
 
 function draftFromBot(bot: PersonalBot): BotDraft {
   return {
@@ -68,6 +79,10 @@ function draftFromBot(bot: PersonalBot): BotDraft {
     avatarColor: bot.avatarColor,
     instanceId: bot.modelSelection.instanceId,
     model: bot.modelSelection.model,
+    effort:
+      EFFORT_OPTION_IDS.map((id) =>
+        getModelSelectionStringOptionValue(bot.modelSelection, id),
+      ).find((value) => value !== undefined) ?? "",
   };
 }
 
@@ -126,6 +141,7 @@ function BotForm({
       avatarColor: "#1A73E8",
       instanceId: first?.instanceId ?? "",
       model: defaultModelFor(first),
+      effort: "",
     };
   });
 
@@ -160,14 +176,41 @@ function BotForm({
 
   const update = (patch: Partial<BotDraft>) => setDraft((previous) => ({ ...previous, ...patch }));
 
+  // The selected model's effort control, if its provider offers one.
+  const effortDescriptor: SelectProviderOptionDescriptor | null =
+    selectedProvider === undefined || draft.model === ""
+      ? null
+      : (getProviderOptionDescriptors({
+          caps: getProviderModelCapabilities(
+            selectedProvider.models,
+            draft.model,
+            selectedProvider.driver,
+          ),
+        }).find(
+          (descriptor): descriptor is SelectProviderOptionDescriptor =>
+            descriptor.type === "select" && EFFORT_OPTION_IDS.includes(descriptor.id),
+        ) ?? null);
+  // A saved effort the new model does not offer falls back to its default.
+  const effortValue =
+    effortDescriptor?.options.some((option) => option.id === draft.effort) === true
+      ? draft.effort
+      : "";
+
   const buildModelSelection = (): ModelSelection => {
     const unchanged =
       bot !== null &&
       bot.modelSelection.instanceId === draft.instanceId &&
       bot.modelSelection.model === draft.model;
-    return unchanged
+    const base = unchanged
       ? bot.modelSelection
       : ({ instanceId: draft.instanceId, model: draft.model } as ModelSelection);
+    const others = (base.options ?? []).filter((option) => !EFFORT_OPTION_IDS.includes(option.id));
+    const options =
+      effortDescriptor !== null && effortValue !== ""
+        ? [...others, { id: effortDescriptor.id, value: effortValue }]
+        : others;
+    const { options: _previous, ...rest } = base;
+    return (options.length > 0 ? { ...rest, options } : rest) as ModelSelection;
   };
 
   const onSubmit = async (event: FormEvent) => {
@@ -335,6 +378,36 @@ function BotForm({
               </option>
             ))}
           </select>
+        </div>
+      ) : null}
+
+      {effortDescriptor !== null ? (
+        <div>
+          <label htmlFor="bot-effort" className={LABEL_CLASS}>
+            Effort
+          </label>
+          <select
+            id="bot-effort"
+            value={effortValue}
+            onChange={(event) => update({ effort: event.target.value })}
+            className={`${FIELD_CLASS} h-11`}
+          >
+            <option value="">
+              Default
+              {(() => {
+                const fallback = effortDescriptor.options.find((option) => option.isDefault);
+                return fallback === undefined ? "" : ` (${fallback.label})`;
+              })()}
+            </option>
+            {effortDescriptor.options.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
+            Higher effort thinks longer and uses more of your plan's limits.
+          </p>
         </div>
       ) : null}
 
