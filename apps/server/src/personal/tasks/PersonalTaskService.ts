@@ -15,13 +15,16 @@ import * as Stream from "effect/Stream";
 
 import {
   CommandId,
+  ComposerContextId,
   MessageId,
+  PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
   PERSONAL_TASK_RETRYABLE_STATUSES,
   PERSONAL_TASK_TERMINAL_STATUSES,
   PersonalTaskId,
   PersonalTasksError,
   ThreadId,
   type OrchestrationEvent,
+  type OrchestrationMessageContext,
   type OrchestrationSession,
   type PersonalBotId,
   type PersonalDelegationBrief,
@@ -32,6 +35,7 @@ import {
   type PersonalTaskDetail,
   type PersonalTaskListInput,
   type PersonalTaskListResult,
+  type PersonalTaskMessageMarker,
   type PersonalTaskSource,
   type PersonalTaskStatus,
   type PersonalTaskStreamEvent,
@@ -236,6 +240,26 @@ const taskSections = (task: PersonalTask, brief: PersonalDelegationBrief | null)
     task.acceptanceCriteria ? `Acceptance criteria:\n${task.acceptanceCriteria}` : null,
     task.expectedOutput ? `Expected output:\n${task.expectedOutput}` : null,
   ].filter((section) => section !== null);
+
+/**
+ * The message context that marks a task turn as server-authored. The record is
+ * never referenced from the text, so `projectComposerContextForProvider` drops
+ * it and the provider prompt is unchanged.
+ */
+export const personalTaskMessageContext = (
+  marker: PersonalTaskMessageMarker,
+): OrchestrationMessageContext => ({
+  version: 1,
+  records: [
+    {
+      version: 1,
+      contextId: ComposerContextId.make(PERSONAL_TASK_MESSAGE_CONTEXT_KIND),
+      label: "Task turn",
+      kind: PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
+      payload: marker,
+    },
+  ],
+});
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
@@ -488,39 +512,69 @@ export const make = Effect.gen(function* () {
     delivered: ReadonlyArray<PersonalHandoff>,
     notes: ReadonlyArray<string>,
   ) {
+    const marker = (
+      turn: PersonalTaskMessageMarker["turn"],
+      delegatorBotId: PersonalBotId | null,
+      children: PersonalTaskMessageMarker["children"],
+    ): PersonalTaskMessageMarker => ({
+      taskId: task.taskId,
+      attempt: attemptNumber,
+      turn,
+      source: task.source,
+      title: task.title,
+      delegatorBotId,
+      children,
+    });
     if (delivered.length > 0) {
       const results = yield* Effect.forEach(delivered, (handoff) =>
         repository.getTask(handoff.childTaskId).pipe(
-          Effect.map((child) => {
-            const status = Option.match(child, {
+          Effect.map((child) => ({
+            text: `### ${handoff.brief.title} (${Option.match(child, {
               onNone: () => "unknown",
               onSome: (value) => value.status,
-            });
-            return `### ${handoff.brief.title} (${status})\n${handoff.resultSummary ?? ""}`;
-          }),
+            })})\n${handoff.resultSummary ?? ""}`,
+            child: {
+              taskId: handoff.childTaskId,
+              botId: Option.isSome(child) ? child.value.botId : null,
+              title: handoff.brief.title,
+              status: Option.isSome(child) ? child.value.status : null,
+            },
+          })),
         ),
       );
-      return [
-        "[Task continuation] Your delegated tasks have finished. Their results:",
-        ...results,
-        ...notes,
-        "Continue the task below with these results and give your final answer.",
-        ...taskSections(task, null),
-      ].join("\n\n");
+      return {
+        text: [
+          "[Task continuation] Your delegated tasks have finished. Their results:",
+          ...results.map((result) => result.text),
+          ...notes,
+          "Continue the task below with these results and give your final answer.",
+          ...taskSections(task, null),
+        ].join("\n\n"),
+        marker: marker(
+          "continuation",
+          null,
+          results.map((result) => result.child),
+        ),
+      };
     }
     if (notes.length > 0) {
-      return [
-        "[Task continuation]",
-        ...notes,
-        "Continue the task below.",
-        ...taskSections(task, null),
-      ].join("\n\n");
+      return {
+        text: [
+          "[Task continuation]",
+          ...notes,
+          "Continue the task below.",
+          ...taskSections(task, null),
+        ].join("\n\n"),
+        marker: marker("continuation", null, []),
+      };
     }
     const handoff = yield* repository.getHandoffByChild(task.taskId);
     let delegatorName: string | null = null;
+    let delegatorBotId: PersonalBotId | null = null;
     if (Option.isSome(handoff)) {
       const parent = yield* repository.getTask(handoff.value.parentTaskId);
       if (Option.isSome(parent)) {
+        delegatorBotId = parent.value.botId;
         const bot = yield* botRepository
           .getBotById({ botId: parent.value.botId })
           .pipe(Effect.orElseSucceed(() => Option.none()));
@@ -531,10 +585,13 @@ export const make = Effect.gen(function* () {
       attemptNumber > 1
         ? `${sourceLabel(task, delegatorName)} Retry, attempt ${attemptNumber}.`
         : sourceLabel(task, delegatorName);
-    return [
-      header,
-      ...taskSections(task, Option.isSome(handoff) ? handoff.value.brief : null),
-    ].join("\n\n");
+    return {
+      text: [
+        header,
+        ...taskSections(task, Option.isSome(handoff) ? handoff.value.brief : null),
+      ].join("\n\n"),
+      marker: marker(attemptNumber > 1 ? "retry" : "start", delegatorBotId, []),
+    };
   });
 
   // Creates the bot thread on first use and starts the turn. Deterministic
@@ -546,7 +603,7 @@ export const make = Effect.gen(function* () {
     delivered: ReadonlyArray<PersonalHandoff>,
     notes: ReadonlyArray<string>,
   ) {
-    const text = yield* buildTurnText(task, attempt.attempt, delivered, notes);
+    const { text, marker } = yield* buildTurnText(task, attempt.attempt, delivered, notes);
     yield* bots.createThread({ botId: task.botId, threadId: attempt.providerThreadId });
     yield* engine.dispatch({
       type: "thread.turn.start",
@@ -557,6 +614,7 @@ export const make = Effect.gen(function* () {
         role: "user",
         text,
         attachments: [],
+        context: personalTaskMessageContext(marker),
       },
       titleSeed: task.title,
       runtimeMode: "full-access",
