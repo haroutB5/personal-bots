@@ -417,6 +417,10 @@ describe("personal secret requests", () => {
         expect((yield* access.forThread(thread)).systemInstructions).toBe(
           `Write in short sentences.\n\n${PERSONAL_BOT_APP_RULES}`,
         );
+        expect(yield* access.instructionsForThread(thread)).toBe(
+          `Write in short sentences.\n\n${PERSONAL_BOT_APP_RULES}`,
+        );
+        expect(yield* access.instructionsForThread(ThreadId.make("thread-plain"))).toBeNull();
         expect(PERSONAL_BOT_APP_RULES).toContain("save_memory");
       }),
     ),

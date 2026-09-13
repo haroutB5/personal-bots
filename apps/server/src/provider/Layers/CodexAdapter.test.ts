@@ -50,6 +50,16 @@ import {
 import { makeCodexAdapter } from "./CodexAdapter.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
+// A stand-in for the owner's ~/.codex/skills: one user skill and a bundled one.
+const ownerSkillsRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "codex-owner-skills-"));
+for (const skill of ["wrangler", NodePath.join(".system", "imagegen")]) {
+  NodeFS.mkdirSync(NodePath.join(ownerSkillsRoot, skill), { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(ownerSkillsRoot, skill, "SKILL.md"), "---\nname: x\n---\n");
+}
+const ownerSkillArg = `skills.config=[{path=${JSON.stringify(
+  NodePath.join(ownerSkillsRoot, "wrangler", "SKILL.md"),
+)},enabled=false}]`;
+
 // Test-local service tag so the rest of the file can keep using `yield* CodexAdapter`.
 class CodexAdapter extends Context.Service<CodexAdapter, CodexAdapterShape>()(
   "t3/provider/Layers/CodexAdapter.test/CodexAdapter",
@@ -239,6 +249,7 @@ const validationLayer = it.layer(
       const codexConfig = decodeCodexSettings({});
       return yield* makeCodexAdapter(codexConfig, {
         makeRuntime: validationRuntimeFactory.factory,
+        ownerSkillRoots: [ownerSkillsRoot, NodePath.join(ownerSkillsRoot, "missing")],
       });
     }),
   ).pipe(
@@ -300,7 +311,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
     }),
   );
 
-  it.effect("turns off connectors, plugins and Codex memories for personal-bot sessions", () =>
+  it.effect("turns off connectors, plugins, memories and owner skills for personal bots", () =>
     Effect.gen(function* () {
       validationRuntimeFactory.factory.mockClear();
       const adapter = yield* CodexAdapter;
@@ -346,6 +357,8 @@ validationLayer("CodexAdapterLive validation", (it) => {
         "features.plugins=false",
         "-c",
         "features.memories=false",
+        "-c",
+        ownerSkillArg,
       ]);
       NodeAssert.deepStrictEqual(withoutMcp?.appServerArgs, [
         "-c",
@@ -354,6 +367,8 @@ validationLayer("CodexAdapterLive validation", (it) => {
         "features.plugins=false",
         "-c",
         "features.memories=false",
+        "-c",
+        ownerSkillArg,
       ]);
     }),
   );

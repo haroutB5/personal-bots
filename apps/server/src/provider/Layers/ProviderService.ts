@@ -1275,6 +1275,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const recoverSessionForThread = Effect.fn("recoverSessionForThread")(function* (input: {
     readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
     readonly operation: string;
+    readonly systemInstructions?: string | undefined;
   }) {
     const bindingInstanceId = yield* requireBindingInstanceId(input.operation, input.binding);
     yield* Effect.annotateCurrentSpan({
@@ -1317,10 +1318,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
-      const { personalBot, systemInstructions } = yield* prepareMcpSession(
-        input.binding.threadId,
-        bindingInstanceId,
-      );
+      const prepared = yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
+      const personalBot = prepared.personalBot;
+      // The reactor's turn instructions carry the memory block for this
+      // message; the bot-only ones are the fallback (e.g. a continuation).
+      const systemInstructions = input.systemInstructions ?? prepared.systemInstructions;
       const resumed = yield* adapter
         .startSession({
           threadId: input.binding.threadId,
@@ -1369,6 +1371,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly threadId: ThreadId;
     readonly operation: string;
     readonly allowRecovery: boolean;
+    /** The triggering turn's instructions, preferred by a recovery start. */
+    readonly systemInstructions?: string | undefined;
   }) {
     const bindingOption = yield* directory.getBinding(input.threadId);
     const binding = Option.getOrUndefined(bindingOption);
@@ -1405,6 +1409,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     const recovered = yield* recoverSessionForThread({
       binding,
       operation: input.operation,
+      systemInstructions: input.systemInstructions,
     });
     return {
       adapter: recovered.adapter,
@@ -1711,11 +1716,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
     }
 
+    // The reactor always sends a bot's instructions; turns sent from elsewhere
+    // (the post-restart continuation) do not, and Codex reads them per turn.
+    const fallbackInstructions =
+      parsed.systemInstructions === undefined && Option.isSome(personalSessions)
+        ? yield* personalSessions.value.instructionsForThread(parsed.threadId)
+        : null;
     const input = {
       ...parsed,
       ...(inputTextWithAttachmentContext !== undefined
         ? { input: inputTextWithAttachmentContext }
         : {}),
+      ...(fallbackInstructions ? { systemInstructions: fallbackInstructions } : {}),
     };
     yield* Effect.annotateCurrentSpan({
       "provider.operation": "send-turn",
@@ -1747,6 +1759,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           threadId: input.threadId,
           operation: "ProviderService.sendTurn",
           allowRecovery: true,
+          systemInstructions: input.systemInstructions,
         });
       }
       metricProvider = routed.adapter.provider;

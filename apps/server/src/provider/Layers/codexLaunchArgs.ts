@@ -1,3 +1,7 @@
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 
 const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
@@ -54,6 +58,49 @@ export const PERSONAL_BOT_CODEX_APP_SERVER_ARGS: ReadonlyArray<string> = [
   "-c",
   "features.memories=false",
 ];
+
+/**
+ * Turns off the owner's own Codex skills (`~/.codex/skills`, `~/.agents/skills`)
+ * for a personal bot. Codex has no switch for user-scoped skills, but it
+ * honours `skills.config` entries keyed by each skill's full `SKILL.md` path.
+ * JSON string escaping is valid TOML basic-string escaping.
+ */
+export const personalBotCodexSkillArgs = (
+  skillFiles: ReadonlyArray<string>,
+): ReadonlyArray<string> =>
+  skillFiles.length === 0
+    ? []
+    : [
+        "-c",
+        `skills.config=[${skillFiles
+          .map((path) => `{path=${JSON.stringify(path)},enabled=false}`)
+          .join(",")}]`,
+      ];
+
+/**
+ * `SKILL.md` files under the given skill roots, skipping dot-folders (Codex's
+ * bundled `.system` skills are part of Codex, not the owner's add-ons). A
+ * missing or unreadable root lists nothing.
+ */
+export const listOwnerCodexSkillFiles = Effect.fn("listOwnerCodexSkillFiles")(function* (
+  roots: ReadonlyArray<string>,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const files: Array<string> = [];
+  for (const root of roots) {
+    const entries = yield* fileSystem
+      .readDirectory(root, { recursive: true })
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    for (const entry of entries) {
+      const segments = entry.split(/[\\/]/);
+      if (segments.at(-1) !== "SKILL.md") continue;
+      if (segments.some((segment) => segment.startsWith("."))) continue;
+      files.push(path.join(root, entry));
+    }
+  }
+  return files.toSorted();
+});
 
 export const codexSessionAppServerArgs = (
   appServerArgs: ReadonlyArray<string> | undefined,

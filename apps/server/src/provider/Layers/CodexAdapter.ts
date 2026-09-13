@@ -33,10 +33,12 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as NodeCrypto from "node:crypto";
+import * as NodeOS from "node:os";
 import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -70,7 +72,12 @@ import {
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
-import { PERSONAL_BOT_CODEX_APP_SERVER_ARGS, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import {
+  listOwnerCodexSkillFiles,
+  PERSONAL_BOT_CODEX_APP_SERVER_ARGS,
+  personalBotCodexSkillArgs,
+  resolveCodexLaunchArgs,
+} from "./codexLaunchArgs.ts";
 import {
   type CodexRateLimitSnapshot,
   codexRateLimitsToUpdate,
@@ -99,6 +106,8 @@ export interface CodexAdapterLiveOptions {
   >;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  /** Where the owner's Codex skills live; defaults to the Codex home and `~/.agents`. */
+  readonly ownerSkillRoots?: ReadonlyArray<string>;
 }
 
 interface CodexAdapterSessionContext {
@@ -2220,6 +2229,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 ) {
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("codex");
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
   const serverConfig = yield* Effect.service(ServerConfig);
@@ -2234,6 +2244,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  const ownerSkillRoots = (): ReadonlyArray<string> => {
+    if (options?.ownerSkillRoots !== undefined) return options.ownerSkillRoots;
+    const configuredHome =
+      codexConfig.homePath || (options?.environment ?? process.env).CODEX_HOME || "~/.codex";
+    const codexHome =
+      configuredHome === "~" || /^~[\\/]/.test(configuredHome)
+        ? path.join(NodeOS.homedir(), configuredHome.slice(2))
+        : configuredHome;
+    return [path.join(codexHome, "skills"), path.join(NodeOS.homedir(), ".agents", "skills")];
+  };
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -2265,7 +2285,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
               ]
             : []),
-          ...(input.personalBot === true ? PERSONAL_BOT_CODEX_APP_SERVER_ARGS : []),
+          ...(input.personalBot === true
+            ? [
+                ...PERSONAL_BOT_CODEX_APP_SERVER_ARGS,
+                ...personalBotCodexSkillArgs(
+                  yield* listOwnerCodexSkillFiles(ownerSkillRoots()).pipe(
+                    Effect.provideService(FileSystem.FileSystem, fileSystem),
+                    Effect.provideService(Path.Path, path),
+                  ),
+                ),
+              ]
+            : []),
         ];
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,

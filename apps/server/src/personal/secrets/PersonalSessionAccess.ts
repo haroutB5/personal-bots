@@ -43,6 +43,12 @@ export class PersonalSessionAccess extends Context.Service<
   PersonalSessionAccess,
   {
     readonly forThread: (threadId: ThreadId) => Effect.Effect<PersonalSessionGrant>;
+    /**
+     * Just the bot's session instructions (no secret reads), for turns sent
+     * outside the reactor such as the post-restart continuation. Null for
+     * non-personal threads or a failed lookup.
+     */
+    readonly instructionsForThread: (threadId: ThreadId) => Effect.Effect<string | null>;
   }
 >()("t3/personal/secrets/PersonalSessionAccess") {}
 
@@ -108,7 +114,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  return { forThread } satisfies PersonalSessionAccess["Service"];
+  return { forThread, instructionsForThread } satisfies PersonalSessionAccess["Service"];
 });
 
 export const layer = Layer.effect(PersonalSessionAccess, make);

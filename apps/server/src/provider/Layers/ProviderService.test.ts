@@ -4914,6 +4914,10 @@ describe("agent browser access", () => {
        * Receives each input the adapter's startSession got during recovery.
        */
       readonly recoveryInputs?: Array<unknown>;
+      /** Instructions the recovering turn itself carries (the reactor's, with memory). */
+      readonly turnInstructions?: string;
+      /** Receives each input the adapter's sendTurn got during recovery. */
+      readonly sentTurns?: Array<unknown>;
     },
   ) =>
     Effect.gen(function* () {
@@ -5004,6 +5008,10 @@ describe("agent browser access", () => {
                         }
                       : { botId: null, environment: {}, systemInstructions: null },
                   ),
+                instructionsForThread: () =>
+                  Effect.succeed(
+                    options.personalBotThread ? (options.botInstructions ?? null) : null,
+                  ),
               }),
         ),
         Layer.provide(
@@ -5049,8 +5057,14 @@ describe("agent browser access", () => {
         if (options?.recoveryInputs === undefined) return;
         yield* codex.stopAll();
         codex.startSession.mockClear();
-        yield* provider.sendTurn({ threadId, input: "resume", attachments: [] });
+        yield* provider.sendTurn({
+          threadId,
+          input: "resume",
+          attachments: [],
+          ...(options.turnInstructions ? { systemInstructions: options.turnInstructions } : {}),
+        });
         options.recoveryInputs.push(...codex.startSession.mock.calls.map(([input]) => input));
+        options.sentTurns?.push(...codex.sendTurn.mock.calls.map(([input]) => input));
       }).pipe(Effect.provide(providerLayer));
 
       return issued;
@@ -5169,6 +5183,41 @@ describe("agent browser access", () => {
           { personalBot: undefined, systemInstructions: undefined },
         ]);
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // The reactor's turn instructions include the "Known facts" memory block, so
+  // a recovery triggered by a user message must start with those; a turn sent
+  // without any (the post-restart continuation) still gets the bot's own.
+  it.effect("recovery prefers the turn's instructions; bare turns get the bot's", () =>
+    Effect.gen(function* () {
+      const botInstructions = "Answer as Nova.";
+      const withMemory = `${botInstructions}\n\nKnown facts (from memory).\n- [note] Likes tea`;
+      const memoryStarts: Array<unknown> = [];
+      const memoryTurns: Array<unknown> = [];
+      const bareStarts: Array<unknown> = [];
+      const bareTurns: Array<unknown> = [];
+
+      yield* startSessionWith(false, asThreadId("thread-recover-memory"), undefined, {
+        personalBotThread: true,
+        botInstructions,
+        turnInstructions: withMemory,
+        recoveryInputs: memoryStarts,
+        sentTurns: memoryTurns,
+      });
+      yield* startSessionWith(false, asThreadId("thread-recover-bare"), undefined, {
+        personalBotThread: true,
+        botInstructions,
+        recoveryInputs: bareStarts,
+        sentTurns: bareTurns,
+      });
+
+      const instructionsOf = (inputs: ReadonlyArray<unknown>) =>
+        inputs.map((input) => (input as { systemInstructions?: string }).systemInstructions);
+      assert.deepEqual(instructionsOf(memoryStarts), [withMemory]);
+      assert.deepEqual(instructionsOf(memoryTurns), [withMemory]);
+      assert.deepEqual(instructionsOf(bareStarts), [botInstructions]);
+      assert.deepEqual(instructionsOf(bareTurns), [botInstructions]);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("issues a credential with preview when agent browser access is on", () =>
