@@ -998,7 +998,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       // Decided here, where the thread's personal-bot link is already read,
       // so adapters never re-query it. It narrows the toolset and is set even
       // when no MCP credential could be issued, so isolation never fails open.
-      return { personalBot: botGrant || linked };
+      return {
+        personalBot: botGrant || linked,
+        // Only recovery uses this: fresh starts carry the reactor's own
+        // instructions (plus memory context) on their start input.
+        systemInstructions: personal?.systemInstructions ?? undefined,
+      };
     });
   const clearMcpSession = (threadId: ThreadId) =>
     McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
@@ -1312,7 +1317,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
-      const { personalBot } = yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
+      const { personalBot, systemInstructions } = yield* prepareMcpSession(
+        input.binding.threadId,
+        bindingInstanceId,
+      );
       const resumed = yield* adapter
         .startSession({
           threadId: input.binding.threadId,
@@ -1323,6 +1331,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           runtimeMode: input.binding.runtimeMode ?? "full-access",
           ...(personalBot ? { personalBot: true } : {}),
+          // Session-scoped instructions (Claude's appended system prompt) are
+          // read only at start, and this start bypasses the reactor, so a
+          // resumed bot chat would otherwise lose its persona and app rules.
+          ...(personalBot && systemInstructions !== undefined ? { systemInstructions } : {}),
         })
         .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
       if (resumed.provider !== adapter.provider) {
