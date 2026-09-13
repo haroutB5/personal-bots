@@ -39,6 +39,7 @@ import {
 import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
+import { PERSONAL_BOT_APP_RULES } from "../personalBotInstructions.ts";
 import * as PersonalTaskRepository from "../tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
@@ -394,6 +395,33 @@ describe("personal secret requests", () => {
     ),
   );
 
+  it.effect("session instructions are the bot's own followed by the app rules", () =>
+    withLayer(() =>
+      Effect.gen(function* () {
+        const bots = yield* PersonalBotService.PersonalBotService;
+        const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+        yield* bots.create({
+          botId: botId("writer"),
+          name: "writer",
+          description: "",
+          instructions: "Write in short sentences.",
+          avatarShape: "blob",
+          avatarColor: "#1A73E8",
+          modelSelection: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude" },
+        });
+        const thread = ThreadId.make("thread-writer");
+        yield* bots.createThread({ botId: botId("writer"), threadId: thread });
+
+        // Spelled out rather than rebuilt with the builder, so the test is an
+        // oracle for the reactor's format, not a copy of the implementation.
+        expect((yield* access.forThread(thread)).systemInstructions).toBe(
+          `Write in short sentences.\n\n${PERSONAL_BOT_APP_RULES}`,
+        );
+        expect(PERSONAL_BOT_APP_RULES).toContain("save_memory");
+      }),
+    ),
+  );
+
   it.effect("session env holds only the bot's own fulfilled secrets plus shared ones", () =>
     withLayer(() =>
       Effect.gen(function* () {
@@ -431,17 +459,21 @@ describe("personal secret requests", () => {
         yield* fulfil("b", "developer", "DEV_ONLY", "dev-value", false);
         yield* fulfil("c", "developer", "SHARED_KEY", "shared-value", true);
 
+        // Seeded bots have blank instructions: they still owe the app rules.
         expect(yield* access.forThread(assistantThread)).toEqual({
           botId: botId("assistant"),
           environment: { PB_SECRET_GITHUB_TOKEN: "gh-value", PB_SECRET_SHARED_KEY: "shared-value" },
+          systemInstructions: PERSONAL_BOT_APP_RULES,
         });
         expect(yield* access.forThread(developerThread)).toEqual({
           botId: botId("developer"),
           environment: { PB_SECRET_DEV_ONLY: "dev-value", PB_SECRET_SHARED_KEY: "shared-value" },
+          systemInstructions: PERSONAL_BOT_APP_RULES,
         });
         expect(yield* access.forThread(ThreadId.make("thread-plain"))).toEqual({
           botId: null,
           environment: {},
+          systemInstructions: null,
         });
 
         expect(yield* secrets.remove({ name: "SHARED_KEY" })).toEqual({ deleted: true });

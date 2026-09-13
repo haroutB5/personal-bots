@@ -8,6 +8,7 @@ import { personalSecretEnvVar, type PersonalBotId, type ThreadId } from "@t3tool
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import { personalBotSystemInstructions } from "../personalBotInstructions.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
 import { personalSecretStoreKey } from "./PersonalSecretService.ts";
 
@@ -20,15 +21,23 @@ export interface PersonalSessionGrant {
    * every shared one. Read from the secret store when the session starts.
    */
   readonly environment: Readonly<Record<string, string>>;
+  /**
+   * The bot's own instructions followed by the app rules, built exactly as
+   * the orchestration reactor builds them. ProviderService passes it when it
+   * resumes a session outside the reactor (recovery after a restart); fresh
+   * starts keep the reactor's own. Null for non-personal threads, a deleted
+   * bot, or a failed lookup.
+   */
+  readonly systemInstructions: string | null;
 }
 
-const NONE: PersonalSessionGrant = { botId: null, environment: {} };
+const NONE: PersonalSessionGrant = { botId: null, environment: {}, systemInstructions: null };
 
 /**
  * The narrow hook ProviderService consults when it starts a provider session:
- * whether the thread is a personal bot's (the "bots" MCP capability) and
- * which secrets reach its process environment. Never fails: a lookup error
- * grants nothing.
+ * whether the thread is a personal bot's (the "bots" MCP capability), which
+ * secrets reach its process environment, and the bot's session instructions.
+ * Never fails: a lookup error grants nothing.
  */
 export class PersonalSessionAccess extends Context.Service<
   PersonalSessionAccess,
@@ -43,6 +52,23 @@ export const make = Effect.gen(function* () {
   const secrets = yield* PersonalSecretRepository.PersonalSecretRepository;
   const store = yield* ServerSecretStore.ServerSecretStore;
   const decoder = new TextDecoder();
+
+  /** Isolated so a failed instructions read never costs the thread its secrets or grant. */
+  const instructionsForThread = (threadId: ThreadId) =>
+    bots.getInstructionsForThread({ threadId }).pipe(
+      Effect.map(
+        Option.match({
+          onNone: () => null,
+          onSome: personalBotSystemInstructions,
+        }),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("personal bot instructions lookup failed; starting without them", {
+          threadId,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(null)),
+      ),
+    );
 
   const forThread: PersonalSessionAccess["Service"]["forThread"] = (threadId) =>
     Effect.gen(function* () {
@@ -71,7 +97,8 @@ export const make = Effect.gen(function* () {
           environment[personalSecretEnvVar(name)] = decoder.decode(value.value);
         }
       }
-      return { botId, environment } satisfies PersonalSessionGrant;
+      const systemInstructions = yield* instructionsForThread(threadId);
+      return { botId, environment, systemInstructions } satisfies PersonalSessionGrant;
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("personal session access lookup failed; granting nothing", {

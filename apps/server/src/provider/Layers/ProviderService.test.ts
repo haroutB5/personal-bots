@@ -4906,6 +4906,14 @@ describe("agent browser access", () => {
       readonly personalBotThread?: boolean;
       /** Receives each input the adapter's startSession was called with. */
       readonly startInputs?: Array<unknown>;
+      /** Instructions the fake PersonalSessionAccess returns for a personal-bot thread. */
+      readonly botInstructions?: string;
+      /**
+       * After the fresh start, drop the adapter's live sessions (a server
+       * restart) and send a turn, which recovers from the persisted binding.
+       * Receives each input the adapter's startSession got during recovery.
+       */
+      readonly recoveryInputs?: Array<unknown>;
     },
   ) =>
     Effect.gen(function* () {
@@ -4992,8 +5000,9 @@ describe("agent browser access", () => {
                           botId:
                             "bot-personal" as PersonalSessionAccess.PersonalSessionGrant["botId"],
                           environment: { PB_SECRET_TEST: "value" },
+                          systemInstructions: options.botInstructions ?? null,
                         }
-                      : { botId: null, environment: {} },
+                      : { botId: null, environment: {}, systemInstructions: null },
                   ),
               }),
         ),
@@ -5030,15 +5039,20 @@ describe("agent browser access", () => {
 
       yield* Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
-        return yield* provider.startSession(threadId, {
+        yield* provider.startSession(threadId, {
           provider: CODEX_DRIVER,
           providerInstanceId: codexInstanceId,
           threadId,
           runtimeMode: "full-access",
         });
+        options?.startInputs?.push(...codex.startSession.mock.calls.map(([input]) => input));
+        if (options?.recoveryInputs === undefined) return;
+        yield* codex.stopAll();
+        codex.startSession.mockClear();
+        yield* provider.sendTurn({ threadId, input: "resume", attachments: [] });
+        options.recoveryInputs.push(...codex.startSession.mock.calls.map(([input]) => input));
       }).pipe(Effect.provide(providerLayer));
 
-      options?.startInputs?.push(...codex.startSession.mock.calls.map(([input]) => input));
       return issued;
     });
 
@@ -5107,6 +5121,53 @@ describe("agent browser access", () => {
           plainStarts.map((input) => (input as { personalBot?: boolean }).personalBot),
           [undefined],
         );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // Claude reads its instructions only at session start, and recovery starts
+  // the session outside the reactor, so recovery must bring them itself.
+  it.effect(
+    "recovering a personal-bot session restores its instructions; plain threads get none",
+    () =>
+      Effect.gen(function* () {
+        const personalThread = asThreadId("thread-personal-bot-recover");
+        const plainThread = asThreadId("thread-plain-recover");
+        const botInstructions = `Answer as Nova.\n\n<app_rules>\nCall save_memory.\n</app_rules>`;
+        const personalStarts: Array<unknown> = [];
+        const personalRecoveries: Array<unknown> = [];
+        const plainStarts: Array<unknown> = [];
+        const plainRecoveries: Array<unknown> = [];
+
+        yield* startSessionWith(false, personalThread, undefined, {
+          personalBotThread: true,
+          botInstructions,
+          startInputs: personalStarts,
+          recoveryInputs: personalRecoveries,
+        });
+        yield* startSessionWith(false, plainThread, undefined, {
+          personalBotThread: false,
+          startInputs: plainStarts,
+          recoveryInputs: plainRecoveries,
+        });
+
+        const pick = (inputs: ReadonlyArray<unknown>) =>
+          inputs.map((input) => {
+            const start = input as { personalBot?: boolean; systemInstructions?: string };
+            return { personalBot: start.personalBot, systemInstructions: start.systemInstructions };
+          });
+        // Fresh starts are untouched: the reactor supplies (and owns) theirs.
+        assert.deepEqual(pick(personalStarts), [
+          { personalBot: true, systemInstructions: undefined },
+        ]);
+        assert.deepEqual(pick(personalRecoveries), [
+          { personalBot: true, systemInstructions: botInstructions },
+        ]);
+        assert.deepEqual(pick(plainStarts), [
+          { personalBot: undefined, systemInstructions: undefined },
+        ]);
+        assert.deepEqual(pick(plainRecoveries), [
+          { personalBot: undefined, systemInstructions: undefined },
+        ]);
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
