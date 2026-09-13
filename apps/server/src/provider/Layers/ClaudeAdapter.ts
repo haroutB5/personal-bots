@@ -25,6 +25,7 @@ import {
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { type ClaudeScopedLimitNames, claudeRateLimitEventToUpdate } from "./claudeUsageLimits.ts";
+import { claudeApiRetryInfo, claudeRateLimitRejectionInfo } from "./claudeRetryInfo.ts";
 import {
   ApprovalRequestId,
   classifyTaskAgentKind,
@@ -3712,13 +3713,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // Transport-level retry heartbeat. Surfacing each attempt as a
         // warning row spammed the work log (10 rows during a 502 storm);
         // the terminal result/error path reports the actual failure. Keep
-        // the session visibly alive instead.
+        // the session visibly alive instead, carrying the wait (a 429 can
+        // hold the turn for hours) so the thread does not just say Working.
         yield* offerRuntimeEvent({
           ...base,
           type: "session.state.changed",
           payload: {
             state: "running",
             reason: `api_retry:${message.attempt}/${message.max_retries}`,
+            retry: claudeApiRetryInfo(message, base.createdAt),
           },
         });
         return;
@@ -3950,6 +3953,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           );
           yield* emitRuntimeWarning(context, notice, rateLimitInfo);
         }
+        // The parked turn waits on this window: put its reset on the session
+        // so the thread reads "Rate limited", not "Working".
+        yield* offerRuntimeEvent({
+          ...base,
+          type: "session.state.changed",
+          payload: {
+            state: "running",
+            reason: `rate_limit:${limitType}`,
+            retry: claudeRateLimitRejectionInfo(rateLimitInfo),
+          },
+        });
       }
       return;
     }

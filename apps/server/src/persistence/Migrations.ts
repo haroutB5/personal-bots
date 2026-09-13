@@ -68,6 +68,7 @@ import Migration0053 from "./Migrations/053_PersonalTasks.ts";
 import Migration0054 from "./Migrations/054_PersonalSecretRequests.ts";
 import Migration0055 from "./Migrations/055_PersonalBotTitle.ts";
 import Migration0056 from "./Migrations/056_PersonalBrowserLeases.ts";
+import Migration0060 from "./Migrations/060_ProjectionThreadSessionProviderRetry.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -139,6 +140,8 @@ const migrationEntries = [
   // Personal ids 057-059 (routines, memory, notifications) are reserved for a
   // parallel branch. The migrator runs any id above the latest applied one, so
   // never deploy a build whose personal ids are not contiguous from 052.
+  // 060 is deliberately past that reservation: land 057-059 before deploying it.
+  [60, "ProjectionThreadSessionProviderRetry", Migration0060],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

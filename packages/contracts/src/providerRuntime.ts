@@ -15,7 +15,7 @@ import {
 } from "./baseSchemas.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
 import { ProviderUsageLimitsUpdate } from "./providerUsageLimits.ts";
-import { ProviderApprovalOption } from "./orchestration.ts";
+import { ProviderApprovalOption, ProviderRetryInfo } from "./orchestration.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
@@ -283,6 +283,8 @@ const SessionStateChangedPayload = Schema.Struct({
   state: RuntimeSessionState,
   reason: Schema.optional(TrimmedNonEmptyStringSchema),
   detail: Schema.optional(Schema.Unknown),
+  /** Normalized rate-limit / retry wait, projected onto the thread session. */
+  retry: Schema.optional(ProviderRetryInfo),
 });
 export type SessionStateChangedPayload = typeof SessionStateChangedPayload.Type;
 
@@ -405,6 +407,8 @@ const TurnCompletedPayload = Schema.Struct({
   totalCostUsd: Schema.optional(Schema.Number),
   errorMessage: Schema.optional(TrimmedNonEmptyStringSchema),
   tokenUsage: Schema.optional(TurnTokenUsage),
+  /** A failed turn that stopped on a provider limit, with its reset when reported. */
+  retry: Schema.optional(ProviderRetryInfo),
 });
 export type TurnCompletedPayload = typeof TurnCompletedPayload.Type;
 

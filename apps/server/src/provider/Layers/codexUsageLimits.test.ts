@@ -7,6 +7,7 @@ import {
   codexRateLimitsToUpdate,
   codexResetCreditsToContract,
   codexUsageLimitMessage,
+  codexUsageLimitResetAt,
   mergeCodexRateLimits,
 } from "./codexUsageLimits.ts";
 
@@ -201,6 +202,37 @@ describe("codexResetCreditsToContract", () => {
         resetCredits: { availableCount: 1 },
       }).resetCredits,
     ).toEqual({ availableCount: 1 });
+  });
+});
+
+describe("codexUsageLimitResetAt", () => {
+  const at = "2026-01-01T00:00:00.000Z";
+  const atSeconds = Date.parse(at) / 1000;
+
+  it("returns the reset of the exhausted window that resets last", () => {
+    expect(
+      codexUsageLimitResetAt(
+        {
+          limitId: "codex",
+          primary: { usedPercent: 100, resetsAt: atSeconds + 3_600, windowDurationMins: 300 },
+          secondary: { usedPercent: 100, resetsAt: atSeconds + 86_400, windowDurationMins: 10_080 },
+        },
+        at,
+      ),
+    ).toBe("2026-01-02T00:00:00.000Z");
+  });
+
+  it("reports nothing when no exhausted window names a future reset", () => {
+    expect(
+      codexUsageLimitResetAt(
+        {
+          limitId: "codex",
+          primary: { usedPercent: 40, resetsAt: atSeconds + 3_600, windowDurationMins: 300 },
+        },
+        at,
+      ),
+    ).toBeUndefined();
+    expect(codexUsageLimitResetAt(undefined, at)).toBeUndefined();
   });
 });
 
