@@ -50,6 +50,21 @@ $null = Import-RepoDotEnv
 Clear-DevOriginEnv
 $env:T3CODE_ENVIRONMENT_LABEL = $Label
 
+# A fixed port per root. On a loopback bind the server names its session cookie
+# t3_session_<port>_<instance>, so a random port per start would sign every
+# browser (the installed iPhone app included) out after each restart.
+if ($Port -eq 0) {
+    $Port = if ($Root -eq 'prod') { 38473 } else { 38472 }
+}
+$probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
+try {
+    $probe.Start()
+} catch {
+    throw ("Port {0} is already in use on 127.0.0.1. Free it or pass -Port <n> (the phone's saved sign-in is tied to the port)." -f $Port)
+} finally {
+    $probe.Stop()
+}
+
 function Assert-DataRootFree {
     $runtime = Read-PbRuntimeState -BaseDir $paths.BaseDir
     if ($null -eq $runtime -or -not $runtime.pid) { return }

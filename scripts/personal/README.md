@@ -30,6 +30,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\pair.ps1
   local port, the T3 Connect public URL, the clock offset and the last log lines.
 - `start.ps1` refuses to start if any live T3 server already serves the same
   data root. Add `-Root prod` for the prod root.
+- The server always listens on a fixed loopback port: 38472 for `dev`, 38473
+  for `prod` (override with `-Port <n>`). Keep it fixed: the browser's session
+  cookie name includes the port, so changing it signs the phone out and you
+  would need a new `pair.ps1` link.
 - `stop.ps1` stops only the PID it recorded, after checking that PID's command
   line still names the release and data root. It never kills by name.
 - `pair.ps1` prints `https://<tunnel>/pair#token=...` and a QR code (15 minute
