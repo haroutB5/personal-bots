@@ -40,7 +40,7 @@ export interface UsageCard {
   /** Why there are no bars (unavailable message or probe notice). */
   readonly notice: string | null;
   readonly session: UsageWindowRow | null;
-  readonly weekly: UsageWindowRow | null;
+  readonly weeklies: readonly UsageWindowRow[];
   /** Epoch millis the snapshot was checked, or null when unknown. */
   readonly checkedAt: number | null;
 }
@@ -82,20 +82,30 @@ function pickSession(
 }
 
 /**
- * Pick the weekly row: the first `weekly` window, else a window whose id
- * names a seven-day bucket (Claude's `seven_day_opus`).
+ * All weekly rows in server order, deduped by id: every `weekly` window,
+ * else every window whose id names a seven-day bucket (Claude's
+ * `seven_day` plus per-model weeklies like `seven_day_fable`).
  */
-function pickWeekly(
+function pickWeeklies(
   windows: ReadonlyArray<ServerProviderUsageWindow>,
   now: number,
-): UsageWindowRow | null {
-  const direct = windows.find((window) => window.kind === "weekly");
-  const fallback = windows.find((window) => {
-    const id = window.id.toLowerCase();
-    return id.includes("seven_day") || id.includes("week");
-  });
-  const match = direct ?? fallback;
-  return match ? toRow(match, now) : null;
+): readonly UsageWindowRow[] {
+  const direct = windows.filter((window) => window.kind === "weekly");
+  const source =
+    direct.length > 0
+      ? direct
+      : windows.filter((window) => {
+          const id = window.id.toLowerCase();
+          return id.includes("seven_day") || id.includes("week");
+        });
+  const seen = new Set<string>();
+  const rows: UsageWindowRow[] = [];
+  for (const window of source) {
+    if (seen.has(window.id)) continue;
+    seen.add(window.id);
+    rows.push(toRow(window, now));
+  }
+  return rows;
 }
 
 function parseCheckedAt(value: string | undefined): number | null {
@@ -145,7 +155,7 @@ export function selectUsageCards(
         status: limits?.unavailable?.reason === "unsupported" ? "unavailable" : "not-reported",
         notice,
         session: null,
-        weekly: null,
+        weeklies: [],
         checkedAt: parseCheckedAt(limits?.checkedAt),
       });
       continue;
@@ -157,7 +167,7 @@ export function selectUsageCards(
       status: "ready",
       notice: null,
       session: pickSession(limits.windows, now),
-      weekly: pickWeekly(limits.windows, now),
+      weeklies: pickWeeklies(limits.windows, now),
       checkedAt: parseCheckedAt(limits.checkedAt),
     });
   }

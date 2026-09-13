@@ -78,8 +78,8 @@ function UsageCardView({ card, now }: { readonly card: UsageCard; readonly now: 
           ) : (
             <MissingRow label="5-hour session" />
           )}
-          {card.weekly ? (
-            <WindowRow card={card} row={card.weekly} />
+          {card.weeklies.length > 0 ? (
+            card.weeklies.map((row) => <WindowRow key={row.id} card={card} row={row} />)
           ) : (
             <MissingRow label="Weekly" />
           )}
@@ -100,7 +100,7 @@ function UsageCardView({ card, now }: { readonly card: UsageCard; readonly now: 
   );
 }
 
-/** Token/quota windows for Claude and GPT: 5-hour session plus weekly, with resets. */
+/** Token/quota windows for Claude and GPT: 5-hour session plus weeklies, with resets. */
 export function PersonalUsageSection(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const providers = useAtomValue(primaryServerProvidersAtom);

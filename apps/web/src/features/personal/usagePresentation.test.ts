@@ -115,7 +115,8 @@ describe("selectUsageCards", () => {
     const [claude, gpt] = cards;
     expect(claude!.status).toBe("ready");
     expect(claude!.session).toMatchObject({ usedPercent: 42, resetLabel: "resets in 2h 30m" });
-    expect(claude!.weekly).toMatchObject({ usedPercent: 17, resetLabel: "resets in 7d 0h" });
+    expect(claude!.weeklies).toHaveLength(1);
+    expect(claude!.weeklies[0]).toMatchObject({ usedPercent: 17, resetLabel: "resets in 7d 0h" });
     expect(gpt!.plan).toBe("ChatGPT Plus");
     expect(gpt!.session).toMatchObject({ usedPercent: 63, resetLabel: "resets in 45m" });
   });
@@ -136,7 +137,7 @@ describe("selectUsageCards", () => {
       NOW,
     );
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toMatchObject({ status: "unavailable", session: null, weekly: null });
+    expect(cards[0]).toMatchObject({ status: "unavailable", session: null, weeklies: [] });
     expect(cards[0]!.notice).toContain("no subscription limits");
   });
 
@@ -175,7 +176,50 @@ describe("selectUsageCards", () => {
     );
     expect(cards[0]!.status).toBe("ready");
     expect(cards[0]!.session).not.toBeNull();
-    expect(cards[0]!.weekly).toBeNull();
+    expect(cards[0]!.weeklies).toEqual([]);
+  });
+
+  it("keeps every Claude weekly window in server order with labels intact", () => {
+    const cards = selectUsageCards(
+      [
+        provider({
+          driver: "claudeAgent",
+          instanceId: "claudeAgent",
+          usageLimits: claudeLimits([
+            window({
+              id: "five_hour",
+              kind: "session",
+              label: "Session",
+              usedPercent: 42,
+              resetsAt: "2026-09-13T14:30:00Z",
+              windowDurationMins: 300,
+            }),
+            window({
+              id: "seven_day",
+              kind: "weekly",
+              label: "Weekly",
+              usedPercent: 17,
+              resetsAt: "2026-09-20T12:00:00Z",
+            }),
+            window({
+              id: "seven_day_fable",
+              kind: "weekly",
+              label: "Weekly · Fable",
+              usedPercent: 55,
+              resetsAt: "2026-09-20T12:00:00Z",
+            }),
+          ]),
+        }),
+      ],
+      NOW,
+    );
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.status).toBe("ready");
+    expect(cards[0]!.session).toMatchObject({ id: "five_hour", label: "Session" });
+    expect(cards[0]!.weeklies.map((row) => row.id)).toEqual(["seven_day", "seven_day_fable"]);
+    expect(cards[0]!.weeklies.map((row) => row.label)).toEqual(["Weekly", "Weekly · Fable"]);
+    expect(cards[0]!.weeklies[0]).toMatchObject({ usedPercent: 17 });
+    expect(cards[0]!.weeklies[1]).toMatchObject({ usedPercent: 55 });
   });
 
   it("skips drivers with no configured instance and ignores other drivers", () => {
