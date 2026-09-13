@@ -33,8 +33,12 @@ param(
 
 $paths = Get-PbPaths -Root dev
 $nodeExe = Resolve-NodeExe -Node $Node
+# Repo-local Node shim first: Smart App Control blocks the global vp.exe
+# per-hash after vite-plus self-updates (seen 2026-09-14), the .CMD shim
+# runs through node and is immune.
+$vpRepoBin = Join-Path $PbRepoRoot 'node_modules\.bin'
 $vpBin = Join-Path $env:LOCALAPPDATA 'vite-plus\bin'
-$env:PATH = "$vpBin;$(Split-Path -Parent $nodeExe);$env:PATH"
+$env:PATH = "$vpRepoBin;$vpBin;$(Split-Path -Parent $nodeExe);$env:PATH"
 
 $keyCount = Import-RepoDotEnv
 Clear-DevOriginEnv
