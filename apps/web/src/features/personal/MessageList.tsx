@@ -72,6 +72,7 @@ const UserMessage = memo(function UserMessage({
   );
   return (
     <div className="flex flex-col items-end gap-1.5">
+      <span className="sr-only">You said:</span>
       {resources.length > 0 ? (
         <div className="flex max-w-[78%] flex-wrap justify-end gap-1.5">
           {resources.map((resource, index) => {
@@ -114,14 +115,17 @@ const AssistantMessage = memo(function AssistantMessage({
   message,
   threadRef,
   workspaceRoot,
+  botName,
 }: {
   message: ChatMessage;
   threadRef: ScopedThreadRef;
   workspaceRoot: string | undefined;
+  botName: string;
 }) {
   if (message.text.length === 0) return null;
   return (
     <div className="personal-markdown max-w-[90%] text-[15px] leading-[1.45] text-[var(--personal-text)]">
+      <span className="sr-only">{botName} said:</span>
       <ChatMarkdown
         text={message.text}
         cwd={workspaceRoot}
@@ -359,6 +363,7 @@ export function MessageList({
                   message={item.message}
                   threadRef={threadRef}
                   workspaceRoot={workspaceRoot}
+                  botName={botName}
                 />
               );
             case "plan":

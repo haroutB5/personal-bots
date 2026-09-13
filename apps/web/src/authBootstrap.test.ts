@@ -269,6 +269,69 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(attempts).toBe(4);
   });
 
+  it("treats a transport failure (no response) as transient and reports status 0", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const request = HttpClientRequest.get("http://localhost/api/auth/session");
+    const runner: PrimaryHttpEffectRunner = async <A>() => {
+      attempts += 1;
+      if (attempts < 3) {
+        // What the browser fetch layer raises when the laptop or tunnel is unreachable.
+        throw new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({
+            request,
+            cause: new TypeError("Failed to fetch"),
+          }),
+        });
+      }
+      return unauthenticatedSession(LOOPBACK_AUTH) as A;
+    };
+    __setPrimaryHttpRunnerForTests(runner);
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    const gateStatePromise = resolveInitialServerAuthGateState();
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    await expect(gateStatePromise).resolves.toEqual({
+      status: "requires-auth",
+      auth: LOOPBACK_AUTH,
+    });
+    expect(attempts).toBe(3);
+  });
+
+  it("gives up on an unreachable server after the retry budget with an unreachable error", async () => {
+    vi.useFakeTimers();
+    const request = HttpClientRequest.get("http://localhost/api/auth/session");
+    const runner: PrimaryHttpEffectRunner = async () => {
+      throw new HttpClientError.HttpClientError({
+        reason: new HttpClientError.TransportError({
+          request,
+          cause: new TypeError("Failed to fetch"),
+        }),
+      });
+    };
+    __setPrimaryHttpRunnerForTests(runner);
+
+    const { isPrimaryEnvironmentRequestError, resolveInitialServerAuthGateState } =
+      await import("./environments/primary");
+
+    const gateStatePromise = resolveInitialServerAuthGateState().then(
+      () => null,
+      (failure: unknown) => failure,
+    );
+    await vi.advanceTimersByTimeAsync(20_000);
+    const error = await gateStatePromise;
+
+    expect(isPrimaryEnvironmentRequestError(error)).toBe(true);
+    if (!isPrimaryEnvironmentRequestError(error)) throw new Error("expected a request error");
+    expect(error.status).toBe(0);
+    expect(error.unreachable).toBe(true);
+    expect(error.message).toBe(
+      "Primary environment request failed during fetch-session-state (no response).",
+    );
+  });
+
   it("takes a pairing token from the location hash and strips it immediately", async () => {
     const testWindow = installTestBrowser("http://localhost/#token=pairing-token");
     const { takePairingTokenFromUrl } = await import("./environments/primary");

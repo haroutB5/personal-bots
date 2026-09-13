@@ -1,5 +1,5 @@
 import type { FormEvent, JSX, ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -25,6 +25,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatarPicker } from "./BotAvatarPicker";
 import { resolveBotProvider, providerLine } from "./botSummaries";
+import { commandFailureMessage } from "./commandFeedback";
 import { useDeleteBot } from "./useDeleteBot";
 import {
   personalBotCreate,
@@ -127,6 +128,8 @@ function BotForm({
   const [botId] = useState(() => bot?.botId ?? PersonalBotId.make(randomUUID()));
   const [busy, setBusy] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const selectableProviders = useMemo(() => providers.filter(isSelectable), [providers]);
   const [rawDraft, setDraft] = useState<BotDraft>(() => {
@@ -176,7 +179,11 @@ function BotForm({
   const models = selectedProvider?.models ?? [];
   const canSave = draft.instanceId !== "" && draft.model !== "" && !busy;
 
-  const update = (patch: Partial<BotDraft>) => setDraft((previous) => ({ ...previous, ...patch }));
+  const update = (patch: Partial<BotDraft>) => {
+    setDraft((previous) => ({ ...previous, ...patch }));
+    // The "give your bot a name" error clears as soon as the name is typed.
+    if (patch.name !== undefined && patch.name.trim().length > 0) setNameError(null);
+  };
 
   // The selected model's effort control, if its provider offers one.
   const effortDescriptor: SelectProviderOptionDescriptor | null =
@@ -220,10 +227,15 @@ function BotForm({
     const name = draft.name.trim();
     if (name.length === 0) {
       setNameError("Give your bot a name.");
+      // The form is taller than a phone screen: bring the field into view.
+      const input = nameInputRef.current;
+      input?.focus();
+      input?.scrollIntoView({ block: "center" });
       return;
     }
     if (!canSave) return;
     setNameError(null);
+    setSubmitError(null);
     setBusy(true);
     const fields = {
       name,
@@ -241,7 +253,9 @@ function BotForm({
     setBusy(false);
     if (result._tag === "Success") {
       await navigate({ to: "/bots" });
+      return;
     }
+    setSubmitError(commandFailureMessage(result, "The bot could not be saved."));
   };
 
   const onDelete = async () => {
@@ -265,6 +279,7 @@ function BotForm({
           Name
         </label>
         <input
+          ref={nameInputRef}
           id="bot-name"
           value={draft.name}
           maxLength={NAME_MAX}
@@ -276,7 +291,7 @@ function BotForm({
           className={`${FIELD_CLASS} h-11`}
         />
         {nameError !== null ? (
-          <p id="bot-name-error" className="mt-1.5 text-sm text-[#b3261e]">
+          <p id="bot-name-error" role="alert" className="mt-1.5 text-sm text-[#b3261e]">
             {nameError}
           </p>
         ) : null}
@@ -422,6 +437,12 @@ function BotForm({
           onChange={(next) => update({ avatarShape: next.shape, avatarColor: next.color })}
         />
       </fieldset>
+
+      {submitError !== null ? (
+        <p role="alert" className="text-sm text-[#b3261e]">
+          {submitError}
+        </p>
+      ) : null}
 
       <button
         type="submit"

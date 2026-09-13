@@ -8,6 +8,7 @@ export {
 export {
   createServerPairingCredential,
   isPrimaryEnvironmentPairingCredentialRejectedError,
+  isPrimaryEnvironmentRequestError,
   peekPairingTokenFromUrl,
   PrimaryEnvironmentPairingCredentialRejectedError,
   PrimaryEnvironmentRequestError,

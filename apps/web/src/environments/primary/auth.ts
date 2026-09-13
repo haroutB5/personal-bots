@@ -50,7 +50,9 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEn
     readonly pairingLinkId?: string;
     readonly sessionId?: string;
   }): PrimaryEnvironmentRequestError {
-    const status = readHttpApiStatus(input.cause) ?? 500;
+    // 0 means no HTTP response at all (offline, tunnel down, DNS): the one
+    // failure a phone behind a tunnel hits every day, and always transient.
+    const status = readHttpApiStatus(input.cause) ?? (isTransportFailure(input.cause) ? 0 : 500);
     return new PrimaryEnvironmentRequestError({
       operation: input.operation,
       status,
@@ -61,11 +63,18 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEn
   }
 
   override get message(): string {
-    return `Primary environment request failed during ${this.operation} (HTTP ${this.status}).`;
+    return this.status === 0
+      ? `Primary environment request failed during ${this.operation} (no response).`
+      : `Primary environment request failed during ${this.operation} (HTTP ${this.status}).`;
+  }
+
+  /** No HTTP response was received: the server is unreachable, not failing. */
+  get unreachable(): boolean {
+    return this.status === 0;
   }
 }
 
-const isPrimaryEnvironmentRequestError = Schema.is(PrimaryEnvironmentRequestError);
+export const isPrimaryEnvironmentRequestError = Schema.is(PrimaryEnvironmentRequestError);
 
 export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.TaggedError<PrimaryEnvironmentPairingCredentialRejectedError>()(
   "PrimaryEnvironmentPairingCredentialRejectedError",
@@ -193,6 +202,20 @@ export async function fetchSessionState(): Promise<AuthSessionState> {
   });
 }
 
+function isTransportFailure(error: unknown): boolean {
+  if (error instanceof TypeError) {
+    return true;
+  }
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return true;
+  }
+  return (
+    HttpClientError.isHttpClientError(error) &&
+    error.response === undefined &&
+    error.reason._tag === "TransportError"
+  );
+}
+
 function readHttpApiStatus(error: unknown): number | null {
   if (isEnvironmentHttpCommonError(error)) {
     return readEnvironmentHttpErrorStatus(error);
@@ -266,7 +289,7 @@ async function waitForAuthenticatedSessionAfterBootstrap(): Promise<AuthSessionS
   }
 }
 
-const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([502, 503, 504]);
+const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([0, 502, 503, 504]);
 const BOOTSTRAP_RETRY_TIMEOUT_MS = 15_000;
 const BOOTSTRAP_RETRY_STEP_MS = 500;
 

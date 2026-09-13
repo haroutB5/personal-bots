@@ -193,7 +193,7 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
 
       <nav
         aria-label="Task lists"
-        className="mt-3 grid h-9 grid-cols-4 gap-0.5 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)] p-0.5"
+        className="mt-3 grid h-11 grid-cols-4 gap-0.5 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)] p-0.5"
       >
         {TASK_LIST_FILTERS.map((filter) => {
           const active = filter.id === view;

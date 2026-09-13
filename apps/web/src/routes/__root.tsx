@@ -8,6 +8,7 @@ import {
   type ErrorComponentProps,
   useLocation,
   useNavigate,
+  useRouter,
 } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
@@ -49,7 +50,10 @@ import {
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
-import { resolveInitialServerAuthGateState } from "../environments/primary";
+import {
+  isPrimaryEnvironmentRequestError,
+  resolveInitialServerAuthGateState,
+} from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { shellEnvironment } from "../state/shell";
 import { useAtomValue } from "@effect/atom-react";
@@ -67,6 +71,7 @@ import {
 } from "../components/KeybindingsUpdateToast.logic";
 
 import { isPersonalPath } from "../features/personal/personalMode";
+import { PersonalUnreachableScreen } from "../features/personal/PersonalUnreachableScreen";
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 
@@ -345,7 +350,21 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
   const message = errorMessage(error);
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
   const pathname = useLocation({ select: (location) => location.pathname });
+  const router = useRouter();
   const report = useMemo(() => errorReport(error, pathname), [error, pathname]);
+
+  // The personal shell on a phone: an unreachable laptop is a state to
+  // recover from, not a crash to report. Retrying re-runs the auth bootstrap.
+  if (isPersonalPath(pathname) && isPrimaryEnvironmentRequestError(error) && error.unreachable) {
+    return (
+      <PersonalUnreachableScreen
+        onRetry={() => {
+          reset();
+          void router.invalidate();
+        }}
+      />
+    );
+  }
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
