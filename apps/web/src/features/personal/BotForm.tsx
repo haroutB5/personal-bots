@@ -13,16 +13,15 @@ import {
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 
-import { requestConfirmDialog } from "~/confirmDialog";
 import { randomUUID } from "~/lib/utils";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatarPicker } from "./BotAvatarPicker";
 import { resolveBotProvider, providerLine } from "./botSummaries";
+import { useDeleteBot } from "./useDeleteBot";
 import {
   personalBotCreate,
-  personalBotDelete,
   personalBotUpdate,
   usePersonalBotsList,
   usePersonalEnvironmentId,
@@ -109,7 +108,7 @@ function BotForm({
   const providers = useAtomValue(primaryServerProvidersAtom);
   const createBot = useAtomCommand(personalBotCreate);
   const updateBot = useAtomCommand(personalBotUpdate);
-  const deleteBot = useAtomCommand(personalBotDelete);
+  const deleteBot = useDeleteBot(environmentId);
   const [botId] = useState(() => bot?.botId ?? PersonalBotId.make(randomUUID()));
   const [busy, setBusy] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
@@ -187,14 +186,10 @@ function BotForm({
 
   const onDelete = async () => {
     if (bot === null) return;
-    const message = `Delete ${bot.name}?\nIts chats stay in your history.`;
-    const confirmed =
-      (await requestConfirmDialog(message, { variant: "destructive" })) ?? window.confirm(message);
-    if (!confirmed) return;
     setBusy(true);
-    const result = await deleteBot({ environmentId, input: { botId: bot.botId } });
+    const deleted = await deleteBot(bot);
     setBusy(false);
-    if (result._tag === "Success") {
+    if (deleted) {
       await navigate({ to: "/bots" });
     }
   };

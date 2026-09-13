@@ -17,6 +17,8 @@ import {
   waitingLabelsByThread,
 } from "./delegationModel";
 import { greetingLine, teamStatusLine } from "./greeting";
+import { SwipeToDelete } from "./SwipeToDelete";
+import { useDeleteBot } from "./useDeleteBot";
 import { usePersonalTasks } from "./usePersonalAutomation";
 import {
   usePersonalBotsList,
@@ -47,6 +49,7 @@ export function ChatsScreen(): JSX.Element {
   const allShells = useThreadShells();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const now = useMinuteClock();
+  const deleteBot = useDeleteBot(environmentId);
   const [query, setQuery] = useState("");
 
   const shells = useMemo(
@@ -189,12 +192,17 @@ export function ChatsScreen(): JSX.Element {
             <ul className="mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)]">
               {visible.map((summary) => (
                 <li key={summary.bot.botId}>
-                  <BotRow
-                    environmentId={environmentId!}
-                    summary={summary}
-                    now={now}
-                    describeTurn={describeTurn}
-                  />
+                  <SwipeToDelete
+                    label={`Delete ${summary.bot.name}`}
+                    onDelete={() => deleteBot(summary.bot)}
+                  >
+                    <BotRow
+                      environmentId={environmentId!}
+                      summary={summary}
+                      now={now}
+                      describeTurn={describeTurn}
+                    />
+                  </SwipeToDelete>
                 </li>
               ))}
             </ul>

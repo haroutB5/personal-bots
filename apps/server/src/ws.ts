@@ -162,6 +162,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
+import { purgePersonalBot } from "./personal/purgePersonalBot.ts";
 import { signPersonalFiles } from "./personal/PersonalFiles.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
@@ -2350,7 +2351,17 @@ const makeWsRpcLayer = (
         [WS_METHODS.personalBotsDelete]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalBotsDelete,
-            personalBots.remove(input).pipe(Effect.as({})),
+            purgePersonalBot(
+              {
+                bots: personalBots,
+                tasks: personalTasks,
+                routines: personalRoutines,
+                memory: personalMemory,
+                secrets: personalSecrets,
+                engine: orchestrationEngine,
+              },
+              input.botId,
+            ).pipe(Effect.as({})),
             {
               "rpc.aggregate": "server",
             },
