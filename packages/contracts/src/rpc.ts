@@ -263,6 +263,13 @@ import {
   PersonalProfile,
   PersonalProfileSetInput,
 } from "./personalBots.ts";
+// personal browser
+import {
+  PersonalBrowserError,
+  PersonalBrowserFilesResult,
+  PersonalBrowserStatus,
+  PersonalBrowserStreamItem,
+} from "./personalBrowser.ts";
 import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
@@ -419,6 +426,13 @@ export const WS_METHODS = {
   personalBotsArchiveThread: "personalBots.archiveThread",
   personalBotsGetProfile: "personalBots.getProfile",
   personalBotsSetProfile: "personalBots.setProfile",
+
+  // personal browser
+  personalBrowserStatus: "personalBrowser.status",
+  personalBrowserTakeControl: "personalBrowser.takeControl",
+  personalBrowserReturnToAgent: "personalBrowser.returnToAgent",
+  personalBrowserListFiles: "personalBrowser.listFiles",
+  personalBrowserActivity: "personalBrowser.activity",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -894,6 +908,40 @@ const WsPersonalBotsSetProfileRpc = Rpc.make(WS_METHODS.personalBotsSetProfile, 
   payload: PersonalProfileSetInput,
   success: PersonalProfile,
   error: PersonalBotsRpcError,
+});
+
+// personal browser
+const PersonalBrowserRpcError = Schema.Union([PersonalBrowserError, EnvironmentAuthorizationError]);
+
+const WsPersonalBrowserStatusRpc = Rpc.make(WS_METHODS.personalBrowserStatus, {
+  payload: Schema.Struct({}),
+  success: PersonalBrowserStatus,
+  error: PersonalBrowserRpcError,
+});
+
+const WsPersonalBrowserTakeControlRpc = Rpc.make(WS_METHODS.personalBrowserTakeControl, {
+  payload: Schema.Struct({}),
+  success: PersonalBrowserStatus,
+  error: PersonalBrowserRpcError,
+});
+
+const WsPersonalBrowserReturnToAgentRpc = Rpc.make(WS_METHODS.personalBrowserReturnToAgent, {
+  payload: Schema.Struct({}),
+  success: PersonalBrowserStatus,
+  error: PersonalBrowserRpcError,
+});
+
+const WsPersonalBrowserListFilesRpc = Rpc.make(WS_METHODS.personalBrowserListFiles, {
+  payload: Schema.Struct({}),
+  success: PersonalBrowserFilesResult,
+  error: PersonalBrowserRpcError,
+});
+
+const WsPersonalBrowserActivityRpc = Rpc.make(WS_METHODS.personalBrowserActivity, {
+  payload: Schema.Struct({}),
+  success: PersonalBrowserStreamItem,
+  error: PersonalBrowserRpcError,
+  stream: true,
 });
 
 const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
@@ -1420,6 +1468,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsPersonalBotsArchiveThreadRpc,
   WsPersonalBotsGetProfileRpc,
   WsPersonalBotsSetProfileRpc,
+  // personal browser
+  WsPersonalBrowserStatusRpc,
+  WsPersonalBrowserTakeControlRpc,
+  WsPersonalBrowserReturnToAgentRpc,
+  WsPersonalBrowserListFilesRpc,
+  WsPersonalBrowserActivityRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,

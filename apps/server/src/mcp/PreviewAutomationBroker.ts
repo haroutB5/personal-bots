@@ -71,6 +71,7 @@ interface ClientConnection {
   readonly connectionId: string;
   readonly environmentId: PreviewAutomationHost["environmentId"];
   readonly supportedOperations: ReadonlySet<PreviewAutomationOperation>;
+  readonly kind: "desktop" | "server";
   readonly focused: boolean;
   readonly focusOrder: number;
   readonly queue: Queue.Queue<PreviewAutomationStreamEvent>;
@@ -359,6 +360,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       connectionId,
       environmentId: host.environmentId,
       supportedOperations: new Set(host.supportedOperations ?? PREVIEW_AUTOMATION_V1_OPERATIONS),
+      kind: host.kind ?? "desktop",
       focused: false,
       focusOrder: 0,
       queue,
@@ -476,23 +478,33 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       // operation is not silently moved to a newer client: the caller gets a
       // capability failure and can deliberately start a fresh provider
       // session. A dead lease is pruned above and may fail over.
+      const eligibleHosts = hasLiveAssignment
+        ? []
+        : Array.from(current.clients.values()).filter(
+            (host) =>
+              host.environmentId === input.scope.environmentId &&
+              supportsOperation(host, input.operation),
+          );
+      // The in-process server browser ranks above every desktop host unless
+      // one of them is focused (the user is looking at a desktop preview).
+      // Desktop hosts keep their historical order among themselves.
+      const focusedDesktopExists = eligibleHosts.some(
+        (host) => host.kind === "desktop" && host.focused,
+      );
+      const serverRank = (host: ClientConnection) =>
+        host.kind === "server" ? (focusedDesktopExists ? -1 : 1) : 0;
       const connection =
         hasLiveAssignment && supportsOperation(assignedConnection, input.operation)
           ? assignedConnection
           : hasLiveAssignment
             ? undefined
-            : Array.from(current.clients.values())
-                .filter(
-                  (host) =>
-                    host.environmentId === input.scope.environmentId &&
-                    supportsOperation(host, input.operation),
-                )
-                .sort(
-                  (left, right) =>
-                    right.supportedOperations.size - left.supportedOperations.size ||
-                    Number(right.focused) - Number(left.focused) ||
-                    right.focusOrder - left.focusOrder,
-                )[0];
+            : eligibleHosts.sort(
+                (left, right) =>
+                  serverRank(right) - serverRank(left) ||
+                  right.supportedOperations.size - left.supportedOperations.size ||
+                  Number(right.focused) - Number(left.focused) ||
+                  right.focusOrder - left.focusOrder,
+              )[0];
       if (!connection) {
         if (!hasLiveAssignment) assignments.delete(assignmentKey);
         return [undefined, { ...current, assignments }] as const;

@@ -162,6 +162,8 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
+// personal browser
+import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -625,6 +627,8 @@ const makeWsRpcLayer = (
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const personalBots = yield* PersonalBotService.PersonalBotService;
+      // personal browser
+      const personalBrowser = yield* PersonalBrowser.PersonalBrowser;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -2360,6 +2364,35 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalBotsSetProfile, personalBots.setProfile(input), {
             "rpc.aggregate": "server",
           }),
+        // personal browser (control is bound to this connection's auth session)
+        [WS_METHODS.personalBrowserStatus]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBrowserStatus,
+            personalBrowser.status(currentSessionId),
+            { "rpc.aggregate": "personal-browser" },
+          ),
+        [WS_METHODS.personalBrowserTakeControl]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBrowserTakeControl,
+            personalBrowser.takeControl(currentSessionId),
+            { "rpc.aggregate": "personal-browser" },
+          ),
+        [WS_METHODS.personalBrowserReturnToAgent]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBrowserReturnToAgent,
+            personalBrowser.returnToAgent(currentSessionId),
+            { "rpc.aggregate": "personal-browser" },
+          ),
+        [WS_METHODS.personalBrowserListFiles]: (_input) =>
+          observeRpcEffect(WS_METHODS.personalBrowserListFiles, personalBrowser.listFiles, {
+            "rpc.aggregate": "personal-browser",
+          }),
+        [WS_METHODS.personalBrowserActivity]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.personalBrowserActivity,
+            personalBrowser.activity(currentSessionId),
+            { "rpc.aggregate": "personal-browser" },
+          ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,

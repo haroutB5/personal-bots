@@ -72,6 +72,15 @@ import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRun
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
+// personal browser
+import * as PersonalBrowserLease from "./personal/browser/BrowserLease.ts";
+import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
+import * as PersonalBrowserLeaseRepository from "./personal/browser/PersonalBrowserLeaseRepository.ts";
+import * as PersonalBrowserHost from "./personal/browser/ServerBrowserHost.ts";
+import {
+  personalBrowserFilesRouteLayer,
+  personalBrowserStreamRouteLayer,
+} from "./personal/browser/routes.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -488,6 +497,12 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
 );
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+  // personal browser: the service needs the lease (-> its repository ->
+  // SqlClient), PreviewManager and PersonalBotRepository, all provided by
+  // later steps below.
+  Layer.provideMerge(PersonalBrowser.layer),
+  Layer.provideMerge(PersonalBrowserLease.layer),
+  Layer.provideMerge(PersonalBrowserLeaseRepository.layer),
   // Personal bots. Order matters: each step's output feeds requirements
   // opened by EARLIER steps, so consumers come first — the seed needs the
   // service, the service needs the repository, the repository needs SqlClient
@@ -591,6 +606,11 @@ export const makeRoutesLayer = Layer.mergeAll(
     assetRouteLayer,
     attachmentUploadRouteLayer,
     deviceHubProxyRouteLayer,
+    // personal browser (routes + in-process preview automation host; the host
+    // shares the single PreviewAutomationBroker provided below)
+    personalBrowserStreamRouteLayer,
+    personalBrowserFilesRouteLayer,
+    PersonalBrowserHost.layer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),

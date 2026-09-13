@@ -583,6 +583,12 @@ export const PreviewAutomationHost = Schema.Struct({
    * a newer server safely coexist with an older desktop during rollout.
    */
   supportedOperations: Schema.optional(Schema.Array(PreviewAutomationOperation)),
+  /**
+   * Missing means a client-hosted (desktop) runtime. The in-process server
+   * browser registers as "server": it takes requests whenever no desktop
+   * host is focused, so a focused desktop preview still wins.
+   */
+  kind: Schema.optional(Schema.Literals(["desktop", "server"])),
 });
 export type PreviewAutomationHost = typeof PreviewAutomationHost.Type;
 
