@@ -114,7 +114,7 @@ function BotForm({
   const [nameError, setNameError] = useState<string | null>(null);
 
   const selectableProviders = useMemo(() => providers.filter(isSelectable), [providers]);
-  const [draft, setDraft] = useState<BotDraft>(() => {
+  const [rawDraft, setDraft] = useState<BotDraft>(() => {
     if (bot !== null) return draftFromBot(bot);
     const first = selectableProviders[0];
     return {
@@ -128,6 +128,18 @@ function BotForm({
       model: defaultModelFor(first),
     };
   });
+
+  // A cold open of /bots/new renders before providers load; pick the first
+  // ready one when it arrives so "Create bot" is not stuck disabled.
+  const firstSelectable = selectableProviders[0];
+  const draft: BotDraft =
+    bot === null && rawDraft.instanceId === "" && firstSelectable !== undefined
+      ? {
+          ...rawDraft,
+          instanceId: firstSelectable.instanceId,
+          model: defaultModelFor(firstSelectable),
+        }
+      : rawDraft;
 
   // The bot's current instance stays listed even when it went unavailable, so
   // the select never silently shows a different provider than the saved one.
