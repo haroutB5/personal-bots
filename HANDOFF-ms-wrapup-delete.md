@@ -39,7 +39,20 @@ Branch: personal-bots/main. No SendMessage. Do NOT deploy, do NOT bump scripts/p
 - [x] Web wrapup (+ tests) — `wrapupChat.test.ts` 4/4 green; web `tsc --noEmit` clean (fixed MessageId/ProviderInstanceId brand errors).
 - [x] Web delete chat (+ tests) — `useDeleteChat.test.ts` 1/1 green.
 - [x] Gates: `vp lint` on all 14 touched files — no errors (only pre-existing react warnings in ConversationScreen's untouched projection block, lines ~186-195).
-- [ ] Commit + push (doing now).
+- [x] Committed + pushed to origin personal-bots/main:
+  - `319476a63` feat(server): add personalBots.deleteThread for permanent single-chat deletion
+  - `14e93dec0` feat(web): wrapup action and permanent delete chat in personal bots UI (includes this handoff file)
+
+## Gate output (evidence)
+
+- Server: `cd apps/server && ./node_modules/.bin/vp test run src/personal` → 15 files, 115 tests passed (~20s).
+- Web: `cd apps/web && ./node_modules/.bin/vp test run --project unit src/features/personal/wrapupChat.test.ts src/features/personal/useDeleteChat.test.ts` → 2 files, 5 tests passed.
+- `tsc --noEmit`: clean in both apps (only pre-existing style suggestions in server; fixed 3 brand-type errors in web wrapup files).
+- `vp lint` on all touched files: no errors.
+
+## Open issues
+
+- None. Did NOT deploy, did NOT bump scripts/personal/app-version.txt (orchestrator owns that).
 
 ## Gates
 
