@@ -4,7 +4,7 @@ import { cloneElement, useMemo, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Bell, Brain, CalendarClock, ChevronRight, SquareTerminal } from "lucide-react";
+import { Bell, Brain, CalendarClock, ChevronRight, Network, SquareTerminal } from "lucide-react";
 
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -123,6 +123,26 @@ export function PersonalSettingsScreen(): JSX.Element {
           Bots
         </h2>
         <ul className={`${CARD} divide-y divide-[var(--personal-border)]`}>
+          <li>
+            <Link to="/bots/team" className={SETTINGS_ROW}>
+              <Network
+                aria-hidden="true"
+                className="size-5 shrink-0 text-[var(--personal-text)]"
+                strokeWidth={1.75}
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-[15px] font-semibold text-[var(--personal-text)]">Team</span>
+                <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
+                  See how your bots work together
+                </span>
+              </span>
+              <ChevronRight
+                aria-hidden="true"
+                className="size-5 shrink-0 text-[var(--personal-text-secondary)]"
+                strokeWidth={1.75}
+              />
+            </Link>
+          </li>
           {bots.map((bot) => (
             <li key={bot.botId}>
               <Link

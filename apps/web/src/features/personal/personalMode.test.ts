@@ -30,6 +30,7 @@ describe("activeTabFor", () => {
   it("maps tab roots and hides the bar on focused editors", () => {
     expect(activeTabFor("/bots")).toBe("chats");
     expect(activeTabFor("/bots/settings")).toBe("chats");
+    expect(activeTabFor("/bots/team")).toBe("chats");
     expect(activeTabFor("/computer")).toBe("computer");
     expect(activeTabFor("/bots/new")).toBeNull();
     expect(activeTabFor("/bots/b1/edit")).toBeNull();

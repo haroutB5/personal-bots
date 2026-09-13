@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import type { PersonalBotId, ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ChevronRight, Plus, Search, Settings } from "lucide-react";
+import { ChevronRight, Network, Plus, Search, Settings } from "lucide-react";
 
 import { useThreadShells } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
@@ -294,6 +294,13 @@ export function ChatsScreen(): JSX.Element {
       <header className="flex h-14 items-center justify-between">
         <h1 className="text-[28px] leading-none font-bold text-[var(--personal-text)]">Bots</h1>
         <div className="flex items-center gap-4">
+          <Link to="/bots/team" aria-label="Team" className={ICON_BUTTON}>
+            <Network
+              aria-hidden="true"
+              className="size-[22px] text-[var(--personal-text)]"
+              strokeWidth={1.75}
+            />
+          </Link>
           <Link to="/bots/settings" aria-label="Settings" className={ICON_BUTTON}>
             <Settings
               aria-hidden="true"

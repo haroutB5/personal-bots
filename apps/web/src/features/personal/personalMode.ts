@@ -42,7 +42,7 @@ export function isPersonalPath(pathname: string): boolean {
 /** Tab highlighted for a path; `null` hides the tab bar (focused editors). */
 export function activeTabFor(pathname: string): PersonalTab | null {
   const path = normalizePath(pathname);
-  if (path === "/bots" || path === "/bots/settings") return "chats";
+  if (path === "/bots" || path === "/bots/settings" || path === "/bots/team") return "chats";
   // Task and routine detail keep the tab bar; the routine editor is focused.
   if (path === "/tasks" || (path.startsWith("/tasks/") && !isRoutineEditorPath(path))) {
     return "tasks";
