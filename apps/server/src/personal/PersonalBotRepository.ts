@@ -27,6 +27,7 @@ import {
 export const CreatePersonalBotInput = Schema.Struct({
   botId: PersonalBotId,
   name: Schema.String,
+  title: Schema.String,
   description: Schema.String,
   instructions: Schema.String,
   avatarShape: BotAvatarShape,
@@ -41,6 +42,7 @@ export type CreatePersonalBotInput = typeof CreatePersonalBotInput.Type;
 export const UpdatePersonalBotInput = Schema.Struct({
   botId: PersonalBotId,
   name: Schema.optional(Schema.String),
+  title: Schema.optional(Schema.String),
   description: Schema.optional(Schema.String),
   instructions: Schema.optional(Schema.String),
   avatarShape: Schema.optional(BotAvatarShape),
@@ -141,6 +143,7 @@ export class PersonalBotRepository extends Context.Service<
 const PersonalBotDbRow = Schema.Struct({
   botId: PersonalBotId,
   name: Schema.String,
+  title: Schema.String,
   description: Schema.String,
   instructions: Schema.String,
   avatarShape: BotAvatarShape,
@@ -156,6 +159,7 @@ const PersonalBotDbRow = Schema.Struct({
 const PersonalBotRawDbRow = Schema.Struct({
   botId: Schema.Unknown,
   name: Schema.Unknown,
+  title: Schema.Unknown,
   description: Schema.Unknown,
   instructions: Schema.Unknown,
   avatarShape: Schema.Unknown,
@@ -193,6 +197,7 @@ function toPersonalBot(row: typeof PersonalBotDbRow.Type): PersonalBot {
   return {
     botId: row.botId,
     name: row.name,
+    title: row.title,
     description: row.description,
     instructions: row.instructions,
     avatarShape: row.avatarShape,
@@ -240,6 +245,7 @@ export const make = Effect.gen(function* () {
         INSERT INTO personal_bots (
           bot_id,
           name,
+          title,
           description,
           instructions,
           avatar_shape,
@@ -254,6 +260,7 @@ export const make = Effect.gen(function* () {
         VALUES (
           ${input.botId},
           ${input.name},
+          ${input.title},
           ${input.description},
           ${input.instructions},
           ${input.avatarShape},
@@ -276,6 +283,7 @@ export const make = Effect.gen(function* () {
         SELECT
           bot_id AS "botId",
           name AS "name",
+          title AS "title",
           description AS "description",
           instructions AS "instructions",
           avatar_shape AS "avatarShape",
@@ -299,6 +307,7 @@ export const make = Effect.gen(function* () {
         SELECT
           bot_id AS "botId",
           name AS "name",
+          title AS "title",
           description AS "description",
           instructions AS "instructions",
           avatar_shape AS "avatarShape",
@@ -322,6 +331,7 @@ export const make = Effect.gen(function* () {
       sql`
         UPDATE personal_bots
         SET name = COALESCE(${input.name ?? null}, name),
+            title = COALESCE(${input.title ?? null}, title),
             description = COALESCE(${input.description ?? null}, description),
             instructions = COALESCE(${input.instructions ?? null}, instructions),
             avatar_shape = COALESCE(${input.avatarShape ?? null}, avatar_shape),
@@ -337,6 +347,7 @@ export const make = Effect.gen(function* () {
         RETURNING
           bot_id AS "botId",
           name AS "name",
+          title AS "title",
           description AS "description",
           instructions AS "instructions",
           avatar_shape AS "avatarShape",

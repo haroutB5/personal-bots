@@ -45,6 +45,7 @@ const CODEX_DRIVER = ProviderDriverKind.make("codex");
 interface SeedBotDefinition {
   readonly key: string;
   readonly name: string;
+  readonly title: string;
   readonly description: string;
   readonly avatarShape: PersonalBot["avatarShape"];
   readonly avatarColor: string;
@@ -55,6 +56,7 @@ const SEED_BOT_DEFINITIONS: ReadonlyArray<SeedBotDefinition> = [
   {
     key: "assistant",
     name: "Assistant",
+    title: "Personal assistant",
     description: "Understands requests, organizes work, delegates and reviews results.",
     avatarShape: "blob",
     avatarColor: "#1A73E8",
@@ -63,6 +65,7 @@ const SEED_BOT_DEFINITIONS: ReadonlyArray<SeedBotDefinition> = [
   {
     key: "developer",
     name: "Developer",
+    title: "Engineer",
     description: "Implements, tests and returns reviewable changes.",
     avatarShape: "roundedHexagon",
     avatarColor: "#F26A1B",
@@ -71,6 +74,7 @@ const SEED_BOT_DEFINITIONS: ReadonlyArray<SeedBotDefinition> = [
   {
     key: "researcher",
     name: "Researcher",
+    title: "Research analyst",
     description: "Researches, compares options and returns sources.",
     avatarShape: "scallopedCloud",
     avatarColor: "#F0457E",
@@ -79,6 +83,7 @@ const SEED_BOT_DEFINITIONS: ReadonlyArray<SeedBotDefinition> = [
   {
     key: "planner",
     name: "Planner",
+    title: "Planner",
     description: "Prepares plans and manages routines.",
     avatarShape: "roundedSquare",
     avatarColor: "#E5323B",
@@ -195,6 +200,7 @@ export const make = Effect.gen(function* () {
           .createBot({
             botId,
             name: definition.name,
+            title: definition.title,
             // The description doubles as the starting bot instruction.
             description: definition.description,
             instructions: definition.description,
@@ -319,7 +325,13 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError(repositoryError("create")));
       const sortOrder = siblings.reduce((max, bot) => Math.max(max, bot.sortOrder), -1) + 1;
       yield* repository
-        .createBot({ ...input, sortOrder, createdAt: now, updatedAt: now })
+        .createBot({
+          ...input,
+          title: input.title?.trim() ?? "",
+          sortOrder,
+          createdAt: now,
+          updatedAt: now,
+        })
         .pipe(Effect.mapError(repositoryError("create")));
       const inserted = yield* repository
         .getBotById({ botId: input.botId })
@@ -334,7 +346,11 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const updated = yield* repository
-        .updateBot({ ...input, updatedAt: now })
+        .updateBot({
+          ...input,
+          ...(input.title === undefined ? {} : { title: input.title.trim() }),
+          updatedAt: now,
+        })
         .pipe(Effect.mapError(repositoryError("update")));
       if (Option.isNone(updated)) {
         return yield* notFound(`Personal bot '${input.botId}' was not found.`);

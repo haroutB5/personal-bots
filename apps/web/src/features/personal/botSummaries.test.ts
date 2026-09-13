@@ -17,6 +17,7 @@ function bot(botId: string, name: string, instanceId: string, sortOrder: number)
   return decodeBot({
     botId,
     name,
+    title: "",
     description: "",
     instructions: "",
     avatarShape: "blob",

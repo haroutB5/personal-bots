@@ -32,6 +32,7 @@ const FIELD_CLASS =
   "w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
 const LABEL_CLASS = "mb-1.5 block text-sm font-medium text-[var(--personal-text)]";
 const NAME_MAX = 60;
+const TITLE_MAX = 60;
 
 function isSelectable(provider: ServerProvider): boolean {
   return resolveBotProvider(provider.instanceId, [provider]).available;
@@ -49,6 +50,7 @@ function defaultModelFor(provider: ServerProvider | undefined): string {
 
 interface BotDraft {
   name: string;
+  title: string;
   description: string;
   instructions: string;
   avatarShape: BotAvatarShape;
@@ -60,6 +62,7 @@ interface BotDraft {
 function draftFromBot(bot: PersonalBot): BotDraft {
   return {
     name: bot.name,
+    title: bot.title,
     description: bot.description,
     instructions: bot.instructions,
     avatarShape: bot.avatarShape,
@@ -117,6 +120,7 @@ function BotForm({
     const first = selectableProviders[0];
     return {
       name: "",
+      title: "",
       description: "",
       instructions: "",
       avatarShape: "blob",
@@ -164,6 +168,7 @@ function BotForm({
     setBusy(true);
     const fields = {
       name,
+      title: draft.title.trim(),
       description: draft.description.trim(),
       instructions: draft.instructions.trim(),
       avatarShape: draft.avatarShape,
@@ -220,6 +225,22 @@ function BotForm({
             {nameError}
           </p>
         ) : null}
+      </div>
+
+      <div>
+        <label htmlFor="bot-title" className={LABEL_CLASS}>
+          Title{" "}
+          <span className="font-normal text-[var(--personal-text-secondary)]">(optional)</span>
+        </label>
+        <input
+          id="bot-title"
+          value={draft.title}
+          maxLength={TITLE_MAX}
+          onChange={(event) => update({ title: event.target.value })}
+          placeholder="Personal assistant"
+          autoComplete="off"
+          className={`${FIELD_CLASS} h-11`}
+        />
       </div>
 
       <div>

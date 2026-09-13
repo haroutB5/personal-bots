@@ -97,6 +97,7 @@ const botInput = (botId: string) =>
   ({
     botId: PersonalBotId.make(botId),
     name: "Helper",
+    title: "Helper bot",
     description: "Helps with things.",
     instructions: "Be helpful.",
     avatarShape: "blob" as const,
@@ -117,6 +118,7 @@ it.effect(
       const listed = yield* service.list();
       expect(listed.bots.length).toBe(1);
       expect(listed.bots[0]?.botId).toBe(created.botId);
+      expect(listed.bots[0]?.title).toBe("Helper bot");
       expect(listed.bots[0]?.avatarShape).toBe("blob");
       expect(listed.bots[0]?.avatarColor).toBe("#1A73E8");
       expect(listed.bots[0]?.modelSelection.instanceId).toBe("codex");
@@ -145,10 +147,23 @@ it.effect("update changes name and avatar; delete hides the bot from list", () =
     expect(updated.name).toBe("Renamed");
     expect(updated.avatarShape).toBe("pill");
     expect(updated.avatarColor).toBe("#000000");
+    // An update that omits title keeps it.
+    expect(updated.title).toBe("Helper bot");
+
+    const retitled = yield* service.update({ botId: created.botId, title: "  Engineer  " });
+    expect(retitled.title).toBe("Engineer");
+    expect(retitled.name).toBe("Renamed");
+    const cleared = yield* service.update({ botId: created.botId, title: "" });
+    expect(cleared.title).toBe("");
+    expect((yield* service.list()).bots[0]?.title).toBe("");
+
+    const { title: _title, ...untitledInput } = botInput("bot-2b");
+    const untitled = yield* service.create(untitledInput);
+    expect(untitled.title).toBe("");
 
     yield* service.remove({ botId: created.botId });
     const listed = yield* service.list();
-    expect(listed.bots.length).toBe(0);
+    expect(listed.bots.map((bot) => bot.botId)).toEqual([untitled.botId]);
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
 
@@ -171,6 +186,12 @@ it.effect("seedDefaultsIfNeeded creates the four default bots once, even after a
       ["Developer", "roundedHexagon", "#F26A1B", "codex", "gpt-6-astra"],
       ["Researcher", "scallopedCloud", "#F0457E", "codex", "gpt-6-astra"],
       ["Planner", "roundedSquare", "#E5323B", "claude", "claude-fable-5-1"],
+    ]);
+    expect(seeded.map((bot) => bot.title)).toEqual([
+      "Personal assistant",
+      "Engineer",
+      "Research analyst",
+      "Planner",
     ]);
 
     expect(yield* service.seedDefaultsIfNeeded).toEqual([]);

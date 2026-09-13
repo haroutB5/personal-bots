@@ -20,9 +20,14 @@ export type BotAvatarShape = typeof BotAvatarShape.Type;
 export const BotAvatarColor = Schema.String.check(Schema.isPattern(/^#[0-9A-Fa-f]{6}$/));
 export type BotAvatarColor = typeof BotAvatarColor.Type;
 
+/** Short role label shown under the bot's name, e.g. "Personal assistant". */
+export const PersonalBotTitle = Schema.String.check(Schema.isMaxLength(60));
+
 export const PersonalBot = Schema.Struct({
   botId: PersonalBotId,
   name: Schema.String,
+  /** Empty string means "no title"; the UI then omits it. */
+  title: Schema.String,
   description: Schema.String,
   instructions: Schema.String,
   avatarShape: BotAvatarShape,
@@ -46,6 +51,7 @@ export type PersonalBotThread = typeof PersonalBotThread.Type;
 export const PersonalBotCreateInput = Schema.Struct({
   botId: PersonalBotId,
   name: Schema.String,
+  title: Schema.optional(PersonalBotTitle),
   description: Schema.String,
   instructions: Schema.String,
   avatarShape: BotAvatarShape,
@@ -57,6 +63,7 @@ export type PersonalBotCreateInput = typeof PersonalBotCreateInput.Type;
 export const PersonalBotUpdateInput = Schema.Struct({
   botId: PersonalBotId,
   name: Schema.optional(Schema.String),
+  title: Schema.optional(PersonalBotTitle),
   description: Schema.optional(Schema.String),
   instructions: Schema.optional(Schema.String),
   avatarShape: Schema.optional(BotAvatarShape),
