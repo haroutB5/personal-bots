@@ -193,6 +193,8 @@ export interface CodexSessionRuntimeSendTurnInput {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
   readonly interactionMode?: ProviderInteractionMode;
+  /** Per-thread bot instructions (personal bot persona); omitted for ordinary threads. */
+  readonly systemInstructions?: string;
 }
 
 export interface CodexThreadTurnSnapshot {
@@ -585,6 +587,7 @@ function buildCodexCollaborationMode(input: {
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly browserToolsAvailable?: boolean | T3CodeToolAvailability;
+  readonly systemInstructions?: string;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
   if (input.interactionMode === undefined) {
     return undefined;
@@ -600,6 +603,7 @@ function buildCodexCollaborationMode(input: {
         input.interactionMode,
         { model, reasoningEffort },
         input.browserToolsAvailable ?? true,
+        input.systemInstructions,
       ),
     },
   };
@@ -619,6 +623,8 @@ export function buildTurnStartParams(input: {
   readonly interactionMode?: ProviderInteractionMode;
   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
   readonly browserToolsAvailable?: boolean | T3CodeToolAvailability;
+  /** Per-thread bot instructions (personal bot persona); omitted for ordinary threads. */
+  readonly systemInstructions?: string;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -640,6 +646,7 @@ export function buildTurnStartParams(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
     browserToolsAvailable: input.browserToolsAvailable ?? true,
+    ...(input.systemInstructions ? { systemInstructions: input.systemInstructions } : {}),
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
@@ -2455,6 +2462,7 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+            ...(input.systemInstructions ? { systemInstructions: input.systemInstructions } : {}),
             // Derived from the session's own credential rather than the
             // setting, so the prompt describes the tools this turn actually
             // has even if the setting changed after the session started.

@@ -43,7 +43,7 @@ const makeProviderSnapshot = (input: {
         capabilities: null,
       },
     ],
-  }) as ServerProvider;
+  }) as unknown as ServerProvider;
 
 const claudeSnapshot = () =>
   makeProviderSnapshot({

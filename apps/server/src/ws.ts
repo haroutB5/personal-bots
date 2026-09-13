@@ -160,6 +160,8 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
+import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
+import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -622,6 +624,7 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const personalBots = yield* PersonalBotService.PersonalBotService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -2317,6 +2320,38 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "source-control",
             },
           ),
+        [WS_METHODS.personalBotsList]: (_input) =>
+          observeRpcEffect(WS_METHODS.personalBotsList, personalBots.list(), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalBotsCreate]: (input) =>
+          observeRpcEffect(WS_METHODS.personalBotsCreate, personalBots.create(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalBotsUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.personalBotsUpdate, personalBots.update(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalBotsDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsDelete,
+            personalBots.remove(input).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.personalBotsCreateThread]: (input) =>
+          observeRpcEffect(WS_METHODS.personalBotsCreateThread, personalBots.createThread(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalBotsArchiveThread]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsArchiveThread,
+            personalBots.archiveThread(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
@@ -3097,6 +3132,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
+              Layer.provide(
+                PersonalBotService.layer.pipe(Layer.provide(PersonalBotRepository.layer)),
+              ),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.

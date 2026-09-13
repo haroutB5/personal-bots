@@ -63,6 +63,14 @@ export const ProviderSessionStartInput = Schema.Struct({
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,
+  /**
+   * Per-thread system instructions (personal bot persona). Adapters that
+   * support a session-level system prompt append these below their harness
+   * instructions; adapters without that slot consume them per turn instead.
+   * Absent means no extra instructions — never confuse with the user's
+   * visible message, which this must not be prepended into.
+   */
+  systemInstructions: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
@@ -79,6 +87,10 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  /** Per-thread system instructions (personal bot persona). Same meaning as
+      on ProviderSessionStartInput, for adapters whose instructions slot is
+      per turn rather than per session. */
+  systemInstructions: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 

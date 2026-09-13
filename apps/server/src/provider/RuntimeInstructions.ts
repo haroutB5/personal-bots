@@ -16,6 +16,20 @@ export function buildRuntimeInstructions(runtime: {
   return `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths.</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
 }
 
+/**
+ * Append per-thread bot instructions below the harness instructions, in
+ * their own tagged block so the model can tell persona from harness. Blank
+ * input returns the base unchanged; the result still never touches the
+ * user's visible message.
+ */
+export function withBotInstructions(base: string, botInstructions: string | undefined): string {
+  const extra = botInstructions?.trim();
+  if (!extra) {
+    return base;
+  }
+  return `${base}\n\n<bot_instructions>${extra}</bot_instructions>`;
+}
+
 function toSingleLine(value: string): string {
   return value.replaceAll(/\s+/g, " ").trim();
 }

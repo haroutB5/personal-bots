@@ -60,6 +60,7 @@ import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 import { importRecentAgentThreads } from "./AgentSessionImporter.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
+import * as PersonalBotRepository from "../personal/PersonalBotRepository.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
 const WORKSPACE_ROOT = "/tmp/project-from-server";
@@ -906,6 +907,10 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
         );
         const reactorLayer = ProviderCommandReactorLive.pipe(
           Layer.provideMerge(providerLayer),
+          Layer.provideMerge(PersonalBotRepository.layer),
+          // No personal bots exist in this harness; the repository reads an
+          // empty migrated database and every instructions lookup yields none.
+          Layer.provideMerge(SqlitePersistenceMemory),
           Layer.provide(
             Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
               ...snapshots,

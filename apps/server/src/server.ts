@@ -70,6 +70,8 @@ import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationRe
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
+import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
+import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -438,6 +440,26 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
+// Seeds the default personal bots once providers are ready. Runs at server
+// startup (after migrations and the provider registry are built, via layer
+// dependencies) and never fails startup: `personalBots.list` re-seeds lazily
+// if this run finds no provider or fails.
+const PersonalBotsSeedLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const personalBots = yield* PersonalBotService.PersonalBotService;
+    const seeded = yield* personalBots.seedDefaultsIfNeeded;
+    if (seeded.length > 0) {
+      yield* Effect.logInfo("Personal bots seeded default bots.", { count: seeded.length });
+    }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Personal bots startup seeding failed; list calls retry lazily.", {
+        cause,
+      }),
+    ),
+  ),
+);
+
 const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const installation = yield* AntigravityInstallation;
@@ -466,6 +488,13 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
 );
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+  // Personal bots. Order matters: each step's output feeds requirements
+  // opened by EARLIER steps, so consumers come first — the seed needs the
+  // service, the service needs the repository, the repository needs SqlClient
+  // (provided by PersistenceLayerLive further below).
+  Layer.provideMerge(PersonalBotsSeedLive),
+  Layer.provideMerge(PersonalBotService.layer),
+  Layer.provideMerge(PersonalBotRepository.layer),
   Layer.provideMerge(AntigravityInstallationRefreshLive),
   Layer.provideMerge(ProviderAuthServiceLive),
   // Core Services

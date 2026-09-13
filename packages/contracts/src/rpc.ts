@@ -250,6 +250,17 @@ import {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import {
+  PersonalBot,
+  PersonalBotArchiveThreadInput,
+  PersonalBotCreateInput,
+  PersonalBotCreateThreadInput,
+  PersonalBotDeleteInput,
+  PersonalBotsError,
+  PersonalBotsListResult,
+  PersonalBotThread,
+  PersonalBotUpdateInput,
+} from "./personalBots.ts";
 import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
@@ -396,6 +407,14 @@ export const WS_METHODS = {
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
+
+  // Personal bots methods
+  personalBotsList: "personalBots.list",
+  personalBotsCreate: "personalBots.create",
+  personalBotsUpdate: "personalBots.update",
+  personalBotsDelete: "personalBots.delete",
+  personalBotsCreateThread: "personalBots.createThread",
+  personalBotsArchiveThread: "personalBots.archiveThread",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -821,6 +840,44 @@ const WsSourceControlPublishRepositoryRpc = Rpc.make(WS_METHODS.sourceControlPub
   payload: SourceControlPublishRepositoryInput,
   success: SourceControlPublishRepositoryResult,
   error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
+});
+
+const PersonalBotsRpcError = Schema.Union([PersonalBotsError, EnvironmentAuthorizationError]);
+
+const WsPersonalBotsListRpc = Rpc.make(WS_METHODS.personalBotsList, {
+  payload: Schema.Struct({}),
+  success: PersonalBotsListResult,
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsCreateRpc = Rpc.make(WS_METHODS.personalBotsCreate, {
+  payload: PersonalBotCreateInput,
+  success: PersonalBot,
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsUpdateRpc = Rpc.make(WS_METHODS.personalBotsUpdate, {
+  payload: PersonalBotUpdateInput,
+  success: PersonalBot,
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsDeleteRpc = Rpc.make(WS_METHODS.personalBotsDelete, {
+  payload: PersonalBotDeleteInput,
+  success: Schema.Struct({}),
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsCreateThreadRpc = Rpc.make(WS_METHODS.personalBotsCreateThread, {
+  payload: PersonalBotCreateThreadInput,
+  success: PersonalBotThread,
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsArchiveThreadRpc = Rpc.make(WS_METHODS.personalBotsArchiveThread, {
+  payload: PersonalBotArchiveThreadInput,
+  success: PersonalBotThread,
+  error: PersonalBotsRpcError,
 });
 
 const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
@@ -1339,6 +1396,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
+  WsPersonalBotsListRpc,
+  WsPersonalBotsCreateRpc,
+  WsPersonalBotsUpdateRpc,
+  WsPersonalBotsDeleteRpc,
+  WsPersonalBotsCreateThreadRpc,
+  WsPersonalBotsArchiveThreadRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,

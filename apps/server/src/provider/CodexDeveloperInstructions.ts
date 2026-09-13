@@ -1,5 +1,5 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
-import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
+import { buildRuntimeInstructions, withBotInstructions } from "./RuntimeInstructions.ts";
 
 const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 
@@ -206,12 +206,20 @@ export function buildCodexDeveloperInstructions(
    * setting, so the prompt cannot claim tools the turn doesn't have.
    */
   browserToolsAvailable: boolean | T3CodeToolAvailability = true,
+  /**
+   * Per-thread bot instructions (personal bot persona). Appended in their own
+   * block; omitted when blank so non-bot threads are byte-identical.
+   */
+  botInstructions?: string | undefined,
 ): string {
   const base =
     interactionMode === "plan"
       ? codexPlanModeDeveloperInstructions(browserToolsAvailable)
       : codexDefaultModeDeveloperInstructions(browserToolsAvailable);
-  return `${base}
+  return withBotInstructions(
+    `${base}
 
-${buildRuntimeInstructions({ harness: "Codex", ...runtime })}`;
+${buildRuntimeInstructions({ harness: "Codex", ...runtime })}`,
+    botInstructions,
+  );
 }

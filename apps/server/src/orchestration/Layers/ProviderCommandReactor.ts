@@ -33,6 +33,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
+import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterValidationError,
@@ -331,6 +332,22 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const personalBots = yield* PersonalBotRepository.PersonalBotRepository;
+  /**
+   * Personal bot instructions for a thread, for the provider session/turn
+   * path. Best-effort: a lookup failure starts the session without bot
+   * instructions rather than failing the turn.
+   */
+  const personalBotInstructionsForThread = (threadId: ThreadId) =>
+    personalBots.getInstructionsForThread({ threadId }).pipe(
+      Effect.map(Option.getOrUndefined),
+      Effect.catchCause((cause) =>
+        Effect.logDebug("personal bot instructions lookup failed; continuing without them", {
+          threadId,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(undefined)),
+      ),
+    );
   /** Environment settings with the thread's project overrides applied. */
   const projectSettingsForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const settings = yield* serverSettingsService.getSettings;
@@ -813,18 +830,23 @@ const make = Effect.gen(function* () {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
     }) =>
-      providerService
-        .startSession(threadId, {
-          threadId,
-          ...(preferredProvider ? { provider: preferredProvider } : {}),
-          providerInstanceId: desiredInstanceId,
-          ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
-          ...(thread.title ? { title: thread.title } : {}),
-          modelSelection: desiredModelSelection,
-          ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
-          runtimeMode: desiredRuntimeMode,
-        })
-        .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
+      personalBotInstructionsForThread(threadId).pipe(
+        Effect.flatMap((systemInstructions) =>
+          providerService
+            .startSession(threadId, {
+              threadId,
+              ...(preferredProvider ? { provider: preferredProvider } : {}),
+              providerInstanceId: desiredInstanceId,
+              ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+              ...(thread.title ? { title: thread.title } : {}),
+              modelSelection: desiredModelSelection,
+              ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+              ...(systemInstructions !== undefined ? { systemInstructions } : {}),
+              runtimeMode: desiredRuntimeMode,
+            })
+            .pipe(Effect.tap(() => refreshWorkspaceSnapshot)),
+        ),
+      );
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {
@@ -951,6 +973,7 @@ const make = Effect.gen(function* () {
     }
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
+    const systemInstructions = yield* personalBotInstructionsForThread(input.threadId);
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
@@ -985,6 +1008,7 @@ const make = Effect.gen(function* () {
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(systemInstructions !== undefined ? { systemInstructions } : {}),
     };
   });
 
