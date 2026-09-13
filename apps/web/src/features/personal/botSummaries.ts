@@ -7,6 +7,8 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 
+import { providerWaitState } from "./conversationModel";
+
 export interface BotProviderStatus {
   readonly label: string;
   /** False when the bot's instance is missing, disabled or unavailable. */
@@ -19,8 +21,10 @@ export interface BotSummary {
   /** Most recently updated, non-archived thread linked to the bot. */
   readonly newestThread: EnvironmentThreadShell | null;
   readonly threadTitles: ReadonlyArray<string>;
-  /** A linked thread has a turn or session running right now. */
+  /** A linked thread has a turn or session running right now (not stuck on a rate limit). */
   readonly live: boolean;
+  /** A linked thread is stuck on a provider rate limit. */
+  readonly rateLimited: boolean;
   /** Linked threads waiting on the user (approval or requested input). */
   readonly attentionThreads: ReadonlyArray<EnvironmentThreadShell>;
   readonly lastActivityMs: number | null;
@@ -55,7 +59,13 @@ export function providerLine(status: BotProviderStatus): string {
   return status.available ? status.label : `${status.label} · unavailable`;
 }
 
+export function isThreadRateLimited(shell: EnvironmentThreadShell): boolean {
+  return providerWaitState(shell.session) === "rate_limited";
+}
+
+/** Running right now. A turn parked on a rate limit is not live, however long it "runs". */
 export function isThreadLive(shell: EnvironmentThreadShell): boolean {
+  if (isThreadRateLimited(shell)) return false;
   return (
     shell.latestTurn?.state === "running" ||
     shell.session?.status === "running" ||
@@ -108,6 +118,7 @@ export function buildBotSummaries(input: {
       newestThread,
       threadTitles: shells.map((shell) => shell.title),
       live: shells.some(isThreadLive),
+      rateLimited: shells.some(isThreadRateLimited),
       attentionThreads: shells.filter(threadNeedsAttention),
       lastActivityMs: newestThread === null ? null : updatedMs(newestThread),
     };

@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -24,7 +24,7 @@ import { buildRunningThreadTurnInterruptInput } from "~/components/ChatView.logi
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 import { derivePhase, deriveTimelineEntries, deriveWorkLogEntries } from "~/session-logic";
-import { useProject, useThreadDetail, useThreadShell, useThreadStatus } from "~/state/entities";
+import { useProject, useThreadDetail, useThreadStatus } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { threadEnvironment, useEnvironmentThread } from "~/state/threads";
 import type { ChatMessage } from "~/types";
@@ -34,9 +34,10 @@ import { BotAvatar } from "./BotAvatar";
 import { resolveBotProvider } from "./botSummaries";
 import {
   buildConversationItems,
-  CONVERSATION_STATE_LABEL,
   type ConversationState,
+  conversationStateLabel,
   deriveConversationState,
+  resolveConversationHeaderName,
 } from "./conversationModel";
 import { MessageList, type PendingOutgoingMessage } from "./MessageList";
 import { PersonalComposer } from "./PersonalComposer";
@@ -54,6 +55,8 @@ const STATE_DOT: Record<ConversationState, string> = {
   idle: "bg-[var(--personal-text-tertiary)]",
   working: "bg-[var(--personal-live)]",
   waiting: "bg-[var(--personal-review)]",
+  rate_limited: "bg-[var(--personal-review)]",
+  retrying: "bg-[var(--personal-review)]",
   error: "bg-[#b3261e]",
 };
 
@@ -118,9 +121,27 @@ export function ConversationScreen({
   );
   const list = usePersonalBotsList(environmentId);
   const bot = list.data?.bots.find((candidate) => candidate.botId === botId) ?? null;
+  const headerName = resolveConversationHeaderName({
+    botName: bot?.name ?? null,
+    botsLoaded: list.data !== null,
+  });
   const thread = useThreadDetail(threadRef);
-  const shell = useThreadShell(threadRef);
   const status = useThreadStatus(threadRef);
+
+  // A cold deep link (notification tap, PWA relaunch) makes this the first
+  // screen: nothing else has loaded the bots list, and a query that failed
+  // before the connection came up stays failed. Ask once per failure, and
+  // once more when a loaded list lacks this bot (created after it cached).
+  const refreshBotsList = list.refresh;
+  const listNeedsRefresh =
+    environmentId !== null && !list.isPending && (list.data === null || bot === null);
+  const listRefreshKey = `${environmentId}|${botId}|${list.data === null ? "none" : "stale"}|${list.error ?? ""}`;
+  const lastListRefreshKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!listNeedsRefresh || lastListRefreshKey.current === listRefreshKey) return;
+    lastListRefreshKey.current = listRefreshKey;
+    refreshBotsList();
+  }, [listNeedsRefresh, listRefreshKey, refreshBotsList]);
   const threadState = useEnvironmentThread(environmentId, threadId);
   const providers = useAtomValue(primaryServerProvidersAtom);
   const project = useProject(
@@ -156,8 +177,15 @@ export function ConversationScreen({
     pendingUserInputs: userInputs,
   });
   const phase = derivePhase(thread?.session ?? null);
+  // Stop depends on the thread alone, never on the bots list.
   const interruptInput = buildRunningThreadTurnInterruptInput(thread, phase);
+  // "Working" drives the typing indicator; a turn parked on a provider wait
+  // still occupies the composer (Stop, no send) without claiming progress.
   const working = conversationState === "working";
+  const providerWait = conversationState === "rate_limited" || conversationState === "retrying";
+  const turnBusy =
+    working || (providerWait && thread?.session !== null && thread?.session?.status !== "error");
+  const stateLabel = conversationStateLabel(conversationState, thread?.session ?? null, now);
   const provider =
     bot === null ? null : resolveBotProvider(bot.modelSelection.instanceId, providers);
 
@@ -219,13 +247,20 @@ export function ConversationScreen({
         }
       : null;
 
-  const name = bot?.name ?? shell?.title ?? "Chat";
+  const botName = headerName.status === "ready" ? headerName.name : null;
+  const failedOnLimit = conversationState === "rate_limited" && thread?.session?.status === "error";
   const sessionError =
-    conversationState === "error" ? (thread?.session?.lastError ?? "The last turn failed.") : null;
-  const disabledReason =
-    provider !== null && !provider.available
-      ? `${provider.label} can't run right now, so ${name} can't reply. Fix it on your computer or edit the bot.`
+    conversationState === "error" || failedOnLimit
+      ? (thread?.session?.lastError ?? "The last turn failed.")
       : null;
+  const disabledReason =
+    provider !== null && bot !== null && !provider.available
+      ? `${provider.label} can't run right now, so ${bot.name} can't reply. Fix it on your computer or edit the bot.`
+      : null;
+  const onStopFromMenu = async () => {
+    const error = await onInterrupt();
+    if (error !== null) setActionError(error);
+  };
 
   return (
     <div
@@ -240,12 +275,27 @@ export function ConversationScreen({
         </Link>
         {bot !== null ? (
           <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={48} label={bot.name} />
+        ) : headerName.status === "loading" ? (
+          <span
+            aria-hidden="true"
+            className="size-12 shrink-0 rounded-full bg-[var(--personal-fill-muted)]"
+          />
         ) : null}
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
-            {name}
-          </h1>
-          {provider !== null ? (
+          {headerName.status === "loading" ? (
+            <>
+              <h1 className="sr-only">Loading chat</h1>
+              <span
+                aria-hidden="true"
+                className="block h-5 w-32 max-w-full rounded-md bg-[var(--personal-fill-muted)]"
+              />
+            </>
+          ) : (
+            <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
+              {headerName.name}
+            </h1>
+          )}
+          {provider !== null || conversationState !== "idle" ? (
             <p className="flex min-w-0 items-center gap-1.5 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
               <span
                 aria-hidden="true"
@@ -257,8 +307,8 @@ export function ConversationScreen({
                   <span aria-hidden="true">·</span>
                 </>
               ) : null}
-              <span className="shrink-0">
-                {provider.label} · {CONVERSATION_STATE_LABEL[conversationState]}
+              <span className={providerWait ? "min-w-0 truncate" : "shrink-0"}>
+                {provider !== null ? `${provider.label} · ${stateLabel}` : stateLabel}
               </span>
             </p>
           ) : null}
@@ -270,6 +320,19 @@ export function ConversationScreen({
             <Ellipsis aria-hidden="true" className="size-6" strokeWidth={1.75} />
           </MenuTrigger>
           <MenuPopup align="end" className="min-w-48">
+            {interruptInput !== null ? (
+              <MenuItem onClick={() => void onStopFromMenu()}>Stop</MenuItem>
+            ) : null}
+            {bot !== null && providerWait ? (
+              <MenuItem
+                onClick={() =>
+                  void navigate({ to: "/bots/$botId/edit", params: { botId: bot.botId } })
+                }
+              >
+                Switch model…
+              </MenuItem>
+            ) : null}
+            {interruptInput !== null || (bot !== null && providerWait) ? <MenuSeparator /> : null}
             {bot !== null ? (
               <MenuItem
                 onClick={() =>
@@ -301,7 +364,7 @@ export function ConversationScreen({
             items={items}
             pending={visiblePending}
             working={working}
-            botName={name}
+            botName={botName ?? "Bot"}
             workspaceRoot={thread.worktreePath ?? project?.workspaceRoot}
             approvals={approvals}
             userInputs={userInputs}
@@ -317,9 +380,9 @@ export function ConversationScreen({
             environmentId={environmentId}
             threadId={threadId}
             thread={thread}
-            botName={name}
+            botName={botName}
             disabledReason={disabledReason}
-            working={working}
+            working={turnBusy}
             canInterrupt={interruptInput !== null}
             onInterrupt={onInterrupt}
             onPendingChange={(update) => setPending((current) => update(current))}

@@ -52,7 +52,7 @@ export function BotRow({
   now: number;
 }): JSX.Element {
   const preview = usePreview(environmentId, summary);
-  const { bot, newestThread, provider, live, lastActivityMs } = summary;
+  const { bot, newestThread, provider, live, rateLimited, lastActivityMs } = summary;
   const { start, starting } = useStartBotChat(environmentId, bot.botId);
 
   const content: ReactNode = (
@@ -67,6 +67,14 @@ export function BotRow({
             <span className="ml-2 flex shrink-0 items-center">
               <span aria-hidden="true" className="size-2 rounded-full bg-[var(--personal-live)]" />
               <span className="sr-only">, working</span>
+            </span>
+          ) : rateLimited ? (
+            <span className="ml-2 flex shrink-0 items-center gap-1.5 text-[13px] leading-[22px] text-[var(--personal-text-secondary)]">
+              <span
+                aria-hidden="true"
+                className="size-2 rounded-full bg-[var(--personal-review)]"
+              />
+              Rate limited
             </span>
           ) : null}
           {lastActivityMs !== null ? (

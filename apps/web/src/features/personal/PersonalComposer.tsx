@@ -79,7 +79,8 @@ export function PersonalComposer({
   environmentId: EnvironmentId;
   threadId: ThreadId;
   thread: Thread;
-  botName: string;
+  /** Null while the bot is still loading (a cold deep link). */
+  botName: string | null;
   /** Why sending is impossible right now (e.g. provider unavailable), or null. */
   disabledReason: string | null;
   working: boolean;
@@ -278,7 +279,7 @@ export function PersonalComposer({
       if (text.length > 0 && currentPrompt.length === 0) {
         setPrompt(threadRef, text);
       }
-      setError(`${botName} didn't get that message. Try sending it again.`);
+      setError(`${botName ?? "The bot"} didn't get that message. Try sending it again.`);
     }
   };
 
@@ -362,14 +363,14 @@ export function PersonalComposer({
           </>
         ) : null}
         <label className="flex min-h-11 min-w-0 flex-1 items-center rounded-[22px] bg-[var(--personal-fill-muted)] px-4">
-          <span className="sr-only">Message {botName}</span>
+          <span className="sr-only">{botName === null ? "Message" : `Message ${botName}`}</span>
           <textarea
             ref={textareaRef}
             rows={1}
             value={prompt}
             onChange={(event) => setPrompt(threadRef, event.target.value)}
             onKeyDown={onKeyDown}
-            placeholder={`Message ${botName}...`}
+            placeholder={botName === null ? "Message..." : `Message ${botName}...`}
             enterKeyHint={isCoarsePointer() ? "enter" : "send"}
             className="block w-full resize-none bg-transparent py-[11px] text-base leading-[22px] text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)]"
           />
