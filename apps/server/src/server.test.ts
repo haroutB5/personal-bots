@@ -100,6 +100,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
+import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import {
   isThreadDetailEvent,
   resolveAvailableEditorsForConfig,
@@ -757,6 +758,8 @@ const buildAppUnderTest = (options?: {
             streamChanges: Stream.empty,
             ...options?.layers?.keybindings,
           }),
+          // Server-lifetime dispatcher service the WS route shares across clients.
+          Layer.mock(PersonalTaskService.PersonalTaskService)({}),
           Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
             current: Effect.succeed([]),
             streamChanges: Stream.empty,

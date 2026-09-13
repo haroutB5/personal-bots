@@ -64,6 +64,7 @@ import Migration0049 from "./Migrations/049_ProjectionThreadsActiveOrderKey.ts";
 import Migration0050 from "./Migrations/050_ProjectionThreadPullRequests.ts";
 import Migration0051 from "./Migrations/051_ProjectionThreadMessageContext.ts";
 import Migration0052 from "./Migrations/052_PersonalBots.ts";
+import Migration0053 from "./Migrations/053_PersonalTasks.ts";
 import Migration0055 from "./Migrations/055_PersonalBotTitle.ts";
 
 /**
@@ -129,8 +130,10 @@ const migrationEntries = [
   [50, "ProjectionThreadPullRequests", Migration0050],
   [51, "ProjectionThreadMessageContext", Migration0051],
   [52, "PersonalBots", Migration0052],
-  // 53-54 are reserved for the Phase 2 branch; the migrator runs any id above
-  // the latest applied one, so merge those in before this ships.
+  [53, "PersonalTasks", Migration0053],
+  // 54 is reserved for the Phase 2 secret-requests step and 56 for the Phase 3
+  // browser leases. The migrator runs any id above the latest applied one, so
+  // never deploy a build whose personal ids are not contiguous from 052.
   [55, "PersonalBotTitle", Migration0055],
 ] as const;
 

@@ -72,6 +72,7 @@ import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRun
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
+import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -460,6 +461,16 @@ const PersonalBotsSeedLive = Layer.effectDiscard(
   ),
 );
 
+// Starts the personal task dispatcher. The domain-event subscription is taken
+// now, while its consumer and the lease/backoff sweep park on ServerActivation
+// (provided above this layer), so no turn starts before the provider reactors.
+const PersonalTasksDispatcherLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const personalTasks = yield* PersonalTaskService.PersonalTaskService;
+    yield* personalTasks.start();
+  }),
+);
+
 const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const installation = yield* AntigravityInstallation;
@@ -491,7 +502,10 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Personal bots. Order matters: each step's output feeds requirements
   // opened by EARLIER steps, so consumers come first — the seed needs the
   // service, the service needs the repository, the repository needs SqlClient
-  // (provided by PersistenceLayerLive further below).
+  // (provided by PersistenceLayerLive further below). Tasks come first: they
+  // consume the bot service and repository.
+  Layer.provideMerge(PersonalTasksDispatcherLive),
+  Layer.provideMerge(PersonalTaskService.layerLive),
   Layer.provideMerge(PersonalBotsSeedLive),
   Layer.provideMerge(PersonalBotService.layer),
   Layer.provideMerge(PersonalBotRepository.layer),
