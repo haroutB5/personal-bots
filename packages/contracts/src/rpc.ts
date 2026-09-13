@@ -259,6 +259,7 @@ import {
   PersonalBotsError,
   PersonalBotsListResult,
   PersonalBotThread,
+  PersonalFilesListResult,
   PersonalBotUpdateInput,
   PersonalProfile,
   PersonalProfileSetInput,
@@ -429,6 +430,7 @@ export const WS_METHODS = {
   personalBotsArchiveThread: "personalBots.archiveThread",
   personalBotsGetProfile: "personalBots.getProfile",
   personalBotsSetProfile: "personalBots.setProfile",
+  personalBotsListFiles: "personalBots.listFiles",
 
   // Personal tasks methods
   personalTasksList: "personalTasks.list",
@@ -911,6 +913,12 @@ const WsPersonalBotsGetProfileRpc = Rpc.make(WS_METHODS.personalBotsGetProfile, 
 const WsPersonalBotsSetProfileRpc = Rpc.make(WS_METHODS.personalBotsSetProfile, {
   payload: PersonalProfileSetInput,
   success: PersonalProfile,
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsListFilesRpc = Rpc.make(WS_METHODS.personalBotsListFiles, {
+  payload: Schema.Struct({}),
+  success: PersonalFilesListResult,
   error: PersonalBotsRpcError,
 });
 
@@ -1477,6 +1485,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPersonalBotsArchiveThreadRpc,
   WsPersonalBotsGetProfileRpc,
   WsPersonalBotsSetProfileRpc,
+  WsPersonalBotsListFilesRpc,
   WsPersonalTasksListRpc,
   WsPersonalTasksGetRpc,
   WsPersonalTasksCreateRpc,

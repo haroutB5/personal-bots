@@ -9,6 +9,7 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import {
   BotAvatarColor,
   BotAvatarShape,
+  ChatAttachment,
   ModelSelection,
   PersonalBot,
   PersonalBotId,
@@ -130,6 +131,15 @@ export class PersonalBotRepository extends Context.Service<
       input: SetPersonalMetaInput,
     ) => Effect.Effect<void, PersonalBotRepositoryError>;
     /**
+     * Messages with attachments in threads linked to live (not deleted) bots,
+     * newest first. Rows whose ids or attachment JSON fail to decode are
+     * skipped so one bad message cannot hide every file.
+     */
+    readonly listThreadAttachments: () => Effect.Effect<
+      ReadonlyArray<PersonalThreadAttachments>,
+      PersonalBotRepositoryError
+    >;
+    /**
      * Bot instructions for a thread, for the provider session/turn path.
      * None when the thread has no bot link, the bot is soft-deleted, or its
      * instructions are blank.
@@ -189,6 +199,31 @@ const PersonalBotThreadRawDbRow = Schema.Struct({
 const PersonalMetaDbRow = Schema.Struct({
   value: Schema.String,
 });
+
+export interface PersonalThreadAttachments {
+  readonly botId: PersonalBotId;
+  readonly threadId: ThreadId;
+  readonly createdAt: typeof Schema.DateTimeUtcFromString.Type;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}
+
+const PersonalThreadAttachmentsDbRow = Schema.Struct({
+  botId: PersonalBotId,
+  threadId: ThreadId,
+  createdAt: Schema.DateTimeUtcFromString,
+  attachments: Schema.fromJsonString(Schema.Array(ChatAttachment)),
+});
+
+const PersonalThreadAttachmentsRawDbRow = Schema.Struct({
+  botId: Schema.Unknown,
+  threadId: Schema.Unknown,
+  createdAt: Schema.Unknown,
+  attachments: Schema.Unknown,
+});
+
+const decodePersonalThreadAttachmentsDbRow = Schema.decodeUnknownOption(
+  PersonalThreadAttachmentsDbRow,
+);
 
 const decodePersonalBotDbRow = Schema.decodeUnknownEffect(PersonalBotDbRow);
 const decodePersonalBotThreadDbRow = Schema.decodeUnknownEffect(PersonalBotThreadDbRow);
@@ -461,6 +496,25 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const listThreadAttachmentRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: PersonalThreadAttachmentsRawDbRow,
+    execute: () =>
+      sql`
+        SELECT
+          t.bot_id AS "botId",
+          m.thread_id AS "threadId",
+          m.created_at AS "createdAt",
+          m.attachments_json AS "attachments"
+        FROM personal_bot_threads t
+        JOIN personal_bots b ON b.bot_id = t.bot_id AND b.deleted_at IS NULL
+        JOIN projection_thread_messages m ON m.thread_id = t.thread_id
+        WHERE m.attachments_json IS NOT NULL
+          AND m.attachments_json <> '[]'
+        ORDER BY m.created_at DESC, m.message_id DESC
+      `,
+  });
+
   const decodeBotRow = (
     operation: string,
     rowOption: Option.Option<typeof PersonalBotRawDbRow.Type>,
@@ -658,6 +712,19 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const listThreadAttachments: PersonalBotRepository["Service"]["listThreadAttachments"] = () =>
+    listThreadAttachmentRows().pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "PersonalBotRepository.listThreadAttachments:query",
+          "PersonalBotRepository.listThreadAttachments:decodeRows",
+        ),
+      ),
+      Effect.map((rows) =>
+        rows.flatMap((row) => Option.toArray(decodePersonalThreadAttachmentsDbRow(row))),
+      ),
+    );
+
   return {
     createBot,
     getBotById,
@@ -671,6 +738,7 @@ export const make = Effect.gen(function* () {
     getMeta,
     setMeta,
     getInstructionsForThread,
+    listThreadAttachments,
   } satisfies PersonalBotRepository["Service"];
 });
 

@@ -162,6 +162,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
+import { signPersonalFiles } from "./personal/PersonalFiles.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
@@ -2362,6 +2363,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalBotsSetProfile, personalBots.setProfile(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalBotsListFiles]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsListFiles,
+            personalBots.listFiles().pipe(Effect.flatMap(signPersonalFiles)),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.personalTasksList]: (input) =>
           observeRpcEffect(WS_METHODS.personalTasksList, personalTasks.list(input), {
             "rpc.aggregate": "server",

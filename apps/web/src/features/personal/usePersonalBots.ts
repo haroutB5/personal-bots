@@ -28,6 +28,18 @@ export const personalProfile = createEnvironmentRpcQueryAtomFamily(connectionAto
   idleTtlMs: 10 * 60_000,
 });
 
+/**
+ * Files-tab rows with signed asset URLs. The server's URLs live for an hour,
+ * so the list refreshes well inside that while the tab is mounted.
+ */
+export const personalFilesList = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "personal-bots:files",
+  tag: WS_METHODS.personalBotsListFiles,
+  staleTimeMs: 30_000,
+  idleTtlMs: 5 * 60_000,
+  refreshIntervalMs: 20 * 60_000,
+});
+
 const refreshBotsList = (
   target: { readonly environmentId: EnvironmentId },
   registry: { refresh: (atom: ReturnType<typeof personalBotsList>) => void },
@@ -85,6 +97,14 @@ export function usePersonalEnvironmentId(): EnvironmentId | null {
 export function usePersonalBotsList(environmentId: EnvironmentId | null) {
   const atom = useMemo(
     () => (environmentId === null ? null : personalBotsList({ environmentId, input: {} })),
+    [environmentId],
+  );
+  return useEnvironmentQuery(atom);
+}
+
+export function usePersonalFiles(environmentId: EnvironmentId | null) {
+  const atom = useMemo(
+    () => (environmentId === null ? null : personalFilesList({ environmentId, input: {} })),
     [environmentId],
   );
   return useEnvironmentQuery(atom);

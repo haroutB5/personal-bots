@@ -20,7 +20,7 @@ import {
 const MINUTE_MS = 60_000;
 
 /** Re-render once a minute so relative timestamps and the greeting stay true. */
-function useMinuteClock(): number {
+export function useMinuteClock(): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), MINUTE_MS);

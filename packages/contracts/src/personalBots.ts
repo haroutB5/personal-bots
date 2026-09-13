@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ModelSelection } from "./orchestration.ts";
 
 export const PersonalBotId = TrimmedNonEmptyString.pipe(Schema.brand("PersonalBotId"));
@@ -113,6 +113,38 @@ export const PersonalProfileSetInput = Schema.Struct({
   displayName: Schema.String,
 });
 export type PersonalProfileSetInput = typeof PersonalProfileSetInput.Type;
+
+/**
+ * One chat attachment from a personal-bot thread, as listed on the Files tab.
+ * The client only ever gets the attachment id and signed URLs, never a host
+ * path.
+ */
+export const PersonalFile = Schema.Struct({
+  /** The attachment id (`ChatAttachment.id`). */
+  fileId: TrimmedNonEmptyString,
+  name: Schema.String,
+  mimeType: Schema.String,
+  sizeBytes: NonNegativeInt,
+  botId: PersonalBotId,
+  threadId: ThreadId,
+  /** When the message carrying the attachment was sent. */
+  createdAt: Schema.DateTimeUtcFromString,
+  /**
+   * Signed, expiring `/api/assets/...` URL relative to the environment's HTTP
+   * origin. Images serve inline; every other type downloads with its name.
+   */
+  url: TrimmedNonEmptyString,
+  /** Inline URL for documents the browser can show itself (PDF); null otherwise. */
+  previewUrl: Schema.NullOr(TrimmedNonEmptyString),
+  /** Epoch ms after which `url` and `previewUrl` stop working. */
+  expiresAt: Schema.Number,
+});
+export type PersonalFile = typeof PersonalFile.Type;
+
+export const PersonalFilesListResult = Schema.Struct({
+  files: Schema.Array(PersonalFile),
+});
+export type PersonalFilesListResult = typeof PersonalFilesListResult.Type;
 
 export class PersonalBotsError extends Schema.TaggedError<PersonalBotsError>()(
   "PersonalBotsError",

@@ -21,10 +21,16 @@ import {
   type PersonalBotCreateInput,
   type PersonalBotsListResult,
   type PersonalBotUpdateInput,
+  type PersonalFile,
   type PersonalProfile,
   type ServerProvider,
 } from "@t3tools/contracts";
 
+import {
+  parseThreadSegmentFromAttachmentId,
+  resolveAttachmentPathById,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -99,6 +105,9 @@ const seedBotId = (key: string): PersonalBotId =>
 const toPersonalBotsError = (message: string) => (cause: unknown) =>
   new PersonalBotsError({ message, cause });
 
+/** A Files-tab row before its URLs are signed (see `PersonalFiles.ts`). */
+export type PersonalFileRecord = Omit<PersonalFile, "url" | "previewUrl" | "expiresAt">;
+
 export class PersonalBotService extends Context.Service<
   PersonalBotService,
   {
@@ -125,6 +134,8 @@ export class PersonalBotService extends Context.Service<
       readonly displayName: string;
     }) => Effect.Effect<PersonalProfile, PersonalBotsError>;
     readonly seedDefaultsIfNeeded: Effect.Effect<ReadonlyArray<PersonalBot>, PersonalBotsError>;
+    /** Attachments from live bots' threads that still exist on disk, newest first. */
+    readonly listFiles: () => Effect.Effect<ReadonlyArray<PersonalFileRecord>, PersonalBotsError>;
   }
 >()("t3/personal/PersonalBotService") {}
 
@@ -465,6 +476,52 @@ export const make = Effect.gen(function* () {
       return { displayName };
     });
 
+  const listFiles: PersonalBotService["Service"]["listFiles"] = () =>
+    Effect.gen(function* () {
+      const rows = yield* repository
+        .listThreadAttachments()
+        .pipe(Effect.mapError(repositoryError("files")));
+      const seen = new Set<string>();
+      const files: Array<PersonalFileRecord> = [];
+      for (const row of rows) {
+        const threadSegment = toSafeThreadAttachmentSegment(row.threadId);
+        for (const attachment of row.attachments) {
+          if (attachment.type !== "image" && attachment.type !== "file") continue;
+          if (seen.has(attachment.id)) continue;
+          // Stored attachment ids are minted for the thread that claimed them.
+          // An id naming another thread is not this bot's file, so it is not
+          // listed even though a personal message references it.
+          if (
+            threadSegment === null ||
+            parseThreadSegmentFromAttachmentId(attachment.id) !== threadSegment
+          ) {
+            continue;
+          }
+          // Id-only lookup confined to the attachments directory; a file that
+          // was removed or expired is not offered.
+          if (
+            resolveAttachmentPathById({
+              attachmentsDir: config.attachmentsDir,
+              attachmentId: attachment.id,
+            }) === null
+          ) {
+            continue;
+          }
+          seen.add(attachment.id);
+          files.push({
+            fileId: attachment.id,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+            botId: row.botId,
+            threadId: row.threadId,
+            createdAt: row.createdAt,
+          });
+        }
+      }
+      return files as ReadonlyArray<PersonalFileRecord>;
+    });
+
   return {
     list,
     create,
@@ -475,6 +532,7 @@ export const make = Effect.gen(function* () {
     getProfile,
     setProfile,
     seedDefaultsIfNeeded,
+    listFiles,
   } satisfies PersonalBotService["Service"];
 });
 
