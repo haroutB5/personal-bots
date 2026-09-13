@@ -27,6 +27,7 @@ import {
   RelayEnvironmentLinkProof,
   RelayEnvironmentLinkProofPayload,
   RelayLinkProofRequest,
+  type RelayManagedEndpoint,
   RelayManagedEndpointOrigin,
   RelayOkResponse,
 } from "@t3tools/contracts/relay";
@@ -67,6 +68,7 @@ import {
   serviceStateHasPendingUpdate,
 } from "./serviceProtocol.ts";
 import {
+  CLOUD_ENDPOINT_HTTP_BASE_URL,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
@@ -533,6 +535,22 @@ const relayClientRequest = <A>(
     withRelayClientTracing,
   );
 
+/**
+ * Keeps the relay-issued public origin so `t3 connect status` and
+ * `t3 pair --connect` can show where the environment is reachable. A manual
+ * endpoint is only the local origin, so nothing is kept for it.
+ */
+export const persistRelayEndpoint = Effect.fn("environment.cloud.persistRelayEndpoint")(function* (
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
+  endpoint: RelayManagedEndpoint,
+) {
+  if (endpoint.providerKind === "manual") {
+    yield* secrets.remove(CLOUD_ENDPOINT_HTTP_BASE_URL);
+    return;
+  }
+  yield* secrets.set(CLOUD_ENDPOINT_HTTP_BASE_URL, stringToBytes(endpoint.httpBaseUrl));
+});
+
 const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesiredLinkWith")(
   function* (dependencies: CloudHttpDependencies, localOrigin: string) {
     const localUrl = yield* Effect.try({
@@ -603,7 +621,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
       schema: RelayEnvironmentLinkResponse,
     });
     yield* setCliDesiredCloudLink(true, mode);
-    return yield* applyCloudRelayConfig(dependencies, {
+    const applied = yield* applyCloudRelayConfig(dependencies, {
       relayUrl,
       relayIssuer: link.relayIssuer,
       cloudUserId: link.cloudUserId,
@@ -611,6 +629,8 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
       cloudMintPublicKey: link.cloudMintPublicKey,
       endpointRuntime: link.endpointRuntime,
     });
+    yield* persistRelayEndpoint(dependencies.secrets, link.endpoint);
+    return applied;
   },
   Effect.catchIf(
     ServerSecretStore.isSecretStoreError,
@@ -793,9 +813,10 @@ const cloudUnlinkHandler = Effect.fn("environment.cloud.unlink")(
         dependencies.secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
         dependencies.secrets.remove(CLOUD_MINT_PUBLIC_KEY),
         dependencies.secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+        dependencies.secrets.remove(CLOUD_ENDPOINT_HTTP_BASE_URL),
         dependencies.secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
       ],
-      { concurrency: 7 },
+      { concurrency: 8 },
     );
     yield* setCliDesiredCloudLink(false);
     return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;

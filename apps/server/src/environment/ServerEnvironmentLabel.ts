@@ -1,4 +1,5 @@
 import { HostProcessHostname, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -182,6 +183,17 @@ const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function*
 export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironmentLabel")(function* (
   input: ResolveServerEnvironmentLabelInput,
 ) {
+  // An explicit label names the environment in pairing and T3 Connect lists,
+  // so it wins over every machine-name probe.
+  const configured = yield* Config.string("T3CODE_ENVIRONMENT_LABEL").pipe(
+    Config.option,
+    Effect.map((value) => normalizeLabel(Option.getOrUndefined(value))),
+    Effect.orElseSucceed(() => null),
+  );
+  if (configured) {
+    return configured;
+  }
+
   const friendlyHostLabel = yield* resolveFriendlyHostLabel();
   if (friendlyHostLabel) {
     return friendlyHostLabel;

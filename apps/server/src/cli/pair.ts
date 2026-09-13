@@ -39,6 +39,8 @@ import {
 } from "effect/unstable/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { CLOUD_ENDPOINT_HTTP_BASE_URL } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import {
@@ -130,6 +132,53 @@ export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupied
     return `HTTPS port ${String(this.servePort)} on the tailnet already serves something that is not a T3 Code server. Pass --tailscale-serve-port to publish this one on another port.`;
   }
 }
+
+export class ConnectEndpointMissingError extends Schema.TaggedError<ConnectEndpointMissingError>()(
+  "ConnectEndpointMissingError",
+  { baseDir: Schema.String },
+) {
+  override get message(): string {
+    return [
+      `No T3 Connect public URL is stored for ${this.baseDir}.`,
+      "Run `t3 connect link`, then start the server so it provisions the tunnel, and pair again.",
+    ].join("\n");
+  }
+}
+
+export class ConflictingPairTargetsError extends Schema.TaggedError<ConflictingPairTargetsError>()(
+  "ConflictingPairTargetsError",
+  {},
+) {
+  override get message(): string {
+    return "Choose one of --connect or --tailscale.";
+  }
+}
+
+/**
+ * The relay records the tunnel origin as a URL; older relays may send a bare
+ * host. Either way pairing goes over HTTPS at that origin.
+ */
+export const resolveConnectPairingBaseUrl = (stored: string): string => {
+  const trimmed = stored.trim();
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//iu.test(trimmed) ? trimmed : `https://${trimmed}`;
+  return new URL(withScheme).origin;
+};
+
+const readConnectPairingBaseUrl = Effect.fn("pair.readConnectPairingBaseUrl")(function* (
+  config: ServerConfig.ServerConfig["Service"],
+) {
+  const stored = yield* Effect.gen(function* () {
+    const secrets = yield* ServerSecretStore.ServerSecretStore;
+    return yield* secrets.get(CLOUD_ENDPOINT_HTTP_BASE_URL);
+  }).pipe(Effect.provide(ServerSecretStore.layer.pipe(Layer.provide(ServerConfig.layer(config)))));
+  const value = Option.map(stored, (bytes) => new TextDecoder().decode(bytes).trim()).pipe(
+    Option.filter((text) => text.length > 0),
+  );
+  if (Option.isNone(value)) {
+    return yield* new ConnectEndpointMissingError({ baseDir: config.baseDir });
+  }
+  return resolveConnectPairingBaseUrl(value.value);
+});
 
 /** The URL a browser or phone should pair through, absent Tailscale. */
 export const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
@@ -471,12 +520,18 @@ const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
   Flag.withDefault(DEFAULT_TAILSCALE_SERVE_PORT),
 );
 
+const connectFlag = Flag.boolean("connect").pipe(
+  Flag.withDescription("Pair through this environment's T3 Connect public URL."),
+  Flag.withDefault(false),
+);
+
 export const pairCommand = Command.make("pair", {
   baseDir: baseDirFlag,
   ttl: ttlFlag,
   label: labelFlag,
   tailscale: tailscaleFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  connect: connectFlag,
 }).pipe(
   Command.withDescription(
     "Mint a pairing token for a running T3 Code server and print it as a QR code.",
@@ -488,11 +543,18 @@ export const pairCommand = Command.make("pair", {
       // an explicit --log-level still wins.
       const logLevel = Option.getOrElse(cliLogLevel, () => "Warn" as const);
 
+      if (flags.connect && flags.tailscale) {
+        return yield* new ConflictingPairTargetsError();
+      }
+
       const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
+      const config = yield* makePairServerConfig({ target, logLevel });
 
       const notes: Array<string> = [];
       let pairingBaseUrl: string;
-      if (flags.tailscale) {
+      if (flags.connect) {
+        pairingBaseUrl = yield* readConnectPairingBaseUrl(config);
+      } else if (flags.tailscale) {
         const resolved = yield* resolveTailscalePairingBase({
           target,
           servePort: flags.tailscaleServePort,
@@ -513,7 +575,6 @@ export const pairCommand = Command.make("pair", {
         }
       }
 
-      const config = yield* makePairServerConfig({ target, logLevel });
       const issued = yield* mintPairingLink({ config, ttl: flags.ttl, label: flags.label });
       const pairingUrl = buildPairingUrl(pairingBaseUrl, issued.credential);
 

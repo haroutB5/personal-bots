@@ -8,6 +8,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
@@ -24,8 +25,10 @@ import {
   persistServerRuntimeState,
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
+import { CLOUD_ENDPOINT_HTTP_BASE_URL } from "../cloud/config.ts";
 import {
   DevServerNotProxiableError,
+  resolveConnectPairingBaseUrl,
   resolveDirectPairingBaseUrl,
   resolveTailscaleLocalTarget,
 } from "./pair.ts";
@@ -54,6 +57,17 @@ describe("pair base URL selection", () => {
       "http://100.64.0.7:3773",
     );
     expect(resolveDirectPairingBaseUrl(baseState)).toBe("http://localhost:3773");
+  });
+});
+
+describe("pair T3 Connect base URL", () => {
+  it("pairs over HTTPS at the stored tunnel origin", () => {
+    expect(resolveConnectPairingBaseUrl("https://bots-abc.t3.example/")).toBe(
+      "https://bots-abc.t3.example",
+    );
+    expect(resolveConnectPairingBaseUrl(" bots-abc.t3.example ")).toBe(
+      "https://bots-abc.t3.example",
+    );
   });
 });
 
@@ -215,6 +229,66 @@ describe("t3 pair", () => {
         assert.include(output, "Pairing URL: http://localhost:5733/pair#token=");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("pairs through the stored T3 Connect URL with --connect", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-connect-test-"));
+        const port = Number(new URL(origin).port);
+        const stateDir = NodePath.join(baseDir, "userdata");
+        yield* persistServerRuntimeState({
+          path: NodePath.join(stateDir, "server-runtime.json"),
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port,
+          }),
+        });
+
+        const missing = yield* provideCliTestLayers(
+          runCli(["pair", "--base-dir", baseDir, "--connect"]).pipe(Effect.flip),
+        );
+        const rendered = String(
+          typeof missing === "object" && missing !== null && "cause" in missing
+            ? missing.cause
+            : missing,
+        );
+        assert.include(rendered, "No T3 Connect public URL is stored");
+        assert.include(rendered, "t3 connect link");
+
+        NodeFS.mkdirSync(NodePath.join(stateDir, "secrets"), { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(stateDir, "secrets", `${CLOUD_ENDPOINT_HTTP_BASE_URL}.bin`),
+          "https://bots-abc.t3.example",
+        );
+        const output = yield* captureStdout(
+          runCli(["pair", "--base-dir", baseDir, "--connect", "--ttl", "30m"]),
+        );
+
+        assert.include(output, "Pairing URL: https://bots-abc.t3.example/pair#token=");
+        assert.notInclude(output, "only reachable from this machine");
+        const expires = /Expires: (\S+)/.exec(output)?.[1];
+        assert.isString(expires);
+        // The minted expiry is stamped from the Effect clock, not wall time.
+        const ttlMs = Date.parse(expires ?? "") - (yield* Clock.currentTimeMillis);
+        // --ttl reaches the minted link: well past the 5 minute default.
+        assert.isAbove(ttlMs, 25 * 60_000);
+        assert.isBelow(ttlMs, 31 * 60_000);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects --connect together with --tailscale", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-conflict-test-"));
+      const error = yield* provideCliTestLayers(
+        runCli(["pair", "--base-dir", baseDir, "--connect", "--tailscale"]).pipe(Effect.flip),
+      );
+      const rendered = String(
+        typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+      );
+      assert.include(rendered, "Choose one of --connect or --tailscale.");
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("directs to t3 serve or t3 connect when no server is running", () =>

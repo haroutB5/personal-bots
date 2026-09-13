@@ -30,12 +30,17 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import type { RelayLinkProofRequest } from "@t3tools/contracts/relay";
-import { CLOUD_ENDPOINT_RUNTIME_CONFIG, RELAY_URL_SECRET } from "./config.ts";
+import {
+  CLOUD_ENDPOINT_HTTP_BASE_URL,
+  CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  RELAY_URL_SECRET,
+} from "./config.ts";
 import {
   consumeCloudReplayGuards,
   isSupportedLinkProviderKind,
   linkProofScopes,
   pendingServiceUpdateExists,
+  persistRelayEndpoint,
   reconcileDesiredCloudLink,
   releaseManagedTunnelOnShutdown,
 } from "./http.ts";
@@ -578,6 +583,47 @@ describe("releaseManagedTunnelOnShutdown", () => {
         respond: () => Response.json({ ok: false }, { status: 503 }),
       }),
     );
+  });
+});
+
+describe("persistRelayEndpoint", () => {
+  it.effect("keeps the tunnel origin for managed links and drops it for manual ones", () => {
+    const values = new Map<string, Uint8Array>();
+    const store: ServerSecretStore.ServerSecretStore["Service"] = {
+      get: (name) => Effect.sync(() => Option.fromNullishOr(values.get(name))),
+      set: (name, value) =>
+        Effect.sync(() => {
+          values.set(name, value);
+        }),
+      create: unusedSecretStoreOperation,
+      getOrCreateRandom: unusedSecretStoreOperation,
+      remove: (name) =>
+        Effect.sync(() => {
+          values.delete(name);
+        }),
+    };
+    const stored = () => {
+      const bytes = values.get(CLOUD_ENDPOINT_HTTP_BASE_URL);
+      return bytes === undefined ? null : new TextDecoder().decode(bytes);
+    };
+
+    return Effect.gen(function* () {
+      yield* persistRelayEndpoint(store, {
+        httpBaseUrl: "https://bots-abc.t3.example",
+        wsBaseUrl: "wss://bots-abc.t3.example",
+        providerKind: "cloudflare_tunnel",
+      });
+      expect(stored()).toBe("https://bots-abc.t3.example");
+
+      // A publish-only relink reports the local origin as a manual endpoint;
+      // advertising that as the public URL would hand out an unreachable link.
+      yield* persistRelayEndpoint(store, {
+        httpBaseUrl: "http://127.0.0.1:3773",
+        wsBaseUrl: "ws://127.0.0.1:3773",
+        providerKind: "manual",
+      });
+      expect(stored()).toBeNull();
+    });
   });
 });
 

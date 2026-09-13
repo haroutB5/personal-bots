@@ -13,10 +13,34 @@ import * as Terminal from "effect/Terminal";
 import * as BootService from "../cloud/bootService.ts";
 import {
   acquireRelayClientForLink,
+  type CloudCliStatus,
+  formatCloudStatus,
   headlessSessionConfig,
   reportCloudDisconnectResults,
 } from "./connect.ts";
 import { recoverServiceOnboardingOffer } from "./service.ts";
+
+it("shows the stored public URL in connect status text and JSON", () => {
+  const status: CloudCliStatus = {
+    desired: true,
+    authenticated: true,
+    linked: true,
+    cloudUserId: "user_123",
+    relayUrl: "https://relay.example.test",
+    endpointUrl: "https://bots-abc.t3.example",
+    publishAgentActivity: false,
+    relayClient: { status: "missing", version: RelayClient.CLOUDFLARED_VERSION },
+  };
+
+  assert.include(formatCloudStatus(status), "  Public URL: https://bots-abc.t3.example");
+  const json = JSON.parse(formatCloudStatus(status, { json: true })) as {
+    readonly endpointUrl: string | null;
+  };
+  assert.equal(json.endpointUrl, "https://bots-abc.t3.example");
+
+  const unlinked = { ...status, linked: false, endpointUrl: null };
+  assert.include(formatCloudStatus(unlinked), "  Public URL: not provisioned");
+});
 
 const readHeadlessSessionConfig = (env: Record<string, string>) =>
   headlessSessionConfig.pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))));

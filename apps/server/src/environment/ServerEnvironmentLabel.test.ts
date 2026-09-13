@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -68,6 +69,28 @@ describe("resolveServerEnvironmentLabel", () => {
       }).pipe(Effect.provide(withHostPlatform(TestLayer, "win32", "macbook-pro")));
 
       expect(result).toBe("macbook-pro");
+    }),
+  );
+
+  it.effect("prefers T3CODE_ENVIRONMENT_LABEL over every machine-name probe", () =>
+    Effect.gen(function* () {
+      const withEnv = (platform: NodeJS.Platform, env: Record<string, string>) =>
+        Layer.merge(
+          withHostPlatform(TestLayer, platform, "macbook-pro"),
+          ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
+        );
+
+      const configured = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+        cwdBaseName: "t3code",
+      }).pipe(Effect.provide(withEnv("darwin", { T3CODE_ENVIRONMENT_LABEL: "  Bots  " })));
+      expect(configured).toBe("Bots");
+      // The macOS ComputerName probe never ran: the label short-circuits it.
+      expect(runMock).not.toHaveBeenCalled();
+
+      const blank = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+        cwdBaseName: "t3code",
+      }).pipe(Effect.provide(withEnv("win32", { T3CODE_ENVIRONMENT_LABEL: "   " })));
+      expect(blank).toBe("macbook-pro");
     }),
   );
 
