@@ -56,6 +56,7 @@ import {
   waitingLabelsByThread,
 } from "./delegationModel";
 import { MessageList, type PendingOutgoingMessage } from "./MessageList";
+import { useKeyboardInset } from "./useKeyboardInset";
 import { PersonalComposer } from "./PersonalComposer";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { useStartBotChat } from "./startBotChat";
@@ -83,32 +84,6 @@ const STATE_DOT: Record<ConversationState, string> = {
 const EMPTY_MESSAGES: ReadonlyArray<ChatMessage> = [];
 const EMPTY_ACTIVITIES: ReadonlyArray<never> = [];
 const EMPTY_PLANS: ReadonlyArray<never> = [];
-
-/**
- * Height the on-screen keyboard covers. Chromium resizes the layout viewport
- * itself (`interactive-widget=resizes-content`), which leaves this at 0; iOS
- * Safari only shrinks the visual viewport, so the composer is lifted by the
- * difference.
- */
-function useKeyboardInset(): number {
-  const [inset, setInset] = useState(0);
-  useEffect(() => {
-    const viewport = window.visualViewport;
-    if (!viewport) return;
-    const update = () => {
-      const covered = window.innerHeight - viewport.height - viewport.offsetTop;
-      setInset(covered > 1 ? Math.round(covered) : 0);
-    };
-    update();
-    viewport.addEventListener("resize", update);
-    viewport.addEventListener("scroll", update);
-    return () => {
-      viewport.removeEventListener("resize", update);
-      viewport.removeEventListener("scroll", update);
-    };
-  }, []);
-  return inset;
-}
 
 /** Minute clock for "Today, 21:38" dividers. */
 function useMinuteNow(): Date {
