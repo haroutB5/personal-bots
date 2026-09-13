@@ -1,0 +1,43 @@
+/* Personal Bots theme tokens (light only).
+ *
+ * Scoped under `.personal-app` so the upstream T3 theme is untouched. Values
+ * transcribed from `.plans/ui-spec.md`. The personal layout (Task 3) wraps its
+ * routes in `.personal-app`; this file is imported from `index.css` so the
+ * variables exist wherever the wrapper is used. */
+
+.personal-app {
+  --personal-bg: #fafaf8;
+  --personal-surface: #ffffff;
+  --personal-fill-muted: #f3f3f1;
+  --personal-text: #171717;
+  --personal-text-secondary: #707070;
+  --personal-text-tertiary: #8a8a87;
+  --personal-border: #e6e6e3;
+  --personal-live: #34a853;
+  --personal-review: #d4a017;
+  --personal-review-bg: #fbf8ee;
+  --personal-review-border: #efe8d2;
+  --personal-primary: #171717;
+  --personal-primary-text: #ffffff;
+  --personal-font:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+
+  --personal-radius-pill: 999px;
+  --personal-radius-card: 14px;
+  --personal-radius-button: 10px;
+  --personal-radius-bubble: 16px;
+
+  background-color: var(--personal-bg);
+  color: var(--personal-text);
+  font-family: var(--personal-font);
+}
+
+/* The personal surface honours reduced-motion: no perpetual animations. */
+@media (prefers-reduced-motion: reduce) {
+  .personal-app *,
+  .personal-app *::before,
+  .personal-app *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
