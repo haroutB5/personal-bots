@@ -163,6 +163,9 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
+import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
+import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
+import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -627,6 +630,9 @@ const makeWsRpcLayer = (
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const personalBots = yield* PersonalBotService.PersonalBotService;
       const personalTasks = yield* PersonalTaskService.PersonalTaskService;
+      const personalRoutines = yield* PersonalRoutineService.PersonalRoutineService;
+      const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
+      const personalPush = yield* PersonalPushService.PersonalPushService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -2386,6 +2392,96 @@ const makeWsRpcLayer = (
           observeRpcStream(WS_METHODS.personalTasksSubscribe, personalTasks.subscribe, {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalRoutinesList]: (_input) =>
+          observeRpcEffect(WS_METHODS.personalRoutinesList, personalRoutines.list(), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalRoutinesCreate]: (input) =>
+          observeRpcEffect(WS_METHODS.personalRoutinesCreate, personalRoutines.create(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalRoutinesUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.personalRoutinesUpdate, personalRoutines.update(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalRoutinesDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalRoutinesDelete,
+            personalRoutines.remove(input).pipe(Effect.as({})),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalRoutinesPause]: (input) =>
+          observeRpcEffect(WS_METHODS.personalRoutinesPause, personalRoutines.pause(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalRoutinesResume]: (input) =>
+          observeRpcEffect(WS_METHODS.personalRoutinesResume, personalRoutines.resume(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalRoutinesRunNow]: (input) =>
+          observeRpcEffect(WS_METHODS.personalRoutinesRunNow, personalRoutines.runNow(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalMemoryList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalMemoryList,
+            personalMemory.list(input).pipe(Effect.map((entries) => ({ entries: [...entries] }))),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalMemorySearch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalMemorySearch,
+            personalMemory.search(input).pipe(Effect.map((entries) => ({ entries: [...entries] }))),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalMemoryUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.personalMemoryUpdate, personalMemory.update(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalMemoryDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalMemoryDelete,
+            personalMemory.remove(input).pipe(Effect.as({})),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalPushPublicKey]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.personalPushPublicKey,
+            personalPush.publicKey().pipe(Effect.map((publicKey) => ({ publicKey }))),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalPushGetSettings]: (_input) =>
+          observeRpcEffect(WS_METHODS.personalPushGetSettings, personalPush.getSettings(), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalPushSubscribe]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalPushSubscribe,
+            personalPush
+              .subscribe(input)
+              .pipe(Effect.map((subscriptionId) => ({ subscriptionId }))),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalPushUnsubscribe]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalPushUnsubscribe,
+            personalPush.unsubscribe(input).pipe(Effect.as({})),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalPushTest]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalPushTest,
+            personalPush.test(input).pipe(Effect.map((queued) => ({ queued }))),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalPushSetPreferences]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalPushSetPreferences,
+            personalPush.setPreferences(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
@@ -3130,6 +3226,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const pullRequests = yield* PullRequestService.PullRequestService;
     // Server-lifetime: the dispatcher, its lock and the upsert stream are shared by every client.
     const personalTasks = yield* PersonalTaskService.PersonalTaskService;
+    const personalRoutines = yield* PersonalRoutineService.PersonalRoutineService;
+    const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
+    const personalPush = yield* PersonalPushService.PersonalPushService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3172,6 +3271,13 @@ export const websocketRpcRouteLayer = Layer.unwrap(
                 PersonalBotService.layer.pipe(Layer.provide(PersonalBotRepository.layer)),
               ),
               Layer.provide(Layer.succeed(PersonalTaskService.PersonalTaskService, personalTasks)),
+              Layer.provide(
+                Layer.succeed(PersonalRoutineService.PersonalRoutineService, personalRoutines),
+              ),
+              Layer.provide(
+                Layer.succeed(PersonalMemoryService.PersonalMemoryService, personalMemory),
+              ),
+              Layer.provide(Layer.succeed(PersonalPushService.PersonalPushService, personalPush)),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.

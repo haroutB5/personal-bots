@@ -66,6 +66,9 @@ import Migration0051 from "./Migrations/051_ProjectionThreadMessageContext.ts";
 import Migration0052 from "./Migrations/052_PersonalBots.ts";
 import Migration0053 from "./Migrations/053_PersonalTasks.ts";
 import Migration0055 from "./Migrations/055_PersonalBotTitle.ts";
+import Migration0057 from "./Migrations/057_PersonalRoutines.ts";
+import Migration0058 from "./Migrations/058_PersonalMemory.ts";
+import Migration0059 from "./Migrations/059_PersonalNotifications.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -135,6 +138,9 @@ const migrationEntries = [
   // browser leases. The migrator runs any id above the latest applied one, so
   // never deploy a build whose personal ids are not contiguous from 052.
   [55, "PersonalBotTitle", Migration0055],
+  [57, "PersonalRoutines", Migration0057],
+  [58, "PersonalMemory", Migration0058],
+  [59, "PersonalNotifications", Migration0059],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

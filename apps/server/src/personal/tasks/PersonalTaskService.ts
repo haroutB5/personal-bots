@@ -100,6 +100,8 @@ export class PersonalTaskService extends Context.Service<
     ) => Effect.Effect<PersonalTaskListResult, PersonalTasksError>;
     /** Every current task as an upsert, then live upserts. */
     readonly subscribe: Stream.Stream<PersonalTaskStreamEvent, PersonalTasksError>;
+    /** Live task changes only, no replay (reactors: memory summaries, push). */
+    readonly changes: Stream.Stream<PersonalTask>;
     /** Starts the dispatcher: domain-event watch plus the lease/backoff sweep. */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     /** Feeds one orchestration event to the dispatcher (the start() stream uses this). */
@@ -1080,6 +1082,10 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const changes: PersonalTaskService["Service"]["changes"] = Stream.unwrap(
+    Effect.map(PubSub.subscribe(upserts), (subscription) => Stream.fromSubscription(subscription)),
+  );
+
   return {
     createTask,
     delegate,
@@ -1088,6 +1094,7 @@ export const make = Effect.gen(function* () {
     get,
     list,
     subscribe,
+    changes,
     start,
     ingestDomainEvent,
     sweep: worker.enqueue({ type: "sweep" }),

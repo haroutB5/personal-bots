@@ -34,6 +34,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
+import * as PersonalMemoryService from "../../personal/memory/PersonalMemoryService.ts";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterValidationError,
@@ -338,7 +339,8 @@ const make = Effect.gen(function* () {
    * path. Best-effort: a lookup failure starts the session without bot
    * instructions rather than failing the turn.
    */
-  const personalBotInstructionsForThread = (threadId: ThreadId) =>
+  const personalMemory = yield* Effect.serviceOption(PersonalMemoryService.PersonalMemoryService);
+  const personalBotInstructions = (threadId: ThreadId) =>
     personalBots.getInstructionsForThread({ threadId }).pipe(
       Effect.map(Option.getOrUndefined),
       Effect.catchCause((cause) =>
@@ -348,6 +350,32 @@ const make = Effect.gen(function* () {
         }).pipe(Effect.as(undefined)),
       ),
     );
+  /**
+   * Bot instructions plus, when `memory` is given, up to 8 relevant memory
+   * entries for the turn's text ("Known facts (from memory)"). Memory only
+   * applies to personal-bot threads and never fails the turn.
+   */
+  const personalBotInstructionsForThread = (
+    threadId: ThreadId,
+    memory?: { readonly query: string; readonly record: boolean },
+  ) =>
+    Effect.gen(function* () {
+      const instructions = yield* personalBotInstructions(threadId);
+      if (memory === undefined || Option.isNone(personalMemory)) return instructions;
+      const thread = yield* projectionSnapshotQuery
+        .getThreadShellById(threadId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      const context = yield* personalMemory.value.contextForThread({
+        threadId,
+        query: memory.query,
+        projectId: Option.isSome(thread) ? thread.value.projectId : undefined,
+        record: memory.record,
+      });
+      const joined = [instructions?.trim(), context.block]
+        .filter((part) => part !== undefined && part !== null && part.length > 0)
+        .join("\n\n");
+      return joined.length > 0 ? joined : undefined;
+    });
   /** Environment settings with the thread's project overrides applied. */
   const projectSettingsForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const settings = yield* serverSettingsService.getSettings;
@@ -688,6 +716,8 @@ const make = Effect.gen(function* () {
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
+      /** The first turn's text: session-level instructions carry its memory. */
+      readonly memoryQuery?: string;
     },
   ) {
     const thread = yield* resolveThreadShell(threadId);
@@ -830,7 +860,12 @@ const make = Effect.gen(function* () {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
     }) =>
-      personalBotInstructionsForThread(threadId).pipe(
+      personalBotInstructionsForThread(
+        threadId,
+        options?.memoryQuery === undefined
+          ? undefined
+          : { query: options.memoryQuery, record: false },
+      ).pipe(
         Effect.flatMap((systemInstructions) =>
           providerService
             .startSession(threadId, {
@@ -967,13 +1002,17 @@ const make = Effect.gen(function* () {
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,
+      memoryQuery: input.messageText,
     });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
-    const systemInstructions = yield* personalBotInstructionsForThread(input.threadId);
+    const systemInstructions = yield* personalBotInstructionsForThread(input.threadId, {
+      query: input.messageText,
+      record: true,
+    });
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
