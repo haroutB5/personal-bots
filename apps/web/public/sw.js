@@ -22,6 +22,8 @@ const NEVER_CACHE = [
   /^\/attachments?(\/|$)/,
   /^\/downloads?(\/|$)/,
   /^\/pair(\/|$)/,
+  // Always live so the Chats screen shows the running release, not a cached one.
+  /^\/VERSION$/,
 ];
 
 self.addEventListener("install", () => {

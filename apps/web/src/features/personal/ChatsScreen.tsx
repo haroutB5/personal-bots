@@ -16,6 +16,7 @@ import {
   serverTurnLabel,
   waitingLabelsByThread,
 } from "./delegationModel";
+import { useAppVersion } from "./appVersion";
 import { greetingLine, teamStatusLine } from "./greeting";
 import { SwipeToDelete } from "./SwipeToDelete";
 import { useDeleteBot } from "./useDeleteBot";
@@ -107,6 +108,7 @@ export function ChatsScreen(): JSX.Element {
   const runningCount = summaries.filter((summary) => summary.live).length;
   const loaded = list.data !== null;
   const firstAttention = attention[0] ?? null;
+  const versionLabel = useAppVersion();
   const firstAttentionBot =
     firstAttention === null
       ? null
@@ -257,6 +259,12 @@ export function ChatsScreen(): JSX.Element {
             </Link>
           ) : null}
         </>
+      ) : null}
+
+      {versionLabel !== null ? (
+        <p className="mt-8 text-center text-[11px] leading-4 text-[var(--personal-text-secondary)]">
+          Bots {versionLabel}
+        </p>
       ) : null}
     </div>
   );
