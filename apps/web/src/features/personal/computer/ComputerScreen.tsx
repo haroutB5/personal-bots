@@ -49,6 +49,8 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import {
   activeAgentLine,
+  backToChatTarget,
+  type BackToChatTarget,
   describeComputerState,
   formatActivityTime,
   formatFileSize,
@@ -67,7 +69,8 @@ import {
 import { connectViewport, type ViewportClient } from "./viewportClient";
 
 export interface ComputerScreenProps {
-  readonly onBackToChat: () => void;
+  /** Null when no agent holds the browser: fall back to the chats list. */
+  readonly onBackToChat: (target: BackToChatTarget | null) => void;
 }
 
 const ICON_STROKE = 1.75;
@@ -125,6 +128,7 @@ export function ComputerScreen({ onBackToChat }: ComputerScreenProps) {
     reachable: environmentId !== null && error === null,
     loading,
   });
+  const goBackToChat = () => onBackToChat(backToChatTarget(feed.status));
 
   return (
     <div
@@ -135,7 +139,7 @@ export function ComputerScreen({ onBackToChat }: ComputerScreenProps) {
         <button
           type="button"
           aria-label="Back to chat"
-          onClick={onBackToChat}
+          onClick={goBackToChat}
           className="-ml-3 flex size-11 shrink-0 items-center justify-center rounded-full"
         >
           <ChevronLeft className="size-[22px]" strokeWidth={ICON_STROKE} />
@@ -181,7 +185,7 @@ export function ComputerScreen({ onBackToChat }: ComputerScreenProps) {
           status={feed.status}
           events={feed.events}
           reachable={environmentId !== null && error === null}
-          onBackToChat={onBackToChat}
+          onBackToChat={goBackToChat}
         />
       ) : (
         <FilesPane environmentId={environmentId} />

@@ -1,6 +1,7 @@
 import {
   PERSONAL_BROWSER_FILES_ROUTE_PREFIX,
   PERSONAL_BROWSER_STREAM_PATH,
+  PersonalBotId,
   ThreadId,
   type PersonalBrowserActivityEvent,
   type PersonalBrowserStatus,
@@ -9,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   activeAgentLine,
+  backToChatTarget,
   describeComputerState,
   EMPTY_COMPUTER_FEED,
   formatActivityTime,
@@ -69,6 +71,38 @@ describe("computer feed", () => {
         }),
       ),
     ).toBe("Developer is using the browser");
+  });
+
+  it("targets the leased bot's chat for Back to chat, else falls back", () => {
+    expect(backToChatTarget(null)).toBeNull();
+    expect(backToChatTarget(status())).toBeNull();
+    expect(
+      backToChatTarget(status({ controller: { _tag: "Human", self: true, connected: true } })),
+    ).toBeNull();
+    expect(
+      backToChatTarget(
+        status({
+          controller: {
+            _tag: "Agent",
+            threadId: ThreadId.make("thread-a"),
+            botId: null,
+            botName: "Developer",
+          },
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      backToChatTarget(
+        status({
+          controller: {
+            _tag: "Agent",
+            threadId: ThreadId.make("thread-a"),
+            botId: PersonalBotId.make("bot-1"),
+            botName: "Developer",
+          },
+        }),
+      ),
+    ).toEqual({ botId: "bot-1", threadId: "thread-a" });
   });
 
   it("separates an unreachable laptop from browser states", () => {

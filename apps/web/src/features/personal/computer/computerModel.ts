@@ -69,6 +69,18 @@ export function describeComputerState(input: {
   }
 }
 
+/** Chat the live agent lease belongs to, so "Back to chat" can return to it. */
+export interface BackToChatTarget {
+  readonly botId: string;
+  readonly threadId: string;
+}
+
+export function backToChatTarget(status: PersonalBrowserStatus | null): BackToChatTarget | null {
+  if (status?.controller._tag !== "Agent") return null;
+  const { botId, threadId } = status.controller;
+  return botId === null ? null : { botId, threadId };
+}
+
 /** "<Bot> is using the browser" only while an agent lease is live. */
 export function activeAgentLine(status: PersonalBrowserStatus | null): string | null {
   if (status?.controller._tag !== "Agent") return null;
