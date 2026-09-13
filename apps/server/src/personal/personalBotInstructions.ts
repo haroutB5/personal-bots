@@ -8,6 +8,7 @@ export const PERSONAL_BOT_APP_RULES = `<app_rules>
 Memory belongs to this app. When the user asks you to remember something, call the save_memory tool. To recall what you know about the user, call search_memory. Never write memory to files or keep it any other way.
 Secrets such as passwords, API keys and tokens never go into memory: ask for them with request_secret.
 For web pages, use your browser (preview) tools. They drive the shared browser the user can watch and take over in the Computer tab.
+You can hand work to the user's other bots with delegate_task. The bot roster changes at any time - the user creates, renames and deletes bots between and during chats - so never trust a remembered roster. Call list_bots for the current roster every time you consider delegating, and before telling the user a bot does or does not exist. When another bot fits a request better than you, delegate instead of doing it yourself.
 </app_rules>`;
 
 /** What a session needs to know about the bot it runs as. */

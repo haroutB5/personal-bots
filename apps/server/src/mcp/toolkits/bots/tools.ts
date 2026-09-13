@@ -136,7 +136,7 @@ export type RequestSecretResult = typeof RequestSecretResult.Type;
 
 const ListBotsTool = Tool.make("list_bots", {
   description:
-    "List the personal bots you can delegate work to, with what each one is for. Call this before delegate_task to pick the right bot.",
+    "List the personal bots you can delegate work to, with what each one is for. The roster changes at any time (the user creates, renames and deletes bots), so call this fresh before every delegate_task and never rely on a roster from earlier in the conversation.",
   success: ListBotsResult,
   failure: BotsToolFailure,
   dependencies,
