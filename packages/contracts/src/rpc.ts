@@ -260,6 +260,8 @@ import {
   PersonalBotsListResult,
   PersonalBotThread,
   PersonalBotUpdateInput,
+  PersonalProfile,
+  PersonalProfileSetInput,
 } from "./personalBots.ts";
 import { VcsError } from "./vcs.ts";
 
@@ -415,6 +417,8 @@ export const WS_METHODS = {
   personalBotsDelete: "personalBots.delete",
   personalBotsCreateThread: "personalBots.createThread",
   personalBotsArchiveThread: "personalBots.archiveThread",
+  personalBotsGetProfile: "personalBots.getProfile",
+  personalBotsSetProfile: "personalBots.setProfile",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -877,6 +881,18 @@ const WsPersonalBotsCreateThreadRpc = Rpc.make(WS_METHODS.personalBotsCreateThre
 const WsPersonalBotsArchiveThreadRpc = Rpc.make(WS_METHODS.personalBotsArchiveThread, {
   payload: PersonalBotArchiveThreadInput,
   success: PersonalBotThread,
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsGetProfileRpc = Rpc.make(WS_METHODS.personalBotsGetProfile, {
+  payload: Schema.Struct({}),
+  success: PersonalProfile,
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsSetProfileRpc = Rpc.make(WS_METHODS.personalBotsSetProfile, {
+  payload: PersonalProfileSetInput,
+  success: PersonalProfile,
   error: PersonalBotsRpcError,
 });
 
@@ -1402,6 +1418,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPersonalBotsDeleteRpc,
   WsPersonalBotsCreateThreadRpc,
   WsPersonalBotsArchiveThreadRpc,
+  WsPersonalBotsGetProfileRpc,
+  WsPersonalBotsSetProfileRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,

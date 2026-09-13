@@ -2352,6 +2352,14 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.personalBotsGetProfile]: (_input) =>
+          observeRpcEffect(WS_METHODS.personalBotsGetProfile, personalBots.getProfile(), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalBotsSetProfile]: (input) =>
+          observeRpcEffect(WS_METHODS.personalBotsSetProfile, personalBots.setProfile(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,

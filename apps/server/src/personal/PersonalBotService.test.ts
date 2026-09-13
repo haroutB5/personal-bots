@@ -236,3 +236,22 @@ it.effect(
     }).pipe(Effect.provide(makeTestLayer(context)));
   },
 );
+
+it.effect("profile display name defaults to empty, trims on set, and rejects long names", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+    expect(yield* service.getProfile()).toEqual({ displayName: "" });
+
+    expect(yield* service.setProfile({ displayName: "  Harout  " })).toEqual({
+      displayName: "Harout",
+    });
+    expect(yield* service.getProfile()).toEqual({ displayName: "Harout" });
+
+    expect(yield* service.setProfile({ displayName: "" })).toEqual({ displayName: "" });
+    expect(yield* service.getProfile()).toEqual({ displayName: "" });
+
+    const tooLong = yield* Effect.flip(service.setProfile({ displayName: "x".repeat(81) }));
+    expect(tooLong.message).toContain("at most 80 characters");
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});

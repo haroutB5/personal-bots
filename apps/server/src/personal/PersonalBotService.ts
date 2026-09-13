@@ -21,6 +21,7 @@ import {
   type PersonalBotCreateInput,
   type PersonalBotsListResult,
   type PersonalBotUpdateInput,
+  type PersonalProfile,
   type ServerProvider,
 } from "@t3tools/contracts";
 
@@ -32,6 +33,8 @@ import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 
 const PERSONAL_META_SEEDED = "seeded";
 const PERSONAL_META_PROJECT_ID = "personalProjectId";
+const PERSONAL_META_DISPLAY_NAME = "displayName";
+const PERSONAL_PROFILE_DISPLAY_NAME_MAX_LENGTH = 80;
 const PERSONAL_WORKSPACE_DIRNAME = "personal-workspace";
 const PERSONAL_PROJECT_TITLE = "Personal";
 const PERSONAL_THREAD_TITLE = "New chat";
@@ -112,6 +115,10 @@ export class PersonalBotService extends Context.Service<
       readonly threadId: ThreadId;
       readonly archived: boolean;
     }) => Effect.Effect<PersonalBotThread, PersonalBotsError>;
+    readonly getProfile: () => Effect.Effect<PersonalProfile, PersonalBotsError>;
+    readonly setProfile: (input: {
+      readonly displayName: string;
+    }) => Effect.Effect<PersonalProfile, PersonalBotsError>;
     readonly seedDefaultsIfNeeded: Effect.Effect<ReadonlyArray<PersonalBot>, PersonalBotsError>;
   }
 >()("t3/personal/PersonalBotService") {}
@@ -420,6 +427,28 @@ export const make = Effect.gen(function* () {
       return updated.value;
     });
 
+  // The Chats greeting name. Unset (no row yet) reads back as "" so the
+  // client can omit the name instead of inventing one.
+  const getProfile: PersonalBotService["Service"]["getProfile"] = () =>
+    repository.getMeta({ key: PERSONAL_META_DISPLAY_NAME }).pipe(
+      Effect.mapError(repositoryError("profile lookup")),
+      Effect.map((stored) => ({ displayName: Option.getOrElse(stored, () => "") })),
+    );
+
+  const setProfile: PersonalBotService["Service"]["setProfile"] = (input) =>
+    Effect.gen(function* () {
+      const displayName = input.displayName.trim();
+      if (displayName.length > PERSONAL_PROFILE_DISPLAY_NAME_MAX_LENGTH) {
+        return yield* notFound(
+          `Personal profile display name must be at most ${PERSONAL_PROFILE_DISPLAY_NAME_MAX_LENGTH} characters.`,
+        );
+      }
+      yield* repository
+        .setMeta({ key: PERSONAL_META_DISPLAY_NAME, value: displayName })
+        .pipe(Effect.mapError(repositoryError("profile update")));
+      return { displayName };
+    });
+
   return {
     list,
     create,
@@ -427,6 +456,8 @@ export const make = Effect.gen(function* () {
     remove,
     createThread,
     archiveThread,
+    getProfile,
+    setProfile,
     seedDefaultsIfNeeded,
   } satisfies PersonalBotService["Service"];
 });

@@ -91,6 +91,22 @@ export const PersonalBotsListResult = Schema.Struct({
 });
 export type PersonalBotsListResult = typeof PersonalBotsListResult.Type;
 
+/**
+ * The personal-shell user profile. `displayName` is the greeting name shown
+ * on the Chats screen; the empty string means "unset" (the greeting then
+ * omits the name). Stored server-side in `personal_meta` under "displayName".
+ */
+export const PersonalProfile = Schema.Struct({
+  displayName: Schema.String,
+});
+export type PersonalProfile = typeof PersonalProfile.Type;
+
+export const PersonalProfileSetInput = Schema.Struct({
+  /** Trimmed server-side; empty clears the name. Max 80 chars after trim. */
+  displayName: Schema.String,
+});
+export type PersonalProfileSetInput = typeof PersonalProfileSetInput.Type;
+
 export class PersonalBotsError extends Schema.TaggedError<PersonalBotsError>()(
   "PersonalBotsError",
   {
