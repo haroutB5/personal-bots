@@ -29,6 +29,7 @@ import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../../state/s
 import { environmentShell } from "../../state/shell";
 import { environmentThreadShells } from "../../state/threads";
 import { Button } from "../ui/button";
+import { isPersonalPath } from "../../features/personal/personalMode";
 
 /**
  * Holds back authenticated and hosted app trees until the first-run decision
@@ -149,23 +150,31 @@ export function FirstRunGate({
         threadCount: threads.length,
       });
 
+  // The personal Bots app needs no project setup, so a fresh install that
+  // opens on a personal route completes onboarding instead of showing the
+  // upstream wizard.
+  const personalRoute = isPersonalPath(pathname);
+  const skipWizardForPersonal = personalRoute && nextDecision === "wizard";
+  const effectiveDecision = skipWizardForPersonal ? "app" : nextDecision;
+  const effectivePersistCompletion = persistCompletion || skipWizardForPersonal;
+
   useEffect(() => {
     if (decision === "wizard" || !hydrated) return;
 
-    if (persistCompletion && onboardingCompletedAt === null) {
+    if (effectivePersistCompletion && onboardingCompletedAt === null) {
       void completeOnboarding().catch(() => undefined);
     }
 
     setGateState((state) =>
-      transitionFirstRunGateState(state, { type: "evidence", decision: nextDecision }),
+      transitionFirstRunGateState(state, { type: "evidence", decision: effectiveDecision }),
     );
   }, [
     completeOnboarding,
     decision,
+    effectiveDecision,
+    effectivePersistCompletion,
     hydrated,
-    nextDecision,
     onboardingCompletedAt,
-    persistCompletion,
   ]);
 
   // A stalled server read gets a recovery screen, but never mounts the app.

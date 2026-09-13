@@ -42,8 +42,10 @@ export function resolveBotProvider(
   if (snapshot === undefined) {
     return { label: humanizeInstanceId(instanceId), available: false };
   }
+  const label = resolveProviderInstanceDisplayName(snapshot);
   return {
-    label: resolveProviderInstanceDisplayName(snapshot),
+    // The bots UI names Anthropic's runtime by its product name.
+    label: label === "Claude" ? "Claude Code" : label,
     available: snapshot.enabled && isProviderAvailable(snapshot),
   };
 }
