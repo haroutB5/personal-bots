@@ -129,6 +129,14 @@ export class PersonalBotService extends Context.Service<
       readonly threadId: ThreadId;
       readonly archived: boolean;
     }) => Effect.Effect<PersonalBotThread, PersonalBotsError>;
+    /**
+     * Permanently deletes exactly one chat: the orchestration thread plus
+     * its bot-thread link row. Bot-level data (bot row, memories, secrets,
+     * routines, tasks) is untouched.
+     */
+    readonly deleteThread: (input: {
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<void, PersonalBotsError>;
     readonly getProfile: () => Effect.Effect<PersonalProfile, PersonalBotsError>;
     readonly setProfile: (input: {
       readonly displayName: string;
@@ -454,6 +462,30 @@ export const make = Effect.gen(function* () {
       return updated.value;
     });
 
+  const deleteThread: PersonalBotService["Service"]["deleteThread"] = (input) =>
+    Effect.gen(function* () {
+      const linked = yield* repository
+        .getThreadLink({ threadId: input.threadId })
+        .pipe(Effect.mapError(repositoryError("thread lookup")));
+      if (Option.isNone(linked)) {
+        return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
+      }
+      yield* engine
+        .dispatch({
+          type: "thread.delete",
+          // Same deterministic id the bot purge uses, so a retried delete
+          // reuses the command receipt instead of deleting twice.
+          commandId: CommandId.make(`personal-bots:thread.delete:${input.threadId}`),
+          threadId: input.threadId,
+        })
+        .pipe(Effect.mapError(toPersonalBotsError("Personal bots thread deletion failed.")));
+      // The link row goes only after the thread is gone: a dispatch failure
+      // keeps the chat listed so the user can retry.
+      yield* repository
+        .deleteThreadLink({ threadId: input.threadId })
+        .pipe(Effect.mapError(repositoryError("thread delete")));
+    });
+
   // The Chats greeting name. Unset (no row yet) reads back as "" so the
   // client can omit the name instead of inventing one.
   const getProfile: PersonalBotService["Service"]["getProfile"] = () =>
@@ -529,6 +561,7 @@ export const make = Effect.gen(function* () {
     remove,
     createThread,
     archiveThread,
+    deleteThread,
     getProfile,
     setProfile,
     seedDefaultsIfNeeded,

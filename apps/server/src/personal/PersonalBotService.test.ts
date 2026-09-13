@@ -258,6 +258,43 @@ it.effect(
   },
 );
 
+it.effect("deleteThread dispatches thread.delete once and removes only that link", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+    const created = yield* service.create(botInput("bot-del"));
+    const gone = ThreadId.make("thread-gone");
+    const kept = ThreadId.make("thread-kept");
+    yield* service.createThread({ botId: created.botId, threadId: gone });
+    yield* service.createThread({ botId: created.botId, threadId: kept });
+
+    yield* service.deleteThread({ threadId: gone });
+
+    const deletes = context.dispatched.filter((command) => command.type === "thread.delete");
+    expect(deletes.length).toBe(1);
+    expect(deletes[0]).toMatchObject({
+      threadId: gone,
+      commandId: `personal-bots:thread.delete:${gone}`,
+    });
+    const listed = yield* service.list();
+    expect(listed.threads.map((thread) => thread.threadId)).toEqual([kept]);
+    // The bot row itself is untouched: only the one chat goes.
+    expect(listed.bots.map((bot) => bot.botId)).toEqual([created.botId]);
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});
+
+it.effect("deleteThread on an unknown thread fails without dispatching anything", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+    const failure = yield* Effect.flip(
+      service.deleteThread({ threadId: ThreadId.make("thread-nope") }),
+    );
+    expect(failure.message).toContain("was not found");
+    expect(context.dispatched.length).toBe(0);
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});
+
 it.effect("profile display name defaults to empty, trims on set, and rejects long names", () => {
   const context = makeContext();
   return Effect.gen(function* () {

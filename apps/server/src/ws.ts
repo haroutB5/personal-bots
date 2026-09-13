@@ -2378,6 +2378,14 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.personalBotsDeleteThread]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsDeleteThread,
+            personalBots.deleteThread(input).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.personalBotsGetProfile]: (_input) =>
           observeRpcEffect(WS_METHODS.personalBotsGetProfile, personalBots.getProfile(), {
             "rpc.aggregate": "server",

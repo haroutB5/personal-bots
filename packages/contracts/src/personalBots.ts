@@ -113,6 +113,12 @@ export const PersonalBotArchiveThreadInput = Schema.Struct({
 });
 export type PersonalBotArchiveThreadInput = typeof PersonalBotArchiveThreadInput.Type;
 
+/** Permanently deletes exactly one linked chat (the thread plus its link row). */
+export const PersonalBotDeleteThreadInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type PersonalBotDeleteThreadInput = typeof PersonalBotDeleteThreadInput.Type;
+
 export const PersonalBotsListResult = Schema.Struct({
   bots: Schema.Array(PersonalBot),
   threads: Schema.Array(PersonalBotThread),

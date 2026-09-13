@@ -124,6 +124,10 @@ export class PersonalBotRepository extends Context.Service<
     readonly setThreadArchived: (
       input: SetPersonalBotThreadArchivedInput,
     ) => Effect.Effect<Option.Option<PersonalBotThread>, PersonalBotRepositoryError>;
+    /** Removes exactly one bot-thread link row; the thread itself is deleted via `thread.delete`. */
+    readonly deleteThreadLink: (
+      input: GetPersonalBotThreadInput,
+    ) => Effect.Effect<void, PersonalBotRepositoryError>;
     readonly listThreadLinks: () => Effect.Effect<
       ReadonlyArray<PersonalBotThread>,
       PersonalBotRepositoryError
@@ -485,6 +489,15 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const deleteThreadLinkRow = SqlSchema.void({
+    Request: GetPersonalBotThreadInput,
+    execute: ({ threadId }) =>
+      sql`
+        DELETE FROM personal_bot_threads
+        WHERE thread_id = ${threadId}
+      `,
+  });
+
   // One indexed point lookup per link for the newest non-system message
   // (idx_projection_thread_messages_thread_created_id); the preview text is
   // capped at the length the list can show.
@@ -707,6 +720,16 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const deleteThreadLink: PersonalBotRepository["Service"]["deleteThreadLink"] = (input) =>
+    deleteThreadLinkRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "PersonalBotRepository.deleteThreadLink:query",
+          "PersonalBotRepository.deleteThreadLink:encodeRequest",
+        ),
+      ),
+    );
+
   const listThreadLinks: PersonalBotRepository["Service"]["listThreadLinks"] = () =>
     listThreadLinkRows().pipe(
       Effect.mapError(
@@ -787,6 +810,7 @@ export const make = Effect.gen(function* () {
     insertThreadLink,
     getThreadLink,
     setThreadArchived,
+    deleteThreadLink,
     listThreadLinks,
     getMeta,
     setMeta,
