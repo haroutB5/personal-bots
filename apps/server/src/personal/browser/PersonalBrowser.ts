@@ -45,6 +45,7 @@ import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FiberSet from "effect/FiberSet";
@@ -80,6 +81,12 @@ import {
   performWaitFor,
 } from "./pageOperations.ts";
 import { resolveBrowserNavigationTarget, resolveBrowserUrl } from "./urlPolicy.ts";
+
+/** Chrome did not start; `message` is Playwright's own error text. */
+class PersonalBrowserLaunchError extends Data.TaggedError("PersonalBrowserLaunchError")<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
 
 export interface ViewerHandle {
   readonly id: number;
@@ -456,37 +463,47 @@ export const make = (options: PersonalBrowserOptions) =>
         runtime.lockedByPid = null;
         yield* notify;
         const exit = yield* Effect.exit(
-          Effect.tryPromise(() =>
-            options.driver.launch({
-              userDataDir: profileDir,
-              headless: options.headless,
-              executablePath: options.executablePath,
-              downloadsDir,
-              onDownloadSaved: (file) =>
-                runFork(
-                  recordActivity({
-                    kind: "download",
-                    summary: `Downloaded ${file.name}`,
-                    status: "succeeded",
-                    threadId: null,
-                    botName: null,
-                  }),
-                ),
-            }),
-          ),
+          Effect.tryPromise({
+            try: () =>
+              options.driver.launch({
+                userDataDir: profileDir,
+                headless: options.headless,
+                executablePath: options.executablePath,
+                downloadsDir,
+                onDownloadSaved: (file) =>
+                  runFork(
+                    recordActivity({
+                      kind: "download",
+                      summary: `Downloaded ${file.name}`,
+                      status: "succeeded",
+                      threadId: null,
+                      botName: null,
+                    }),
+                  ),
+              }),
+            // Keep Playwright's own error. The default wrapper replaces it with
+            // "An error occurred in Effect.tryPromise", which hides the cause.
+            catch: (cause) =>
+              new PersonalBrowserLaunchError({
+                message: cause instanceof Error ? cause.message : String(cause),
+                cause,
+              }),
+          }),
         );
         if (Exit.isFailure(exit)) {
           const error = Cause.squash(exit.cause);
+          const message =
+            error instanceof PersonalBrowserLaunchError ? error.message : String(error);
           const lock = yield* Effect.promise(() => detectProfileLock(profileDir));
           const detail = lock.locked
             ? lock.pid === null
               ? "The browser profile is in use by another Chrome process."
               : `Locked by pid ${lock.pid}`
-            : `Chrome failed to start: ${firstLine(error instanceof Error ? error.message : String(error))}`;
+            : `Chrome failed to start: ${firstLine(message)}`;
           runtime.phase = lock.locked ? "locked" : "crashed";
           runtime.lockedByPid = lock.locked ? lock.pid : null;
           runtime.detail = detail;
-          yield* Effect.logWarning("Personal browser launch failed.", { detail });
+          yield* Effect.logWarning("Personal browser launch failed.", { detail, error: message });
           yield* notify;
           return yield* Effect.fail(
             new HostOperationError("PreviewAutomationExecutionError", detail),
