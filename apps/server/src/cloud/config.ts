@@ -12,6 +12,9 @@ export const RELAY_URL_SECRET = "cloud-relay-url";
 export const RELAY_ISSUER_SECRET = "cloud-relay-issuer";
 export const RELAY_ENVIRONMENT_CREDENTIAL_SECRET = "cloud-relay-environment-credential";
 export const PUBLISH_AGENT_ACTIVITY_SECRET = "cloud-publish-agent-activity";
+// Public tunnel origin the relay issued for this environment. Not secret; kept
+// beside the other link state so every unlink path clears it with them.
+export const CLOUD_ENDPOINT_HTTP_BASE_URL = "cloud-endpoint-http-base-url";
 
 export const encodeEndpointRuntimeConfigJson = Schema.encodeEffect(
   Schema.fromJsonString(RelayManagedEndpointRuntimeConfig),

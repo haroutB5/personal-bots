@@ -37,6 +37,7 @@ import * as CliState from "../cloud/CliState.ts";
 import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import { filterRelayResponse } from "../cloud/relayResponse.ts";
 import {
+  CLOUD_ENDPOINT_HTTP_BASE_URL,
   CLOUD_LINKED_USER_ID,
   isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
@@ -144,12 +145,14 @@ function stringToBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
-interface CloudCliStatus {
+export interface CloudCliStatus {
   readonly desired: boolean;
   readonly authenticated: boolean;
   readonly linked: boolean;
   readonly cloudUserId: string | null;
   readonly relayUrl: string | null;
+  /** Public tunnel origin the relay issued at the last successful link. */
+  readonly endpointUrl: string | null;
   readonly publishAgentActivity: boolean;
   readonly relayClient: RelayClient.RelayClientStatus;
 }
@@ -179,7 +182,10 @@ function formatRelayClientStatus(executable: RelayClient.RelayClientStatus): Rea
   }
 }
 
-function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: boolean }): string {
+export function formatCloudStatus(
+  status: CloudCliStatus,
+  options?: { readonly json?: boolean },
+): string {
   if (options?.json) {
     return JSON.stringify(status, null, 2);
   }
@@ -203,6 +209,7 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
     `  Authorization: ${status.authenticated ? "stored credential" : "missing"}`,
     `  Environment link: ${provisioned}`,
     `  Relay: ${status.relayUrl ?? "not provisioned"}`,
+    `  Public URL: ${status.endpointUrl ?? "not provisioned"}`,
     `  Publish agent activity: ${status.publishAgentActivity ? "enabled" : "disabled"}`,
     ...formatRelayClientStatus(status.relayClient),
     "",
@@ -551,24 +558,33 @@ const connectStatusCommand = Command.make("status", {
         const secrets = yield* ServerSecretStore.ServerSecretStore;
         const relayClient = yield* RelayClient.RelayClient;
         const tokens = yield* CliTokenManager.CloudCliTokenManager;
-        const [desired, authenticated, cloudUserId, relayUrl, publishAgentActivity, executable] =
-          yield* Effect.all(
-            [
-              CliState.readCliDesiredCloudLink,
-              tokens.hasCredential,
-              secrets.get(CLOUD_LINKED_USER_ID),
-              secrets.get(RELAY_URL_SECRET),
-              secrets.get(PUBLISH_AGENT_ACTIVITY_SECRET),
-              relayClient.resolve,
-            ],
-            { concurrency: "unbounded" },
-          );
+        const [
+          desired,
+          authenticated,
+          cloudUserId,
+          relayUrl,
+          endpointUrl,
+          publishAgentActivity,
+          executable,
+        ] = yield* Effect.all(
+          [
+            CliState.readCliDesiredCloudLink,
+            tokens.hasCredential,
+            secrets.get(CLOUD_LINKED_USER_ID),
+            secrets.get(RELAY_URL_SECRET),
+            secrets.get(CLOUD_ENDPOINT_HTTP_BASE_URL),
+            secrets.get(PUBLISH_AGENT_ACTIVITY_SECRET),
+            relayClient.resolve,
+          ],
+          { concurrency: "unbounded" },
+        );
         const status: CloudCliStatus = {
           desired,
           authenticated,
           linked: Option.isSome(cloudUserId),
           cloudUserId: Option.isSome(cloudUserId) ? bytesToString(cloudUserId.value) : null,
           relayUrl: Option.isSome(relayUrl) ? bytesToString(relayUrl.value) : null,
+          endpointUrl: Option.isSome(endpointUrl) ? bytesToString(endpointUrl.value) : null,
           publishAgentActivity: isAgentActivityPublishingEnabledValue(
             Option.isSome(publishAgentActivity) ? bytesToString(publishAgentActivity.value) : null,
           ),
