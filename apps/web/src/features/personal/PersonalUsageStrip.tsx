@@ -1,0 +1,253 @@
+import { useAtomValue } from "@effect/atom-react";
+import { useState, type JSX } from "react";
+import { RefreshCw, X } from "lucide-react";
+
+import { Sheet, SheetClose, SheetDescription, SheetPopup, SheetTitle } from "~/components/ui/sheet";
+import { primaryServerProvidersAtom, serverEnvironment } from "~/state/server";
+import { useAtomCommand } from "~/state/use-atom-command";
+
+import { formatRelativeTime } from "./relativeTime";
+import { usePersonalEnvironmentId } from "./usePersonalBots";
+import { selectUsageCards, type UsageCard, type UsageWindowRow } from "./usagePresentation";
+import { formatStripPercent, selectUsageStripCells, usageStripAriaLabel } from "./usageStrip";
+
+const ICON_BUTTON =
+  "flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
+
+/** Bars turn amber once a window is nearly spent; muted ink the rest of the time. */
+function barColor(usedPercent: number): string {
+  return usedPercent >= 80 ? "var(--personal-review)" : "var(--personal-text-tertiary)";
+}
+
+function StripCellBar({ percent }: { readonly percent: number | null }): JSX.Element {
+  return (
+    <span
+      aria-hidden="true"
+      className="block h-[3px] overflow-hidden rounded-full bg-[var(--personal-fill-muted)]"
+    >
+      {percent !== null && percent > 0 ? (
+        <span
+          className="block h-full rounded-full"
+          style={{ width: `${percent}%`, backgroundColor: barColor(percent) }}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+function WindowRow({ card, row }: { readonly card: UsageCard; readonly row: UsageWindowRow }) {
+  const summary = `${card.title} ${row.label}: ${row.usedPercent}% used${row.resetLabel ? `, ${row.resetLabel}` : ""}`;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="truncate text-[15px] text-[var(--personal-text)]">{row.label}</span>
+        <span className="shrink-0 text-[15px] font-semibold text-[var(--personal-text)] tabular-nums">
+          {row.usedPercent}% used
+        </span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label={summary}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={row.usedPercent}
+        className="h-2.5 overflow-hidden rounded-full bg-[var(--personal-fill-muted)]"
+      >
+        {row.usedPercent > 0 ? (
+          <div
+            className="h-full rounded-full"
+            style={{
+              width: `${row.usedPercent}%`,
+              backgroundColor:
+                row.usedPercent >= 80 ? "var(--personal-review)" : "var(--personal-text)",
+            }}
+          />
+        ) : null}
+      </div>
+      <span className="text-[13px] text-[var(--personal-text-secondary)] tabular-nums">
+        {row.resetLabel ?? "Reset time not reported"}
+      </span>
+    </div>
+  );
+}
+
+function MissingRow({ label }: { readonly label: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="truncate text-[15px] text-[var(--personal-text)]">{label}</span>
+      <span className="shrink-0 text-[13px] text-[var(--personal-text-secondary)]">
+        not reported
+      </span>
+    </div>
+  );
+}
+
+function UsageCardView({ card, now }: { readonly card: UsageCard; readonly now: number }) {
+  return (
+    <article
+      aria-label={`${card.title} usage`}
+      className="flex flex-col gap-4 overflow-hidden rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-4"
+    >
+      <div className="flex min-w-0 flex-col">
+        <h3 className="text-[16px] font-semibold text-[var(--personal-text)]">{card.title}</h3>
+        {card.plan ? (
+          <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
+            {card.plan}
+          </span>
+        ) : null}
+      </div>
+      {card.status === "ready" ? (
+        <div className="flex flex-col gap-4">
+          {card.session ? (
+            <WindowRow card={card} row={card.session} />
+          ) : (
+            <MissingRow label="5-hour session" />
+          )}
+          {card.weeklies.length > 0 ? (
+            card.weeklies.map((row) => <WindowRow key={row.id} card={card} row={row} />)
+          ) : (
+            <MissingRow label="Weekly" />
+          )}
+        </div>
+      ) : (
+        <p className="text-[14px] text-[var(--personal-text-secondary)]">
+          {card.status === "unavailable"
+            ? (card.notice ?? "This account has no subscription limits.")
+            : (card.notice ?? "Usage is not reported for this account yet.")}
+        </p>
+      )}
+      {card.checkedAt !== null ? (
+        <span className="text-[13px] text-[var(--personal-text-secondary)]">
+          Updated {formatRelativeTime(card.checkedAt, now)}
+        </span>
+      ) : null}
+    </article>
+  );
+}
+
+/**
+ * Sheet body: every window both providers report, with resets and a refresh.
+ * Mounted only while the sheet is open, so the refresh command and the
+ * providers atom cost nothing on the Chats screen's first paint.
+ */
+function UsageSheetBody({
+  cards,
+  now,
+}: {
+  readonly cards: readonly UsageCard[];
+  readonly now: number;
+}): JSX.Element {
+  const environmentId = usePersonalEnvironmentId();
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = async () => {
+    if (environmentId === null || refreshing) return;
+    setRefreshing(true);
+    try {
+      await refreshProviders({ environmentId, input: {} });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="flex items-center gap-1 py-2 pr-2 pl-5">
+        <div className="min-w-0 flex-1">
+          <SheetTitle className="text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
+            Usage
+          </SheetTitle>
+          <SheetDescription className="text-[13px] text-[var(--personal-text-tertiary)]">
+            Token windows for Claude and Codex
+          </SheetDescription>
+        </div>
+        <button
+          type="button"
+          onClick={() => void onRefresh()}
+          disabled={environmentId === null || refreshing}
+          aria-busy={refreshing}
+          aria-label="Refresh usage"
+          className={`${ICON_BUTTON} disabled:opacity-40`}
+        >
+          <RefreshCw
+            aria-hidden="true"
+            className={`size-5 ${refreshing ? "animate-spin" : ""}`}
+            strokeWidth={1.75}
+          />
+        </button>
+        <SheetClose aria-label="Close usage" className={ICON_BUTTON}>
+          <X aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
+        </SheetClose>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-5 pb-5">
+        {cards.map((card) => (
+          <UsageCardView key={card.driver} card={card} now={now} />
+        ))}
+      </div>
+    </>
+  );
+}
+
+/**
+ * Slim two-up usage strip for the Chats screen: Claude left, Codex right,
+ * each showing the 5-hour session figure over a hairline bar plus the weekly
+ * figure. Renders nothing until the config stream publishes a provider, so a
+ * cold start never reserves space it cannot fill. Tapping opens the full
+ * per-window detail sheet.
+ *
+ * `now` comes from the screen's minute clock rather than a second interval
+ * of its own: reset countdowns only need minute resolution.
+ */
+export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Element | null {
+  const providers = useAtomValue(primaryServerProvidersAtom);
+  const [open, setOpen] = useState(false);
+
+  const cards = selectUsageCards(providers, now);
+  const cells = selectUsageStripCells(cards);
+  if (cells.length === 0) return null;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={usageStripAriaLabel(cells)}
+        aria-haspopup="dialog"
+        className="mt-1 flex min-h-11 w-full items-center gap-5 rounded-[var(--personal-radius-button)] text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+      >
+        {cells.map((cell) => (
+          <span key={cell.driver} className="flex min-w-0 flex-1 flex-col gap-1">
+            <span className="flex items-baseline justify-between gap-2">
+              <span className="truncate text-[12px] leading-4 text-[var(--personal-text-secondary)]">
+                {cell.title}
+              </span>
+              <span className="shrink-0 text-[12px] leading-4 tabular-nums">
+                <span className="font-semibold text-[var(--personal-text-secondary)]">
+                  {formatStripPercent(cell.sessionPercent)}
+                </span>
+                {cell.weeklyPercent !== null ? (
+                  <span className="pl-1.5 text-[var(--personal-text-tertiary)]">
+                    wk {cell.weeklyPercent}%
+                  </span>
+                ) : null}
+              </span>
+            </span>
+            <StripCellBar percent={cell.sessionPercent} />
+          </span>
+        ))}
+      </button>
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetPopup
+          side="bottom"
+          showCloseButton={false}
+          className="personal-app max-h-[90dvh] rounded-t-[var(--personal-radius-card)] border-[var(--personal-border)] pb-[env(safe-area-inset-bottom)]"
+        >
+          {open ? <UsageSheetBody cards={cards} now={now} /> : null}
+        </SheetPopup>
+      </Sheet>
+    </>
+  );
+}

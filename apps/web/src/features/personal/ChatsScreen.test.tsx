@@ -64,7 +64,11 @@ function stubWindow() {
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
 vi.mock("~/state/entities", () => ({ useThreadShells: () => [] }));
-vi.mock("~/state/server", () => ({ primaryServerProvidersAtom: {} }));
+vi.mock("~/state/server", () => ({
+  primaryServerProvidersAtom: {},
+  serverEnvironment: { refreshProviders: { label: "refreshProviders" } },
+}));
+vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => undefined }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
 }));
@@ -186,6 +190,8 @@ describe("ChatsScreen cold start", () => {
     expect(state.tasksCalls).toEqual([null, "env-1"]);
     // Footer pins to the bottom instead of floating mid-screen.
     expect(json).toContain("mt-auto");
+    // No provider data yet: the usage strip stays out of the layout entirely.
+    expect(json).not.toContain("Open details");
   });
 
   it("replaces the snapshot seamlessly when live data arrives", async () => {

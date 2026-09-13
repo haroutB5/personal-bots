@@ -7,7 +7,7 @@ export type UsageCardDriver = (typeof USAGE_CARD_DRIVERS)[number];
 
 export const USAGE_CARD_TITLES: Record<UsageCardDriver, string> = {
   claudeAgent: "Claude",
-  codex: "GPT",
+  codex: "Codex",
 };
 
 function clampPercent(value: number): number {
@@ -133,7 +133,7 @@ function newestInstance(
 }
 
 /**
- * One card per driver (Claude, GPT) from the providers the config stream
+ * One card per driver (Claude, Codex) from the providers the config stream
  * already publishes. Drivers with no configured instance get no card;
  * everything else degrades to `unavailable` or `not-reported`, never 0%.
  */

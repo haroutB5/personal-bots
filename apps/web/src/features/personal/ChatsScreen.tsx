@@ -35,6 +35,7 @@ import { greetingLine, teamStatusLine } from "./greeting";
 import { SwipeToDelete } from "./SwipeToDelete";
 import { useDeleteBot } from "./useDeleteBot";
 import { usePersonalTasks } from "./usePersonalAutomation";
+import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import {
   usePersonalBotsList,
@@ -310,7 +311,9 @@ export function ChatsScreen(): JSX.Element {
         </div>
       </header>
 
-      <section className="mt-6" aria-live="polite">
+      <PersonalUsageStrip now={now} />
+
+      <section className="mt-4" aria-live="polite">
         <p className="text-2xl leading-8 font-bold tracking-[-0.3px] text-[var(--personal-text)]">
           {greetingLine(new Date(now), profile.data?.displayName ?? "")}
         </p>

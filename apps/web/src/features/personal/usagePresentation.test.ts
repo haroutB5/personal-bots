@@ -79,7 +79,7 @@ describe("formatResetCountdown", () => {
 });
 
 describe("selectUsageCards", () => {
-  it("builds Claude and GPT cards with session and weekly rows", () => {
+  it("builds Claude and Codex cards with session and weekly rows", () => {
     const cards = selectUsageCards(
       [
         provider({ driver: "claudeAgent", instanceId: "claudeAgent", usageLimits: claudeLimits() }),
@@ -111,14 +111,14 @@ describe("selectUsageCards", () => {
       ],
       NOW,
     );
-    expect(cards.map((card) => card.title)).toEqual(["Claude", "GPT"]);
-    const [claude, gpt] = cards;
+    expect(cards.map((card) => card.title)).toEqual(["Claude", "Codex"]);
+    const [claude, codex] = cards;
     expect(claude!.status).toBe("ready");
     expect(claude!.session).toMatchObject({ usedPercent: 42, resetLabel: "resets in 2h 30m" });
     expect(claude!.weeklies).toHaveLength(1);
     expect(claude!.weeklies[0]).toMatchObject({ usedPercent: 17, resetLabel: "resets in 7d 0h" });
-    expect(gpt!.plan).toBe("ChatGPT Plus");
-    expect(gpt!.session).toMatchObject({ usedPercent: 63, resetLabel: "resets in 45m" });
+    expect(codex!.plan).toBe("ChatGPT Plus");
+    expect(codex!.session).toMatchObject({ usedPercent: 63, resetLabel: "resets in 45m" });
   });
 
   it("marks API-key accounts unavailable instead of zeroing the bars", () => {
