@@ -100,6 +100,21 @@ describe("buildBotSummaries", () => {
   ];
   const summaries = buildBotSummaries({ bots, links, shells, providers: [provider("codex")] });
 
+  it("says which bot a parked thread waits for, and nothing otherwise", () => {
+    const waiting = buildBotSummaries({
+      bots,
+      links,
+      shells,
+      providers: [provider("codex")],
+      waitingByThread: new Map([["t-old", "Waiting for Developer"]]),
+    });
+    expect(waiting.find((summary) => summary.bot.name === "Assistant")?.waitingFor).toBe(
+      "Waiting for Developer",
+    );
+    expect(waiting.find((summary) => summary.bot.name === "Developer")?.waitingFor).toBeNull();
+    expect(summaries.every((summary) => summary.waitingFor === null)).toBe(true);
+  });
+
   it("orders by latest activity, bots without threads last", () => {
     expect(summaries.map((summary) => summary.bot.name)).toEqual([
       "Developer",

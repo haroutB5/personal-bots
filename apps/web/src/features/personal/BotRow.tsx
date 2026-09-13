@@ -8,14 +8,22 @@ import { useThreadDetail } from "~/state/entities";
 
 import { BotAvatar } from "./BotAvatar";
 import { type BotSummary, providerLine } from "./botSummaries";
+import { readServerTurn, type ServerTurn } from "./delegationModel";
 import { formatRelativeTime } from "./relativeTime";
 import { useStartBotChat } from "./startBotChat";
 
 const ROW_CLASS =
   "flex w-full min-w-0 items-center gap-[18px] py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]";
 
-/** First non-empty line of the newest user/assistant message, else the thread title. */
-function usePreview(environmentId: EnvironmentId, summary: BotSummary): string {
+/**
+ * First non-empty line of the newest user/assistant message, else the thread
+ * title. A turn the task service wrote previews as its system-row text.
+ */
+function usePreview(
+  environmentId: EnvironmentId,
+  summary: BotSummary,
+  describeTurn: (turn: ServerTurn) => string,
+): string {
   const thread = summary.newestThread;
   const detail = useThreadDetail(thread === null ? null : { environmentId, threadId: thread.id });
   if (thread === null) return "No chats yet";
@@ -23,6 +31,8 @@ function usePreview(environmentId: EnvironmentId, summary: BotSummary): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]!;
     if (message.role === "system") continue;
+    const turn = readServerTurn(message);
+    if (turn !== null) return describeTurn(turn);
     const line = message.text
       .split("\n")
       .map((part) => part.trim())
@@ -46,13 +56,15 @@ export function BotRow({
   environmentId,
   summary,
   now,
+  describeTurn,
 }: {
   environmentId: EnvironmentId;
   summary: BotSummary;
   now: number;
+  describeTurn: (turn: ServerTurn) => string;
 }): JSX.Element {
-  const preview = usePreview(environmentId, summary);
-  const { bot, newestThread, provider, live, rateLimited, lastActivityMs } = summary;
+  const preview = usePreview(environmentId, summary, describeTurn);
+  const { bot, newestThread, provider, live, rateLimited, waitingFor, lastActivityMs } = summary;
   const { start, starting } = useStartBotChat(environmentId, bot.botId);
 
   const content: ReactNode = (
@@ -75,6 +87,14 @@ export function BotRow({
                 className="size-2 rounded-full bg-[var(--personal-review)]"
               />
               Rate limited
+            </span>
+          ) : waitingFor !== null ? (
+            <span className="ml-2 flex min-w-0 items-center gap-1.5 text-[13px] leading-[22px] text-[var(--personal-text-secondary)]">
+              <span
+                aria-hidden="true"
+                className="size-2 shrink-0 rounded-full bg-[var(--personal-text-tertiary)]"
+              />
+              <span className="truncate">{waitingFor}</span>
             </span>
           ) : null}
           {lastActivityMs !== null ? (

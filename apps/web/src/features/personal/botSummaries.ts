@@ -27,6 +27,8 @@ export interface BotSummary {
   readonly rateLimited: boolean;
   /** Linked threads waiting on the user (approval or requested input). */
   readonly attentionThreads: ReadonlyArray<EnvironmentThreadShell>;
+  /** "Waiting for Developer": a linked thread's task is parked on delegated work. */
+  readonly waitingFor: string | null;
   readonly lastActivityMs: number | null;
 }
 
@@ -92,6 +94,8 @@ export function buildBotSummaries(input: {
   readonly links: ReadonlyArray<PersonalBotThread>;
   readonly shells: ReadonlyArray<EnvironmentThreadShell>;
   readonly providers: ReadonlyArray<ServerProvider>;
+  /** From `waitingLabelsByThread`: thread id to "Waiting for Developer". */
+  readonly waitingByThread?: ReadonlyMap<string, string>;
 }): BotSummary[] {
   const shellsById = new Map(input.shells.map((shell) => [shell.id as string, shell] as const));
   const shellsByBot = new Map<string, EnvironmentThreadShell[]>();
@@ -120,6 +124,10 @@ export function buildBotSummaries(input: {
       live: shells.some(isThreadLive),
       rateLimited: shells.some(isThreadRateLimited),
       attentionThreads: shells.filter(threadNeedsAttention),
+      waitingFor:
+        shells
+          .map((shell) => input.waitingByThread?.get(shell.id) ?? null)
+          .find((label) => label !== null) ?? null,
       lastActivityMs: newestThread === null ? null : updatedMs(newestThread),
     };
   });

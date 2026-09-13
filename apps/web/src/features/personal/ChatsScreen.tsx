@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
@@ -10,7 +10,14 @@ import { primaryServerProvidersAtom } from "~/state/server";
 
 import { BotRow } from "./BotRow";
 import { buildBotSummaries, collectAttentionThreads, filterBotSummaries } from "./botSummaries";
+import {
+  resolveTurnChildren,
+  type ServerTurn,
+  serverTurnLabel,
+  waitingLabelsByThread,
+} from "./delegationModel";
 import { greetingLine, teamStatusLine } from "./greeting";
+import { usePersonalTasks } from "./usePersonalAutomation";
 import {
   usePersonalBotsList,
   usePersonalEnvironmentId,
@@ -46,6 +53,17 @@ export function ChatsScreen(): JSX.Element {
     () => allShells.filter((shell) => shell.environmentId === environmentId),
     [allShells, environmentId],
   );
+  const { tasks: taskFeed } = usePersonalTasks(environmentId);
+  const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
+  const nameOf = useCallback(
+    (botId: string) => list.data?.bots.find((entry) => entry.botId === botId)?.name ?? null,
+    [list.data],
+  );
+  const waitingByThread = useMemo(() => waitingLabelsByThread(tasks, nameOf), [tasks, nameOf]);
+  const describeTurn = useCallback(
+    (turn: ServerTurn) => serverTurnLabel(turn, resolveTurnChildren(turn, tasks), nameOf),
+    [tasks, nameOf],
+  );
   const summaries = useMemo(
     () =>
       list.data === null
@@ -55,8 +73,9 @@ export function ChatsScreen(): JSX.Element {
             links: list.data.threads,
             shells,
             providers,
+            waitingByThread,
           }),
-    [list.data, providers, shells],
+    [list.data, providers, shells, waitingByThread],
   );
   const visible = useMemo(() => filterBotSummaries(summaries, query), [query, summaries]);
   const attention = useMemo(() => collectAttentionThreads(summaries), [summaries]);
@@ -170,7 +189,12 @@ export function ChatsScreen(): JSX.Element {
             <ul className="mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)]">
               {visible.map((summary) => (
                 <li key={summary.bot.botId}>
-                  <BotRow environmentId={environmentId!} summary={summary} now={now} />
+                  <BotRow
+                    environmentId={environmentId!}
+                    summary={summary}
+                    now={now}
+                    describeTurn={describeTurn}
+                  />
                 </li>
               ))}
             </ul>
