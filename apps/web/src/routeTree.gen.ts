@@ -40,7 +40,9 @@ import { Route as PersonalBotsSettingsRouteImport } from './routes/_personal.bot
 import { Route as PersonalBotsNewRouteImport } from './routes/_personal.bots_.new'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as PersonalBotsBotIdIndexRouteImport } from './routes/_personal.bots_.$botId.index'
 import { Route as PersonalBotsBotIdEditRouteImport } from './routes/_personal.bots_.$botId.edit'
+import { Route as PersonalBotsBotIdThreadIdRouteImport } from './routes/_personal.bots_.$botId.$threadId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -197,11 +199,22 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
+const PersonalBotsBotIdIndexRoute = PersonalBotsBotIdIndexRouteImport.update({
+  id: '/bots_/$botId/',
+  path: '/bots/$botId/',
+  getParentRoute: () => PersonalRoute,
+} as any)
 const PersonalBotsBotIdEditRoute = PersonalBotsBotIdEditRouteImport.update({
   id: '/bots_/$botId/edit',
   path: '/bots/$botId/edit',
   getParentRoute: () => PersonalRoute,
 } as any)
+const PersonalBotsBotIdThreadIdRoute =
+  PersonalBotsBotIdThreadIdRouteImport.update({
+    id: '/bots_/$botId/$threadId',
+    path: '/bots/$botId/$threadId',
+    getParentRoute: () => PersonalRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -233,7 +246,9 @@ export interface FileRoutesByFullPath {
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/bots/new': typeof PersonalBotsNewRoute
   '/bots/settings': typeof PersonalBotsSettingsRoute
+  '/bots/$botId/$threadId': typeof PersonalBotsBotIdThreadIdRoute
   '/bots/$botId/edit': typeof PersonalBotsBotIdEditRoute
+  '/bots/$botId/': typeof PersonalBotsBotIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof ChatIndexRoute
@@ -265,7 +280,9 @@ export interface FileRoutesByTo {
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/bots/new': typeof PersonalBotsNewRoute
   '/bots/settings': typeof PersonalBotsSettingsRoute
+  '/bots/$botId/$threadId': typeof PersonalBotsBotIdThreadIdRoute
   '/bots/$botId/edit': typeof PersonalBotsBotIdEditRoute
+  '/bots/$botId': typeof PersonalBotsBotIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -300,7 +317,9 @@ export interface FileRoutesById {
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/_personal/bots_/new': typeof PersonalBotsNewRoute
   '/_personal/bots_/settings': typeof PersonalBotsSettingsRoute
+  '/_personal/bots_/$botId/$threadId': typeof PersonalBotsBotIdThreadIdRoute
   '/_personal/bots_/$botId/edit': typeof PersonalBotsBotIdEditRoute
+  '/_personal/bots_/$botId/': typeof PersonalBotsBotIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -334,7 +353,9 @@ export interface FileRouteTypes {
     | '/draft/$draftId'
     | '/bots/new'
     | '/bots/settings'
+    | '/bots/$botId/$threadId'
     | '/bots/$botId/edit'
+    | '/bots/$botId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -366,7 +387,9 @@ export interface FileRouteTypes {
     | '/draft/$draftId'
     | '/bots/new'
     | '/bots/settings'
+    | '/bots/$botId/$threadId'
     | '/bots/$botId/edit'
+    | '/bots/$botId'
   id:
     | '__root__'
     | '/_chat'
@@ -400,7 +423,9 @@ export interface FileRouteTypes {
     | '/_chat/draft/$draftId'
     | '/_personal/bots_/new'
     | '/_personal/bots_/settings'
+    | '/_personal/bots_/$botId/$threadId'
     | '/_personal/bots_/$botId/edit'
+    | '/_personal/bots_/$botId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -634,11 +659,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_personal/bots_/$botId/': {
+      id: '/_personal/bots_/$botId/'
+      path: '/bots/$botId'
+      fullPath: '/bots/$botId/'
+      preLoaderRoute: typeof PersonalBotsBotIdIndexRouteImport
+      parentRoute: typeof PersonalRoute
+    }
     '/_personal/bots_/$botId/edit': {
       id: '/_personal/bots_/$botId/edit'
       path: '/bots/$botId/edit'
       fullPath: '/bots/$botId/edit'
       preLoaderRoute: typeof PersonalBotsBotIdEditRouteImport
+      parentRoute: typeof PersonalRoute
+    }
+    '/_personal/bots_/$botId/$threadId': {
+      id: '/_personal/bots_/$botId/$threadId'
+      path: '/bots/$botId/$threadId'
+      fullPath: '/bots/$botId/$threadId'
+      preLoaderRoute: typeof PersonalBotsBotIdThreadIdRouteImport
       parentRoute: typeof PersonalRoute
     }
   }
@@ -667,7 +706,9 @@ interface PersonalRouteChildren {
   PersonalTasksRoute: typeof PersonalTasksRoute
   PersonalBotsNewRoute: typeof PersonalBotsNewRoute
   PersonalBotsSettingsRoute: typeof PersonalBotsSettingsRoute
+  PersonalBotsBotIdThreadIdRoute: typeof PersonalBotsBotIdThreadIdRoute
   PersonalBotsBotIdEditRoute: typeof PersonalBotsBotIdEditRoute
+  PersonalBotsBotIdIndexRoute: typeof PersonalBotsBotIdIndexRoute
 }
 
 const PersonalRouteChildren: PersonalRouteChildren = {
@@ -677,7 +718,9 @@ const PersonalRouteChildren: PersonalRouteChildren = {
   PersonalTasksRoute: PersonalTasksRoute,
   PersonalBotsNewRoute: PersonalBotsNewRoute,
   PersonalBotsSettingsRoute: PersonalBotsSettingsRoute,
+  PersonalBotsBotIdThreadIdRoute: PersonalBotsBotIdThreadIdRoute,
   PersonalBotsBotIdEditRoute: PersonalBotsBotIdEditRoute,
+  PersonalBotsBotIdIndexRoute: PersonalBotsBotIdIndexRoute,
 }
 
 const PersonalRouteWithChildren = PersonalRoute._addFileChildren(

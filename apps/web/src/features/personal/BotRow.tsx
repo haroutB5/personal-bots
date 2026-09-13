@@ -1,18 +1,15 @@
 import type { JSX, ReactNode } from "react";
-import { useState } from "react";
 
 import type { EnvironmentId } from "@t3tools/contracts";
-import { ThreadId } from "@t3tools/contracts";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 
-import { cn, randomUUID } from "~/lib/utils";
+import { cn } from "~/lib/utils";
 import { useThreadDetail } from "~/state/entities";
-import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatar } from "./BotAvatar";
 import { type BotSummary, providerLine } from "./botSummaries";
 import { formatRelativeTime } from "./relativeTime";
-import { personalBotCreateThread } from "./usePersonalBots";
+import { useStartBotChat } from "./startBotChat";
 
 const ROW_CLASS =
   "flex w-full min-w-0 items-center gap-[18px] py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]";
@@ -41,9 +38,9 @@ function usePreview(environmentId: EnvironmentId, summary: BotSummary): string {
  * derived from real bot/thread state; there is no unread badge because T3
  * has no unread concept to back it.
  *
- * Tapping opens the bot's newest chat, or starts its first one. A bot whose
- * provider cannot run and has no chat yet links to its editor instead, so
- * the row is always actionable.
+ * Tapping opens the bot's newest chat in the personal conversation view, or
+ * starts its first one. A bot whose provider cannot run and has no chat yet
+ * links to its editor instead, so the row is always actionable.
  */
 export function BotRow({
   environmentId,
@@ -54,11 +51,9 @@ export function BotRow({
   summary: BotSummary;
   now: number;
 }): JSX.Element {
-  const navigate = useNavigate();
-  const createThread = useAtomCommand(personalBotCreateThread);
-  const [starting, setStarting] = useState(false);
   const preview = usePreview(environmentId, summary);
   const { bot, newestThread, provider, live, lastActivityMs } = summary;
+  const { start, starting } = useStartBotChat(environmentId, bot.botId);
 
   const content: ReactNode = (
     <>
@@ -101,8 +96,8 @@ export function BotRow({
   if (newestThread !== null) {
     return (
       <Link
-        to="/$environmentId/$threadId"
-        params={{ environmentId, threadId: newestThread.id }}
+        to="/bots/$botId/$threadId"
+        params={{ botId: bot.botId, threadId: newestThread.id }}
         className={ROW_CLASS}
       >
         {content}
@@ -123,24 +118,10 @@ export function BotRow({
     );
   }
 
-  const startChat = async () => {
-    if (starting) return;
-    setStarting(true);
-    const threadId = ThreadId.make(randomUUID());
-    const result = await createThread({
-      environmentId,
-      input: { botId: bot.botId, threadId },
-    });
-    setStarting(false);
-    if (result._tag === "Success") {
-      await navigate({ to: "/$environmentId/$threadId", params: { environmentId, threadId } });
-    }
-  };
-
   return (
     <button
       type="button"
-      onClick={() => void startChat()}
+      onClick={() => void start()}
       disabled={starting}
       aria-busy={starting}
       className={cn(ROW_CLASS, "cursor-pointer disabled:cursor-wait")}

@@ -60,6 +60,12 @@ export const personalBotCreateThread = createEnvironmentRpcCommand(connectionAto
   onSuccess: refreshBotsList,
 });
 
+export const personalBotArchiveThread = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-bots:archive-thread",
+  tag: WS_METHODS.personalBotsArchiveThread,
+  onSuccess: refreshBotsList,
+});
+
 export const personalProfileSet = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-bots:set-profile",
   tag: WS_METHODS.personalBotsSetProfile,

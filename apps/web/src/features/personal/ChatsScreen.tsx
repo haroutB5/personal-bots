@@ -63,6 +63,11 @@ export function ChatsScreen(): JSX.Element {
   const runningCount = summaries.filter((summary) => summary.live).length;
   const loaded = list.data !== null;
   const firstAttention = attention[0] ?? null;
+  const firstAttentionBot =
+    firstAttention === null
+      ? null
+      : (summaries.find((summary) => summary.attentionThreads.includes(firstAttention))?.bot ??
+        null);
 
   return (
     <div className="flex min-w-0 flex-col px-5 pb-6">
@@ -175,10 +180,10 @@ export function ChatsScreen(): JSX.Element {
             </p>
           )}
 
-          {firstAttention !== null ? (
+          {firstAttention !== null && firstAttentionBot !== null ? (
             <Link
-              to="/$environmentId/$threadId"
-              params={{ environmentId: firstAttention.environmentId, threadId: firstAttention.id }}
+              to="/bots/$botId/$threadId"
+              params={{ botId: firstAttentionBot.botId, threadId: firstAttention.id }}
               className="mt-3 flex h-[50px] items-center gap-3 rounded-xl border border-[var(--personal-review-border)] bg-[var(--personal-review-bg)] px-4 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
             >
               <span
