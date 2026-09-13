@@ -110,6 +110,8 @@ export function SwipeToDelete({
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         onClickCapture={onClickCapture}
+        // A native link drag would cancel the pointer and end the swipe.
+        onDragStart={(event) => event.preventDefault()}
         className="relative bg-[var(--personal-bg)] [touch-action:pan-y]"
         style={{
           transform: `translateX(${offset}px)`,

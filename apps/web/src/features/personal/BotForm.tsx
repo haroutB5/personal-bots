@@ -131,7 +131,10 @@ function BotForm({
 
   // A cold open of /bots/new renders before providers load; pick the first
   // ready one when it arrives so "Create bot" is not stuck disabled.
-  const firstSelectable = selectableProviders[0];
+  // The owner runs bots on Claude Code first, so it is the default when ready.
+  const firstSelectable =
+    selectableProviders.find((provider) => provider.driver === "claudeAgent") ??
+    selectableProviders[0];
   const draft: BotDraft =
     bot === null && rawDraft.instanceId === "" && firstSelectable !== undefined
       ? {
