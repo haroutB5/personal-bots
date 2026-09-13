@@ -415,10 +415,10 @@ describe("personal secret requests", () => {
         // Spelled out rather than rebuilt with the builder, so the test is an
         // oracle for the reactor's format, not a copy of the implementation.
         expect((yield* access.forThread(thread)).systemInstructions).toBe(
-          `Write in short sentences.\n\n${PERSONAL_BOT_APP_RULES}`,
+          `You are writer, one of the user's personal bots.\n\nWrite in short sentences.\n\n${PERSONAL_BOT_APP_RULES}`,
         );
         expect(yield* access.instructionsForThread(thread)).toBe(
-          `Write in short sentences.\n\n${PERSONAL_BOT_APP_RULES}`,
+          `You are writer, one of the user's personal bots.\n\nWrite in short sentences.\n\n${PERSONAL_BOT_APP_RULES}`,
         );
         expect(yield* access.instructionsForThread(ThreadId.make("thread-plain"))).toBeNull();
         expect(PERSONAL_BOT_APP_RULES).toContain("save_memory");
@@ -467,12 +467,16 @@ describe("personal secret requests", () => {
         expect(yield* access.forThread(assistantThread)).toEqual({
           botId: botId("assistant"),
           environment: { PB_SECRET_GITHUB_TOKEN: "gh-value", PB_SECRET_SHARED_KEY: "shared-value" },
-          systemInstructions: PERSONAL_BOT_APP_RULES,
+          systemInstructions: expect.stringMatching(
+            /^You are [^\n]+, one of the user's personal bots\.\n\n<app_rules>/u,
+          ),
         });
         expect(yield* access.forThread(developerThread)).toEqual({
           botId: botId("developer"),
           environment: { PB_SECRET_DEV_ONLY: "dev-value", PB_SECRET_SHARED_KEY: "shared-value" },
-          systemInstructions: PERSONAL_BOT_APP_RULES,
+          systemInstructions: expect.stringMatching(
+            /^You are [^\n]+, one of the user's personal bots\.\n\n<app_rules>/u,
+          ),
         });
         expect(yield* access.forThread(ThreadId.make("thread-plain"))).toEqual({
           botId: null,

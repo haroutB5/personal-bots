@@ -10,8 +10,19 @@ Secrets such as passwords, API keys and tokens never go into memory: ask for the
 For web pages, use your browser (preview) tools. They drive the shared browser the user can watch and take over in the Computer tab.
 </app_rules>`;
 
-/** A bot's own instructions (possibly blank) followed by the app rules. */
-export function personalBotSystemInstructions(botInstructions: string): string {
-  const own = botInstructions.trim();
-  return own.length > 0 ? `${own}\n\n${PERSONAL_BOT_APP_RULES}` : PERSONAL_BOT_APP_RULES;
+/** What a session needs to know about the bot it runs as. */
+export interface PersonalBotPersona {
+  readonly name: string;
+  readonly title: string;
+  readonly instructions: string;
+}
+
+/** Who the bot is, then its own instructions (possibly blank), then the app rules. */
+export function personalBotSystemInstructions(persona: PersonalBotPersona): string {
+  const name = persona.name.trim();
+  const title = persona.title.trim();
+  const identity = `You are ${name}${title.length > 0 ? ` (${title})` : ""}, one of the user's personal bots.`;
+  return [identity, persona.instructions.trim(), PERSONAL_BOT_APP_RULES]
+    .filter((part) => part.length > 0)
+    .join("\n\n");
 }

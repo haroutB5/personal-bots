@@ -24,6 +24,7 @@ import {
   type PersistenceErrorCorrelation,
   PersistenceSqlError,
 } from "../persistence/Errors.ts";
+import type { PersonalBotPersona } from "./personalBotInstructions.ts";
 
 export const CreatePersonalBotInput = Schema.Struct({
   botId: PersonalBotId,
@@ -140,13 +141,13 @@ export class PersonalBotRepository extends Context.Service<
       PersonalBotRepositoryError
     >;
     /**
-     * Bot instructions for a thread, for the provider session/turn path.
-     * None when the thread has no bot link, the bot is soft-deleted, or its
-     * instructions are blank.
+     * The bot's name, title and instructions for a thread, for the provider
+     * session/turn path. None when the thread has no bot link or the bot is
+     * soft-deleted.
      */
     readonly getInstructionsForThread: (
       input: GetPersonalBotThreadInput,
-    ) => Effect.Effect<Option.Option<string>, PersonalBotRepositoryError>;
+    ) => Effect.Effect<Option.Option<PersonalBotPersona>, PersonalBotRepositoryError>;
   }
 >()("t3/personal/PersonalBotRepository") {}
 
@@ -485,10 +486,14 @@ export const make = Effect.gen(function* () {
 
   const getInstructionsForThreadRow = SqlSchema.findOneOption({
     Request: GetPersonalBotThreadInput,
-    Result: Schema.Struct({ instructions: Schema.String }),
+    Result: Schema.Struct({
+      name: Schema.String,
+      title: Schema.String,
+      instructions: Schema.String,
+    }),
     execute: ({ threadId }) =>
       sql`
-        SELECT b.instructions AS "instructions"
+        SELECT b.name AS "name", b.title AS "title", b.instructions AS "instructions"
         FROM personal_bot_threads t
         JOIN personal_bots b ON b.bot_id = t.bot_id
         WHERE t.thread_id = ${threadId}
@@ -705,8 +710,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
       // Some for every thread linked to a live bot, even with blank
-      // instructions: the caller still owes that thread the app rules.
-      Effect.map(Option.map((row) => row.instructions)),
+      // instructions: the caller still owes that thread its identity and rules.
     );
 
   const listThreadAttachments: PersonalBotRepository["Service"]["listThreadAttachments"] = () =>
