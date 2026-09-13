@@ -168,6 +168,41 @@ export const PersonalTaskStreamEvent = Schema.Struct({
 });
 export type PersonalTaskStreamEvent = typeof PersonalTaskStreamEvent.Type;
 
+/**
+ * Marks a turn message the task service wrote (the user role is only what the
+ * provider needs). Rides on the message's `context` as a forward-compatible
+ * record of this kind: no text references it, so providers never see it and
+ * the Developer view ignores it, while clients render the turn as a system row.
+ */
+export const PERSONAL_TASK_MESSAGE_CONTEXT_KIND = "personal-task";
+
+/**
+ * start: first attempt. retry: a later attempt of the same task.
+ * continuation: the task resumes, with delegated results or resume notes.
+ */
+export const PersonalTaskTurnKind = Schema.Literals(["start", "retry", "continuation"]);
+export type PersonalTaskTurnKind = typeof PersonalTaskTurnKind.Type;
+
+export const PersonalTaskMessageMarker = Schema.Struct({
+  taskId: PersonalTaskId,
+  attempt: Schema.Number,
+  turn: PersonalTaskTurnKind,
+  source: PersonalTaskSource,
+  title: Schema.String,
+  /** The delegating bot, for a delegated task's first turns. */
+  delegatorBotId: Schema.NullOr(PersonalBotId),
+  /** Children whose results this continuation delivers, as they were then. */
+  children: Schema.Array(
+    Schema.Struct({
+      taskId: PersonalTaskId,
+      botId: Schema.NullOr(PersonalBotId),
+      title: Schema.String,
+      status: Schema.NullOr(PersonalTaskStatus),
+    }),
+  ),
+});
+export type PersonalTaskMessageMarker = typeof PersonalTaskMessageMarker.Type;
+
 export class PersonalTasksError extends Schema.TaggedError<PersonalTasksError>()(
   "PersonalTasksError",
   {

@@ -4,7 +4,10 @@ import {
   CorrelationId,
   EventId,
   MessageId,
+  OrchestrationMessageContext,
+  PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
   PersonalBotId,
+  PersonalTaskId,
   ProviderInstanceId,
   TurnId,
   type OrchestrationCommand,
@@ -20,7 +23,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
@@ -492,7 +497,69 @@ it.effect("a child's completion re-queues its parent exactly once", () => {
     ]);
     const rootStarts = turnStarts(harness).filter((command) => command.threadId === rootThread);
     expect(rootStarts.length).toBe(2);
+
+    // Every task turn is marked server-authored at the source.
+    const markerOf = (command: (typeof rootStarts)[number]) => {
+      const record = command.message.context?.records[0];
+      return record !== undefined && "payload" in record ? record.payload : undefined;
+    };
+    expect(markerOf(rootStarts[0]!)).toMatchObject({
+      taskId: root.taskId,
+      attempt: 1,
+      turn: "start",
+      source: "user",
+      delegatorBotId: null,
+      children: [],
+    });
+    expect(markerOf(rootStarts[1]!)).toEqual({
+      taskId: root.taskId,
+      attempt: 2,
+      turn: "continuation",
+      source: "user",
+      title: "Root requeue",
+      delegatorBotId: null,
+      children: [
+        { taskId: child.taskId, botId: botId("developer"), title: "Fix it", status: "completed" },
+      ],
+    });
+    const childStart = turnStarts(harness).find((command) => command.threadId === childThread)!;
+    expect(childStart.message.text.startsWith("[Delegated task from Assistant]")).toBe(true);
+    expect(markerOf(childStart)).toMatchObject({
+      taskId: child.taskId,
+      turn: "start",
+      source: "delegation",
+      title: "Fix it",
+      delegatorBotId: botId("assistant"),
+    });
   }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it("the task-turn marker survives persistence decoding and never reaches the provider", () => {
+  const marker = {
+    taskId: PersonalTaskId.make("task-1"),
+    attempt: 2,
+    turn: "continuation" as const,
+    source: "user" as const,
+    title: "Root",
+    delegatorBotId: null,
+    children: [
+      {
+        taskId: PersonalTaskId.make("task-2"),
+        botId: botId("developer"),
+        title: "Fix it",
+        status: "completed" as const,
+      },
+    ],
+  };
+  const context = PersonalTaskService.personalTaskMessageContext(marker);
+  // Same codec as projection_thread_messages.context_json, i.e. a replay.
+  const codec = Schema.fromJsonString(OrchestrationMessageContext);
+  const decoded = Schema.decodeUnknownSync(codec)(Schema.encodeSync(codec)(context));
+  const record = decoded.records[0]!;
+  expect(record.kind).toBe(PERSONAL_TASK_MESSAGE_CONTEXT_KIND);
+  expect("payload" in record ? record.payload : null).toEqual(marker);
+  const text = "[Task continuation] Your delegated tasks have finished.";
+  expect(projectComposerContextForProvider({ text, records: decoded.records })).toBe(text);
 });
 
 it.effect("cancel cascades by task id, interrupts live turns and keeps completed children", () => {

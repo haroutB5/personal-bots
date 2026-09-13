@@ -1,16 +1,17 @@
-import type { JSX } from "react";
+import type { JSX, ReactNode } from "react";
 import { memo, useEffect, useMemo, useRef } from "react";
 
 import type { PendingApproval, PendingUserInput } from "@t3tools/client-runtime/pending-requests";
 import type {
   ApprovalRequestId,
   EnvironmentId,
+  PersonalTask,
   ProviderApprovalDecision,
   ProviderApprovalOption,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { FileText } from "lucide-react";
+import { ChevronRight, FileText } from "lucide-react";
 
 import { useAssetUrls } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -20,6 +21,7 @@ import { selectMessageImageResources } from "~/session-logic";
 import type { ChatMessage } from "~/types";
 
 import { type ConversationItem, formatDayDivider } from "./conversationModel";
+import type { ServerTurn } from "./delegationModel";
 import { ToolDetails } from "./ToolDetails";
 
 /** A message the user sent that the server has not echoed back yet. */
@@ -131,6 +133,35 @@ const AssistantMessage = memo(function AssistantMessage({
   );
 });
 
+/**
+ * A turn the task service wrote in the user's role (delegated brief, results
+ * coming back, routine run, retry): a compact centred row, not the user's
+ * bubble. Tapping it shows the exact text the bot received.
+ */
+const SystemTurnRow = memo(function SystemTurnRow({
+  label,
+  text,
+}: {
+  label: string;
+  text: string;
+}) {
+  return (
+    <details className="group flex w-full flex-col items-center">
+      <summary className="mx-auto flex min-h-11 max-w-[90%] cursor-pointer list-none items-center gap-1.5 rounded-full px-3 text-[13px] text-[var(--personal-text-secondary)] outline-none select-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          aria-hidden="true"
+          className="size-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+          strokeWidth={1.75}
+        />
+        <span className="min-w-0 truncate">{label}</span>
+      </summary>
+      <p className="mx-auto mt-1 max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3.5 py-2.5 text-[13px] leading-[1.45] break-words whitespace-pre-wrap text-[var(--personal-text-secondary)]">
+        {text}
+      </p>
+    </details>
+  );
+});
+
 function ApprovalCard({
   approval,
   botName,
@@ -202,10 +233,16 @@ export function MessageList({
   errorText,
   loadEarlier,
   now,
+  describeTurn,
+  renderDelegation,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
   items: ReadonlyArray<ConversationItem>;
+  /** One-line text for a server-authored turn ("Developer finished: ..."). */
+  describeTurn: (turn: ServerTurn) => string;
+  /** The live card for a task delegated from this thread. */
+  renderDelegation: (task: PersonalTask) => ReactNode;
   pending: ReadonlyArray<PendingOutgoingMessage>;
   working: boolean;
   botName: string;
@@ -247,11 +284,12 @@ export function MessageList({
   }, []);
 
   // The work group that is still being written: the last one, while working,
-  // with no user message after it.
+  // with no user message or task turn after it.
   const liveWorkId = useMemo(() => {
     if (!working) return null;
     for (let index = items.length - 1; index >= 0; index -= 1) {
       const item = items[index]!;
+      if (item.kind === "system-turn") return null;
       if (item.kind === "message" && item.message.role === "user") return null;
       if (item.kind === "work") return item.id;
     }
@@ -302,6 +340,16 @@ export function MessageList({
                   <time dateTime={item.at.toISOString()}>{formatDayDivider(item.at, now)}</time>
                 </p>
               );
+            case "system-turn":
+              return (
+                <SystemTurnRow
+                  key={item.id}
+                  label={describeTurn(item.turn)}
+                  text={item.message.text}
+                />
+              );
+            case "delegation":
+              return <div key={item.id}>{renderDelegation(item.task)}</div>;
             case "message":
               return item.message.role === "user" ? (
                 <UserMessage key={item.id} environmentId={environmentId} message={item.message} />

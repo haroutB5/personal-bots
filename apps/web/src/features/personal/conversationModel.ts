@@ -1,16 +1,25 @@
 import type { PendingApproval, PendingUserInput } from "@t3tools/client-runtime/pending-requests";
-import type { OrchestrationLatestTurn, OrchestrationSession } from "@t3tools/contracts";
+import type {
+  OrchestrationLatestTurn,
+  OrchestrationSession,
+  PersonalTask,
+} from "@t3tools/contracts";
 
 import type { ChatMessage, ProposedPlan } from "~/types";
 import type { TimelineEntry, WorkLogEntry } from "~/session-logic";
 
+import { readServerTurn, type ServerTurn, taskCreatedMs } from "./delegationModel";
 import { PERSONAL_TIME_ZONE } from "./greeting";
 
-/** Header state for a bot conversation, derived only from session/turn/request state. */
+/**
+ * Header state for a bot conversation, derived only from session/turn/request
+ * state, plus the thread's task when it is parked on delegated work.
+ */
 export type ConversationState =
   | "idle"
   | "working"
   | "waiting"
+  | "delegating"
   | "rate_limited"
   | "retrying"
   | "error";
@@ -19,6 +28,8 @@ export const CONVERSATION_STATE_LABEL: Record<ConversationState, string> = {
   idle: "Idle",
   working: "Working",
   waiting: "Waiting for you",
+  // The screen names the bots ("Waiting for Developer") when it knows them.
+  delegating: "Waiting on another bot",
   rate_limited: "Rate limited",
   retrying: "Retrying",
   error: "Error",
@@ -46,6 +57,8 @@ export function deriveConversationState(input: {
   readonly latestTurn: OrchestrationLatestTurn | null;
   readonly pendingApprovals: ReadonlyArray<PendingApproval>;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
+  /** The thread's task is parked waiting for delegated work (`waiting_for_agent`). */
+  readonly waitingForAgent?: boolean;
 }): ConversationState {
   if (input.pendingApprovals.length > 0 || input.pendingUserInputs.length > 0) return "waiting";
   const wait = providerWaitState(input.session);
@@ -54,6 +67,8 @@ export function deriveConversationState(input: {
   if (input.latestTurn?.state === "running" || status === "running" || status === "starting") {
     return "working";
   }
+  // The delegating turn ended cleanly; its outcome is still open.
+  if (input.waitingForAgent === true) return "delegating";
   if (status === "error" || input.latestTurn?.state === "error") return "error";
   return "idle";
 }
@@ -175,17 +190,27 @@ const DIVIDER_GAP_MS = 60 * 60_000;
 export type ConversationItem =
   | { readonly kind: "divider"; readonly id: string; readonly at: Date }
   | { readonly kind: "message"; readonly id: string; readonly message: ChatMessage }
+  /** A turn the task service wrote in the user's role; a compact system row. */
+  | {
+      readonly kind: "system-turn";
+      readonly id: string;
+      readonly message: ChatMessage;
+      readonly turn: ServerTurn;
+    }
   | { readonly kind: "plan"; readonly id: string; readonly plan: ProposedPlan }
   | {
       readonly kind: "work";
       readonly id: string;
       readonly entries: ReadonlyArray<WorkLogEntry>;
-    };
+    }
+  /** A task delegated from this thread, shown as a live card. */
+  | { readonly kind: "delegation"; readonly id: string; readonly task: PersonalTask };
 
 /**
  * Flattens the upstream timeline into chat rows: consecutive work entries
  * fold into one collapsible group, and day dividers are inserted from the
- * entries' real timestamps. System messages are not shown.
+ * entries' real timestamps. System messages are not shown; turns the task
+ * service authored become system rows instead of the user's bubble.
  */
 export function buildConversationItems(
   entries: ReadonlyArray<TimelineEntry>,
@@ -222,10 +247,69 @@ export function buildConversationItems(
     }
     openWork = null;
     if (entry.kind === "message") {
-      items.push({ kind: "message", id: entry.id, message: entry.message });
+      const turn = readServerTurn(entry.message);
+      items.push(
+        turn === null
+          ? { kind: "message", id: entry.id, message: entry.message }
+          : { kind: "system-turn", id: entry.id, message: entry.message, turn },
+      );
     } else {
       items.push({ kind: "plan", id: entry.id, plan: entry.proposedPlan });
     }
   }
   return items;
+}
+
+/** A new turn starts here: the user spoke, the task service did, or a new day began. */
+export function isTurnBoundary(item: ConversationItem): boolean {
+  return (
+    item.kind === "divider" ||
+    item.kind === "system-turn" ||
+    (item.kind === "message" && item.message.role === "user")
+  );
+}
+
+function itemTimeMs(item: ConversationItem): number {
+  switch (item.kind) {
+    case "divider":
+      return item.at.getTime();
+    case "message":
+    case "system-turn":
+      return Date.parse(item.message.createdAt);
+    case "plan":
+      return Date.parse(item.plan.createdAt);
+    case "work":
+      return Date.parse(item.entries.at(-1)?.createdAt ?? "");
+    case "delegation":
+      return taskCreatedMs(item.task);
+  }
+}
+
+/**
+ * Puts each delegated child's card at the end of the turn that created it:
+ * after the last row written before the child existed, then past the rest of
+ * that turn (its reply), stopping at the next turn. A child older than every
+ * loaded row (earlier turns not paged in) goes first.
+ */
+export function placeDelegationCards(
+  items: ReadonlyArray<ConversationItem>,
+  children: ReadonlyArray<PersonalTask>,
+): ConversationItem[] {
+  const placed = [...items];
+  for (const task of children.toSorted(
+    (left, right) => taskCreatedMs(left) - taskCreatedMs(right),
+  )) {
+    const createdMs = taskCreatedMs(task);
+    let anchor = -1;
+    for (let index = 0; index < placed.length; index += 1) {
+      const at = itemTimeMs(placed[index]!);
+      if (Number.isFinite(at) && at <= createdMs) anchor = index;
+    }
+    let end = anchor;
+    if (anchor >= 0) {
+      while (end + 1 < placed.length && !isTurnBoundary(placed[end + 1]!)) end += 1;
+    }
+    placed.splice(end + 1, 0, { kind: "delegation", id: `delegation:${task.taskId}`, task });
+  }
+  return placed;
 }
