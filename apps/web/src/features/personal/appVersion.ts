@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 
 /**
- * Short build label for the Chats screen footer, e.g. "7ae8f86 · 13 Sep".
- * Parsed from the version.txt build.ps1 writes into dist/client
- * (key=value lines). Null when the file is missing or unparsable (dev serves
- * no /VERSION), in which case the footer is simply omitted.
+ * Build label for the Chats screen footer: the human version when the stamp
+ * carries one ("v1.0.5"), else the short release sha ("7ae8f86"). Parsed from
+ * the version.txt build.ps1 writes into dist/client (key=value lines). Null
+ * when the file is missing or unparsable (dev serves no /version.txt), in
+ * which case the footer is simply omitted.
  */
 export function parseVersionLabel(text: string): string | null {
   const entries = new Map<string, string>();
@@ -13,14 +14,11 @@ export function parseVersionLabel(text: string): string | null {
     if (separator <= 0) continue;
     entries.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
   }
+  const version = entries.get("version");
+  if (version !== undefined && version.length > 0) return `v${version}`;
   const release = entries.get("release");
   if (release === undefined || release.length === 0) return null;
-  const short = release.slice(0, 7);
-  const builtAt = entries.get("builtAt");
-  const built = builtAt === undefined ? null : new Date(builtAt);
-  if (built === null || Number.isNaN(built.getTime())) return short;
-  const day = built.toLocaleDateString(undefined, { day: "numeric", month: "short" });
-  return `${short} · ${day}`;
+  return release.slice(0, 7);
 }
 
 export function useAppVersion(): string | null {

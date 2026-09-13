@@ -105,7 +105,11 @@ if ($resolveCode -ne 0) { throw "node-pty does not resolve from $releaseDir. Che
 if ($versionCode -ne 0) { throw "The staged CLI failed to start (t3 --version exited $versionCode)." }
 
 $builtAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+# Human app version, bumped by hand in scripts/personal/app-version.txt per shipped change.
+$appVersionFile = Join-Path $PSScriptRoot 'app-version.txt'
+$appVersion = if (Test-Path $appVersionFile) { (Get-Content -LiteralPath $appVersionFile -First 1).Trim() } else { '' }
 $version = @(
+    "version=$appVersion",
     "release=$releaseName",
     "sha=$sha",
     "branch=$branch",
