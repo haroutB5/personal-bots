@@ -10,9 +10,9 @@ import type { BotAvatarShape } from "@t3tools/contracts";
 
 export const BOT_AVATAR_VIEWBOX = "0 0 100 100";
 
-/** Eye pill size in viewBox units, shared by every shape. */
-export const BOT_AVATAR_EYE_WIDTH = 7;
-export const BOT_AVATAR_EYE_HEIGHT = 18;
+/** Eye pill size in viewBox units, shared by every shape (~22% of height). */
+export const BOT_AVATAR_EYE_WIDTH = 9;
+export const BOT_AVATAR_EYE_HEIGHT = 22;
 /** Clockwise tilt of the eyes (top leans right), in degrees. */
 export const BOT_AVATAR_EYE_TILT_DEG = 15;
 export const BOT_AVATAR_EYE_COLOR = "#111111";
@@ -69,9 +69,11 @@ export const BOT_AVATAR_SILHOUETTES: Record<BotAvatarShape, BotAvatarSilhouette>
     d: "M50 8L84.6 28V72L50 92L15.4 72V28Z",
     roundCorners: true,
   },
-  // Six-lobe scalloped cloud centred on (50, 52).
+  // Six-lobe scalloped cloud centred on (50, 53). Shallow valleys
+  // (r ~33) keep the visual mass close to the other shapes; quadratic
+  // controls pushed past each lobe tip keep the lobes round and soft.
   scallopedCloud: {
-    d: "M50 24Q74 10.4 74.2 38Q98 52 74.2 66Q74 93.6 50 80Q26 93.6 25.8 66Q2 52 25.8 38Q26 10.4 50 24Z",
+    d: "M33.5 24.4Q50 1.8 66.5 24.4Q94.4 27.4 83 53Q94.4 78.6 66.5 81.6Q50 104.3 33.5 81.6Q5.6 78.6 17 53Q5.6 27.4 33.5 24.4Z",
     roundCorners: false,
   },
   // Droplet: pointed top, round bottom (circle centre (50, 62), r 28).
@@ -91,32 +93,32 @@ export const BOT_AVATAR_EYES: Record<
   readonly [BotAvatarEyeCenter, BotAvatarEyeCenter]
 > = {
   blob: [
-    { cx: 38, cy: 54 },
-    { cx: 54, cy: 54 },
+    { cx: 38, cy: 57 },
+    { cx: 54, cy: 57 },
   ],
   roundedSquare: [
-    { cx: 38, cy: 54 },
-    { cx: 54, cy: 54 },
+    { cx: 38, cy: 57 },
+    { cx: 54, cy: 57 },
   ],
   pill: [
-    { cx: 38, cy: 54 },
-    { cx: 54, cy: 54 },
+    { cx: 38, cy: 57 },
+    { cx: 54, cy: 57 },
   ],
   triangle: [
-    { cx: 38, cy: 62 },
-    { cx: 54, cy: 62 },
+    { cx: 38, cy: 64 },
+    { cx: 54, cy: 64 },
   ],
   roundedHexagon: [
-    { cx: 38, cy: 54 },
-    { cx: 54, cy: 54 },
+    { cx: 38, cy: 57 },
+    { cx: 54, cy: 57 },
   ],
   scallopedCloud: [
-    { cx: 38, cy: 54 },
-    { cx: 54, cy: 54 },
+    { cx: 38, cy: 57 },
+    { cx: 54, cy: 57 },
   ],
   droplet: [
-    { cx: 38, cy: 58 },
-    { cx: 54, cy: 58 },
+    { cx: 38, cy: 60 },
+    { cx: 54, cy: 60 },
   ],
 };
 
