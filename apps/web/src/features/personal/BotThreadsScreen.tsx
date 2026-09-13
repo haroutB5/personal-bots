@@ -130,6 +130,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
   const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
   useRefreshBotsForTaskThreads({
+    bots: list.data?.bots ?? null,
     links: list.data?.threads ?? null,
     tasks,
     refresh: list.refresh,
