@@ -48,6 +48,12 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   // becoming real if either is ever declared as a dependency.
   "bufferutil",
   "utf-8-validate",
+  // The personal browser's Playwright driver. It is CommonJS and locates its
+  // own files (injected scripts, browser registry) through __dirname, which
+  // does not exist once inlined into the ESM bundle: every Chrome launch then
+  // failed with "__dirname is not defined in ES module scope". It has no
+  // dependencies of its own, so the external closure is just itself.
+  "playwright-core",
 ] as const;
 
 /**
