@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 /**
  * Short build label for the Chats screen footer, e.g. "7ae8f86 · 13 Sep".
- * Parsed from the release VERSION file build.ps1 copies into dist/client
+ * Parsed from the version.txt build.ps1 writes into dist/client
  * (key=value lines). Null when the file is missing or unparsable (dev serves
  * no /VERSION), in which case the footer is simply omitted.
  */
@@ -27,7 +27,7 @@ export function useAppVersion(): string | null {
   const [label, setLabel] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    void fetch("/VERSION", { cache: "no-store" })
+    void fetch("/version.txt", { cache: "no-store" })
       .then((response) => (response.ok ? response.text() : null))
       .then((text) => {
         if (!cancelled && text !== null) setLabel(parseVersionLabel(text));

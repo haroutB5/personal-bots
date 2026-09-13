@@ -116,8 +116,9 @@ $version = @(
     "repo=$PbRepoRoot"
 )
 Set-Content -LiteralPath (Join-Path $releaseDir 'VERSION') -Value $version -Encoding ASCII
-# The web app fetches /VERSION to show the build on the Chats screen.
-Set-Content -LiteralPath (Join-Path $releaseDist 'client\VERSION') -Value $version -Encoding ASCII
+# The web app fetches /version.txt to show the build on the Chats screen.
+# (Needs a file extension: the static handler treats extension-less paths as directories.)
+Set-Content -LiteralPath (Join-Path $releaseDist 'client\version.txt') -Value $version -Encoding ASCII
 
 if (-not $NoActivate) {
     Set-Content -LiteralPath $paths.CurrentFile -Value $releaseName -Encoding ASCII
