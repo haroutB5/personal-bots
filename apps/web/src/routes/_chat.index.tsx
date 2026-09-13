@@ -1,6 +1,6 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { LinkIcon, PlusIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -19,6 +19,7 @@ import {
 import { useEnvironments } from "../state/environments";
 import { APP_DISPLAY_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { readDeveloperView } from "~/features/personal/personalMode";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
@@ -108,6 +109,14 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
 }
 
 export const Route = createFileRoute("/_chat/")({
+  // A paired environment opens on the personal Bots shell. Developer view
+  // (chosen from personal Settings) keeps `/` on the upstream workspace for
+  // the rest of the session.
+  beforeLoad: ({ context }) => {
+    if (context.authGateState.status === "authenticated" && !readDeveloperView()) {
+      throw redirect({ to: "/bots", replace: true });
+    }
+  },
   component: ChatIndexRouteView,
 });
 

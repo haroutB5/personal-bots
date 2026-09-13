@@ -1,5 +1,6 @@
 import {
   ArrowLeftIcon,
+  BotIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
   SettingsIcon,
@@ -7,6 +8,7 @@ import {
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
+import { setDeveloperView } from "../../features/personal/personalMode";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -169,6 +171,12 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     closeMobileSidebar();
     void navigate({ to: "/settings" });
   }, [closeMobileSidebar, navigate]);
+  // Way back from Developer view to the personal Bots shell.
+  const handleBotsClick = useCallback(() => {
+    closeMobileSidebar();
+    setDeveloperView(false);
+    void navigate({ to: "/bots" });
+  }, [closeMobileSidebar, navigate]);
 
   const handleUsageClick = useCallback(() => {
     if (isMobile) {
@@ -202,6 +210,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Settings"
             onClick={handleSettingsClick}
           />
+          <SidebarUtilityItem icon={<BotIcon />} label="Bots" onClick={handleBotsClick} />
           {pullRequestsSupported ? (
             <SidebarUtilityItem
               icon={<GitPullRequestIcon />}

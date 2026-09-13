@@ -14,6 +14,7 @@ import { Route as UsageRouteImport } from './routes/usage'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as ConnectRouteImport } from './routes/connect'
+import { Route as PersonalRouteImport } from './routes/_personal'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
@@ -30,9 +31,16 @@ import { Route as SettingsArchivedRouteImport } from './routes/settings.archived
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
+import { Route as PersonalTasksRouteImport } from './routes/_personal.tasks'
+import { Route as PersonalFilesRouteImport } from './routes/_personal.files'
+import { Route as PersonalComputerRouteImport } from './routes/_personal.computer'
+import { Route as PersonalBotsRouteImport } from './routes/_personal.bots'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
+import { Route as PersonalBotsSettingsRouteImport } from './routes/_personal.bots_.settings'
+import { Route as PersonalBotsNewRouteImport } from './routes/_personal.bots_.new'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as PersonalBotsBotIdEditRouteImport } from './routes/_personal.bots_.$botId.edit'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -57,6 +65,10 @@ const PairRoute = PairRouteImport.update({
 const ConnectRoute = ConnectRouteImport.update({
   id: '/connect',
   path: '/connect',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PersonalRoute = PersonalRouteImport.update({
+  id: '/_personal',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ChatRoute = ChatRouteImport.update({
@@ -139,10 +151,40 @@ const ConnectCallbackRoute = ConnectCallbackRouteImport.update({
   path: '/connect/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PersonalTasksRoute = PersonalTasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
+  getParentRoute: () => PersonalRoute,
+} as any)
+const PersonalFilesRoute = PersonalFilesRouteImport.update({
+  id: '/files',
+  path: '/files',
+  getParentRoute: () => PersonalRoute,
+} as any)
+const PersonalComputerRoute = PersonalComputerRouteImport.update({
+  id: '/computer',
+  path: '/computer',
+  getParentRoute: () => PersonalRoute,
+} as any)
+const PersonalBotsRoute = PersonalBotsRouteImport.update({
+  id: '/bots',
+  path: '/bots',
+  getParentRoute: () => PersonalRoute,
+} as any)
 const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   id: '/pull-requests',
   path: '/pull-requests',
   getParentRoute: () => ChatRoute,
+} as any)
+const PersonalBotsSettingsRoute = PersonalBotsSettingsRouteImport.update({
+  id: '/bots_/settings',
+  path: '/bots/settings',
+  getParentRoute: () => PersonalRoute,
+} as any)
+const PersonalBotsNewRoute = PersonalBotsNewRouteImport.update({
+  id: '/bots_/new',
+  path: '/bots/new',
+  getParentRoute: () => PersonalRoute,
 } as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
@@ -155,6 +197,11 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
+const PersonalBotsBotIdEditRoute = PersonalBotsBotIdEditRouteImport.update({
+  id: '/bots_/$botId/edit',
+  path: '/bots/$botId/edit',
+  getParentRoute: () => PersonalRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -164,6 +211,10 @@ export interface FileRoutesByFullPath {
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/bots': typeof PersonalBotsRoute
+  '/computer': typeof PersonalComputerRoute
+  '/files': typeof PersonalFilesRoute
+  '/tasks': typeof PersonalTasksRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -180,14 +231,22 @@ export interface FileRoutesByFullPath {
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/bots/new': typeof PersonalBotsNewRoute
+  '/bots/settings': typeof PersonalBotsSettingsRoute
+  '/bots/$botId/edit': typeof PersonalBotsBotIdEditRoute
 }
 export interface FileRoutesByTo {
+  '/': typeof ChatIndexRoute
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/bots': typeof PersonalBotsRoute
+  '/computer': typeof PersonalComputerRoute
+  '/files': typeof PersonalFilesRoute
+  '/tasks': typeof PersonalTasksRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -202,19 +261,26 @@ export interface FileRoutesByTo {
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
-  '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/bots/new': typeof PersonalBotsNewRoute
+  '/bots/settings': typeof PersonalBotsSettingsRoute
+  '/bots/$botId/edit': typeof PersonalBotsBotIdEditRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_chat': typeof ChatRouteWithChildren
+  '/_personal': typeof PersonalRouteWithChildren
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
+  '/_personal/bots': typeof PersonalBotsRoute
+  '/_personal/computer': typeof PersonalComputerRoute
+  '/_personal/files': typeof PersonalFilesRoute
+  '/_personal/tasks': typeof PersonalTasksRoute
   '/connect_/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -232,6 +298,9 @@ export interface FileRoutesById {
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/_personal/bots_/new': typeof PersonalBotsNewRoute
+  '/_personal/bots_/settings': typeof PersonalBotsSettingsRoute
+  '/_personal/bots_/$botId/edit': typeof PersonalBotsBotIdEditRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -243,6 +312,10 @@ export interface FileRouteTypes {
     | '/usage'
     | '/welcome'
     | '/pull-requests'
+    | '/bots'
+    | '/computer'
+    | '/files'
+    | '/tasks'
     | '/connect/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -259,14 +332,22 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/bots/new'
+    | '/bots/settings'
+    | '/bots/$botId/edit'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/'
     | '/connect'
     | '/pair'
     | '/settings'
     | '/usage'
     | '/welcome'
     | '/pull-requests'
+    | '/bots'
+    | '/computer'
+    | '/files'
+    | '/tasks'
     | '/connect/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -281,18 +362,25 @@ export interface FileRouteTypes {
     | '/settings/providers'
     | '/settings/snap-shot'
     | '/settings/source-control'
-    | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/bots/new'
+    | '/bots/settings'
+    | '/bots/$botId/edit'
   id:
     | '__root__'
     | '/_chat'
+    | '/_personal'
     | '/connect'
     | '/pair'
     | '/settings'
     | '/usage'
     | '/welcome'
     | '/_chat/pull-requests'
+    | '/_personal/bots'
+    | '/_personal/computer'
+    | '/_personal/files'
+    | '/_personal/tasks'
     | '/connect_/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -310,10 +398,14 @@ export interface FileRouteTypes {
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/_personal/bots_/new'
+    | '/_personal/bots_/settings'
+    | '/_personal/bots_/$botId/edit'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
+  PersonalRoute: typeof PersonalRouteWithChildren
   ConnectRoute: typeof ConnectRoute
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
@@ -358,6 +450,13 @@ declare module '@tanstack/react-router' {
       path: '/connect'
       fullPath: '/connect'
       preLoaderRoute: typeof ConnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_personal': {
+      id: '/_personal'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof PersonalRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_chat': {
@@ -472,12 +571,54 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConnectCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_personal/tasks': {
+      id: '/_personal/tasks'
+      path: '/tasks'
+      fullPath: '/tasks'
+      preLoaderRoute: typeof PersonalTasksRouteImport
+      parentRoute: typeof PersonalRoute
+    }
+    '/_personal/files': {
+      id: '/_personal/files'
+      path: '/files'
+      fullPath: '/files'
+      preLoaderRoute: typeof PersonalFilesRouteImport
+      parentRoute: typeof PersonalRoute
+    }
+    '/_personal/computer': {
+      id: '/_personal/computer'
+      path: '/computer'
+      fullPath: '/computer'
+      preLoaderRoute: typeof PersonalComputerRouteImport
+      parentRoute: typeof PersonalRoute
+    }
+    '/_personal/bots': {
+      id: '/_personal/bots'
+      path: '/bots'
+      fullPath: '/bots'
+      preLoaderRoute: typeof PersonalBotsRouteImport
+      parentRoute: typeof PersonalRoute
+    }
     '/_chat/pull-requests': {
       id: '/_chat/pull-requests'
       path: '/pull-requests'
       fullPath: '/pull-requests'
       preLoaderRoute: typeof ChatPullRequestsRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/_personal/bots_/settings': {
+      id: '/_personal/bots_/settings'
+      path: '/bots/settings'
+      fullPath: '/bots/settings'
+      preLoaderRoute: typeof PersonalBotsSettingsRouteImport
+      parentRoute: typeof PersonalRoute
+    }
+    '/_personal/bots_/new': {
+      id: '/_personal/bots_/new'
+      path: '/bots/new'
+      fullPath: '/bots/new'
+      preLoaderRoute: typeof PersonalBotsNewRouteImport
+      parentRoute: typeof PersonalRoute
     }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
@@ -492,6 +633,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/$environmentId/$threadId'
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/_personal/bots_/$botId/edit': {
+      id: '/_personal/bots_/$botId/edit'
+      path: '/bots/$botId/edit'
+      fullPath: '/bots/$botId/edit'
+      preLoaderRoute: typeof PersonalBotsBotIdEditRouteImport
+      parentRoute: typeof PersonalRoute
     }
   }
 }
@@ -511,6 +659,30 @@ const ChatRouteChildren: ChatRouteChildren = {
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
+
+interface PersonalRouteChildren {
+  PersonalBotsRoute: typeof PersonalBotsRoute
+  PersonalComputerRoute: typeof PersonalComputerRoute
+  PersonalFilesRoute: typeof PersonalFilesRoute
+  PersonalTasksRoute: typeof PersonalTasksRoute
+  PersonalBotsNewRoute: typeof PersonalBotsNewRoute
+  PersonalBotsSettingsRoute: typeof PersonalBotsSettingsRoute
+  PersonalBotsBotIdEditRoute: typeof PersonalBotsBotIdEditRoute
+}
+
+const PersonalRouteChildren: PersonalRouteChildren = {
+  PersonalBotsRoute: PersonalBotsRoute,
+  PersonalComputerRoute: PersonalComputerRoute,
+  PersonalFilesRoute: PersonalFilesRoute,
+  PersonalTasksRoute: PersonalTasksRoute,
+  PersonalBotsNewRoute: PersonalBotsNewRoute,
+  PersonalBotsSettingsRoute: PersonalBotsSettingsRoute,
+  PersonalBotsBotIdEditRoute: PersonalBotsBotIdEditRoute,
+}
+
+const PersonalRouteWithChildren = PersonalRoute._addFileChildren(
+  PersonalRouteChildren,
+)
 
 interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
@@ -548,6 +720,7 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
+  PersonalRoute: PersonalRouteWithChildren,
   ConnectRoute: ConnectRoute,
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,

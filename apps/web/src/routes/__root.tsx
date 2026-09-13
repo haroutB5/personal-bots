@@ -66,6 +66,7 @@ import {
   type KeybindingsUpdateToastController,
 } from "../components/KeybindingsUpdateToast.logic";
 
+import { isPersonalPath } from "../features/personal/personalMode";
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 
@@ -167,7 +168,13 @@ function RootRouteView() {
     );
   }
 
-  const appShell = (
+  // The personal Bots shell brings its own full-screen layout and tab bar, so
+  // it skips the upstream thread sidebar; every other route keeps it.
+  const appShell = isPersonalPath(pathname) ? (
+    <CommandPalette>
+      <Outlet />
+    </CommandPalette>
+  ) : (
     <CommandPalette>
       <AppSidebarLayout>
         <Outlet />
