@@ -86,6 +86,13 @@ export class BrowserLease extends Context.Service<
       input: { readonly threadId: string; readonly operation: string },
       effect: Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | BrowserLeaseRejected, R>;
+    /**
+     * Runs `effect` under the same lock agent ops take, without asking who
+     * holds the lease. For teardown the user themselves asked for: it must not
+     * interleave with an agent op that is already past its own checks, but it
+     * is not subject to them.
+     */
+    readonly runExclusive: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
     readonly takeControl: (sessionId: string) => Effect.Effect<LeaseView>;
     readonly returnToAgent: Effect.Effect<LeaseView>;
     /**
@@ -350,6 +357,9 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const runExclusive: BrowserLease["Service"]["runExclusive"] = (effect) =>
+    opLock.withPermit(effect);
+
   const takeControl: BrowserLease["Service"]["takeControl"] = (sessionId) =>
     takeoverLock.withPermit(
       Effect.gen(function* () {
@@ -490,6 +500,7 @@ export const make = Effect.gen(function* () {
 
   return BrowserLease.of({
     runAgentOp,
+    runExclusive,
     takeControl,
     returnToAgent,
     recordPageUrl,

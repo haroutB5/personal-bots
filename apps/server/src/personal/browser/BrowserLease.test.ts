@@ -42,6 +42,39 @@ const rejectionReason = <A, E>(exit: Exit.Exit<A, E>): string => {
 };
 
 describe("BrowserLease", () => {
+  // Audit #6: a close that only takes the launch lock can tear the context
+  // down underneath an operation that is already past launch.
+  it.effect("runExclusive waits for the in-flight agent op", () =>
+    Effect.gen(function* () {
+      const lease = yield* BrowserLease.BrowserLease;
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const order: string[] = [];
+      const inFlight = yield* lease
+        .runAgentOp(
+          { threadId: "thread-a", operation: "click" },
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(Effect.sync(() => order.push("op"))),
+          ),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+
+      const exclusive = yield* lease
+        .runExclusive(Effect.sync(() => order.push("exclusive")))
+        .pipe(Effect.forkChild);
+      // Given a chance to run, it still has not: the op holds the lock.
+      yield* Effect.yieldNow;
+      expect(order).toEqual([]);
+
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(inFlight);
+      yield* Fiber.join(exclusive);
+      expect(order).toEqual(["op", "exclusive"]);
+    }).pipe(Effect.provide(leaseLayer)),
+  );
+
   it.effect("takeover waits for the in-flight agent op, then bumps the generation", () =>
     Effect.gen(function* () {
       const lease = yield* BrowserLease.BrowserLease;

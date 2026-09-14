@@ -33,6 +33,7 @@ import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginSe
 import * as PersonalTaskRepository from "../../../personal/tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
 import * as ProviderRegistry from "../../../provider/Services/ProviderRegistry.ts";
+import { HostOperationError } from "../../../personal/browser/pageOperations.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { BotsToolkitHandlersLive, DELEGATE_NOTE } from "./handlers.ts";
 import { BotsToolkit } from "./tools.ts";
@@ -56,6 +57,8 @@ interface Harness {
     state: PersonalBrowserStatus["state"];
     controller: PersonalBrowserStatus["controller"];
     readonly closes: Array<ThreadId | null>;
+    /** Fires as the handler reads the status; lets a test land a takeover there. */
+    onStatusRead: (() => void) | null;
   };
 }
 
@@ -73,14 +76,30 @@ const makeLayer = (harness: Harness) =>
   PersonalSecretService.layerLive.pipe(
     Layer.provideMerge(
       Layer.mock(PersonalBrowser.PersonalBrowser)({
-        status: () => Effect.sync(() => browserStatus(harness)),
-        closeBrowser: (input) =>
+        status: () =>
           Effect.sync(() => {
-            harness.browser.closes.push(input.byThreadId);
-            harness.browser.state = "offline";
-            harness.browser.controller = { _tag: "None" };
-            return browserStatus(harness);
+            const snapshot = browserStatus(harness);
+            harness.browser.onStatusRead?.();
+            return snapshot;
           }),
+        // The real service re-checks human control inside the lease lock, so a
+        // takeover that lands after the handler's read still refuses the close.
+        closeBrowser: (input) =>
+          Effect.suspend(() =>
+            harness.browser.controller._tag === "Human"
+              ? Effect.fail(
+                  new HostOperationError(
+                    "PreviewAutomationControlInterruptedError",
+                    "The user has taken control of the shared browser.",
+                  ),
+                )
+              : Effect.sync(() => {
+                  harness.browser.closes.push(input.byThreadId);
+                  harness.browser.state = "offline";
+                  harness.browser.controller = { _tag: "None" };
+                  return browserStatus(harness);
+                }),
+          ),
       }),
     ),
     Layer.provideMerge(
@@ -206,7 +225,12 @@ const withHarness = <A, E>(
     dispatched: [],
     sessions: new Map(),
     loginUses: [],
-    browser: { state: "connected", controller: { _tag: "None" }, closes: [] },
+    browser: {
+      state: "connected",
+      controller: { _tag: "None" },
+      closes: [],
+      onStatusRead: null,
+    },
   };
   return body(harness).pipe(Effect.provide(makeLayer(harness)));
 };
@@ -386,6 +410,27 @@ describe("bots toolkit handlers", () => {
         const second = yield* call("close_browser", {});
         expect(second.closed).toBe(false);
         expect(second.note).toContain("already closed");
+      }),
+    ),
+  );
+
+  // Audit #6: the handler's own read cannot be the authorization. A takeover
+  // that lands after it must still leave the browser open.
+  it.effect("close_browser reports a takeover that lands after its status read", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        // The user takes control in the window between the read and the close.
+        harness.browser.onStatusRead = () => {
+          harness.browser.controller = { _tag: "Human", self: false, connected: true };
+          harness.browser.onStatusRead = null;
+        };
+
+        const error = yield* call("close_browser", {}).pipe(Effect.flip);
+
+        expect(error.message).toContain("The browser was not closed");
+        expect(error.message).toContain("taken control");
+        expect(harness.browser.closes).toEqual([]);
       }),
     ),
   );

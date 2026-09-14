@@ -272,7 +272,9 @@ const make = Effect.gen(function* () {
     // Which thread opened the browser does not gate this: the browser is
     // shared, and a bot the user asked to close it should be able to. A human
     // at the controls does, because closing under them would yank the page
-    // they are reading.
+    // they are reading. That check is the browser service's, taken inside the
+    // same lease lock as the teardown; the read below only turns the common
+    // case into a better sentence than the lease's own.
     close_browser: () =>
       Effect.gen(function* () {
         const caller = yield* callerBot();
@@ -283,10 +285,20 @@ const make = Effect.gen(function* () {
           );
         }
         const wasRunning = before.state !== "offline";
-        yield* browser.closeBrowser({
-          sessionId: MCP_SESSION_ID,
-          byThreadId: caller.threadId,
-        });
+        yield* browser
+          .closeBrowser({
+            sessionId: MCP_SESSION_ID,
+            byThreadId: caller.threadId,
+          })
+          .pipe(
+            // A takeover that landed after the read above is refused by the
+            // service, and the bot is told the browser is still open.
+            Effect.mapError((error) =>
+              toolError(
+                `The browser was not closed: ${error.message} Leave it open; the user will close it or hand control back.`,
+              ),
+            ),
+          );
         return {
           closed: wasRunning,
           note: wasRunning

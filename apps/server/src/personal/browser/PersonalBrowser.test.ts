@@ -1,14 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
-  PersonalBotId,
   PersonalBrowserInputMessage,
-  ProviderInstanceId,
   ThreadId,
   type PreviewAutomationRequest,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -659,6 +656,43 @@ describe("PersonalBrowser", () => {
         ((yield* browser.handleAutomationRequest(request("status"))) as PreviewAutomationStatus)
           .tabId,
       ).toBeNull();
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  // Audit #6: the authority check used to sit in the MCP handler, so a
+  // takeover could land between "no human is in control" and Chrome exiting.
+  it.effect("refuses a bot's close from inside the lease, after a human takes over", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      yield* browser.takeControl("session-1");
+
+      const refused = yield* browser
+        .closeBrowser({ sessionId: "mcp", byThreadId: threadId })
+        .pipe(Effect.asVoid, Effect.flip);
+
+      expect(refused.tag).toBe("PreviewAutomationControlInterruptedError");
+      // Chrome is still up and the page the user is reading is still open.
+      expect(fake.state.page.closed).toBe(false);
+      expect((yield* browser.status("session-1")).state).toBe("connected");
+
+      // The user's own close is not subject to that check.
+      const closed = yield* browser.closeBrowser({ sessionId: "session-1", byThreadId: null });
+      expect(closed.state).toBe("offline");
+      expect(fake.state.page.closed).toBe(true);
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  // The other half of #6: the close is serialized with agent operations, so it
+  // cannot tear the context down underneath one that is already past launch.
+  it.effect("agent close with an idle lease", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      const closed = yield* browser.closeBrowser({ sessionId: "mcp", byThreadId: threadId });
+      expect(closed.state).toBe("offline");
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 

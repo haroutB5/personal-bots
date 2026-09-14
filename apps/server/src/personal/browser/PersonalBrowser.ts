@@ -119,11 +119,14 @@ export class PersonalBrowser extends Context.Service<
      * so the next boot does not reopen what was just closed. Idempotent — a
      * second close on an already-offline browser changes nothing and records
      * no activity. `byThreadId` names the bot that asked; null means the user.
+     * A bot's close is refused, inside the lease lock, while a human holds
+     * control: checking that from the caller leaves a window in which the
+     * takeover lands after the check and before the teardown.
      */
     readonly closeBrowser: (input: {
       readonly sessionId: string;
       readonly byThreadId: ThreadId | null;
-    }) => Effect.Effect<PersonalBrowserStatus>;
+    }) => Effect.Effect<PersonalBrowserStatus, HostOperationError>;
     readonly listFiles: Effect.Effect<PersonalBrowserFilesResult, PersonalBrowserError>;
     readonly resolveFile: (
       fileId: string,
@@ -1348,10 +1351,10 @@ export const make = (options: PersonalBrowserOptions) =>
         return yield* status(sessionId);
       });
 
-    const closeBrowser: PersonalBrowser["Service"]["closeBrowser"] = (input) =>
+    const closeBrowser: PersonalBrowser["Service"]["closeBrowser"] = (input) => {
       // Under the launch lock so a close can never interleave with a launch and
       // leave a live context behind an "offline" phase.
-      launchLock.withPermit(
+      const teardown = launchLock.withPermit(
         Effect.gen(function* () {
           const leaseBefore = yield* lease.view;
           // "Nothing to close" is the whole idempotency test: no Chrome, no
@@ -1404,6 +1407,27 @@ export const make = (options: PersonalBrowserOptions) =>
           return yield* status(input.sessionId);
         }),
       );
+      // A bot's close is an agent operation like any other: the authority check
+      // and the teardown run inside the same lease lock, so a takeover can no
+      // longer land between "no human is in control" and Chrome exiting, and
+      // the close cannot overtake an agent op that is already past launch.
+      // The user's own close is not subject to that check, but still takes the
+      // lock so it does not interleave with an op either.
+      return input.byThreadId === null
+        ? lease.runExclusive(teardown)
+        : lease
+            .runAgentOp({ threadId: input.byThreadId, operation: "close" }, teardown)
+            .pipe(
+              Effect.catchTag("BrowserLeaseRejected", (rejected) =>
+                Effect.fail(
+                  new HostOperationError(
+                    "PreviewAutomationControlInterruptedError",
+                    rejected.message,
+                  ),
+                ),
+              ),
+            );
+    };
 
     const listFiles: PersonalBrowser["Service"]["listFiles"] = Effect.tryPromise({
       try: () => scanArtifacts(artifactsDir),

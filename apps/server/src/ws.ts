@@ -2525,7 +2525,12 @@ const makeWsRpcLayer = (
         [WS_METHODS.personalBrowserClose]: (_input) =>
           observeRpcEffect(
             WS_METHODS.personalBrowserClose,
-            personalBrowser.closeBrowser({ sessionId: currentSessionId, byThreadId: null }),
+            // The user's own close is never refused by the browser's own
+            // human-control check; a failure can only be a teardown error, and
+            // the current status is the useful answer either way.
+            personalBrowser
+              .closeBrowser({ sessionId: currentSessionId, byThreadId: null })
+              .pipe(Effect.catch(() => personalBrowser.status(currentSessionId))),
             { "rpc.aggregate": "personal-browser" },
           ),
         [WS_METHODS.personalBrowserListFiles]: (_input) =>
