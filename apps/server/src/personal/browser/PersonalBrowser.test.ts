@@ -128,7 +128,16 @@ class FakePage implements BrowserPage {
  */
 const configureLoginPage = (page: FakePage) => {
   page.locatorCount = 1;
-  page.countLocatorImpl = (locator) => (locator.includes("[action") ? 0 : 1);
+  page.countLocatorImpl = () => 1;
+  // The fill resolves the form's real submission target in the page; an
+  // ordinary login form posts back to the page it is on.
+  page.evaluateImpl = async () => ({
+    found: true,
+    hasForm: true,
+    baseUri: page.currentUrl,
+    action: page.currentUrl,
+    submitters: [],
+  });
 };
 
 const makeFakeDriver = () => {

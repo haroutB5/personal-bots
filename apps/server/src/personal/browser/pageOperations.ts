@@ -165,16 +165,109 @@ const pageOrigin = (page: BrowserPage, expectedOrigin: string) => {
 const PASSWORD_FILL_TIMEOUT_MS = 2_000;
 
 /**
+ * Where the login form would actually submit, resolved by the browser rather
+ * than read off an attribute.
+ *
+ * `form.action` and `element.formAction` are IDL attributes: the browser has
+ * already resolved them against `document.baseURI` and normalized the scheme,
+ * so uppercase schemes, leading whitespace, a protocol-relative `//host/…` and
+ * a relative action under a cross-origin `<base>` all arrive here as absolute
+ * URLs. Attribute-prefix matching saw none of those.
+ *
+ * The form is selected the same way the fill selects it — the visible, enabled
+ * password field, preferring the form that holds the focus — so what is
+ * validated is what is filled.
+ */
+const FORM_DESTINATIONS_SCRIPT = `(() => {
+  const visible = (element) => {
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+  };
+  const fields = Array.from(document.querySelectorAll('input[type="password"]'))
+    .filter((element) => !element.disabled && visible(element));
+  if (fields.length === 0) return { found: false, hasForm: false, baseUri: document.baseURI, action: null, submitters: [] };
+  const focused = fields.find((element) => element.form !== null && element.form.contains(document.activeElement));
+  const form = (focused ?? fields[0]).form;
+  if (form === null) return { found: true, hasForm: false, baseUri: document.baseURI, action: null, submitters: [] };
+  const submitters = Array.from(form.querySelectorAll("[formaction]"))
+    .map((element) => (typeof element.formAction === "string" ? element.formAction : null))
+    .filter((value) => value !== null && value !== "");
+  return { found: true, hasForm: true, baseUri: document.baseURI, action: form.action, submitters };
+})()`;
+
+interface FormDestinations {
+  readonly found: boolean;
+  readonly hasForm: boolean;
+  readonly baseUri: unknown;
+  readonly action: unknown;
+  readonly submitters: unknown;
+}
+
+const originOf = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+};
+
+const crossOriginError = (expectedOrigin: string, what: string) =>
+  new HostOperationError(
+    "PreviewAutomationExecutionError",
+    `This login form submits to a different origin than ${expectedOrigin} (${what}), so it was not filled.`,
+    { selectorKind: "login-form-action" },
+  );
+
+/**
  * A form that posts to a different origin is a credential hand-off the user
  * never approved, and `pageOrigin` cannot see it: origin equality ignores the
  * path, and the page itself is chosen by the (possibly prompt-injected) model.
  * Relative and same-origin actions are the normal case and stay allowed.
+ *
+ * Runs in the server's own evaluate path. Bots never reach this primitive: a
+ * model-provided script is a separate, taint-tracked tool call, and a saved
+ * login is refused on any origin where one has run.
  */
-const crossOriginActionSelector = (formSelector: string, expectedOrigin: string) =>
-  [
-    `${formSelector}[action^="http"]:not([action^="${expectedOrigin}/"]):not([action="${expectedOrigin}"])`,
-    `${formSelector}[action^="//"]`,
-  ].join(", ");
+async function assertFormDestinations(page: BrowserPage, expectedOrigin: string): Promise<void> {
+  let resolved: FormDestinations;
+  try {
+    resolved = (await page.evaluate(FORM_DESTINATIONS_SCRIPT)) as FormDestinations;
+  } catch (cause) {
+    throw new HostOperationError(
+      "PreviewAutomationExecutionError",
+      `The login form on ${expectedOrigin} could not be checked, so it was not filled.`,
+      { selectorKind: "login-form-action", cause: String(cause) },
+    );
+  }
+  if (resolved === null || typeof resolved !== "object" || resolved.found !== true) {
+    // Playwright matched a password field, so a page that now reports none has
+    // changed under the check. Fail closed rather than fill blind.
+    throw new HostOperationError(
+      "PreviewAutomationTargetNotEditableError",
+      "The login form changed while it was being checked, so it was not filled.",
+      { selectorKind: "login-password-field" },
+    );
+  }
+  if (resolved.hasForm) {
+    if (originOf(resolved.action) !== expectedOrigin) {
+      throw crossOriginError(expectedOrigin, "form action");
+    }
+    const submitters = Array.isArray(resolved.submitters) ? resolved.submitters : [];
+    for (const submitter of submitters) {
+      if (originOf(submitter) !== expectedOrigin) {
+        throw crossOriginError(expectedOrigin, "a submit button's formaction");
+      }
+    }
+  }
+  // A cross-origin <base> retargets every relative URL on the page; it is
+  // never normal on a sign-in page, and the form is not the only thing on the
+  // page that would follow it.
+  if (originOf(resolved.baseUri) !== expectedOrigin) {
+    throw crossOriginError(expectedOrigin, "its base URL points elsewhere");
+  }
+}
 
 /**
  * Types a login without putting either value in an evaluate expression or a
@@ -211,16 +304,7 @@ export async function performFillLogin(
       { selectorKind: "login-password-field" },
     );
   }
-  if (
-    formSelector !== null &&
-    (await page.countLocator(crossOriginActionSelector(formSelector, input.expectedOrigin))) > 0
-  ) {
-    throw new HostOperationError(
-      "PreviewAutomationExecutionError",
-      `This login form submits to a different origin than ${input.expectedOrigin}, so it was not filled.`,
-      { selectorKind: "login-form-action" },
-    );
-  }
+  await assertFormDestinations(page, input.expectedOrigin);
 
   const fields: PersonalLoginFilledField[] = [];
   for (const candidate of LOGIN_USERNAME_INPUTS) {
@@ -231,6 +315,11 @@ export async function performFillLogin(
     fields.push("username");
     break;
   }
+  // Typing the username is an event the page reacts to: it can swap the form,
+  // rewrite the action or reveal a submitter, so the destinations are resolved
+  // again rather than trusted from before the keystrokes.
+  pageOrigin(page, input.expectedOrigin);
+  await assertFormDestinations(page, input.expectedOrigin);
 
   // Resolve first, check the origin second, fill third. Anything that moves the
   // page between the check and the fill invalidates the handle.
@@ -244,6 +333,8 @@ export async function performFillLogin(
   }
   try {
     pageOrigin(page, input.expectedOrigin);
+    // Last look before the value exists in the page at all.
+    await assertFormDestinations(page, input.expectedOrigin);
     await passwordField.fill(input.password, PASSWORD_FILL_TIMEOUT_MS);
   } catch (cause) {
     if (cause instanceof HostOperationError) throw cause;
