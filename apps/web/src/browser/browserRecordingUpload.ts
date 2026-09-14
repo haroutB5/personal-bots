@@ -14,7 +14,7 @@ import {
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { attachmentEnvironment } from "~/state/attachments";
-import { readPreparedConnection } from "~/state/session";
+import { awaitPreparedConnection } from "~/state/session";
 
 /** Sends the finished encoded file once; capture frames never cross the environment connection. */
 export async function uploadBrowserRecording(
@@ -37,8 +37,8 @@ export async function uploadBrowserRecording(
       mimeType: artifact.mimeType,
       sizeBytes: blob.size,
     },
-    resolveUploadUrl: (relativeUrl) => {
-      const connection = readPreparedConnection(environmentId);
+    resolveUploadUrl: async (relativeUrl) => {
+      const connection = await awaitPreparedConnection(environmentId);
       return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
     },
     transport: (url) => {
