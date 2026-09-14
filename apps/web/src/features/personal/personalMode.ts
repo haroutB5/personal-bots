@@ -7,16 +7,15 @@
  * `/bots` again. The upstream routes themselves are always reachable by URL.
  */
 
-export type PersonalTab = "chats" | "tasks" | "computer" | "files";
+export type PersonalTab = "chats" | "tasks" | "files";
 
 export const PERSONAL_TABS: ReadonlyArray<{
   readonly tab: PersonalTab;
   readonly label: string;
-  readonly to: "/bots" | "/tasks" | "/computer" | "/files";
+  readonly to: "/bots" | "/tasks" | "/files";
 }> = [
   { tab: "chats", label: "Chats", to: "/bots" },
   { tab: "tasks", label: "Tasks", to: "/tasks" },
-  { tab: "computer", label: "Computer", to: "/computer" },
   { tab: "files", label: "Files", to: "/files" },
 ];
 
@@ -47,7 +46,8 @@ export function activeTabFor(pathname: string): PersonalTab | null {
   if (path === "/tasks" || (path.startsWith("/tasks/") && !isRoutineEditorPath(path))) {
     return "tasks";
   }
-  if (path === "/computer") return "computer";
+  // The Computer deep link remains in the personal shell, but is no longer a tab.
+  if (path === "/computer") return null;
   if (path === "/files") return "files";
   return null;
 }
