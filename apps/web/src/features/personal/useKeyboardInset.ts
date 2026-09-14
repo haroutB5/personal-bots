@@ -1,32 +1,45 @@
+import type { RefObject } from "react";
 import { useEffect, useState } from "react";
 
 /**
- * Height the on-screen keyboard covers. Chromium resizes the layout viewport
- * itself (`interactive-widget=resizes-content`), which leaves this at 0; iOS
- * Safari only shrinks the visual viewport, so the composer is lifted by the
- * difference.
+ * How far the conversation shell's bottom edge sits below the visible
+ * viewport's bottom edge - i.e. the padding needed to lift the composer
+ * above the on-screen keyboard.
  *
- * iOS also pans the document itself to reveal the focused input (the shell's
- * `overflow-hidden` does not stop the browser's own pan) and can leave that
- * pan behind after the keyboard closes, which shoves the header off-screen
- * and opens a dead strip under the composer. Whenever the viewport reports
- * the keyboard gone, any leftover document scroll is put back to 0.
+ * Measured on a real iPhone (standalone PWA): the keyboard shrinks the
+ * LAYOUT viewport (innerHeight 873 -> 487) while `100dvh` does not follow,
+ * so the shell keeps its full height and the composer lands below the fold
+ * with `innerHeight - visualViewport.height` reading 0. No single global
+ * height is trustworthy, so the overlap is computed geometrically:
+ *
+ *   covered = shellRect.bottom - (visualViewport.offsetTop + height)
+ *
+ * (client coords share the layout-viewport origin with offsetTop). This is
+ * exact for all three observed keyboard models: iOS resizing the layout
+ * viewport, older iOS shrinking only the visual viewport (with or without a
+ * pan), and Chromium's resizes-content where the shell itself shrinks and
+ * the overlap is 0.
+ *
+ * Leftover document pan is reset only when the shell is fully visible again
+ * (overlap <= 1); resetting while typing drags the composer back under the
+ * keyboard.
  */
-export function useKeyboardInset(): number {
+export function useKeyboardInset(shellRef?: RefObject<HTMLElement | null>): number {
   const [inset, setInset] = useState(0);
   useEffect(() => {
     const viewport = window.visualViewport;
     if (!viewport) return;
     const update = () => {
-      const covered = window.innerHeight - viewport.height - viewport.offsetTop;
+      const shell = shellRef?.current ?? null;
+      // The applied padding lifts the composer inside the shell without
+      // moving the shell's rect (its height is constrained by the 100dvh
+      // ancestor), so reading the rect each event does not feed back.
+      const shellBottom =
+        shell !== null ? shell.getBoundingClientRect().bottom : window.innerHeight;
+      const visibleBottom = viewport.offsetTop + viewport.height;
+      const covered = shellBottom - visibleBottom;
       setInset(covered > 1 ? Math.round(covered) : 0);
-      // `covered` alone cannot distinguish "keyboard closed" from "keyboard
-      // open but iOS panned the visual viewport down" (offsetTop eats the
-      // difference). Resetting during that pan drags the focused composer
-      // back under the keyboard, so the scroll restore keys on the raw
-      // height delta instead.
-      const keyboardClosed = window.innerHeight - viewport.height <= 1;
-      if (keyboardClosed) {
+      if (covered <= 1) {
         const scroller = document.scrollingElement;
         if (scroller && scroller.scrollTop > 0) scroller.scrollTop = 0;
         if (window.scrollY > 0) window.scrollTo(0, 0);
@@ -39,6 +52,6 @@ export function useKeyboardInset(): number {
       viewport.removeEventListener("resize", update);
       viewport.removeEventListener("scroll", update);
     };
-  }, []);
+  }, [shellRef]);
   return inset;
 }

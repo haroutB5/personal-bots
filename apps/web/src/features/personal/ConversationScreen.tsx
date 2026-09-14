@@ -154,7 +154,8 @@ export function ConversationScreen({
   });
   const archiveThread = useAtomCommand(personalBotArchiveThread);
   const { start: startNewChat, starting } = useStartBotChat(environmentId, bot?.botId ?? null);
-  const keyboardInset = useKeyboardInset();
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const keyboardInset = useKeyboardInset(shellRef);
   const now = useMinuteNow();
   const [pending, setPending] = useState<ReadonlyArray<PendingOutgoingMessage>>([]);
   const [respondingIds, setRespondingIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -352,6 +353,7 @@ export function ConversationScreen({
 
   return (
     <div
+      ref={shellRef}
       className="flex h-full min-h-0 flex-col"
       style={{
         paddingBottom: keyboardInset > 0 ? keyboardInset : "max(env(safe-area-inset-bottom), 8px)",
