@@ -57,6 +57,7 @@ import {
   waitingLabelsByThread,
 } from "./delegationModel";
 import { MessageList, type PendingOutgoingMessage } from "./MessageList";
+import { diagnosticsEnabled, DiagnosticsOverlay } from "./DiagnosticsOverlay";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { PersonalComposer } from "./PersonalComposer";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
@@ -356,6 +357,7 @@ export function ConversationScreen({
         paddingBottom: keyboardInset > 0 ? keyboardInset : "max(env(safe-area-inset-bottom), 8px)",
       }}
     >
+      {diagnosticsEnabled() ? <DiagnosticsOverlay /> : null}
       <header className="flex h-16 shrink-0 items-center gap-3 px-2">
         <Link to="/bots" aria-label="Back to Bots" className={ICON_BUTTON}>
           <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />

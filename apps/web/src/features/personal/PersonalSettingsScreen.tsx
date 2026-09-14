@@ -20,6 +20,7 @@ import {
   usePersonalEnvironmentId,
   usePersonalProfile,
 } from "./usePersonalBots";
+import { diagnosticsEnabled, setDiagnosticsEnabled } from "./DiagnosticsOverlay";
 
 const SECTION_TITLE =
   "mb-2 px-1 text-[13px] font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase";
@@ -99,6 +100,7 @@ function DisplayNameForm({
 /** /bots/settings: greeting name, bot management and the Developer view exit. */
 export function PersonalSettingsScreen(): JSX.Element {
   const navigate = useNavigate();
+  const [diagnosticsOn, setDiagnosticsOn] = useState(() => diagnosticsEnabled());
   const environmentId = usePersonalEnvironmentId();
   const profile = usePersonalProfile(environmentId);
   const list = usePersonalBotsList(environmentId);
@@ -285,6 +287,27 @@ export function PersonalSettingsScreen(): JSX.Element {
           Bots only use their built-in tools and this app&apos;s tools. Your Claude Code add-ons and
           claude.ai connectors, and your Codex plugins and connectors, are not shared with bots.
         </p>
+        <button
+          type="button"
+          onClick={() => {
+            setDiagnosticsEnabled(!diagnosticsOn);
+            setDiagnosticsOn(!diagnosticsOn);
+          }}
+          aria-pressed={diagnosticsOn}
+          className={`${CARD} mt-3 flex min-h-14 w-full items-center gap-3 px-4 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]`}
+        >
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="text-[15px] font-semibold text-[var(--personal-text)]">
+              Diagnostics overlay
+            </span>
+            <span className="text-[13px] text-[var(--personal-text-secondary)]">
+              Shows live viewport numbers in chats, for debugging keyboard issues.
+            </span>
+          </span>
+          <span className="shrink-0 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
+            {diagnosticsOn ? "On" : "Off"}
+          </span>
+        </button>
       </section>
     </div>
   );

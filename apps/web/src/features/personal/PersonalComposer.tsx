@@ -409,6 +409,11 @@ export function PersonalComposer({
                   className="flex h-11 shrink-0 items-center gap-1 px-1 text-xs font-semibold text-[var(--personal-danger)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-danger)] disabled:opacity-40"
                 >
                   <CircleAlert aria-hidden="true" className="size-4" strokeWidth={2} />
+                  {/* The reason is visible, not just announced: it is the only
+                      way to diagnose a phone-side failure from a screenshot. */}
+                  <span aria-hidden="true" className="max-w-32 truncate font-normal">
+                    {upload.reason} ·
+                  </span>
                   <span aria-hidden="true">Retry</span>
                 </button>
               ) : null}
