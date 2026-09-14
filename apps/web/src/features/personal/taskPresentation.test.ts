@@ -1,3 +1,5 @@
+import type { PersonalRoutine } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -5,6 +7,7 @@ import {
   canRetryTask,
   formatLocalDateTime,
   parseTaskListFilter,
+  routineNextRunLabel,
   taskListFor,
   taskStatusTone,
 } from "./taskPresentation";
@@ -47,5 +50,16 @@ describe("formatLocalDateTime", () => {
     expect(formatLocalDateTime(Date.parse("2026-09-14T08:00:00Z"), "America/New_York")).toBe(
       "Mon 14 Sep, 04:00",
     );
+  });
+
+  it("uses the Scheduled list's next-run states", () => {
+    const routine = {
+      enabled: true,
+      nextDueAt: DateTime.makeUnsafe("2026-09-14T08:00:00Z"),
+      timeZone: "Europe/London",
+    } as PersonalRoutine;
+    expect(routineNextRunLabel(routine)).toBe("Next: Mon 14 Sep, 09:00");
+    expect(routineNextRunLabel({ ...routine, enabled: false })).toBe("Paused");
+    expect(routineNextRunLabel({ ...routine, nextDueAt: null })).toBe("No more runs");
   });
 });

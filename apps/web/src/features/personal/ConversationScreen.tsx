@@ -40,6 +40,7 @@ import { BotAvatar } from "./BotAvatar";
 import { resolveBotProvider } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerPanel } from "./ConversationComputerPanel";
+import { ConversationRoutinesPanel } from "./ConversationRoutinesPanel";
 import {
   buildConversationItems,
   CONVERSATION_STATE_LABEL,
@@ -501,8 +502,14 @@ export function ConversationScreen({
             threadId={threadId}
             manuallyVisible={computerPanelVisible}
             expanded={computerPanelExpanded}
-            onExpandedChange={setComputerPanelExpanded}
+            onExpandedChange={(expanded) => {
+              if (expanded) setComputerPanelVisible(true);
+              setComputerPanelExpanded(expanded);
+            }}
           />
+          {!computerPanelExpanded ? (
+            <ConversationRoutinesPanel environmentId={environmentId} botId={botId} />
+          ) : null}
           <PersonalComposer
             environmentId={environmentId}
             threadId={threadId}

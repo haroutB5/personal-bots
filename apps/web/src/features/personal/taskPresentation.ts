@@ -1,8 +1,10 @@
 import {
   PERSONAL_TASK_RETRYABLE_STATUSES,
   PERSONAL_TASK_TERMINAL_STATUSES,
+  type PersonalRoutine,
   type PersonalTaskStatus,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import { PERSONAL_TIME_ZONE } from "./greeting";
 
@@ -93,4 +95,10 @@ export function formatLocalDateTime(
   // ICU's en-GB short September is "Sept"; the app writes "Sep".
   const month = pick("month").slice(0, 3);
   return `${pick("weekday")} ${pick("day")} ${month}, ${pick("hour")}:${pick("minute")}`;
+}
+
+export function routineNextRunLabel(routine: PersonalRoutine): string {
+  if (!routine.enabled) return "Paused";
+  if (routine.nextDueAt === null) return "No more runs";
+  return `Next: ${formatLocalDateTime(DateTime.toEpochMillis(routine.nextDueAt), routine.timeZone)}`;
 }

@@ -14,7 +14,7 @@ import { Plus } from "lucide-react";
 import { BotAvatar } from "./BotAvatar";
 import { formatRelativeTime } from "./relativeTime";
 import {
-  formatLocalDateTime,
+  routineNextRunLabel,
   TASK_LIST_FILTERS,
   taskListFor,
   taskStatusLabel,
@@ -96,12 +96,6 @@ function TaskRow({
       </Link>
     </li>
   );
-}
-
-export function routineNextRunLabel(routine: PersonalRoutine): string {
-  if (!routine.enabled) return "Paused";
-  if (routine.nextDueAt === null) return "No more runs";
-  return `Next: ${formatLocalDateTime(DateTime.toEpochMillis(routine.nextDueAt), routine.timeZone)}`;
 }
 
 function RoutineRow({

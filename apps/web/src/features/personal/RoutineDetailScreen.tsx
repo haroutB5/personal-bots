@@ -13,7 +13,8 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { commandFailureMessage } from "./commandFeedback";
 import { formatLocalDateTime } from "./taskPresentation";
 import { DETAIL_CARD, DetailRow, PRIMARY_BUTTON, SECONDARY_BUTTON } from "./TaskDetailScreen";
-import { routineNextRunLabel, SmallBotAvatar } from "./TasksScreen";
+import { routineNextRunLabel } from "./taskPresentation";
+import { SmallBotAvatar } from "./TasksScreen";
 import {
   personalRoutineDelete,
   personalRoutinePause,
