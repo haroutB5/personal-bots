@@ -180,7 +180,7 @@ export function ComputerScreen({ onBackToChat }: ComputerScreenProps) {
       </div>
 
       {segment === "browser" ? (
-        <BrowserPane
+        <ComputerBrowserPane
           environmentId={environmentId}
           status={feed.status}
           events={feed.events}
@@ -194,12 +194,12 @@ export function ComputerScreen({ onBackToChat }: ComputerScreenProps) {
   );
 }
 
-function BrowserPane(props: {
+export function ComputerBrowserPane(props: {
   readonly environmentId: EnvironmentId | null;
   readonly status: PersonalBrowserStatus | null;
   readonly events: ReadonlyArray<PersonalBrowserActivityEvent>;
   readonly reachable: boolean;
-  readonly onBackToChat: () => void;
+  readonly onBackToChat?: () => void;
 }) {
   const { environmentId, status } = props;
   const takeControl = useAtomCommand(computerEnvironment.takeControl);
@@ -265,7 +265,7 @@ function BrowserPane(props: {
         </p>
       ) : null}
 
-      <div className="mt-2.5 grid grid-cols-2 gap-2.5">
+      <div className={`mt-2.5 grid gap-2.5 ${props.onBackToChat ? "grid-cols-2" : "grid-cols-1"}`}>
         <button
           type="button"
           disabled={environmentId === null || !props.reachable || status === null || pending}
@@ -279,14 +279,16 @@ function BrowserPane(props: {
           )}
           {inControl ? "Return to agent" : "Take control"}
         </button>
-        <button
-          type="button"
-          onClick={props.onBackToChat}
-          className="flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[15px] font-semibold"
-        >
-          <Reply className="size-[18px]" strokeWidth={ICON_STROKE} />
-          Back to chat
-        </button>
+        {props.onBackToChat ? (
+          <button
+            type="button"
+            onClick={props.onBackToChat}
+            className="flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[15px] font-semibold"
+          >
+            <Reply className="size-[18px]" strokeWidth={ICON_STROKE} />
+            Back to chat
+          </button>
+        ) : null}
       </div>
 
       <ActivityCard events={props.events} />

@@ -39,6 +39,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { BotAvatar } from "./BotAvatar";
 import { resolveBotProvider } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
+import { ConversationComputerPanel } from "./ConversationComputerPanel";
 import {
   buildConversationItems,
   CONVERSATION_STATE_LABEL,
@@ -160,6 +161,8 @@ export function ConversationScreen({
   const [pending, setPending] = useState<ReadonlyArray<PendingOutgoingMessage>>([]);
   const [respondingIds, setRespondingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [actionError, setActionError] = useState<string | null>(null);
+  const [computerPanelVisible, setComputerPanelVisible] = useState(false);
+  const [computerPanelExpanded, setComputerPanelExpanded] = useState(false);
   const laptopOffline = useLaptopOffline();
   const connectionPhase = usePersonalConnectionPhase();
 
@@ -444,6 +447,14 @@ export function ConversationScreen({
                 New chat
               </MenuItem>
             ) : null}
+            <MenuItem
+              onClick={() => {
+                setComputerPanelVisible(true);
+                setComputerPanelExpanded(true);
+              }}
+            >
+              Computer
+            </MenuItem>
             <MenuItem onClick={() => void navigate({ to: "/bots/$botId", params: { botId } })}>
               All chats
             </MenuItem>
@@ -483,6 +494,14 @@ export function ConversationScreen({
             now={now}
             describeTurn={describeTurn}
             renderDelegation={renderDelegation}
+          />
+          <ConversationComputerPanel
+            environmentId={environmentId}
+            botId={botId}
+            threadId={threadId}
+            manuallyVisible={computerPanelVisible}
+            expanded={computerPanelExpanded}
+            onExpandedChange={setComputerPanelExpanded}
           />
           <PersonalComposer
             environmentId={environmentId}

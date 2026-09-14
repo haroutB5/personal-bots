@@ -11,6 +11,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   activeAgentLine,
   backToChatTarget,
+  computerIsActiveForChat,
+  computerPanelDetail,
   describeComputerState,
   EMPTY_COMPUTER_FEED,
   formatActivityTime,
@@ -103,6 +105,36 @@ describe("computer feed", () => {
         }),
       ),
     ).toEqual({ botId: "bot-1", threadId: "thread-a" });
+  });
+
+  it("only activates a chat panel for the exact leased bot and thread", () => {
+    const leased = status({
+      controller: {
+        _tag: "Agent",
+        threadId: ThreadId.make("thread-a"),
+        botId: PersonalBotId.make("bot-1"),
+        botName: "Developer",
+      },
+    });
+    expect(computerIsActiveForChat(leased, { botId: "bot-1", threadId: "thread-a" })).toBe(true);
+    expect(computerIsActiveForChat(leased, { botId: "bot-2", threadId: "thread-a" })).toBe(false);
+    expect(computerIsActiveForChat(leased, { botId: "bot-1", threadId: "thread-b" })).toBe(false);
+    expect(computerIsActiveForChat(status(), { botId: "bot-1", threadId: "thread-a" })).toBe(false);
+  });
+
+  it("shows the current page title in the compact bar only for a live viewport", () => {
+    expect(
+      computerPanelDetail(
+        status({ page: { title: "T3 Code", url: "https://t3.codes" } }),
+        "Connected",
+      ),
+    ).toBe("T3 Code");
+    expect(
+      computerPanelDetail(
+        status({ state: "starting", page: { title: "Old page", url: "https://example.com" } }),
+        "Starting browser",
+      ),
+    ).toBe("Starting browser");
   });
 
   it("separates an unreachable laptop from browser states", () => {

@@ -81,6 +81,27 @@ export function backToChatTarget(status: PersonalBrowserStatus | null): BackToCh
   return botId === null ? null : { botId, threadId };
 }
 
+/** Whether the live agent browser lease belongs to this exact conversation. */
+export function computerIsActiveForChat(
+  status: PersonalBrowserStatus | null,
+  chat: BackToChatTarget,
+): boolean {
+  const target = backToChatTarget(status);
+  return target?.botId === chat.botId && target.threadId === chat.threadId;
+}
+
+/** Compact label for the chat panel bar. */
+export function computerPanelDetail(
+  status: PersonalBrowserStatus | null,
+  stateLabel: string,
+): string {
+  if (status !== null && hasLiveViewport(status)) {
+    const pageTitle = status.page?.title.trim();
+    if (pageTitle) return pageTitle;
+  }
+  return stateLabel;
+}
+
 /** "<Bot> is using the browser" only while an agent lease is live. */
 export function activeAgentLine(status: PersonalBrowserStatus | null): string | null {
   if (status?.controller._tag !== "Agent") return null;
