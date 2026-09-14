@@ -6,6 +6,8 @@ import {
   PersonalRoutineId,
   type PersonalRoutine,
   type PersonalRoutineMissedPolicy,
+  type PersonalRoutineSchedule,
+  type PersonalRoutineTrigger,
 } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
@@ -38,6 +40,22 @@ const KINDS: ReadonlyArray<{ readonly kind: RoutineScheduleKind; readonly label:
   { kind: "once", label: "Once" },
 ];
 
+const TRIGGERS: ReadonlyArray<{
+  readonly trigger: PersonalRoutineTrigger;
+  readonly label: string;
+}> = [
+  { trigger: "schedule", label: "On a schedule" },
+  { trigger: "event", label: "When an event fires" },
+];
+
+/** Shared choice-button styling for the trigger and schedule-kind pickers. */
+const choiceButton = (selected: boolean) =>
+  `h-11 rounded-[var(--personal-radius-button)] border text-[14px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] ${
+    selected
+      ? "border-[var(--personal-primary)] bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
+      : "border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[var(--personal-text)]"
+  }`;
+
 /** Create (routine = null) or edit a routine. The create id is fixed per form, so a retried save is idempotent. */
 export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): JSX.Element {
   const navigate = useNavigate();
@@ -63,16 +81,28 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
   const set = <K extends keyof RoutineDraft>(key: K, value: RoutineDraft[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
 
+  const isEvent = draft.trigger === "event";
+
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (environmentId === null || busy) return;
-    const built = scheduleFromDraft(draft);
-    if ("error" in built) {
-      setError(built.error);
-      return;
+    // An event routine has no schedule to validate, and validating the hidden
+    // schedule inputs would reject a perfectly valid event routine.
+    let schedule: PersonalRoutineSchedule | null = null;
+    if (!isEvent) {
+      const built = scheduleFromDraft(draft);
+      if ("error" in built) {
+        setError(built.error);
+        return;
+      }
+      schedule = built.schedule;
     }
     if (draft.title.trim().length === 0 || draft.prompt.trim().length === 0) {
       setError("Give the routine a name and a task.");
+      return;
+    }
+    if (isEvent && draft.eventLabel.trim().length === 0) {
+      setError("Name the event, for example 'PR merged'.");
       return;
     }
     if (botId.length === 0) {
@@ -90,17 +120,31 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
     };
     const result =
       routine === null
-        ? await create({ environmentId, input: { routineId, schedule: built.schedule, ...common } })
+        ? await create({
+            environmentId,
+            input:
+              schedule === null
+                ? {
+                    routineId,
+                    trigger: "event" as const,
+                    eventLabel: draft.eventLabel.trim(),
+                    ...common,
+                  }
+                : { routineId, schedule, ...common },
+          })
         : await update({
             environmentId,
-            input: {
-              routineId,
-              ...common,
-              // Unchanged interval schedules keep their anchor (and cadence).
-              ...(sameSchedule(built.schedule, routine.schedule)
-                ? {}
-                : { schedule: built.schedule }),
-            },
+            input:
+              schedule === null
+                ? { routineId, ...common, eventLabel: draft.eventLabel.trim() }
+                : {
+                    routineId,
+                    ...common,
+                    // Unchanged interval schedules keep their anchor (and cadence).
+                    ...(routine.schedule !== null && sameSchedule(schedule, routine.schedule)
+                      ? {}
+                      : { schedule }),
+                  },
           });
     setBusy(false);
     if (result._tag === "Success") {
@@ -188,28 +232,67 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
           />
         </div>
 
-        <fieldset>
-          <legend className={LABEL}>When</legend>
-          <div className="grid grid-cols-2 gap-2">
-            {KINDS.map((option) => (
-              <button
-                key={option.kind}
-                type="button"
-                aria-pressed={draft.kind === option.kind}
-                onClick={() => set("kind", option.kind)}
-                className={`h-11 rounded-[var(--personal-radius-button)] border text-[14px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] ${
-                  draft.kind === option.kind
-                    ? "border-[var(--personal-primary)] bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
-                    : "border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[var(--personal-text)]"
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
+        {routine === null ? (
+          <fieldset>
+            <legend className={LABEL}>What starts it</legend>
+            <div className="grid grid-cols-2 gap-2">
+              {TRIGGERS.map((option) => (
+                <button
+                  key={option.trigger}
+                  type="button"
+                  aria-pressed={draft.trigger === option.trigger}
+                  onClick={() => set("trigger", option.trigger)}
+                  className={choiceButton(draft.trigger === option.trigger)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        ) : null}
 
-        {draft.kind === "weekly" ? (
+        {isEvent ? (
+          <div>
+            <label htmlFor="routine-event-label" className={LABEL}>
+              Event name
+            </label>
+            <input
+              id="routine-event-label"
+              className={`${FIELD} h-11`}
+              value={draft.eventLabel}
+              maxLength={60}
+              placeholder="PR merged"
+              aria-describedby="routine-event-hint"
+              onChange={(event) => set("eventLabel", event.target.value)}
+            />
+            <p
+              id="routine-event-hint"
+              className="mt-1.5 text-[13px] text-[var(--personal-text-secondary)]"
+            >
+              After you save, this routine gets its own webhook URL. Anything that can send a POST
+              request can start it.
+            </p>
+          </div>
+        ) : (
+          <fieldset>
+            <legend className={LABEL}>When</legend>
+            <div className="grid grid-cols-2 gap-2">
+              {KINDS.map((option) => (
+                <button
+                  key={option.kind}
+                  type="button"
+                  aria-pressed={draft.kind === option.kind}
+                  onClick={() => set("kind", option.kind)}
+                  className={choiceButton(draft.kind === option.kind)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        )}
+
+        {!isEvent && draft.kind === "weekly" ? (
           <fieldset>
             <legend className={LABEL}>Days</legend>
             <div className="grid grid-cols-7 gap-1">
@@ -240,7 +323,7 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
           </fieldset>
         ) : null}
 
-        {draft.kind === "interval" ? (
+        {isEvent ? null : draft.kind === "interval" ? (
           <div>
             <label htmlFor="routine-hours" className={LABEL}>
               Every how many hours
@@ -290,47 +373,51 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
           </div>
         )}
 
-        <div>
-          <label htmlFor="routine-zone" className={LABEL}>
-            Time zone
-          </label>
-          <input
-            id="routine-zone"
-            className={`${FIELD} h-11`}
-            value={draft.timeZone}
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            onChange={(event) => set("timeZone", event.target.value)}
-          />
-          <p className="mt-1.5 text-[13px] text-[var(--personal-text-secondary)]">
-            Wall-clock time: a 09:00 routine stays at 09:00 when the clocks change.
-          </p>
-        </div>
-
-        <fieldset>
-          <legend className={LABEL}>If the laptop was asleep at run time</legend>
-          {(
-            [
-              ["coalesce", "Run once when it wakes (latest missed run only)"],
-              ["skip", "Skip missed runs"],
-            ] as ReadonlyArray<readonly [PersonalRoutineMissedPolicy, string]>
-          ).map(([policy, label]) => (
-            <label
-              key={policy}
-              className="flex min-h-11 items-center gap-3 text-[15px] text-[var(--personal-text)]"
-            >
-              <input
-                type="radio"
-                name="routine-missed"
-                className="size-5 accent-[var(--personal-primary)]"
-                checked={draft.missedPolicy === policy}
-                onChange={() => set("missedPolicy", policy)}
-              />
-              {label}
+        {isEvent ? null : (
+          <div>
+            <label htmlFor="routine-zone" className={LABEL}>
+              Time zone
             </label>
-          ))}
-        </fieldset>
+            <input
+              id="routine-zone"
+              className={`${FIELD} h-11`}
+              value={draft.timeZone}
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              onChange={(event) => set("timeZone", event.target.value)}
+            />
+            <p className="mt-1.5 text-[13px] text-[var(--personal-text-secondary)]">
+              Wall-clock time: a 09:00 routine stays at 09:00 when the clocks change.
+            </p>
+          </div>
+        )}
+
+        {isEvent ? null : (
+          <fieldset>
+            <legend className={LABEL}>If the laptop was asleep at run time</legend>
+            {(
+              [
+                ["coalesce", "Run once when it wakes (latest missed run only)"],
+                ["skip", "Skip missed runs"],
+              ] as ReadonlyArray<readonly [PersonalRoutineMissedPolicy, string]>
+            ).map(([policy, label]) => (
+              <label
+                key={policy}
+                className="flex min-h-11 items-center gap-3 text-[15px] text-[var(--personal-text)]"
+              >
+                <input
+                  type="radio"
+                  name="routine-missed"
+                  className="size-5 accent-[var(--personal-primary)]"
+                  checked={draft.missedPolicy === policy}
+                  onChange={() => set("missedPolicy", policy)}
+                />
+                {label}
+              </label>
+            ))}
+          </fieldset>
+        )}
 
         {error !== null ? (
           <p role="alert" className="text-[14px] text-[#B3261E]">

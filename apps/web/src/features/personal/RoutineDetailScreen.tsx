@@ -1,16 +1,18 @@
 import type { JSX } from "react";
 import { useMemo, useState } from "react";
 
-import { describePersonalRoutineSchedule, type PersonalRoutineId } from "@t3tools/contracts";
+import { describePersonalRoutineTrigger, type PersonalRoutineId } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
-import { ChevronLeft } from "lucide-react";
+import { Check, ChevronLeft, Copy } from "lucide-react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { randomUUID } from "~/lib/utils";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
+import { currentOrigin, isEventRoutine, routineHookUrl } from "./routineHook";
 import { formatLocalDateTime } from "./taskPresentation";
 import { DETAIL_CARD, DetailRow, PRIMARY_BUTTON, SECONDARY_BUTTON } from "./TaskDetailScreen";
 import { routineNextRunLabel } from "./taskPresentation";
@@ -18,6 +20,7 @@ import { SmallBotAvatar } from "./TasksScreen";
 import {
   personalRoutineDelete,
   personalRoutinePause,
+  personalRoutineRegenerateHook,
   personalRoutineResume,
   personalRoutineRunNow,
   usePersonalRoutines,
@@ -32,6 +35,9 @@ const OCCURRENCE_STATUS = {
 
 function occurrenceLabel(localOccurrence: string): string {
   if (localOccurrence.startsWith("manual:")) return "Run now";
+  if (localOccurrence.startsWith("event:")) {
+    return `Event ${localOccurrence.slice("event:".length).replace("T", " ").slice(0, 16)}`;
+  }
   return localOccurrence.replace("T", " ").slice(0, 16);
 }
 
@@ -45,8 +51,10 @@ export function RoutineDetailScreen({ routineId }: { routineId: PersonalRoutineI
   const resume = useAtomCommand(personalRoutineResume);
   const runNow = useAtomCommand(personalRoutineRunNow);
   const remove = useAtomCommand(personalRoutineDelete);
+  const regenerateHook = useAtomCommand(personalRoutineRegenerateHook);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const routine = routinesQuery.data?.routines.find((entry) => entry.routineId === routineId);
   const occurrences = useMemo(
@@ -115,6 +123,44 @@ export function RoutineDetailScreen({ routineId }: { routineId: PersonalRoutineI
     setActionError(commandFailureMessage(result, "That did not work. Try again."));
   };
 
+  const isEvent = isEventRoutine(routine);
+  const origin = currentOrigin();
+  const hookUrl =
+    routine.hookToken === null || origin === null
+      ? null
+      : routineHookUrl(origin, routine.hookToken);
+
+  const copyHookUrl = async () => {
+    if (hookUrl === null) return;
+    setActionError(null);
+    try {
+      await writeTextToClipboard(hookUrl, "webhook URL");
+      setCopied(true);
+    } catch {
+      // A phone browser can refuse the clipboard outright; the URL is on screen
+      // and selectable, so say what happened instead of failing silently.
+      setActionError("Could not copy. Select the URL and copy it by hand.");
+    }
+  };
+
+  const rotateHook = async () => {
+    setActionError(null);
+    const message = [
+      "Get a new webhook URL?",
+      "The current URL stops working straight away, so anything already using it must be updated.",
+    ].join("\n");
+    const confirmed =
+      (await requestConfirmDialog(message, { variant: "destructive" })) ?? window.confirm(message);
+    if (!confirmed) return;
+    setBusy(true);
+    const result = await regenerateHook({ environmentId, input: { routineId: routine.routineId } });
+    setBusy(false);
+    setCopied(false);
+    if (result._tag !== "Success") {
+      setActionError(commandFailureMessage(result, "The URL could not be regenerated."));
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4 px-5 pb-8">
       {header}
@@ -129,21 +175,88 @@ export function RoutineDetailScreen({ routineId }: { routineId: PersonalRoutineI
           {routine.title}
         </h2>
         <p className="mt-1 text-[14px] text-[var(--personal-text-secondary)]">
-          {describePersonalRoutineSchedule(routine.schedule, routine.timeZone)}
+          {describePersonalRoutineTrigger(routine)}
         </p>
         <dl className="mt-3 border-t border-[var(--personal-border)] pt-2">
-          <DetailRow label="Next run">
-            {routineNextRunLabel(routine).replace(/^Next: /, "")}
-          </DetailRow>
-          <DetailRow label="Time zone">{routine.timeZone}</DetailRow>
-          <DetailRow label="If the laptop was asleep">
-            {routine.missedPolicy === "coalesce" ? "Run once to catch up" : "Skip missed runs"}
-          </DetailRow>
+          {isEvent ? (
+            <>
+              <DetailRow label="Last fired">
+                {routine.lastFiredAt === null
+                  ? "Never"
+                  : formatLocalDateTime(
+                      DateTime.toEpochMillis(routine.lastFiredAt),
+                      routine.timeZone,
+                    )}
+              </DetailRow>
+              <DetailRow label="Status">
+                {routine.enabled ? "Listening for events" : "Paused"}
+              </DetailRow>
+            </>
+          ) : (
+            <>
+              <DetailRow label="Next run">
+                {routineNextRunLabel(routine).replace(/^Next: /, "")}
+              </DetailRow>
+              <DetailRow label="Time zone">{routine.timeZone}</DetailRow>
+              <DetailRow label="If the laptop was asleep">
+                {routine.missedPolicy === "coalesce" ? "Run once to catch up" : "Skip missed runs"}
+              </DetailRow>
+            </>
+          )}
           <DetailRow label="Created">
             {formatLocalDateTime(DateTime.toEpochMillis(routine.createdAt))}
           </DetailRow>
         </dl>
       </section>
+
+      {isEvent ? (
+        <section className={DETAIL_CARD}>
+          <h3 className="text-[14px] font-semibold text-[var(--personal-text)]">Webhook URL</h3>
+          <p className="mt-1 text-[13px] text-[var(--personal-text-secondary)]">
+            Anything that can send a POST request to this URL starts the routine. Treat it like a
+            password: the URL is the only thing standing between the internet and this bot.
+          </p>
+          {hookUrl === null ? (
+            <p className="mt-2 text-[14px] text-[var(--personal-text-secondary)]">
+              The URL is not available on this screen.
+            </p>
+          ) : (
+            <>
+              <p
+                data-testid="routine-hook-url"
+                className="mt-2 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)] px-3 py-2 font-mono text-[13px] break-all text-[var(--personal-text)] select-all"
+              >
+                {hookUrl}
+              </p>
+              <div className="mt-2.5 grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  className={SECONDARY_BUTTON}
+                  onClick={() => void copyHookUrl()}
+                >
+                  {copied ? (
+                    <Check aria-hidden="true" className="mr-1.5 inline size-4" />
+                  ) : (
+                    <Copy aria-hidden="true" className="mr-1.5 inline size-4" />
+                  )}
+                  {copied ? "Copied" : "Copy URL"}
+                </button>
+                <button
+                  type="button"
+                  className={SECONDARY_BUTTON}
+                  disabled={busy}
+                  onClick={() => void rotateHook()}
+                >
+                  Regenerate URL
+                </button>
+              </div>
+              <p aria-live="polite" className="sr-only">
+                {copied ? "Webhook URL copied to the clipboard." : ""}
+              </p>
+            </>
+          )}
+        </section>
+      ) : null}
 
       <section className={DETAIL_CARD}>
         <h3 className="text-[14px] font-semibold text-[var(--personal-text)]">Task</h3>

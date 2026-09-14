@@ -122,6 +122,12 @@ export const personalRoutineRunNow = createEnvironmentRpcCommand(connectionAtomR
   onSuccess: refreshRoutines,
 });
 
+export const personalRoutineRegenerateHook = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-routines:regenerate-hook",
+  tag: WS_METHODS.personalRoutinesRegenerateHook,
+  onSuccess: refreshRoutines,
+});
+
 export const personalMemoryDelete = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-memory:delete",
   tag: WS_METHODS.personalMemoryDelete,

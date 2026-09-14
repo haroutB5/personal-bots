@@ -97,7 +97,10 @@ export function formatLocalDateTime(
   return `${pick("weekday")} ${pick("day")} ${month}, ${pick("hour")}:${pick("minute")}`;
 }
 
-export function routineNextRunLabel(routine: PersonalRoutine): string {
+/** Scheduled routines only: an event routine has no next run. See `routineHook`. */
+export function routineNextRunLabel(
+  routine: Pick<PersonalRoutine, "enabled" | "nextDueAt" | "timeZone">,
+): string {
   if (!routine.enabled) return "Paused";
   if (routine.nextDueAt === null) return "No more runs";
   return `Next: ${formatLocalDateTime(DateTime.toEpochMillis(routine.nextDueAt), routine.timeZone)}`;

@@ -3,6 +3,7 @@ import {
   type PersonalRoutine,
   type PersonalRoutineMissedPolicy,
   type PersonalRoutineSchedule,
+  type PersonalRoutineTrigger,
 } from "@t3tools/contracts";
 
 export type RoutineScheduleKind = PersonalRoutineSchedule["kind"];
@@ -12,6 +13,10 @@ export interface RoutineDraft {
   readonly botId: string;
   readonly title: string;
   readonly prompt: string;
+  /** Fixed once the routine exists; the form only offers it on create. */
+  readonly trigger: PersonalRoutineTrigger;
+  /** Event routines only, e.g. "PR merged". */
+  readonly eventLabel: string;
   readonly kind: RoutineScheduleKind;
   readonly time: string;
   readonly days: ReadonlyArray<number>;
@@ -50,6 +55,8 @@ export function draftFromRoutine(
     botId: routine?.botId ?? fallbackBotId,
     title: routine?.title ?? "",
     prompt: routine?.prompt ?? "",
+    trigger: routine?.trigger ?? "schedule",
+    eventLabel: routine?.eventLabel ?? "",
     kind: "daily",
     time: "09:00",
     days: [1, 2, 3, 4, 5],
@@ -60,6 +67,9 @@ export function draftFromRoutine(
   };
   if (routine === null) return base;
   const schedule = routine.schedule;
+  // An event routine has no schedule at all; the defaults above are only there
+  // so the hidden schedule inputs stay controlled.
+  if (schedule === null) return base;
   switch (schedule.kind) {
     case "daily":
       return { ...base, kind: "daily", time: schedule.time };

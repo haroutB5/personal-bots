@@ -2,7 +2,7 @@ import type { JSX } from "react";
 import { useMemo } from "react";
 
 import {
-  describePersonalRoutineSchedule,
+  describePersonalRoutineTrigger,
   type PersonalBot,
   type PersonalRoutine,
   type PersonalTask,
@@ -13,8 +13,8 @@ import { Plus } from "lucide-react";
 
 import { BotAvatar } from "./BotAvatar";
 import { formatRelativeTime } from "./relativeTime";
+import { routineTriggerStatusLabel } from "./routineHook";
 import {
-  routineNextRunLabel,
   TASK_LIST_FILTERS,
   taskListFor,
   taskStatusLabel,
@@ -118,10 +118,10 @@ function RoutineRow({
             {routine.title}
           </span>
           <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
-            {describePersonalRoutineSchedule(routine.schedule, routine.timeZone)}
+            {describePersonalRoutineTrigger(routine)}
           </span>
           <span className="truncate text-[13px] text-[var(--personal-text-tertiary)]">
-            {routineNextRunLabel(routine)}
+            {routineTriggerStatusLabel(routine)}
           </span>
         </span>
       </Link>
@@ -132,7 +132,8 @@ function RoutineRow({
 const EMPTY_TEXT: Record<TaskListFilter, string> = {
   active: "Nothing is running right now.",
   waiting: "Nothing is waiting on you or another bot.",
-  scheduled: "No routines yet. A routine gives a bot the same task on a schedule.",
+  scheduled:
+    "No routines yet. A routine gives a bot the same task on a schedule, or whenever an event fires.",
   completed: "Finished tasks will show up here.",
 };
 
