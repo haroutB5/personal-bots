@@ -10,14 +10,20 @@ import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import * as NodeCrypto from "node:crypto";
+
 import {
   PERSONAL_ROUTINE_DEFAULT_TIME_ZONE,
+  PERSONAL_ROUTINE_EVENT_MIN_INTERVAL_MS,
+  PERSONAL_ROUTINE_HOOK_TOKEN_BYTES,
+  PERSONAL_ROUTINE_HOOK_TOKEN_PATTERN,
   PersonalBotId,
   PersonalRoutineId,
   PersonalRoutineMissedPolicy,
   PersonalRoutineOccurrenceStatus,
   PersonalRoutineSchedule,
   PersonalRoutinesError,
+  PersonalRoutineTrigger,
   PersonalTaskId,
   type PersonalRoutine,
   type PersonalRoutineCreateInput,
@@ -29,9 +35,11 @@ import {
   type PersonalTask,
 } from "@t3tools/contracts";
 
+import { timingSafeEqualBase64Url } from "../../auth/utils.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
+import { buildEventRoutinePrompt, formatHookPayload } from "./eventPrompt.ts";
 import { dueRoutineSlots, nextRoutineSlot, type RoutineSlot } from "./routineSchedule.ts";
 import { isValidTimeZone, parseLocal } from "./zonedTime.ts";
 
@@ -44,7 +52,12 @@ const RoutineDbRow = Schema.Struct({
   botId: PersonalBotId,
   title: Schema.String,
   prompt: Schema.String,
-  schedule: Schema.fromJsonString(PersonalRoutineSchedule),
+  trigger: PersonalRoutineTrigger,
+  // Event routines store the JSON literal `null`; see migration 064.
+  schedule: Schema.fromJsonString(Schema.NullOr(PersonalRoutineSchedule)),
+  eventLabel: Schema.NullOr(Schema.String),
+  hookToken: Schema.NullOr(Schema.String),
+  lastFiredAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   timeZone: Schema.String,
   enabled: Schema.Number,
   missedPolicy: PersonalRoutineMissedPolicy,
@@ -72,7 +85,11 @@ const ROUTINE_COLUMNS = `
   bot_id AS "botId",
   title AS "title",
   prompt AS "prompt",
+  trigger_kind AS "trigger",
   schedule_json AS "schedule",
+  event_label AS "eventLabel",
+  hook_token AS "hookToken",
+  last_fired_utc AS "lastFiredAt",
   time_zone AS "timeZone",
   enabled AS "enabled",
   missed_policy AS "missedPolicy",
@@ -95,8 +112,14 @@ const OCCURRENCE_COLUMNS = `
   created_at AS "createdAt"
 `;
 
-const encodeSchedule = Schema.encodeSync(Schema.fromJsonString(PersonalRoutineSchedule));
+const encodeSchedule = Schema.encodeSync(
+  Schema.fromJsonString(Schema.NullOr(PersonalRoutineSchedule)),
+);
 const isRoutinesError = Schema.is(PersonalRoutinesError);
+
+/** 32 random bytes, base64url: 256 bits of entropy in a 43-character URL segment. */
+const makeHookToken = () =>
+  NodeCrypto.randomBytes(PERSONAL_ROUTINE_HOOK_TOKEN_BYTES).toString("base64url");
 
 // @effect-diagnostics-next-line globalDate:off - slot instants are epoch millis from wall-clock arithmetic.
 const isoOfMs = (ms: number) => new Date(ms).toISOString();
@@ -104,6 +127,18 @@ const isoOfMs = (ms: number) => new Date(ms).toISOString();
 /** Idempotency key of the task an occurrence starts: one task per slot, ever. */
 export const routineTaskIdempotencyKey = (routineId: string, localOccurrence: string) =>
   `routine:${routineId}:${localOccurrence}`;
+
+export interface PersonalRoutineFireEventInput {
+  readonly hookToken: string;
+  readonly contentType: string | null;
+  readonly body: string;
+}
+
+export type PersonalRoutineFireEventResult =
+  | { readonly _tag: "NotFound" }
+  | { readonly _tag: "RateLimited"; readonly retryAfterSeconds: number }
+  | { readonly _tag: "Fired"; readonly taskId: PersonalTaskId }
+  | { readonly _tag: "Failed" };
 
 export class PersonalRoutineService extends Context.Service<
   PersonalRoutineService,
@@ -130,6 +165,18 @@ export class PersonalRoutineService extends Context.Service<
     readonly runNow: (
       input: PersonalRoutineRunNowInput,
     ) => Effect.Effect<PersonalRoutineRunNowResult, PersonalRoutinesError>;
+    /**
+     * Webhook entry point. Never fails and never reports which routine (or
+     * whether any) owns a token beyond found/not-found, because the caller is
+     * an unauthenticated external service.
+     */
+    readonly fireEvent: (
+      input: PersonalRoutineFireEventInput,
+    ) => Effect.Effect<PersonalRoutineFireEventResult>;
+    /** Mints a new hook token; the previous webhook URL stops working at once. */
+    readonly regenerateHook: (input: {
+      readonly routineId: PersonalRoutineId;
+    }) => Effect.Effect<PersonalRoutine, PersonalRoutinesError>;
     /** One catch-up pass over every enabled routine that is due. */
     readonly tick: Effect.Effect<void>;
     /** Runs `tick` now (startup catch-up) and then every 30 seconds. */
@@ -312,7 +359,11 @@ export const make = Effect.gen(function* () {
     nowMs: number,
     nowIso: string,
   ) {
-    const next = nextRoutineSlot(routine.schedule, routine.timeZone, nowMs);
+    // Event routines never appear in the sweep; they have no slots to miss and
+    // no exhaustion to be deleted for. Belt and braces with the tick's filter.
+    if (routine.schedule === null) return;
+    const schedule = routine.schedule;
+    const next = nextRoutineSlot(schedule, routine.timeZone, nowMs);
     if (routine.nextDueAt === null) {
       if (next === null) {
         yield* deleteRoutine(routine.routineId);
@@ -322,7 +373,7 @@ export const make = Effect.gen(function* () {
       return;
     }
     const due = dueRoutineSlots(
-      routine.schedule,
+      schedule,
       routine.timeZone,
       DateTime.toEpochMillis(routine.nextDueAt),
       nowMs,
@@ -368,10 +419,13 @@ export const make = Effect.gen(function* () {
           DELETE FROM personal_routine_occurrences
           WHERE created_at < ${pruneBefore}
         `;
+        // `trigger_kind` first: an event routine has next_due_utc NULL forever,
+        // and the NULL branch is what deletes an exhausted schedule. Without
+        // this filter every event routine would be swept away on the next tick.
         const rows = yield* sql`
           SELECT ${sql.literal(ROUTINE_COLUMNS)} FROM personal_routines
-          WHERE next_due_utc IS NULL
-             OR (enabled = 1 AND next_due_utc <= ${nowIso})
+          WHERE trigger_kind = 'schedule'
+            AND (next_due_utc IS NULL OR (enabled = 1 AND next_due_utc <= ${nowIso}))
           ORDER BY next_due_utc ASC
         `;
         for (const raw of rows) {
@@ -432,19 +486,43 @@ export const make = Effect.gen(function* () {
           );
           const now = yield* DateTime.now;
           const nowMs = DateTime.toEpochMillis(now);
+          const nowIso = DateTime.formatIso(now);
+          const trigger = input.trigger ?? "schedule";
+          if (trigger === "event") {
+            const eventLabel = input.eventLabel?.trim() ?? "";
+            if (eventLabel.length === 0) {
+              return yield* fail("Give the event a name, for example 'PR merged'.");
+            }
+            yield* sql`
+              INSERT INTO personal_routines (
+                routine_id, bot_id, title, prompt, trigger_kind, schedule_json, event_label,
+                hook_token, last_fired_utc, time_zone, enabled, missed_policy, next_due_utc,
+                last_occurrence_local, created_at, updated_at
+              )
+              VALUES (
+                ${input.routineId}, ${input.botId}, ${input.title}, ${input.prompt}, 'event',
+                ${encodeSchedule(null)}, ${eventLabel}, ${makeHookToken()}, NULL, ${timeZone},
+                1, ${input.missedPolicy ?? "coalesce"}, NULL, NULL, ${nowIso}, ${nowIso}
+              )
+              ON CONFLICT (routine_id) DO NOTHING
+            `;
+            return yield* requireRoutine(input.routineId);
+          }
+          if (input.schedule === undefined) {
+            return yield* fail("A scheduled routine needs a schedule.");
+          }
           const schedule = yield* normalizeSchedule(input.schedule, nowMs);
           const next = nextRoutineSlot(schedule, timeZone, nowMs);
           if (next === null) {
             return yield* fail(`That time has already passed in ${timeZone}.`);
           }
-          const nowIso = DateTime.formatIso(now);
           yield* sql`
             INSERT INTO personal_routines (
-              routine_id, bot_id, title, prompt, schedule_json, time_zone, enabled,
+              routine_id, bot_id, title, prompt, trigger_kind, schedule_json, time_zone, enabled,
               missed_policy, next_due_utc, last_occurrence_local, created_at, updated_at
             )
             VALUES (
-              ${input.routineId}, ${input.botId}, ${input.title}, ${input.prompt},
+              ${input.routineId}, ${input.botId}, ${input.title}, ${input.prompt}, 'schedule',
               ${encodeSchedule(schedule)}, ${timeZone}, 1, ${input.missedPolicy ?? "coalesce"},
               ${isoOfMs(next.dueMs)}, NULL, ${nowIso}, ${nowIso}
             )
@@ -464,11 +542,32 @@ export const make = Effect.gen(function* () {
           const timeZone = yield* requireTimeZone(input.timeZone ?? current.timeZone);
           const now = yield* DateTime.now;
           const nowMs = DateTime.toEpochMillis(now);
+          // The trigger is fixed at creation, so an edit only ever touches the
+          // half of the shape the routine actually has.
+          if (current.trigger === "event") {
+            const eventLabel = input.eventLabel?.trim() ?? current.eventLabel ?? "";
+            if (eventLabel.length === 0) {
+              return yield* fail("Give the event a name, for example 'PR merged'.");
+            }
+            yield* sql`
+              UPDATE personal_routines
+              SET bot_id = ${input.botId ?? current.botId},
+                  title = ${input.title ?? current.title},
+                  prompt = ${input.prompt ?? current.prompt},
+                  event_label = ${eventLabel},
+                  updated_at = ${DateTime.formatIso(now)}
+              WHERE routine_id = ${input.routineId}
+            `;
+            return yield* requireRoutine(input.routineId);
+          }
           const scheduleChanged = input.schedule !== undefined || timeZone !== current.timeZone;
           const schedule =
             input.schedule === undefined
               ? current.schedule
               : yield* normalizeSchedule(input.schedule, nowMs);
+          if (schedule === null) {
+            return yield* fail("A scheduled routine needs a schedule.");
+          }
           let nextDueAt = current.nextDueAt === null ? null : DateTime.formatIso(current.nextDueAt);
           if (scheduleChanged) {
             const next = nextRoutineSlot(schedule, timeZone, nowMs);
@@ -519,6 +618,16 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const current = yield* requireRoutine(input.routineId);
           const now = yield* DateTime.now;
+          // An event routine has nothing to recompute: it simply starts
+          // accepting its webhook again.
+          if (current.schedule === null) {
+            const resumedAt = DateTime.formatIso(now);
+            yield* sql`
+              UPDATE personal_routines SET enabled = 1, updated_at = ${resumedAt}
+              WHERE routine_id = ${input.routineId}
+            `;
+            return yield* requireRoutine(input.routineId);
+          }
           const next = nextRoutineSlot(
             current.schedule,
             current.timeZone,
@@ -577,6 +686,105 @@ export const make = Effect.gen(function* () {
       )
       .pipe(storageFailure("run"));
 
+  /**
+   * Resolves a hook token without letting the comparison leak it. The lookup is
+   * NOT `WHERE hook_token = ?`: SQLite's string compare exits at the first
+   * differing byte, so a remote caller could walk the token out one character
+   * at a time. Instead every enabled event routine's token is compared with a
+   * constant-time equality over the whole 32 bytes. The set is a handful of
+   * rows (one per event routine the user created), so the scan is free.
+   */
+  const resolveHookToken = (hookToken: string) =>
+    Effect.gen(function* () {
+      if (!PERSONAL_ROUTINE_HOOK_TOKEN_PATTERN.test(hookToken)) return null;
+      const rows = yield* sql`
+        SELECT ${sql.literal(ROUTINE_COLUMNS)} FROM personal_routines
+        WHERE trigger_kind = 'event' AND hook_token IS NOT NULL
+      `;
+      let found: PersonalRoutine | null = null;
+      for (const raw of rows) {
+        const routine = toRoutine(yield* decodeRoutineRow(raw));
+        if (routine.hookToken !== null && timingSafeEqualBase64Url(routine.hookToken, hookToken)) {
+          found = routine;
+        }
+      }
+      return found;
+    });
+
+  const fireEvent: PersonalRoutineService["Service"]["fireEvent"] = (input) =>
+    lock
+      .withPermit(
+        Effect.gen(function* () {
+          const routine = yield* resolveHookToken(input.hookToken);
+          // A paused routine is indistinguishable from an unknown token on the
+          // wire: the caller is unauthenticated and learns nothing either way.
+          if (routine === null || !routine.enabled) {
+            return { _tag: "NotFound" } as const;
+          }
+          const now = yield* DateTime.now;
+          const nowMs = DateTime.toEpochMillis(now);
+          if (routine.lastFiredAt !== null) {
+            const sinceMs = nowMs - DateTime.toEpochMillis(routine.lastFiredAt);
+            if (sinceMs < PERSONAL_ROUTINE_EVENT_MIN_INTERVAL_MS) {
+              return {
+                _tag: "RateLimited",
+                retryAfterSeconds: Math.max(
+                  1,
+                  Math.ceil((PERSONAL_ROUTINE_EVENT_MIN_INTERVAL_MS - sinceMs) / 1000),
+                ),
+              } as const;
+            }
+          }
+          const nowIso = DateTime.formatIso(now);
+          // Stamp before firing: a crash mid-run must not open the rate limit.
+          yield* sql`
+            UPDATE personal_routines SET last_fired_utc = ${nowIso}, updated_at = ${nowIso}
+            WHERE routine_id = ${routine.routineId}
+          `;
+          const prompt = buildEventRoutinePrompt({
+            prompt: routine.prompt,
+            eventLabel: routine.eventLabel ?? "event",
+            payload: formatHookPayload(input.contentType, input.body),
+          });
+          // The rate limit guarantees one fire per 30s, so the millisecond key
+          // is unique; it also makes a duplicated delivery idempotent.
+          const task = yield* fireSlot(
+            { ...routine, prompt },
+            { localKey: `event:${nowIso}`, dueMs: nowMs },
+            "run",
+          );
+          return task === null
+            ? ({ _tag: "Failed" } as const)
+            : ({ _tag: "Fired", taskId: task.taskId } as const);
+        }),
+      )
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("personal routine webhook could not fire", {
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ _tag: "Failed" } as const)),
+        ),
+      );
+
+  const regenerateHook: PersonalRoutineService["Service"]["regenerateHook"] = (input) =>
+    lock
+      .withPermit(
+        Effect.gen(function* () {
+          const current = yield* requireRoutine(input.routineId);
+          if (current.trigger !== "event") {
+            return yield* fail("Only event routines have a webhook URL.");
+          }
+          const nowIso = DateTime.formatIso(yield* DateTime.now);
+          yield* sql`
+            UPDATE personal_routines
+            SET hook_token = ${makeHookToken()}, updated_at = ${nowIso}
+            WHERE routine_id = ${input.routineId}
+          `;
+          return yield* requireRoutine(input.routineId);
+        }),
+      )
+      .pipe(storageFailure("regenerate hook"));
+
   const start: PersonalRoutineService["Service"]["start"] = () =>
     forkParked(tick.pipe(Effect.repeat(Schedule.spaced(TICK_INTERVAL)), Effect.asVoid)).pipe(
       Effect.asVoid,
@@ -591,6 +799,8 @@ export const make = Effect.gen(function* () {
     pause,
     resume,
     runNow,
+    fireEvent,
+    regenerateHook,
     tick,
     start,
   } satisfies PersonalRoutineService["Service"];

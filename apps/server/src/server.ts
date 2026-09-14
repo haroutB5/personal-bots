@@ -86,6 +86,10 @@ import {
   personalBrowserStreamRouteLayer,
 } from "./personal/browser/routes.ts";
 import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
+import {
+  personalRoutineHookMethodRouteLayer,
+  personalRoutineHookRouteLayer,
+} from "./personal/routines/hookRoutes.ts";
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
@@ -673,6 +677,9 @@ export const makeRoutesLayer = Layer.mergeAll(
     // shares the single PreviewAutomationBroker provided below)
     personalBrowserStreamRouteLayer,
     personalBrowserFilesRouteLayer,
+    // Unauthenticated by necessity; the URL token is the whole credential.
+    personalRoutineHookRouteLayer,
+    personalRoutineHookMethodRouteLayer,
     PersonalBrowserHost.layer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,

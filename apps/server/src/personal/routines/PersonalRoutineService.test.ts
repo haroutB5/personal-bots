@@ -543,3 +543,177 @@ it.effect("prunes ancient occurrence rows on tick and lists only the recent wind
     ).toEqual(["2026-09-14T09:00"]);
   }).pipe(Effect.scoped, Effect.provide(Layer.merge(makeLayer(), NodeServices.layer))),
 );
+
+const EVENT_ROUTINE = PersonalRoutineId.make("on-pr-merged");
+
+const createEventRoutine = Effect.gen(function* () {
+  const routines = yield* PersonalRoutineService.PersonalRoutineService;
+  return yield* routines.create({
+    routineId: EVENT_ROUTINE,
+    botId: BOT,
+    title: "PR watch",
+    prompt: "Tell me what changed.",
+    trigger: "event",
+    eventLabel: "PR merged",
+  });
+});
+
+it.effect("gives a new event routine an unguessable token and no schedule", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T10:00:00Z");
+    yield* seedBot;
+    const routine = yield* createEventRoutine;
+    expect(routine.trigger).toBe("event");
+    expect(routine.schedule).toBeNull();
+    expect(routine.eventLabel).toBe("PR merged");
+    expect(routine.nextDueAt).toBeNull();
+    expect(routine.lastFiredAt).toBeNull();
+    // 32 bytes, base64url, no padding.
+    expect(routine.hookToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(Buffer.from(routine.hookToken!, "base64url").length).toBe(32);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("never deletes an event routine on the no-future-runs sweep", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T10:00:00Z");
+    yield* seedBot;
+    yield* createEventRoutine;
+    // The sweep is what deletes a spent one-off: an event routine has
+    // next_due_utc NULL forever and must survive every pass.
+    yield* setNow("2026-09-15T10:00:00Z");
+    yield* tickAndDrain;
+    yield* setNow("2026-10-30T10:00:00Z");
+    yield* tickAndDrain;
+    expect(yield* listedRoutineIds).toContain(EVENT_ROUTINE);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("fires once on a valid token and puts the payload in the prompt as data", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T10:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const tasks = yield* PersonalTaskService.PersonalTaskService;
+    const created = yield* createEventRoutine;
+
+    const fired = yield* routines.fireEvent({
+      hookToken: created.hookToken!,
+      contentType: "application/json",
+      body: '{"number":7}',
+    });
+    expect(fired._tag).toBe("Fired");
+    yield* tasks.drain;
+
+    const started = yield* routineTasks(EVENT_ROUTINE);
+    expect(started.length).toBe(1);
+    expect(started[0]!.objective).toContain("Tell me what changed.");
+    expect(started[0]!.objective).toContain("Triggered by event 'PR merged' with payload:");
+    expect(started[0]!.objective).toContain("untrusted data");
+    expect(started[0]!.objective).toContain('"number": 7');
+
+    const after = yield* routines.get({ routineId: EVENT_ROUTINE });
+    expect(after.lastFiredAt).not.toBeNull();
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("rate-limits a second delivery inside the window and never queues it", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T10:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const tasks = yield* PersonalTaskService.PersonalTaskService;
+    const created = yield* createEventRoutine;
+    const token = created.hookToken!;
+
+    expect(
+      (yield* routines.fireEvent({ hookToken: token, contentType: null, body: "1" }))._tag,
+    ).toBe("Fired");
+    yield* setNow("2026-09-14T10:00:20Z");
+    const limited = yield* routines.fireEvent({ hookToken: token, contentType: null, body: "2" });
+    expect(limited._tag).toBe("RateLimited");
+    yield* tasks.drain;
+    // The refused delivery did not land later: still exactly one run.
+    expect((yield* routineTasks(EVENT_ROUTINE)).length).toBe(1);
+
+    yield* setNow("2026-09-14T10:00:31Z");
+    expect(
+      (yield* routines.fireEvent({ hookToken: token, contentType: null, body: "3" }))._tag,
+    ).toBe("Fired");
+    yield* tasks.drain;
+    expect((yield* routineTasks(EVENT_ROUTINE)).length).toBe(2);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("reports an unknown or paused token as not found, and fires nothing", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T10:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const created = yield* createEventRoutine;
+
+    expect(
+      (yield* routines.fireEvent({ hookToken: "z".repeat(43), contentType: null, body: "" }))._tag,
+    ).toBe("NotFound");
+    // A malformed segment never reaches the row scan either.
+    expect(
+      (yield* routines.fireEvent({ hookToken: "../state.sqlite", contentType: null, body: "" }))
+        ._tag,
+    ).toBe("NotFound");
+
+    yield* routines.pause({ routineId: EVENT_ROUTINE });
+    expect(
+      (yield* routines.fireEvent({ hookToken: created.hookToken!, contentType: null, body: "" }))
+        ._tag,
+    ).toBe("NotFound");
+
+    // Resuming an event routine restores it without inventing a schedule.
+    const resumed = yield* routines.resume({ routineId: EVENT_ROUTINE });
+    expect(resumed.enabled).toBe(true);
+    expect(resumed.schedule).toBeNull();
+    expect(
+      (yield* routines.fireEvent({ hookToken: created.hookToken!, contentType: null, body: "" }))
+        ._tag,
+    ).toBe("Fired");
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("regenerating the hook stops the old URL working", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T10:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const created = yield* createEventRoutine;
+    const oldToken = created.hookToken!;
+
+    const rotated = yield* routines.regenerateHook({ routineId: EVENT_ROUTINE });
+    expect(rotated.hookToken).not.toBe(oldToken);
+    expect(rotated.hookToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+
+    expect(
+      (yield* routines.fireEvent({ hookToken: oldToken, contentType: null, body: "" }))._tag,
+    ).toBe("NotFound");
+    expect(
+      (yield* routines.fireEvent({ hookToken: rotated.hookToken!, contentType: null, body: "" }))
+        ._tag,
+    ).toBe("Fired");
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("keeps an event routine's label editable without touching its schedule", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T10:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    yield* createEventRoutine;
+    const updated = yield* routines.update({
+      routineId: EVENT_ROUTINE,
+      title: "PR watch v2",
+      eventLabel: "PR closed",
+    });
+    expect(updated.title).toBe("PR watch v2");
+    expect(updated.eventLabel).toBe("PR closed");
+    expect(updated.schedule).toBeNull();
+    expect(updated.nextDueAt).toBeNull();
+  }).pipe(Effect.provide(makeLayer())),
+);

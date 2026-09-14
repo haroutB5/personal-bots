@@ -524,6 +524,7 @@ export const WS_METHODS = {
   personalRoutinesPause: "personalRoutines.pause",
   personalRoutinesResume: "personalRoutines.resume",
   personalRoutinesRunNow: "personalRoutines.runNow",
+  personalRoutinesRegenerateHook: "personalRoutines.regenerateHook",
 
   // Personal memory methods
   personalMemoryList: "personalMemory.list",
@@ -1213,6 +1214,13 @@ const WsPersonalRoutinesRunNowRpc = Rpc.make(WS_METHODS.personalRoutinesRunNow, 
   error: PersonalRoutinesRpcError,
 });
 
+/** Mints a fresh hook token; the old webhook URL stops working immediately. */
+const WsPersonalRoutinesRegenerateHookRpc = Rpc.make(WS_METHODS.personalRoutinesRegenerateHook, {
+  payload: PersonalRoutineIdInput,
+  success: PersonalRoutine,
+  error: PersonalRoutinesRpcError,
+});
+
 const PersonalMemoryRpcError = Schema.Union([PersonalMemoryError, EnvironmentAuthorizationError]);
 
 const WsPersonalMemoryListRpc = Rpc.make(WS_METHODS.personalMemoryList, {
@@ -1846,6 +1854,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPersonalRoutinesPauseRpc,
   WsPersonalRoutinesResumeRpc,
   WsPersonalRoutinesRunNowRpc,
+  WsPersonalRoutinesRegenerateHookRpc,
   WsPersonalMemoryListRpc,
   WsPersonalMemorySearchRpc,
   WsPersonalMemoryUpdateRpc,

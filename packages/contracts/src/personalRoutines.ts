@@ -39,16 +39,53 @@ export type PersonalRoutineMissedPolicy = typeof PersonalRoutineMissedPolicy.Typ
 
 export const PERSONAL_ROUTINE_DEFAULT_TIME_ZONE = "Europe/London";
 
+/**
+ * What starts a run. `schedule` routines have a schedule and a next-due time;
+ * `event` routines have neither and fire when their webhook is called. The
+ * trigger is fixed at creation: an event routine has no schedule to fall back
+ * to, and a scheduled routine has no hook token, so flipping one would have to
+ * invent the other silently.
+ */
+export const PersonalRoutineTrigger = Schema.Literals(["schedule", "event"]);
+export type PersonalRoutineTrigger = typeof PersonalRoutineTrigger.Type;
+
+/** Path prefix of the unauthenticated webhook endpoint: `<prefix>/<hookToken>`. */
+export const PERSONAL_ROUTINE_HOOK_ROUTE_PREFIX = "/api/personal/hooks";
+
+/** 32 random bytes, base64url, no padding. */
+export const PERSONAL_ROUTINE_HOOK_TOKEN_BYTES = 32;
+export const PERSONAL_ROUTINE_HOOK_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+/** Largest webhook body accepted; anything above is rejected, never queued. */
+export const PERSONAL_ROUTINE_EVENT_PAYLOAD_MAX_BYTES = 64 * 1024;
+/** How much of the payload reaches the bot's prompt. */
+export const PERSONAL_ROUTINE_EVENT_PAYLOAD_PROMPT_CHARS = 4_000;
+/** One fire per token per window; excess is dropped with 429, not queued. */
+export const PERSONAL_ROUTINE_EVENT_MIN_INTERVAL_MS = 30_000;
+
+/** `<prefix>/<token>`; join with the origin the phone reached the server on. */
+export function personalRoutineHookPath(hookToken: string): string {
+  return `${PERSONAL_ROUTINE_HOOK_ROUTE_PREFIX}/${hookToken}`;
+}
+
 export const PersonalRoutine = Schema.Struct({
   routineId: PersonalRoutineId,
   botId: PersonalBotId,
   title: Schema.String,
   prompt: Schema.String,
-  schedule: PersonalRoutineSchedule,
+  trigger: PersonalRoutineTrigger,
+  /** Null for event routines, which have no schedule at all. */
+  schedule: Schema.NullOr(PersonalRoutineSchedule),
+  /** Event routines only: the user-facing name of the event, e.g. "PR merged". */
+  eventLabel: Schema.NullOr(Schema.String),
+  /** Event routines only: the secret in the webhook URL. */
+  hookToken: Schema.NullOr(Schema.String),
+  /** Event routines only: when the webhook last started a run. */
+  lastFiredAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   timeZone: Schema.String,
   enabled: Schema.Boolean,
   missedPolicy: PersonalRoutineMissedPolicy,
-  /** Null once a one-off has run. */
+  /** Null once a one-off has run, and always null for event routines. */
   nextDueAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   lastOccurrenceLocal: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtcFromString,
@@ -77,7 +114,12 @@ export const PersonalRoutineCreateInput = Schema.Struct({
   botId: PersonalBotId,
   title: TrimmedNonEmptyString,
   prompt: TrimmedNonEmptyString,
-  schedule: PersonalRoutineSchedule,
+  /** Omitted means `schedule`, so existing callers keep working. */
+  trigger: Schema.optional(PersonalRoutineTrigger),
+  /** Required for `schedule`, rejected for `event`. */
+  schedule: Schema.optional(PersonalRoutineSchedule),
+  /** Required for `event`, rejected for `schedule`. */
+  eventLabel: Schema.optional(TrimmedNonEmptyString),
   timeZone: Schema.optional(TrimmedNonEmptyString),
   missedPolicy: Schema.optional(PersonalRoutineMissedPolicy),
 });
@@ -88,7 +130,10 @@ export const PersonalRoutineUpdateInput = Schema.Struct({
   botId: Schema.optional(PersonalBotId),
   title: Schema.optional(TrimmedNonEmptyString),
   prompt: Schema.optional(TrimmedNonEmptyString),
+  /** Ignored for event routines, which have no schedule. */
   schedule: Schema.optional(PersonalRoutineSchedule),
+  /** Event routines only; ignored for scheduled routines. */
+  eventLabel: Schema.optional(TrimmedNonEmptyString),
   timeZone: Schema.optional(TrimmedNonEmptyString),
   missedPolicy: Schema.optional(PersonalRoutineMissedPolicy),
 });
@@ -126,6 +171,18 @@ export class PersonalRoutinesError extends Schema.TaggedError<PersonalRoutinesEr
 ) {}
 
 const WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+
+/** Human summary of what starts the routine, for lists and detail headers. */
+export function describePersonalRoutineTrigger(routine: {
+  readonly schedule: PersonalRoutineSchedule | null;
+  readonly eventLabel: string | null;
+  readonly timeZone: string;
+}): string {
+  if (routine.schedule === null) {
+    return `On event: ${routine.eventLabel ?? "unnamed event"}`;
+  }
+  return describePersonalRoutineSchedule(routine.schedule, routine.timeZone);
+}
 
 /** Human summary of a schedule, e.g. "Weekdays at 09:00 (Europe/London)". */
 export function describePersonalRoutineSchedule(

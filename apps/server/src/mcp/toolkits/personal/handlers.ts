@@ -1,7 +1,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
-  describePersonalRoutineSchedule,
+  describePersonalRoutineTrigger,
   PersonalRoutineId,
   type PersonalRoutineSchedule,
 } from "@t3tools/contracts";
@@ -141,7 +141,7 @@ const make = Effect.gen(function* () {
         const nextRunLocal = formatNextRun(nextRunUtc, routine.timeZone);
         return {
           routineId: routine.routineId,
-          summary: `${routine.title}: ${describePersonalRoutineSchedule(routine.schedule, routine.timeZone)}. Next run: ${nextRunLocal ?? "none"}.`,
+          summary: `${routine.title}: ${describePersonalRoutineTrigger(routine)}. Next run: ${nextRunLocal ?? "none"}.`,
           timeZone: routine.timeZone,
           nextRunLocal,
           nextRunUtc,
@@ -160,7 +160,7 @@ const make = Effect.gen(function* () {
             routineId: routine.routineId,
             title: routine.title,
             botName: names.get(routine.botId) ?? "(deleted bot)",
-            schedule: describePersonalRoutineSchedule(routine.schedule, routine.timeZone),
+            schedule: describePersonalRoutineTrigger(routine),
             enabled: routine.enabled,
             nextRunLocal: routine.enabled
               ? formatNextRun(

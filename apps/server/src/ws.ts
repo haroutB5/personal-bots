@@ -2568,6 +2568,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalRoutinesRunNow, personalRoutines.runNow(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalRoutinesRegenerateHook]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalRoutinesRegenerateHook,
+            personalRoutines.regenerateHook(input),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalMemoryList]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalMemoryList,

@@ -134,6 +134,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalRoutinesPause]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalRoutinesResume]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalRoutinesRunNow]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalRoutinesRegenerateHook]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalMemoryList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalMemorySearch]: AuthOrchestrationReadScope,
   [WS_METHODS.personalMemoryUpdate]: AuthOrchestrationOperateScope,
