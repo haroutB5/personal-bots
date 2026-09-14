@@ -59,6 +59,12 @@ export interface RpcSessionOptions {
   readonly usageLimitSources?: boolean;
   /** This client answers /usage-limits itself, so the server may advertise it. */
   readonly usageLimitsCommand?: boolean;
+  /**
+   * This surface renders no composer, so the server may drop
+   * `workspaceSnapshots`, `slashCommands` and `skills` from provider
+   * catalogs -- 82% of a measured boot snapshot, rebroadcast every ~40 s.
+   */
+  readonly omitProviderWorkspaceData?: boolean;
 }
 
 export class RpcSessionFactory extends Context.Service<
@@ -156,6 +162,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
     ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
     ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+    ...(options.omitProviderWorkspaceData === true ? { omitProviderWorkspaceData: true } : {}),
   };
 
   const connect = Effect.fnUntraced(function* (connection: PreparedConnection) {

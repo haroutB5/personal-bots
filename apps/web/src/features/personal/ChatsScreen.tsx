@@ -248,7 +248,14 @@ export function ChatsScreen(): JSX.Element {
   // list once instead of every row holding a full thread subscription.
   const previewKey = summaries.map((summary) => summary.newestThread?.updatedAt ?? "").join("|");
   const previewKeyRef = useRef<string | null>(null);
+  // `newestThread` comes from the thread shells and the rows from the list, so
+  // until both have landed the key is a placeholder of empty segments.
+  // Adopting that placeholder as the baseline made the initial population read
+  // as a message arriving and refetched the list a second time on every cold
+  // start (measured: two byte-identical 12,035 B responses, 28 ms apart).
+  const previewKeyReady = list.data !== null && shells.length > 0;
   useEffect(() => {
+    if (!previewKeyReady) return;
     if (previewKeyRef.current === null) {
       previewKeyRef.current = previewKey;
       return;
@@ -256,7 +263,7 @@ export function ChatsScreen(): JSX.Element {
     if (previewKeyRef.current === previewKey) return;
     previewKeyRef.current = previewKey;
     list.refresh();
-  }, [list, previewKey]);
+  }, [list, previewKey, previewKeyReady]);
   const visible = useMemo(() => filterBotSummaries(summaries, query), [query, summaries]);
   const attention = useMemo(() => collectAttentionThreads(summaries), [summaries]);
   const runningCount = summaries.filter((summary) => summary.live).length;

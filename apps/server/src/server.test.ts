@@ -6447,6 +6447,120 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  /**
+   * `workspaceSnapshots` + `slashCommands` + `skills` measured 119,412 B of a
+   * 145,187 B boot snapshot, and the whole catalog is rebroadcast every ~40 s
+   * because the provider health poll moves `checkedAt`. The personal shell
+   * renders none of the three but does render `usageLimits.checkedAt`, so the
+   * opt-out has to remove exactly those three and leave the liveness data
+   * alone. Run both ways: a no-op implementation fails the `true` case and an
+   * over-eager one fails the `false` case, which protects the IDE composer.
+   */
+  it.effect.each([false, true])(
+    "subscribeServerConfig drops composer workspace data only when asked (omit: %s)",
+    (omitProviderWorkspaceData) =>
+      Effect.gen(function* () {
+        const workspaceData = {
+          slashCommands: [{ name: "review", description: "Review the diff" }],
+          skills: [
+            {
+              name: "pdf",
+              description: "Fill in PDF forms",
+              path: "/repo/.skills/pdf",
+              enabled: true,
+            },
+          ],
+          workspaceSnapshots: [
+            {
+              cwd: "/repo",
+              checkedAt: "2026-04-11T00:00:00.000Z",
+              slashCommands: [{ name: "review", description: "Review the diff" }],
+              skills: [
+                {
+                  name: "pdf",
+                  description: "Fill in PDF forms",
+                  path: "/repo/.skills/pdf",
+                  enabled: true,
+                },
+              ],
+            },
+          ],
+        };
+        const provider = {
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          installed: true,
+          version: "1.0.0",
+          status: "ready" as const,
+          auth: { status: "authenticated" as const },
+          checkedAt: "2026-04-11T00:00:00.000Z",
+          models: [],
+          usageLimits: {
+            checkedAt: "2026-04-11T00:00:00.000Z",
+            windows: [{ id: "weekly", kind: "weekly" as const, label: "Weekly", usedPercent: 25 }],
+          },
+          ...workspaceData,
+        };
+        // What the ~40 s health poll produces: one moved timestamp, which
+        // republishes the entire catalog to every connected client.
+        const polledProvider = {
+          ...provider,
+          checkedAt: "2026-04-11T00:00:40.000Z",
+          usageLimits: { ...provider.usageLimits, checkedAt: "2026-04-11T00:00:40.000Z" },
+        };
+
+        yield* buildAppUnderTest({
+          layers: {
+            keybindings: {
+              loadConfigState: Effect.succeed({ keybindings: [], issues: [] }),
+              streamChanges: Stream.empty,
+            },
+            providerRegistry: {
+              getProviders: Effect.succeed([provider]),
+              streamChanges: Stream.succeed([polledProvider]),
+            },
+          },
+        });
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const events = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.subscribeServerConfig](
+              omitProviderWorkspaceData ? { omitProviderWorkspaceData: true } : {},
+            ).pipe(Stream.take(2), Stream.runCollect),
+          ),
+        );
+
+        const [first, second] = Array.from(events);
+        assert.equal(first?.type, "snapshot");
+        assert.equal(second?.type, "providerStatuses");
+        const snapshotProvider = first?.type === "snapshot" ? first.config.providers[0] : undefined;
+        const republishedProvider =
+          second?.type === "providerStatuses" ? second.payload.providers[0] : undefined;
+
+        for (const shaped of [snapshotProvider, republishedProvider]) {
+          assert.ok(shaped);
+          if (omitProviderWorkspaceData) {
+            assert.deepEqual(shaped.slashCommands, []);
+            assert.deepEqual(shaped.skills, []);
+            assert.equal(shaped.workspaceSnapshots, undefined);
+          } else {
+            assert.deepEqual(shaped.slashCommands, workspaceData.slashCommands);
+            assert.deepEqual(shaped.skills, workspaceData.skills);
+            assert.deepEqual(shaped.workspaceSnapshots, workspaceData.workspaceSnapshots);
+          }
+        }
+
+        // The liveness data the personal usage strip renders survives either
+        // way -- it is the reason the catalog is republished at all.
+        assert.equal(snapshotProvider?.usageLimits?.checkedAt, "2026-04-11T00:00:00.000Z");
+        assert.equal(republishedProvider?.checkedAt, "2026-04-11T00:00:40.000Z");
+        assert.equal(republishedProvider?.usageLimits?.checkedAt, "2026-04-11T00:00:40.000Z");
+        assert.deepEqual(republishedProvider?.usageLimits?.windows, provider.usageLimits.windows);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect.each([false, true])(
     "routes websocket rpc subscribeServerConfig emits provider status updates (limits: %s)",
     (hasLimits) =>

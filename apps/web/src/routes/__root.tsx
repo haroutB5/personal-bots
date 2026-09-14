@@ -71,6 +71,10 @@ import {
 } from "../components/KeybindingsUpdateToast.logic";
 
 import { isPersonalPath } from "../features/personal/personalMode";
+import {
+  PROVIDER_WORKSPACE_DATA_OMITTED,
+  shouldReloadForProviderWorkspaceData,
+} from "../features/personal/providerCatalogScope";
 import { PersonalUnreachableScreen } from "../features/personal/PersonalUnreachableScreen";
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
@@ -132,6 +136,20 @@ function RootRouteView() {
     return () => {
       window.cancelAnimationFrame(frame);
     };
+  }, [pathname]);
+
+  // A session that launched into the personal shell subscribed without the
+  // composer's provider workspace data, and the subscription payload is fixed
+  // for the life of the connection. Leaving the shell therefore has to
+  // re-enter through a document load, or the upstream composer would come up
+  // with no slash commands and no skills. One reload, then never again: see
+  // features/personal/providerCatalogScope.
+  useEffect(() => {
+    if (
+      shouldReloadForProviderWorkspaceData({ omitted: PROVIDER_WORKSPACE_DATA_OMITTED, pathname })
+    ) {
+      window.location.assign(`${pathname}${window.location.search}${window.location.hash}`);
+    }
   }, [pathname]);
 
   if (pathname === "/pair" || pathname === "/connect" || pathname.startsWith("/connect/")) {

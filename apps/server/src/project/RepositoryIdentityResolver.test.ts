@@ -131,6 +131,85 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(resolverLayer));
   });
 
+  /**
+   * A workspace root that is not a repository used to re-spawn
+   * `git rev-parse` on every resolve, because a `null` root was cached for
+   * `Duration.zero`. With three non-repo roots in the projection that made
+   * `GET /api/orchestration/shell` cost 1-2.4 s on every call. Exit 128 is
+   * git's definitive "no repository here", so it is cached like any other
+   * negative answer; the transient-failure retry above (exit 1) is unchanged.
+   */
+  it.effect("caches a non-repository root until the negative TTL expires", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+      run: (input) =>
+        Effect.sync(() => {
+          calls.push(input.args);
+          return {
+            stdout: "",
+            stderr: "fatal: not a git repository (or any of the parent directories): .git",
+            code: ChildProcessSpawner.ExitCode(128),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }),
+    });
+    const resolverLayer = Layer.effect(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+      RepositoryIdentityResolver.make({
+        negativeCacheTtl: Duration.millis(50),
+        positiveCacheTtl: Duration.seconds(1),
+      }),
+    ).pipe(Layer.provide(processRunner));
+
+    return Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+
+      for (const _attempt of [1, 2, 3]) {
+        expect(yield* resolver.resolve("/not-a-repo")).toBeNull();
+      }
+      expect(calls).toEqual([["-C", "/not-a-repo", "rev-parse", "--show-toplevel"]]);
+
+      yield* TestClock.adjust(Duration.millis(120));
+      expect(yield* resolver.resolve("/not-a-repo")).toBeNull();
+      expect(calls).toHaveLength(2);
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
+  });
+
+  it.effect("retries a root lookup git could not answer", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+      run: (input) =>
+        Effect.sync(() => {
+          calls.push(input.args);
+          return {
+            stdout: "",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(1),
+            timedOut: true,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }),
+    });
+    const resolverLayer = Layer.effect(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+      RepositoryIdentityResolver.make({ negativeCacheTtl: Duration.minutes(5) }),
+    ).pipe(Layer.provide(processRunner));
+
+    return Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      expect(yield* resolver.resolve("/timing-out")).toBeNull();
+      expect(yield* resolver.resolve("/timing-out")).toBeNull();
+      expect(calls).toHaveLength(2);
+    }).pipe(Effect.provide(resolverLayer));
+  });
+
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

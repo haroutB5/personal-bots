@@ -1648,6 +1648,20 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
      * client would send it to the provider as an ordinary prompt.
      */
     usageLimitsCommand: Schema.optional(Schema.Boolean),
+    /**
+     * Whether this client renders none of the composer's workspace data --
+     * `workspaceSnapshots`, `slashCommands` and `skills`. Those three fields
+     * were measured at 119 KB of a 145 KB boot snapshot, and the whole catalog
+     * is rebroadcast whenever a provider health poll moves a `checkedAt`
+     * timestamp (~40 s), so a client that never reads them pays ~111 KB per
+     * poll for nothing.
+     *
+     * Opt-out rather than opt-in on purpose: a client that does not send it,
+     * cannot send it, or talks to a server that drops it keeps the full
+     * catalog. The failure mode is the payload staying large, never a composer
+     * silently losing its slash commands.
+     */
+    omitProviderWorkspaceData: Schema.optional(Schema.Boolean),
   }),
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),

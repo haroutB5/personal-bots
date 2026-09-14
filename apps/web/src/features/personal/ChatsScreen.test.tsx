@@ -11,6 +11,7 @@ const decodeBot = Schema.decodeUnknownSync(PersonalBot);
 const state = vi.hoisted(() => ({
   environmentId: "env-1" as string | null,
   listData: null as { bots: unknown[]; threads: unknown[]; personalProjectId: null } | null,
+  shells: [] as unknown[],
   refresh: vi.fn(),
   tasksCalls: [] as Array<string | null>,
   deleteOutcome: { status: "done" } as
@@ -67,7 +68,7 @@ function stubWindow() {
 }
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
-vi.mock("~/state/entities", () => ({ useThreadShells: () => [] }));
+vi.mock("~/state/entities", () => ({ useThreadShells: () => state.shells }));
 vi.mock("~/state/server", () => ({
   primaryServerProvidersAtom: {},
   serverEnvironment: { refreshProviders: { label: "refreshProviders" } },
@@ -149,6 +150,8 @@ afterEach(async () => {
   renderer = undefined;
   state.environmentId = "env-1";
   state.listData = null;
+  state.shells = [];
+  state.refresh.mockClear();
   state.deleteOutcome = { status: "done" };
   state.tasksCalls.length = 0;
   state.rafQueue.length = 0;
@@ -257,5 +260,61 @@ describe("ChatsScreen delete failures", () => {
       });
       expect(renderer!.root.findAllByProps({ role: "alert" })).toEqual([]);
     }
+  });
+});
+
+/**
+ * The preview-refresh effect exists to catch a message landing on a bot's
+ * newest thread. Its key is built from the thread shells, which arrive after
+ * the bot list, so seeding the baseline from the pre-data render made the
+ * initial population look like a message arriving: every cold start fetched
+ * `personalBots.list` twice (measured as two byte-identical 12,035 B
+ * responses, 28 ms apart).
+ */
+describe("ChatsScreen preview refresh", () => {
+  const link = (botId: string, threadId: string) => ({
+    botId,
+    threadId,
+    createdAt: "2026-09-01T10:00:00.000Z",
+    archivedAt: null,
+  });
+  const shell = (id: string, updatedAt: string) => ({
+    id,
+    environmentId: "env-1",
+    title: `Thread ${id}`,
+    updatedAt,
+    archivedAt: null,
+    latestTurn: null,
+    session: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+  });
+
+  async function populate() {
+    stubWindow();
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+    // The list lands first, then the thread shells.
+    state.listData = {
+      bots: [bot("bot-live", "Live Ada")],
+      threads: [link("bot-live", "thread-1")],
+      personalProjectId: null,
+    };
+    await act(async () => renderer!.update(<ChatsScreen />));
+    state.shells = [shell("thread-1", "2026-09-01T10:00:00.000Z")];
+    await act(async () => renderer!.update(<ChatsScreen />));
+  }
+
+  it("does not refetch the list while it is still populating", async () => {
+    await populate();
+    expect(state.refresh).not.toHaveBeenCalled();
+  });
+
+  it("still refetches once a message bumps the newest thread", async () => {
+    await populate();
+    state.shells = [shell("thread-1", "2026-09-01T10:05:00.000Z")];
+    await act(async () => renderer!.update(<ChatsScreen />));
+    expect(state.refresh).toHaveBeenCalledTimes(1);
   });
 });

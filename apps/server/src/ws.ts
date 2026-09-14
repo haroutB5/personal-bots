@@ -71,6 +71,7 @@ import {
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
+  type ServerProvider,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -354,6 +355,34 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
+
+/**
+ * Drops the composer's workspace data from a provider catalog for subscribers
+ * that told us they never render it (`omitProviderWorkspaceData`).
+ *
+ * Measured on this install: `workspaceSnapshots` + `slashCommands` + `skills`
+ * are 119,412 B of a 145,187 B boot snapshot, and the whole catalog is
+ * rebroadcast every ~40 s because a provider health poll moves three
+ * `checkedAt` timestamps. The timestamps are load-bearing -- the personal
+ * usage strip renders "Updated <relative time>" from them -- so the catalog
+ * cannot stop being published; it can only stop carrying what the subscriber
+ * does not read.
+ *
+ * `slashCommands` and `skills` are emptied rather than removed because both
+ * are required in `ServerProvider` (their schemas carry a decoding default of
+ * `[]`, which is exactly what an omitted field would decode to anyway). It is
+ * applied last, so any `/usage-limits` command injected above is dropped too:
+ * a client that renders no slash commands cannot offer that one either.
+ */
+function withoutProviderWorkspaceData(
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProvider> {
+  return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) => ({
+    ...provider,
+    slashCommands: [],
+    skills: [],
+  }));
+}
 
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
@@ -3100,7 +3129,19 @@ const makeWsRpcLayer = (
             WS_METHODS.subscribeServerConfig,
             Effect.gen(function* () {
               const usageLimitsCommand = input.usageLimitsCommand === true;
-              const config = yield* loadServerConfig({ usageLimitsCommand });
+              // Applied to the snapshot and to every republished catalog, and
+              // applied *before* the dedupe below -- so a subscriber that does
+              // not read workspace data also stops being woken by changes
+              // confined to it, and the comparator stringifies the small shape.
+              const shapeProviders = (providers: ReadonlyArray<ServerProvider>) =>
+                input.omitProviderWorkspaceData === true
+                  ? withoutProviderWorkspaceData(providers)
+                  : providers;
+              const loadedConfig = yield* loadServerConfig({ usageLimitsCommand });
+              const config = {
+                ...loadedConfig,
+                providers: shapeProviders(loadedConfig.providers),
+              };
               const keybindingsUpdates = keybindings.streamChanges.pipe(
                 Stream.map((event) => ({
                   version: 1 as const,
@@ -3127,7 +3168,9 @@ const makeWsRpcLayer = (
                   ),
                 ),
                 (providers, sources) =>
-                  usageLimitsCommand ? withUsageLimitsCommands(providers, sources) : providers,
+                  shapeProviders(
+                    usageLimitsCommand ? withUsageLimitsCommands(providers, sources) : providers,
+                  ),
               ).pipe(
                 // Both sides replay their current value, so the first pairing normally
                 // repeats the snapshot the client already holds. Compare against that

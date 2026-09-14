@@ -10,6 +10,7 @@ import {
   backgroundActivityObserverLayer,
   backgroundActivityReporterLayer,
 } from "../lib/backgroundActivityReporter";
+import { PROVIDER_WORKSPACE_DATA_OMITTED } from "../features/personal/providerCatalogScope";
 import { connectionPlatformLayer } from "./platform";
 
 const providedConnectionPlatformLayer = connectionPlatformLayer.pipe(
@@ -36,6 +37,7 @@ const providedClientConnectionLayer = snapshotLoaderLayer.pipe(
       environmentThemes: true,
       usageLimitSources: true,
       usageLimitsCommand: true,
+      omitProviderWorkspaceData: PROVIDER_WORKSPACE_DATA_OMITTED,
     }),
   ),
   Layer.provideMerge(

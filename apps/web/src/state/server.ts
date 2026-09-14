@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
+import { PROVIDER_WORKSPACE_DATA_OMITTED } from "../features/personal/providerCatalogScope";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { environmentSession } from "./session";
@@ -30,6 +31,7 @@ export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRunt
   environmentThemes: true,
   usageLimitSources: true,
   usageLimitsCommand: true,
+  omitProviderWorkspaceData: PROVIDER_WORKSPACE_DATA_OMITTED,
 });
 export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,

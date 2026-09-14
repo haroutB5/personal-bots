@@ -90,6 +90,20 @@ function buildRepositoryIdentity(input: {
   };
 }
 
+/**
+ * `git rev-parse --show-toplevel` exits 128 both for a directory that is not a
+ * repository and for one that does not exist — the two definitive "no root
+ * here" answers. Any other failure (spawn error, timeout, some other non-zero
+ * code) means git did not answer, which must stay uncached so a transient
+ * failure does not pin a workspace root to `null` for a whole TTL.
+ */
+const GIT_NOT_A_REPOSITORY_EXIT_CODE = 128;
+
+/** git could not answer. Never cached, so the next resolve retries. */
+class GitRootUnavailable {
+  readonly _tag = "GitRootUnavailable";
+}
+
 const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
   function* (cwd: string) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
@@ -103,8 +117,13 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.option);
-    if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
-      return null;
+    if (topLevelResult._tag === "None" || topLevelResult.value.timedOut) {
+      return yield* Effect.fail(new GitRootUnavailable());
+    }
+    if (topLevelResult.value.code !== 0) {
+      return topLevelResult.value.code === GIT_NOT_A_REPOSITORY_EXIT_CODE
+        ? null
+        : yield* Effect.fail(new GitRootUnavailable());
     }
 
     const candidate = topLevelResult.value.stdout.trim();
@@ -139,16 +158,26 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
 
-  const repositoryRootCache = yield* Cache.makeWith<string, string | null>(
+  const repositoryRootCache = yield* Cache.makeWith<string, string | null, GitRootUnavailable>(
     (cwd) =>
       resolveRepositoryIdentityCacheKey(cwd).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       ),
     {
       capacity: cacheCapacity,
+      // A root that is not a git repository is cached for the negative TTL, the
+      // same as an unresolvable identity eleven lines below. Without it every
+      // caller re-spawns `git rev-parse` for a non-repo workspace root forever:
+      // a shell snapshot over four roots, three of them non-repos, measured
+      // 977-1816 ms and was the slowest endpoint in the app by three orders of
+      // magnitude. The cost of caching is that a folder that gets `git init`ed
+      // is recognised up to one TTL later, which the identity cache already
+      // accepts.
       timeToLive: Exit.match({
         onSuccess: (value) =>
-          value === null ? Duration.zero : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
+          value === null
+            ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
+            : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
         onFailure: () => Duration.zero,
       }),
     },
@@ -175,7 +204,10 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     "RepositoryIdentityResolver.resolve",
   )(function* (cwd, options) {
     if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
-    const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
+    // A lookup git could not answer surfaces as a cache failure, which is never
+    // cached; the caller sees the same `null` it always did.
+    const cacheKeyResult = yield* Cache.get(repositoryRootCache, cwd).pipe(Effect.option);
+    const cacheKey = cacheKeyResult._tag === "Some" ? cacheKeyResult.value : null;
     if (cacheKey === null) return null;
     if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
     return yield* Cache.get(repositoryIdentityCache, cacheKey);
