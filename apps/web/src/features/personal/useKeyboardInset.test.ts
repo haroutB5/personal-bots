@@ -83,6 +83,24 @@ describe("useKeyboardInset", () => {
     expect(scrollTo).toHaveBeenCalledWith(0, 0);
   });
 
+  it("never resets scroll while the keyboard is open, even when iOS pans the viewport", () => {
+    act(() => {
+      renderer = create(createElement(Probe));
+    });
+    // Keyboard open AND iOS panned the visual viewport down: offsetTop eats
+    // the height difference, so `covered` reads ~0 while typing.
+    viewport.height = 500;
+    viewport.offsetTop = 300;
+    fakeWindow.scrollY = 300;
+    scroller.scrollTop = 300;
+    act(() => {
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    expect(lastInset).toBe(0);
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(scroller.scrollTop).toBe(300);
+  });
+
   it("leaves scroll alone when the keyboard closes with no pan", () => {
     act(() => {
       renderer = create(createElement(Probe));

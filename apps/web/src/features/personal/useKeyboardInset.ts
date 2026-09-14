@@ -20,7 +20,13 @@ export function useKeyboardInset(): number {
     const update = () => {
       const covered = window.innerHeight - viewport.height - viewport.offsetTop;
       setInset(covered > 1 ? Math.round(covered) : 0);
-      if (covered <= 1) {
+      // `covered` alone cannot distinguish "keyboard closed" from "keyboard
+      // open but iOS panned the visual viewport down" (offsetTop eats the
+      // difference). Resetting during that pan drags the focused composer
+      // back under the keyboard, so the scroll restore keys on the raw
+      // height delta instead.
+      const keyboardClosed = window.innerHeight - viewport.height <= 1;
+      if (keyboardClosed) {
         const scroller = document.scrollingElement;
         if (scroller && scroller.scrollTop > 0) scroller.scrollTop = 0;
         if (window.scrollY > 0) window.scrollTo(0, 0);
