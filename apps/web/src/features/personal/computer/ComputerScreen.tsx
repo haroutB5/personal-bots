@@ -200,6 +200,7 @@ export function ComputerBrowserPane(props: {
   readonly events: ReadonlyArray<PersonalBrowserActivityEvent>;
   readonly reachable: boolean;
   readonly onBackToChat?: () => void;
+  readonly fullScreen?: boolean;
 }) {
   const { environmentId, status } = props;
   const takeControl = useAtomCommand(computerEnvironment.takeControl);
@@ -235,7 +236,10 @@ export function ComputerBrowserPane(props: {
   };
 
   return (
-    <>
+    // A plain wrapper, not a fragment: going full screen must not change the
+    // shape of this subtree, or React would remount LiveViewport and the
+    // screencast socket would reconnect.
+    <div>
       <AddressBar page={page} editable={inControl && inputReady} onSend={send} />
 
       <div className="mt-2.5 overflow-hidden rounded-[12px] border border-[var(--personal-border)] bg-[var(--personal-surface)]">
@@ -291,8 +295,8 @@ export function ComputerBrowserPane(props: {
         ) : null}
       </div>
 
-      <ActivityCard events={props.events} />
-    </>
+      {!props.fullScreen ? <ActivityCard events={props.events} /> : null}
+    </div>
   );
 }
 
