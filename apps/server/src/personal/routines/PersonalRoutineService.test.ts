@@ -135,6 +135,135 @@ const nextDueIso = (routineId: string) =>
     return routine.nextDueAt === null ? null : DateTime.formatIso(routine.nextDueAt);
   });
 
+const listedRoutineIds = Effect.gen(function* () {
+  const routines = yield* PersonalRoutineService.PersonalRoutineService;
+  return (yield* routines.list()).routines.map((routine) => routine.routineId);
+});
+
+it.effect("deletes a one-off after it fires but keeps its occurrence and task", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T10:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const routineId = PersonalRoutineId.make("one-off");
+    yield* routines.create({
+      routineId,
+      botId: BOT,
+      title: "One-off",
+      prompt: "Do it once.",
+      schedule: { kind: "once", at: "2026-09-14T11:30" },
+    });
+
+    yield* setNow("2026-09-14T10:30:10Z");
+    yield* tickAndDrain;
+
+    expect(yield* listedRoutineIds).not.toContain(routineId);
+    expect(yield* occurrences(routineId)).toEqual([
+      expect.objectContaining({ localOccurrence: "2026-09-14T11:30", status: "created" }),
+    ]);
+    expect((yield* routineTasks(routineId)).length).toBe(1);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("keeps a recurring routine after it fires", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T06:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const routineId = PersonalRoutineId.make("recurring");
+    yield* routines.create({
+      routineId,
+      botId: BOT,
+      title: "Recurring",
+      prompt: "Do it daily.",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+
+    yield* setNow("2026-09-14T08:00:10Z");
+    yield* tickAndDrain;
+
+    expect(yield* listedRoutineIds).toContain(routineId);
+    expect(yield* nextDueIso(routineId)).toBe("2026-09-15T08:00:00.000Z");
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("removes a pre-existing spent one-off on the startup scheduler pass", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T10:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const routineId = PersonalRoutineId.make("spent-before-upgrade");
+    yield* routines.create({
+      routineId,
+      botId: BOT,
+      title: "Spent",
+      prompt: "Already ran.",
+      schedule: { kind: "once", at: "2026-09-14T11:30" },
+    });
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO personal_routine_occurrences
+        (routine_id, local_occurrence, due_utc, task_id, status, error_message, created_at)
+      VALUES (${routineId}, '2026-09-14T11:30', '2026-09-14T10:30:00.000Z', NULL, 'skipped', NULL,
+        '2026-09-14T10:30:00.000Z')
+    `;
+    yield* sql`
+      UPDATE personal_routines SET next_due_utc = NULL WHERE routine_id = ${routineId}
+    `;
+
+    yield* setNow("2026-09-14T12:00:00Z");
+    yield* routines.tick;
+
+    expect(yield* listedRoutineIds).not.toContain(routineId);
+    expect(yield* occurrences(routineId)).toEqual([
+      expect.objectContaining({ localOccurrence: "2026-09-14T11:30", status: "skipped" }),
+    ]);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("resume fails cleanly after an exhausted one-off is deleted", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T10:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const routineId = PersonalRoutineId.make("deleted-one-off");
+    yield* routines.create({
+      routineId,
+      botId: BOT,
+      title: "Deleted",
+      prompt: "Run once.",
+      schedule: { kind: "once", at: "2026-09-14T11:30" },
+    });
+    yield* setNow("2026-09-14T10:30:10Z");
+    yield* tickAndDrain;
+
+    const error = yield* Effect.flip(routines.resume({ routineId }));
+    expect(error.message).toContain("was not found");
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("resume deletes a paused one-off after its scheduled time has passed", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T10:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const routineId = PersonalRoutineId.make("paused-one-off");
+    yield* routines.create({
+      routineId,
+      botId: BOT,
+      title: "Paused once",
+      prompt: "Run once.",
+      schedule: { kind: "once", at: "2026-09-14T11:30" },
+    });
+    yield* routines.pause({ routineId });
+    yield* setNow("2026-09-14T12:00:00Z");
+
+    const error = yield* Effect.flip(routines.resume({ routineId }));
+    expect(error.message).toContain("was not found");
+    expect(yield* listedRoutineIds).not.toContain(routineId);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
 it.effect("spring-forward: a 01:30 routine fires once, at 02:00 BST", () =>
   Effect.gen(function* () {
     yield* setNow("2026-03-28T12:00:00Z");
@@ -412,5 +541,5 @@ it.effect("prunes ancient occurrence rows on tick and lists only the recent wind
         .filter((row) => row.routineId === "prune")
         .map((row) => row.localOccurrence),
     ).toEqual(["2026-09-14T09:00"]);
-  }).pipe(Effect.scoped, Effect.provide(makeLayer()), Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.merge(makeLayer(), NodeServices.layer))),
 );

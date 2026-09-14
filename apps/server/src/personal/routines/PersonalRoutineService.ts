@@ -298,6 +298,12 @@ export const make = Effect.gen(function* () {
       WHERE routine_id = ${routine.routineId}
     `;
 
+  // Occurrences and their tasks are history, not children of the schedule.
+  // Keeping this as the one deletion path makes manual and automatic removal
+  // agree while the existing retention pass eventually prunes old occurrences.
+  const deleteRoutine = (routineId: PersonalRoutineId) =>
+    sql`DELETE FROM personal_routines WHERE routine_id = ${routineId}`.pipe(Effect.asVoid);
+
   // Missed runs (the laptop slept): an on-time slot always runs; otherwise
   // `coalesce` runs ONE occurrence for the latest missed slot and `skip`
   // records it as skipped. Either way the routine advances past `now`.
@@ -306,16 +312,27 @@ export const make = Effect.gen(function* () {
     nowMs: number,
     nowIso: string,
   ) {
-    if (routine.nextDueAt === null) return;
+    const next = nextRoutineSlot(routine.schedule, routine.timeZone, nowMs);
+    if (routine.nextDueAt === null) {
+      if (next === null) {
+        yield* deleteRoutine(routine.routineId);
+      } else {
+        yield* advance(routine, next.dueMs, null, nowIso);
+      }
+      return;
+    }
     const due = dueRoutineSlots(
       routine.schedule,
       routine.timeZone,
       DateTime.toEpochMillis(routine.nextDueAt),
       nowMs,
     );
-    const next = nextRoutineSlot(routine.schedule, routine.timeZone, nowMs);
     if (due === null) {
-      yield* advance(routine, next?.dueMs ?? null, null, nowIso);
+      if (next === null) {
+        yield* deleteRoutine(routine.routineId);
+      } else {
+        yield* advance(routine, next.dueMs, null, nowIso);
+      }
       return;
     }
     const onTime = nowMs - due.latest.dueMs <= PERSONAL_ROUTINE_MISSED_GRACE_MS;
@@ -329,12 +346,11 @@ export const make = Effect.gen(function* () {
         }),
       ),
     );
-    yield* advance(
-      routine,
-      next?.dueMs ?? null,
-      mode === "run" ? due.latest.localKey : null,
-      nowIso,
-    );
+    if (next === null) {
+      yield* deleteRoutine(routine.routineId);
+    } else {
+      yield* advance(routine, next.dueMs, mode === "run" ? due.latest.localKey : null, nowIso);
+    }
   });
 
   const tick: PersonalRoutineService["Service"]["tick"] = lock
@@ -354,7 +370,8 @@ export const make = Effect.gen(function* () {
         `;
         const rows = yield* sql`
           SELECT ${sql.literal(ROUTINE_COLUMNS)} FROM personal_routines
-          WHERE enabled = 1 AND next_due_utc IS NOT NULL AND next_due_utc <= ${nowIso}
+          WHERE next_due_utc IS NULL
+             OR (enabled = 1 AND next_due_utc <= ${nowIso})
           ORDER BY next_due_utc ASC
         `;
         for (const raw of rows) {
@@ -478,17 +495,7 @@ export const make = Effect.gen(function* () {
       .pipe(storageFailure("update"));
 
   const remove: PersonalRoutineService["Service"]["remove"] = (input) =>
-    lock
-      .withPermit(
-        sql.withTransaction(
-          Effect.gen(function* () {
-            // Tasks the routine already started stay; only the schedule goes.
-            yield* sql`DELETE FROM personal_routine_occurrences WHERE routine_id = ${input.routineId}`;
-            yield* sql`DELETE FROM personal_routines WHERE routine_id = ${input.routineId}`;
-          }),
-        ),
-      )
-      .pipe(storageFailure("delete"));
+    lock.withPermit(deleteRoutine(input.routineId)).pipe(storageFailure("delete"));
 
   const pause: PersonalRoutineService["Service"]["pause"] = (input) =>
     lock
@@ -517,11 +524,15 @@ export const make = Effect.gen(function* () {
             current.timeZone,
             DateTime.toEpochMillis(now),
           );
+          if (next === null) {
+            yield* deleteRoutine(current.routineId);
+            return yield* fail(`Routine '${input.routineId}' was not found.`);
+          }
           const nowIso = DateTime.formatIso(now);
           yield* sql`
             UPDATE personal_routines
             SET enabled = 1,
-                next_due_utc = ${next === null ? null : isoOfMs(next.dueMs)},
+                next_due_utc = ${isoOfMs(next.dueMs)},
                 updated_at = ${nowIso}
             WHERE routine_id = ${input.routineId}
           `;
