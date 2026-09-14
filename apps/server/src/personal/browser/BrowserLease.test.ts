@@ -5,6 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -30,6 +32,8 @@ const awaitLease = (predicate: (view: BrowserLease.LeaseView) => boolean) =>
     }
     return yield* Effect.die(new Error("lease never reached the expected state"));
   });
+
+const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 
 const rejectionReason = <A, E>(exit: Exit.Exit<A, E>): string => {
   if (Exit.isSuccess(exit)) return "succeeded";
@@ -234,24 +238,89 @@ describe("BrowserLease", () => {
     }).pipe(Effect.provide(leaseLayer)),
   );
 
+  it.effect("deleting the owning thread releases the lease and forgets its page", () =>
+    Effect.gen(function* () {
+      const lease = yield* BrowserLease.BrowserLease;
+      yield* lease.runAgentOp({ threadId: "thread-a", operation: "navigate" }, Effect.void);
+      yield* lease.recordPageUrl("https://example.com/");
+
+      // Another thread's deletion must not take the browser off this bot.
+      yield* lease.releaseThread("thread-b");
+      expect(yield* lease.view).toMatchObject({
+        ownerId: "thread-a",
+        lastUrl: "https://example.com/",
+      });
+
+      yield* lease.releaseThread("thread-a");
+      // The page goes with the owner: a deleted chat's URL must never be
+      // reopened by a later boot restore.
+      expect(yield* lease.view).toMatchObject({ ownerId: null, lastUrl: null });
+    }).pipe(Effect.provide(leaseLayer)),
+  );
+
+  it.effect("boot releases a lapsed agent lease instead of keeping its page", () =>
+    Effect.gen(function* () {
+      const saved: PersonalBrowserLeaseRepository.BrowserLeaseRow[] = [];
+      // The test clock boots at the epoch, so a heartbeat a day earlier is a
+      // day stale from boot's point of view.
+      const heartbeatMs = -24 * 60 * 60 * 1_000;
+      const stale: PersonalBrowserLeaseRepository.BrowserLeaseRow = {
+        profileId: BrowserLease.PERSONAL_BROWSER_PROFILE_ID,
+        ownerType: "agent",
+        ownerId: "thread-a",
+        generation: 4,
+        heartbeatAt: iso(heartbeatMs),
+        expiresAt: iso(heartbeatMs + BrowserLease.AGENT_LEASE_TTL_MS),
+        lastUrl: "https://example.com/",
+      };
+      const repository = Layer.succeed(
+        PersonalBrowserLeaseRepository.PersonalBrowserLeaseRepository,
+        PersonalBrowserLeaseRepository.PersonalBrowserLeaseRepository.of({
+          load: () => Effect.succeed(Option.some(stale)),
+          save: (next) =>
+            Effect.sync(() => {
+              saved.push(next);
+            }),
+        }),
+      );
+
+      yield* Effect.gen(function* () {
+        const lease = yield* BrowserLease.BrowserLease;
+        expect(yield* lease.view).toMatchObject({ ownerId: null, lastUrl: null });
+        // Normalized on disk too, so the stale owner and URL stop accumulating.
+        expect(saved.at(-1)).toMatchObject({ ownerId: null, lastUrl: null });
+      }).pipe(Effect.provide(BrowserLease.layer.pipe(Layer.provide(repository))));
+    }),
+  );
+
   describe("decideBrowserRestore", () => {
+    const BOOT_MS = Date.parse("2026-01-02T00:00:00.000Z");
+    /** When the agent last touched the browser, N seconds before the restart. */
+    const heartbeat = (secondsBeforeBoot: number) => BOOT_MS - secondsBeforeBoot * 1_000;
+
     const row = (
       ownerType: "agent" | "human",
       ownerId: string | null,
       lastUrl: string | null,
+      // Live by default: an agent lease heartbeaten 30s before the restart.
+      heartbeatAt: number | null = heartbeat(30),
     ): PersonalBrowserLeaseRepository.BrowserLeaseRow => ({
       profileId: BrowserLease.PERSONAL_BROWSER_PROFILE_ID,
       ownerType,
       ownerId,
       generation: 4,
-      heartbeatAt: null,
-      expiresAt: null,
+      heartbeatAt: heartbeatAt === null ? null : iso(heartbeatAt),
+      // Always past: a restart outlasts the 90s idle TTL, which is exactly why
+      // the restore decision is made on the heartbeat instead.
+      expiresAt: heartbeatAt === null ? null : iso(heartbeatAt + BrowserLease.AGENT_LEASE_TTL_MS),
       lastUrl,
     });
 
     it.effect("restores an agent lease with its normalized page", () =>
       Effect.gen(function* () {
-        expect(BrowserLease.decideBrowserRestore(row("agent", "thread-a", "example.com"))).toEqual({
+        expect(
+          BrowserLease.decideBrowserRestore(row("agent", "thread-a", "example.com"), BOOT_MS),
+        ).toEqual({
           _tag: "RestoreAgent",
           threadId: "thread-a",
           url: "https://example.com/",
@@ -261,7 +330,7 @@ describe("BrowserLease", () => {
 
     it.effect("restores an agent lease without a page when there is nothing usable", () =>
       Effect.gen(function* () {
-        expect(BrowserLease.decideBrowserRestore(row("agent", "thread-a", null))).toEqual({
+        expect(BrowserLease.decideBrowserRestore(row("agent", "thread-a", null), BOOT_MS)).toEqual({
           _tag: "RestoreAgent",
           threadId: "thread-a",
           url: null,
@@ -269,22 +338,56 @@ describe("BrowserLease", () => {
         // A saved URL that fails the navigation policy restores the lease but
         // never navigates, rather than blocking the restore.
         expect(
-          BrowserLease.decideBrowserRestore(row("agent", "thread-a", "javascript:alert(1)")),
+          BrowserLease.decideBrowserRestore(
+            row("agent", "thread-a", "javascript:alert(1)"),
+            BOOT_MS,
+          ),
         ).toEqual({ _tag: "RestoreAgent", threadId: "thread-a", url: null });
       }),
     );
 
     it.effect("clears a human lease and leaves a released lease alone", () =>
       Effect.gen(function* () {
-        expect(BrowserLease.decideBrowserRestore(row("human", "session-1", null))).toEqual({
-          _tag: "ClearHuman",
-        });
-        expect(BrowserLease.decideBrowserRestore(row("agent", null, null))).toEqual({
+        expect(BrowserLease.decideBrowserRestore(row("human", "session-1", null), BOOT_MS)).toEqual(
+          {
+            _tag: "ClearHuman",
+          },
+        );
+        expect(BrowserLease.decideBrowserRestore(row("agent", null, null), BOOT_MS)).toEqual({
           _tag: "Noop",
         });
-        expect(BrowserLease.decideBrowserRestore(row("human", null, null))).toEqual({
+        expect(BrowserLease.decideBrowserRestore(row("human", null, null), BOOT_MS)).toEqual({
           _tag: "Noop",
         });
+      }),
+    );
+
+    it.effect("refuses to restore an agent lease that lapsed before the restart window", () =>
+      Effect.gen(function* () {
+        // A day-old lease. Without this bound every later restart relaunches
+        // Chrome on yesterday's page and reports the bot as working.
+        const stale = row("agent", "thread-a", "https://example.com/", heartbeat(24 * 60 * 60));
+        expect(BrowserLease.decideBrowserRestore(stale, BOOT_MS)).toEqual({ _tag: "Noop" });
+        expect(BrowserLease.isLapsedAgentLease(stale, BOOT_MS)).toBe(true);
+
+        // A row that never recorded a heartbeat proves nothing about liveness.
+        const unheard = row("agent", "thread-a", "https://example.com/", null);
+        expect(BrowserLease.decideBrowserRestore(unheard, BOOT_MS)).toEqual({ _tag: "Noop" });
+        expect(BrowserLease.isLapsedAgentLease(unheard, BOOT_MS)).toBe(true);
+
+        // The window's own edge still restores, and a live lease is not lapsed.
+        const edge = row(
+          "agent",
+          "thread-a",
+          null,
+          heartbeat(BrowserLease.RESTART_GRACE_MS / 1000),
+        );
+        expect(BrowserLease.decideBrowserRestore(edge, BOOT_MS)).toMatchObject({
+          _tag: "RestoreAgent",
+        });
+        expect(BrowserLease.isLapsedAgentLease(row("agent", "thread-a", null), BOOT_MS)).toBe(
+          false,
+        );
       }),
     );
   });

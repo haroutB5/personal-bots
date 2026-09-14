@@ -162,6 +162,13 @@ const stubRepository = (
     }),
   );
 
+/**
+ * A row the previous process left behind moments before the restart. The
+ * heartbeat sits at the test clock's own boot instant on purpose: boot
+ * restores only leases heartbeaten within `RESTART_GRACE_MS` of it, so a
+ * fixture dated anywhere else would assert restore behaviour against a lease
+ * the real boot path skips.
+ */
 const persistedAgentRow = (
   lastUrl: string | null,
 ): PersonalBrowserLeaseRepository.BrowserLeaseRow => ({
@@ -169,8 +176,8 @@ const persistedAgentRow = (
   ownerType: "agent",
   ownerId: "thread-a",
   generation: 4,
-  heartbeatAt: "2026-01-01T00:00:00.000Z",
-  expiresAt: "2026-01-01T00:01:30.000Z",
+  heartbeatAt: "1970-01-01T00:00:00.000Z",
+  expiresAt: "1970-01-01T00:01:30.000Z",
   lastUrl,
 });
 
@@ -325,6 +332,32 @@ describe("PersonalBrowser", () => {
       const lease = yield* BrowserLease.BrowserLease;
       yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
       expect((yield* lease.view).lastUrl).toBe("https://example.com/");
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  it.effect("deleting the thread closes its tab and gives up the browser", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      const lease = yield* BrowserLease.BrowserLease;
+      const open = (yield* browser.handleAutomationRequest(
+        request("navigate", { url: "example.com" }),
+      )) as PreviewAutomationStatus;
+      expect(open.tabId).not.toBeNull();
+      expect((yield* lease.view).lastUrl).toBe("https://example.com/");
+
+      yield* browser.releaseThread(threadId);
+
+      // Nothing of the deleted chat survives in the browser: no tab, no
+      // controller on the Computer screen, and no page for the next restart
+      // to reopen.
+      expect(fake.state.page.closed).toBe(true);
+      expect(yield* lease.view).toMatchObject({ ownerId: null, lastUrl: null });
+      expect((yield* browser.status("session-1")).controller).toEqual({ _tag: "None" });
+      expect(
+        ((yield* browser.handleAutomationRequest(request("status"))) as PreviewAutomationStatus)
+          .tabId,
+      ).toBeNull();
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 

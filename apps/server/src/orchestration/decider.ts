@@ -1281,6 +1281,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      // Thread deletion is a soft delete, so `requireThread` alone still
+      // admits a turn on a chat the user was told was removed: a task that
+      // kept the thread id, or a `thread.create` whose receipt replayed
+      // without recreating the row, both land here. Mirrors the
+      // `thread.history.import` guard below.
+      if (targetThread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is deleted and cannot start a turn.`,
+        });
+      }
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({

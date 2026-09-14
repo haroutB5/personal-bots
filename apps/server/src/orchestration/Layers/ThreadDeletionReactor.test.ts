@@ -16,6 +16,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
 
+import { PersonalBrowser } from "../../personal/browser/PersonalBrowser.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -82,6 +83,7 @@ describe("ThreadDeletionReactor drain", () => {
   effectIt.effect("waits for a published deletion the subscriber has not consumed yet", () =>
     Effect.gen(function* () {
       const stops: Array<number> = [];
+      const released: Array<number> = [];
       const firstCleanupDone = yield* Deferred.make<void>();
       // The engine has already committed and published sequence 2, but the
       // subscriber has not received it yet: the stream releases it on demand.
@@ -108,9 +110,16 @@ describe("ThreadDeletionReactor drain", () => {
       const terminalManager = {
         close: () => Effect.void,
       } as unknown as TerminalManager.TerminalManager["Service"];
+      const personalBrowser = {
+        releaseThread: () =>
+          Effect.sync(() => {
+            released.push(released.length + 1);
+          }),
+      } as unknown as PersonalBrowser["Service"];
       const layer = ThreadDeletionReactorLive.pipe(
         Layer.provide(Layer.succeed(ProviderService, providerService)),
         Layer.provide(Layer.succeed(TerminalManager.TerminalManager, terminalManager)),
+        Layer.provide(Layer.succeed(PersonalBrowser, personalBrowser)),
         Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
       );
 
@@ -132,6 +141,9 @@ describe("ThreadDeletionReactor drain", () => {
           yield* Deferred.succeed(releaseSecondEvent, undefined);
           yield* Fiber.join(drained);
           expect(stops).toEqual([1, 2]);
+          // Every deletion also gives the shared browser back: the tab and the
+          // lease row outlive the thread otherwise.
+          expect(released).toEqual([1, 2]);
         }),
       ).pipe(Effect.provide(layer));
     }),

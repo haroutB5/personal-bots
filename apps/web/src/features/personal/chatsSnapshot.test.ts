@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   buildChatsSnapshot,
+  dropChatFromSnapshot,
   MAX_SNAPSHOT_PREVIEW_CHARS,
   MAX_SNAPSHOT_ROWS,
   readChatsSnapshot,
@@ -48,7 +49,7 @@ function row(botId: string, overrides: Partial<ChatsSnapshotRowInput> = {}): Cha
     avatarShape: "blob",
     avatarColor: "#1A73E8",
     providerLabel: "Claude Code",
-    preview: "Hello there",
+    previewLabel: "Delegated to Developer",
     previewAtMs: 1_757_800_000_000,
     threadId: `thread-${botId}`,
     threadTitle: `Thread ${botId}`,
@@ -63,7 +64,7 @@ describe("buildChatsSnapshot", () => {
       savedAtMs: 1_757_800_000_000,
       rows: [
         row("a", {
-          preview: "  first line\nsecond line that must not persist\nthird",
+          previewLabel: "  first line\nsecond line that must not persist\nthird",
           name: "  Ada  ",
         }),
       ],
@@ -84,7 +85,7 @@ describe("buildChatsSnapshot", () => {
         }),
       ],
     });
-    // No message bodies beyond the preview, no secrets, no live state.
+    // No message bodies, no secrets, no live state.
     expect(Object.keys(snapshot.rows[0]!).toSorted()).toEqual(
       [
         "avatarColor",
@@ -100,9 +101,45 @@ describe("buildChatsSnapshot", () => {
     );
   });
 
+  it("never lets message text reach the stored envelope", () => {
+    // A chat whose newest message is ordinary prose has no turn label, so the
+    // row carries none and the stored preview falls back to the thread title.
+    const snapshot = buildChatsSnapshot({
+      environmentId: "env-1",
+      savedAtMs: 0,
+      rows: [
+        row("a", { previewLabel: null, threadTitle: "Weekly plan" }),
+        row("b", { previewLabel: null, threadTitle: null }),
+      ],
+    });
+
+    expect(snapshot.rows[0]!.preview).toBe("Weekly plan");
+    expect(snapshot.rows[1]!.preview).toBe("");
+
+    // The module's stated invariant, asserted rather than assumed. The type
+    // has no field a message body can enter; the builder also copies field by
+    // field, so a caller that spreads a richer object in carries nothing extra
+    // to disk.
+    const smuggled = buildChatsSnapshot({
+      environmentId: "env-1",
+      savedAtMs: 0,
+      rows: [
+        {
+          ...row("c", { previewLabel: null, threadTitle: "Weekly plan" }),
+          preview: "my passport number is 123456789",
+          messageText: "my passport number is 123456789",
+        } as ChatsSnapshotRowInput,
+      ],
+    });
+
+    expect(JSON.stringify({ environmentId: "env-1", snapshot: smuggled })).not.toContain(
+      "passport",
+    );
+  });
+
   it("truncates long previews and caps the row count", () => {
     const rows = Array.from({ length: MAX_SNAPSHOT_ROWS + 10 }, (_, index) =>
-      row(`bot-${index}`, { preview: "x".repeat(MAX_SNAPSHOT_PREVIEW_CHARS + 50) }),
+      row(`bot-${index}`, { previewLabel: "x".repeat(MAX_SNAPSHOT_PREVIEW_CHARS + 50) }),
     );
     const snapshot = buildChatsSnapshot({ environmentId: "env-1", savedAtMs: 0, rows });
 
@@ -116,7 +153,7 @@ describe("buildChatsSnapshot", () => {
   it("drops least-recent rows until the byte budget holds", () => {
     const rows = Array.from({ length: MAX_SNAPSHOT_ROWS }, (_, index) =>
       row(`bot-${index}`, {
-        preview: "y".repeat(MAX_SNAPSHOT_PREVIEW_CHARS),
+        previewLabel: "y".repeat(MAX_SNAPSHOT_PREVIEW_CHARS),
         threadTitle: "z".repeat(120),
       }),
     );
@@ -196,6 +233,51 @@ describe("chats snapshot storage", () => {
 
     expect(() => writeChatsSnapshot("env-1", snapshot)).not.toThrow();
     expect(readChatsSnapshot("env-1")).toBeNull();
+  });
+
+  it("drops a deleted chat so a cold start stops painting it", () => {
+    stubWindow();
+    writeChatsSnapshot(
+      "env-1",
+      buildChatsSnapshot({
+        environmentId: "env-1",
+        savedAtMs: 0,
+        rows: [row("a"), row("b")],
+      }),
+    );
+
+    const remaining = dropChatFromSnapshot("env-1", (entry) => entry.threadId === "thread-a");
+
+    expect(remaining?.rows.map((entry) => entry.botId)).toEqual(["b"]);
+    expect(readChatsSnapshot("env-1")?.rows.map((entry) => entry.threadId)).toEqual(["thread-b"]);
+  });
+
+  it("drops every chat of a deleted bot, clearing the entry when nothing is left", () => {
+    const storage = stubWindow();
+    writeChatsSnapshot(
+      "env-1",
+      buildChatsSnapshot({ environmentId: "env-1", savedAtMs: 0, rows: [row("a")] }),
+    );
+
+    expect(dropChatFromSnapshot("env-1", (entry) => entry.botId === "a")).toBeNull();
+    expect(readChatsSnapshot("env-1")).toBeNull();
+    expect(storage.getItem("t3code:chats-snapshot:v1")).toBeNull();
+  });
+
+  it("leaves the snapshot alone when nothing matches, and no-ops without an environment", () => {
+    stubWindow();
+    const snapshot = buildChatsSnapshot({
+      environmentId: "env-1",
+      savedAtMs: 0,
+      rows: [row("a")],
+    });
+    writeChatsSnapshot("env-1", snapshot);
+
+    expect(dropChatFromSnapshot("env-1", (entry) => entry.threadId === "thread-missing")).toEqual(
+      snapshot,
+    );
+    expect(dropChatFromSnapshot(null, () => true)).toBeNull();
+    expect(readChatsSnapshot("env-1")).toEqual(snapshot);
   });
 
   it("reads null when storage itself is unavailable", () => {

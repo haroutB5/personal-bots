@@ -113,7 +113,7 @@ function seedSnapshot() {
           avatarShape: "blob",
           avatarColor: "#1A73E8",
           providerLabel: "Claude Code",
-          preview: "cached preview line",
+          previewLabel: "cached preview line",
           previewAtMs: 1_757_800_000_000,
           threadId: "thread-cached",
           threadTitle: "Cached thread",

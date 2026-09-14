@@ -162,6 +162,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
+import { deletePersonalChat } from "./personal/deletePersonalChat.ts";
 import { purgePersonalBot } from "./personal/purgePersonalBot.ts";
 import { signPersonalFiles } from "./personal/PersonalFiles.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
@@ -2381,7 +2382,9 @@ const makeWsRpcLayer = (
         [WS_METHODS.personalBotsDeleteThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalBotsDeleteThread,
-            personalBots.deleteThread(input).pipe(Effect.as({})),
+            deletePersonalChat({ bots: personalBots, tasks: personalTasks }, input.threadId).pipe(
+              Effect.as({}),
+            ),
             {
               "rpc.aggregate": "server",
             },

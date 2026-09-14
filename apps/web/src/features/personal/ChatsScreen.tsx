@@ -10,7 +10,7 @@ import { useThreadShells } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 
 import { BotAvatar } from "./BotAvatar";
-import { BotRow, previewOf, ROW_CLASS } from "./BotRow";
+import { BotRow, ROW_CLASS, snapshotPreviewLabel } from "./BotRow";
 import {
   buildBotSummaries,
   collectAttentionThreads,
@@ -271,7 +271,7 @@ export function ChatsScreen(): JSX.Element {
       avatarShape: summary.bot.avatarShape,
       avatarColor: summary.bot.avatarColor,
       providerLabel: providerLine(summary.provider),
-      preview: previewOf(summary, describeTurn),
+      previewLabel: snapshotPreviewLabel(summary, describeTurn),
       previewAtMs: summary.lastActivityMs,
       threadId: summary.newestThread === null ? null : (summary.newestThread.id as string),
       threadTitle: summary.newestThread === null ? null : summary.newestThread.title,

@@ -111,6 +111,13 @@ export class PersonalBrowser extends Context.Service<
     readonly resolveFile: (
       fileId: string,
     ) => Effect.Effect<Option.Option<ResolvedBrowserFile>, PersonalBrowserError>;
+    /**
+     * Gives up everything the browser holds for one thread: its open tabs, and
+     * the shared lease when that thread owns it. Called when the thread is
+     * deleted, so a removed chat cannot keep a tab open, keep reading as the
+     * browser's controller, or have its page reopened by a later restart.
+     */
+    readonly releaseThread: (threadId: ThreadId) => Effect.Effect<void>;
     readonly activity: (sessionId: string) => Stream.Stream<PersonalBrowserStreamItem>;
     readonly handleAutomationRequest: (
       request: PreviewAutomationRequest,
@@ -648,6 +655,19 @@ export const make = (options: PersonalBrowserOptions) =>
         return tab;
       });
 
+    const releaseThread: PersonalBrowser["Service"]["releaseThread"] = (threadId) =>
+      Effect.gen(function* () {
+        const owned = [...runtime.tabs.values()].filter((tab) => tab.threadId === threadId);
+        for (const tab of owned) {
+          // The page's own close handler reaps the tab too; `onTabPageClosed`
+          // is keyed on the entry still being the live one, so running it here
+          // as well is idempotent and makes the reap synchronous with us.
+          yield* Effect.promise(() => tab.page.close().catch(() => undefined));
+          yield* onTabPageClosed(tab);
+        }
+        yield* lease.releaseThread(threadId);
+      });
+
     const statusOf = (tab: TabEntry | undefined): PreviewAutomationStatus => ({
       available: runtime.phase !== "locked",
       visible: viewers.size > 0 || !options.headless,
@@ -1127,6 +1147,7 @@ export const make = (options: PersonalBrowserOptions) =>
       returnToAgent,
       listFiles,
       resolveFile,
+      releaseThread,
       activity,
       handleAutomationRequest,
       attachViewer,

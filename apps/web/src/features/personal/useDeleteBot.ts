@@ -3,6 +3,7 @@ import type { EnvironmentId, PersonalBot } from "@t3tools/contracts";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { dropChatFromSnapshot } from "./chatsSnapshot";
 import { personalBotDelete } from "./usePersonalBots";
 
 /**
@@ -20,6 +21,10 @@ export function useDeleteBot(
       (await requestConfirmDialog(message, { variant: "destructive" })) ?? window.confirm(message);
     if (!confirmed) return false;
     const result = await deleteBot({ environmentId, input: { botId: bot.botId } });
-    return result._tag === "Success";
+    if (result._tag !== "Success") return false;
+    // Same reason as `useDeleteChat`: the Chats screen owns the only snapshot
+    // write, and deletion can happen with that screen unmounted.
+    dropChatFromSnapshot(environmentId, (row) => row.botId === bot.botId);
+    return true;
   };
 }

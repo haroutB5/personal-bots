@@ -132,7 +132,9 @@ export class PersonalBotService extends Context.Service<
     /**
      * Permanently deletes exactly one chat: the orchestration thread plus
      * its bot-thread link row. Bot-level data (bot row, memories, secrets,
-     * routines, tasks) is untouched.
+     * routines, tasks) is untouched — call `deletePersonalChat` instead of
+     * this method from a request path, so the tasks still bound to the thread
+     * are cancelled first and cannot re-run a turn on the tombstone.
      */
     readonly deleteThread: (input: {
       readonly threadId: ThreadId;

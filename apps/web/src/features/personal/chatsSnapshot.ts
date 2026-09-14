@@ -15,10 +15,16 @@ import {
 /**
  * Cold-start snapshot for the Chats list. After each successful
  * `personalBots.list` the screen persists just enough to paint instantly on
- * the next launch: identity, avatar, provider label and the one-line preview
- * already shown in the row. Live state (working dots, rate limits, review
- * row) is deliberately absent — it needs live data and stays neutral until
- * the list arrives. Never message bodies, never secrets.
+ * the next launch: identity, avatar, provider label and a one-line preview.
+ * Live state (working dots, rate limits, review row) is deliberately absent —
+ * it needs live data and stays neutral until the list arrives.
+ *
+ * Never message bodies, never secrets. This is structural, not a convention:
+ * {@link ChatsSnapshotRowInput} has no field a message body can enter. The
+ * stored preview is a server-authored turn label when there is one, else the
+ * thread title — both already server-side metadata. The rendered row shows the
+ * newest message line, but that line lives only in memory, because the
+ * snapshot is at rest in `localStorage` with no credential in front of it.
  */
 export const ChatsSnapshotRow = Schema.Struct({
   botId: Schema.String,
@@ -26,7 +32,10 @@ export const ChatsSnapshotRow = Schema.Struct({
   avatarShape: BotAvatarShapeSchema,
   avatarColor: BotAvatarColorSchema,
   providerLabel: Schema.String,
-  /** One-line preview text, already trimmed to {@link MAX_SNAPSHOT_PREVIEW_CHARS}. */
+  /**
+   * One-line preview, already trimmed to {@link MAX_SNAPSHOT_PREVIEW_CHARS}.
+   * Derived from a turn label or the thread title — never message text.
+   */
   preview: Schema.String,
   previewAtMs: Schema.NullOr(Schema.Finite),
   threadId: Schema.NullOr(Schema.String),
@@ -63,8 +72,12 @@ export interface ChatsSnapshotRowInput {
   readonly avatarShape: BotAvatarShape;
   readonly avatarColor: BotAvatarColor;
   readonly providerLabel: string;
-  /** Full preview line; the builder keeps the first line and trims it. */
-  readonly preview: string;
+  /**
+   * A server-authored turn label ("Delegated to Developer", …) and nothing
+   * else. There is deliberately no field for the newest message's text: null
+   * falls back to the thread title, which is what a plain chat stores.
+   */
+  readonly previewLabel: string | null;
   readonly previewAtMs: number | null;
   readonly threadId: string | null;
   readonly threadTitle: string | null;
@@ -95,7 +108,7 @@ export function buildChatsSnapshot(input: {
     avatarShape: row.avatarShape,
     avatarColor: row.avatarColor,
     providerLabel: firstLine(row.providerLabel, MAX_SNAPSHOT_LABEL_CHARS),
-    preview: firstLine(row.preview, MAX_SNAPSHOT_PREVIEW_CHARS),
+    preview: firstLine(row.previewLabel ?? row.threadTitle ?? "", MAX_SNAPSHOT_PREVIEW_CHARS),
     previewAtMs: row.previewAtMs,
     threadId: row.threadId,
     threadTitle:
@@ -154,4 +167,30 @@ export function writeChatsSnapshot(environmentId: string, snapshot: ChatsSnapsho
   } catch {
     removeQuietly();
   }
+}
+
+/**
+ * Removes every row matching `predicate`, and drops the entry entirely once
+ * nothing is left. Deletion happens from screens the Chats list is not mounted
+ * behind, so the only writer (`ChatsScreen`'s persist effect) may not run for
+ * a long time — until it does, a cold start would keep painting the deleted
+ * chat as a live deep link. Returns the rows that survived, or null when the
+ * snapshot is gone. Never throws.
+ */
+export function dropChatFromSnapshot(
+  environmentId: string | null,
+  predicate: (row: ChatsSnapshotRow) => boolean,
+): ChatsSnapshot | null {
+  if (environmentId === null) return null;
+  const snapshot = readChatsSnapshot(environmentId);
+  if (snapshot === null) return null;
+  const rows = snapshot.rows.filter((row) => !predicate(row));
+  if (rows.length === snapshot.rows.length) return snapshot;
+  if (rows.length === 0) {
+    removeQuietly();
+    return null;
+  }
+  const next: ChatsSnapshot = { ...snapshot, rows };
+  writeChatsSnapshot(environmentId, next);
+  return next;
 }

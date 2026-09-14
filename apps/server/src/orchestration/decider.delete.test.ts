@@ -2,6 +2,7 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
+  MessageId,
   ProjectId,
   ThreadId,
   type OrchestrationCommand,
@@ -212,6 +213,71 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
       }
 
       expect(normalizeDeleteEvent(forcedResult)).toEqual(normalizeDeleteEvent(sequentialEvents));
+    }),
+  );
+
+  it.effect("refuses to start a turn on a deleted thread", () =>
+    Effect.gen(function* () {
+      const seeded = yield* seedReadModel;
+      const threadId = asThreadId("thread-delete-1");
+      const deleted = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.delete",
+          commandId: asCommandId("cmd-thread-delete-turn-guard"),
+          threadId,
+        },
+        readModel: seeded,
+      });
+      const readModel = yield* projectEvent(seeded, {
+        ...(Array.isArray(deleted) ? deleted[0]! : deleted),
+        sequence: seeded.snapshotSequence + 1,
+      });
+
+      // Deletion is a soft delete, so the row is still findable. A task that
+      // kept the thread id, or a replayed thread.create receipt, would reach
+      // here and run a full-access turn on a chat the user was told was gone.
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.turn.start",
+            commandId: asCommandId("cmd-turn-on-deleted"),
+            threadId,
+            message: {
+              messageId: MessageId.make("message-on-deleted"),
+              role: "user",
+              text: "Continue.",
+              attachments: [],
+            },
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            createdAt: "2026-01-01T00:00:01.000Z",
+          },
+          readModel,
+        }),
+      );
+
+      expect(error.message).toContain("is deleted and cannot start a turn");
+
+      // The same command on a live thread is still accepted.
+      const accepted = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.turn.start",
+          commandId: asCommandId("cmd-turn-on-live"),
+          threadId: asThreadId("thread-delete-2"),
+          message: {
+            messageId: MessageId.make("message-on-live"),
+            role: "user",
+            text: "Continue.",
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+        readModel,
+      });
+
+      expect((Array.isArray(accepted) ? accepted : [accepted]).length).toBeGreaterThan(0);
     }),
   );
 });

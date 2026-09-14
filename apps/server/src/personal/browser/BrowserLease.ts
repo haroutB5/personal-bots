@@ -27,6 +27,13 @@ import { resolveBrowserUrl } from "./urlPolicy.ts";
 export const PERSONAL_BROWSER_PROFILE_ID = "default";
 /** An agent lease lapses after this long without an op; the next op re-acquires. */
 export const AGENT_LEASE_TTL_MS = 90_000;
+/**
+ * How stale an agent lease may be at boot and still be restored. A restart
+ * always outlasts {@link AGENT_LEASE_TTL_MS}, so restore cannot require a live
+ * lease — but it must require a *recent* one, or a lease abandoned days ago
+ * reopens its page on every start from then on. Sized as a deploy window.
+ */
+export const RESTART_GRACE_MS = 5 * 60_000;
 /** Take control waits this long for an in-flight agent op before taking over anyway. */
 export const TAKEOVER_WAIT_MS = 10_000;
 
@@ -88,6 +95,13 @@ export class BrowserLease extends Context.Service<
     readonly recordPageUrl: (url: string) => Effect.Effect<void>;
     /** Drops a live agent lease back to released; used when boot restore fails. */
     readonly releaseAgentLease: Effect.Effect<LeaseView>;
+    /**
+     * Releases the lease if `threadId` owns it, dropping its saved page too.
+     * Used when the thread is deleted: the chat is gone, so neither the
+     * controller nor its last page may survive it. A no-op for any other
+     * owner, so an unrelated deletion never takes the browser off a live bot.
+     */
+    readonly releaseThread: (threadId: string) => Effect.Effect<LeaseView>;
     readonly isHumanController: (sessionId: string) => Effect.Effect<boolean>;
     readonly view: Effect.Effect<LeaseView>;
     readonly changes: Stream.Stream<LeaseView>;
@@ -121,21 +135,45 @@ export type BrowserRestoreDecision =
   | { readonly _tag: "Noop" };
 
 /**
- * Pure boot decision for a persisted lease row. Agent leases (thread id +
- * last page) are restored; human leases point at an auth session id that died
- * with the previous process, so they are cleared instead of restored. A saved
- * URL that no longer passes the navigation policy restores the lease without
- * a page rather than blocking the restore.
+ * Whether a persisted agent lease still shows evidence of life at boot.
+ * `heartbeatAt` is stamped on every agent op, so its age is how long ago the
+ * bot last touched the browser; `expiresAt` only says the idle TTL has passed,
+ * which a restart guarantees anyway. A heartbeat in the future is clock skew,
+ * not staleness, so it counts as live.
  */
-export const decideBrowserRestore = (row: BrowserLeaseRow): BrowserRestoreDecision => {
+const agentLeaseWithinRestartGrace = (row: BrowserLeaseRow, now: number) => {
+  if (row.heartbeatAt === null) return false;
+  const age = now - Date.parse(row.heartbeatAt);
+  return Number.isFinite(age) && age <= RESTART_GRACE_MS;
+};
+
+/**
+ * Pure boot decision for a persisted lease row. Agent leases (thread id +
+ * last page) are restored, but only when the row was still being heartbeaten
+ * within {@link RESTART_GRACE_MS} of boot: a lease the bot abandoned long ago
+ * would otherwise relaunch Chrome on its old page at every start, forever.
+ * Human leases point at an auth session id that died with the previous
+ * process, so they are cleared instead of restored. A saved URL that no
+ * longer passes the navigation policy restores the lease without a page
+ * rather than blocking the restore.
+ *
+ * A lapsed agent lease returns `Noop`; the caller releases the row so its
+ * stale `ownerId`/`lastUrl` stop accumulating.
+ */
+export const decideBrowserRestore = (row: BrowserLeaseRow, now: number): BrowserRestoreDecision => {
   if (row.ownerType === "human") {
     return row.ownerId === null ? { _tag: "Noop" } : { _tag: "ClearHuman" };
   }
   if (row.ownerId === null) return { _tag: "Noop" };
+  if (!agentLeaseWithinRestartGrace(row, now)) return { _tag: "Noop" };
   if (row.lastUrl === null) return { _tag: "RestoreAgent", threadId: row.ownerId, url: null };
   const resolved = resolveBrowserUrl(row.lastUrl);
   return { _tag: "RestoreAgent", threadId: row.ownerId, url: resolved.ok ? resolved.url : null };
 };
+
+/** An agent lease row that boot must not restore, but must not leave either. */
+export const isLapsedAgentLease = (row: BrowserLeaseRow, now: number) =>
+  row.ownerType === "agent" && row.ownerId !== null && !agentLeaseWithinRestartGrace(row, now);
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
@@ -153,8 +191,12 @@ export const make = Effect.gen(function* () {
   // restart always outlasts the idle TTL, so without the refresh the restored
   // controller would read as lapsed immediately).
   const bootRow = Option.getOrElse(loaded, () => releasedRow(0));
-  const bootDecision = decideBrowserRestore(bootRow);
   const bootNow = yield* Clock.currentTimeMillis;
+  const bootDecision = decideBrowserRestore(bootRow, bootNow);
+  // An agent lease too stale to restore is released rather than left in place:
+  // its `lastUrl` goes too, so the abandoned page is not reopened by a later
+  // restart and is not shown as "the bot's page" in the meantime.
+  const lapsed = bootDecision._tag === "Noop" && isLapsedAgentLease(bootRow, bootNow);
   const initialRow =
     bootDecision._tag === "ClearHuman"
       ? { ...releasedRow(bootRow.generation + 1, bootRow.lastUrl), heartbeatAt: iso(bootNow) }
@@ -164,7 +206,9 @@ export const make = Effect.gen(function* () {
             heartbeatAt: iso(bootNow),
             expiresAt: iso(bootNow + AGENT_LEASE_TTL_MS),
           }
-        : bootRow;
+        : lapsed
+          ? { ...releasedRow(bootRow.generation + 1), heartbeatAt: iso(bootNow) }
+          : bootRow;
   const state = yield* Ref.make<LeaseState>({
     row: initialRow,
     inFlight: null,
@@ -186,7 +230,7 @@ export const make = Effect.gen(function* () {
     lastUrl: current.row.lastUrl,
   });
 
-  if (bootDecision._tag !== "Noop") {
+  if (bootDecision._tag !== "Noop" || lapsed) {
     yield* repository
       .save(initialRow)
       .pipe(
@@ -387,6 +431,28 @@ export const make = Effect.gen(function* () {
     return yield* view;
   });
 
+  const releaseThread: BrowserLease["Service"]["releaseThread"] = (threadId) =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const row = yield* Ref.modify(state, (latest) => {
+        if (latest.row.ownerType !== "agent" || latest.row.ownerId !== threadId) {
+          return [null, latest] as const;
+        }
+        // No `lastUrl` carried over: the deleted chat's page must not be
+        // reopened by the next boot restore.
+        const next: BrowserLeaseRow = {
+          ...releasedRow(latest.row.generation + 1),
+          heartbeatAt: iso(now),
+        };
+        return [next, { ...latest, row: next }] as const;
+      });
+      if (row !== null) {
+        yield* persist(row);
+        yield* publish;
+      }
+      return yield* view;
+    });
+
   const isHumanController: BrowserLease["Service"]["isHumanController"] = (sessionId) =>
     Ref.get(state).pipe(
       Effect.map(
@@ -400,6 +466,7 @@ export const make = Effect.gen(function* () {
     returnToAgent,
     recordPageUrl,
     releaseAgentLease,
+    releaseThread,
     isHumanController,
     view,
     changes: Stream.fromPubSub(changesPubSub),

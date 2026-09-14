@@ -38,6 +38,21 @@ export function previewOf(summary: BotSummary, describeTurn: (turn: ServerTurn) 
 }
 
 /**
+ * The part of {@link previewOf} that may be written to disk: a turn label when
+ * the newest message is a task-service turn, else null so the cold-start
+ * snapshot falls back to the thread title. The raw message line is never
+ * returned — see the invariant in `chatsSnapshot.ts`.
+ */
+export function snapshotPreviewLabel(
+  summary: BotSummary,
+  describeTurn: (turn: ServerTurn) => string,
+): string | null {
+  if (summary.newestThread === null || summary.newestMessage === null) return null;
+  const turn = readServerTurn(summary.newestMessage);
+  return turn === null ? null : describeTurn(turn);
+}
+
+/**
  * Chats list row (ui-spec Screen 1): 56px avatar, name + live dot,
  * relative timestamp, provider label and a one-line preview. Every value is
  * derived from real bot/thread state; there is no unread badge because T3
