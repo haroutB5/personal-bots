@@ -59,6 +59,13 @@ const post = (token: string, init?: RequestInit) =>
   new Request(hookUrl(token), { method: "POST", ...init });
 
 describe("personal routine webhook route", () => {
+  it("rejects malformed token escapes without a server error", async () => {
+    const { handler, calls } = fixture();
+    const response = await handler(post("%E0%A4%A", { body: "{}" }));
+    expect(response.status).toBe(404);
+    expect(calls).toEqual([]);
+  });
+
   it("fires the routine the token names and accepts the delivery", async () => {
     const { handler, calls } = fixture();
     const response = await handler(
@@ -117,6 +124,27 @@ describe("personal routine webhook route", () => {
     const response = await handler(post(VALID_TOKEN, { body: atCap }));
     expect(response.status).toBe(202);
     expect(calls[0]?.body.length).toBe(PERSONAL_ROUTINE_EVENT_PAYLOAD_MAX_BYTES);
+  });
+
+  it("stops reading as soon as a streamed body exceeds the cap", async () => {
+    const { handler, calls } = fixture();
+    let reads = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          reads++;
+          if (reads === 1)
+            controller.enqueue(new Uint8Array(PERSONAL_ROUTINE_EVENT_PAYLOAD_MAX_BYTES + 1));
+          else controller.error(new Error("Read past the limit"));
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const init: RequestInit & { duplex: "half" } = { body, duplex: "half" };
+    const response = await handler(post(VALID_TOKEN, init));
+    expect(response.status).toBe(413);
+    expect(reads).toBe(1);
+    expect(calls).toEqual([]);
   });
 
   it("answers GET with 405 and never reaches the service", async () => {

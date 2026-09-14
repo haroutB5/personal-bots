@@ -3,6 +3,16 @@ import { describe, expect, it } from "vite-plus/test";
 import { buildEventRoutinePrompt, formatHookPayload } from "./eventPrompt.ts";
 
 describe("formatHookPayload", () => {
+  it("preserves form fields whose names shadow Object properties", () => {
+    const payload = formatHookPayload(
+      "application/x-www-form-urlencoded",
+      "__proto__=first&__proto__=second&constructor=value&toString=text",
+    );
+    expect(JSON.parse(payload)).toEqual(
+      JSON.parse('{"__proto__":["first","second"],"constructor":"value","toString":"text"}'),
+    );
+  });
+
   it("pretty-prints JSON bodies", () => {
     expect(formatHookPayload("application/json; charset=utf-8", '{"action":"closed"}')).toBe(
       '{\n  "action": "closed"\n}',

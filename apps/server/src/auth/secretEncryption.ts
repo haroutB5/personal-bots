@@ -5,16 +5,14 @@
  * Threat model, stated honestly because the guarantee is narrower than
  * "encrypted secrets" usually implies:
  *
- * - What this stops: reading a saved password out of `userdata/secrets` with a
- *   one-line `cat`/`type`, and reading one out of a backup, a sync folder, or a
- *   copy of the profile taken to another machine. The wrapping key is derived
- *   from machine-stable material, so the files do not travel.
+ * - This prevents direct plaintext reads of the password files. Machine
+ *   identifiers are not secrets: a copy of the files can still be decrypted
+ *   anywhere if the original machine material is known.
  * - What this does NOT stop: code running as the same OS user. It can read the
  *   same key file and the same machine material this module reads. Defeating
- *   that needs an OS keystore (DPAPI/Keychain/libsecret) held by the server
- *   process alone, or a sandbox that denies the bot runtimes read access to the
- *   secrets directory. Neither ships here; the residual risk is accepted and
- *   documented in `.plans/security-review-passwords.md`.
+ *   that needs an OS-enforced boundary between bot runtimes and the credential
+ *   broker, including its key and browser profile. An OS keystore under the
+ *   same user identity alone does not provide that boundary.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -132,7 +130,7 @@ const deriveWrappingKey = (material: string, salt: Uint8Array): Uint8Array =>
     }),
   );
 
-/** The on-disk key file. Not secret by itself; useless on another machine. */
+/** Protect this file: machine material is not a secret independent wrapping key. */
 export interface WrappedDataKeyFile {
   readonly v: 1;
   readonly source: MachineMaterialSource;

@@ -21,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
@@ -57,10 +58,21 @@ export const personalRoutineHookRouteLayer = HttpRouter.add(
       return hookResponse(413, "Payload Too Large");
     }
     // One byte over the cap is enough to know it is over the cap.
+    // The shared collector drains its source after truncation for child-process
+    // output. Stop this HTTP stream instead of waiting for an unbounded upload.
+    let receivedBytes = 0;
     const collected = yield* collectUint8StreamText({
-      stream: request.stream,
+      stream: request.stream.pipe(
+        Stream.takeUntil((chunk) => {
+          receivedBytes += chunk.byteLength;
+          return receivedBytes > PERSONAL_ROUTINE_EVENT_PAYLOAD_MAX_BYTES;
+        }),
+      ),
       maxBytes: PERSONAL_ROUTINE_EVENT_PAYLOAD_MAX_BYTES + 1,
-    }).pipe(Effect.orElseSucceed(() => null));
+    }).pipe(
+      Effect.timeout("10 seconds"),
+      Effect.orElseSucceed(() => null),
+    );
     if (collected === null) return hookResponse(400, "Bad Request");
     if (collected.bytes > PERSONAL_ROUTINE_EVENT_PAYLOAD_MAX_BYTES) {
       return hookResponse(413, "Payload Too Large");

@@ -108,15 +108,12 @@ describe("Passwords screen", () => {
     expect(state.calls).toEqual([]);
   });
 
-  // The guarantee the app can actually keep: encrypted at rest, never handed to
-  // a model. It deliberately does not promise safety from software the user
-  // installs, because a bot runs as the user.
   it("states the at-rest guarantee without overclaiming", async () => {
     await renderScreen();
 
     const copy = JSON.stringify(renderer!.toJSON());
-    expect(copy).toContain("Passwords are encrypted on this computer.");
-    expect(copy).toContain("same care as any other software");
+    expect(copy).toContain("Passwords are encrypted on this computer");
+    expect(copy).toContain("Only save accounts you trust every bot to access.");
     expect(copy).not.toContain("never see its password");
   });
 });

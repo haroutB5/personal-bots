@@ -4,8 +4,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import * as PersonalBrowser from "../browser/PersonalBrowser.ts";
 import * as PersonalLoginRepository from "./PersonalLoginRepository.ts";
 import * as PersonalLoginService from "./PersonalLoginService.ts";
@@ -29,6 +31,8 @@ const login: PersonalLoginRepository.StoredPersonalLogin = {
 
 const makeLayer = (
   browserCalls: Array<Parameters<PersonalBrowser.PersonalBrowser["Service"]["fillLogin"]>[0]>,
+  repository: Partial<PersonalLoginRepository.PersonalLoginRepository["Service"]> = {},
+  store: Partial<ServerSecretStore.ServerSecretStore["Service"]> = {},
 ) =>
   PersonalLoginService.layer.pipe(
     Layer.provide(
@@ -40,6 +44,7 @@ const makeLayer = (
           create: () => Effect.void,
           update: () => Effect.succeed(true),
           remove: () => Effect.succeed(true),
+          ...repository,
         }),
       ),
     ),
@@ -52,6 +57,7 @@ const makeLayer = (
           create: () => Effect.void,
           getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
           remove: () => Effect.void,
+          ...store,
         }),
       ),
     ),
@@ -67,6 +73,96 @@ const makeLayer = (
   );
 
 describe("PersonalLoginService use", () => {
+  it.effect("keeps the old password and grants when a metadata update fails", () => {
+    const oldKey = PersonalLoginService.personalLoginStoreKey(login.secretRef);
+    const values = new Map([[oldKey, PASSWORD]]);
+    const write = (key: string, bytes: Uint8Array) =>
+      Effect.sync(() => {
+        values.set(key, new TextDecoder().decode(bytes));
+      });
+    return Effect.gen(function* () {
+      const service = yield* PersonalLoginService.PersonalLoginService;
+      yield* service
+        .update({
+          ...login,
+          origin: "https://other.example",
+          botIds: [OTHER],
+          password: Redacted.make("replacement-password"),
+        })
+        .pipe(Effect.flip);
+      expect([...values]).toEqual([[oldKey, PASSWORD]]);
+    }).pipe(
+      Effect.provide(
+        makeLayer(
+          [],
+          {
+            update: () => Effect.fail(new PersistenceSqlError({ operation: "update" })),
+          },
+          {
+            create: write,
+            set: write,
+            remove: (key) =>
+              Effect.sync(() => {
+                values.delete(key);
+              }),
+          },
+        ),
+      ),
+    );
+  });
+
+  it.effect(
+    "publishes the replacement password with its new grants before retiring the old secret",
+    () => {
+      const oldKey = PersonalLoginService.personalLoginStoreKey(login.secretRef);
+      const values = new Map([[oldKey, PASSWORD]]);
+      let updated: PersonalLoginRepository.StoredPersonalLogin | undefined;
+      return Effect.gen(function* () {
+        const service = yield* PersonalLoginService.PersonalLoginService;
+        const result = yield* service.update({
+          ...login,
+          botIds: [OTHER],
+          password: Redacted.make("replacement-password"),
+        });
+        expect(result.botIds).toEqual([OTHER]);
+        expect(updated?.secretRef).not.toBe(login.secretRef);
+        expect([...values.values()]).toEqual(["replacement-password"]);
+        expect(values.has(oldKey)).toBe(false);
+      }).pipe(
+        Effect.provide(
+          makeLayer(
+            [],
+            {
+              update: (next) =>
+                Effect.sync(() => {
+                  expect(values.get(oldKey)).toBe(PASSWORD);
+                  expect(
+                    values.get(PersonalLoginService.personalLoginStoreKey(next.secretRef)),
+                  ).toBe("replacement-password");
+                  updated = next;
+                  return true;
+                }),
+            },
+            {
+              create: (key, bytes) =>
+                Effect.sync(() => {
+                  values.set(key, new TextDecoder().decode(bytes));
+                }),
+              set: (key, bytes) =>
+                Effect.sync(() => {
+                  values.set(key, new TextDecoder().decode(bytes));
+                }),
+              remove: (key) =>
+                Effect.sync(() => {
+                  values.delete(key);
+                }),
+            },
+          ),
+        ),
+      );
+    },
+  );
+
   it.effect("refuses a bot with no grant before reading or filling the secret", () => {
     const browserCalls: Array<
       Parameters<PersonalBrowser.PersonalBrowser["Service"]["fillLogin"]>[0]

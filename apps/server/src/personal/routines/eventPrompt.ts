@@ -2,10 +2,10 @@
  * Turns a webhook body into the text an event routine's bot actually reads.
  *
  * The payload is attacker-controlled: anyone who learns the hook token can put
- * arbitrary text in front of the bot. So it is never concatenated into the
- * instruction text. It goes inside a fenced block, under an explicit line
- * saying it is untrusted data, with a fence long enough that the payload cannot
- * close it early and escape into the instructions.
+ * arbitrary text in front of the bot. A fenced block marks it as untrusted and
+ * prevents Markdown delimiter breakout. This is a presentation aid, not a
+ * security boundary against prompt injection; tool permissions must enforce
+ * what the bot may do.
  */
 import { PERSONAL_ROUTINE_EVENT_PAYLOAD_PROMPT_CHARS } from "@t3tools/contracts";
 
@@ -21,17 +21,19 @@ export function formatHookPayload(contentType: string | null, body: string): str
     }
   }
   if (mediaType === "application/x-www-form-urlencoded") {
-    const fields: Record<string, string | ReadonlyArray<string>> = {};
+    const fields = new Map<string, string[]>();
     for (const [key, value] of new URLSearchParams(body)) {
-      const existing = fields[key];
-      fields[key] =
-        existing === undefined
-          ? value
-          : Array.isArray(existing)
-            ? [...existing, value]
-            : [existing as string, value];
+      const existing = fields.get(key);
+      if (existing === undefined) fields.set(key, [value]);
+      else existing.push(value);
     }
-    return JSON.stringify(fields, null, 2);
+    return JSON.stringify(
+      Object.fromEntries(
+        [...fields].map(([key, values]) => [key, values.length === 1 ? values[0] : values]),
+      ),
+      null,
+      2,
+    );
   }
   return body;
 }

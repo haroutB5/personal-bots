@@ -44,6 +44,10 @@ export function ConversationComputerPanel({
   const fullScreenToggleRef = useRef<HTMLButtonElement | null>(null);
   const fullScreenRef = useRef<HTMLElement | null>(null);
   const activeForChat = computerIsActiveForChat(feed.status, { botId, threadId });
+  const visible = manuallyVisible || activeForChat;
+  // External closure can hide the mounted panel without going through its
+  // Close button. Drop full screen then, including its body scroll lock.
+  if (fullScreen && (!visible || !expanded)) setFullScreen(false);
 
   // The browser closing (Close button, close_browser tool, crash-teardown)
   // retires the bar: a "Browser not running" strip is dead chrome. Transition-
@@ -73,7 +77,7 @@ export function ConversationComputerPanel({
     };
   }, [fullScreen]);
 
-  if (!manuallyVisible && !activeForChat) return null;
+  if (!visible) return null;
 
   const reachable = environmentId !== null && error === null;
   const state = describeComputerState({ status: feed.status, reachable, loading });

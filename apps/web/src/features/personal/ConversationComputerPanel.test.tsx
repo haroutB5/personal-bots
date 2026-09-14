@@ -266,4 +266,37 @@ describe("ConversationComputerPanel", () => {
     });
     expect(renderer!.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
   });
+
+  it("releases full screen when an external close hides the panel, and reopens collapsed", () => {
+    const props = {
+      environmentId: null,
+      botId: "bot-1",
+      threadId: "thread-a",
+      manuallyVisible: true,
+      expanded: true,
+      onExpandedChange: () => undefined,
+      onBrowserClosed: () => undefined,
+    };
+    let renderer: ReactTestRenderer;
+    act(() => {
+      renderer = create(<ConversationComputerPanel {...props} />);
+    });
+    act(() => renderer!.root.findByProps({ "aria-label": "Full screen" }).props.onClick());
+    expect(document.body.style.overflow).toBe("hidden");
+    useComputerFeed.mockReturnValue({
+      feed: { status: { ...status(), state: "offline", controller: { _tag: "None" } }, events: [] },
+      error: null,
+      loading: false,
+    });
+    act(() =>
+      renderer!.update(
+        <ConversationComputerPanel {...props} manuallyVisible={false} expanded={false} />,
+      ),
+    );
+    expect(renderer!.toJSON()).toBeNull();
+    expect(document.body.style.overflow).toBe("");
+    act(() => renderer!.update(<ConversationComputerPanel {...props} expanded={false} />));
+    expect(renderer!.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
+    act(() => renderer!.unmount());
+  });
 });

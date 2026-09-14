@@ -220,7 +220,7 @@ export function PersonalSettingsScreen(): JSX.Element {
                   Passwords
                 </span>
                 <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
-                  Logins bots can use without seeing passwords
+                  Saved website logins and bot grants
                 </span>
               </span>
               <ChevronRight

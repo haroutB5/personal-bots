@@ -5,7 +5,7 @@ import { Link } from "@tanstack/react-router";
 import { ChevronRight } from "lucide-react";
 
 import { routinesForBot } from "./conversationRoutinesModel";
-import { routineNextRunLabel } from "./taskPresentation";
+import { routineTriggerStatusLabel } from "./routineHook";
 import { usePersonalRoutines } from "./usePersonalAutomation";
 
 export function ConversationRoutinesPanel({
@@ -53,7 +53,7 @@ export function ConversationRoutinesPanel({
                   {routine.title}
                 </span>
                 <span className="block truncate text-[12px] leading-4 text-[var(--personal-text-tertiary)]">
-                  {routineNextRunLabel(routine)}
+                  {routineTriggerStatusLabel(routine)}
                 </span>
               </span>
               <ChevronRight

@@ -389,7 +389,32 @@ describe("PersonalBrowser", () => {
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 
-  // M1: a login form with method="GET" puts the password in the query string.
+  it.effect(
+    "keeps scripts blocked on credential origins after closing and reopening Chrome",
+    () => {
+      const fake = makeFakeDriver();
+      asLoginPage(fake.state.page);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.fillLogin({
+          threadId,
+          label: "Example",
+          expectedOrigin: "https://example.com",
+          username: "person",
+          password: "password-value",
+        });
+        yield* browser.closeBrowser({ sessionId: "session-1", byThreadId: null });
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const result = yield* browser
+          .handleAutomationRequest(request("evaluate", { expression: "document.cookie" }))
+          .pipe(Effect.result);
+        expect(result._tag).toBe("Failure");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    },
+  );
+
+  // A login form with method="GET" puts the password in the query string.
   it.effect("strips the query string from a protected tab's reported url", () => {
     const fake = makeFakeDriver();
     asLoginPage(fake.state.page);

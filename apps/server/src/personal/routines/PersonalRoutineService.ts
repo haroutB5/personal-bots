@@ -746,8 +746,8 @@ export const make = Effect.gen(function* () {
             eventLabel: routine.eventLabel ?? "event",
             payload: formatHookPayload(input.contentType, input.body),
           });
-          // The rate limit guarantees one fire per 30s, so the millisecond key
-          // is unique; it also makes a duplicated delivery idempotent.
+          // Each accepted delivery gets a distinct occurrence. Retries outside
+          // the rate-limit window are new runs; no delivery ID is supplied.
           const task = yield* fireSlot(
             { ...routine, prompt },
             { localKey: `event:${nowIso}`, dueMs: nowMs },

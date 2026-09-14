@@ -177,15 +177,35 @@ export const make = Effect.gen(function* () {
     const next: PersonalLoginRepository.StoredPersonalLogin = {
       ...previous,
       ...metadata,
+      secretRef: NodeCrypto.randomUUID(),
       botIds: [...new Set(input.botIds)],
       updatedAt: yield* DateTime.now,
     };
-    yield* store.set(personalLoginStoreKey(previous.secretRef), password).pipe(
-      Effect.mapError((cause) => fail("Could not store the password.", cause)),
-      Effect.ensuring(wipe(password)),
+    // Publish the secret reference, origin and grants in the same DB transaction.
+    // Overwriting the old file first would expose the replacement password under
+    // the old grants if the metadata write failed (for example, a duplicate label).
+    const nextKey = personalLoginStoreKey(next.secretRef);
+    yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        yield* store.create(nextKey, password).pipe(
+          Effect.mapError((cause) => fail("Could not store the password.", cause)),
+          Effect.ensuring(wipe(password)),
+        );
+        yield* db("update", repository.update(next)).pipe(
+          Effect.flatMap((written) =>
+            written
+              ? Effect.void
+              : Effect.fail(fail("Saved login changed while it was being updated.")),
+          ),
+          Effect.tapError(() => store.remove(nextKey).pipe(Effect.ignore)),
+        );
+        yield* store
+          .remove(personalLoginStoreKey(previous.secretRef))
+          .pipe(
+            Effect.catch(() => Effect.logWarning("Could not remove a retired saved-login secret.")),
+          );
+      }),
     );
-    const written = yield* db("update", repository.update(next));
-    if (!written) return yield* fail("Saved login changed while it was being updated.");
     return present(next);
   });
   const update: PersonalLoginService["Service"]["update"] = (input) =>

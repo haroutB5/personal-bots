@@ -330,8 +330,8 @@ export function PasswordsScreen(): JSX.Element {
       </header>
 
       <p className="text-[14px] leading-snug text-[var(--personal-text-secondary)]">
-        Passwords are encrypted on this computer. A bot can never read one through the app; treat
-        bots you install with the same care as any other software.
+        Passwords are encrypted on this computer, but bots run under your computer account and share
+        signed-in browser sessions. Only save accounts you trust every bot to access.
       </p>
 
       {error === null ? null : (

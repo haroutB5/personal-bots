@@ -1203,12 +1203,9 @@ export const make = (options: PersonalBrowserOptions) =>
           runtime.phase = "offline";
           runtime.detail = null;
           runtime.lockedByPid = null;
-          // The next session gets a clean Chrome, so the model-read locks that
-          // a filled credential imposed on this one do not outlive it.
-          runtime.loginUsed = false;
-          // `credentialOrigins` deliberately survives: the Chrome profile is
-          // reused, so the signed-in cookies a fill created are still there for
-          // the next launch, and the origins they belong to are still sensitive.
+          // Keep both loginUsed and credentialOrigins: the persistent profile
+          // retains authenticated cookies across a Chrome close. Re-enabling
+          // evaluate here would bypass the protections on the next launch.
           runtime.closing = false;
           yield* lease.releaseAll;
           if (closedSomething) {
