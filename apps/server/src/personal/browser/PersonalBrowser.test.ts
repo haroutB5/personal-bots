@@ -1,11 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  PersonalBotId,
   PersonalBrowserInputMessage,
+  ProviderInstanceId,
   ThreadId,
   type PreviewAutomationRequest,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -130,14 +133,24 @@ const configureLoginPage = (page: FakePage) => {
   page.locatorCount = 1;
   page.countLocatorImpl = () => 1;
   // The fill resolves the form's real submission target in the page; an
-  // ordinary login form posts back to the page it is on.
-  page.evaluateImpl = async () => ({
-    found: true,
-    hasForm: true,
-    baseUri: page.currentUrl,
-    action: page.currentUrl,
-    submitters: [],
-  });
+  // ordinary login form posts back to the page it is on. Anything else the
+  // server evaluates here is a snapshot.
+  page.evaluateImpl = async (expression: string) =>
+    expression.includes('input[type="password"]')
+      ? {
+          found: true,
+          hasForm: true,
+          baseUri: page.currentUrl,
+          action: page.currentUrl,
+          submitters: [],
+        }
+      : {
+          url: page.currentUrl,
+          title: "Fake page",
+          loading: false,
+          visibleText: "",
+          interactiveElements: [],
+        };
 };
 
 const makeFakeDriver = () => {
@@ -403,18 +416,20 @@ describe("PersonalBrowser", () => {
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 
-  // I1: the browser context (and therefore the signed-in session) is shared by
-  // every bot, so the grant cannot be the only thing standing between an
-  // ungranted bot and the account.
-  it.effect("protects another bot's tab when it reaches a credential-bearing origin", () => {
+  // Saved logins are shared by every bot by design, so the signed-in site is
+  // not gated per bot. What is gated is the document the password is sitting
+  // in, for whoever asks.
+  it.effect("leaves other threads free on the signed-in origin while the form is open", () => {
     const fake = makeFakeDriver();
     asLoginBrowser(fake);
-    const otherThread = ThreadId.make("thread-ungranted");
+    const otherThread = ThreadId.make("thread-other");
     const otherRequest = (operation: PreviewAutomationRequest["operation"], input: unknown = {}) =>
       ({ ...request(operation, input), threadId: otherThread }) as PreviewAutomationRequest;
     return Effect.gen(function* () {
       const browser = yield* PersonalBrowser.PersonalBrowser;
-      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      yield* browser.handleAutomationRequest(
+        request("navigate", { url: "https://example.com/sign-in" }),
+      );
       yield* browser.fillLogin({
         threadId,
         label: "Example",
@@ -423,20 +438,25 @@ describe("PersonalBrowser", () => {
         password: "password-value",
       });
 
-      // A bot with no grant opens the same site: it inherits the session, so it
-      // inherits the protection too.
-      yield* browser.handleAutomationRequest(otherRequest("navigate", { url: "example.com" }));
-      const error = yield* browser
-        .handleAutomationRequest(otherRequest("snapshot"))
-        .pipe(Effect.asVoid, Effect.flip);
-      expect(error.message).toContain("contains a saved login");
-
-      // Proportionate: a fresh tab on any other origin reads normally. (The
-      // protected tab stays protected for its own lifetime, as before.)
+      // Another thread opens the same site and reads it: it inherits the
+      // session, which is the point of sharing the saved login.
       yield* browser.handleAutomationRequest(
-        otherRequest("open", { url: "other.example", reuseExistingTab: false }),
+        otherRequest("navigate", { url: "https://example.com/account" }),
       );
       yield* browser.handleAutomationRequest(otherRequest("snapshot"));
+
+      // Page scripts stay disabled for everyone while the profile holds the
+      // session the credential created.
+      const scripted = yield* browser
+        .handleAutomationRequest(otherRequest("evaluate", { expression: "document.cookie" }))
+        .pipe(Effect.asVoid, Effect.flip);
+      expect(scripted.message).toContain("Page scripts are disabled");
+
+      // The tab the password went into is still closed, to its own thread too.
+      const onForm = yield* browser
+        .handleAutomationRequest(request("snapshot"))
+        .pipe(Effect.asVoid, Effect.flip);
+      expect(onForm.message).toContain("contains a saved login");
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 
@@ -832,6 +852,9 @@ describe("PersonalBrowser", () => {
     return Effect.gen(function* () {
       yield* Effect.gen(function* () {
         const browser = yield* PersonalBrowser.PersonalBrowser;
+        // One origin gets a model-provided script, another gets the login.
+        yield* browser.handleAutomationRequest(request("navigate", { url: "other.example" }));
+        yield* browser.handleAutomationRequest(request("evaluate", { expression: "1" }));
         yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
         yield* browser.fillLogin({
           threadId,
@@ -844,11 +867,11 @@ describe("PersonalBrowser", () => {
 
       expect(protections.saved.at(-1)).toMatchObject({
         loginUsed: true,
-        credentialOrigins: [{ origin: "https://example.com", botId: null }],
+        taintedOrigins: ["https://other.example"],
       });
 
-      // A new process over the same profile: page scripts stay disabled, and a
-      // tab that reaches the credential origin is still unreadable.
+      // A new process over the same still-signed-in profile: page scripts stay
+      // disabled, and the tainted origin still refuses a fill.
       yield* Effect.gen(function* () {
         const browser = yield* PersonalBrowser.PersonalBrowser;
         yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
@@ -856,12 +879,71 @@ describe("PersonalBrowser", () => {
           .handleAutomationRequest(request("evaluate", { expression: "document.cookie" }))
           .pipe(Effect.asVoid, Effect.flip);
         expect(scripted.message).toContain("Page scripts are disabled");
-        const read = yield* browser
-          .handleAutomationRequest(request("snapshot"))
+
+        yield* browser.handleAutomationRequest(request("navigate", { url: "other.example" }));
+        const refused = yield* browser
+          .fillLogin({
+            threadId,
+            label: "Other",
+            expectedOrigin: "https://other.example",
+            username: "person@example.com",
+            password: "password-value",
+          })
           .pipe(Effect.asVoid, Effect.flip);
-        expect(read.message).toContain("contains a saved login");
+        expect(refused.message).toContain("A page script was run on https://other.example");
       }).pipe(Effect.provide(layerFor(second)));
     });
+  });
+
+  // Audit #5: the post-login workflow was blocked for everyone, including the
+  // bot that had just signed the user in. Saved logins are shared, so the only
+  // thing that stays closed is the document the password is in, and only until
+  // that tab leaves the form.
+  it.effect("reopens the credential tab to reads once it has left the form", () => {
+    const fake = makeFakeDriver();
+    asLoginBrowser(fake);
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(
+        request("navigate", { url: "https://example.com/sign-in" }),
+      );
+      yield* browser.fillLogin({
+        threadId,
+        label: "Example",
+        expectedOrigin: "https://example.com",
+        username: "person@example.com",
+        password: "password-value",
+      });
+
+      const onForm = yield* browser
+        .handleAutomationRequest(request("snapshot"))
+        .pipe(Effect.asVoid, Effect.flip);
+      expect(onForm.message).toContain("contains a saved login");
+
+      // A GET login form submits to a URL carrying the password, so leaving the
+      // form is not enough on its own: a query string keeps the tab closed.
+      yield* browser.handleAutomationRequest(
+        request("navigate", { url: "https://example.com/in?pw=password-value" }),
+      );
+      const withQuery = yield* browser
+        .handleAutomationRequest(request("snapshot"))
+        .pipe(Effect.asVoid, Effect.flip);
+      expect(withQuery.message).toContain("contains a saved login");
+
+      // The signed-in page: the password is in neither the document nor the
+      // URL, so the tab reads normally again.
+      yield* browser.handleAutomationRequest(
+        request("navigate", { url: "https://example.com/account" }),
+      );
+      yield* browser.handleAutomationRequest(request("snapshot"));
+      yield* browser.handleAutomationRequest(request("type", { locator: "input", text: "hello" }));
+
+      // Page scripts stay off on that profile all the same.
+      const scripted = yield* browser
+        .handleAutomationRequest(request("evaluate", { expression: "document.cookie" }))
+        .pipe(Effect.asVoid, Effect.flip);
+      expect(scripted.message).toContain("Page scripts are disabled");
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 
   it.effect("screencasts only while at least one viewer is attached", () => {

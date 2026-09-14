@@ -180,8 +180,10 @@ interface TabEntry {
   readonly page: BrowserPage;
   title: string;
   readonly timeline: PreviewAutomationActionEvent[];
-  /** Once credentials enter this tab, model-readable operations stay disabled for its lifetime. */
+  /** Model-readable operations are disabled while a credential is in this document. */
   loginProtected: boolean;
+  /** The URL a saved login was filled on; null once the tab has left that form. */
+  credentialFormUrl: string | null;
   /**
    * A model-provided script has run in this tab since the last server-initiated
    * navigation. Such a tab is never a fill target: `preview_evaluate` can leave
@@ -332,11 +334,6 @@ export const make = (options: PersonalBrowserOptions) =>
       tabs: new Map<string, TabEntry>(),
       activeTabId: null as string | null,
       loginUsed: false,
-      // Origins where a saved login was filled into this browser context. The
-      // context is shared by every bot, so the authenticated session outlives
-      // the tab that created it and belongs to no single grant. The value is
-      // the bot that filled it, or null when the filling thread had no bot.
-      credentialOrigins: new Map<string, string | null>(),
       // Origins where a model-provided script was allowed to run. A script can
       // register a service worker, which survives the tab, the navigation and
       // the Chrome process, so no saved login is ever filled on such an origin
@@ -359,7 +356,6 @@ export const make = (options: PersonalBrowserOptions) =>
             Option.some<BrowserProtectionState>({
               profileId: PERSONAL_BROWSER_PROFILE_ID,
               loginUsed: true,
-              credentialOrigins: [],
               taintedOrigins: [],
             }),
           ),
@@ -368,9 +364,6 @@ export const make = (options: PersonalBrowserOptions) =>
     );
     if (Option.isSome(restored)) {
       runtime.loginUsed = restored.value.loginUsed;
-      for (const entry of restored.value.credentialOrigins) {
-        runtime.credentialOrigins.set(entry.origin, entry.botId);
-      }
       for (const origin of restored.value.taintedOrigins) runtime.taintedOrigins.add(origin);
     }
 
@@ -383,10 +376,6 @@ export const make = (options: PersonalBrowserOptions) =>
       protections.save({
         profileId: PERSONAL_BROWSER_PROFILE_ID,
         loginUsed: runtime.loginUsed,
-        credentialOrigins: [...runtime.credentialOrigins].map(([origin, botId]) => ({
-          origin,
-          botId,
-        })),
         taintedOrigins: [...runtime.taintedOrigins],
       }),
     );
@@ -759,6 +748,7 @@ export const make = (options: PersonalBrowserOptions) =>
           title: "",
           timeline: [],
           loginProtected: false,
+          credentialFormUrl: null,
           scriptTainted: false,
         };
         runtime.tabs.set(tab.tabId, tab);
@@ -801,16 +791,29 @@ export const make = (options: PersonalBrowserOptions) =>
       });
 
     /**
-     * A logged-in session is shared by every tab in the context, so any tab
-     * that lands on an origin where a saved login was filled gets the same
-     * protection as the tab that filled it. Otherwise an ungranted bot could
-     * simply open the site and read the account the grant was meant to gate.
+     * The tab a saved login was typed into is closed to the model while the
+     * credential form is still the document: the value is sitting in it. Once
+     * that tab has navigated away from the form the password is gone from the
+     * page, so it reads normally again — every bot shares the saved logins and
+     * the sessions they create, so no other tab is restricted at all.
+     *
+     * A query string is the exception. A `method="GET"` login form puts the
+     * password in the URL, and a snapshot would report it, so a tab that
+     * navigated to a URL carrying one stays closed.
      */
-    const applyCredentialOrigin = (tab: TabEntry | undefined): void => {
-      if (tab === undefined || tab.loginProtected) return;
-      if (runtime.credentialOrigins.size === 0 || !openPage(tab.page)) return;
-      const origin = originOf(tab.page.url());
-      if (origin !== null && runtime.credentialOrigins.has(origin)) tab.loginProtected = true;
+    const refreshCredentialProtection = (tab: TabEntry | undefined): void => {
+      if (tab === undefined || tab.credentialFormUrl === null || !openPage(tab.page)) return;
+      const current = tab.page.url();
+      if (current === tab.credentialFormUrl) return;
+      let parsed: URL;
+      try {
+        parsed = new URL(current);
+      } catch {
+        return;
+      }
+      if (parsed.search !== "" || parsed.hash !== "") return;
+      tab.credentialFormUrl = null;
+      tab.loginProtected = false;
     };
 
     /** Protected tabs never publish a query string: a GET login form puts the password there. */
@@ -827,7 +830,7 @@ export const make = (options: PersonalBrowserOptions) =>
     };
 
     const statusOf = (tab: TabEntry | undefined): PreviewAutomationStatus => {
-      applyCredentialOrigin(tab);
+      refreshCredentialProtection(tab);
       return {
         available: runtime.phase !== "locked",
         visible: viewers.size > 0 || !options.headless,
@@ -929,7 +932,7 @@ export const make = (options: PersonalBrowserOptions) =>
             break;
         }
         const tab = yield* requireTab(request);
-        applyCredentialOrigin(tab);
+        refreshCredentialProtection(tab);
         yield* setActive(tab);
         if (runtime.loginUsed && request.operation === "evaluate") {
           return yield* rejectUrl(
@@ -1230,9 +1233,8 @@ export const make = (options: PersonalBrowserOptions) =>
         // after inserting some or all of a value, and must not reopen model reads.
         // The bit intentionally survives navigation for the tab's lifetime.
         tab.loginProtected = true;
+        tab.credentialFormUrl = openPage(tab.page) ? tab.page.url() : target;
         runtime.loginUsed = true;
-        // Registered before the fill, so a partial fill still marks the origin.
-        runtime.credentialOrigins.set(input.expectedOrigin, null);
         // A protection that is only in memory would be gone after a restart
         // while the profile stayed signed in, so the fill waits for the write.
         yield* persistProtections.pipe(
@@ -1382,9 +1384,9 @@ export const make = (options: PersonalBrowserOptions) =>
           runtime.phase = "offline";
           runtime.detail = null;
           runtime.lockedByPid = null;
-          // Keep both loginUsed and credentialOrigins: the persistent profile
-          // retains authenticated cookies across a Chrome close. Re-enabling
-          // evaluate here would bypass the protections on the next launch.
+          // Keep loginUsed: the persistent profile retains authenticated
+          // cookies across a Chrome close, so re-enabling page scripts here
+          // would bypass the protection on the next launch.
           runtime.closing = false;
           yield* lease.releaseAll;
           if (closedSomething) {

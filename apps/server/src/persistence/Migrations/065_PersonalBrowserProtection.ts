@@ -10,11 +10,10 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
  * signed-in profile with no protection at all (audit finding #3). One row per
  * profile, rewritten whole: the state is a handful of origins.
  *
- * `login_used` disables page scripts everywhere; `credential_origins` records
- * the origins a saved login was filled into and which bot filled each one;
- * `tainted_origins` records origins where a model-provided script was allowed
- * to run, which blocks a later fill there because a service worker installed
- * then can outlive any tab (audit finding #2).
+ * `login_used` disables page scripts for as long as the profile keeps the
+ * session a saved login created; `tainted_origins` records origins where a
+ * model-provided script was allowed to run, which blocks a later fill there
+ * because a service worker installed then can outlive any tab (finding #2).
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -23,7 +22,6 @@ export default Effect.gen(function* () {
     CREATE TABLE personal_browser_protection (
       profile_id TEXT PRIMARY KEY,
       login_used INTEGER NOT NULL DEFAULT 0,
-      credential_origins TEXT NOT NULL DEFAULT '[]',
       tainted_origins TEXT NOT NULL DEFAULT '[]'
     )
   `;

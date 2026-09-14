@@ -22,19 +22,10 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import { PersistenceDecodeError, PersistenceSqlError } from "../../persistence/Errors.ts";
 
-/** One origin a saved login was filled into, and the bot that filled it. */
-export const BrowserCredentialOrigin = Schema.Struct({
-  origin: Schema.String,
-  /** The leaseholder bot at fill time; null when the filling thread had no bot. */
-  botId: Schema.NullOr(Schema.String),
-});
-export type BrowserCredentialOrigin = typeof BrowserCredentialOrigin.Type;
-
 export const BrowserProtectionState = Schema.Struct({
   profileId: Schema.String,
   /** A saved login has been used in this profile, so page scripts stay disabled. */
   loginUsed: Schema.Boolean,
-  credentialOrigins: Schema.Array(BrowserCredentialOrigin),
   /** Origins where a model-provided script was allowed to run. */
   taintedOrigins: Schema.Array(Schema.String),
 });
@@ -44,13 +35,9 @@ export type BrowserProtectionState = typeof BrowserProtectionState.Type;
 const ProtectionRow = Schema.Struct({
   profileId: Schema.String,
   loginUsed: Schema.Int,
-  credentialOrigins: Schema.fromJsonString(Schema.Array(BrowserCredentialOrigin)),
   taintedOrigins: Schema.fromJsonString(Schema.Array(Schema.String)),
 });
 
-const encodeCredentialOrigins = Schema.encodeSync(
-  Schema.fromJsonString(Schema.Array(BrowserCredentialOrigin)),
-);
 const encodeTaintedOrigins = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 export type BrowserProtectionRepositoryError = PersistenceSqlError | PersistenceDecodeError;
@@ -86,7 +73,6 @@ export const make = Effect.gen(function* () {
         SELECT
           profile_id AS "profileId",
           login_used AS "loginUsed",
-          credential_origins AS "credentialOrigins",
           tainted_origins AS "taintedOrigins"
         FROM personal_browser_protection
         WHERE profile_id = ${profileId}
@@ -96,16 +82,14 @@ export const make = Effect.gen(function* () {
   const saveRow = (state: BrowserProtectionState) =>
     sql`
       INSERT INTO personal_browser_protection (
-        profile_id, login_used, credential_origins, tainted_origins
+        profile_id, login_used, tainted_origins
       )
       VALUES (
         ${state.profileId}, ${state.loginUsed ? 1 : 0},
-        ${encodeCredentialOrigins(state.credentialOrigins)},
         ${encodeTaintedOrigins(state.taintedOrigins)}
       )
       ON CONFLICT(profile_id) DO UPDATE SET
         login_used = excluded.login_used,
-        credential_origins = excluded.credential_origins,
         tainted_origins = excluded.tainted_origins
     `;
 
@@ -116,7 +100,6 @@ export const make = Effect.gen(function* () {
           Option.map((row): BrowserProtectionState => ({
             profileId: row.profileId,
             loginUsed: row.loginUsed !== 0,
-            credentialOrigins: row.credentialOrigins,
             taintedOrigins: row.taintedOrigins,
           })),
         ),
