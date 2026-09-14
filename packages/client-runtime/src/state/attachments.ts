@@ -156,7 +156,12 @@ export async function runAttachmentUploadCycle<E, RE>(input: {
   readonly remove: AttachmentRemoveCommand<RE>;
   readonly environmentId: EnvironmentId;
   readonly upload: AttachmentCreateUploadUrlInput;
-  readonly resolveUploadUrl: (relativeUrl: string) => string | null;
+  /**
+   * Resolves the minted relative URL against the environment's HTTP base. May
+   * be asynchronous: the base URL lives on the prepared connection, which the
+   * client can still be waiting for when the mint returns.
+   */
+  readonly resolveUploadUrl: (relativeUrl: string) => string | null | Promise<string | null>;
   readonly transport: (url: string) => AttachmentByteUpload;
   /** Observe the minted id (for cancellation bookkeeping) before bytes move. */
   readonly onMinted?: (attachmentId: string) => "continue" | "cancel";
@@ -187,7 +192,7 @@ export async function runAttachmentUploadCycle<E, RE>(input: {
     return { status: "cancelled", attachmentId };
   }
 
-  const url = input.resolveUploadUrl(minted.value.relativeUrl);
+  const url = await input.resolveUploadUrl(minted.value.relativeUrl);
   if (!url) {
     return {
       status: "failed",

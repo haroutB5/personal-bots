@@ -124,6 +124,63 @@ describe("runAttachmentUploadCycle", () => {
     });
     expect(removeCalls).toEqual([]);
   });
+
+  it("waits for an asynchronous url resolution before transferring", async () => {
+    const transferred: string[] = [];
+    let publish: ((url: string) => void) | null = null;
+    const pending = runAttachmentUploadCycle({
+      registry,
+      createUploadUrl: makeCreateUploadUrl("pending-async"),
+      remove,
+      environmentId,
+      upload: uploadInput,
+      // The web client resolves this against the prepared connection, which it
+      // may still be waiting for when the mint returns.
+      resolveUploadUrl: () =>
+        new Promise<string | null>((resolve) => {
+          publish = resolve;
+        }),
+      transport: (url) => {
+        transferred.push(url);
+        return { done: Promise.resolve(), abort: () => {} };
+      },
+    });
+
+    // Drains the microtasks the mint takes, so the outstanding work below is
+    // the url resolution and nothing else.
+    for (let tick = 0; tick < 20; tick += 1) {
+      await Promise.resolve();
+    }
+    expect(publish).not.toBeNull();
+    // The mint has landed and the resolution is outstanding: nothing may move
+    // bytes until it answers.
+    expect(transferred).toEqual([]);
+
+    publish!("https://environment.test/api/attachments/upload/pending-async");
+
+    expect(await pending).toEqual({ status: "uploaded", attachmentId: "pending-async" });
+    expect(transferred).toEqual(["https://environment.test/api/attachments/upload/pending-async"]);
+  });
+
+  it("fails at resolve-url when an asynchronous resolution answers null", async () => {
+    const result = await runAttachmentUploadCycle({
+      registry,
+      createUploadUrl: makeCreateUploadUrl("pending-unresolved"),
+      remove,
+      environmentId,
+      upload: uploadInput,
+      resolveUploadUrl: () => Promise.resolve(null),
+      transport: () => {
+        throw new Error("transport must not run without a url");
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      step: "resolve-url",
+      attachmentId: "pending-unresolved",
+    });
+  });
 });
 
 describe("verifyPersistedAttachmentUpload", () => {

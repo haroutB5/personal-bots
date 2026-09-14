@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   executeAtomQuery: vi.fn(),
   removeUpload: Symbol("remove-upload"),
   runAtomCommand: vi.fn(),
-  readPreparedConnection: vi.fn(),
+  awaitPreparedConnection: vi.fn(),
 }));
 
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
@@ -38,7 +38,7 @@ vi.mock("../state/attachments", () => ({
 }));
 
 vi.mock("../state/session", () => ({
-  readPreparedConnection: mocks.readPreparedConnection,
+  awaitPreparedConnection: mocks.awaitPreparedConnection,
 }));
 
 import {
@@ -113,6 +113,17 @@ class TestXmlHttpRequest {
 const firstEnvironment = EnvironmentId.make("environment-1");
 const secondEnvironment = EnvironmentId.make("environment-2");
 
+/**
+ * Drains the microtasks a start-to-transfer hop takes. Resolving the upload
+ * URL awaits the prepared connection, so the hop is several ticks deep and a
+ * single `Promise.resolve()` no longer reaches the transport.
+ */
+async function flushUploadStart(): Promise<void> {
+  for (let tick = 0; tick < 10; tick += 1) {
+    await Promise.resolve();
+  }
+}
+
 function makeImage(id: string): ComposerImageAttachment {
   const file = new File([new Uint8Array([1, 2, 3])], `${id}.png`, { type: "image/png" });
   return {
@@ -148,8 +159,8 @@ describe("attachmentUploadQueue", () => {
     mocks.executeAtomQuery.mockReset();
     mocks.executeAtomQuery.mockResolvedValue({ _tag: "Success", value: {} });
     mocks.runAtomCommand.mockReset();
-    mocks.readPreparedConnection.mockReset();
-    mocks.readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://environment.test/" });
+    mocks.awaitPreparedConnection.mockReset();
+    mocks.awaitPreparedConnection.mockResolvedValue({ httpBaseUrl: "https://environment.test/" });
     mocks.runAtomCommand.mockImplementation(
       async (
         _registry: unknown,
@@ -194,7 +205,7 @@ describe("attachmentUploadQueue", () => {
       },
     };
     startAttachmentUpload({ environmentId: firstEnvironment, image });
-    await Promise.resolve();
+    await flushUploadStart();
 
     const request = TestXmlHttpRequest.requests[0]!;
     expect(request.method).toBe("POST");
@@ -240,7 +251,7 @@ describe("attachmentUploadQueue", () => {
   it("uploads generic files and sends file attachment references", async () => {
     const file = makeFile("report");
     startAttachmentUpload({ environmentId: firstEnvironment, image: file });
-    await Promise.resolve();
+    await flushUploadStart();
 
     expect(mocks.runAtomCommand).toHaveBeenCalledWith(
       expect.anything(),
@@ -284,7 +295,7 @@ describe("attachmentUploadQueue", () => {
     };
 
     startAttachmentUpload({ environmentId: firstEnvironment, image: file });
-    await Promise.resolve();
+    await flushUploadStart();
 
     expect(mocks.runAtomCommand).toHaveBeenCalledWith(
       expect.anything(),
@@ -320,7 +331,7 @@ describe("attachmentUploadQueue", () => {
         image: file,
         draftTarget: draftId,
       });
-      await Promise.resolve();
+      await flushUploadStart();
 
       // No composer effect is subscribed; only the queue can stamp the draft.
       const settled = awaitAttachmentUploads([file.id]);
@@ -346,13 +357,13 @@ describe("attachmentUploadQueue", () => {
     store.addFiles(draftId, [file]);
     try {
       startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
-      await Promise.resolve();
+      await flushUploadStart();
       let settled = awaitAttachmentUploads([file.id]);
       TestXmlHttpRequest.requests[0]!.complete(500);
       await settled;
       expect(store.getComposerDraft(draftId)?.files[0]?.uploadedAttachmentId).toBeUndefined();
       retryAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
-      await Promise.resolve();
+      await flushUploadStart();
       settled = awaitAttachmentUploads([file.id]);
       TestXmlHttpRequest.requests[1]!.complete();
       await settled;
@@ -437,7 +448,7 @@ describe("attachmentUploadQueue", () => {
         image: replacement,
         draftTarget: draftId,
       });
-      await Promise.resolve();
+      await flushUploadStart();
       const settled = awaitAttachmentUploads([replacement.id]);
       TestXmlHttpRequest.requests[0]!.complete();
       await settled;
@@ -473,7 +484,7 @@ describe("attachmentUploadQueue", () => {
     // The verify-then-reupload path crosses several awaits before the
     // transfer starts; drain microtasks until the XHR exists.
     for (let hop = 0; hop < 20 && TestXmlHttpRequest.requests.length === 0; hop += 1) {
-      await Promise.resolve();
+      await flushUploadStart();
     }
 
     const settled = awaitAttachmentUploads([file.id]);
@@ -637,7 +648,7 @@ describe("attachmentUploadQueue", () => {
       attachmentId: "pending-stashed-checking-pdf",
     });
     resolveVerification({ _tag: "Success", value: {} });
-    await Promise.resolve();
+    await flushUploadStart();
 
     expect(readAttachmentUpload(file.id)).toBeUndefined();
     expect(mocks.runAtomCommand).toHaveBeenCalledWith(
@@ -726,7 +737,7 @@ describe("attachmentUploadQueue", () => {
   it("retries rejected uploads", async () => {
     const image = makeImage("image-retry");
     startAttachmentUpload({ environmentId: firstEnvironment, image });
-    await Promise.resolve();
+    await flushUploadStart();
 
     let settled = awaitAttachmentUploads([image.id]);
     TestXmlHttpRequest.requests[0]!.complete(500);
@@ -737,7 +748,7 @@ describe("attachmentUploadQueue", () => {
     });
 
     retryAttachmentUpload({ environmentId: firstEnvironment, image });
-    await Promise.resolve();
+    await flushUploadStart();
     settled = awaitAttachmentUploads([image.id]);
     TestXmlHttpRequest.requests[1]!.complete();
     await settled;
@@ -792,13 +803,13 @@ describe("attachmentUploadQueue", () => {
   it("restores the previous environment after a replacement upload fails", async () => {
     const image = makeImage("image-move");
     startAttachmentUpload({ environmentId: firstEnvironment, image });
-    await Promise.resolve();
+    await flushUploadStart();
     let settled = awaitAttachmentUploads([image.id]);
     TestXmlHttpRequest.requests[0]!.complete();
     await settled;
 
     startAttachmentUpload({ environmentId: secondEnvironment, image });
-    await Promise.resolve();
+    await flushUploadStart();
     settled = awaitAttachmentUploads([image.id]);
     TestXmlHttpRequest.requests[1]!.complete(500);
     await settled;
@@ -818,7 +829,7 @@ describe("attachmentUploadQueue", () => {
     }
     const otherEnvironmentImage = makeImage("image-other");
     startAttachmentUpload({ environmentId: secondEnvironment, image: otherEnvironmentImage });
-    await Promise.resolve();
+    await flushUploadStart();
 
     expect(TestXmlHttpRequest.requests).toHaveLength(4);
     const otherRequest = TestXmlHttpRequest.requests.find((request) =>
@@ -833,8 +844,59 @@ describe("attachmentUploadQueue", () => {
       ...images.slice(0, 3).map((image) => awaitAttachmentUploads([image.id])),
       awaitAttachmentUploads([otherEnvironmentImage.id]),
     ]);
-    await Promise.resolve();
+    await flushUploadStart();
     TestXmlHttpRequest.requests[4]!.complete();
     await awaitAttachmentUploads([images[3]!.id]);
+  });
+
+  // Regression: the queue used to read the prepared connection synchronously
+  // from the atom registry. On a screen where nothing had mounted that atom --
+  // a brand-new chat, whose transcript renders no message and therefore no
+  // asset URL -- the read answered `null` every time, so the upload failed at
+  // `resolve-url` and the bytes never left the device, while the server had
+  // already minted the pending upload.
+  it("uploads once the prepared connection arrives, even when it is not mounted yet", async () => {
+    let publish: ((connection: { readonly httpBaseUrl: string }) => void) | null = null;
+    mocks.awaitPreparedConnection.mockReturnValue(
+      new Promise<{ readonly httpBaseUrl: string }>((resolve) => {
+        publish = resolve;
+      }),
+    );
+    const image = makeImage("image-cold");
+
+    startAttachmentUpload({ environmentId: firstEnvironment, image });
+    await flushUploadStart();
+
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
+    expect(readAttachmentUpload(image.id)).toMatchObject({ status: "uploading" });
+
+    publish!({ httpBaseUrl: "https://environment.test/" });
+    await flushUploadStart();
+
+    const request = TestXmlHttpRequest.requests[0]!;
+    expect(request.method).toBe("POST");
+    expect(request.url).toBe(
+      "https://environment.test/api/attachments/upload/pending-environment-1-image-cold.png",
+    );
+
+    const settled = awaitAttachmentUploads([image.id]);
+    request.complete();
+    await settled;
+    expect(readAttachmentUpload(image.id)).toMatchObject({ status: "ready" });
+  });
+
+  it("fails as not connected when the prepared connection never arrives", async () => {
+    mocks.awaitPreparedConnection.mockResolvedValue(null);
+    const image = makeImage("image-offline");
+
+    startAttachmentUpload({ environmentId: firstEnvironment, image });
+    await awaitAttachmentUploads([image.id]);
+
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
+    expect(readAttachmentUpload(image.id)).toMatchObject({
+      status: "failed",
+      reason: "Not connected",
+      attachmentId: "pending-environment-1-image-offline.png",
+    });
   });
 });

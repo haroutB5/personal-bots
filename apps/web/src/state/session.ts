@@ -21,10 +21,69 @@ export function usePreparedConnection(environmentId: EnvironmentId | null) {
   );
 }
 
+/**
+ * The prepared connection *if some other consumer already keeps the atom
+ * mounted*. `preparedConnectionAtom` is a stream-backed atom whose initial
+ * value is `None`, and the stream that fills it only runs while the atom has a
+ * subscriber. A bare `registry.get` therefore reads `None` and keeps reading
+ * `None` for as long as nothing in the mounted tree happens to subscribe.
+ * Prefer `awaitPreparedConnection` anywhere a null answer is a user-visible
+ * failure rather than a render-time placeholder.
+ */
 export function readPreparedConnection(environmentId: EnvironmentId) {
   return Option.getOrNull(
     appAtomRegistry.get(environmentSession.preparedConnectionValueAtom(environmentId)),
   );
+}
+
+export type PreparedConnection = NonNullable<ReturnType<typeof readPreparedConnection>>;
+
+const PREPARED_CONNECTION_WAIT_MS = 10_000;
+
+/**
+ * The prepared connection, mounting the atom and waiting when no one else has.
+ *
+ * Subscribing is what starts the supervisor stream that publishes the prepared
+ * connection, so this answers even from a screen that renders nothing else
+ * bound to the environment. Resolves `null` only when the wait elapses, which
+ * really does mean "not connected".
+ */
+export function awaitPreparedConnection(
+  environmentId: EnvironmentId,
+  options: { readonly timeoutMs?: number } = {},
+): Promise<PreparedConnection | null> {
+  const atom = environmentSession.preparedConnectionValueAtom(environmentId);
+  const mounted = Option.getOrNull(appAtomRegistry.get(atom));
+  if (mounted !== null) {
+    return Promise.resolve(mounted);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let unsubscribe: (() => void) | undefined;
+    const finish = (connection: PreparedConnection | null): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      // `undefined` when `subscribe` called back before returning; the caller
+      // below releases the subscription in that case.
+      unsubscribe?.();
+      resolve(connection);
+    };
+    unsubscribe = appAtomRegistry.subscribe(
+      atom,
+      (value) => {
+        const connection = Option.getOrNull(value);
+        if (connection !== null) finish(connection);
+      },
+      { immediate: true },
+    );
+    if (settled) {
+      unsubscribe();
+      return;
+    }
+    timer = setTimeout(() => finish(null), options.timeoutMs ?? PREPARED_CONNECTION_WAIT_MS);
+  });
 }
 
 /**

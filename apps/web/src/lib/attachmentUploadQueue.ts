@@ -23,7 +23,7 @@ import {
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { assetEnvironment } from "../state/assets";
 import { attachmentEnvironment } from "../state/attachments";
-import { readPreparedConnection } from "../state/session";
+import { awaitPreparedConnection } from "../state/session";
 import type { AttachmentUploadState, ReadyAttachmentUpload } from "./attachmentUploadState";
 
 const MAX_UPLOADS_PER_ENVIRONMENT = 3;
@@ -266,8 +266,14 @@ async function runUpload(job: UploadJob): Promise<void> {
       mimeType,
       sizeBytes: file.size,
     },
-    resolveUploadUrl: (relativeUrl) => {
-      const connection = readPreparedConnection(job.environmentId);
+    // Awaited, not read: nothing on a brand-new chat's screen subscribes to
+    // the prepared connection, and a bare read of that atom answers `null`
+    // forever when no one has mounted it. Reading it here is what made a
+    // first attachment in a new chat fail with the bytes never leaving the
+    // device. The wait also covers a reconnect mid-attach.
+    resolveUploadUrl: async (relativeUrl) => {
+      const connection = await awaitPreparedConnection(job.environmentId);
+      if (job.cancelled) return null;
       return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
     },
     transport: (url) =>
