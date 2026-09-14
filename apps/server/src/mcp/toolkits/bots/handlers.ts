@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
+import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { BotsToolError, BotsToolkit, type DelegateTaskInput, type TaskSummary } from "./tools.ts";
@@ -82,6 +83,7 @@ const make = Effect.gen(function* () {
   const tasks = yield* PersonalTaskService.PersonalTaskService;
   const botRepository = yield* PersonalBotRepository.PersonalBotRepository;
   const secrets = yield* PersonalSecretService.PersonalSecretService;
+  const logins = yield* PersonalLoginService.PersonalLoginService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
 
   const listBots = botRepository
@@ -246,6 +248,17 @@ const make = Effect.gen(function* () {
               ? `${input.name} is already stored. It is ${envVar} in sessions started after it was saved; do not print it.`
               : REQUEST_SECRET_NOTE,
         };
+      }),
+    use_login: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* callerBot();
+        return yield* logins
+          .use({
+            botId: caller.botId,
+            threadId: caller.threadId,
+            labelOrOrigin: input.login,
+          })
+          .pipe(Effect.mapError(readable));
       }),
   });
 });

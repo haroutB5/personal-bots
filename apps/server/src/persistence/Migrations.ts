@@ -74,6 +74,7 @@ import Migration0059 from "./Migrations/059_PersonalNotifications.ts";
 import Migration0060 from "./Migrations/060_ProjectionThreadSessionProviderRetry.ts";
 import Migration0061 from "./Migrations/061_PersonalHotPathIndexes.ts";
 import Migration0062 from "./Migrations/062_PersonalBrowserRestoreUrl.ts";
+import Migration0063 from "./Migrations/063_PersonalLogins.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -148,6 +149,7 @@ const migrationEntries = [
   [60, "ProjectionThreadSessionProviderRetry", Migration0060],
   [61, "PersonalHotPathIndexes", Migration0061],
   [62, "PersonalBrowserRestoreUrl", Migration0062],
+  [63, "PersonalLogins", Migration0063],
   // Ids 052+ are contiguous. The migrator runs any id above the latest applied
   // one, so a new migration must take the next free id; never deploy a gap.
 ] as const;

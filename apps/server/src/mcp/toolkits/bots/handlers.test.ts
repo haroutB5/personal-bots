@@ -27,6 +27,7 @@ import {
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "../../../personal/PersonalBotService.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
+import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
 import * as PersonalTaskRepository from "../../../personal/tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
 import * as ProviderRegistry from "../../../provider/Services/ProviderRegistry.ts";
@@ -43,10 +44,24 @@ const botId = (key: string) => PersonalBotId.make(`bot-${key}`);
 interface Harness {
   readonly dispatched: Array<OrchestrationCommand>;
   readonly sessions: Map<string, OrchestrationSession>;
+  readonly loginUses: Array<{
+    readonly botId: string;
+    readonly threadId: string;
+    readonly labelOrOrigin: string;
+  }>;
 }
 
 const makeLayer = (harness: Harness) =>
   PersonalSecretService.layerLive.pipe(
+    Layer.provideMerge(
+      Layer.mock(PersonalLoginService.PersonalLoginService)({
+        use: (input) =>
+          Effect.sync(() => {
+            harness.loginUses.push(input);
+            return { success: true as const, filled: ["username", "password"] as const };
+          }),
+      }),
+    ),
     Layer.provideMerge(PersonalTaskService.layer),
     Layer.provideMerge(PersonalTaskRepository.layer),
     Layer.provideMerge(PersonalBotService.layer),
@@ -157,7 +172,7 @@ const setup = (harness: Harness) =>
 const withHarness = <A, E>(
   body: (harness: Harness) => Effect.Effect<A, E, Layer.Success<ReturnType<typeof makeLayer>>>,
 ) => {
-  const harness: Harness = { dispatched: [], sessions: new Map() };
+  const harness: Harness = { dispatched: [], sessions: new Map(), loginUses: [] };
   return body(harness).pipe(Effect.provide(makeLayer(harness)));
 };
 
@@ -304,6 +319,21 @@ describe("bots toolkit handlers", () => {
           objective: "five",
         }).pipe(Effect.flip);
         expect(limited.message).toContain("Delegation limit reached");
+      }),
+    ),
+  );
+
+  it.effect("use_login returns only status and filled fields", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const result = yield* call("use_login", { login: "Example" });
+
+        expect(harness.loginUses).toEqual([
+          { botId: botId("assistant"), threadId: CALLER_THREAD, labelOrOrigin: "Example" },
+        ]);
+        expect(result).toEqual({ success: true, filled: ["username", "password"] });
+        expect(Object.keys(result).toSorted()).toEqual(["filled", "success"]);
       }),
     ),
   );

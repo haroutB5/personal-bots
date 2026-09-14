@@ -168,6 +168,7 @@ import { purgePersonalBot } from "./personal/purgePersonalBot.ts";
 import { signPersonalFiles } from "./personal/PersonalFiles.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
+import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
 // personal browser
 import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
 import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
@@ -666,6 +667,7 @@ const makeWsRpcLayer = (
       const personalBots = yield* PersonalBotService.PersonalBotService;
       const personalTasks = yield* PersonalTaskService.PersonalTaskService;
       const personalSecrets = yield* PersonalSecretService.PersonalSecretService;
+      const personalLogins = yield* PersonalLoginService.PersonalLoginService;
       // personal browser
       const personalBrowser = yield* PersonalBrowser.PersonalBrowser;
       const personalRoutines = yield* PersonalRoutineService.PersonalRoutineService;
@@ -2480,6 +2482,25 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalSecretsDelete, personalSecrets.remove(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalLoginsList]: (_input) =>
+          observeRpcEffect(WS_METHODS.personalLoginsList, personalLogins.list(), {
+            "rpc.aggregate": "server",
+          }),
+        // Password is Redacted by RPC decoding and every response omits it.
+        [WS_METHODS.personalLoginsCreate]: (input) =>
+          observeRpcEffect(WS_METHODS.personalLoginsCreate, personalLogins.create(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalLoginsUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.personalLoginsUpdate, personalLogins.update(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalLoginsDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalLoginsDelete,
+            personalLogins.remove(input).pipe(Effect.as({})),
+            { "rpc.aggregate": "server" },
+          ),
         // personal browser (control is bound to this connection's auth session)
         [WS_METHODS.personalBrowserStatus]: (_input) =>
           observeRpcEffect(
@@ -3358,6 +3379,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     // Server-lifetime: the dispatcher, its lock and the upsert stream are shared by every client.
     const personalTasks = yield* PersonalTaskService.PersonalTaskService;
     const personalSecrets = yield* PersonalSecretService.PersonalSecretService;
+    const personalLogins = yield* PersonalLoginService.PersonalLoginService;
     const personalRoutines = yield* PersonalRoutineService.PersonalRoutineService;
     const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
     const personalPush = yield* PersonalPushService.PersonalPushService;
@@ -3405,6 +3427,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provide(Layer.succeed(PersonalTaskService.PersonalTaskService, personalTasks)),
               Layer.provide(
                 Layer.succeed(PersonalSecretService.PersonalSecretService, personalSecrets),
+              ),
+              Layer.provide(
+                Layer.succeed(PersonalLoginService.PersonalLoginService, personalLogins),
               ),
               Layer.provide(
                 Layer.succeed(PersonalRoutineService.PersonalRoutineService, personalRoutines),

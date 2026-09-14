@@ -30,6 +30,7 @@ export * from "./orchestration.ts";
 export * from "./personalBots.ts";
 export * from "./personalTasks.ts";
 export * from "./personalSecrets.ts";
+export * from "./personalLogins.ts";
 export * from "./personalBrowser.ts";
 export * from "./personalRoutines.ts";
 export * from "./personalMemory.ts";

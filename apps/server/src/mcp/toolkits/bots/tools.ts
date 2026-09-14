@@ -134,6 +134,19 @@ export const RequestSecretResult = Schema.Struct({
 });
 export type RequestSecretResult = typeof RequestSecretResult.Type;
 
+export const UseLoginInput = Schema.Struct({
+  login: TrimmedNonEmptyString.annotate({
+    description: "A saved login label, or its exact https origin such as https://example.com.",
+  }),
+});
+export type UseLoginInput = typeof UseLoginInput.Type;
+
+export const UseLoginResult = Schema.Struct({
+  success: Schema.Literal(true),
+  filled: Schema.Array(Schema.Literals(["username", "password"])),
+});
+export type UseLoginResult = typeof UseLoginResult.Type;
+
 const ListBotsTool = Tool.make("list_bots", {
   description:
     "List the personal bots you can delegate work to, with what each one is for. The roster changes at any time (the user creates, renames and deletes bots), so call this fresh before every delegate_task and never rely on a roster from earlier in the conversation.",
@@ -191,7 +204,7 @@ const ListTasksTool = Tool.make("list_tasks", {
 
 const RequestSecretTool = Tool.make("request_secret", {
   description:
-    "Ask the user for a password, API key or token through a secure form. Never ask for secrets in chat and never print one. After calling this, end your turn: you are resumed in a fresh session where the value is the environment variable PB_SECRET_<NAME> for shell commands.",
+    "Ask the user for an API key or token through a secure form. Never use this for website passwords; use use_login for a login the user has granted. Never ask for secrets in chat and never print one. After calling this, end your turn: you are resumed in a fresh session where the value is the environment variable PB_SECRET_<NAME> for shell commands.",
   parameters: RequestSecretInput,
   success: RequestSecretResult,
   failure: BotsToolFailure,
@@ -203,10 +216,25 @@ const RequestSecretTool = Tool.make("request_secret", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const UseLoginTool = Tool.make("use_login", {
+  description:
+    "Fill a saved website login into the current browser page. Pass the login label or exact origin. The login must be granted to you and the page origin must exactly match; the password is filled by the server and is never revealed to you. Review the page, then submit the form with the browser tools.",
+  parameters: UseLoginInput,
+  success: UseLoginResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Use a saved login")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 export const BotsToolkit = Toolkit.make(
   ListBotsTool,
   DelegateTaskTool,
   GetTaskTool,
   ListTasksTool,
   RequestSecretTool,
+  UseLoginTool,
 );

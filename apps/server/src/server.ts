@@ -74,6 +74,7 @@ import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
+import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
 import * as PersonalSessionAccess from "./personal/secrets/PersonalSessionAccess.ts";
 // personal browser
 import * as PersonalBrowserLease from "./personal/browser/BrowserLease.ts";
@@ -544,6 +545,7 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
 );
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+  Layer.provideMerge(PersonalLoginService.layerLive),
   // personal browser: the service needs the lease (-> its repository ->
   // SqlClient), PreviewManager and PersonalBotRepository, all provided by
   // later steps below.

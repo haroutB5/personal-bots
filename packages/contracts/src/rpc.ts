@@ -284,6 +284,14 @@ import {
   PersonalSecretsListPendingResult,
   PersonalSecretsListResult,
 } from "./personalSecrets.ts";
+import {
+  PersonalLogin,
+  PersonalLoginCreateInput,
+  PersonalLoginDeleteInput,
+  PersonalLoginsError,
+  PersonalLoginsListResult,
+  PersonalLoginUpdateInput,
+} from "./personalLogins.ts";
 // personal browser
 import {
   PersonalBrowserError,
@@ -494,6 +502,12 @@ export const WS_METHODS = {
   personalSecretsCancel: "personalSecrets.cancel",
   personalSecretsList: "personalSecrets.list",
   personalSecretsDelete: "personalSecrets.delete",
+
+  // Personal saved logins (passwords are write-only and never appear in results)
+  personalLoginsList: "personalLogins.list",
+  personalLoginsCreate: "personalLogins.create",
+  personalLoginsUpdate: "personalLogins.update",
+  personalLoginsDelete: "personalLogins.delete",
 
   // personal browser
   personalBrowserStatus: "personalBrowser.status",
@@ -1082,6 +1096,32 @@ const WsPersonalSecretsDeleteRpc = Rpc.make(WS_METHODS.personalSecretsDelete, {
   payload: PersonalSecretNameInput,
   success: Schema.Struct({ deleted: Schema.Boolean }),
   error: PersonalSecretsRpcError,
+});
+
+const PersonalLoginsRpcError = Schema.Union([PersonalLoginsError, EnvironmentAuthorizationError]);
+
+const WsPersonalLoginsListRpc = Rpc.make(WS_METHODS.personalLoginsList, {
+  payload: Schema.Struct({}),
+  success: PersonalLoginsListResult,
+  error: PersonalLoginsRpcError,
+});
+
+const WsPersonalLoginsCreateRpc = Rpc.make(WS_METHODS.personalLoginsCreate, {
+  payload: PersonalLoginCreateInput,
+  success: PersonalLogin,
+  error: PersonalLoginsRpcError,
+});
+
+const WsPersonalLoginsUpdateRpc = Rpc.make(WS_METHODS.personalLoginsUpdate, {
+  payload: PersonalLoginUpdateInput,
+  success: PersonalLogin,
+  error: PersonalLoginsRpcError,
+});
+
+const WsPersonalLoginsDeleteRpc = Rpc.make(WS_METHODS.personalLoginsDelete, {
+  payload: PersonalLoginDeleteInput,
+  success: Schema.Struct({}),
+  error: PersonalLoginsRpcError,
 });
 
 // personal browser
@@ -1780,6 +1820,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsPersonalSecretsCancelRpc,
   WsPersonalSecretsListRpc,
   WsPersonalSecretsDeleteRpc,
+  WsPersonalLoginsListRpc,
+  WsPersonalLoginsCreateRpc,
+  WsPersonalLoginsUpdateRpc,
+  WsPersonalLoginsDeleteRpc,
   // personal browser
   WsPersonalBrowserStatusRpc,
   WsPersonalBrowserTakeControlRpc,

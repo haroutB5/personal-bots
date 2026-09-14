@@ -75,10 +75,12 @@ import {
   HostOperationError,
   performClick,
   performEvaluate,
+  performFillLogin,
   performPress,
   performScroll,
   performType,
   performWaitFor,
+  type PersonalLoginFilledField,
 } from "./pageOperations.ts";
 import { resolveBrowserNavigationTarget, resolveBrowserUrl } from "./urlPolicy.ts";
 
@@ -122,6 +124,12 @@ export class PersonalBrowser extends Context.Service<
     readonly handleAutomationRequest: (
       request: PreviewAutomationRequest,
     ) => Effect.Effect<unknown, HostOperationError>;
+    readonly fillLogin: (input: {
+      readonly threadId: ThreadId;
+      readonly expectedOrigin: string;
+      readonly username: string;
+      readonly password: string;
+    }) => Effect.Effect<ReadonlyArray<PersonalLoginFilledField>, HostOperationError>;
     readonly attachViewer: (input: {
       readonly sessionId: string;
       readonly canOperate: boolean;
@@ -932,6 +940,68 @@ export const make = (options: PersonalBrowserOptions) =>
         );
     };
 
+    const fillLogin: PersonalBrowser["Service"]["fillLogin"] = (input) => {
+      const execute = Effect.gen(function* () {
+        const tab = latestTabForThread(input.threadId);
+        if (tab === undefined) {
+          return yield* Effect.fail(
+            new HostOperationError(
+              "PreviewAutomationTabNotFoundError",
+              "No open browser tab for this thread. Open the matching site first.",
+            ),
+          );
+        }
+        yield* setActive(tab);
+        const fields = yield* attempt({}, () =>
+          performFillLogin(
+            tab.page,
+            {
+              expectedOrigin: input.expectedOrigin,
+              username: input.username,
+              password: input.password,
+            },
+            10_000,
+          ),
+        );
+        return { tab, fields };
+      });
+      return lease
+        .runAgentOp(
+          { threadId: input.threadId, operation: "type" },
+          Effect.andThen(ensureLaunched, execute),
+        )
+        .pipe(
+          Effect.tap(({ tab }) =>
+            Effect.gen(function* () {
+              tab.timeline.push({
+                id: NodeCrypto.randomUUID(),
+                action: "type",
+                status: "succeeded",
+                startedAt: yield* nowIso,
+                completedAt: yield* nowIso,
+              });
+              if (tab.timeline.length > TIMELINE_LIMIT)
+                tab.timeline.splice(0, tab.timeline.length - TIMELINE_LIMIT);
+              const bot = yield* botForThread(input.threadId);
+              yield* recordActivity({
+                kind: "type",
+                summary: "Filled a saved login",
+                status: "succeeded",
+                threadId: input.threadId,
+                botName: bot?.name ?? null,
+              });
+            }),
+          ),
+          Effect.map(({ fields }) => fields),
+          Effect.catchTag("BrowserLeaseRejected", (rejected) =>
+            Effect.fail(
+              new HostOperationError("PreviewAutomationControlInterruptedError", rejected.message),
+            ),
+          ),
+          Effect.ensuring(notify),
+        );
+    };
+
     const takeControl: PersonalBrowser["Service"]["takeControl"] = (sessionId) =>
       Effect.gen(function* () {
         const before = yield* lease.view;
@@ -1150,6 +1220,7 @@ export const make = (options: PersonalBrowserOptions) =>
       releaseThread,
       activity,
       handleAutomationRequest,
+      fillLogin,
       attachViewer,
       handleViewerMessage,
     });

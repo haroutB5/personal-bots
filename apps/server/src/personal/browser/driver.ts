@@ -54,6 +54,7 @@ export interface BrowserPage {
   reload(): Promise<void>;
   history(): Promise<NavigationHistory>;
   clickLocator(locator: string, timeoutMs: number): Promise<void>;
+  countLocator(locator: string): Promise<number>;
   typeText(input: {
     readonly locator: string | null;
     readonly text: string;
@@ -199,6 +200,7 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
     },
     clickLocator: (locator, timeoutMs) =>
       page.locator(locator).first().click({ timeout: timeoutMs }),
+    countLocator: (locator) => page.locator(locator).count(),
     typeText: async ({ locator, text, clear, timeoutMs }) => {
       if (locator !== null) {
         const target = page.locator(locator).first();

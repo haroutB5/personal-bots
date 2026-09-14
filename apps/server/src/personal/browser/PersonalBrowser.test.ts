@@ -56,6 +56,9 @@ class FakePage implements BrowserPage {
     return { canGoBack: false, canGoForward: false };
   }
   async clickLocator() {}
+  async countLocator() {
+    return 0;
+  }
   async typeText() {}
   async scrollLocator() {}
   async waitForLocator() {}
