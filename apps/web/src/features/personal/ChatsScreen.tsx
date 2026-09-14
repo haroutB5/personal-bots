@@ -9,6 +9,7 @@ import { ChevronRight, Network, Plus, Search, Settings } from "lucide-react";
 import { useThreadShells } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 
+import { capContinuousMotion, motionForSummary } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
 import { BotRow, ROW_CLASS, snapshotPreviewLabel } from "./BotRow";
 import {
@@ -265,6 +266,10 @@ export function ChatsScreen(): JSX.Element {
     list.refresh();
   }, [list, previewKey, previewKeyReady]);
   const visible = useMemo(() => filterBotSummaries(summaries, query), [query, summaries]);
+  // Avatar poses for the visible rows. The cap is the point: only the first
+  // working bot animates, so the list never runs more than one continuous
+  // animation however many bots are busy.
+  const rowMotions = useMemo(() => capContinuousMotion(visible.map(motionForSummary)), [visible]);
   const attention = useMemo(() => collectAttentionThreads(summaries), [summaries]);
   const runningCount = summaries.filter((summary) => summary.live).length;
   const firstAttention = attention[0] ?? null;
@@ -421,7 +426,7 @@ export function ChatsScreen(): JSX.Element {
 
           {visible.length > 0 ? (
             <ul className="mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)]">
-              {visible.map((summary) => (
+              {visible.map((summary, index) => (
                 <li key={summary.bot.botId}>
                   <SwipeToDelete
                     label={`Delete ${summary.bot.name}`}
@@ -432,6 +437,7 @@ export function ChatsScreen(): JSX.Element {
                       summary={summary}
                       now={now}
                       describeTurn={describeTurn}
+                      motion={rowMotions[index]}
                     />
                   </SwipeToDelete>
                 </li>

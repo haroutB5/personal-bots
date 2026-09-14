@@ -36,6 +36,7 @@ import { threadEnvironment, useEnvironmentThread } from "~/state/threads";
 import type { ChatMessage } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { motionForConversationState } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
 import { resolveBotProvider } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
@@ -369,7 +370,13 @@ export function ConversationScreen({
           <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
         </Link>
         {bot !== null ? (
-          <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={48} label={bot.name} />
+          <BotAvatar
+            shape={bot.avatarShape}
+            color={bot.avatarColor}
+            size={48}
+            label={bot.name}
+            motion={motionForConversationState(conversationState)}
+          />
         ) : headerName.status === "loading" ? (
           <span
             aria-hidden="true"

@@ -6,6 +6,7 @@ import { Link } from "@tanstack/react-router";
 
 import { cn } from "~/lib/utils";
 
+import type { AvatarMotion } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
 import { type BotSummary, providerLine } from "./botSummaries";
 import { readServerTurn, type ServerTurn } from "./delegationModel";
@@ -67,11 +68,14 @@ export const BotRow = memo(function BotRow({
   summary,
   now,
   describeTurn,
+  motion,
 }: {
   environmentId: EnvironmentId;
   summary: BotSummary;
   now: number;
   describeTurn: (turn: ServerTurn) => string;
+  /** Avatar pose for this row; the list decides which row may animate. */
+  motion?: AvatarMotion | undefined;
 }): JSX.Element {
   const preview = previewOf(summary, describeTurn);
   const { bot, newestThread, provider, live, rateLimited, waitingFor, lastActivityMs } = summary;
@@ -79,7 +83,13 @@ export const BotRow = memo(function BotRow({
 
   const content: ReactNode = (
     <>
-      <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={56} label={bot.name} />
+      <BotAvatar
+        shape={bot.avatarShape}
+        color={bot.avatarColor}
+        size={56}
+        label={bot.name}
+        motion={motion}
+      />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex min-w-0 items-center">
           <span className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">

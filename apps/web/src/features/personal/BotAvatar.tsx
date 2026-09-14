@@ -1,9 +1,11 @@
 import type { JSX } from "react";
+import { useState } from "react";
 
 import type { BotAvatarShape } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
 
+import type { AvatarMotion } from "./avatarMotion";
 import {
   BOT_AVATAR_EYE_COLOR,
   BOT_AVATAR_EYE_HEIGHT,
@@ -23,6 +25,12 @@ export interface BotAvatarProps {
   /** Bot name; used as the accessible label. */
   label: string;
   className?: string;
+  /**
+   * Express the bot's state in the avatar's pose. Omitted (the default) renders
+   * the plain static avatar — pickers, the team diagram and settings pass
+   * nothing and are unaffected.
+   */
+  motion?: AvatarMotion | undefined;
 }
 
 /**
@@ -30,8 +38,30 @@ export interface BotAvatarProps {
  * eyes. No mouth, gradient, shadow or 3D (see `.plans/ui-spec.md`). The status
  * dot is rendered next to the name by the row, never on the avatar.
  * Deterministic: same props always produce the same SVG.
+ *
+ * With `motion`, the pose carries the bot's state as decoration on top of those
+ * dots. Everything is transform-only, so the avatar's box never moves, and only
+ * `working` repeats (see `personal.css` and `avatarMotion.ts`).
  */
-export function BotAvatar({ shape, color, size, label, className }: BotAvatarProps): JSX.Element {
+export function BotAvatar({
+  shape,
+  color,
+  size,
+  label,
+  className,
+  motion,
+}: BotAvatarProps): JSX.Element {
+  // Work stopping is the one transition that needs its own pose: dropping the
+  // continuous bob would snap the avatar back to rest mid-cycle, so `done`
+  // plays it out. Adjusted during render (no effect, no timer) and cleared by
+  // the settle animation ending.
+  const [settling, setSettling] = useState(false);
+  const [lastMotion, setLastMotion] = useState(motion);
+  if (lastMotion !== motion) {
+    setLastMotion(motion);
+    setSettling(lastMotion === "working" && motion === "idle");
+  }
+  const pose = motion === undefined ? undefined : settling ? "done" : motion;
   const silhouette = BOT_AVATAR_SILHOUETTES[shape];
   const eyes = BOT_AVATAR_EYES[shape];
   const eyeRx = BOT_AVATAR_EYE_WIDTH / 2;
@@ -43,7 +73,9 @@ export function BotAvatar({ shape, color, size, label, className }: BotAvatarPro
       width={size}
       height={size}
       viewBox={BOT_AVATAR_VIEWBOX}
-      className={cn("shrink-0", className)}
+      data-motion={pose}
+      onAnimationEnd={settling ? () => setSettling(false) : undefined}
+      className={cn("bot-avatar shrink-0", className)}
     >
       <path
         d={silhouette.d}
@@ -52,18 +84,20 @@ export function BotAvatar({ shape, color, size, label, className }: BotAvatarPro
         strokeWidth={silhouette.roundCorners ? 7 : 0}
         strokeLinejoin="round"
       />
-      {eyes.map((eye) => (
-        <rect
-          key={`${eye.cx}-${eye.cy}`}
-          x={eye.cx - BOT_AVATAR_EYE_WIDTH / 2}
-          y={eye.cy - BOT_AVATAR_EYE_HEIGHT / 2}
-          width={BOT_AVATAR_EYE_WIDTH}
-          height={BOT_AVATAR_EYE_HEIGHT}
-          rx={eyeRx}
-          fill={BOT_AVATAR_EYE_COLOR}
-          transform={`rotate(${BOT_AVATAR_EYE_TILT_DEG} ${eye.cx} ${eye.cy})`}
-        />
-      ))}
+      <g className="bot-avatar-eyes">
+        {eyes.map((eye) => (
+          <rect
+            key={`${eye.cx}-${eye.cy}`}
+            x={eye.cx - BOT_AVATAR_EYE_WIDTH / 2}
+            y={eye.cy - BOT_AVATAR_EYE_HEIGHT / 2}
+            width={BOT_AVATAR_EYE_WIDTH}
+            height={BOT_AVATAR_EYE_HEIGHT}
+            rx={eyeRx}
+            fill={BOT_AVATAR_EYE_COLOR}
+            transform={`rotate(${BOT_AVATAR_EYE_TILT_DEG} ${eye.cx} ${eye.cy})`}
+          />
+        ))}
+      </g>
     </svg>
   );
 }

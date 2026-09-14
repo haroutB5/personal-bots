@@ -8,6 +8,7 @@ import { ChatsScreen } from "./ChatsScreen";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
 import { activeTabFor } from "./personalMode";
 import { PersonalTabBar } from "./PersonalTabBar";
+import { useHiddenRootAttribute } from "./useHiddenRootAttribute";
 
 /**
  * Layout for /bots, /tasks, /computer and /files. One scroller per column
@@ -21,6 +22,7 @@ export function PersonalShell(): JSX.Element {
   const pathname = useLocation({ select: (location) => location.pathname });
   const isWide = useMediaQuery("md");
   const activeTab = activeTabFor(pathname);
+  useHiddenRootAttribute();
 
   if (!isWide) {
     return (
