@@ -10,7 +10,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { truncate } from "@t3tools/shared/String";
-import { ArrowUp, FileText, Plus, Square, X } from "lucide-react";
+import { ArrowUp, CircleAlert, CircleDashed, FileText, Plus, Square, X } from "lucide-react";
 
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "~/components/chat/composerPromptHistory";
 import {
@@ -28,7 +28,9 @@ import {
   awaitAttachmentUploads,
   getUploadedAttachments,
   releaseDraftAttachment,
+  retryAttachmentUpload,
   startAttachmentUpload,
+  useAttachmentUploadStore,
 } from "~/lib/attachmentUploadQueue";
 import { prepareImageForAttachment } from "~/lib/imageCompression";
 import { newMessageId, randomUUID } from "~/lib/utils";
@@ -38,6 +40,7 @@ import type { Thread } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import type { PendingOutgoingMessage } from "./MessageList";
+import { attachmentChipUploadPresentation } from "./attachmentChipUploadPresentation";
 
 const LINE_HEIGHT_PX = 22;
 const MAX_LINES = 5;
@@ -123,10 +126,18 @@ export function PersonalComposer({
   const [error, setError] = useState<string | null>(null);
 
   const prompt = draft.prompt;
-  const attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment> = [
-    ...draft.images,
-    ...draft.files,
-  ];
+  const attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment> = useMemo(
+    () => [...draft.images, ...draft.files],
+    [draft.files, draft.images],
+  );
+  const uploadsByAttachmentId = useAttachmentUploadStore((state) => state.uploadsByImageId);
+  const attachmentChips = attachments.map((attachment) => ({
+    attachment,
+    upload: attachmentChipUploadPresentation(uploadsByAttachmentId[attachment.id], environmentId),
+  }));
+  const failedAttachmentNames = attachmentChips.flatMap(({ attachment, upload }) =>
+    upload.status === "failed" ? [attachment.name] : [],
+  );
   const supportsUploads = serverConfig?.environment.capabilities.attachmentUploads === true;
   const fileLimit = fileAttachmentStagingLimit({
     attachmentUploadsCapabilityKnown: serverConfig !== null,
@@ -237,6 +248,11 @@ export function PersonalComposer({
     }
   };
 
+  const retryAttachment = (attachment: ComposerImageAttachment | ComposerFileAttachment) => {
+    setError(null);
+    retryAttachmentUpload({ environmentId, image: attachment, draftTarget: threadRef });
+  };
+
   const send = async () => {
     if (!canSend || sendingRef.current || preparingRef.current) return;
     sendingRef.current = true;
@@ -344,12 +360,24 @@ export function PersonalComposer({
           {statusText}
         </p>
       ) : null}
+      {failedAttachmentNames.length > 0 ? (
+        <p role="alert" className="sr-only">
+          {failedAttachmentNames.length === 1
+            ? `Upload failed for ${failedAttachmentNames[0]}. Retry is available on the attachment.`
+            : `Uploads failed for ${failedAttachmentNames.join(", ")}. Retry is available on each attachment.`}
+        </p>
+      ) : null}
       {attachments.length > 0 ? (
         <ul aria-label="Attachments" className="flex gap-2 overflow-x-auto pb-2">
-          {attachments.map((attachment) => (
+          {attachmentChips.map(({ attachment, upload }) => (
             <li
               key={attachment.id}
-              className="flex h-11 max-w-[220px] shrink-0 items-center gap-2 rounded-xl border border-[var(--personal-border)] bg-[var(--personal-surface)] pl-1.5"
+              aria-busy={upload.status === "uploading" || undefined}
+              className={`flex h-11 max-w-[240px] shrink-0 items-center gap-2 rounded-xl border pl-1.5 ${
+                upload.status === "failed"
+                  ? "border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)]"
+                  : "border-[var(--personal-border)] bg-[var(--personal-surface)]"
+              }`}
             >
               {attachment.type === "image" ? (
                 <img
@@ -363,6 +391,27 @@ export function PersonalComposer({
               <span className="min-w-0 truncate text-sm text-[var(--personal-text)]">
                 {attachment.name}
               </span>
+              {upload.status === "uploading" ? (
+                <span
+                  aria-label={`Uploading ${attachment.name}: ${upload.progressLabel}`}
+                  className="flex shrink-0 items-center gap-1 text-xs tabular-nums text-[var(--personal-text-secondary)]"
+                >
+                  <CircleDashed aria-hidden="true" className="size-3.5" strokeWidth={2} />
+                  <span aria-hidden="true">{upload.progressLabel}</span>
+                </span>
+              ) : null}
+              {upload.status === "failed" ? (
+                <button
+                  type="button"
+                  onClick={() => retryAttachment(attachment)}
+                  disabled={sending}
+                  aria-label={`Upload failed for ${attachment.name}: ${upload.reason}. Retry upload`}
+                  className="flex h-11 shrink-0 items-center gap-1 px-1 text-xs font-semibold text-[var(--personal-danger)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-danger)] disabled:opacity-40"
+                >
+                  <CircleAlert aria-hidden="true" className="size-4" strokeWidth={2} />
+                  <span aria-hidden="true">Retry</span>
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => removeAttachment(attachment)}

@@ -2,6 +2,7 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
+import type { AttachmentUploadState } from "~/lib/attachmentUploadState";
 import type { Thread } from "~/types";
 import { PersonalComposer } from "./PersonalComposer";
 
@@ -14,6 +15,8 @@ const state = vi.hoisted(() => ({
   start: vi.fn(),
   waitUploads: vi.fn(),
   release: vi.fn(),
+  retry: vi.fn(),
+  uploads: {} as Record<string, AttachmentUploadState>,
 }));
 
 vi.mock("~/composerDraftStore", () => {
@@ -49,6 +52,10 @@ vi.mock("~/lib/attachmentUploadQueue", () => ({
   awaitAttachmentUploads: () => state.waitUploads(),
   getUploadedAttachments: () => [{ type: "file", id: "uploaded-file" }],
   releaseDraftAttachment: (value: unknown) => state.release(value),
+  retryAttachmentUpload: (value: unknown) => state.retry(value),
+  useAttachmentUploadStore: (
+    select: (store: { uploadsByImageId: Record<string, AttachmentUploadState> }) => unknown,
+  ) => select({ uploadsByImageId: state.uploads }),
 }));
 vi.mock("~/lib/imageCompression", () => ({ prepareImageForAttachment: vi.fn() }));
 
@@ -79,6 +86,8 @@ beforeEach(async () => {
   state.start.mockReset().mockResolvedValue({ _tag: "Success" });
   state.waitUploads.mockReset().mockResolvedValue(undefined);
   state.release.mockClear();
+  state.retry.mockClear();
+  state.uploads = {};
   await act(async () => {
     renderer = create(<PersonalComposer {...props} />);
   });
@@ -130,5 +139,43 @@ describe("personal composer sends", () => {
     expect(state.start).toHaveBeenCalledOnce();
     expect(state.draft.prompt).toBe("");
     expect(state.draft.files).toEqual([]);
+  });
+
+  it("shows upload progress and exposes a failed attachment retry", async () => {
+    state.uploads = {
+      "file-1": {
+        status: "uploading",
+        environmentId: props.environmentId,
+        progress: 0.42,
+      },
+    };
+    await act(async () => renderer.update(<PersonalComposer {...props} />));
+    expect(renderer.root.findByProps({ "aria-label": "Uploading notes.txt: 42%" })).toBeDefined();
+
+    state.uploads = {
+      "file-1": {
+        status: "failed",
+        environmentId: props.environmentId,
+        reason: "Connection interrupted",
+      },
+    };
+    await act(async () => renderer.update(<PersonalComposer {...props} />));
+
+    const alert = renderer.root.findAllByProps({ role: "alert" });
+    expect(
+      alert.some((node) => node.children.join("").includes("Upload failed for notes.txt")),
+    ).toBe(true);
+    const retry = renderer.root.findByProps({
+      "aria-label": "Upload failed for notes.txt: Connection interrupted. Retry upload",
+    });
+    await act(async () => retry.props.onClick());
+    expect(state.retry).toHaveBeenCalledWith({
+      environmentId: props.environmentId,
+      image: state.draft.files[0],
+      draftTarget: {
+        environmentId: props.environmentId,
+        threadId: props.threadId,
+      },
+    });
   });
 });
