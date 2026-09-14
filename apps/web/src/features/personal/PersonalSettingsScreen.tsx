@@ -4,7 +4,15 @@ import { cloneElement, useMemo, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Bell, Brain, CalendarClock, ChevronRight, Network, SquareTerminal } from "lucide-react";
+import {
+  Bell,
+  Brain,
+  CalendarClock,
+  ChevronRight,
+  KeyRound,
+  Network,
+  SquareTerminal,
+} from "lucide-react";
 
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -190,6 +198,36 @@ export function PersonalSettingsScreen(): JSX.Element {
               className="flex min-h-12 items-center px-4 text-[15px] font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
             >
               New bot
+            </Link>
+          </li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="settings-plugins">
+        <h2 id="settings-plugins" className={SECTION_TITLE}>
+          Plugins
+        </h2>
+        <ul className={CARD}>
+          <li>
+            <Link to="/bots/settings/passwords" className={SETTINGS_ROW}>
+              <KeyRound
+                aria-hidden="true"
+                className="size-5 shrink-0 text-[var(--personal-text)]"
+                strokeWidth={1.75}
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-[15px] font-semibold text-[var(--personal-text)]">
+                  Passwords
+                </span>
+                <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
+                  Logins bots can use without seeing passwords
+                </span>
+              </span>
+              <ChevronRight
+                aria-hidden="true"
+                className="size-5 shrink-0 text-[var(--personal-text-secondary)]"
+                strokeWidth={1.75}
+              />
             </Link>
           </li>
         </ul>
