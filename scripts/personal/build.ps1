@@ -124,9 +124,13 @@ $version = @(
     "repo=$PbRepoRoot"
 )
 Set-Content -LiteralPath (Join-Path $releaseDir 'VERSION') -Value $version -Encoding ASCII
-# The web app fetches /version.txt to show the build on the Chats screen.
+# The web app fetches /version.txt to show the build on the Chats screen and
+# to detect a stale cached bundle: `client=` names the entry script of THIS
+# build, and the app compares it with the script it is actually running.
 # (Needs a file extension: the static handler treats extension-less paths as directories.)
-Set-Content -LiteralPath (Join-Path $releaseDist 'client\version.txt') -Value $version -Encoding ASCII
+$indexHtml = Get-Content -LiteralPath (Join-Path $releaseDist 'client\index.html') -Raw
+$clientEntry = if ($indexHtml -match '/assets/(index-[A-Za-z0-9_-]+\.js)') { $Matches[1] } else { '' }
+Set-Content -LiteralPath (Join-Path $releaseDist 'client\version.txt') -Value ($version + @("client=$clientEntry")) -Encoding ASCII
 
 if (-not $NoActivate) {
     Set-Content -LiteralPath $paths.CurrentFile -Value $releaseName -Encoding ASCII

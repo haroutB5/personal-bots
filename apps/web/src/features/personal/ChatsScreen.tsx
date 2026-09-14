@@ -268,7 +268,7 @@ export function ChatsScreen(): JSX.Element {
   const attention = useMemo(() => collectAttentionThreads(summaries), [summaries]);
   const runningCount = summaries.filter((summary) => summary.live).length;
   const firstAttention = attention[0] ?? null;
-  const versionLabel = useAppVersion();
+  const { label: versionLabel, updateAvailable } = useAppVersion();
   const firstAttentionBot =
     firstAttention === null
       ? null
@@ -476,9 +476,19 @@ export function ChatsScreen(): JSX.Element {
 
       {versionLabel !== null ? (
         <div className="mt-auto pt-8">
-          <p className="text-center text-[11px] leading-4 text-[var(--personal-text-secondary)]">
-            Bots {versionLabel}
-          </p>
+          {updateAvailable ? (
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="mx-auto flex min-h-11 items-center justify-center rounded-full px-4 text-[13px] font-semibold text-[var(--personal-primary)]"
+            >
+              Update to {versionLabel} - tap to refresh
+            </button>
+          ) : (
+            <p className="text-center text-[11px] leading-4 text-[var(--personal-text-secondary)]">
+              Bots {versionLabel}
+            </p>
+          )}
         </div>
       ) : null}
     </div>
