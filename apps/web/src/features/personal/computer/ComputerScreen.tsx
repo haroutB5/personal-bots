@@ -29,6 +29,7 @@ import {
   Lock,
   MousePointer2,
   MousePointerClick,
+  Power,
   Reply,
   RotateCw,
 } from "lucide-react";
@@ -43,14 +44,19 @@ import {
   useState,
 } from "react";
 
+import { requestConfirmDialog } from "~/confirmDialog";
+import { cn } from "~/lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
 import { usePersonalEnvironmentId } from "../usePersonalBots";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { commandFailureMessage } from "../commandFeedback";
 import {
   activeAgentLine,
   backToChatTarget,
   type BackToChatTarget,
+  canCloseBrowser,
+  closeBrowserConfirmMessage,
   describeComputerState,
   formatActivityTime,
   formatFileSize,
@@ -201,11 +207,15 @@ export function ComputerBrowserPane(props: {
   readonly reachable: boolean;
   readonly onBackToChat?: () => void;
   readonly fullScreen?: boolean;
+  /** Told after the browser is actually closed, so a host panel can stand down. */
+  readonly onClosed?: () => void;
 }) {
   const { environmentId, status } = props;
   const takeControl = useAtomCommand(computerEnvironment.takeControl);
   const returnToAgent = useAtomCommand(computerEnvironment.returnToAgent);
+  const closeBrowser = useAtomCommand(computerEnvironment.close);
   const [pending, setPending] = useState(false);
+  const [closeError, setCloseError] = useState<string | null>(null);
   const sendRef = useRef<((message: PersonalBrowserInputMessage) => void) | null>(null);
   const [inputReady, setInputReady] = useState(false);
   const pageVisible = usePageVisible();
@@ -215,6 +225,7 @@ export function ComputerBrowserPane(props: {
   const otherDeviceInControl = controller?._tag === "Human" && !controller.self;
   const agentLine = activeAgentLine(status);
   const page = status?.page ?? null;
+  const canClose = canCloseBrowser(status);
 
   const onClient = useCallback((client: ViewportClient | null) => {
     sendRef.current = client?.send ?? null;
@@ -230,6 +241,35 @@ export function ComputerBrowserPane(props: {
     setPending(true);
     try {
       await (inControl ? returnToAgent : takeControl)({ environmentId, input: {} });
+    } finally {
+      setPending(false);
+    }
+  };
+
+  /**
+   * Closing is destructive for whoever is mid-task, so a live agent lease is
+   * confirmed first. A refusal has to reach the screen: without it a failed
+   * close looks exactly like a cancelled one.
+   */
+  const close = async () => {
+    if (environmentId === null || pending) return;
+    setCloseError(null);
+    const confirmMessage = closeBrowserConfirmMessage(status);
+    if (confirmMessage !== null) {
+      const confirmed =
+        (await requestConfirmDialog(confirmMessage, { variant: "destructive" })) ??
+        window.confirm(confirmMessage);
+      if (!confirmed) return;
+    }
+    setPending(true);
+    try {
+      const result = await closeBrowser({ environmentId, input: {} });
+      const failure = commandFailureMessage(result, "Couldn't close the browser. Try again.");
+      if (failure !== null) {
+        setCloseError(failure);
+        return;
+      }
+      props.onClosed?.();
     } finally {
       setPending(false);
     }
@@ -269,7 +309,7 @@ export function ComputerBrowserPane(props: {
         </p>
       ) : null}
 
-      <div className={`mt-2.5 grid gap-2.5 ${props.onBackToChat ? "grid-cols-2" : "grid-cols-1"}`}>
+      <div className="mt-2.5 grid gap-2.5">
         <button
           type="button"
           disabled={environmentId === null || !props.reachable || status === null || pending}
@@ -283,17 +323,44 @@ export function ComputerBrowserPane(props: {
           )}
           {inControl ? "Return to agent" : "Take control"}
         </button>
-        {props.onBackToChat ? (
-          <button
-            type="button"
-            onClick={props.onBackToChat}
-            className="flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[15px] font-semibold"
+        {props.onBackToChat !== undefined || canClose ? (
+          <div
+            className={cn(
+              "grid gap-2.5",
+              props.onBackToChat !== undefined && canClose ? "grid-cols-2" : "grid-cols-1",
+            )}
           >
-            <Reply className="size-[18px]" strokeWidth={ICON_STROKE} />
-            Back to chat
-          </button>
+            {props.onBackToChat !== undefined ? (
+              <button
+                type="button"
+                onClick={props.onBackToChat}
+                className="flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[15px] font-semibold"
+              >
+                <Reply className="size-[18px]" strokeWidth={ICON_STROKE} />
+                Back to chat
+              </button>
+            ) : null}
+            {canClose ? (
+              <button
+                type="button"
+                aria-label="Close browser"
+                disabled={environmentId === null || !props.reachable || pending}
+                onClick={() => void close()}
+                className="flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[15px] font-semibold text-[var(--personal-danger)] disabled:opacity-50"
+              >
+                <Power className="size-[18px]" strokeWidth={ICON_STROKE} />
+                Close browser
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
+
+      {closeError !== null ? (
+        <p role="alert" className="mt-2.5 text-[13px] text-[var(--personal-danger)]">
+          {closeError}
+        </p>
+      ) : null}
 
       {!props.fullScreen ? <ActivityCard events={props.events} /> : null}
     </div>

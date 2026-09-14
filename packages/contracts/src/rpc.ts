@@ -513,6 +513,7 @@ export const WS_METHODS = {
   personalBrowserStatus: "personalBrowser.status",
   personalBrowserTakeControl: "personalBrowser.takeControl",
   personalBrowserReturnToAgent: "personalBrowser.returnToAgent",
+  personalBrowserClose: "personalBrowser.close",
   personalBrowserListFiles: "personalBrowser.listFiles",
   personalBrowserActivity: "personalBrowser.activity",
   // Personal routines methods
@@ -1140,6 +1141,13 @@ const WsPersonalBrowserTakeControlRpc = Rpc.make(WS_METHODS.personalBrowserTakeC
 });
 
 const WsPersonalBrowserReturnToAgentRpc = Rpc.make(WS_METHODS.personalBrowserReturnToAgent, {
+  payload: Schema.Struct({}),
+  success: PersonalBrowserStatus,
+  error: PersonalBrowserRpcError,
+});
+
+/** Ends the shared browser session: tabs closed, Chrome stopped, lease released. */
+const WsPersonalBrowserCloseRpc = Rpc.make(WS_METHODS.personalBrowserClose, {
   payload: Schema.Struct({}),
   success: PersonalBrowserStatus,
   error: PersonalBrowserRpcError,
@@ -1828,6 +1836,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPersonalBrowserStatusRpc,
   WsPersonalBrowserTakeControlRpc,
   WsPersonalBrowserReturnToAgentRpc,
+  WsPersonalBrowserCloseRpc,
   WsPersonalBrowserListFilesRpc,
   WsPersonalBrowserActivityRpc,
   WsPersonalRoutinesListRpc,

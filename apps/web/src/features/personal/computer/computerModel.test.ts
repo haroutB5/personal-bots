@@ -11,6 +11,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   activeAgentLine,
   backToChatTarget,
+  canCloseBrowser,
+  closeBrowserConfirmMessage,
   computerIsActiveForChat,
   computerPanelDetail,
   describeComputerState,
@@ -176,5 +178,55 @@ describe("viewport input mapping", () => {
   it("shows activity times in Europe/London", () => {
     expect(formatActivityTime("2026-09-13T20:40:00.000Z")).toBe("21:40");
     expect(formatActivityTime("not a date")).toBe("");
+  });
+});
+
+describe("closing the browser", () => {
+  it("only offers a close while there is a session to close", () => {
+    expect(canCloseBrowser(null)).toBe(false);
+    expect(canCloseBrowser(status({ state: "offline" }))).toBe(false);
+    for (const state of [
+      "connected",
+      "starting",
+      "waiting_for_login",
+      "crashed",
+      "locked",
+    ] as const)
+      expect(canCloseBrowser(status({ state }))).toBe(true);
+  });
+
+  it("confirms only when a bot is mid-task, and names it", () => {
+    expect(closeBrowserConfirmMessage(status())).toBeNull();
+    expect(
+      closeBrowserConfirmMessage(
+        status({ controller: { _tag: "Human", self: true, connected: true } }),
+      ),
+    ).toBeNull();
+
+    const agent = closeBrowserConfirmMessage(
+      status({
+        controller: {
+          _tag: "Agent",
+          threadId: ThreadId.make("thread-a"),
+          botId: PersonalBotId.make("bot-1"),
+          botName: "Developer",
+        },
+      }),
+    );
+    expect(agent).toContain("Developer is using the browser");
+
+    // An unnamed bot still earns the prompt: the interruption is the point.
+    expect(
+      closeBrowserConfirmMessage(
+        status({
+          controller: {
+            _tag: "Agent",
+            threadId: ThreadId.make("thread-a"),
+            botId: PersonalBotId.make("bot-1"),
+            botName: null,
+          },
+        }),
+      ),
+    ).toContain("A bot is using the browser");
   });
 });

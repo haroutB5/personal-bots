@@ -47,6 +47,10 @@ export const computerEnvironment = {
     label: "environment-data:personal-browser:return-to-agent",
     tag: WS_METHODS.personalBrowserReturnToAgent,
   }),
+  close: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:personal-browser:close",
+    tag: WS_METHODS.personalBrowserClose,
+  }),
 };
 
 export function useComputerFeed(environmentId: EnvironmentId | null): {

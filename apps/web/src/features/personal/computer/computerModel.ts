@@ -108,6 +108,23 @@ export function activeAgentLine(status: PersonalBrowserStatus | null): string | 
   return `${status.controller.botName ?? "An agent"} is using the browser`;
 }
 
+/** Whether there is a browser session to close at all. */
+export function canCloseBrowser(status: PersonalBrowserStatus | null): boolean {
+  return status !== null && status.state !== "offline";
+}
+
+/**
+ * Confirm copy for closing the shared browser, or null when no confirmation is
+ * needed. Only a live agent lease earns a prompt: closing under a working bot
+ * interrupts it, while closing an idle browser (or one this device already
+ * controls) is the plain, reversible thing the button says it is.
+ */
+export function closeBrowserConfirmMessage(status: PersonalBrowserStatus | null): string | null {
+  if (status?.controller._tag !== "Agent") return null;
+  const name = status.controller.botName ?? "A bot";
+  return `${name} is using the browser. Close it anyway?\nIts tabs are closed and the session ends.`;
+}
+
 export function hasLiveViewport(status: PersonalBrowserStatus | null): boolean {
   return status?.state === "connected" || status?.state === "waiting_for_login";
 }

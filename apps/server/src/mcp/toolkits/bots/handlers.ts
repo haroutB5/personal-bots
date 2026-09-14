@@ -13,11 +13,19 @@ import * as Option from "effect/Option";
 
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
+import * as PersonalBrowser from "../../../personal/browser/PersonalBrowser.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { BotsToolError, BotsToolkit, type DelegateTaskInput, type TaskSummary } from "./tools.ts";
+
+/**
+ * A tool call is not a viewer session, so there is no session id to pass.
+ * `status` only uses one to decide whether a *human* controller is this caller,
+ * and a bot is never that, so any non-session value reads correctly here.
+ */
+const MCP_SESSION_ID = "mcp";
 
 export const DELEGATE_NOTE =
   "You will receive the result in a follow-up message; end your turn now.";
@@ -85,6 +93,7 @@ const make = Effect.gen(function* () {
   const secrets = yield* PersonalSecretService.PersonalSecretService;
   const logins = yield* PersonalLoginService.PersonalLoginService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const browser = yield* PersonalBrowser.PersonalBrowser;
 
   const listBots = botRepository
     .listBots()
@@ -259,6 +268,31 @@ const make = Effect.gen(function* () {
             labelOrOrigin: input.login,
           })
           .pipe(Effect.mapError(readable));
+      }),
+    // Which thread opened the browser does not gate this: the browser is
+    // shared, and a bot the user asked to close it should be able to. A human
+    // at the controls does, because closing under them would yank the page
+    // they are reading.
+    close_browser: () =>
+      Effect.gen(function* () {
+        const caller = yield* callerBot();
+        const before = yield* browser.status(MCP_SESSION_ID);
+        if (before.controller._tag === "Human") {
+          return yield* toolError(
+            "The user is using the browser right now. Leave it open; they will close it or hand control back.",
+          );
+        }
+        const wasRunning = before.state !== "offline";
+        yield* browser.closeBrowser({
+          sessionId: MCP_SESSION_ID,
+          byThreadId: caller.threadId,
+        });
+        return {
+          closed: wasRunning,
+          note: wasRunning
+            ? "The browser is closed. It starts again on your next browser tool call."
+            : "The browser was already closed.",
+        };
       }),
   });
 });

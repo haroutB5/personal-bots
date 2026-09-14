@@ -148,6 +148,12 @@ export function ConversationComputerPanel({
               events={feed.events}
               reachable={reachable}
               fullScreen={fullScreen}
+              onClosed={() => {
+                // Nothing left to watch: leave full screen and fold the panel
+                // back down to the bar.
+                setFullScreen(false);
+                onExpandedChange(false);
+              }}
             />
           </div>
         ) : null}

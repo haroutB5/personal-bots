@@ -109,6 +109,17 @@ export class PersonalBrowser extends Context.Service<
     readonly status: (sessionId: string) => Effect.Effect<PersonalBrowserStatus>;
     readonly takeControl: (sessionId: string) => Effect.Effect<PersonalBrowserStatus>;
     readonly returnToAgent: (sessionId: string) => Effect.Effect<PersonalBrowserStatus>;
+    /**
+     * Ends the shared browser session outright: every tab closed, Chrome
+     * stopped, the lease released whoever held it, and the saved page dropped
+     * so the next boot does not reopen what was just closed. Idempotent — a
+     * second close on an already-offline browser changes nothing and records
+     * no activity. `byThreadId` names the bot that asked; null means the user.
+     */
+    readonly closeBrowser: (input: {
+      readonly sessionId: string;
+      readonly byThreadId: ThreadId | null;
+    }) => Effect.Effect<PersonalBrowserStatus>;
     readonly listFiles: Effect.Effect<PersonalBrowserFilesResult, PersonalBrowserError>;
     readonly resolveFile: (
       fileId: string,
@@ -1107,6 +1118,63 @@ export const make = (options: PersonalBrowserOptions) =>
         return yield* status(sessionId);
       });
 
+    const closeBrowser: PersonalBrowser["Service"]["closeBrowser"] = (input) =>
+      // Under the launch lock so a close can never interleave with a launch and
+      // leave a live context behind an "offline" phase.
+      launchLock.withPermit(
+        Effect.gen(function* () {
+          const leaseBefore = yield* lease.view;
+          // "Nothing to close" is the whole idempotency test: no Chrome, no
+          // controller and no saved page means a second close is a no-op.
+          const closedSomething =
+            runtime.phase !== "offline" ||
+            leaseBefore.ownerId !== null ||
+            leaseBefore.lastUrl !== null;
+          const context = runtime.context;
+          const tabs = [...runtime.tabs.values()];
+          // Invalidate the context's own close callback: this teardown is
+          // deliberate, so it must not be reported as a crash.
+          runtime.contextSerial++;
+          runtime.closing = true;
+          for (const tab of tabs) {
+            yield* Effect.promise(() => tab.page.close().catch(() => undefined));
+            yield* onTabPageClosed(tab);
+          }
+          if (screencast !== null) {
+            const { stop } = screencast;
+            screencast = null;
+            yield* Effect.promise(() => stop().catch(() => undefined));
+          }
+          if (context !== null) {
+            yield* Effect.promise(() => context.close().catch(() => undefined));
+          }
+          runtime.context = null;
+          runtime.tabs.clear();
+          runtime.activeTabId = null;
+          runtime.phase = "offline";
+          runtime.detail = null;
+          runtime.lockedByPid = null;
+          // The next session gets a clean Chrome, so the model-read locks that
+          // a filled credential imposed on this one do not outlive it.
+          runtime.loginUsed = false;
+          runtime.closing = false;
+          yield* lease.releaseAll;
+          if (closedSomething) {
+            const bot = input.byThreadId === null ? null : yield* botForThread(input.byThreadId);
+            yield* recordActivity({
+              kind: "control",
+              summary:
+                bot === null ? "Browser closed by you" : `Browser closed by ${bot.name ?? "a bot"}`,
+              status: "succeeded",
+              threadId: input.byThreadId,
+              botName: bot?.name ?? null,
+            });
+          }
+          yield* notify;
+          return yield* status(input.sessionId);
+        }),
+      );
+
     const listFiles: PersonalBrowser["Service"]["listFiles"] = Effect.tryPromise({
       try: () => scanArtifacts(artifactsDir),
       catch: (cause) =>
@@ -1282,6 +1350,7 @@ export const make = (options: PersonalBrowserOptions) =>
       status,
       takeControl,
       returnToAgent,
+      closeBrowser,
       listFiles,
       resolveFile,
       releaseThread,

@@ -96,6 +96,13 @@ export class BrowserLease extends Context.Service<
     /** Drops a live agent lease back to released; used when boot restore fails. */
     readonly releaseAgentLease: Effect.Effect<LeaseView>;
     /**
+     * Gives up the lease whoever holds it, agent or human, and drops the saved
+     * page with it. Used when the browser is closed outright: the session is
+     * over, so no controller survives it and the next boot must not reopen the
+     * page that was just closed.
+     */
+    readonly releaseAll: Effect.Effect<LeaseView>;
+    /**
      * Releases the lease if `threadId` owns it, dropping its saved page too.
      * Used when the thread is deleted: the chat is gone, so neither the
      * controller nor its last page may survive it. A no-op for any other
@@ -431,6 +438,27 @@ export const make = Effect.gen(function* () {
     return yield* view;
   });
 
+  const releaseAll: BrowserLease["Service"]["releaseAll"] = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const row = yield* Ref.modify(state, (latest) => {
+      // Already released with nothing saved: idempotent, and no generation bump
+      // for a close that changed nothing.
+      if (latest.row.ownerId === null && latest.row.lastUrl === null) {
+        return [null, latest] as const;
+      }
+      const next: BrowserLeaseRow = {
+        ...releasedRow(latest.row.generation + 1),
+        heartbeatAt: iso(now),
+      };
+      return [next, { ...latest, row: next, freshSnapshotRequired: false }] as const;
+    });
+    if (row !== null) {
+      yield* persist(row);
+      yield* publish;
+    }
+    return yield* view;
+  });
+
   const releaseThread: BrowserLease["Service"]["releaseThread"] = (threadId) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
@@ -466,6 +494,7 @@ export const make = Effect.gen(function* () {
     returnToAgent,
     recordPageUrl,
     releaseAgentLease,
+    releaseAll,
     releaseThread,
     isHumanController,
     view,

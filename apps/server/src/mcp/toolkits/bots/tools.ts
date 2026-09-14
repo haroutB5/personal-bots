@@ -147,6 +147,14 @@ export const UseLoginResult = Schema.Struct({
 });
 export type UseLoginResult = typeof UseLoginResult.Type;
 
+export const CloseBrowserResult = Schema.Struct({
+  closed: Schema.Boolean.annotate({
+    description: "False when the browser was already closed; nothing was changed.",
+  }),
+  note: Schema.String,
+});
+export type CloseBrowserResult = typeof CloseBrowserResult.Type;
+
 const ListBotsTool = Tool.make("list_bots", {
   description:
     "List the personal bots you can delegate work to, with what each one is for. The roster changes at any time (the user creates, renames and deletes bots), so call this fresh before every delegate_task and never rely on a roster from earlier in the conversation.",
@@ -230,6 +238,19 @@ const UseLoginTool = Tool.make("use_login", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const CloseBrowserTool = Tool.make("close_browser", {
+  description:
+    "Close the shared browser when you are done with it, or when the user asks you to. Every tab is closed, Chrome is stopped and the session ends, so do this only when no further browsing is expected; the browser starts again on the next browser tool call. Refused while the user is controlling the browser themselves. Closing an already-closed browser is safe and does nothing.",
+  success: CloseBrowserResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Close the browser")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 export const BotsToolkit = Toolkit.make(
   ListBotsTool,
   DelegateTaskTool,
@@ -237,4 +258,5 @@ export const BotsToolkit = Toolkit.make(
   ListTasksTool,
   RequestSecretTool,
   UseLoginTool,
+  CloseBrowserTool,
 );

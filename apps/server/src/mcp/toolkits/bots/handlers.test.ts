@@ -4,6 +4,7 @@ import {
   PersonalBotId,
   ProviderInstanceId,
   ThreadId,
+  type PersonalBrowserStatus,
   TurnId,
   type OrchestrationCommand,
   type OrchestrationSession,
@@ -25,6 +26,7 @@ import {
   type ProjectionThreadMessageRepositoryShape,
 } from "../../../persistence/Services/ProjectionThreadMessages.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
+import * as PersonalBrowser from "../../../personal/browser/PersonalBrowser.ts";
 import * as PersonalBotService from "../../../personal/PersonalBotService.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
@@ -49,10 +51,38 @@ interface Harness {
     readonly threadId: string;
     readonly labelOrOrigin: string;
   }>;
+  /** The shared browser as the tools see it: current state, and what closed it. */
+  readonly browser: {
+    state: PersonalBrowserStatus["state"];
+    controller: PersonalBrowserStatus["controller"];
+    readonly closes: Array<ThreadId | null>;
+  };
 }
+
+const browserStatus = (harness: Harness): PersonalBrowserStatus => ({
+  state: harness.browser.state,
+  detail: null,
+  lockedByPid: null,
+  controller: harness.browser.controller,
+  generation: 1,
+  page: null,
+  viewers: 0,
+});
 
 const makeLayer = (harness: Harness) =>
   PersonalSecretService.layerLive.pipe(
+    Layer.provideMerge(
+      Layer.mock(PersonalBrowser.PersonalBrowser)({
+        status: () => Effect.sync(() => browserStatus(harness)),
+        closeBrowser: (input) =>
+          Effect.sync(() => {
+            harness.browser.closes.push(input.byThreadId);
+            harness.browser.state = "offline";
+            harness.browser.controller = { _tag: "None" };
+            return browserStatus(harness);
+          }),
+      }),
+    ),
     Layer.provideMerge(
       Layer.mock(PersonalLoginService.PersonalLoginService)({
         use: (input) =>
@@ -172,7 +202,12 @@ const setup = (harness: Harness) =>
 const withHarness = <A, E>(
   body: (harness: Harness) => Effect.Effect<A, E, Layer.Success<ReturnType<typeof makeLayer>>>,
 ) => {
-  const harness: Harness = { dispatched: [], sessions: new Map(), loginUses: [] };
+  const harness: Harness = {
+    dispatched: [],
+    sessions: new Map(),
+    loginUses: [],
+    browser: { state: "connected", controller: { _tag: "None" }, closes: [] },
+  };
   return body(harness).pipe(Effect.provide(makeLayer(harness)));
 };
 
@@ -334,6 +369,37 @@ describe("bots toolkit handlers", () => {
         ]);
         expect(result).toEqual({ success: true, filled: ["username", "password"] });
         expect(Object.keys(result).toSorted()).toEqual(["filled", "success"]);
+      }),
+    ),
+  );
+
+  it.effect("close_browser closes the shared browser once and says so", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const first = yield* call("close_browser", {});
+        expect(first.closed).toBe(true);
+        expect(harness.browser.closes).toEqual([CALLER_THREAD]);
+
+        // Already closed: still safe to call, and the model is told nothing
+        // happened rather than being left to guess.
+        const second = yield* call("close_browser", {});
+        expect(second.closed).toBe(false);
+        expect(second.note).toContain("already closed");
+      }),
+    ),
+  );
+
+  it.effect("close_browser refuses while the user is controlling the browser", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        harness.browser.controller = { _tag: "Human", self: false, connected: true };
+
+        const error = yield* call("close_browser", {}).pipe(Effect.flip);
+
+        expect(error.message).toContain("The user is using the browser");
+        expect(harness.browser.closes).toEqual([]);
       }),
     ),
   );

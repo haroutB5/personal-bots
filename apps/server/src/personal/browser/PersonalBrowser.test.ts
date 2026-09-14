@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -183,6 +184,17 @@ const persistedAgentRow = (
   heartbeatAt: "1970-01-01T00:00:00.000Z",
   expiresAt: "1970-01-01T00:01:30.000Z",
   lastUrl,
+});
+
+/** A row with nothing to restore, so boot leaves the browser lazily offline. */
+const releasedPersistedRow = (): PersonalBrowserLeaseRepository.BrowserLeaseRow => ({
+  profileId: "default",
+  ownerType: "agent",
+  ownerId: null,
+  generation: 4,
+  heartbeatAt: null,
+  expiresAt: null,
+  lastUrl: null,
 });
 
 /** The boot restore runs on a background fiber; wait for its effects, bounded. */
@@ -439,6 +451,67 @@ describe("PersonalBrowser", () => {
           .tabId,
       ).toBeNull();
     }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  it.effect("closing the browser ends the session and leaves nothing to restore", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      const lease = yield* BrowserLease.BrowserLease;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      expect((yield* lease.view).lastUrl).toBe("https://example.com/");
+
+      const closed = yield* browser.closeBrowser({ sessionId: "session-1", byThreadId: null });
+
+      expect(closed.state).toBe("offline");
+      expect(closed.controller).toEqual({ _tag: "None" });
+      expect(fake.state.page.closed).toBe(true);
+      // No saved page, so a restart after a close cannot resurrect the session.
+      expect(yield* lease.view).toMatchObject({ ownerId: null, lastUrl: null });
+      expect(
+        ((yield* browser.handleAutomationRequest(request("status"))) as PreviewAutomationStatus)
+          .tabId,
+      ).toBeNull();
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  it.effect("records one close, and a second close is a no-op", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      yield* browser.closeBrowser({ sessionId: "session-1", byThreadId: null });
+      yield* browser.closeBrowser({ sessionId: "session-1", byThreadId: null });
+
+      const head = yield* browser.activity("session-1").pipe(Stream.take(1), Stream.runCollect);
+      const recent = head[0];
+      expect(recent?._tag).toBe("Recent");
+      const closes =
+        recent?._tag === "Recent"
+          ? recent.events.filter((event) => event.summary === "Browser closed by you")
+          : [];
+      expect(closes).toHaveLength(1);
+
+      // Closed twice, and the browser still starts again on the next op.
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      expect(fake.state.launches).toBe(2);
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  it.effect("a browser closed before the restart is not reopened at boot", () => {
+    const fake = makeFakeDriver();
+    const saved: PersonalBrowserLeaseRepository.BrowserLeaseRow[] = [];
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      yield* browser.closeBrowser({ sessionId: "session-1", byThreadId: null });
+
+      // The row a later boot would read has no owner and no page left, so the
+      // restore decision it drives is a no-op rather than a reopen.
+      const persisted = saved.at(-1)!;
+      expect(persisted).toMatchObject({ ownerType: "agent", ownerId: null, lastUrl: null });
+      expect(BrowserLease.decideBrowserRestore(persisted, 0)).toEqual({ _tag: "Noop" });
+    }).pipe(Effect.provide(baseLayer(fake.driver, stubRepository(releasedPersistedRow(), saved))));
   });
 
   it.effect("reopens the agent's last page at boot and re-attaches the lease", () => {

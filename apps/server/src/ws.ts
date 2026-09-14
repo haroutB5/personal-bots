@@ -2520,6 +2520,14 @@ const makeWsRpcLayer = (
             personalBrowser.returnToAgent(currentSessionId),
             { "rpc.aggregate": "personal-browser" },
           ),
+        // The user closing the browser from a client: no thread to attribute it
+        // to, so the activity line reads "Browser closed by you".
+        [WS_METHODS.personalBrowserClose]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBrowserClose,
+            personalBrowser.closeBrowser({ sessionId: currentSessionId, byThreadId: null }),
+            { "rpc.aggregate": "personal-browser" },
+          ),
         [WS_METHODS.personalBrowserListFiles]: (_input) =>
           observeRpcEffect(WS_METHODS.personalBrowserListFiles, personalBrowser.listFiles, {
             "rpc.aggregate": "personal-browser",
