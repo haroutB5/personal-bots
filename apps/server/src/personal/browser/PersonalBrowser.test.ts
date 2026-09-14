@@ -19,7 +19,7 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as BrowserLease from "./BrowserLease.ts";
-import type { BrowserDriver, BrowserPage, ScreencastMeta } from "./driver.ts";
+import type { BrowserDriver, BrowserElementHandle, BrowserPage, ScreencastMeta } from "./driver.ts";
 import * as PersonalBrowser from "./PersonalBrowser.ts";
 import * as PersonalBrowserLeaseRepository from "./PersonalBrowserLeaseRepository.ts";
 
@@ -58,8 +58,21 @@ class FakePage implements BrowserPage {
     return { canGoBack: false, canGoForward: false };
   }
   async clickLocator() {}
-  async countLocator() {
-    return this.locatorCount;
+  countLocatorImpl: ((locator: string) => number) | null = null;
+  async countLocator(locator: string) {
+    return this.countLocatorImpl?.(locator) ?? this.locatorCount;
+  }
+  readonly filled: Array<{ readonly locator: string; readonly text: string }> = [];
+  resolveElementImpl: ((locator: string) => BrowserElementHandle | null) | null = null;
+  async resolveElement(locator: string): Promise<BrowserElementHandle | null> {
+    if (this.resolveElementImpl !== null) return this.resolveElementImpl(locator);
+    if (this.locatorCount === 0) return null;
+    return {
+      fill: async (text: string) => {
+        this.filled.push({ locator, text });
+      },
+      dispose: async () => {},
+    };
   }
   async typeText() {}
   async scrollLocator() {}
@@ -107,6 +120,15 @@ class FakePage implements BrowserPage {
     this.closed = true;
   }
 }
+
+/**
+ * Makes the fake look like an ordinary login page: one match for every login
+ * selector, and no form whose `action` posts to another origin.
+ */
+const asLoginPage = (page: FakePage) => {
+  page.locatorCount = 1;
+  page.countLocatorImpl = (locator) => (locator.includes("[action") ? 0 : 1);
+};
 
 const makeFakeDriver = () => {
   const page = new FakePage();
@@ -295,12 +317,13 @@ describe("PersonalBrowser", () => {
 
   it.effect("keeps credential-bearing tabs unreadable to the model after filling", () => {
     const fake = makeFakeDriver();
-    fake.state.page.locatorCount = 1;
+    asLoginPage(fake.state.page);
     return Effect.gen(function* () {
       const browser = yield* PersonalBrowser.PersonalBrowser;
       yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
       const filled = yield* browser.fillLogin({
         threadId,
+        label: "Example",
         expectedOrigin: "https://example.com",
         username: "person@example.com",
         password: "password-value",
@@ -329,6 +352,68 @@ describe("PersonalBrowser", () => {
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 
+  // I1: the browser context (and therefore the signed-in session) is shared by
+  // every bot, so the grant cannot be the only thing standing between an
+  // ungranted bot and the account.
+  it.effect("protects another bot's tab when it reaches a credential-bearing origin", () => {
+    const fake = makeFakeDriver();
+    asLoginPage(fake.state.page);
+    const otherThread = ThreadId.make("thread-ungranted");
+    const otherRequest = (operation: PreviewAutomationRequest["operation"], input: unknown = {}) =>
+      ({ ...request(operation, input), threadId: otherThread }) as PreviewAutomationRequest;
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      yield* browser.fillLogin({
+        threadId,
+        label: "Example",
+        expectedOrigin: "https://example.com",
+        username: "person@example.com",
+        password: "password-value",
+      });
+
+      // A bot with no grant opens the same site: it inherits the session, so it
+      // inherits the protection too.
+      yield* browser.handleAutomationRequest(otherRequest("navigate", { url: "example.com" }));
+      const error = yield* browser
+        .handleAutomationRequest(otherRequest("snapshot"))
+        .pipe(Effect.asVoid, Effect.flip);
+      expect(error.message).toContain("contains a saved login");
+
+      // Proportionate: a fresh tab on any other origin reads normally. (The
+      // protected tab stays protected for its own lifetime, as before.)
+      yield* browser.handleAutomationRequest(
+        otherRequest("open", { url: "other.example", reuseExistingTab: false }),
+      );
+      yield* browser.handleAutomationRequest(otherRequest("snapshot"));
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  // M1: a login form with method="GET" puts the password in the query string.
+  it.effect("strips the query string from a protected tab's reported url", () => {
+    const fake = makeFakeDriver();
+    asLoginPage(fake.state.page);
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      yield* browser.fillLogin({
+        threadId,
+        label: "Example",
+        expectedOrigin: "https://example.com",
+        username: "person@example.com",
+        password: "password-value",
+      });
+      yield* browser.handleAutomationRequest(
+        request("navigate", { url: "https://example.com/in?user=person&pw=password-value#t" }),
+      );
+
+      const status = (yield* browser.handleAutomationRequest(
+        request("status"),
+      )) as PreviewAutomationStatus;
+      expect(status.url).toBe("https://example.com/in");
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
   it.effect(
     "blocks agent clipboard shortcuts that could move a password into a readable tab",
     () => {
@@ -346,7 +431,7 @@ describe("PersonalBrowser", () => {
 
   it.effect("keeps the tab protected when a credential fill fails", () => {
     const fake = makeFakeDriver();
-    fake.state.page.locatorCount = 1;
+    asLoginPage(fake.state.page);
     fake.state.page.typeText = async () => {
       throw new Error("late fill failure");
     };
@@ -356,6 +441,7 @@ describe("PersonalBrowser", () => {
       yield* browser
         .fillLogin({
           threadId,
+          label: "Example",
           expectedOrigin: "https://example.com",
           username: "person@example.com",
           password: "password-value",

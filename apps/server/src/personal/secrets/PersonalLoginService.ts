@@ -232,6 +232,7 @@ export const make = Effect.gen(function* () {
     const filled = yield* browser
       .fillLogin({
         threadId: input.threadId,
+        label: login.label,
         expectedOrigin: login.origin,
         username: login.username,
         password,

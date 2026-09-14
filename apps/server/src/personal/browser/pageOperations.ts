@@ -161,11 +161,28 @@ const pageOrigin = (page: BrowserPage, expectedOrigin: string) => {
   }
 };
 
+/** The password fill gets a short window of its own; `timeoutMs` covers discovery. */
+const PASSWORD_FILL_TIMEOUT_MS = 2_000;
+
+/**
+ * A form that posts to a different origin is a credential hand-off the user
+ * never approved, and `pageOrigin` cannot see it: origin equality ignores the
+ * path, and the page itself is chosen by the (possibly prompt-injected) model.
+ * Relative and same-origin actions are the normal case and stay allowed.
+ */
+const crossOriginActionSelector = (formSelector: string, expectedOrigin: string) =>
+  [
+    `${formSelector}[action^="http"]:not([action^="${expectedOrigin}/"]):not([action="${expectedOrigin}"])`,
+    `${formSelector}[action^="//"]`,
+  ].join(", ");
+
 /**
  * Types a login without putting either value in an evaluate expression or a
  * model-visible result. The origin is rechecked immediately before each
  * field, so a username-triggered navigation cannot carry the password onto a
- * different origin.
+ * different origin, and the password is written through an element handle
+ * resolved on the checked page: a cross-document navigation inside the fill
+ * window detaches the handle and aborts instead of retargeting the new page.
  */
 export async function performFillLogin(
   page: BrowserPage,
@@ -176,20 +193,32 @@ export async function performFillLogin(
   },
   timeoutMs: number,
 ): Promise<ReadonlyArray<PersonalLoginFilledField>> {
+  pageOrigin(page, input.expectedOrigin);
   const focusedForm = `form:has(:focus):has(${LOGIN_PASSWORD_INPUT})`;
   const loginForm = `form:has(${LOGIN_PASSWORD_INPUT})`;
-  const scope =
+  const formSelector =
     (await page.countLocator(focusedForm)) > 0
-      ? `${focusedForm} `
+      ? focusedForm
       : (await page.countLocator(loginForm)) > 0
-        ? `${loginForm} `
-        : "";
+        ? loginForm
+        : null;
+  const scope = formSelector === null ? "" : `${formSelector} `;
   const passwordLocator = `${scope}${LOGIN_PASSWORD_INPUT}`;
   if ((await page.countLocator(passwordLocator)) === 0) {
     throw new HostOperationError(
       "PreviewAutomationTargetNotEditableError",
       "No visible password field was found in the current login form.",
       { selectorKind: "login-password-field" },
+    );
+  }
+  if (
+    formSelector !== null &&
+    (await page.countLocator(crossOriginActionSelector(formSelector, input.expectedOrigin))) > 0
+  ) {
+    throw new HostOperationError(
+      "PreviewAutomationExecutionError",
+      `This login form submits to a different origin than ${input.expectedOrigin}, so it was not filled.`,
+      { selectorKind: "login-form-action" },
     );
   }
 
@@ -203,13 +232,30 @@ export async function performFillLogin(
     break;
   }
 
-  pageOrigin(page, input.expectedOrigin);
-  await page.typeText({
-    locator: passwordLocator,
-    text: input.password,
-    clear: true,
-    timeoutMs,
-  });
+  // Resolve first, check the origin second, fill third. Anything that moves the
+  // page between the check and the fill invalidates the handle.
+  const passwordField = await page.resolveElement(passwordLocator, timeoutMs);
+  if (passwordField === null) {
+    throw new HostOperationError(
+      "PreviewAutomationTargetNotEditableError",
+      "The password field disappeared before the password could be filled.",
+      { selectorKind: "login-password-field" },
+    );
+  }
+  try {
+    pageOrigin(page, input.expectedOrigin);
+    await passwordField.fill(input.password, PASSWORD_FILL_TIMEOUT_MS);
+  } catch (cause) {
+    if (cause instanceof HostOperationError) throw cause;
+    throw new HostOperationError(
+      "PreviewAutomationExecutionError",
+      `The password was not filled: the login field on ${input.expectedOrigin} became unavailable before the fill completed.`,
+    );
+  } finally {
+    await passwordField.dispose().catch(() => undefined);
+  }
+  // The page may have navigated as a result of the fill itself; what matters is
+  // that the value went to the approved origin, which the pre-fill check proved.
   fields.push("password");
   return fields;
 }

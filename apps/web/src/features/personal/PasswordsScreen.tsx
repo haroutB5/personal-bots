@@ -245,7 +245,8 @@ function PasswordForm({
           )}
         </div>
         <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
-          No bot has access by default.
+          No bot has access by default. After a login is used, the site stays signed in for the
+          shared browser, so keep it to bots you trust with that account.
         </p>
       </fieldset>
 
@@ -329,7 +330,8 @@ export function PasswordsScreen(): JSX.Element {
       </header>
 
       <p className="text-[14px] leading-snug text-[var(--personal-text-secondary)]">
-        Bots can fill a granted login in the shared browser, but never see its password.
+        Passwords are encrypted on this computer. A bot can never read one through the app; treat
+        bots you install with the same care as any other software.
       </p>
 
       {error === null ? null : (

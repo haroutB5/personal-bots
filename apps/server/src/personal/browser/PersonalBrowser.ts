@@ -137,6 +137,8 @@ export class PersonalBrowser extends Context.Service<
     ) => Effect.Effect<unknown, HostOperationError>;
     readonly fillLogin: (input: {
       readonly threadId: ThreadId;
+      /** User-facing login name, for the activity line only. Never a credential. */
+      readonly label: string;
       readonly expectedOrigin: string;
       readonly username: string;
       readonly password: string;
@@ -317,6 +319,10 @@ export const make = (options: PersonalBrowserOptions) =>
       tabs: new Map<string, TabEntry>(),
       activeTabId: null as string | null,
       loginUsed: false,
+      // Origins where a saved login was filled into this browser context. The
+      // context is shared by every bot, so the authenticated session outlives
+      // the tab that created it and belongs to no single grant.
+      credentialOrigins: new Set<string>(),
     };
     const pageTitles = new WeakMap<BrowserPage, string>();
     const viewers = new Map<number, ViewerHandle>();
@@ -697,14 +703,48 @@ export const make = (options: PersonalBrowserOptions) =>
         yield* lease.releaseThread(threadId);
       });
 
-    const statusOf = (tab: TabEntry | undefined): PreviewAutomationStatus => ({
-      available: runtime.phase !== "locked",
-      visible: viewers.size > 0 || !options.headless,
-      tabId: tab?.tabId ?? null,
-      url: tab !== undefined && openPage(tab.page) ? tab.page.url() : null,
-      title: tab?.title ?? null,
-      loading: runtime.phase === "starting",
-    });
+    /**
+     * A logged-in session is shared by every tab in the context, so any tab
+     * that lands on an origin where a saved login was filled gets the same
+     * protection as the tab that filled it. Otherwise an ungranted bot could
+     * simply open the site and read the account the grant was meant to gate.
+     */
+    const applyCredentialOrigin = (tab: TabEntry | undefined): void => {
+      if (tab === undefined || tab.loginProtected) return;
+      if (runtime.credentialOrigins.size === 0 || !openPage(tab.page)) return;
+      try {
+        if (runtime.credentialOrigins.has(new URL(tab.page.url()).origin)) {
+          tab.loginProtected = true;
+        }
+      } catch {
+        // A page with no parseable origin cannot match a credential origin.
+      }
+    };
+
+    /** Protected tabs never publish a query string: a GET login form puts the password there. */
+    const safeUrl = (tab: TabEntry, url: string): string => {
+      if (!tab.loginProtected) return url;
+      try {
+        const parsed = new URL(url);
+        parsed.search = "";
+        parsed.hash = "";
+        return parsed.toString();
+      } catch {
+        return url;
+      }
+    };
+
+    const statusOf = (tab: TabEntry | undefined): PreviewAutomationStatus => {
+      applyCredentialOrigin(tab);
+      return {
+        available: runtime.phase !== "locked",
+        visible: viewers.size > 0 || !options.headless,
+        tabId: tab?.tabId ?? null,
+        url: tab !== undefined && openPage(tab.page) ? safeUrl(tab, tab.page.url()) : null,
+        title: tab?.title ?? null,
+        loading: runtime.phase === "starting",
+      };
+    };
 
     const navigateTab = (tab: TabEntry, url: string, readiness: string, timeoutMs: number) =>
       attempt({}, () =>
@@ -762,6 +802,7 @@ export const make = (options: PersonalBrowserOptions) =>
             break;
         }
         const tab = yield* requireTab(request);
+        applyCredentialOrigin(tab);
         yield* setActive(tab);
         if (runtime.loginUsed && request.operation === "evaluate") {
           return yield* rejectUrl(
@@ -985,7 +1026,7 @@ export const make = (options: PersonalBrowserOptions) =>
         // Remember the page for a post-restart reopen. Only real pages count:
         // about:blank and chrome:// URLs would restore to nothing useful.
         if (Exit.isSuccess(exit) && openPage(exit.value.tab.page)) {
-          const current = exit.value.tab.page.url();
+          const current = safeUrl(exit.value.tab, exit.value.tab.page.url());
           if (/^https?:\/\//i.test(current)) yield* lease.recordPageUrl(current);
         }
         return yield* Exit.match(exit, {
@@ -1030,6 +1071,8 @@ export const make = (options: PersonalBrowserOptions) =>
         // The bit intentionally survives navigation for the tab's lifetime.
         tab.loginProtected = true;
         runtime.loginUsed = true;
+        // Registered before the fill, so a partial fill still marks the origin.
+        runtime.credentialOrigins.add(input.expectedOrigin);
         const fields = yield* attempt({}, () =>
           performFillLogin(
             tab.page,
@@ -1061,9 +1104,15 @@ export const make = (options: PersonalBrowserOptions) =>
               if (tab.timeline.length > TIMELINE_LIMIT)
                 tab.timeline.splice(0, tab.timeline.length - TIMELINE_LIMIT);
               const bot = yield* botForThread(input.threadId);
+              // Origin equality ignores the path and the model picks the page,
+              // so the user's activity line names where the credential went.
+              const filledAt = openPage(tab.page) ? safeUrl(tab, tab.page.url()) : null;
               yield* recordActivity({
                 kind: "type",
-                summary: "Filled a saved login",
+                summary:
+                  filledAt === null
+                    ? `Filled the saved login "${input.label}"`
+                    : `Filled the saved login "${input.label}" on ${filledAt.slice(0, 200)}`,
                 status: "succeeded",
                 threadId: input.threadId,
                 botName: bot?.name ?? null,
@@ -1157,6 +1206,9 @@ export const make = (options: PersonalBrowserOptions) =>
           // The next session gets a clean Chrome, so the model-read locks that
           // a filled credential imposed on this one do not outlive it.
           runtime.loginUsed = false;
+          // `credentialOrigins` deliberately survives: the Chrome profile is
+          // reused, so the signed-in cookies a fill created are still there for
+          // the next launch, and the origins they belong to are still sensitive.
           runtime.closing = false;
           yield* lease.releaseAll;
           if (closedSomething) {

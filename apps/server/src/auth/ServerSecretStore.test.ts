@@ -186,43 +186,128 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
     }).pipe(Effect.provide(makeConcurrentCreateSecretStoreLayer())),
   );
 
-  it.effect("uses restrictive permissions for the secret directory and files", () =>
-    Effect.gen(function* () {
-      const chmodCalls: Array<{ readonly path: string; readonly mode: number }> = [];
-      const recordingFileSystemLayer = Layer.effect(
-        FileSystem.FileSystem,
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
+  it.effect("uses restrictive permissions for the secret directory and files", () => {
+    const chmodCalls: Array<{ readonly path: string; readonly mode: number }> = [];
+    const openCalls: Array<{ readonly path: string; readonly mode: number | undefined }> = [];
+    const recordingFileSystemLayer = Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
 
-          return {
-            ...fileSystem,
-            makeDirectory: () => Effect.void,
-            writeFile: () => Effect.void,
-            rename: () => Effect.void,
-            chmod: (path, mode) =>
+        return {
+          ...fileSystem,
+          open: (path, options) =>
+            Effect.andThen(
+              Effect.sync(() => {
+                openCalls.push({ path: String(path), mode: options?.mode });
+              }),
+              fileSystem.open(path, options),
+            ),
+          chmod: (path, mode) =>
+            Effect.andThen(
               Effect.sync(() => {
                 chmodCalls.push({ path: String(path), mode });
               }),
-          } satisfies FileSystem.FileSystem;
-        }),
-      ).pipe(Layer.provide(NodeServices.layer));
+              fileSystem.chmod(path, mode),
+            ),
+        } satisfies FileSystem.FileSystem;
+      }),
+    ).pipe(Layer.provide(NodeServices.layer));
 
-      const secretStore = yield* Effect.service(ServerSecretStore.ServerSecretStore).pipe(
-        Effect.provide(
-          ServerSecretStore.layer.pipe(
-            Layer.provide(makeServerConfigLayer()),
-            Layer.provideMerge(recordingFileSystemLayer),
-          ),
-        ),
-      );
+    return Effect.gen(function* () {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
 
       yield* secretStore.set("session-signing-key", Uint8Array.from([1, 2, 3]));
 
       assert.isTrue(
         chmodCalls.some((call) => call.mode === 0o700 && /[\\/]secrets$/.test(call.path)),
       );
-      assert.isAtLeast(chmodCalls.filter((call) => call.mode === 0o600).length, 2);
-    }).pipe(Effect.provide(NodeServices.layer)),
+      // I3: every file this store creates carries its mode at open time. A
+      // write-then-chmod leaves a window at the process umask, and on Windows
+      // the later chmod is a no-op so the window never closes at all.
+      assert.isAtLeast(openCalls.length, 1);
+      assert.isTrue(openCalls.every((call) => call.mode === 0o600));
+      assert.isTrue(openCalls.some((call) => call.path.endsWith(".tmp")));
+    }).pipe(
+      Effect.provide(
+        ServerSecretStore.layer.pipe(
+          Layer.provide(makeServerConfigLayer()),
+          Layer.provideMerge(recordingFileSystemLayer),
+        ),
+      ),
+    );
+  });
+
+  // C1: a saved password must not be readable with `cat`. Encryption does not
+  // stop code running as the same OS user, but it does stop a file read.
+  it.effect("keeps saved-login secrets unreadable on disk and round-trips them", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const password = "correct horse battery staple";
+
+      yield* secretStore.create("personal-login-abc", new TextEncoder().encode(password));
+      const onDisk = yield* fileSystem.readFile(`${config.secretsDir}/personal-login-abc.bin`);
+      const read = yield* secretStore.get("personal-login-abc");
+
+      assert.notInclude(Buffer.from(onDisk).toString("utf8"), password);
+      assert.equal(new TextDecoder().decode(Option.getOrThrow(read)), password);
+
+      // Updating through the atomic path keeps the file sealed.
+      yield* secretStore.set("personal-login-abc", new TextEncoder().encode("second-password"));
+      const updatedOnDisk = yield* fileSystem.readFile(
+        `${config.secretsDir}/personal-login-abc.bin`,
+      );
+      const updated = yield* secretStore.get("personal-login-abc");
+      assert.notInclude(Buffer.from(updatedOnDisk).toString("utf8"), "second-password");
+      assert.equal(new TextDecoder().decode(Option.getOrThrow(updated)), "second-password");
+
+      // Other store entries keep their existing plaintext format, so no
+      // pre-existing install has to be migrated to boot.
+      yield* secretStore.set("session-signing-key", Uint8Array.from([7, 7, 7]));
+      const plain = yield* fileSystem.readFile(`${config.secretsDir}/session-signing-key.bin`);
+      assert.deepEqual(Array.from(plain), [7, 7, 7]);
+      // One layer instance, so the store and the assertions share one temp dir.
+    }).pipe(Effect.provide(Layer.provideMerge(ServerSecretStore.layer, makeServerConfigLayer()))),
+  );
+
+  it.effect("encrypts a legacy plaintext saved login on boot, idempotently", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const configLayer = Layer.succeed(ServerConfig.ServerConfig, config);
+      const legacyPath = `${config.secretsDir}/personal-login-legacy.bin`;
+      yield* fileSystem.makeDirectory(config.secretsDir, { recursive: true });
+      yield* fileSystem.writeFile(legacyPath, new TextEncoder().encode("legacy-password"));
+
+      // Each boot builds the store layer again against the same directory.
+      const boot = <A>(body: Effect.Effect<A, never, ServerSecretStore.ServerSecretStore>) =>
+        body.pipe(Effect.provide(Layer.provide(ServerSecretStore.layer, configLayer)));
+
+      // First boot: the plaintext file is sealed in place.
+      const first = yield* boot(
+        Effect.gen(function* () {
+          const store = yield* ServerSecretStore.ServerSecretStore;
+          return yield* store.get("personal-login-legacy").pipe(Effect.orDie);
+        }),
+      );
+      const sealed = yield* fileSystem.readFile(legacyPath);
+      assert.notInclude(Buffer.from(sealed).toString("utf8"), "legacy-password");
+      assert.equal(new TextDecoder().decode(Option.getOrThrow(first)), "legacy-password");
+
+      // Second boot: already sealed, so the bytes do not change (no re-seal,
+      // no double encryption) and the value still reads back.
+      const second = yield* boot(
+        Effect.gen(function* () {
+          const store = yield* ServerSecretStore.ServerSecretStore;
+          return yield* store.get("personal-login-legacy").pipe(Effect.orDie);
+        }),
+      );
+      const afterSecondBoot = yield* fileSystem.readFile(legacyPath);
+      assert.deepEqual(Array.from(afterSecondBoot), Array.from(sealed));
+      assert.equal(new TextDecoder().decode(Option.getOrThrow(second)), "legacy-password");
+    }).pipe(Effect.provide(makeServerConfigLayer())),
   );
 
   it.effect("propagates read failures other than missing-file errors", () =>

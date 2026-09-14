@@ -41,6 +41,16 @@ export interface NavigationHistory {
 
 export type WaitUntil = "load" | "domcontentloaded" | "commit";
 
+/**
+ * A handle to one already-resolved element. Unlike a locator it never
+ * re-resolves, so a cross-document navigation between resolution and use
+ * detaches it and the operation throws instead of retargeting the new page.
+ */
+export interface BrowserElementHandle {
+  fill(text: string, timeoutMs: number): Promise<void>;
+  dispose(): Promise<void>;
+}
+
 export interface BrowserPage {
   url(): string;
   title(): Promise<string>;
@@ -55,6 +65,8 @@ export interface BrowserPage {
   history(): Promise<NavigationHistory>;
   clickLocator(locator: string, timeoutMs: number): Promise<void>;
   countLocator(locator: string): Promise<number>;
+  /** `null` when nothing matched within the timeout. */
+  resolveElement(locator: string, timeoutMs: number): Promise<BrowserElementHandle | null>;
   typeText(input: {
     readonly locator: string | null;
     readonly text: string;
@@ -201,6 +213,18 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
     clickLocator: (locator, timeoutMs) =>
       page.locator(locator).first().click({ timeout: timeoutMs }),
     countLocator: (locator) => page.locator(locator).count(),
+    resolveElement: async (locator, timeoutMs) => {
+      const handle = await page
+        .locator(locator)
+        .first()
+        .elementHandle({ timeout: timeoutMs })
+        .catch(() => null);
+      if (handle === null) return null;
+      return {
+        fill: (text, timeout) => handle.fill(text, { timeout }),
+        dispose: () => handle.dispose(),
+      };
+    },
     typeText: async ({ locator, text, clear, timeoutMs }) => {
       if (locator !== null) {
         const target = page.locator(locator).first();

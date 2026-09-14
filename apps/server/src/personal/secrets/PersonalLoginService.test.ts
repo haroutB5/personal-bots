@@ -96,6 +96,7 @@ describe("PersonalLoginService use", () => {
       expect(browserCalls).toEqual([
         {
           threadId: THREAD,
+          label: "Example",
           expectedOrigin: "https://example.com",
           username: "person@example.com",
           password: PASSWORD,
