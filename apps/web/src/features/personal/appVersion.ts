@@ -55,25 +55,46 @@ export function runningClientEntry(doc: Pick<Document, "querySelectorAll">): str
   return null;
 }
 
+/** Reads the server's stamp and compares it with the bundle this page runs. */
+export async function readAppVersion(
+  fetchImpl: typeof fetch,
+  doc: Pick<Document, "querySelectorAll">,
+): Promise<AppVersionInfo | null> {
+  try {
+    const response = await fetchImpl("/version.txt", { cache: "no-store" });
+    if (!response.ok) return null;
+    const stamp = parseVersionStamp(await response.text());
+    const running = runningClientEntry(doc);
+    return {
+      label: stamp.label,
+      updateAvailable:
+        stamp.clientEntry !== null && running !== null && stamp.clientEntry !== running,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function useAppVersion(): AppVersionInfo {
   const [info, setInfo] = useState<AppVersionInfo>({ label: null, updateAvailable: false });
   useEffect(() => {
     let cancelled = false;
-    void fetch("/version.txt", { cache: "no-store" })
-      .then((response) => (response.ok ? response.text() : null))
-      .then((text) => {
-        if (cancelled || text === null) return;
-        const stamp = parseVersionStamp(text);
-        const running = runningClientEntry(document);
-        setInfo({
-          label: stamp.label,
-          updateAvailable:
-            stamp.clientEntry !== null && running !== null && stamp.clientEntry !== running,
-        });
-      })
-      .catch(() => undefined);
+    const refresh = () => {
+      void readAppVersion(fetch, document).then((next) => {
+        if (!cancelled && next !== null) setInfo(next);
+      });
+    };
+    refresh();
+    // A phone keeps this view mounted for days. Checking only on mount means a
+    // deployment goes unnoticed until something else remounts the app, so the
+    // stamp is re-read whenever the user comes back to the tab.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
   return info;

@@ -14,6 +14,7 @@ import {
   type ComputerDotTone,
 } from "./computer/computerModel";
 import { useComputerFeed } from "./computer/computerState";
+import { inertOutside } from "./overlayInert";
 
 const DOT_CLASS: Record<ComputerDotTone, string> = {
   live: "bg-[var(--personal-live)]",
@@ -63,6 +64,9 @@ export function ConversationComputerPanel({
     if (!fullScreen) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    // aria-modal alone still leaves the page behind the overlay focusable and
+    // clickable; inert is what actually keeps focus in the dialog.
+    const restoreBackground = inertOutside(fullScreenRef.current);
     fullScreenRef.current?.focus({ preventScroll: true });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -72,6 +76,7 @@ export function ConversationComputerPanel({
     window.addEventListener("keydown", onKeyDown);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
+      restoreBackground();
       document.body.style.overflow = previousOverflow;
       fullScreenToggleRef.current?.focus({ preventScroll: true });
     };

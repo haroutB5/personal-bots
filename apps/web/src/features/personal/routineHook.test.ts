@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   currentOrigin,
   isEventRoutine,
+  isLocalOnlyOrigin,
   routineHookUrl,
   routineTriggerStatusLabel,
 } from "./routineHook";
@@ -79,5 +80,22 @@ describe("routineTriggerStatusLabel", () => {
 
   it("reports a paused event routine as paused, not as waiting", () => {
     expect(routineTriggerStatusLabel({ ...event, enabled: false })).toBe("Paused");
+  });
+});
+
+describe("webhook origin reachability", () => {
+  it("knows which origins no external sender can reach", () => {
+    for (const origin of [
+      "http://localhost:38472",
+      "https://LOCALHOST",
+      "http://app.localhost:5173",
+      "http://127.0.0.1:38472",
+      "http://[::1]:38472",
+    ]) {
+      expect(isLocalOnlyOrigin(origin)).toBe(true);
+    }
+    for (const origin of ["https://box.example.ts.net", "http://192.168.1.20:38472", "not-a-url"]) {
+      expect(isLocalOnlyOrigin(origin)).toBe(false);
+    }
   });
 });

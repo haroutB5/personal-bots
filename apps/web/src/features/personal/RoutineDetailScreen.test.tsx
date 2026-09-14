@@ -90,10 +90,13 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-const renderScreen = async (routine: Record<string, unknown>) => {
+const renderScreen = async (
+  routine: Record<string, unknown>,
+  origin = "https://box.example.ts.net",
+) => {
   state.routine = routine;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", { location: { origin: "https://box.example.ts.net" } });
+  vi.stubGlobal("window", { location: { origin } });
   await act(async () => {
     renderer = create(<RoutineDetailScreen routineId={ROUTINE_ID} />);
   });
@@ -179,6 +182,19 @@ describe("RoutineDetailScreen webhook panel", () => {
     expect(text).toContain("On event: PR merged");
     expect(text).not.toContain("Next run");
     expect(text).not.toContain("No more runs");
+  });
+
+  // The URL is built from the origin this page was served on, so opening the
+  // app on the machine itself yields one nothing external can reach.
+  it("warns when the page origin only works on this computer", async () => {
+    const tunnel = JSON.stringify((await renderScreen(eventRoutine)).toJSON());
+    expect(tunnel).not.toContain("only works on this computer");
+
+    const tree = await renderScreen(eventRoutine, "http://localhost:38472");
+    expect(hookUrlText(tree)).toBe(`http://localhost:38472/api/personal/hooks/${HOOK_TOKEN}`);
+    const text = JSON.stringify(tree.toJSON());
+    expect(text).toContain("only works on this computer");
+    expect(text).toContain("T3 Connect");
   });
 
   it("leaves a scheduled routine without a webhook panel", async () => {

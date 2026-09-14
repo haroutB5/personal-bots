@@ -12,7 +12,7 @@ import { randomUUID } from "~/lib/utils";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
-import { currentOrigin, isEventRoutine, routineHookUrl } from "./routineHook";
+import { currentOrigin, isEventRoutine, isLocalOnlyOrigin, routineHookUrl } from "./routineHook";
 import { formatLocalDateTime } from "./taskPresentation";
 import { DETAIL_CARD, DetailRow, PRIMARY_BUTTON, SECONDARY_BUTTON } from "./TaskDetailScreen";
 import { routineNextRunLabel } from "./taskPresentation";
@@ -129,6 +129,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: PersonalRoutineI
     routine.hookToken === null || origin === null
       ? null
       : routineHookUrl(origin, routine.hookToken);
+  const localOnlyUrl = origin !== null && isLocalOnlyOrigin(origin);
 
   const copyHookUrl = async () => {
     if (hookUrl === null) return;
@@ -228,6 +229,12 @@ export function RoutineDetailScreen({ routineId }: { routineId: PersonalRoutineI
               >
                 {hookUrl}
               </p>
+              {localOnlyUrl ? (
+                <p role="alert" className="mt-2 text-[13px] text-[var(--personal-danger)]">
+                  This address only works on this computer. Open the app through your T3 Connect
+                  tunnel and copy the URL from there, or nothing outside can reach it.
+                </p>
+              ) : null}
               <div className="mt-2.5 grid grid-cols-2 gap-2.5">
                 <button
                   type="button"
