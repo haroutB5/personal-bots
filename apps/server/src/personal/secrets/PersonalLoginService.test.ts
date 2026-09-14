@@ -1,4 +1,4 @@
-import { PersonalBotId, PersonalLoginId, PersonalLoginsError, ThreadId } from "@t3tools/contracts";
+import { PersonalLoginId, PersonalLoginsError, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -12,8 +12,6 @@ import * as PersonalBrowser from "../browser/PersonalBrowser.ts";
 import * as PersonalLoginRepository from "./PersonalLoginRepository.ts";
 import * as PersonalLoginService from "./PersonalLoginService.ts";
 
-const OWNER = PersonalBotId.make("bot-owner");
-const OTHER = PersonalBotId.make("bot-other");
 const THREAD = ThreadId.make("thread-owner");
 const PASSWORD = "top-secret-password";
 const now = DateTime.makeUnsafe("2026-09-14T00:00:00.000Z");
@@ -24,7 +22,6 @@ const login: PersonalLoginRepository.StoredPersonalLogin = {
   origin: "https://example.com",
   username: "person@example.com",
   secretRef: "opaque-secret-ref",
-  botIds: [OWNER],
   createdAt: now,
   updatedAt: now,
 };
@@ -73,7 +70,7 @@ const makeLayer = (
   );
 
 describe("PersonalLoginService use", () => {
-  it.effect("keeps the old password and grants when a metadata update fails", () => {
+  it.effect("keeps the old password and origin when a metadata update fails", () => {
     const oldKey = PersonalLoginService.personalLoginStoreKey(login.secretRef);
     const values = new Map([[oldKey, PASSWORD]]);
     const write = (key: string, bytes: Uint8Array) =>
@@ -86,7 +83,6 @@ describe("PersonalLoginService use", () => {
         .update({
           ...login,
           origin: "https://other.example",
-          botIds: [OTHER],
           password: Redacted.make("replacement-password"),
         })
         .pipe(Effect.flip);
@@ -112,7 +108,7 @@ describe("PersonalLoginService use", () => {
   });
 
   it.effect(
-    "publishes the replacement password with its new grants before retiring the old secret",
+    "publishes the replacement password with its new metadata before retiring the old secret",
     () => {
       const oldKey = PersonalLoginService.personalLoginStoreKey(login.secretRef);
       const values = new Map([[oldKey, PASSWORD]]);
@@ -121,10 +117,10 @@ describe("PersonalLoginService use", () => {
         const service = yield* PersonalLoginService.PersonalLoginService;
         const result = yield* service.update({
           ...login,
-          botIds: [OTHER],
+          origin: "https://other.example",
           password: Redacted.make("replacement-password"),
         });
-        expect(result.botIds).toEqual([OTHER]);
+        expect(result.origin).toBe("https://other.example");
         expect(updated?.secretRef).not.toBe(login.secretRef);
         expect([...values.values()]).toEqual(["replacement-password"]);
         expect(values.has(oldKey)).toBe(false);
@@ -163,18 +159,32 @@ describe("PersonalLoginService use", () => {
     },
   );
 
-  it.effect("refuses a bot with no grant before reading or filling the secret", () => {
+  // Saved logins are shared by every bot (user decision, 2026-09-14): what is
+  // refused is a name that matches nothing, not a caller.
+  it.effect("refuses an unknown login before reading or filling any secret", () => {
     const browserCalls: Array<
       Parameters<PersonalBrowser.PersonalBrowser["Service"]["fillLogin"]>[0]
     > = [];
     return Effect.gen(function* () {
       const service = yield* PersonalLoginService.PersonalLoginService;
       const error = yield* service
-        .use({ botId: OTHER, threadId: THREAD, labelOrOrigin: "Example" })
+        .use({ threadId: THREAD, labelOrOrigin: "Nothing saved" })
         .pipe(Effect.flip);
       expect(error).toBeInstanceOf(PersonalLoginsError);
-      expect(error.message).toContain("granted to this bot");
+      expect(error.message).toContain("No saved login with that label or origin exists.");
       expect(browserCalls).toEqual([]);
+    }).pipe(Effect.provide(makeLayer(browserCalls)));
+  });
+
+  it.effect("lets any bot's thread use a saved login", () => {
+    const browserCalls: Array<
+      Parameters<PersonalBrowser.PersonalBrowser["Service"]["fillLogin"]>[0]
+    > = [];
+    return Effect.gen(function* () {
+      const service = yield* PersonalLoginService.PersonalLoginService;
+      yield* service.use({ threadId: ThreadId.make("thread-other"), labelOrOrigin: "Example" });
+      yield* service.use({ threadId: THREAD, labelOrOrigin: "https://example.com" });
+      expect(browserCalls.map((call) => call.threadId)).toEqual(["thread-other", THREAD]);
     }).pipe(Effect.provide(makeLayer(browserCalls)));
   });
 
@@ -184,11 +194,7 @@ describe("PersonalLoginService use", () => {
     > = [];
     return Effect.gen(function* () {
       const service = yield* PersonalLoginService.PersonalLoginService;
-      const result = yield* service.use({
-        botId: OWNER,
-        threadId: THREAD,
-        labelOrOrigin: "Example",
-      });
+      const result = yield* service.use({ threadId: THREAD, labelOrOrigin: "Example" });
       expect(browserCalls).toEqual([
         {
           threadId: THREAD,

@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { emptyPasswordDraft, setPasswordBotGrant, validatePasswordDraft } from "./passwordsModel";
+import { emptyPasswordDraft, validatePasswordDraft } from "./passwordsModel";
 
 describe("password form model", () => {
-  it("starts with no bot grants and toggles grants independently", () => {
-    const empty = emptyPasswordDraft();
-    expect(empty.botIds).toEqual([]);
-    const first = setPasswordBotGrant(empty.botIds, "bot-a", true);
-    const both = setPasswordBotGrant(first, "bot-b", true);
-    expect(both).toEqual(["bot-a", "bot-b"]);
-    expect(setPasswordBotGrant(both, "bot-a", false)).toEqual(["bot-b"]);
+  // Saved logins are shared by every bot, so the draft carries no grants at all.
+  it("starts empty, with no per-bot fields to carry", () => {
+    expect(Object.keys(emptyPasswordDraft()).toSorted()).toEqual([
+      "label",
+      "origin",
+      "password",
+      "username",
+    ]);
   });
 
   it("requires a canonical exact https origin and a newly entered password", () => {
@@ -19,7 +20,6 @@ describe("password form model", () => {
         origin: "https://example.com",
         username: "person@example.com",
         password: "entered-now",
-        botIds: [],
       }),
     ).toEqual({});
     expect(
@@ -28,7 +28,6 @@ describe("password form model", () => {
         origin: "https://example.com/account",
         username: "person@example.com",
         password: "",
-        botIds: [],
       }),
     ).toEqual({
       origin: "Enter an exact HTTPS origin, such as https://example.com.",

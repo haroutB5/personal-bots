@@ -11,7 +11,6 @@ const state = vi.hoisted(() => ({
     label: "Example",
     origin: "https://example.com",
     username: "person@example.com",
-    botIds: ["bot-a"],
     createdAt: "2026-09-14T00:00:00.000Z",
     updatedAt: "2026-09-14T00:00:00.000Z",
   },
@@ -27,17 +26,7 @@ vi.mock("./usePersonalLogins", () => ({
   personalLoginDelete: "delete",
   usePersonalLogins: () => ({ data: { logins: [state.login] }, error: null }),
 }));
-vi.mock("./usePersonalBots", () => ({
-  usePersonalEnvironmentId: () => "env-1",
-  usePersonalBotsList: () => ({
-    data: {
-      bots: [
-        { botId: "bot-a", name: "Assistant", sortOrder: 0 },
-        { botId: "bot-b", name: "Researcher", sortOrder: 1 },
-      ],
-    },
-  }),
-}));
+vi.mock("./usePersonalBots", () => ({ usePersonalEnvironmentId: () => "env-1" }));
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: string) => async (target: unknown) => {
     state.calls.push({ command, target });
@@ -62,7 +51,7 @@ const renderScreen = async () => {
 };
 
 describe("Passwords screen", () => {
-  it("never hydrates a saved password and submits a newly entered value with updated grants", async () => {
+  it("never hydrates a saved password and submits a newly entered value", async () => {
     await renderScreen();
     const label = renderer!.root.findByProps({ children: "Example" });
     await act(async () => label.parent!.props.onClick());
@@ -70,14 +59,13 @@ describe("Passwords screen", () => {
     const password = renderer!.root.findByProps({ id: "password-value" });
     expect(password.props.type).toBe("password");
     expect(password.props.value).toBe("");
-    const checkboxes = renderer!.root
-      .findAllByType("input")
-      .filter((input) => input.props.type === "checkbox");
-    expect(checkboxes.map((input) => input.props.checked)).toEqual([true, false]);
+    // Saved logins are shared by every bot, so the form offers no grants to set.
+    expect(
+      renderer!.root.findAllByType("input").filter((input) => input.props.type === "checkbox"),
+    ).toEqual([]);
 
     await act(async () => {
       password.props.onChange({ target: { value: "entered-now" } });
-      checkboxes[1]!.props.onChange({ target: { checked: true } });
     });
     await act(async () => {
       renderer!.root.findByProps({ "aria-label": "Edit Example" }).props.onSubmit({
@@ -88,10 +76,18 @@ describe("Passwords screen", () => {
     expect(state.calls).toHaveLength(1);
     expect(state.calls[0]?.command).toBe("update");
     const target = state.calls[0]?.target as {
-      readonly input: { readonly password: Redacted.Redacted<string>; readonly botIds: string[] };
+      readonly input: Record<string, unknown> & {
+        readonly password: Redacted.Redacted<string>;
+      };
     };
     expect(Redacted.value(target.input.password)).toBe("entered-now");
-    expect(target.input.botIds).toEqual(["bot-a", "bot-b"]);
+    expect(Object.keys(target.input).toSorted()).toEqual([
+      "label",
+      "loginId",
+      "origin",
+      "password",
+      "username",
+    ]);
   });
 
   it("requires destructive confirmation before deleting", async () => {
@@ -112,8 +108,9 @@ describe("Passwords screen", () => {
     await renderScreen();
 
     const copy = JSON.stringify(renderer!.toJSON());
+    expect(copy).toContain("Any bot can use saved logins on their exact site.");
     expect(copy).toContain("Passwords are encrypted on this computer");
-    expect(copy).toContain("Only save accounts you trust every bot to access.");
+    expect(copy).toContain("only save accounts you trust every bot to use");
     expect(copy).not.toContain("never see its password");
   });
 });

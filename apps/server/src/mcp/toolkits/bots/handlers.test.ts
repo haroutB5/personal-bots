@@ -47,11 +47,7 @@ const botId = (key: string) => PersonalBotId.make(`bot-${key}`);
 interface Harness {
   readonly dispatched: Array<OrchestrationCommand>;
   readonly sessions: Map<string, OrchestrationSession>;
-  readonly loginUses: Array<{
-    readonly botId: string;
-    readonly threadId: string;
-    readonly labelOrOrigin: string;
-  }>;
+  readonly loginUses: Array<{ readonly threadId: string; readonly labelOrOrigin: string }>;
   /** The shared browser as the tools see it: current state, and what closed it. */
   readonly browser: {
     state: PersonalBrowserStatus["state"];
@@ -388,9 +384,8 @@ describe("bots toolkit handlers", () => {
         const { call } = yield* setup(harness);
         const result = yield* call("use_login", { login: "Example" });
 
-        expect(harness.loginUses).toEqual([
-          { botId: botId("assistant"), threadId: CALLER_THREAD, labelOrOrigin: "Example" },
-        ]);
+        // No grant is consulted: every bot shares every saved login.
+        expect(harness.loginUses).toEqual([{ threadId: CALLER_THREAD, labelOrOrigin: "Example" }]);
         expect(result).toEqual({ success: true, filled: ["username", "password"] });
         expect(Object.keys(result).toSorted()).toEqual(["filled", "success"]);
       }),

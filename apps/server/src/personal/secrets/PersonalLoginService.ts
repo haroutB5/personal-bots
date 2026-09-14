@@ -3,7 +3,6 @@ import * as NodeCrypto from "node:crypto";
 import {
   PERSONAL_SECRET_MAX_VALUE_BYTES,
   PersonalLoginsError,
-  type PersonalBotId,
   type PersonalLogin,
   type PersonalLoginCreateInput,
   type PersonalLoginDeleteInput,
@@ -54,7 +53,6 @@ export interface UsePersonalLoginResult {
 }
 
 export interface UsePersonalLoginInput {
-  readonly botId: PersonalBotId;
   readonly threadId: ThreadId;
   readonly labelOrOrigin: string;
 }
@@ -81,8 +79,8 @@ export const make = Effect.gen(function* () {
   const repository = yield* PersonalLoginRepository.PersonalLoginRepository;
   const store = yield* ServerSecretStore.ServerSecretStore;
   const browser = yield* PersonalBrowser.PersonalBrowser;
-  // Grant changes and use decisions share one lock, so a UI revocation cannot
-  // race between the authorization check and the browser fill.
+  // Edits and use decisions share one lock, so a password change cannot race
+  // between the lookup and the browser fill.
   const accessLock = yield* Semaphore.make(1);
 
   const fail = (message: string, cause?: unknown) =>
@@ -125,7 +123,6 @@ export const make = Effect.gen(function* () {
     label: login.label,
     origin: login.origin,
     username: login.username,
-    botIds: [...login.botIds],
     createdAt: login.createdAt,
     updatedAt: login.updatedAt,
   });
@@ -151,7 +148,6 @@ export const make = Effect.gen(function* () {
       loginId: input.loginId,
       ...metadata,
       secretRef: NodeCrypto.randomUUID(),
-      botIds: [...new Set(input.botIds)],
       createdAt: now,
       updatedAt: now,
     };
@@ -178,12 +174,12 @@ export const make = Effect.gen(function* () {
       ...previous,
       ...metadata,
       secretRef: NodeCrypto.randomUUID(),
-      botIds: [...new Set(input.botIds)],
       updatedAt: yield* DateTime.now,
     };
-    // Publish the secret reference, origin and grants in the same DB transaction.
-    // Overwriting the old file first would expose the replacement password under
-    // the old grants if the metadata write failed (for example, a duplicate label).
+    // Publish the new secret reference and its metadata in one write, and only
+    // then retire the old secret. Overwriting the old file first would attach
+    // the replacement password to the old origin if the metadata write failed
+    // (for example, a duplicate label).
     const nextKey = personalLoginStoreKey(next.secretRef);
     yield* Effect.uninterruptible(
       Effect.gen(function* () {
@@ -228,19 +224,20 @@ export const make = Effect.gen(function* () {
     input: UsePersonalLoginInput,
   ) {
     const wanted = input.labelOrOrigin.trim();
-    const granted = (yield* db("lookup", repository.list())).filter((login) =>
-      login.botIds.includes(input.botId),
-    );
-    const byLabel = granted.filter(
+    // Every bot may use every saved login: they share the browser profile and
+    // the computer account, so a per-bot grant named an isolation that did not
+    // exist (user decision, 2026-09-14). What gates a fill is the exact origin
+    // and the browser-side protections around it.
+    const saved = yield* db("lookup", repository.list());
+    const byLabel = saved.filter(
       (login) => login.label.toLocaleLowerCase() === wanted.toLocaleLowerCase(),
     );
-    const matches =
-      byLabel.length > 0 ? byLabel : granted.filter((login) => login.origin === wanted);
+    const matches = byLabel.length > 0 ? byLabel : saved.filter((login) => login.origin === wanted);
     if (matches.length === 0) {
-      return yield* fail("No saved login with that label or origin is granted to this bot.");
+      return yield* fail("No saved login with that label or origin exists.");
     }
     if (matches.length > 1) {
-      return yield* fail("More than one granted login matches that origin; use its label instead.");
+      return yield* fail("More than one saved login matches that origin; use its label instead.");
     }
     const login = matches[0]!;
     const secret = yield* store

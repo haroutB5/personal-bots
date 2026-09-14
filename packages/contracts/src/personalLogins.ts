@@ -1,18 +1,21 @@
 import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { PersonalBotId } from "./personalBots.ts";
 
 export const PersonalLoginId = TrimmedNonEmptyString.pipe(Schema.brand("PersonalLoginId"));
 export type PersonalLoginId = typeof PersonalLoginId.Type;
 
-/** A saved login as clients may see it. Passwords and secret-store references never cross RPC. */
+/**
+ * A saved login as clients may see it. Passwords and secret-store references
+ * never cross RPC. Every bot may use every saved login: they share one browser
+ * profile and one computer account, so a per-bot grant described an isolation
+ * the runtime never had (user decision, 2026-09-14).
+ */
 export const PersonalLogin = Schema.Struct({
   loginId: PersonalLoginId,
   label: TrimmedNonEmptyString,
   origin: TrimmedNonEmptyString,
   username: Schema.String,
-  botIds: Schema.Array(PersonalBotId),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
 });
@@ -30,7 +33,6 @@ const PersonalLoginFields = {
   username: Schema.String,
   /** Write-only: decoded as Redacted on the server and absent from every result schema. */
   password: Schema.Redacted(Schema.String),
-  botIds: Schema.Array(PersonalBotId),
 };
 
 export const PersonalLoginCreateInput = Schema.Struct({

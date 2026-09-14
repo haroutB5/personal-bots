@@ -5,7 +5,6 @@ export interface PasswordDraft {
   readonly origin: string;
   readonly username: string;
   readonly password: string;
-  readonly botIds: ReadonlyArray<string>;
 }
 
 export const emptyPasswordDraft = (): PasswordDraft => ({
@@ -13,7 +12,6 @@ export const emptyPasswordDraft = (): PasswordDraft => ({
   origin: "",
   username: "",
   password: "",
-  botIds: [],
 });
 
 /** Existing passwords are deliberately not represented in client state. */
@@ -22,17 +20,7 @@ export const passwordDraftFromLogin = (login: PersonalLogin): PasswordDraft => (
   origin: login.origin,
   username: login.username,
   password: "",
-  botIds: [...login.botIds],
 });
-
-export const setPasswordBotGrant = (
-  botIds: ReadonlyArray<string>,
-  botId: string,
-  granted: boolean,
-): ReadonlyArray<string> => {
-  const without = botIds.filter((candidate) => candidate !== botId);
-  return granted ? [...without, botId] : without;
-};
 
 export interface PasswordDraftErrors {
   readonly label?: string;

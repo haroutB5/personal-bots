@@ -263,7 +263,6 @@ const make = Effect.gen(function* () {
         const caller = yield* callerBot();
         return yield* logins
           .use({
-            botId: caller.botId,
             threadId: caller.threadId,
             labelOrOrigin: input.login,
           })

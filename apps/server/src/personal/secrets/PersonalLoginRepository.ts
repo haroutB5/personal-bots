@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type * as SqlError from "effect/unstable/sql/SqlError";
 
-import { PersonalBotId, PersonalLoginId } from "@t3tools/contracts";
+import { PersonalLoginId } from "@t3tools/contracts";
 
 import { PersistenceDecodeError, PersistenceSqlError } from "../../persistence/Errors.ts";
 
@@ -17,24 +17,22 @@ export interface StoredPersonalLogin {
   readonly origin: string;
   readonly username: string;
   readonly secretRef: string;
-  readonly botIds: ReadonlyArray<PersonalBotId>;
   readonly createdAt: DateTime.Utc;
   readonly updatedAt: DateTime.Utc;
 }
 
 export type PersonalLoginRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 
-const LoginJoinRow = Schema.Struct({
+const LoginRow = Schema.Struct({
   loginId: PersonalLoginId,
   label: Schema.String,
   origin: Schema.String,
   username: Schema.String,
   secretRef: Schema.String,
-  botId: Schema.NullOr(PersonalBotId),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
 });
-const decodeLoginJoinRow = Schema.decodeUnknownEffect(LoginJoinRow);
+const decodeLoginRow = Schema.decodeUnknownEffect(LoginRow);
 
 const LOGIN_COLUMNS = `
   l.login_id AS "loginId",
@@ -42,7 +40,6 @@ const LOGIN_COLUMNS = `
   l.origin AS "origin",
   l.username AS "username",
   l.secret_ref AS "secretRef",
-  g.bot_id AS "botId",
   l.created_at AS "createdAt",
   l.updated_at AS "updatedAt"
 `;
@@ -83,32 +80,11 @@ export const make = Effect.gen(function* () {
 
   const decodeRows = (operation: string, rows: ReadonlyArray<unknown>) =>
     Effect.forEach(rows, (row) =>
-      decodeLoginJoinRow(row).pipe(
+      decodeLoginRow(row).pipe(
         Effect.mapError((cause) =>
           PersistenceDecodeError.fromSchemaError(`PersonalLoginRepository.${operation}`, cause),
         ),
       ),
-    ).pipe(
-      Effect.map((decoded) => {
-        const grouped = new Map<string, StoredPersonalLogin>();
-        for (const row of decoded) {
-          const previous = grouped.get(row.loginId);
-          grouped.set(row.loginId, {
-            loginId: row.loginId,
-            label: row.label,
-            origin: row.origin,
-            username: row.username,
-            secretRef: row.secretRef,
-            botIds:
-              row.botId === null
-                ? (previous?.botIds ?? [])
-                : [...(previous?.botIds ?? []), row.botId],
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-          });
-        }
-        return [...grouped.values()];
-      }),
     );
 
   const select = (suffix: string) =>
@@ -117,23 +93,9 @@ export const make = Effect.gen(function* () {
       sql.unsafe(`
         SELECT ${LOGIN_COLUMNS}
         FROM personal_logins l
-        LEFT JOIN personal_login_grants g ON g.login_id = l.login_id
         ${suffix}
       `),
     ).pipe(Effect.flatMap((rows) => decodeRows("select", rows)));
-
-  const writeGrants = (loginId: PersonalLoginId, botIds: ReadonlyArray<PersonalBotId>) =>
-    Effect.gen(function* () {
-      yield* sql`DELETE FROM personal_login_grants WHERE login_id = ${loginId}`;
-      yield* Effect.forEach(
-        [...new Set(botIds)],
-        (botId) => sql`
-          INSERT INTO personal_login_grants (login_id, bot_id)
-          VALUES (${loginId}, ${botId})
-        `,
-        { discard: true },
-      );
-    });
 
   const list: PersonalLoginRepository["Service"]["list"] = () =>
     select("ORDER BY l.label COLLATE NOCASE ASC, l.login_id ASC");
@@ -144,9 +106,7 @@ export const make = Effect.gen(function* () {
       sql`
         SELECT ${sql.literal(LOGIN_COLUMNS)}
         FROM personal_logins l
-        LEFT JOIN personal_login_grants g ON g.login_id = l.login_id
         WHERE l.login_id = ${loginId}
-        ORDER BY g.bot_id ASC
       `,
     ).pipe(
       Effect.flatMap((rows) => decodeRows("get", rows)),
@@ -154,43 +114,33 @@ export const make = Effect.gen(function* () {
     );
 
   const create: PersonalLoginRepository["Service"]["create"] = (login) =>
-    sql
-      .withTransaction(
-        Effect.gen(function* () {
-          yield* sql`
-            INSERT INTO personal_logins (
-              login_id, label, origin, username, secret_ref, created_at, updated_at
-            ) VALUES (
-              ${login.loginId}, ${login.label}, ${login.origin}, ${login.username},
-              ${login.secretRef}, ${DateTime.formatIso(login.createdAt)},
-              ${DateTime.formatIso(login.updatedAt)}
-            )
-          `;
-          yield* writeGrants(login.loginId, login.botIds);
-        }),
-      )
-      .pipe(Effect.mapError((cause) => sqlError("create", cause)));
+    query(
+      "create",
+      sql`
+        INSERT INTO personal_logins (
+          login_id, label, origin, username, secret_ref, created_at, updated_at
+        ) VALUES (
+          ${login.loginId}, ${login.label}, ${login.origin}, ${login.username},
+          ${login.secretRef}, ${DateTime.formatIso(login.createdAt)},
+          ${DateTime.formatIso(login.updatedAt)}
+        )
+      `,
+    ).pipe(Effect.asVoid);
 
   const update: PersonalLoginRepository["Service"]["update"] = (login) =>
-    sql
-      .withTransaction(
-        Effect.gen(function* () {
-          const rows = yield* sql`
-            UPDATE personal_logins
-            SET label = ${login.label},
-                origin = ${login.origin},
-                username = ${login.username},
-                secret_ref = ${login.secretRef},
-                updated_at = ${DateTime.formatIso(login.updatedAt)}
-            WHERE login_id = ${login.loginId}
-            RETURNING login_id
-          `;
-          if (rows.length === 0) return false;
-          yield* writeGrants(login.loginId, login.botIds);
-          return true;
-        }),
-      )
-      .pipe(Effect.mapError((cause) => sqlError("update", cause)));
+    query(
+      "update",
+      sql`
+        UPDATE personal_logins
+        SET label = ${login.label},
+            origin = ${login.origin},
+            username = ${login.username},
+            secret_ref = ${login.secretRef},
+            updated_at = ${DateTime.formatIso(login.updatedAt)}
+        WHERE login_id = ${login.loginId}
+        RETURNING login_id
+      `,
+    ).pipe(Effect.map((rows) => rows.length > 0));
 
   const remove: PersonalLoginRepository["Service"]["remove"] = (loginId) =>
     query(

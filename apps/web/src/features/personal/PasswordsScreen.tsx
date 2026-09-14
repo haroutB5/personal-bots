@@ -1,7 +1,7 @@
 import type { FormEvent, JSX } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
-import { PersonalLoginId, type PersonalBot, type PersonalLogin } from "@t3tools/contracts";
+import { PersonalLoginId, type PersonalLogin } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import * as Redacted from "effect/Redacted";
 import { ChevronLeft, Plus, Trash2 } from "lucide-react";
@@ -14,7 +14,6 @@ import { commandFailureMessage } from "./commandFeedback";
 import {
   emptyPasswordDraft,
   passwordDraftFromLogin,
-  setPasswordBotGrant,
   validatePasswordDraft,
   type PasswordDraft,
   type PasswordDraftErrors,
@@ -25,7 +24,7 @@ import {
   personalLoginUpdate,
   usePersonalLogins,
 } from "./usePersonalLogins";
-import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
+import { usePersonalEnvironmentId } from "./usePersonalBots";
 
 const FIELD_CLASS =
   "h-11 w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -33,11 +32,9 @@ const LABEL_CLASS = "mb-1.5 block text-sm font-medium text-[var(--personal-text)
 
 function PasswordForm({
   login,
-  bots,
   onDone,
 }: {
   login: PersonalLogin | null;
-  bots: ReadonlyArray<Pick<PersonalBot, "botId" | "name">>;
   onDone: () => void;
 }): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
@@ -90,7 +87,6 @@ function PasswordForm({
       origin: draft.origin.trim(),
       username: draft.username,
       password: Redacted.make(draft.password),
-      botIds: bots.filter((bot) => draft.botIds.includes(bot.botId)).map((bot) => bot.botId),
     };
     const result = await (login === null
       ? createLogin({ environmentId, input })
@@ -160,7 +156,7 @@ function PasswordForm({
           id="password-origin-help"
           className="mt-1.5 text-sm text-[var(--personal-text-secondary)]"
         >
-          Bots can fill this login only when the browser is on this exact origin.
+          Any bot can fill this login, and only while the browser is on this exact origin.
         </p>
         {errors.origin === undefined ? null : (
           <p id="password-origin-error" role="alert" className="mt-1.5 text-sm text-[#b3261e]">
@@ -216,40 +212,6 @@ function PasswordForm({
         )}
       </div>
 
-      <fieldset>
-        <legend className={LABEL_CLASS}>Bots allowed to use this login</legend>
-        <div className="overflow-hidden rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] divide-y divide-[var(--personal-border)]">
-          {bots.length === 0 ? (
-            <p className="px-3.5 py-3 text-sm text-[var(--personal-text-secondary)]">
-              No bots available.
-            </p>
-          ) : (
-            bots.map((bot) => (
-              <label
-                key={bot.botId}
-                className="flex min-h-11 items-center gap-3 px-3.5 text-[15px] text-[var(--personal-text)]"
-              >
-                <input
-                  type="checkbox"
-                  checked={draft.botIds.includes(bot.botId)}
-                  onChange={(event) =>
-                    update({
-                      botIds: setPasswordBotGrant(draft.botIds, bot.botId, event.target.checked),
-                    })
-                  }
-                  className="size-5 accent-[var(--personal-primary)]"
-                />
-                <span>{bot.name}</span>
-              </label>
-            ))
-          )}
-        </div>
-        <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
-          No bot has access by default. After a login is used, the site stays signed in for the
-          shared browser, so keep it to bots you trust with that account.
-        </p>
-      </fieldset>
-
       {submitError === null ? null : (
         <p role="alert" className="text-sm text-[#b3261e]">
           {submitError}
@@ -278,19 +240,14 @@ function PasswordForm({
   );
 }
 
-/** /bots/settings/passwords: saved website logins and explicit per-bot grants. */
+/** /bots/settings/passwords: saved website logins, shared by every bot. */
 export function PasswordsScreen(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const loginsQuery = usePersonalLogins(environmentId);
-  const botsQuery = usePersonalBotsList(environmentId);
   const removeLogin = useAtomCommand(personalLoginDelete);
   const [editing, setEditing] = useState<PersonalLogin | "new" | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const bots = useMemo(
-    () => (botsQuery.data?.bots ?? []).toSorted((left, right) => left.sortOrder - right.sortOrder),
-    [botsQuery.data],
-  );
   const logins = loginsQuery.data?.logins ?? [];
 
   const onDelete = async (login: PersonalLogin) => {
@@ -330,8 +287,9 @@ export function PasswordsScreen(): JSX.Element {
       </header>
 
       <p className="text-[14px] leading-snug text-[var(--personal-text-secondary)]">
-        Passwords are encrypted on this computer, but bots run under your computer account and share
-        signed-in browser sessions. Only save accounts you trust every bot to access.
+        Any bot can use saved logins on their exact site. Passwords are encrypted on this computer,
+        but bots run under your computer account and share one signed-in browser, so only save
+        accounts you trust every bot to use.
       </p>
 
       {error === null ? null : (
@@ -385,7 +343,6 @@ export function PasswordsScreen(): JSX.Element {
         <PasswordForm
           key={editing === "new" ? "new" : editing.loginId}
           login={editing === "new" ? null : editing}
-          bots={bots}
           onDone={() => setEditing(null)}
         />
       )}
