@@ -22,6 +22,7 @@ import * as BrowserLease from "./BrowserLease.ts";
 import type { BrowserDriver, BrowserElementHandle, BrowserPage, ScreencastMeta } from "./driver.ts";
 import * as PersonalBrowser from "./PersonalBrowser.ts";
 import * as PersonalBrowserLeaseRepository from "./PersonalBrowserLeaseRepository.ts";
+import * as PersonalBrowserProtectionRepository from "./PersonalBrowserProtectionRepository.ts";
 
 const encodeInput = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserInputMessage));
 
@@ -122,25 +123,26 @@ class FakePage implements BrowserPage {
 }
 
 /**
- * Makes the fake look like an ordinary login page: one match for every login
- * selector, and no form whose `action` posts to another origin.
+ * Makes one fake page look like an ordinary login page: one match for every
+ * login selector, and no form whose `action` posts to another origin.
  */
-const asLoginPage = (page: FakePage) => {
+const configureLoginPage = (page: FakePage) => {
   page.locatorCount = 1;
   page.countLocatorImpl = (locator) => (locator.includes("[action") ? 0 : 1);
 };
 
 const makeFakeDriver = () => {
   const page = new FakePage();
-  const state = { launches: 0, page };
+  const pages: FakePage[] = [page];
+  const state = { launches: 0, page, pages, onNewPage: null as ((page: FakePage) => void) | null };
   const driver: BrowserDriver = {
     launch: async () => {
       state.launches++;
-      const pages: FakePage[] = [page];
       return {
         pages: () => pages.filter((candidate) => !candidate.closed),
         newPage: async () => {
           const created = new FakePage();
+          state.onNewPage?.(created);
           pages.push(created);
           return created;
         },
@@ -152,17 +154,53 @@ const makeFakeDriver = () => {
   return { driver, state };
 };
 
-const baseLayer = <RepositoryError, RepositoryContext>(
+/**
+ * Every page this browser opens is an ordinary login page. A saved login is
+ * filled into a tab the server opens for itself, so configuring only the tab
+ * the bot navigated would leave the page that actually receives the fill bare.
+ */
+const asLoginBrowser = (fake: ReturnType<typeof makeFakeDriver>) => {
+  configureLoginPage(fake.state.page);
+  fake.state.onNewPage = configureLoginPage;
+};
+
+/**
+ * A protection store that outlives the service, the way the SQLite row does.
+ * Building the layer twice over one of these is a server restart against the
+ * same still-authenticated browser profile.
+ */
+const memoryProtectionRepository = () => {
+  const saved: PersonalBrowserProtectionRepository.BrowserProtectionState[] = [];
+  const layer = Layer.succeed(
+    PersonalBrowserProtectionRepository.PersonalBrowserProtectionRepository,
+    PersonalBrowserProtectionRepository.PersonalBrowserProtectionRepository.of({
+      load: () => Effect.succeed(Option.fromNullishOr(saved.at(-1))),
+      save: (state) =>
+        Effect.sync(() => {
+          saved.push(state);
+        }),
+    }),
+  );
+  return { saved, layer };
+};
+
+const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
   driver: BrowserDriver,
   repository: Layer.Layer<
     PersonalBrowserLeaseRepository.PersonalBrowserLeaseRepository,
     RepositoryError,
     RepositoryContext
   >,
+  protections: Layer.Layer<
+    PersonalBrowserProtectionRepository.PersonalBrowserProtectionRepository,
+    never,
+    ProtectionContext
+  >,
 ) =>
   PersonalBrowser.makeLayer({ driver, headless: true, executablePath: undefined }).pipe(
     Layer.provideMerge(BrowserLease.layer),
     Layer.provideMerge(repository),
+    Layer.provideMerge(protections),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(PreviewManager.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
@@ -171,7 +209,11 @@ const baseLayer = <RepositoryError, RepositoryContext>(
   );
 
 const makeLayer = (driver: BrowserDriver) =>
-  baseLayer(driver, PersonalBrowserLeaseRepository.layer);
+  baseLayer(
+    driver,
+    PersonalBrowserLeaseRepository.layer,
+    PersonalBrowserProtectionRepository.layer,
+  );
 
 /** A repository pre-seeded with one persisted row, recording every save. */
 const stubRepository = (
@@ -317,7 +359,7 @@ describe("PersonalBrowser", () => {
 
   it.effect("keeps credential-bearing tabs unreadable to the model after filling", () => {
     const fake = makeFakeDriver();
-    asLoginPage(fake.state.page);
+    asLoginBrowser(fake);
     return Effect.gen(function* () {
       const browser = yield* PersonalBrowser.PersonalBrowser;
       yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
@@ -357,7 +399,7 @@ describe("PersonalBrowser", () => {
   // ungranted bot and the account.
   it.effect("protects another bot's tab when it reaches a credential-bearing origin", () => {
     const fake = makeFakeDriver();
-    asLoginPage(fake.state.page);
+    asLoginBrowser(fake);
     const otherThread = ThreadId.make("thread-ungranted");
     const otherRequest = (operation: PreviewAutomationRequest["operation"], input: unknown = {}) =>
       ({ ...request(operation, input), threadId: otherThread }) as PreviewAutomationRequest;
@@ -393,7 +435,7 @@ describe("PersonalBrowser", () => {
     "keeps scripts blocked on credential origins after closing and reopening Chrome",
     () => {
       const fake = makeFakeDriver();
-      asLoginPage(fake.state.page);
+      asLoginBrowser(fake);
       return Effect.gen(function* () {
         const browser = yield* PersonalBrowser.PersonalBrowser;
         yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
@@ -417,7 +459,7 @@ describe("PersonalBrowser", () => {
   // A login form with method="GET" puts the password in the query string.
   it.effect("strips the query string from a protected tab's reported url", () => {
     const fake = makeFakeDriver();
-    asLoginPage(fake.state.page);
+    asLoginBrowser(fake);
     return Effect.gen(function* () {
       const browser = yield* PersonalBrowser.PersonalBrowser;
       yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
@@ -456,9 +498,14 @@ describe("PersonalBrowser", () => {
 
   it.effect("keeps the tab protected when a credential fill fails", () => {
     const fake = makeFakeDriver();
-    asLoginPage(fake.state.page);
-    fake.state.page.typeText = async () => {
-      throw new Error("late fill failure");
+    asLoginBrowser(fake);
+    // The fill lands on the tab the server opens, so the failure is injected
+    // into every page this browser creates, not just the one the bot opened.
+    fake.state.onNewPage = (page) => {
+      configureLoginPage(page);
+      page.typeText = async () => {
+        throw new Error("late fill failure");
+      };
     };
     return Effect.gen(function* () {
       const browser = yield* PersonalBrowser.PersonalBrowser;
@@ -622,7 +669,15 @@ describe("PersonalBrowser", () => {
       const persisted = saved.at(-1)!;
       expect(persisted).toMatchObject({ ownerType: "agent", ownerId: null, lastUrl: null });
       expect(BrowserLease.decideBrowserRestore(persisted, 0)).toEqual({ _tag: "Noop" });
-    }).pipe(Effect.provide(baseLayer(fake.driver, stubRepository(releasedPersistedRow(), saved))));
+    }).pipe(
+      Effect.provide(
+        baseLayer(
+          fake.driver,
+          stubRepository(releasedPersistedRow(), saved),
+          PersonalBrowserProtectionRepository.layer,
+        ),
+      ),
+    );
   });
 
   it.effect("reopens the agent's last page at boot and re-attaches the lease", () => {
@@ -646,7 +701,11 @@ describe("PersonalBrowser", () => {
       expect(saved.length).toBeGreaterThan(0);
     }).pipe(
       Effect.provide(
-        baseLayer(fake.driver, stubRepository(persistedAgentRow("example.com"), saved)),
+        baseLayer(
+          fake.driver,
+          stubRepository(persistedAgentRow("example.com"), saved),
+          PersonalBrowserProtectionRepository.layer,
+        ),
       ),
     );
   });
@@ -669,9 +728,131 @@ describe("PersonalBrowser", () => {
       expect(saved.at(-1)).toMatchObject({ ownerType: "agent", ownerId: null });
     }).pipe(
       Effect.provide(
-        baseLayer(broken, stubRepository(persistedAgentRow("https://example.com/"), saved)),
+        baseLayer(
+          broken,
+          stubRepository(persistedAgentRow("https://example.com/"), saved),
+          PersonalBrowserProtectionRepository.layer,
+        ),
       ),
     );
+  });
+
+  // Audit #2: preview_evaluate can install an input listener or register a
+  // service worker before the fill, and disabling later evaluate calls does
+  // not remove either.
+  it.effect("refuses a saved login on an origin where a page script has run", () => {
+    const fake = makeFakeDriver();
+    asLoginBrowser(fake);
+    const protections = memoryProtectionRepository();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      yield* browser.handleAutomationRequest(
+        request("evaluate", { expression: "addEventListener('input', steal)" }),
+      );
+
+      const error = yield* browser
+        .fillLogin({
+          threadId,
+          label: "Example",
+          expectedOrigin: "https://example.com",
+          username: "person@example.com",
+          password: "password-value",
+        })
+        .pipe(Effect.asVoid, Effect.flip);
+
+      expect(error.message).toContain("A page script was run on https://example.com");
+      expect(fake.state.pages.flatMap((page) => page.filled)).toEqual([]);
+      // The taint is recorded where a restart can still see it.
+      expect(protections.saved.at(-1)?.taintedOrigins).toEqual(["https://example.com"]);
+    }).pipe(
+      Effect.provide(
+        baseLayer(fake.driver, PersonalBrowserLeaseRepository.layer, protections.layer),
+      ),
+    );
+  });
+
+  // Audit #2: the tab the bot has been driving is never the fill target, so a
+  // script it installed before the grant was used cannot watch the fill.
+  it.effect("fills into a tab the server opened and retires the bot's own tab", () => {
+    const fake = makeFakeDriver();
+    asLoginBrowser(fake);
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(
+        request("navigate", { url: "https://example.com/sign-in" }),
+      );
+      const filled = yield* browser.fillLogin({
+        threadId,
+        label: "Example",
+        expectedOrigin: "https://example.com",
+        username: "person@example.com",
+        password: "password-value",
+      });
+      expect(filled).toEqual(["username", "password"]);
+
+      const [botPage, fillPage] = fake.state.pages;
+      expect(fake.state.pages).toHaveLength(2);
+      // The bot's page never saw the password and is gone.
+      expect(botPage?.filled).toEqual([]);
+      expect(botPage?.closed).toBe(true);
+      // The fill tab is a fresh document the server navigated itself.
+      expect(fillPage?.gotos).toEqual(["https://example.com/sign-in"]);
+      expect(fillPage?.filled).toHaveLength(1);
+
+      // And the thread's next tool call routes to the fill tab, not the
+      // retired one, so the bot can still submit the form.
+      const status = (yield* browser.handleAutomationRequest(
+        request("status"),
+      )) as PreviewAutomationStatus;
+      expect(status.url).toBe("https://example.com/sign-in");
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  // Audit #3: Chrome's profile keeps the signed-in cookies across a restart,
+  // so the protections in front of them have to come back too.
+  it.effect("restores credential protections after a server restart", () => {
+    const protections = memoryProtectionRepository();
+    const first = makeFakeDriver();
+    asLoginBrowser(first);
+    const second = makeFakeDriver();
+    asLoginBrowser(second);
+    const layerFor = (fake: ReturnType<typeof makeFakeDriver>) =>
+      baseLayer(fake.driver, PersonalBrowserLeaseRepository.layer, protections.layer);
+
+    return Effect.gen(function* () {
+      yield* Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.fillLogin({
+          threadId,
+          label: "Example",
+          expectedOrigin: "https://example.com",
+          username: "person@example.com",
+          password: "password-value",
+        });
+      }).pipe(Effect.provide(layerFor(first)));
+
+      expect(protections.saved.at(-1)).toMatchObject({
+        loginUsed: true,
+        credentialOrigins: [{ origin: "https://example.com", botId: null }],
+      });
+
+      // A new process over the same profile: page scripts stay disabled, and a
+      // tab that reaches the credential origin is still unreadable.
+      yield* Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const scripted = yield* browser
+          .handleAutomationRequest(request("evaluate", { expression: "document.cookie" }))
+          .pipe(Effect.asVoid, Effect.flip);
+        expect(scripted.message).toContain("Page scripts are disabled");
+        const read = yield* browser
+          .handleAutomationRequest(request("snapshot"))
+          .pipe(Effect.asVoid, Effect.flip);
+        expect(read.message).toContain("contains a saved login");
+      }).pipe(Effect.provide(layerFor(second)));
+    });
   });
 
   it.effect("screencasts only while at least one viewer is attached", () => {

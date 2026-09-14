@@ -226,7 +226,7 @@ const RequestSecretTool = Tool.make("request_secret", {
 
 const UseLoginTool = Tool.make("use_login", {
   description:
-    "Fill a saved website login into the current browser page. Pass the login label or exact origin. The login must be granted to you and the page origin must exactly match; the password is filled by the server and is never revealed to you. Review the page before calling this tool, submit with a known button or Enter, then open a new tab to continue because reads stay disabled on the credential-bearing tab.",
+    "Fill a saved website login. Pass the login label or exact origin. The login must be granted to you and your current tab must already be on that exact origin. The server then opens a fresh tab of its own on that page, fills the password there and closes your tab on that origin, because a page script you ran earlier could otherwise read the value. Your next browser call lands on the new tab, so submit with a known button or Enter; reads stay disabled on the credential-bearing tab, and the fill is refused outright on any origin where preview_evaluate has been used.",
   parameters: UseLoginInput,
   success: UseLoginResult,
   failure: BotsToolFailure,

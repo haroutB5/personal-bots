@@ -61,7 +61,7 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../../config.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
-import { AGENT_LEASE_TTL_MS, BrowserLease } from "./BrowserLease.ts";
+import { AGENT_LEASE_TTL_MS, BrowserLease, PERSONAL_BROWSER_PROFILE_ID } from "./BrowserLease.ts";
 import {
   type BrowserContextHandle,
   type BrowserDriver,
@@ -82,6 +82,10 @@ import {
   performWaitFor,
   type PersonalLoginFilledField,
 } from "./pageOperations.ts";
+import {
+  type BrowserProtectionState,
+  PersonalBrowserProtectionRepository,
+} from "./PersonalBrowserProtectionRepository.ts";
 import { resolveBrowserNavigationTarget, resolveBrowserUrl } from "./urlPolicy.ts";
 
 /** Chrome did not start; `message` is Playwright's own error text. */
@@ -178,10 +182,18 @@ interface TabEntry {
   readonly timeline: PreviewAutomationActionEvent[];
   /** Once credentials enter this tab, model-readable operations stay disabled for its lifetime. */
   loginProtected: boolean;
+  /**
+   * A model-provided script has run in this tab since the last server-initiated
+   * navigation. Such a tab is never a fill target: `preview_evaluate` can leave
+   * an input listener behind that reads a value the tool result never returns.
+   */
+  scriptTainted: boolean;
 }
 
 const RECENT_ACTIVITY_LIMIT = 30;
 const RESTORE_NAVIGATE_TIMEOUT_MS = 30_000;
+/** The server's own navigation of the fresh tab a saved login is filled into. */
+const FILL_NAVIGATE_TIMEOUT_MS = 20_000;
 const TIMELINE_LIMIT = 20;
 const PAGE_INFO_REFRESH_MS = 1_500;
 const MAX_LISTED_FILES = 300;
@@ -300,6 +312,7 @@ export const make = (options: PersonalBrowserOptions) =>
     const previewManager = yield* PreviewManager.PreviewManager;
     const bots = yield* PersonalBotRepository.PersonalBotRepository;
     const lease = yield* BrowserLease;
+    const protections = yield* PersonalBrowserProtectionRepository;
     const runFork = yield* FiberSet.makeRuntime<never>();
 
     const profileDir = NodePath.join(config.baseDir, "personal", "browser-profiles", "default");
@@ -321,9 +334,63 @@ export const make = (options: PersonalBrowserOptions) =>
       loginUsed: false,
       // Origins where a saved login was filled into this browser context. The
       // context is shared by every bot, so the authenticated session outlives
-      // the tab that created it and belongs to no single grant.
-      credentialOrigins: new Set<string>(),
+      // the tab that created it and belongs to no single grant. The value is
+      // the bot that filled it, or null when the filling thread had no bot.
+      credentialOrigins: new Map<string, string | null>(),
+      // Origins where a model-provided script was allowed to run. A script can
+      // register a service worker, which survives the tab, the navigation and
+      // the Chrome process, so no saved login is ever filled on such an origin
+      // again in this profile.
+      taintedOrigins: new Set<string>(),
     };
+    // Restored while the layer is still being built, so no tool call can reach
+    // the shared browser before the protections that gate its persistent,
+    // still-authenticated profile are back in place.
+    const restored = yield* protections.load(PERSONAL_BROWSER_PROFILE_ID).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning(
+          "Personal browser protections could not be read; starting with page scripts disabled.",
+          { cause },
+        ).pipe(
+          // Failing open here would hand an unprotected authenticated profile
+          // to the next bot, so an unreadable row is treated as "a login was
+          // used", which is the restrictive answer.
+          Effect.as(
+            Option.some<BrowserProtectionState>({
+              profileId: PERSONAL_BROWSER_PROFILE_ID,
+              loginUsed: true,
+              credentialOrigins: [],
+              taintedOrigins: [],
+            }),
+          ),
+        ),
+      ),
+    );
+    if (Option.isSome(restored)) {
+      runtime.loginUsed = restored.value.loginUsed;
+      for (const entry of restored.value.credentialOrigins) {
+        runtime.credentialOrigins.set(entry.origin, entry.botId);
+      }
+      for (const origin of restored.value.taintedOrigins) runtime.taintedOrigins.add(origin);
+    }
+
+    /**
+     * Writes the whole protection state. Callers treat a failure as a refusal
+     * rather than a warning: a protection that cannot be recorded would be
+     * gone at the next restart while the profile stayed signed in.
+     */
+    const persistProtections = Effect.suspend(() =>
+      protections.save({
+        profileId: PERSONAL_BROWSER_PROFILE_ID,
+        loginUsed: runtime.loginUsed,
+        credentialOrigins: [...runtime.credentialOrigins].map(([origin, botId]) => ({
+          origin,
+          botId,
+        })),
+        taintedOrigins: [...runtime.taintedOrigins],
+      }),
+    );
+
     const pageTitles = new WeakMap<BrowserPage, string>();
     const viewers = new Map<number, ViewerHandle>();
     let viewerSequence = 0;
@@ -378,6 +445,14 @@ export const make = (options: PersonalBrowserOptions) =>
 
     const openPage = (page: BrowserPage | null | undefined): page is BrowserPage =>
       page !== null && page !== undefined && !page.isClosed();
+
+    const originOf = (url: string): string | null => {
+      try {
+        return new URL(url).origin;
+      } catch {
+        return null;
+      }
+    };
 
     const ownedPages = () => new Set([...runtime.tabs.values()].map((tab) => tab.page));
 
@@ -684,10 +759,32 @@ export const make = (options: PersonalBrowserOptions) =>
           title: "",
           timeline: [],
           loginProtected: false,
+          scriptTainted: false,
         };
         runtime.tabs.set(tab.tabId, tab);
         page.onClose(() => runFork(onTabPageClosed(tab)));
         return tab;
+      });
+
+    /** Closes one thread's tabs on `origin`, except the one being kept. */
+    const retireTabsOnOrigin = (input: {
+      readonly threadId: ThreadId;
+      readonly origin: string;
+      readonly except: TabEntry;
+    }) =>
+      Effect.gen(function* () {
+        // Collected first: closing a tab reaps it out of the same map.
+        const doomed = [...runtime.tabs.values()].filter(
+          (tab) =>
+            tab !== input.except &&
+            tab.threadId === input.threadId &&
+            openPage(tab.page) &&
+            originOf(tab.page.url()) === input.origin,
+        );
+        for (const tab of doomed) {
+          yield* Effect.promise(() => tab.page.close().catch(() => undefined));
+          yield* onTabPageClosed(tab);
+        }
       });
 
     const releaseThread: PersonalBrowser["Service"]["releaseThread"] = (threadId) =>
@@ -712,13 +809,8 @@ export const make = (options: PersonalBrowserOptions) =>
     const applyCredentialOrigin = (tab: TabEntry | undefined): void => {
       if (tab === undefined || tab.loginProtected) return;
       if (runtime.credentialOrigins.size === 0 || !openPage(tab.page)) return;
-      try {
-        if (runtime.credentialOrigins.has(new URL(tab.page.url()).origin)) {
-          tab.loginProtected = true;
-        }
-      } catch {
-        // A page with no parseable origin cannot match a credential origin.
-      }
+      const origin = originOf(tab.page.url());
+      if (origin !== null && runtime.credentialOrigins.has(origin)) tab.loginProtected = true;
     };
 
     /** Protected tabs never publish a query string: a GET login form puts the password there. */
@@ -746,6 +838,31 @@ export const make = (options: PersonalBrowserOptions) =>
       };
     };
 
+    /**
+     * Records that a model-provided script was allowed to run here, before it
+     * runs. A script can install an input listener or register a service
+     * worker, and neither is undone by disabling later `evaluate` calls, so
+     * the origin is remembered for the life of the profile and never receives
+     * a saved login again.
+     */
+    const taintForScript = (tab: TabEntry) =>
+      Effect.gen(function* () {
+        tab.scriptTainted = true;
+        const origin = openPage(tab.page) ? originOf(tab.page.url()) : null;
+        if (origin === null || runtime.taintedOrigins.has(origin)) return;
+        runtime.taintedOrigins.add(origin);
+        yield* persistProtections.pipe(
+          Effect.tapError(() => Effect.sync(() => runtime.taintedOrigins.delete(origin))),
+          Effect.mapError(
+            () =>
+              new HostOperationError(
+                "PreviewAutomationExecutionError",
+                "Page-script access could not be recorded, so the script was not run.",
+              ),
+          ),
+        );
+      });
+
     const navigateTab = (tab: TabEntry, url: string, readiness: string, timeoutMs: number) =>
       attempt({}, () =>
         tab.page.goto(url, {
@@ -757,6 +874,16 @@ export const make = (options: PersonalBrowserOptions) =>
                 : "load",
           timeoutMs,
         }),
+      ).pipe(
+        // A server-initiated navigation replaces the document, so the listeners
+        // a model-provided script installed in the old one go with it. What
+        // survives a navigation — a service worker — is held as an origin
+        // taint instead, which nothing clears.
+        Effect.tap(() =>
+          Effect.sync(() => {
+            tab.scriptTainted = false;
+          }),
+        ),
       );
 
     const rejectUrl = (reason: string) =>
@@ -886,6 +1013,7 @@ export const make = (options: PersonalBrowserOptions) =>
           }
           case "evaluate": {
             const input = request.input as PreviewAutomationEvaluateInput;
+            yield* taintForScript(tab);
             return {
               tab,
               result: yield* attempt({}, () => performEvaluate(tab.page, input, timeoutMs)),
@@ -1056,8 +1184,8 @@ export const make = (options: PersonalBrowserOptions) =>
 
     const fillLogin: PersonalBrowser["Service"]["fillLogin"] = (input) => {
       const execute = Effect.gen(function* () {
-        const tab = latestTabForThread(input.threadId);
-        if (tab === undefined) {
+        const source = latestTabForThread(input.threadId);
+        if (source === undefined) {
           return yield* Effect.fail(
             new HostOperationError(
               "PreviewAutomationTabNotFoundError",
@@ -1065,6 +1193,38 @@ export const make = (options: PersonalBrowserOptions) =>
             ),
           );
         }
+        // The bot chooses the page, so its own tab still has to be on the
+        // granted origin; it just never receives the credential itself.
+        const sourceUrl = openPage(source.page) ? source.page.url() : "";
+        const sourceOrigin = originOf(sourceUrl);
+        if (sourceOrigin !== input.expectedOrigin) {
+          return yield* Effect.fail(
+            new HostOperationError(
+              "PreviewAutomationExecutionError",
+              `This saved login can only be used on ${input.expectedOrigin}; the current page origin is ${sourceOrigin ?? "unknown"}.`,
+            ),
+          );
+        }
+        // A model-provided script that ran on this origin may have registered a
+        // service worker, which outlives the tab, the navigation and Chrome
+        // itself and can read a later fill from inside the page. Nothing here
+        // can undo that, so the origin is simply never filled again.
+        if (runtime.taintedOrigins.has(input.expectedOrigin)) {
+          return yield* Effect.fail(
+            new HostOperationError(
+              "PreviewAutomationExecutionError",
+              `A page script was run on ${input.expectedOrigin} in this browser, so saved logins are no longer filled there. Page state from that script can outlive the tab.`,
+            ),
+          );
+        }
+        // The credential goes into a tab this server just opened and navigated,
+        // never into the one the bot has been driving: a script installed by an
+        // earlier preview_evaluate lives in that document, and disabling later
+        // evaluate calls does not remove it.
+        const resolvedTarget = resolveBrowserUrl(sourceUrl);
+        const target = resolvedTarget.ok ? resolvedTarget.url : `${input.expectedOrigin}/`;
+        const tab = yield* createTab(input.threadId, target);
+        yield* navigateTab(tab, target, "load", FILL_NAVIGATE_TIMEOUT_MS);
         yield* setActive(tab);
         // Protect before the first field is touched: a driver timeout can occur
         // after inserting some or all of a value, and must not reopen model reads.
@@ -1072,7 +1232,26 @@ export const make = (options: PersonalBrowserOptions) =>
         tab.loginProtected = true;
         runtime.loginUsed = true;
         // Registered before the fill, so a partial fill still marks the origin.
-        runtime.credentialOrigins.add(input.expectedOrigin);
+        runtime.credentialOrigins.set(input.expectedOrigin, null);
+        // A protection that is only in memory would be gone after a restart
+        // while the profile stayed signed in, so the fill waits for the write.
+        yield* persistProtections.pipe(
+          Effect.mapError(
+            () =>
+              new HostOperationError(
+                "PreviewAutomationExecutionError",
+                "The browser protections for this login could not be recorded, so it was not filled.",
+              ),
+          ),
+        );
+        // The bot's own tabs on this origin are retired with the fill: they can
+        // hold script the bot installed, and closing them also routes its next
+        // tool call to the tab the server opened rather than the old one.
+        yield* retireTabsOnOrigin({
+          threadId: input.threadId,
+          origin: input.expectedOrigin,
+          except: tab,
+        });
         const fields = yield* attempt({}, () =>
           performFillLogin(
             tab.page,
