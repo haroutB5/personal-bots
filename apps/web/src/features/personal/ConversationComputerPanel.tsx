@@ -29,6 +29,7 @@ export function ConversationComputerPanel({
   manuallyVisible,
   expanded,
   onExpandedChange,
+  onBrowserClosed,
 }: {
   readonly environmentId: EnvironmentId | null;
   readonly botId: string;
@@ -36,12 +37,23 @@ export function ConversationComputerPanel({
   readonly manuallyVisible: boolean;
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
+  readonly onBrowserClosed: () => void;
 }): JSX.Element | null {
   const { feed, error, loading } = useComputerFeed(environmentId);
   const [fullScreen, setFullScreen] = useState(false);
   const fullScreenToggleRef = useRef<HTMLButtonElement | null>(null);
   const fullScreenRef = useRef<HTMLElement | null>(null);
   const activeForChat = computerIsActiveForChat(feed.status, { botId, threadId });
+
+  // The browser closing (Close button, close_browser tool, crash-teardown)
+  // retires the bar: a "Browser not running" strip is dead chrome. Transition-
+  // edged so opening the panel from the menu while already offline still works.
+  const browserOffline = feed.status?.state === "offline";
+  const wasOffline = useRef(browserOffline);
+  useEffect(() => {
+    if (browserOffline && !wasOffline.current && !activeForChat) onBrowserClosed();
+    wasOffline.current = browserOffline;
+  }, [browserOffline, activeForChat, onBrowserClosed]);
 
   useEffect(() => {
     if (!fullScreen) return;

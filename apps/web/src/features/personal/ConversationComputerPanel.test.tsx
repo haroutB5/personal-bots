@@ -65,6 +65,78 @@ describe("ConversationComputerPanel", () => {
     vi.clearAllMocks();
   });
 
+  it("retires the bar when the browser transitions to offline", () => {
+    const onBrowserClosed = vi.fn();
+    useComputerFeed.mockReturnValue({
+      feed: { status: status("thread-other"), events: [] },
+      error: null,
+      loading: false,
+    });
+    let renderer: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <ConversationComputerPanel
+          environmentId={null}
+          botId="bot-1"
+          threadId="thread-a"
+          manuallyVisible
+          expanded={false}
+          onExpandedChange={() => undefined}
+          onBrowserClosed={onBrowserClosed}
+        />,
+      );
+    });
+    expect(onBrowserClosed).not.toHaveBeenCalled();
+    useComputerFeed.mockReturnValue({
+      feed: {
+        status: { ...status("thread-other"), state: "offline", controller: { _tag: "None" } },
+        events: [],
+      },
+      error: null,
+      loading: false,
+    });
+    act(() => {
+      renderer!.update(
+        <ConversationComputerPanel
+          environmentId={null}
+          botId="bot-1"
+          threadId="thread-a"
+          manuallyVisible
+          expanded={false}
+          onExpandedChange={() => undefined}
+          onBrowserClosed={onBrowserClosed}
+        />,
+      );
+    });
+    expect(onBrowserClosed).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retire a bar opened while the browser is already offline", () => {
+    const onBrowserClosed = vi.fn();
+    useComputerFeed.mockReturnValue({
+      feed: {
+        status: { ...status("thread-other"), state: "offline", controller: { _tag: "None" } },
+        events: [],
+      },
+      error: null,
+      loading: false,
+    });
+    act(() => {
+      create(
+        <ConversationComputerPanel
+          environmentId={null}
+          botId="bot-1"
+          threadId="thread-a"
+          manuallyVisible
+          expanded={false}
+          onExpandedChange={() => undefined}
+          onBrowserClosed={onBrowserClosed}
+        />,
+      );
+    });
+    expect(onBrowserClosed).not.toHaveBeenCalled();
+  });
+
   it("appears collapsed for the exact chat holding the browser lease", () => {
     let renderer: ReactTestRenderer;
     act(() => {
@@ -76,6 +148,7 @@ describe("ConversationComputerPanel", () => {
           manuallyVisible={false}
           expanded={false}
           onExpandedChange={() => undefined}
+          onBrowserClosed={() => undefined}
         />,
       );
     });
@@ -102,6 +175,7 @@ describe("ConversationComputerPanel", () => {
           manuallyVisible={false}
           expanded={false}
           onExpandedChange={() => undefined}
+          onBrowserClosed={() => undefined}
         />,
       );
     });
@@ -120,6 +194,7 @@ describe("ConversationComputerPanel", () => {
           manuallyVisible
           expanded
           onExpandedChange={onExpandedChange}
+          onBrowserClosed={() => undefined}
         />,
       );
     });
@@ -141,6 +216,7 @@ describe("ConversationComputerPanel", () => {
           manuallyVisible
           expanded
           onExpandedChange={() => undefined}
+          onBrowserClosed={() => undefined}
         />,
       );
     });
@@ -180,6 +256,7 @@ describe("ConversationComputerPanel", () => {
           manuallyVisible
           expanded
           onExpandedChange={() => undefined}
+          onBrowserClosed={() => undefined}
         />,
       );
     });

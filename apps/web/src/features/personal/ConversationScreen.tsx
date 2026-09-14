@@ -513,6 +513,10 @@ export function ConversationScreen({
               if (expanded) setComputerPanelVisible(true);
               setComputerPanelExpanded(expanded);
             }}
+            onBrowserClosed={() => {
+              setComputerPanelVisible(false);
+              setComputerPanelExpanded(false);
+            }}
           />
           {!computerPanelExpanded ? (
             <ConversationRoutinesPanel environmentId={environmentId} botId={botId} />
