@@ -1005,7 +1005,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --error-foreground: var(--color-red-700);
   --tool-error-icon: var(--error);
   --error-surface: color-mix(in srgb, var(--error) 8%, transparent);
-  --destructive: var(--error);
+  /* Filled destructive buttons print white on this fill, so it has to clear
+     WCAG AA on its own: red-500 (#fb2c36) is 3.81:1, red-600 (#e7000b) is
+     4.77:1. `--error` stays red-500 for icons, borders and tinted surfaces. */
+  --destructive: var(--color-red-600);
   --border: var(--color-zinc-200);
   --input: var(--color-zinc-300);
   --ring: var(--primary);

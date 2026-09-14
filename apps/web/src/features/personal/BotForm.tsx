@@ -261,9 +261,11 @@ function BotForm({
   const onDelete = async () => {
     if (bot === null) return;
     setBusy(true);
-    const deleted = await deleteBot(bot);
+    const outcome = await deleteBot(bot);
     setBusy(false);
-    if (deleted) {
+    if (outcome.status === "cancelled") return;
+    setSubmitError(outcome.status === "failed" ? outcome.message : null);
+    if (outcome.status === "done") {
       await navigate({ to: "/bots" });
     }
   };

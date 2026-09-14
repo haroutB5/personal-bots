@@ -7,6 +7,7 @@ import {
   delegationConnectorPath,
   deriveDelegationLinks,
   RECENT_DELEGATION_WINDOW_MS,
+  type TeamDiagramPoint,
 } from "./teamDiagramModel";
 
 const OPTIONS = { width: 400, nodeSize: 64, gapX: 24, gapY: 80, perRow: 4 };
@@ -139,11 +140,101 @@ describe("deriveDelegationLinks", () => {
   });
 });
 
+type Segment = { readonly start: TeamDiagramPoint; readonly end: TeamDiagramPoint };
+
+/** Reads back the endpoints of an `M x y Q cx cy ex ey` path. */
+function endpointsOf(path: string): Segment {
+  const numbers = path.match(/-?[\d.]+/g)?.map(Number);
+  if (numbers?.length !== 6) throw new Error(`unexpected path: ${path}`);
+  const [startX, startY, , , endX, endY] = numbers as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  return { start: { x: startX, y: startY }, end: { x: endX, y: endY } };
+}
+
+const distanceBetween = (a: TeamDiagramPoint, b: TeamDiagramPoint) =>
+  Math.hypot(b.x - a.x, b.y - a.y);
+
+/** Apex of the quadratic, i.e. the point at t = 0.5. */
+function apexOf(path: string): TeamDiagramPoint {
+  const numbers = path.match(/-?[\d.]+/g)?.map(Number) as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  const [startX, startY, controlX, controlY, endX, endY] = numbers;
+  return {
+    x: 0.25 * startX + 0.5 * controlX + 0.25 * endX,
+    y: 0.25 * startY + 0.5 * controlY + 0.25 * endY,
+  };
+}
+
 describe("delegationConnectorPath", () => {
-  it("starts and ends outside node silhouettes and bends directionally", () => {
+  it("leaves both nodes radially and bows clear of the labels", () => {
     expect(delegationConnectorPath({ x: 100, y: 100 }, { x: 300, y: 100 }, 64)).toBe(
-      "M 136 100 Q 197 136 258 100",
+      "M 129.44 79.28 Q 200 29.6 265.66 75.82",
     );
     expect(delegationConnectorPath({ x: 100, y: 100 }, { x: 100, y: 100 }, 64)).toBe("");
+  });
+
+  it("stays visible between adjacent columns instead of hiding under the avatars", () => {
+    // The real phone geometry: TeamScreen lays out 64-unit nodes with gapX 32,
+    // so neighbours are 96 units apart, and each node's opaque `w-24` label
+    // column is exactly that wide — neighbouring columns tile with no seam, so
+    // anything drawn at or below `y - nodeSize / 2` is masked. The old straight
+    // edge-to-edge inset left an 18-unit stub, entirely inside that mask.
+    const layout = buildTeamLayout(["a", "b", "c"], {
+      width: 350,
+      nodeSize: 64,
+      gapX: 32,
+      gapY: 80,
+      perRow: 4,
+    });
+    const a = layout.bots.get("a")!;
+    const b = layout.bots.get("b")!;
+    expect(distanceBetween(a, b)).toBe(96);
+
+    for (const [from, to] of [
+      [a, b],
+      [b, a],
+    ] as const) {
+      const path = delegationConnectorPath(from, to, 64);
+      const { start, end } = endpointsOf(path);
+
+      // Visible run between the two nodes, not a stub.
+      expect(distanceBetween(start, end)).toBeGreaterThanOrEqual(40);
+      // Neither endpoint is swallowed by a node it is meant to connect.
+      for (const point of [start, end]) {
+        expect(distanceBetween(point, a)).toBeGreaterThanOrEqual(32);
+        expect(distanceBetween(point, b)).toBeGreaterThanOrEqual(32);
+      }
+      // The arc clears the label columns: its apex sits above the top edge of
+      // the node boxes, in the open band under the owner, either way round.
+      expect(apexOf(path).y).toBeLessThan(a.y - 32);
+    }
+  });
+
+  it("keeps endpoints one silhouette clear of both node centres at any spacing", () => {
+    for (const gap of [0, 16, 32, 64, 160]) {
+      const from = { x: 0, y: 0 };
+      const to = { x: 64 + gap, y: 0 };
+      const { start, end } = endpointsOf(delegationConnectorPath(from, to, 64));
+      // Outside the 32-unit silhouette, and never further out than the
+      // nominal clearance (36 at the tail, 42 at the arrow head).
+      expect(distanceBetween(start, from)).toBeGreaterThanOrEqual(32);
+      expect(distanceBetween(start, from)).toBeLessThanOrEqual(36.05);
+      expect(distanceBetween(end, to)).toBeGreaterThanOrEqual(32);
+      expect(distanceBetween(end, to)).toBeLessThanOrEqual(42.05);
+      // The arrow head still travels forwards, never backwards.
+      expect(end.x).toBeGreaterThan(start.x);
+    }
   });
 });

@@ -138,14 +138,38 @@ export function delegationConnectorPath(
 
   const unitX = dx / distance;
   const unitY = dy / distance;
-  const startInset = nodeSize / 2 + 4;
-  const endInset = nodeSize / 2 + 10;
-  const start = { x: from.x + unitX * startInset, y: from.y + unitY * startInset };
-  const end = { x: to.x - unitX * endInset, y: to.y - unitY * endInset };
-  const bend = Math.min(44, Math.max(24, distance * 0.18));
+  // Two things made this edge invisible on a phone. Adjacent columns are only
+  // `nodeSize + gapX` — 96 units — apart, so insetting along the straight
+  // centre line spent nodeSize + 14 of that span and left an 18-unit stub; and
+  // each node's label column is an opaque `w-24` box spanning `nodeSize + gapX`
+  // horizontally from `y - nodeSize / 2` down, so neighbouring boxes tile with
+  // no seam and hide anything drawn at or below the avatars.
+  //
+  // So: bow the edge *away from the labels* (toward the top of the diagram,
+  // into the clear band under the owner) and leave each node radially through
+  // the control point rather than along the centre line. The endpoints stay one
+  // silhouette clear of their own node while the visible span grows with the
+  // bow.
+  const bend = Math.max(nodeSize * 1.1, distance * 0.18);
+  const normalX = -unitY;
+  const normalY = unitX;
+  const orient = normalY > 0 ? -1 : 1;
   const control = {
-    x: (start.x + end.x) / 2 - unitY * bend,
-    y: (start.y + end.y) / 2 + unitX * bend,
+    x: (from.x + to.x) / 2 + normalX * bend * orient,
+    y: (from.y + to.y) / 2 + normalY * bend * orient,
+  };
+  // Both radii are `hypot(distance / 2, bend)`; the 0.6 cap keeps the two
+  // endpoints from crossing when nodes are large relative to their spacing.
+  const reach = Math.hypot(distance / 2, bend);
+  const startInset = Math.min(nodeSize / 2 + 4, reach * 0.6);
+  const endInset = Math.min(nodeSize / 2 + 10, reach * 0.6);
+  const start = {
+    x: from.x + ((control.x - from.x) / reach) * startInset,
+    y: from.y + ((control.y - from.y) / reach) * startInset,
+  };
+  const end = {
+    x: to.x + ((control.x - to.x) / reach) * endInset,
+    y: to.y + ((control.y - to.y) / reach) * endInset,
   };
 
   return `M ${pathNumber(start.x)} ${pathNumber(start.y)} Q ${pathNumber(control.x)} ${pathNumber(control.y)} ${pathNumber(end.x)} ${pathNumber(end.y)}`;

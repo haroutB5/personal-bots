@@ -38,6 +38,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatar } from "./BotAvatar";
 import { resolveBotProvider } from "./botSummaries";
+import { commandFailureMessage } from "./commandFeedback";
 import {
   buildConversationItems,
   CONVERSATION_STATE_LABEL,
@@ -284,9 +285,15 @@ export function ConversationScreen({
   const onArchive = async () => {
     if (environmentId === null) return;
     const result = await archiveThread({ environmentId, input: { threadId, archived: true } });
-    if (result._tag === "Success") {
-      await navigate({ to: "/bots/$botId", params: { botId }, replace: true });
+    const failure = commandFailureMessage(result, "Couldn't archive this chat. Try again.");
+    if (failure !== null) {
+      // The menu has already closed, so the transcript's alert is the only
+      // place left to say the chat is still here.
+      setActionError(failure);
+      return;
     }
+    setActionError(null);
+    await navigate({ to: "/bots/$botId", params: { botId }, replace: true });
   };
 
   const { send: sendWrapup, sending: wrapupSending } = useWrapupChat(
@@ -301,10 +308,16 @@ export function ConversationScreen({
 
   const deleteChat = useDeleteChat(environmentId);
   const onDeleteChat = async () => {
-    const deleted = await deleteChat(threadId);
-    if (deleted) {
-      await navigate({ to: "/bots/$botId", params: { botId }, replace: true });
+    const outcome = await deleteChat(threadId);
+    if (outcome.status === "failed") {
+      // Confirm has closed the dialog and the chat is still here: without this
+      // the only feedback is a console warning, so the user taps Confirm again.
+      setActionError(outcome.message);
+      return;
     }
+    if (outcome.status === "cancelled") return;
+    setActionError(null);
+    await navigate({ to: "/bots/$botId", params: { botId }, replace: true });
   };
 
   const loadEarlier =

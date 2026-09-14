@@ -12,6 +12,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { BotAvatar } from "./BotAvatar";
 import { PersonalPageHeader } from "./BotForm";
 import { providerLine, resolveBotProvider } from "./botSummaries";
+import { commandFailureMessage } from "./commandFeedback";
 import { setDeveloperView } from "./personalMode";
 import {
   personalProfileSet,
@@ -38,6 +39,9 @@ function DisplayNameForm({
   const [name, setName] = useState(initialName);
   const [saved, setSaved] = useState(initialName);
   const [busy, setBusy] = useState(false);
+  // A save that never lands used to leave nothing behind but a console
+  // warning: the field kept the typed name, so it looked saved.
+  const [error, setError] = useState<string | null>(null);
   const dirty = name.trim() !== saved.trim();
 
   const onSubmit = async (event: FormEvent) => {
@@ -46,38 +50,49 @@ function DisplayNameForm({
     setBusy(true);
     const result = await setProfile({ environmentId, input: { displayName: name } });
     setBusy(false);
-    if (result._tag === "Success") {
+    const failure = commandFailureMessage(result, "Couldn't save your name. Try again.");
+    setError(failure);
+    if (failure === null && result._tag === "Success") {
       setSaved(result.value.displayName);
       setName(result.value.displayName);
     }
   };
 
   return (
-    <form
-      onSubmit={(event) => void onSubmit(event)}
-      className={`${CARD} flex items-center gap-2 p-2`}
-    >
-      <label htmlFor="personal-display-name" className="sr-only">
-        Your name
-      </label>
-      <input
-        id="personal-display-name"
-        value={name}
-        maxLength={80}
-        onChange={(event) => setName(event.target.value)}
-        placeholder="Your name"
-        autoComplete="given-name"
-        className="h-11 min-w-0 flex-1 rounded-[var(--personal-radius-button)] bg-transparent px-2 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-      />
-      <button
-        type="submit"
-        disabled={!dirty || busy}
-        aria-busy={busy}
-        className="h-11 shrink-0 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] disabled:opacity-40"
+    <>
+      <form
+        onSubmit={(event) => void onSubmit(event)}
+        className={`${CARD} flex items-center gap-2 p-2`}
       >
-        Save
-      </button>
-    </form>
+        <label htmlFor="personal-display-name" className="sr-only">
+          Your name
+        </label>
+        <input
+          id="personal-display-name"
+          value={name}
+          maxLength={80}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Your name"
+          autoComplete="given-name"
+          aria-invalid={error !== null}
+          aria-describedby={error !== null ? "personal-display-name-error" : undefined}
+          className="h-11 min-w-0 flex-1 rounded-[var(--personal-radius-button)] bg-transparent px-2 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+        />
+        <button
+          type="submit"
+          disabled={!dirty || busy}
+          aria-busy={busy}
+          className="h-11 shrink-0 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] disabled:opacity-40"
+        >
+          Save
+        </button>
+      </form>
+      {error !== null ? (
+        <p id="personal-display-name-error" role="alert" className="mt-1.5 text-sm text-[#b3261e]">
+          {error}
+        </p>
+      ) : null}
+    </>
   );
 }
 

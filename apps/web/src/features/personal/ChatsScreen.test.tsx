@@ -13,6 +13,10 @@ const state = vi.hoisted(() => ({
   listData: null as { bots: unknown[]; threads: unknown[]; personalProjectId: null } | null,
   refresh: vi.fn(),
   tasksCalls: [] as Array<string | null>,
+  deleteOutcome: { status: "done" } as
+    | { readonly status: "done" }
+    | { readonly status: "cancelled" }
+    | { readonly status: "failed"; readonly message: string },
   rafQueue: [] as Array<FrameRequestCallback>,
   timeouts: new Map<number, () => void>(),
   nextTimeoutId: 1,
@@ -84,7 +88,7 @@ vi.mock("./usePersonalAutomation", () => ({
   },
 }));
 vi.mock("./useRefreshBotsForTaskThreads", () => ({ useRefreshBotsForTaskThreads: () => {} }));
-vi.mock("./useDeleteBot", () => ({ useDeleteBot: () => async () => {} }));
+vi.mock("./useDeleteBot", () => ({ useDeleteBot: () => async () => state.deleteOutcome }));
 vi.mock("./startBotChat", () => ({
   useStartBotChat: () => ({ start: vi.fn(), starting: false }),
 }));
@@ -145,6 +149,7 @@ afterEach(async () => {
   renderer = undefined;
   state.environmentId = "env-1";
   state.listData = null;
+  state.deleteOutcome = { status: "done" };
   state.tasksCalls.length = 0;
   state.rafQueue.length = 0;
   state.timeouts.clear();
@@ -215,5 +220,42 @@ describe("ChatsScreen cold start", () => {
     expect(json).toContain("Live Ada");
     expect(json).not.toContain("Cached Ada");
     expect(json).not.toContain("Loading your bots");
+  });
+});
+
+describe("ChatsScreen delete failures", () => {
+  async function renderWithOneBot() {
+    stubWindow();
+    state.listData = { bots: [bot("bot-live", "Live Ada")], threads: [], personalProjectId: null };
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+  }
+
+  const swipeDelete = () => renderer!.root.findByProps({ label: "Delete Live Ada" }).props.onDelete;
+
+  it("puts a refused delete on screen instead of only in the console", async () => {
+    await renderWithOneBot();
+    state.deleteOutcome = { status: "failed", message: "Laptop unreachable" };
+
+    await act(async () => {
+      await swipeDelete()();
+    });
+
+    // The swipe row just slides shut, so this alert is the only feedback that
+    // the bot is still there.
+    const alert = renderer!.root.findByProps({ role: "alert" });
+    expect(JSON.stringify(alert.props.children)).toContain("Laptop unreachable");
+  });
+
+  it("says nothing when the delete succeeded or was cancelled", async () => {
+    await renderWithOneBot();
+    for (const outcome of [{ status: "done" } as const, { status: "cancelled" } as const]) {
+      state.deleteOutcome = outcome;
+      await act(async () => {
+        await swipeDelete()();
+      });
+      expect(renderer!.root.findAllByProps({ role: "alert" })).toEqual([]);
+    }
   });
 });

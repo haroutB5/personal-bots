@@ -1,12 +1,16 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { buildChatsSnapshot, readChatsSnapshot, writeChatsSnapshot } from "./chatsSnapshot";
 import { deleteChatConfirmMessage, useDeleteChat } from "./useDeleteChat";
 
-const command = vi.hoisted(() => ({ result: { _tag: "Success" } as { _tag: string } }));
+const command = vi.hoisted(() => ({
+  result: { _tag: "Success" } as { readonly _tag: string; readonly cause?: unknown },
+  confirmed: true,
+}));
 
-vi.mock("~/confirmDialog", () => ({ requestConfirmDialog: async () => true }));
+vi.mock("~/confirmDialog", () => ({ requestConfirmDialog: async () => command.confirmed }));
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => async () => command.result,
 }));
@@ -62,6 +66,7 @@ function seedSnapshot(): void {
 afterEach(() => {
   vi.unstubAllGlobals();
   command.result = { _tag: "Success" };
+  command.confirmed = true;
 });
 
 describe("deleteChatConfirmMessage", () => {
@@ -80,20 +85,50 @@ describe("useDeleteChat", () => {
     // component: it returns the deleter.
     const deleteChat = useDeleteChat("env-1" as EnvironmentId);
 
-    expect(await deleteChat("thread-a" as ThreadId)).toBe(true);
+    expect(await deleteChat("thread-a" as ThreadId)).toEqual({ status: "done" });
 
     // Deletion happens from screens the Chats list is not mounted behind, so
     // without this the deleted chat keeps painting on every offline launch.
     expect(readChatsSnapshot("env-1")?.rows.map((row) => row.threadId)).toEqual(["thread-b"]);
   });
 
-  it("keeps the snapshot when the delete itself failed", async () => {
+  it("reports the server's message instead of failing silently", async () => {
     stubWindow();
     seedSnapshot();
-    command.result = { _tag: "Failure" };
+    command.result = { _tag: "Failure", cause: Cause.fail(new Error("Laptop unreachable")) };
     const deleteChat = useDeleteChat("env-1" as EnvironmentId);
 
-    expect(await deleteChat("thread-a" as ThreadId)).toBe(false);
+    // A bare `false` was indistinguishable from "you cancelled": the dialog
+    // closed, the chat stayed, and the only trace was a console warning.
+    expect(await deleteChat("thread-a" as ThreadId)).toEqual({
+      status: "failed",
+      message: "Laptop unreachable",
+    });
+    expect(readChatsSnapshot("env-1")?.rows.map((row) => row.threadId)).toEqual([
+      "thread-a",
+      "thread-b",
+    ]);
+  });
+
+  it("falls back to its own copy when the failure carries no message", async () => {
+    stubWindow();
+    seedSnapshot();
+    command.result = { _tag: "Failure", cause: Cause.fail("nope") };
+
+    expect(await useDeleteChat("env-1" as EnvironmentId)("thread-a" as ThreadId)).toEqual({
+      status: "failed",
+      message: "Couldn't delete this chat. Try again.",
+    });
+  });
+
+  it("stays quiet when the confirmation was declined", async () => {
+    stubWindow();
+    seedSnapshot();
+    command.confirmed = false;
+
+    expect(await useDeleteChat("env-1" as EnvironmentId)("thread-a" as ThreadId)).toEqual({
+      status: "cancelled",
+    });
     expect(readChatsSnapshot("env-1")?.rows.map((row) => row.threadId)).toEqual([
       "thread-a",
       "thread-b",

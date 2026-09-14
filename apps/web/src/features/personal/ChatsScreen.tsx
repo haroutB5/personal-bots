@@ -156,6 +156,14 @@ export function ChatsScreen(): JSX.Element {
   const now = useMinuteClock();
   const deleteBot = useDeleteBot(environmentId);
   const [query, setQuery] = useState("");
+  // Swipe-Delete has no screen of its own to report back to — the row just
+  // slides shut on a refusal — so the list hosts the message.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const onDeleteBot = async (bot: Parameters<typeof deleteBot>[0]) => {
+    const outcome = await deleteBot(bot);
+    if (outcome.status === "cancelled") return;
+    setDeleteError(outcome.status === "failed" ? outcome.message : null);
+  };
 
   const shells = useMemo(
     () => allShells.filter((shell) => shell.environmentId === environmentId),
@@ -362,6 +370,15 @@ export function ChatsScreen(): JSX.Element {
         </div>
       ) : null}
 
+      {deleteError !== null ? (
+        <p
+          role="alert"
+          className="mt-4 rounded-[var(--personal-radius-card)] border border-[#f1c9c5] bg-[#fdf3f2] px-3.5 py-2.5 text-sm break-words text-[#8c1d18]"
+        >
+          {deleteError}
+        </p>
+      ) : null}
+
       {loaded && summaries.length === 0 ? (
         <div className="mt-10 flex flex-col items-center gap-3 text-center">
           <p className="text-lg font-semibold text-[var(--personal-text)]">No bots yet</p>
@@ -401,7 +418,7 @@ export function ChatsScreen(): JSX.Element {
                 <li key={summary.bot.botId}>
                   <SwipeToDelete
                     label={`Delete ${summary.bot.name}`}
-                    onDelete={() => deleteBot(summary.bot)}
+                    onDelete={() => onDeleteBot(summary.bot)}
                   >
                     <BotRow
                       environmentId={environmentId!}
