@@ -33,6 +33,7 @@ class FakePage implements BrowserPage {
   stoppedScreencasts = 0;
   gotoGate: Promise<void> | null = null;
   onGoto: ((url: string) => void) | null = null;
+  locatorCount = 0;
 
   url() {
     return this.currentUrl;
@@ -57,7 +58,7 @@ class FakePage implements BrowserPage {
   }
   async clickLocator() {}
   async countLocator() {
-    return 0;
+    return this.locatorCount;
   }
   async typeText() {}
   async scrollLocator() {}
@@ -277,6 +278,82 @@ describe("PersonalBrowser", () => {
         expect(error.tag).toBe("PreviewAutomationExecutionError");
       }
       expect(fake.state.page.gotos).toEqual([]);
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  it.effect("keeps credential-bearing tabs unreadable to the model after filling", () => {
+    const fake = makeFakeDriver();
+    fake.state.page.locatorCount = 1;
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      const filled = yield* browser.fillLogin({
+        threadId,
+        expectedOrigin: "https://example.com",
+        username: "person@example.com",
+        password: "password-value",
+      });
+      expect(filled).toEqual(["username", "password"]);
+
+      for (const blocked of [
+        request("snapshot"),
+        request("evaluate", { expression: "document.querySelector('input').value" }),
+        request("type", { locator: "input", text: "copy it", clear: true }),
+        request("click", { locator: "input[value^='p']" }),
+        request("scroll", { locator: "input[value^='p']", deltaY: 1 }),
+        request("waitFor", { locator: "input[value^='p']" }),
+      ]) {
+        const error = yield* browser
+          .handleAutomationRequest(blocked)
+          .pipe(Effect.asVoid, Effect.flip);
+        expect(error.message).toMatch(
+          /contains a saved login|after a saved login|Page scripts are disabled/,
+        );
+      }
+
+      // Non-querying submission paths remain possible without exposing page state.
+      yield* browser.handleAutomationRequest(request("click", { x: 1, y: 1 }));
+      yield* browser.handleAutomationRequest(request("press", { key: "Enter" }));
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  it.effect(
+    "blocks agent clipboard shortcuts that could move a password into a readable tab",
+    () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const error = yield* browser
+          .handleAutomationRequest(request("press", { key: "Insert", modifiers: ["Shift"] }))
+          .pipe(Effect.asVoid, Effect.flip);
+        expect(error.message).toContain("Clipboard shortcuts are disabled");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    },
+  );
+
+  it.effect("keeps the tab protected when a credential fill fails", () => {
+    const fake = makeFakeDriver();
+    fake.state.page.locatorCount = 1;
+    fake.state.page.typeText = async () => {
+      throw new Error("late fill failure");
+    };
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      yield* browser
+        .fillLogin({
+          threadId,
+          expectedOrigin: "https://example.com",
+          username: "person@example.com",
+          password: "password-value",
+        })
+        .pipe(Effect.asVoid, Effect.flip);
+
+      const error = yield* browser
+        .handleAutomationRequest(request("snapshot"))
+        .pipe(Effect.asVoid, Effect.flip);
+      expect(error.message).toContain("contains a saved login");
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 

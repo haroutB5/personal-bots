@@ -163,6 +163,8 @@ interface TabEntry {
   readonly page: BrowserPage;
   title: string;
   readonly timeline: PreviewAutomationActionEvent[];
+  /** Once credentials enter this tab, model-readable operations stay disabled for its lifetime. */
+  loginProtected: boolean;
 }
 
 const RECENT_ACTIVITY_LIMIT = 30;
@@ -303,6 +305,7 @@ export const make = (options: PersonalBrowserOptions) =>
       closing: false,
       tabs: new Map<string, TabEntry>(),
       activeTabId: null as string | null,
+      loginUsed: false,
     };
     const pageTitles = new WeakMap<BrowserPage, string>();
     const viewers = new Map<number, ViewerHandle>();
@@ -657,7 +660,14 @@ export const make = (options: PersonalBrowserOptions) =>
               previewManager.close({ threadId, tabId: snapshot.tabId }).pipe(Effect.ignore),
             ),
           ));
-        const tab: TabEntry = { tabId: snapshot.tabId, threadId, page, title: "", timeline: [] };
+        const tab: TabEntry = {
+          tabId: snapshot.tabId,
+          threadId,
+          page,
+          title: "",
+          timeline: [],
+          loginProtected: false,
+        };
         runtime.tabs.set(tab.tabId, tab);
         page.onClose(() => runFork(onTabPageClosed(tab)));
         return tab;
@@ -742,6 +752,21 @@ export const make = (options: PersonalBrowserOptions) =>
         }
         const tab = yield* requireTab(request);
         yield* setActive(tab);
+        if (runtime.loginUsed && request.operation === "evaluate") {
+          return yield* rejectUrl(
+            "Page scripts are disabled after a saved login is used, so browser or page state cannot reveal it.",
+          );
+        }
+        if (
+          tab.loginProtected &&
+          (request.operation === "snapshot" ||
+            request.operation === "type" ||
+            request.operation === "waitFor")
+        ) {
+          return yield* rejectUrl(
+            "This tab contains a saved login, so page reads, queries, and model-provided typing are disabled. Submit the form, then open a new tab to continue.",
+          );
+        }
         switch (request.operation) {
           case "snapshot": {
             const snapshot = yield* attempt({}, () => captureSnapshot(tab.page, tab.timeline));
@@ -750,6 +775,14 @@ export const make = (options: PersonalBrowserOptions) =>
           }
           case "click": {
             const input = request.input as PreviewAutomationClickInput;
+            if (
+              tab.loginProtected &&
+              (input.locator !== undefined || input.selector !== undefined)
+            ) {
+              return yield* rejectUrl(
+                "Locator clicks are disabled after a saved login is filled. Use a button's coordinates captured before use_login, or press Enter.",
+              );
+            }
             yield* attempt(input, () =>
               performClick(tab.page, input, input.timeoutMs ?? timeoutMs),
             );
@@ -762,11 +795,40 @@ export const make = (options: PersonalBrowserOptions) =>
           }
           case "press": {
             const input = request.input as PreviewAutomationPressInput;
+            const modifiers = new Set(input.modifiers ?? []);
+            const clipboardShortcut =
+              (/^(c|v|x)$/i.test(input.key) &&
+                (modifiers.has("Control") || modifiers.has("Meta"))) ||
+              (input.key === "Insert" && (modifiers.has("Control") || modifiers.has("Shift"))) ||
+              (input.key === "Delete" && modifiers.has("Shift"));
+            if (clipboardShortcut) {
+              return yield* rejectUrl(
+                "Clipboard shortcuts are disabled in the shared bot browser to protect saved logins.",
+              );
+            }
+            if (tab.loginProtected && (input.modifiers?.length ?? 0) > 0 && input.key !== "Tab") {
+              return yield* rejectUrl(
+                "Only ordinary Tab or Enter keys are allowed after a saved login is filled.",
+              );
+            }
+            if (tab.loginProtected && input.key !== "Tab" && input.key !== "Enter") {
+              return yield* rejectUrl(
+                "Only Tab or Enter is allowed after a saved login is filled.",
+              );
+            }
             yield* attempt({}, () => performPress(tab.page, input));
             return { tab, result: { tabId: tab.tabId } };
           }
           case "scroll": {
             const input = request.input as PreviewAutomationScrollInput;
+            if (
+              tab.loginProtected &&
+              (input.locator !== undefined || input.selector !== undefined)
+            ) {
+              return yield* rejectUrl(
+                "Locator queries are disabled after a saved login is filled. Scroll the viewport instead.",
+              );
+            }
             yield* attempt(input, () => performScroll(tab.page, input, timeoutMs));
             return { tab, result: { tabId: tab.tabId } };
           }
@@ -952,6 +1014,11 @@ export const make = (options: PersonalBrowserOptions) =>
           );
         }
         yield* setActive(tab);
+        // Protect before the first field is touched: a driver timeout can occur
+        // after inserting some or all of a value, and must not reopen model reads.
+        // The bit intentionally survives navigation for the tab's lifetime.
+        tab.loginProtected = true;
+        runtime.loginUsed = true;
         const fields = yield* attempt({}, () =>
           performFillLogin(
             tab.page,

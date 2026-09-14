@@ -88,6 +88,8 @@ export const make = Effect.gen(function* () {
   const fail = (message: string, cause?: unknown) =>
     new PersonalLoginsError({ message, ...(cause === undefined ? {} : { cause }) });
 
+  const wipe = (bytes: Uint8Array) => Effect.sync(() => bytes.fill(0));
+
   const db = <A>(
     operation: string,
     effect: Effect.Effect<A, PersonalLoginRepository.PersonalLoginRepositoryError>,
@@ -154,9 +156,10 @@ export const make = Effect.gen(function* () {
       updatedAt: now,
     };
     const key = personalLoginStoreKey(stored.secretRef);
-    yield* store
-      .create(key, password)
-      .pipe(Effect.mapError((cause) => fail("Could not store the password.", cause)));
+    yield* store.create(key, password).pipe(
+      Effect.mapError((cause) => fail("Could not store the password.", cause)),
+      Effect.ensuring(wipe(password)),
+    );
     yield* db("create", repository.create(stored)).pipe(
       Effect.tapError(() => store.remove(key).pipe(Effect.ignore)),
     );
@@ -177,9 +180,10 @@ export const make = Effect.gen(function* () {
       botIds: [...new Set(input.botIds)],
       updatedAt: yield* DateTime.now,
     };
-    yield* store
-      .set(personalLoginStoreKey(previous.secretRef), password)
-      .pipe(Effect.mapError((cause) => fail("Could not store the password.", cause)));
+    yield* store.set(personalLoginStoreKey(previous.secretRef), password).pipe(
+      Effect.mapError((cause) => fail("Could not store the password.", cause)),
+      Effect.ensuring(wipe(password)),
+    );
     const written = yield* db("update", repository.update(next));
     if (!written) return yield* fail("Saved login changed while it was being updated.");
     return present(next);
@@ -223,7 +227,8 @@ export const make = Effect.gen(function* () {
       .get(personalLoginStoreKey(login.secretRef))
       .pipe(Effect.mapError((cause) => fail("Could not read the saved password.", cause)));
     if (Option.isNone(secret)) return yield* fail("The saved password is unavailable.");
-    const password = new TextDecoder().decode(secret.value);
+    const passwordBytes = secret.value;
+    const password = new TextDecoder().decode(passwordBytes);
     const filled = yield* browser
       .fillLogin({
         threadId: input.threadId,
@@ -231,7 +236,10 @@ export const make = Effect.gen(function* () {
         username: login.username,
         password,
       })
-      .pipe(Effect.mapError((cause) => fail(cause.message, cause)));
+      .pipe(
+        Effect.mapError((cause) => fail(cause.message, cause)),
+        Effect.ensuring(wipe(passwordBytes)),
+      );
     return { success: true as const, filled };
   });
   const use: PersonalLoginService["Service"]["use"] = (input) =>
