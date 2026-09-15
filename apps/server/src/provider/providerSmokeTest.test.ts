@@ -4,7 +4,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildClaudeSmokeTestQueryOptions,
   buildCodexSmokeTestArgs,
+  buildOpenCodeSmokeTestArgs,
   claudeSmokeTestFailure,
+  openCodeSmokeTestFailure,
+  SMOKE_TEST_PROMPT,
 } from "./providerSmokeTest.ts";
 
 const result = (fields: Record<string, unknown>) =>
@@ -85,5 +88,60 @@ describe("buildCodexSmokeTestArgs", () => {
     expect(args.join(" ")).toContain("-s read-only");
     expect(args.join(" ")).toContain("--model gpt-5.5");
     expect(args.at(-1)).toBe("-");
+  });
+});
+
+describe("OpenCode smoke test", () => {
+  it("runs one JSON-formatted turn on the bot's model", () => {
+    expect(
+      buildOpenCodeSmokeTestArgs({ model: "opencode/muse-spark-1.3-contributor-free" }),
+    ).toEqual([
+      "run",
+      "-m",
+      "opencode/muse-spark-1.3-contributor-free",
+      "--format",
+      "json",
+      SMOKE_TEST_PROMPT,
+    ]);
+  });
+
+  // Shapes captured from opencode 1.18.29 `run --format json` on 2026-09-15.
+  const ok = [
+    '{"type":"step_start","timestamp":1,"sessionID":"ses_1","part":{"type":"step-start"}}',
+    '{"type":"text","timestamp":2,"sessionID":"ses_1","part":{"type":"text","text":"ready"}}',
+    '{"type":"step_finish","timestamp":3,"sessionID":"ses_1","part":{"type":"step-finish"}}',
+  ].join("\n");
+  const bogusModel =
+    '{"type":"error","timestamp":1789487237708,"sessionID":"ses_2","error":{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_8868fe38"}}}';
+
+  it("passes on a non-empty reply", () => {
+    expect(openCodeSmokeTestFailure({ stdout: ok, stderr: "", exitCode: 0 })).toBeNull();
+  });
+
+  it("fails with OpenCode's own error text, even when it exits non-zero", () => {
+    expect(openCodeSmokeTestFailure({ stdout: bogusModel, stderr: "noise", exitCode: 1 })).toBe(
+      "Unexpected server error. Check server logs for details.",
+    );
+    expect(
+      openCodeSmokeTestFailure({
+        stdout: '{"type":"error","error":{"name":"ProviderAuthError"}}',
+        stderr: "",
+        exitCode: 1,
+      }),
+    ).toBe("ProviderAuthError");
+  });
+
+  it("falls back to stderr on a crash and flags an empty reply", () => {
+    expect(openCodeSmokeTestFailure({ stdout: "", stderr: "boom\n", exitCode: 3 })).toBe("boom");
+    expect(openCodeSmokeTestFailure({ stdout: "", stderr: "", exitCode: 3 })).toBe(
+      "OpenCode exited with code 3.",
+    );
+    expect(
+      openCodeSmokeTestFailure({
+        stdout: '{"type":"step_finish","part":{}}\nnot json',
+        stderr: "",
+        exitCode: 0,
+      }),
+    ).toBe("OpenCode replied with an empty message.");
   });
 });

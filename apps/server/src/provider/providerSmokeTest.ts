@@ -23,6 +23,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -39,6 +40,7 @@ import {
   PERSONAL_BOT_CODEX_APP_SERVER_ARGS,
   personalBotCodexSkillArgs,
 } from "./Layers/codexLaunchArgs.ts";
+import { personalBotOpenCodeEnvironment } from "./opencodeBotIsolation.ts";
 
 export const SMOKE_TEST_PROMPT = "Reply with exactly one word: ready. Do not use any tools.";
 const SMOKE_TEST_TIMEOUT = Duration.minutes(3);
@@ -276,4 +278,137 @@ export const runCodexSmokeTest = (input: {
       }),
     ),
     Effect.withSpan("runCodexSmokeTest"),
+  );
+
+/** `opencode run` argv for the smoke turn; the bot isolation and a deny-all tool rule ride in the env. */
+export function buildOpenCodeSmokeTestArgs(input: {
+  readonly model: string;
+}): ReadonlyArray<string> {
+  return ["run", "-m", input.model, "--format", "json", SMOKE_TEST_PROMPT];
+}
+
+const decodeJsonLine = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+/** The text of a `{"type":"error","error":{"name","data":{"message"}}}` line. */
+function openCodeErrorText(error: unknown): string {
+  if (!isRecord(error)) return "OpenCode reported an error.";
+  const data = isRecord(error.data) ? error.data : undefined;
+  const message = typeof data?.message === "string" ? data.message.trim() : "";
+  if (message.length > 0) return message;
+  return typeof error.name === "string" && error.name.trim().length > 0
+    ? error.name.trim()
+    : "OpenCode reported an error.";
+}
+
+/**
+ * Null when `opencode run --format json` produced a non-empty reply; otherwise
+ * OpenCode's own error text (its NDJSON `error` event), the stderr tail, or
+ * why the reply was unusable.
+ */
+export function openCodeSmokeTestFailure(input: {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number;
+}): string | null {
+  let reply = "";
+  let error: string | undefined;
+  for (const line of input.stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    const event = Option.getOrUndefined(decodeJsonLine(trimmed));
+    if (!isRecord(event)) continue;
+    if (event.type === "error") error ??= openCodeErrorText(event.error);
+    if (event.type === "text" && isRecord(event.part) && typeof event.part.text === "string") {
+      reply += event.part.text;
+    }
+  }
+  if (error !== undefined) return error;
+  if (input.exitCode !== 0) {
+    const tail = lastLines(input.stderr) || lastLines(input.stdout);
+    return tail.length > 0 ? tail : `OpenCode exited with code ${input.exitCode}.`;
+  }
+  return reply.trim().length > 0 ? null : "OpenCode replied with an empty message.";
+}
+
+export const runOpenCodeSmokeTest = (input: {
+  readonly instanceId: string;
+  readonly binaryPath: string;
+  readonly environment: NodeJS.ProcessEnv;
+  /** The bots' `XDG_CONFIG_HOME` (`ensurePersonalBotOpenCodeHome`). */
+  readonly configHome: string;
+  readonly model: string;
+}): Effect.Effect<
+  void,
+  ProviderDriverError,
+  FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.gen(function* () {
+    const fail = (detail: string, cause?: unknown) =>
+      new ProviderDriverError({
+        driver: "opencode",
+        instanceId: input.instanceId,
+        detail,
+        ...(cause === undefined ? {} : { cause }),
+      });
+    const fileSystem = yield* FileSystem.FileSystem;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const cwd = yield* fileSystem
+      .makeTempDirectoryScoped({ prefix: "t3code-smoke-opencode-" })
+      .pipe(Effect.mapError((cause) => fail("Could not create a scratch directory.", cause)));
+    const environment = personalBotOpenCodeEnvironment({
+      base: input.environment,
+      configHome: input.configHome,
+      model: input.model,
+      denyTools: true,
+    });
+    const spawnCommand = yield* resolveSpawnCommand(
+      input.binaryPath || "opencode",
+      buildOpenCodeSmokeTestArgs({ model: input.model }),
+      { env: environment },
+    );
+    const child = yield* spawner
+      .spawn(
+        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          env: environment,
+          cwd,
+          shell: spawnCommand.shell,
+          // `opencode run` appends piped stdin to the message; give it none.
+          stdin: "ignore",
+        }),
+      )
+      .pipe(Effect.mapError((cause) => fail(`OpenCode could not start: ${cause.message}`, cause)));
+    const [stdout, stderr, exitCode] = yield* Effect.all(
+      [
+        collectUint8StreamText({ stream: child.stdout, maxBytes: OUTPUT_MAX_BYTES }),
+        collectUint8StreamText({ stream: child.stderr, maxBytes: OUTPUT_MAX_BYTES }),
+        child.exitCode,
+      ],
+      { concurrency: "unbounded" },
+    ).pipe(Effect.mapError((cause) => fail("OpenCode output could not be read.", cause)));
+    const failure = openCodeSmokeTestFailure({
+      stdout: stdout.text,
+      stderr: stderr.text,
+      exitCode: Number(exitCode),
+    });
+    if (failure !== null) return yield* fail(failure);
+  }).pipe(
+    Effect.scoped,
+    Effect.timeoutOption(SMOKE_TEST_TIMEOUT),
+    Effect.flatMap(
+      Option.match({
+        onSome: () => Effect.void,
+        onNone: () =>
+          Effect.fail(
+            new ProviderDriverError({
+              driver: "opencode",
+              instanceId: input.instanceId,
+              detail: `OpenCode did not reply within ${SMOKE_TEST_TIMEOUT_LABEL}.`,
+            }),
+          ),
+      }),
+    ),
+    Effect.withSpan("runOpenCodeSmokeTest"),
   );

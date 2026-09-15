@@ -43,6 +43,8 @@ import {
 } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { ensurePersonalBotOpenCodeHome } from "../opencodeBotIsolation.ts";
+import { runOpenCodeSmokeTest } from "../providerSmokeTest.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
@@ -130,10 +132,23 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         ),
       );
 
+      // Personal bots run under this app-owned config home. Without it their
+      // sessions refuse to start; every other thread is unaffected.
+      const personalBotConfigHome = yield* ensurePersonalBotOpenCodeHome(
+        serverConfig.stateDir,
+      ).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning(
+            "Could not prepare the OpenCode bots config home; OpenCode bots will not start.",
+            { cause },
+          ).pipe(Effect.as(undefined)),
+        ),
+      );
       const adapter = yield* makeOpenCodeAdapter(effectiveConfig, {
         instanceId,
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+        ...(personalBotConfigHome !== undefined ? { personalBotConfigHome } : {}),
       });
       const serverOwner = yield* OpenCodeServerOwner.make({
         binaryPath: effectiveConfig.binaryPath,
@@ -234,6 +249,28 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         ),
       );
 
+      // Same binary, environment and bot isolation as a personal-bot session.
+      const smokeTest: NonNullable<ProviderInstance["smokeTest"]> = ({ model }) =>
+        personalBotConfigHome === undefined
+          ? Effect.fail(
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: "OpenCode could not prepare the bots' private settings folder.",
+              }),
+            )
+          : runOpenCodeSmokeTest({
+              instanceId,
+              binaryPath: effectiveConfig.binaryPath,
+              environment: processEnv,
+              configHome: personalBotConfigHome,
+              model,
+            }).pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, pathService),
+            );
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -242,6 +279,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         accentColor,
         enabled,
         snapshot,
+        smokeTest,
         snapshotForCwd: (cwd) =>
           !effectiveConfig.enabled
             ? snapshot.getSnapshot

@@ -3,7 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { pathToFileURL } from "node:url";
+import * as NodeURL from "node:url";
 
 import {
   ensurePersonalBotOpenCodeHome,
@@ -93,7 +93,7 @@ it.layer(NodeServices.layer)("opencodeBotIsolation", (it) => {
       const pluginPath = path.join(home, "opencode", "plugin", "t3-restore-owner-env.js");
       const module = (yield* Effect.promise(
         // The temp dir is unique per run, so the module cache never serves a stale copy.
-        () => import(pathToFileURL(pluginPath).href),
+        () => import(NodeURL.pathToFileURL(pluginPath).href),
       )) as { T3RestoreOwnerEnv: () => Promise<Record<string, ShellEnvHook>> };
       const hooks = yield* Effect.promise(() => module.T3RestoreOwnerEnv());
       const hook = hooks["shell.env"];

@@ -74,6 +74,7 @@ export function providerProductName(
 ): string {
   if (provider.driver === "claudeAgent") return "Claude Code";
   if (provider.driver === "codex") return "Codex";
+  if (provider.driver === "opencode") return "OpenCode";
   return provider.displayName ?? provider.instanceId;
 }
 

@@ -16,9 +16,23 @@ import * as Stream from "effect/Stream";
 
 import {
   makeWith,
+  providerProductName,
   smokeCheckMetaKey,
   type PersonalProviderUpdatesDeps,
 } from "./PersonalProviderUpdates.ts";
+
+it("names each bot runtime by its product name", () => {
+  const name = (driver: string, displayName?: string) =>
+    providerProductName({
+      driver: ProviderDriverKind.make(driver),
+      instanceId: ProviderInstanceId.make(driver),
+      ...(displayName ? { displayName } : {}),
+    });
+  assert.strictEqual(name("claudeAgent", "Claude"), "Claude Code");
+  assert.strictEqual(name("codex"), "Codex");
+  assert.strictEqual(name("opencode"), "OpenCode");
+  assert.strictEqual(name("grok", "Grok"), "Grok");
+});
 
 const CLAUDE = ProviderInstanceId.make("claudeAgent");
 const BOT_THREAD = ThreadId.make("thread-bot");
