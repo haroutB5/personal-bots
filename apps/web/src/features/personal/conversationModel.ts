@@ -317,6 +317,11 @@ export function buildConversationItems(
 
   for (const entry of entries) {
     if (entry.kind === "message" && entry.message.role === "system") continue;
+    // Checkpoints are developer plumbing (undo snapshots of a git workspace);
+    // a bot chat never shows their steps, failed or not.
+    if (entry.kind === "work" && entry.entry.sourceActivityKind?.startsWith("checkpoint.")) {
+      continue;
+    }
     pushDividerIfNeeded(entry.createdAt);
     if (entry.kind === "work") {
       if (openWork === null) {

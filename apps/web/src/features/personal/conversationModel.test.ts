@@ -297,6 +297,29 @@ const work = (id: string, createdAt: string) =>
   }) as unknown as TimelineEntry;
 
 describe("buildConversationItems", () => {
+  it("never shows checkpoint steps in a bot chat", () => {
+    const checkpointFailure = {
+      id: "cp",
+      kind: "work",
+      createdAt: "2026-09-13T20:38:05.000Z",
+      entry: {
+        id: "cp",
+        createdAt: "2026-09-13T20:38:05.000Z",
+        label: "VCS process timed out in GitVcsDriver.isInsideWorkTree",
+        tone: "error",
+        sourceActivityKind: "checkpoint.capture.failed",
+      },
+    } as unknown as TimelineEntry;
+    const items = buildConversationItems([
+      message("u1", "user", "2026-09-13T20:38:00.000Z"),
+      checkpointFailure,
+      work("w1", "2026-09-13T20:38:06.000Z"),
+    ]);
+    const workItems = items.filter((item) => item.kind === "work");
+    expect(workItems).toHaveLength(1);
+    expect(workItems[0]).toMatchObject({ entries: [expect.objectContaining({ id: "w1" })] });
+  });
+
   it("folds consecutive work into one group and skips system messages", () => {
     const items = buildConversationItems([
       message("u1", "user", "2026-09-13T20:38:00.000Z"),

@@ -76,7 +76,7 @@ export const ToolDetails = memo(function ToolDetails({
               />
               <span className="min-w-0 flex-1">
                 <span className="block break-words text-[var(--personal-text)]/80">{label}</span>
-                {entry.detail ? (
+                {entry.detail && entry.detail.trim() !== label.trim() ? (
                   <span className="mt-0.5 block line-clamp-3 break-words text-[13px] text-[var(--personal-text-secondary)]">
                     {entry.detail}
                   </span>
