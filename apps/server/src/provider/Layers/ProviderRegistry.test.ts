@@ -1079,6 +1079,88 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             ),
           ),
         );
+
+        it.effect("seeds a restarted provider with its cached usage, same account only", () =>
+          Effect.gen(function* () {
+            const config = yield* ServerConfig.ServerConfig;
+            const filePath = yield* resolveProviderStatusCachePath({
+              cacheDir: config.providerStatusCacheDir,
+              instanceId: cachedProvider.instanceId,
+            });
+            const usageLimits = {
+              checkedAt: "2026-09-04T18:53:00.000Z",
+              windows: [{ id: "primary", kind: "session", label: "Session", usedPercent: 60 }],
+            } as const;
+            const account = { groupKey: "codex:home:/home/dev/.codex" };
+
+            for (const [cachedAccount, expectedSeeds] of [
+              [account, [usageLimits]],
+              [{ groupKey: "codex:home:/home/other/.codex" }, []],
+            ] as const) {
+              yield* writeProviderStatusCache({
+                filePath,
+                provider: { ...cachedProvider, continuation: cachedAccount, usageLimits },
+              });
+              const seeds: Array<ServerProvider["usageLimits"]> = [];
+              const instance = {
+                instanceId: cachedProvider.instanceId,
+                driverKind: cachedProvider.driver,
+                continuationIdentity: {
+                  driverKind: cachedProvider.driver,
+                  continuationKey: account.groupKey,
+                },
+                displayName: undefined,
+                enabled: true,
+                snapshot: {
+                  resolveMaintenance: () =>
+                    Effect.succeed(
+                      makeManualOnlyProviderMaintenanceCapabilities({
+                        provider: cachedProvider.driver,
+                        packageName: null,
+                      }),
+                    ),
+                  getSnapshot: Effect.succeed({ ...pendingProvider, continuation: account }),
+                  refresh: Effect.succeed({ ...pendingProvider, continuation: account }),
+                  streamChanges: Stream.empty,
+                  applyUsageLimits: () => Effect.void,
+                  seedUsageLimits: (limits) =>
+                    Effect.sync(() => {
+                      seeds.push(limits);
+                    }),
+                },
+                adapter: {} as ProviderInstance["adapter"],
+                textGeneration: {} as ProviderInstance["textGeneration"],
+              } satisfies ProviderInstance;
+              const instanceRegistryLayer = Layer.succeed(
+                ProviderInstanceRegistry.ProviderInstanceRegistry,
+                {
+                  getInstance: (id) =>
+                    Effect.succeed(id === instance.instanceId ? instance : undefined),
+                  listInstances: Effect.succeed([instance]),
+                  listUnavailable: Effect.succeed([]),
+                  streamChanges: Stream.empty,
+                  subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+                },
+              );
+
+              yield* ProviderRegistry.ProviderRegistry.pipe(
+                Effect.provide(ProviderRegistryLive.pipe(Layer.provide(instanceRegistryLayer))),
+                Effect.scoped,
+              );
+              assert.deepStrictEqual<ReadonlyArray<unknown>>(
+                seeds,
+                expectedSeeds,
+                cachedAccount.groupKey,
+              );
+            }
+          }).pipe(
+            Effect.provide(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-usage-seed-cache-",
+              }).pipe(Layer.provideMerge(NodeServices.layer)),
+            ),
+          ),
+        );
       });
 
       describe("Antigravity model inventories", () => {

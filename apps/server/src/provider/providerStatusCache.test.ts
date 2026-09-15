@@ -12,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
 
 import {
+  cachedUsageLimitsToSeed,
   hydrateCachedProvider,
   isCachedProviderCorrelated,
   readProviderStatusCache,
@@ -296,5 +297,68 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       }),
       fallbackCodex,
     );
+  });
+
+  it("seeds only a good usage reading cached for the same account", () => {
+    const limits = {
+      checkedAt: "2026-04-10T12:00:00.000Z",
+      windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 60 }],
+    } as const;
+    const account = { groupKey: "claude:home:/home/dev" };
+    const fallback = makeProvider(CLAUDE_AGENT_DRIVER, { continuation: account });
+    const cached = makeProvider(CLAUDE_AGENT_DRIVER, {
+      continuation: account,
+      usageLimits: limits,
+    });
+
+    assert.strictEqual(
+      cachedUsageLimitsToSeed({ cachedProvider: cached, fallbackProvider: fallback }),
+      limits,
+    );
+    // Hydration itself never carries usage; the provider is seeded instead.
+    assert.isUndefined(
+      hydrateCachedProvider({ cachedProvider: cached, fallbackProvider: fallback }).usageLimits,
+    );
+
+    const notSeeded: ReadonlyArray<readonly [string, ServerProvider, ServerProvider]> = [
+      [
+        "another account",
+        { ...cached, continuation: { groupKey: "claude:home:/home/other" } },
+        fallback,
+      ],
+      [
+        "a failed reading",
+        {
+          ...cached,
+          usageLimits: {
+            checkedAt: limits.checkedAt,
+            windows: [],
+            unavailable: { reason: "probeFailed" },
+          },
+        },
+        fallback,
+      ],
+      [
+        "an unsupported account",
+        {
+          ...cached,
+          usageLimits: {
+            checkedAt: limits.checkedAt,
+            windows: [],
+            unavailable: { reason: "unsupported" },
+          },
+        },
+        fallback,
+      ],
+      ["a provider disabled since", cached, { ...fallback, enabled: false }],
+      [
+        "another instance",
+        { ...cached, instanceId: ProviderInstanceId.make("claudeAgent_work") },
+        fallback,
+      ],
+    ];
+    for (const [label, cachedProvider, fallbackProvider] of notSeeded) {
+      assert.isUndefined(cachedUsageLimitsToSeed({ cachedProvider, fallbackProvider }), label);
+    }
   });
 });

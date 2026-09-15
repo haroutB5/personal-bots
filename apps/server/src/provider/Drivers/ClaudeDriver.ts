@@ -190,7 +190,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             Effect.flatMap((manifest) =>
               checkClaudeProviderStatus(
                 effectiveConfig,
-                () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
+                // A probe that could not read usage (or failed outright) is not
+                // kept for the TTL, or the early retry after a failed read
+                // would be served the same miss.
+                () =>
+                  Cache.get(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
+                    Effect.tap((capabilities) =>
+                      capabilities?.usage === undefined
+                        ? Cache.invalidate(capabilitiesProbeCache, capabilitiesCacheKey)
+                        : Effect.void,
+                    ),
+                  ),
                 processEnv,
                 cwd,
                 resolveClaudeModelCatalog(manifest),
