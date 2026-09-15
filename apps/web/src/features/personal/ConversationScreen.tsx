@@ -64,6 +64,7 @@ import {
 import { MessageList, type PendingOutgoingMessage } from "./MessageList";
 import { diagnosticsEnabled, DiagnosticsOverlay } from "./DiagnosticsOverlay";
 import { useKeyboardInset } from "./useKeyboardInset";
+import { useReportViewingThread } from "./useReportViewingThread";
 import { PersonalComposer } from "./PersonalComposer";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { useStartBotChat } from "./startBotChat";
@@ -170,6 +171,9 @@ export function ConversationScreen({
   const [computerPanelExpanded, setComputerPanelExpanded] = useState(false);
   const laptopOffline = useLaptopOffline();
   const connectionPhase = usePersonalConnectionPhase();
+  // Reading this chat right now means its own notifications stay off the
+  // phone; every other chat still notifies.
+  useReportViewingThread(environmentId, threadId, connectionPhase === "connected");
   const { feed: computerFeed } = useComputerFeed(environmentId);
 
   // Delegation state comes from the live task feed (personalTasks.subscribe).
