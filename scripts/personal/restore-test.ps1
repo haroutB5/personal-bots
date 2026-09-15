@@ -9,15 +9,27 @@ T3 Connect or touch the real environment. It is stopped by its captured PID
 after the check, and only its own temp directory (%TEMP%\pb-restore-test-*) is
 deleted. The run log is kept in %USERPROFILE%\.personal-bots\logs.
 
+It doubles as the pre-deploy migration rehearsal: serve a NEW build against a
+copy of the newest backup (never the live database), then assert the migrator
+reached -ExpectMigration and that -ExpectColumn columns exist in the copy.
+-Release serves a staged release; -BinPath serves any built bin.mjs (for
+example a checkout's apps\server\dist\bin.mjs, so nothing is staged).
+
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\restore-test.ps1
+
+.EXAMPLE
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\restore-test.ps1 -Release <sha> -ExpectMigration 67 -ExpectColumn projection_threads.title_state_json
 #>
 [CmdletBinding()]
 param(
     [string]$Backup,
     [string]$Release,
+    [string]$BinPath,
     [string]$Node,
-    [int]$Seconds = 20
+    [int]$Seconds = 30,
+    [int]$ExpectMigration = 0,
+    [string[]]$ExpectColumn = @()
 )
 
 . (Join-Path $PSScriptRoot 'common.ps1')
@@ -37,7 +49,12 @@ if (-not (Test-Path -LiteralPath (Join-Path $backupDir 'state.sqlite') -PathType
 }
 
 # Not $release: that is the [string]$Release parameter (names are case-insensitive).
-$releaseInfo = Get-PbRelease -Paths $paths -Release $Release
+if ($BinPath) {
+    if (-not (Test-Path -LiteralPath $BinPath -PathType Leaf)) { throw "No bin.mjs at $BinPath." }
+    $releaseInfo = [pscustomobject]@{ Name = $BinPath; Bin = (Resolve-Path -LiteralPath $BinPath).Path }
+} else {
+    $releaseInfo = Get-PbRelease -Paths $paths -Release $Release
+}
 $nodeExe = Resolve-NodeExe -Node $Node
 
 $tempBase = [System.IO.Path]::GetTempPath()
@@ -57,6 +74,9 @@ Write-Host "Restoring $backupDir into $tempRoot and serving on 127.0.0.1:$port .
 $proc = $null
 $ok = $false
 $descriptor = $null
+$migration = $null
+$migrationOk = $true
+$migrationProblems = @()
 try {
     $proc = Start-PbServeProcess -NodeExe $nodeExe -BinPath $releaseInfo.Bin -BaseDir $tempRoot `
         -LogFile $logFile -WorkingDirectory $tempRoot -Port $port -HostName '127.0.0.1'
@@ -79,6 +99,32 @@ try {
             Write-Warning "Throwaway server pid $($proc.Id) did not exit; temp root left at $tempRoot."
         }
     }
+    # Migration rehearsal: read the copy the throwaway server just migrated.
+    if ($ok -and ($ExpectMigration -gt 0 -or $ExpectColumn.Count -gt 0)) {
+        $env:PB_CHECK_DB = Join-Path $stateDir 'state.sqlite'
+        $env:PB_CHECK_COLUMNS = ($ExpectColumn -join ',')
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $checkRaw = (& $nodeExe --disable-warning=ExperimentalWarning (Join-Path $PSScriptRoot 'migration-check.cjs')) -join "`n"
+        $checkCode = $LASTEXITCODE
+        $ErrorActionPreference = $previous
+        if ($checkCode -ne 0) {
+            $migrationOk = $false
+            $migrationProblems += "migration-check.cjs exited $checkCode"
+        } else {
+            $migration = $checkRaw | ConvertFrom-Json
+            if ($ExpectMigration -gt 0 -and [int]$migration.maxMigration -ne $ExpectMigration) {
+                $migrationOk = $false
+                $migrationProblems += "max migration is $($migration.maxMigration), expected $ExpectMigration"
+            }
+            foreach ($column in $ExpectColumn) {
+                if (-not $migration.columns.$column) {
+                    $migrationOk = $false
+                    $migrationProblems += "column $column is missing"
+                }
+            }
+        }
+    }
     New-Item -ItemType Directory -Force -Path $paths.LogsDir | Out-Null
     $keptLog = Join-Path $paths.LogsDir ('restore-test-{0}.log' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
     if (Test-Path -LiteralPath $logFile) { Copy-Item -LiteralPath $logFile -Destination $keptLog -Force }
@@ -94,9 +140,18 @@ try {
     }
 }
 
+if ($ok -and -not $migrationOk) {
+    Write-Host ("Restore test FAILED: the server answered, but the migrated copy is wrong: {0}. Log: {1}" -f `
+            ($migrationProblems -join '; '), $keptLog)
+    exit 1
+}
 if ($ok) {
     Write-Host ("Restore test PASSED: {0} served environment '{1}' (t3 {2}) on port {3}." -f `
             (Split-Path -Leaf $backupDir), $descriptor.label, $descriptor.serverVersion, $port)
+    if ($migration) {
+        $columnText = @($ExpectColumn | ForEach-Object { "$_=$($migration.columns.$_)" }) -join ', '
+        Write-Host ("  Migration rehearsal: max migration {0}{1}." -f $migration.maxMigration, $(if ($columnText) { "; $columnText" } else { '' }))
+    }
     exit 0
 }
 Write-Host "Restore test FAILED: no 200 from /.well-known/t3/environment within $Seconds s. Log: $keptLog"

@@ -13,6 +13,11 @@ versioned release under %USERPROFILE%\.personal-bots\releases\<sha>.
    releases\<sha>\node_modules (a junction) to the checkout's
    apps\server\node_modules for the few native packages the bundle keeps
    external (node-pty, msgpackr-extract, ...).
+   -CopyExternals copies that external closure into releases\<sha>\node_modules
+   instead (copy-externals.mjs, ~20-60 MB), so the release survives a later
+   `vp i` or the building checkout going away. The weekly upstream sync always
+   uses it: auto-rollback is only trustworthy when each release carries its own
+   externals.
 4. Writes releases\<sha>\VERSION and makes it the active release
    (releases\current.txt) unless -NoActivate is given.
 
@@ -26,7 +31,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\build.ps1
 param(
     [string]$Node,
     [switch]$SkipBuild,
-    [switch]$NoActivate
+    [switch]$NoActivate,
+    [switch]$CopyExternals
 )
 
 . (Join-Path $PSScriptRoot 'common.ps1')
@@ -67,7 +73,8 @@ if (-not $SkipBuild) {
 }
 
 $dist = Join-Path $PbRepoRoot 'apps\server\dist'
-foreach ($required in @('bin.mjs', 'client\index.html')) {
+# claude-history-worker.mjs: ClaudeAdapter's rollback/fork path spawns it.
+foreach ($required in @('bin.mjs', 'client\index.html', 'claude-history-worker.mjs')) {
     if (-not (Test-Path -LiteralPath (Join-Path $dist $required) -PathType Leaf)) {
         throw "Build output is missing apps\server\dist\$required."
     }
@@ -91,21 +98,57 @@ Copy-Item -LiteralPath $dist -Destination $releaseDist -Recurse
 
 $releaseModules = Join-Path $releaseDir 'node_modules'
 $serverModules = Join-Path $PbRepoRoot 'apps\server\node_modules'
-if (-not (Test-Path -LiteralPath $releaseModules)) {
-    New-Item -ItemType Junction -Path $releaseModules -Target $serverModules | Out-Null
+$modulesItem = Get-Item -LiteralPath $releaseModules -Force -ErrorAction SilentlyContinue
+$modulesIsLink = $modulesItem -and (($modulesItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
+if ($CopyExternals) {
+    if ($modulesIsLink) {
+        # Removes the junction itself; never recurse through it into the checkout.
+        [System.IO.Directory]::Delete($releaseModules)
+    } elseif ($modulesItem) {
+        # A real directory from an earlier -CopyExternals build of this commit.
+        Remove-Item -LiteralPath $releaseModules -Recurse -Force
+    }
+    Write-Host 'Copying runtime externals into the release...'
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $copyOutput = & $nodeExe --disable-warning=ExperimentalWarning (Join-Path $PSScriptRoot 'copy-externals.mjs') `
+        (Join-Path $PbRepoRoot 'apps\server') $releaseModules
+    $copyCode = $LASTEXITCODE
+    $ErrorActionPreference = $previous
+    $copyOutput | ForEach-Object { Write-Host "  $_" }
+    if ($copyCode -ne 0) { throw "copy-externals.mjs failed (exit $copyCode)." }
+    $externalsMode = 'copied'
+} else {
+    if (-not $modulesItem) {
+        New-Item -ItemType Junction -Path $releaseModules -Target $serverModules | Out-Null
+        $externalsMode = 'junction'
+    } elseif ($modulesIsLink) {
+        $externalsMode = 'junction'
+    } else {
+        $externalsMode = 'copied'
+    }
 }
 
 # Smoke check: the externals resolve from the release, and the CLI loads.
 $previous = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 $env:PB_RELEASE_BIN = Join-Path $releaseDist 'bin.mjs'
-& $nodeExe -e "require('node:module').createRequire(process.env.PB_RELEASE_BIN).resolve('node-pty')" | Out-Null
+& $nodeExe -e "const r=require('node:module').createRequire(process.env.PB_RELEASE_BIN);r.resolve('node-pty');r.resolve('playwright-core')" | Out-Null
 $resolveCode = $LASTEXITCODE
 $cliVersion = [string](& $nodeExe (Join-Path $releaseDist 'bin.mjs') --version)
 $versionCode = $LASTEXITCODE
 $nodeVersion = [string](& $nodeExe --version)
 $ErrorActionPreference = $previous
-if ($resolveCode -ne 0) { throw "node-pty does not resolve from $releaseDir. Check the node_modules junction." }
+if ($resolveCode -ne 0) { throw "node-pty or playwright-core does not resolve from $releaseDir. Check releases\$releaseName\node_modules." }
+
+# The upstream T3 Code commit this build is synced through (merge-base with
+# upstream/main), when the checkout has the upstream remote.
+$previous = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+$upstreamBase = [string](& git -C $PbRepoRoot merge-base HEAD upstream/main 2>$null)
+$ErrorActionPreference = $previous
+$upstreamBase = $upstreamBase.Trim()
+if ($upstreamBase.Length -gt 12) { $upstreamBase = $upstreamBase.Substring(0, 12) }
 if ($versionCode -ne 0) { throw "The staged CLI failed to start (t3 --version exited $versionCode)." }
 
 $builtAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
@@ -121,6 +164,8 @@ $version = @(
     "builtAt=$builtAt",
     "cli=$($cliVersion.Trim())",
     "node=$($nodeVersion.Trim())",
+    "upstream=$upstreamBase",
+    "externals=$externalsMode",
     "repo=$PbRepoRoot"
 )
 Set-Content -LiteralPath (Join-Path $releaseDir 'VERSION') -Value $version -Encoding ASCII
