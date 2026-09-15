@@ -174,6 +174,12 @@ export const PersonalFilesListResult = Schema.Struct({
 });
 export type PersonalFilesListResult = typeof PersonalFilesListResult.Type;
 
+/** Permanently deletes exactly one attachment listed by the personal Files tab. */
+export const PersonalFileDeleteInput = Schema.Struct({
+  fileId: TrimmedNonEmptyString,
+});
+export type PersonalFileDeleteInput = typeof PersonalFileDeleteInput.Type;
+
 export class PersonalBotsError extends Schema.TaggedError<PersonalBotsError>()(
   "PersonalBotsError",
   {

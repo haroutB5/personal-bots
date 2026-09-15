@@ -43,6 +43,12 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("requires operate scope to permanently delete a personal file", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.personalFilesDelete)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("requires write access to import agent session history", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.agentSessionsScan)).toBe(
       AuthOrchestrationReadScope,

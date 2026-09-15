@@ -2436,6 +2436,14 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.personalFilesDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalFilesDelete,
+            personalBots.deleteFile(input).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.personalTasksList]: (input) =>
           observeRpcEffect(WS_METHODS.personalTasksList, personalTasks.list(input), {
             "rpc.aggregate": "server",

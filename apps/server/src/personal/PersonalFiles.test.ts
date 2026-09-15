@@ -258,3 +258,39 @@ it.effect("the attachment route rejects traversal, unknown and forged ids", () =
     expect(yield* resolveAsset(`${traversalPayload}.${realSignature}`, name)).toBeNull();
   }).pipe(Effect.provide(testLayer)),
 );
+
+it.effect(
+  "permanently deletes one personal file and treats only a known missing file as idempotent",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* PersonalBotService.PersonalBotService;
+      const bot = yield* service.create(botInput);
+      const threadId = ThreadId.make("thread-delete-file");
+      yield* service.createThread({ botId: bot.botId, threadId });
+
+      const fileId = `thread-delete-file-${uuid(20)}-txt`;
+      const filePath = yield* writeAttachment(`${fileId}.txt`);
+      yield* insertMessage({
+        messageId: "message-delete-file",
+        threadId,
+        createdAt: "2026-09-14T10:00:00.000Z",
+        attachments: [
+          { type: "file", id: fileId, name: "notes.txt", mimeType: "text/plain", sizeBytes: 5 },
+        ],
+      });
+
+      expect((yield* service.listFiles()).map((file) => file.fileId)).toEqual([fileId]);
+      yield* service.deleteFile({ fileId });
+      expect(yield* FileSystem.FileSystem.pipe(Effect.flatMap((fs) => fs.exists(filePath)))).toBe(
+        false,
+      );
+      expect(yield* service.listFiles()).toEqual([]);
+
+      // The message reference remains, so a transport retry is safe.
+      yield* service.deleteFile({ fileId });
+
+      const unknownId = `thread-delete-file-${uuid(21)}-txt`;
+      const error = yield* Effect.flip(service.deleteFile({ fileId: unknownId }));
+      expect(error.message).toBe(`Personal file '${unknownId}' was not found.`);
+    }).pipe(Effect.provide(testLayer)),
+);

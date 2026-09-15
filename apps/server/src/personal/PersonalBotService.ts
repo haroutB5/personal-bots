@@ -146,6 +146,10 @@ export class PersonalBotService extends Context.Service<
     readonly seedDefaultsIfNeeded: Effect.Effect<ReadonlyArray<PersonalBot>, PersonalBotsError>;
     /** Attachments from live bots' threads that still exist on disk, newest first. */
     readonly listFiles: () => Effect.Effect<ReadonlyArray<PersonalFileRecord>, PersonalBotsError>;
+    /** Permanently removes one attachment owned by a live personal-bot thread. */
+    readonly deleteFile: (input: {
+      readonly fileId: string;
+    }) => Effect.Effect<void, PersonalBotsError>;
   }
 >()("t3/personal/PersonalBotService") {}
 
@@ -556,6 +560,38 @@ export const make = Effect.gen(function* () {
       return files as ReadonlyArray<PersonalFileRecord>;
     });
 
+  const deleteFile: PersonalBotService["Service"]["deleteFile"] = (input) =>
+    Effect.gen(function* () {
+      const rows = yield* repository
+        .listThreadAttachments()
+        .pipe(Effect.mapError(repositoryError("files")));
+      const owned = rows.some((row) => {
+        const threadSegment = toSafeThreadAttachmentSegment(row.threadId);
+        return row.attachments.some(
+          (attachment) =>
+            (attachment.type === "image" || attachment.type === "file") &&
+            attachment.id === input.fileId &&
+            threadSegment !== null &&
+            parseThreadSegmentFromAttachmentId(attachment.id) === threadSegment,
+        );
+      });
+      if (!owned) {
+        return yield* notFound(`Personal file '${input.fileId}' was not found.`);
+      }
+
+      const attachmentPath = resolveAttachmentPathById({
+        attachmentsDir: config.attachmentsDir,
+        attachmentId: input.fileId,
+      });
+      // The surviving message reference is the idempotency record. A retry
+      // after the blob was removed is still successful, while an arbitrary id
+      // was rejected by the ownership check above.
+      if (attachmentPath === null) return;
+      yield* fs
+        .remove(attachmentPath, { force: true })
+        .pipe(Effect.mapError(toPersonalBotsError("Personal file deletion failed.")));
+    });
+
   return {
     list,
     create,
@@ -568,6 +604,7 @@ export const make = Effect.gen(function* () {
     setProfile,
     seedDefaultsIfNeeded,
     listFiles,
+    deleteFile,
   } satisfies PersonalBotService["Service"];
 });
 
