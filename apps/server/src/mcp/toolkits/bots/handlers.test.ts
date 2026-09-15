@@ -35,7 +35,7 @@ import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskServic
 import * as ProviderRegistry from "../../../provider/Services/ProviderRegistry.ts";
 import { HostOperationError } from "../../../personal/browser/pageOperations.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { BotsToolkitHandlersLive, DELEGATE_NOTE } from "./handlers.ts";
+import { BotsToolkitHandlersLive, DELEGATE_NOTE, shortenBrowserHelpReason } from "./handlers.ts";
 import { BotsToolkit } from "./tools.ts";
 
 const CALLER_THREAD = ThreadId.make("thread-assistant");
@@ -442,6 +442,37 @@ describe("bots toolkit handlers", () => {
       }),
     ),
   );
+
+  // Live 2026-09-15: a bot the egress guard had just paused wrote a long reason,
+  // got "Expected a value with a length of at most 160" and told the user the
+  // error did not say why. The call goes through the tool's own schema here.
+  it.effect("request_browser_help accepts a long reason and stores it cut to 160", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const reason = `${"word ".repeat(80).trim()}x`;
+        expect(reason).toHaveLength(400);
+
+        const result = yield* call("request_browser_help", { reason });
+
+        expect(result.requested).toBe(true);
+        const stored = harness.browserHelpRequests[0]?.reason ?? "";
+        expect(Array.from(stored)).toHaveLength(160);
+        expect(stored.endsWith("word…")).toBe(true);
+        expect(reason.startsWith(stored.slice(0, -1))).toBe(true);
+      }),
+    ),
+  );
+
+  it("shortens a help reason to one line without splitting a character", () => {
+    expect(shortenBrowserHelpReason("CAPTCHA on amazon.co.uk")).toBe("CAPTCHA on amazon.co.uk");
+    expect(shortenBrowserHelpReason("Paused:\n  send  this\tthere ")).toBe(
+      "Paused: send this there",
+    );
+    const emoji = shortenBrowserHelpReason("🔒".repeat(200));
+    expect(Array.from(emoji)).toHaveLength(160);
+    expect(emoji).toBe(`${"🔒".repeat(159)}…`);
+  });
 
   // Audit #6: the handler's own read cannot be the authorization. A takeover
   // that lands after it must still leave the browser open.

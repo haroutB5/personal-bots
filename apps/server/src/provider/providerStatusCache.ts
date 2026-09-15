@@ -99,6 +99,36 @@ export const hydrateCachedProvider = (input: {
 };
 
 /**
+ * The usage reading a cached snapshot may hand to its provider on boot, or
+ * `undefined`. Hydration drops usage because the fallback merge replaces it
+ * anyway; the registry seeds the provider itself instead, so the reading
+ * survives the first probe if that probe fails.
+ *
+ * Same identity and enabled checks as hydration, plus the same account: a
+ * reading cached under another `continuation.groupKey` (another Claude HOME
+ * or Codex home) describes somebody else's limits. Failed and unsupported
+ * readings are not carried; the first probe decides those.
+ */
+export const cachedUsageLimitsToSeed = (input: {
+  readonly cachedProvider: ServerProvider;
+  readonly fallbackProvider: ServerProvider;
+}): ServerProvider["usageLimits"] => {
+  const limits = input.cachedProvider.usageLimits;
+  if (
+    limits === undefined ||
+    limits.unavailable !== undefined ||
+    limits.windows.length === 0 ||
+    !isCachedProviderCorrelated(input) ||
+    !input.fallbackProvider.enabled ||
+    !input.cachedProvider.enabled ||
+    input.cachedProvider.continuation?.groupKey !== input.fallbackProvider.continuation?.groupKey
+  ) {
+    return undefined;
+  }
+  return limits;
+};
+
+/**
  * Resolve the on-disk cache path for a provider instance snapshot.
  *
  * File naming: `<cacheDir>/<instanceId>.json`. For the default instance of

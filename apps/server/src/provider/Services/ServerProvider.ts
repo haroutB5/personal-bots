@@ -1,4 +1,8 @@
-import type { ProviderUsageLimitsUpdate, ServerProvider } from "@t3tools/contracts";
+import type {
+  ProviderUsageLimitsUpdate,
+  ServerProvider,
+  ServerProviderUsageLimits,
+} from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
@@ -23,4 +27,11 @@ export interface ServerProviderShape {
   readonly applyUsageLimits: (
     update: ProviderUsageLimitsUpdate & { readonly checkedAt: string },
   ) => Effect.Effect<void>;
+  /**
+   * Offer the last good usage reading persisted before a restart. Taken only
+   * while the provider has no reading of its own or its last probe failed,
+   * and published with its original `checkedAt`. Optional because only
+   * managed providers keep usage; the registry skips providers without it.
+   */
+  readonly seedUsageLimits?: (limits: ServerProviderUsageLimits) => Effect.Effect<void>;
 }

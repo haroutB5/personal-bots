@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./providerUsageLimits.ts";
+import {
+  applyUsageLimitsUpdate,
+  resolveUsageLimitsAfterProbe,
+  seedUsageLimits,
+} from "./providerUsageLimits.ts";
 
 const checkedAt = "2026-09-03T12:00:00.000Z";
 const session = {
@@ -85,5 +89,28 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(resolveUsageLimitsAfterProbe({ published, probed: failed })).toBe(published);
     expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
     expect(resolveUsageLimitsAfterProbe({ published: undefined, probed: failed })).toBe(failed);
+  });
+});
+
+describe("seedUsageLimits", () => {
+  const seed = { checkedAt: "2026-09-03T11:53:00.000Z", windows: [session, weekly] };
+  const failed = { checkedAt, windows: [], unavailable: { reason: "probeFailed" as const } };
+  const unsupported = { checkedAt, windows: [], unavailable: { reason: "unsupported" as const } };
+
+  it("fills an empty slot or a failed probe with the seed, its own checkedAt intact", () => {
+    expect(seedUsageLimits({ published: undefined, seed })).toBe(seed);
+    expect(seedUsageLimits({ published: failed, seed })).toBe(seed);
+    // After that it is simply the last good reading.
+    expect(resolveUsageLimitsAfterProbe({ published: seed, probed: failed })).toBe(seed);
+  });
+
+  it("never displaces a reading the provider made itself", () => {
+    expect(seedUsageLimits({ published, seed })).toBe(published);
+    expect(seedUsageLimits({ published: unsupported, seed })).toBe(unsupported);
+  });
+
+  it("ignores a seed with nothing to show", () => {
+    expect(seedUsageLimits({ published: undefined, seed: failed })).toBeUndefined();
+    expect(seedUsageLimits({ published: failed, seed: { checkedAt, windows: [] } })).toBe(failed);
   });
 });

@@ -132,3 +132,25 @@ export function resolveUsageLimitsAfterProbe(input: {
   }
   return probed;
 }
+
+/**
+ * Offer a provider the last good reading from before a restart. It keeps its
+ * own `checkedAt`, so the UI says how old it is. It only fills a gap: a
+ * provider with no reading yet, or whose last probe failed, takes it; one
+ * that already read its usage (or learned the account has none) keeps its
+ * own. After that `resolveUsageLimitsAfterProbe` treats it like any other
+ * good reading.
+ */
+export function seedUsageLimits(input: {
+  readonly published: ServerProviderUsageLimits | undefined;
+  readonly seed: ServerProviderUsageLimits;
+}): ServerProviderUsageLimits | undefined {
+  const { published, seed } = input;
+  if (seed.unavailable !== undefined || seed.windows.length === 0) {
+    return published;
+  }
+  if (published === undefined || published.unavailable?.reason === "probeFailed") {
+    return seed;
+  }
+  return published;
+}

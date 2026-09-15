@@ -3,6 +3,7 @@ import {
   type ModelCapabilities,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -170,6 +171,33 @@ function apiProviderAuthMetadata(
 // account info. The previous 8s budget expired mid-init, so the probe returned
 // `undefined` and left the provider unverified and unselectable in the picker.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
+
+// `get_usage` is a network read the CLI makes for us, sent the moment init
+// returns while a cold CLI is still settling (init alone took 4.5-6.3s on the
+// dev box after a restart). It used the generic 4s CLI-command budget, which
+// was never measured for it. The probe runs off the UI path, so a longer wait
+// costs nothing visible while a timeout costs the reading. Bounded like the
+// auth probe; a warm read takes under a second.
+export const CLAUDE_USAGE_READ_TIMEOUT_MS = 10_000;
+
+const MAX_LOGGED_ERROR_LENGTH = 300;
+
+/** One line for the log: a timeout, or the SDK's own error text, shortened. */
+function describeProbeFailure(failure: unknown): string {
+  if (Cause.isTimeoutError(failure)) {
+    return "timed out";
+  }
+  const cause = Cause.isUnknownError(failure) ? failure.cause : failure;
+  const text =
+    cause instanceof Error
+      ? `${cause.name}: ${cause.message}`
+      : typeof cause === "object" && cause !== null && "message" in cause
+        ? String(cause.message)
+        : String(cause);
+  return text.length > MAX_LOGGED_ERROR_LENGTH
+    ? `${text.slice(0, MAX_LOGGED_ERROR_LENGTH)}…`
+    : text;
+}
 
 /**
  * Keep workspace-scoped command discovery intact while isolating the periodic
@@ -363,9 +391,20 @@ const probeClaudeCapabilities = (
     Effect.flatMap(({ q, init }) =>
       Effect.gen(function* () {
         // Usage has its own deadline so a slow optional request cannot discard initialization.
+        const usageStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
         const usageResult = yield* Effect.tryPromise(() =>
           q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
-        ).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result);
+        ).pipe(Effect.timeout(CLAUDE_USAGE_READ_TIMEOUT_MS), Effect.result);
+        if (Result.isFailure(usageResult)) {
+          // The provider then publishes `probeFailed`; without this line the
+          // cause was invisible and a 40-minute outage left no trace.
+          yield* Effect.logWarning("Claude usage read failed; keeping the last good reading.", {
+            timedOut: Cause.isTimeoutError(usageResult.failure),
+            timeoutMs: CLAUDE_USAGE_READ_TIMEOUT_MS,
+            elapsedMs: DateTime.toEpochMillis(yield* DateTime.now) - usageStartedAt,
+            error: describeProbeFailure(usageResult.failure),
+          });
+        }
         const usage = Result.isSuccess(usageResult)
           ? {
               rate_limits_available: usageResult.success.rate_limits_available,
@@ -396,7 +435,14 @@ const probeClaudeCapabilities = (
       }),
     ),
     Effect.result,
-    Effect.map((result) => (Result.isSuccess(result) ? result.success : undefined)),
+    Effect.flatMap((result) =>
+      Result.isSuccess(result)
+        ? Effect.succeed<ClaudeCapabilitiesProbe | undefined>(result.success)
+        : Effect.logWarning("Claude capabilities probe failed.", {
+            timedOut: Cause.isTimeoutError(result.failure),
+            error: describeProbeFailure(result.failure),
+          }).pipe(Effect.as(undefined)),
+    ),
   );
 };
 
@@ -551,6 +597,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         status: "warning",
         auth: { status: "unknown" },
         message: "Could not verify Claude authentication status from initialization result.",
+        // The SDK probe that reads usage never got that far. Saying so, rather
+        // than omitting usage, keeps the last good reading and earns the
+        // early retry; an omitted field would wipe the reading instead.
+        usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" }),
       },
     });
   }

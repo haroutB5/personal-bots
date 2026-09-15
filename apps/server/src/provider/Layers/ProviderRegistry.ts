@@ -49,6 +49,7 @@ import {
   type ProviderRegistryShape,
 } from "../Services/ProviderRegistry.ts";
 import {
+  cachedUsageLimitsToSeed,
   hydrateCachedProvider,
   isCachedProviderCorrelated,
   orderProviderSnapshots,
@@ -314,7 +315,7 @@ export const ProviderRegistryLive = Layer.effect(
 
     const cachedProviders = yield* Effect.forEach(
       bootSources,
-      (source) =>
+      (source, index) =>
         Effect.gen(function* () {
           // One cache file per configured instance. For the default
           // instance of a built-in kind the path equals `<kind>.json` —
@@ -349,7 +350,17 @@ export const ProviderRegistryLive = Layer.effect(
                   cachedDriver: cachedProvider.driver ?? null,
                 }).pipe(Effect.as(undefined as ServerProvider | undefined));
               }
-              return Effect.succeed(hydrateCachedProvider(correlation));
+              // The last good usage reading goes to the provider itself, not
+              // just this list: the pending snapshot merged in below would
+              // drop it here, and only the provider's own state survives a
+              // first probe that fails to read usage.
+              const usageSeed = cachedUsageLimitsToSeed(correlation);
+              const seedProvider = bootInstances[index]?.snapshot.seedUsageLimits;
+              return (
+                usageSeed !== undefined && seedProvider !== undefined
+                  ? seedProvider(usageSeed)
+                  : Effect.void
+              ).pipe(Effect.as(hydrateCachedProvider(correlation)));
             }),
           );
         }),

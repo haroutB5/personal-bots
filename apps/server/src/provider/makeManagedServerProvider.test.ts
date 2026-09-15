@@ -655,4 +655,149 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
+
+  const persistedLimits = {
+    // Older than every probe below: a carried-over reading keeps its own time.
+    checkedAt: "2026-04-09T23:53:00.000Z",
+    windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 60 }],
+  } as const;
+  const failedLimits = {
+    checkedAt: "2026-04-10T00:00:01.000Z",
+    windows: [],
+    unavailable: { reason: "probeFailed" },
+  } as const;
+  const freshLimits = {
+    checkedAt: "2026-04-10T00:00:03.000Z",
+    windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 62 }],
+  } as const;
+  const unsupportedLimits = {
+    checkedAt: "2026-04-10T00:00:04.000Z",
+    windows: [],
+    unavailable: { reason: "unsupported" },
+  } as const;
+
+  it.effect("keeps a reading carried over a restart until a probe reads usage itself", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const releaseFirstProbe = yield* Deferred.make<void>();
+        const probes = yield* Ref.make(0);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(probes, (count) => count + 1).pipe(
+            Effect.flatMap((count): Effect.Effect<ServerProvider> =>
+              count === 1
+                ? Deferred.await(releaseFirstProbe).pipe(
+                    Effect.as({ ...refreshedSnapshot, usageLimits: failedLimits }),
+                  )
+                : Effect.succeed({
+                    ...refreshedSnapshotSecond,
+                    usageLimits: count === 2 ? freshLimits : unsupportedLimits,
+                  }),
+            ),
+          ),
+          refreshInterval: "1 hour",
+        });
+        const seedUsageLimits = provider.seedUsageLimits!;
+
+        // Boot seeds while the first probe is still running.
+        yield* seedUsageLimits(persistedLimits);
+        assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, persistedLimits);
+
+        // That probe cannot read usage: the carried-over reading stays, with
+        // its real (older) checkedAt rather than the probe's.
+        const afterFailure = yield* Stream.take(provider.streamChanges, 1).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseFirstProbe, undefined);
+        const [failedProbe] = Array.from(yield* Fiber.join(afterFailure));
+        assert.deepStrictEqual(failedProbe?.usageLimits, persistedLimits);
+
+        // A probe that reads usage replaces it, and a late seed cannot undo that.
+        assert.deepStrictEqual((yield* provider.refresh).usageLimits, freshLimits);
+        yield* seedUsageLimits(persistedLimits);
+        assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, freshLimits);
+
+        // An account without subscription windows (API key) stays unavailable.
+        assert.deepStrictEqual((yield* provider.refresh).usageLimits, unsupportedLimits);
+        yield* seedUsageLimits(persistedLimits);
+        assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, unsupportedLimits);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
+  it.effect("re-probes once a minute after a failed usage read, never in a loop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const probes = yield* Ref.make(0);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(probes, (count) => count + 1).pipe(
+            Effect.as({ ...refreshedSnapshot, usageLimits: failedLimits }),
+          ),
+          refreshInterval: "1 hour",
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        assert.strictEqual(yield* Ref.get(probes), 1);
+
+        yield* TestClock.adjust("59 seconds");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(probes), 1);
+
+        const retried = yield* Stream.take(provider.streamChanges, 1).pipe(
+          Stream.runDrain,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("1 second");
+        yield* Fiber.join(retried);
+        assert.strictEqual(yield* Ref.get(probes), 2);
+
+        // The retry failed too; it does not schedule another. The next probe
+        // is the regular interval's.
+        yield* TestClock.adjust("30 minutes");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(probes), 2);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
+  it.effect("drops the pending usage retry when another probe runs first", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const probes = yield* Ref.make(0);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(probes, (count) => count + 1).pipe(
+            Effect.map((count) => ({
+              ...refreshedSnapshot,
+              usageLimits: count === 1 ? failedLimits : freshLimits,
+            })),
+          ),
+          refreshInterval: "1 hour",
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        // The user pulls to refresh before the retry is due, and it reads usage.
+        assert.deepStrictEqual((yield* provider.refresh).usageLimits, freshLimits);
+        assert.strictEqual(yield* Ref.get(probes), 2);
+
+        yield* TestClock.adjust("2 minutes");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(probes), 2);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
 });
