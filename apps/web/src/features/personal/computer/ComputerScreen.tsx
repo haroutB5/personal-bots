@@ -61,11 +61,15 @@ import {
   canCloseBrowser,
   closeBrowserConfirmMessage,
   describeComputerState,
+  fitFrame,
   formatActivityTime,
   formatFileSize,
   hasLiveViewport,
   mapViewportPoint,
+  planViewportRequest,
   type ComputerDotTone,
+  type SentViewport,
+  type ViewportBox,
 } from "./computerModel";
 import {
   computerEnvironment,
@@ -85,6 +89,10 @@ export interface ComputerScreenProps {
 const ICON_STROKE = 1.75;
 const MAX_RECONNECTS = 5;
 const SCROLL_SLOP_PX = 8;
+/** Rotation and the keyboard resize the box in steps; the page relays out once. */
+const VIEWPORT_DEBOUNCE_MS = 250;
+/** The placeholder's ratio, used until the first frame says otherwise. */
+const DEFAULT_ASPECT = 390 / 560;
 const SPECIAL_KEYS = new Set([
   "Enter",
   "Backspace",
@@ -338,6 +346,7 @@ export function ComputerBrowserPane(props: {
             active={pageVisible}
             interactive={!compact && inControl}
             fit={fullScreen === true}
+            syncViewport={fullScreen && inControl}
             onClient={onClient}
           />
         ) : (
@@ -389,7 +398,7 @@ export function ComputerBrowserPane(props: {
           type="button"
           disabled={controlDisabled}
           onClick={() => void toggleControl()}
-          className="flex h-11 items-center justify-center gap-2 rounded-[10px] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] disabled:opacity-50"
+          className="flex h-11 w-full items-center justify-center gap-2 rounded-[10px] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] disabled:opacity-50"
         >
           {inControl ? (
             <Bot className="size-[18px]" strokeWidth={ICON_STROKE} />
@@ -541,12 +550,22 @@ function LiveViewport(props: {
   readonly environmentId: EnvironmentId;
   readonly active: boolean;
   readonly interactive: boolean;
+  /** Full screen: the frame is letterboxed into the whole box. */
   readonly fit?: boolean;
+  /** Full screen and in control: the page is laid out for this box. */
+  readonly syncViewport?: boolean;
   readonly onClient: (client: ViewportClient | null) => void;
 }) {
   const { environmentId, active, interactive, onClient } = props;
+  const fit = props.fit === true;
+  const syncViewport = props.syncViewport === true;
   const access = useComputerAccess(environmentId);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [box, setBox] = useState<ViewportBox | null>(null);
+  // Set once the socket is open: a Viewport sent before that is dropped.
+  const [liveClient, setLiveClient] = useState<ViewportClient | null>(null);
+  const sentViewportRef = useRef<SentViewport<ViewportClient> | null>(null);
   const keyboardRef = useRef<HTMLInputElement | null>(null);
   const clientRef = useRef<ViewportClient | null>(null);
   const metaRef = useRef<PersonalBrowserFrameMeta | null>(null);
@@ -576,6 +595,7 @@ function LiveViewport(props: {
         onOpen: () => {
           failuresRef.current = 0;
           setNotice(null);
+          setLiveClient(client);
         },
         onFrame: (bitmap, meta) => {
           if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
@@ -594,6 +614,7 @@ function LiveViewport(props: {
         onClosed: (opened) => {
           clientRef.current = null;
           onClient(null);
+          setLiveClient(null);
           // A refused upgrade usually means the ticket expired: mint a new one.
           if (!opened) refreshComputerAccess(environmentId);
           failuresRef.current += 1;
@@ -611,8 +632,56 @@ function LiveViewport(props: {
       client?.close();
       clientRef.current = null;
       onClient(null);
+      setLiveClient(null);
     };
   }, [access, active, attempt, environmentId, gaveUp, onClient]);
+
+  // Full screen measures its box: the frame is letterboxed into it, and in
+  // control the page is laid out for it. The compact preview is never measured.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!fit || container === null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (rect === undefined) return;
+      setBox((previous) =>
+        previous !== null && previous.width === rect.width && previous.height === rect.height
+          ? previous
+          : { width: rect.width, height: rect.height },
+      );
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [fit]);
+  const fitBox = fit ? box : null;
+
+  // In control and full screen, the phone asks for its box as the page's
+  // viewport. The server only accepts it from the controller and undoes it
+  // when control goes back, so watching never reshapes the bot's page.
+  useEffect(() => {
+    if (!syncViewport) {
+      sentViewportRef.current = null;
+      return;
+    }
+    const plan = planViewportRequest({
+      box: fitBox,
+      client: liveClient,
+      sent: sentViewportRef.current,
+    });
+    if (plan === null || liveClient === null) return;
+    const request = () => {
+      sentViewportRef.current = { client: liveClient, key: plan.key };
+      liveClient.send({ _tag: "Viewport", width: plan.width, height: plan.height });
+    };
+    if (plan.immediate) {
+      request();
+      return;
+    }
+    const timer = window.setTimeout(request, VIEWPORT_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [fitBox, liveClient, syncViewport]);
+
+  const fitted = fitBox === null ? null : fitFrame(fitBox, aspect ?? DEFAULT_ASPECT);
 
   const send = (message: PersonalBrowserInputMessage) => clientRef.current?.send(message);
   const pointAt = (clientX: number, clientY: number) => {
@@ -710,9 +779,10 @@ function LiveViewport(props: {
 
   return (
     <div
+      ref={containerRef}
       className={cn(
         "relative",
-        props.fit && "flex h-full min-h-0 items-center justify-center overflow-hidden",
+        fit && "flex h-full min-h-0 items-center justify-center overflow-hidden",
       )}
     >
       <canvas
@@ -723,10 +793,20 @@ function LiveViewport(props: {
         }
         className={cn(
           "block bg-[var(--personal-fill-muted)] outline-none",
-          props.fit ? "h-full max-h-full w-auto max-w-full" : "w-full",
+          fit ? "max-h-full max-w-full" : "w-full",
         )}
         style={{
-          aspectRatio: aspect === null ? "390 / 560" : `${aspect}`,
+          // Full screen: exactly the fitted box, so the bitmap scales
+          // uniformly and taps map onto the frame without offsets. Before the
+          // box is measured, width and height stay auto and the canvas keeps
+          // its intrinsic ratio under the max constraints. (v1.10.0 forced
+          // height 100% with a width cap, which stretched landscape frames.)
+          // Inline, the width is the pane's and the ratio sets the height.
+          ...(fit
+            ? fitted === null
+              ? {}
+              : { width: fitted.width, height: fitted.height }
+            : { aspectRatio: aspect === null ? "390 / 560" : `${aspect}` }),
           touchAction: interactive ? "none" : "auto",
           cursor: interactive ? "default" : "not-allowed",
         }}

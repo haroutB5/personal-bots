@@ -17,9 +17,11 @@ import {
   computerPanelDetail,
   describeComputerState,
   EMPTY_COMPUTER_FEED,
+  fitFrame,
   formatActivityTime,
   mapViewportPoint,
   PERSONAL_BROWSER_ROUTE_BASE,
+  planViewportRequest,
   reduceComputerFeed,
 } from "./computerModel";
 
@@ -181,6 +183,88 @@ describe("computer feed", () => {
       "Connecting",
     );
   });
+
+  // QA v1.10.0 BUG-4: green dot beside "left the browser open" under an Idle header.
+  it("reads idle when the lease holder's turn has ended, live while someone works", () => {
+    const agent = status({
+      controller: {
+        _tag: "Agent",
+        threadId: ThreadId.make("thread-a"),
+        botId: PersonalBotId.make("bot-1"),
+        botName: "Developer",
+      },
+    });
+    const tone = (input: PersonalBrowserStatus, agentTurnRunning?: boolean) =>
+      describeComputerState({
+        status: input,
+        reachable: true,
+        loading: false,
+        ...(agentTurnRunning === undefined ? {} : { agentTurnRunning }),
+      }).tone;
+    expect(tone(agent, false)).toBe("idle");
+    expect(tone(status(), false)).toBe("idle");
+    expect(tone(agent, true)).toBe("live");
+    expect(
+      tone(status({ controller: { _tag: "Human", self: true, connected: true } }), false),
+    ).toBe("live");
+    // A caller that cannot tell keeps the old reading.
+    expect(tone(agent)).toBe("live");
+  });
+});
+
+describe("full-screen frame fit", () => {
+  it("letterboxes a laptop frame into a portrait phone box without stretching it", () => {
+    const fitted = fitFrame({ width: 390, height: 640 }, 1280 / 720);
+    expect(fitted).toEqual({ width: 390, height: 219 });
+    // Uniform scale: the fitted box keeps the frame's ratio.
+    expect(Math.abs(fitted!.width / fitted!.height - 1280 / 720)).toBeLessThan(0.01);
+  });
+
+  it("pillarboxes a tall frame and fills exactly when the server applied the phone's box", () => {
+    expect(fitFrame({ width: 390, height: 640 }, 390 / 844)).toEqual({ width: 295, height: 640 });
+    expect(fitFrame({ width: 390, height: 640 }, 390 / 640)).toEqual({ width: 390, height: 640 });
+    expect(fitFrame({ width: 393, height: 659 }, 393 / 659)).toEqual({ width: 393, height: 659 });
+  });
+
+  it("fits nothing before the box is measured", () => {
+    expect(fitFrame({ width: 0, height: 640 }, 1)).toBeNull();
+    expect(fitFrame({ width: 390, height: 640 }, Number.NaN)).toBeNull();
+  });
+});
+
+describe("phone viewport requests", () => {
+  const socket = { id: "socket-1" };
+  const box = { width: 390.4, height: 639.6 };
+
+  it("sends the first box on a socket at once, rounded to CSS pixels", () => {
+    expect(planViewportRequest({ box, client: socket, sent: null })).toEqual({
+      width: 390,
+      height: 640,
+      key: "390x640",
+      immediate: true,
+    });
+  });
+
+  it("sends nothing for an unchanged box and debounces a changed one", () => {
+    const sent = { client: socket, key: "390x640" };
+    expect(planViewportRequest({ box, client: socket, sent })).toBeNull();
+    expect(planViewportRequest({ box: { width: 390, height: 360 }, client: socket, sent })).toEqual(
+      { width: 390, height: 360, key: "390x360", immediate: false },
+    );
+  });
+
+  it("resends at once on a new socket, since the server dropped the old one's viewport", () => {
+    const sent = { client: socket, key: "390x640" };
+    expect(planViewportRequest({ box, client: { id: "socket-2" }, sent })?.immediate).toBe(true);
+  });
+
+  it("waits for both a measured box and an open socket", () => {
+    expect(planViewportRequest({ box: null, client: socket, sent: null })).toBeNull();
+    expect(planViewportRequest({ box, client: null, sent: null })).toBeNull();
+    expect(
+      planViewportRequest({ box: { width: 0, height: 0 }, client: socket, sent: null }),
+    ).toBeNull();
+  });
 });
 
 describe("viewport input mapping", () => {
@@ -269,5 +353,35 @@ describe("closing the browser", () => {
         true,
       ),
     ).toContain("A bot is using the browser");
+  });
+
+  // QA v1.10.0 BUG-3: "…can't be submitted.. Close it anyway?"
+  it("names a pending help request instead of quoting its punctuated reason", () => {
+    const helpRequest = {
+      threadId: ThreadId.make("thread-a"),
+      botId: PersonalBotId.make("bot-1"),
+      botName: "Assistant",
+      reason: "The reCAPTCHA can't be submitted.",
+      requestedAt: "2026-09-15T13:47:32.000Z",
+    };
+    const agent = {
+      _tag: "Agent" as const,
+      threadId: ThreadId.make("thread-a"),
+      botId: PersonalBotId.make("bot-1"),
+      botName: "Assistant",
+    };
+    const withLease = closeBrowserConfirmMessage(status({ controller: agent, helpRequest }));
+    expect(withLease).toMatch(/^Assistant is waiting for your help\. Close it anyway\?\n/);
+    expect(withLease).not.toContain("..");
+    // The request outlives the agent lease's TTL, and closing still ends it.
+    expect(closeBrowserConfirmMessage(status({ helpRequest }))).toContain(
+      "Assistant is waiting for your help",
+    );
+    // The user already helping in control closes without a prompt.
+    expect(
+      closeBrowserConfirmMessage(
+        status({ controller: { _tag: "Human", self: true, connected: true }, helpRequest }),
+      ),
+    ).toBeNull();
   });
 });

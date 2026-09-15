@@ -53,6 +53,23 @@ describe("overlay inert background", () => {
     expect(nodes.chat.inert).toBe(false);
   });
 
+  // The full-screen ⋯ menu portals its popup into a node that Base UI creates
+  // on body only when the menu opens, i.e. after this ran. That node staying
+  // interactive is what keeps Reload and Close browser clickable, so the
+  // background must be a snapshot, never a watcher that inerts new children.
+  it("leaves elements added after the overlay opened interactive", () => {
+    const nodes = tree();
+    const undo = inertOutside(nodes.overlay as unknown as Element);
+
+    const menuPortal = element("menu-portal");
+    menuPortal.parentElement = nodes.body;
+    nodes.body.children.push(menuPortal);
+
+    expect(menuPortal.inert).toBe(false);
+    undo();
+    expect(menuPortal.inert).toBe(false);
+  });
+
   it("does nothing without an overlay element", () => {
     expect(() => inertOutside(null)()).not.toThrow();
   });

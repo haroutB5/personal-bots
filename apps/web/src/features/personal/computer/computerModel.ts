@@ -59,7 +59,16 @@ export function describeComputerState(input: {
   }
   switch (input.status.state) {
     case "connected":
-      return { label: "Connected", tone: "live" };
+      // Open but nobody at work in it (a lease holder whose turn ended, or no
+      // one): the dot must not read live next to "left the browser open".
+      // Callers that cannot tell (the Computer route) omit agentTurnRunning.
+      return {
+        label: "Connected",
+        tone:
+          input.agentTurnRunning === false && input.status.controller._tag !== "Human"
+            ? "idle"
+            : "live",
+      };
     case "waiting_for_login":
       return { label: "Waiting for login", tone: "pending" };
     case "starting":
@@ -146,7 +155,13 @@ export function closeBrowserConfirmMessage(
   status: PersonalBrowserStatus | null,
   agentTurnRunning: boolean = false,
 ): string | null {
-  if (status?.controller._tag !== "Agent") return null;
+  if (status === null || status.controller._tag === "Human") return null;
+  // A pending help request is named, not quoted: its reason is the bot's own
+  // sentence, usually already punctuated, and it outlives the lease TTL.
+  if (status.helpRequest !== null) {
+    return `${status.helpRequest.botName} is waiting for your help. Close it anyway?\nIts tabs are closed and the bot is told the browser closed.`;
+  }
+  if (status.controller._tag !== "Agent") return null;
   const line = activeAgentLine(status, agentTurnRunning) ?? "A bot left the browser open";
   return `${line}. Close it anyway?\nIts tabs are closed and the session ends.`;
 }
@@ -174,6 +189,55 @@ export function mapViewportPoint(input: {
     x: clamp(((input.clientX - rect.left) / rect.width) * meta.width, meta.width),
     y: clamp(((input.clientY - rect.top) / rect.height) * meta.height, meta.height),
   };
+}
+
+export interface ViewportBox {
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * The largest box with the frame's aspect that fits in `container`, in whole
+ * CSS pixels. The full-screen canvas is sized to exactly this, so the bitmap
+ * scales uniformly and the canvas rect is the frame: taps map without offsets.
+ */
+export function fitFrame(container: ViewportBox, aspect: number): ViewportBox | null {
+  if (!(container.width > 0 && container.height > 0 && aspect > 0 && Number.isFinite(aspect))) {
+    return null;
+  }
+  // Nudged before flooring so an exact fit (a phone viewport the server
+  // applied) is not lost to float error: 639.9999 must stay 640.
+  const whole = (value: number) => Math.floor(value + 1e-6);
+  return container.width / container.height > aspect
+    ? { width: whole(container.height * aspect), height: container.height }
+    : { width: container.width, height: whole(container.width / aspect) };
+}
+
+/** The last Viewport request, tied to the socket it went out on. */
+export interface SentViewport<Client> {
+  readonly client: Client;
+  readonly key: string;
+}
+
+/**
+ * Whether the controlling phone should (re)send its full-screen box. A new
+ * socket starts from nothing (the server dropped the old socket's viewport),
+ * so its first request goes out immediately; later changes (rotation, the
+ * keyboard) are debounced by the caller. An unchanged box sends nothing.
+ */
+export function planViewportRequest<Client>(input: {
+  readonly box: ViewportBox | null;
+  readonly client: Client | null;
+  readonly sent: SentViewport<Client> | null;
+}): (ViewportBox & { readonly key: string; readonly immediate: boolean }) | null {
+  const { box, client, sent } = input;
+  if (box === null || client === null) return null;
+  const width = Math.round(box.width);
+  const height = Math.round(box.height);
+  if (width <= 0 || height <= 0) return null;
+  const key = `${width}x${height}`;
+  if (sent !== null && sent.client === client && sent.key === key) return null;
+  return { width, height, key, immediate: sent === null || sent.client !== client };
 }
 
 const ACTIVITY_TIME_FORMAT = new Intl.DateTimeFormat("en-GB", {
