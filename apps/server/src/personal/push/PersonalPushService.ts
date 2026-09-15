@@ -138,7 +138,9 @@ export function pushPayloadForTask(
 ): PersonalPushPayload {
   const title =
     kind === "task_needs_input"
-      ? `${botName} needs you`
+      ? task.status === "waiting_for_browser"
+        ? `${botName} needs your help in the browser`
+        : `${botName} needs you`
       : kind === "task_failed"
         ? `${botName} hit a problem`
         : `${botName} finished`;

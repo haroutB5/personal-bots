@@ -231,7 +231,7 @@ export class PersonalTaskRepository extends Context.Service<
       taskId: PersonalTaskId,
       now: DateTime.Utc,
     ) => Effect.Effect<void, PersonalTaskRepositoryError>;
-    /** waiting_for_user tasks that have an undelivered resume note. */
+    /** User- or browser-waiting tasks that have an undelivered resume note. */
     readonly listTasksAwaitingResume: () => Effect.Effect<
       ReadonlyArray<PersonalTask>,
       PersonalTaskRepositoryError
@@ -635,7 +635,7 @@ export const make = Effect.gen(function* () {
         sql`
           SELECT ${sql.literal(TASK_COLUMNS)}
           FROM personal_tasks
-          WHERE status = 'waiting_for_user'
+          WHERE status IN ('waiting_for_user', 'waiting_for_browser')
             AND task_id IN (
               SELECT task_id FROM personal_task_resume_notes WHERE delivered_at IS NULL
             )

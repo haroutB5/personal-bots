@@ -40,6 +40,16 @@ export const PersonalBrowserPage = Schema.Struct({
 });
 export type PersonalBrowserPage = typeof PersonalBrowserPage.Type;
 
+export const PersonalBrowserHelpRequest = Schema.Struct({
+  threadId: ThreadId,
+  botId: PersonalBotId,
+  botName: Schema.String,
+  reason: Schema.String,
+  /** ISO-8601 UTC instant from the host clock. */
+  requestedAt: Schema.String,
+});
+export type PersonalBrowserHelpRequest = typeof PersonalBrowserHelpRequest.Type;
+
 export const PersonalBrowserStatus = Schema.Struct({
   state: PersonalBrowserState,
   /** Human-readable reason for crashed/locked states, e.g. "Locked by pid 4312". */
@@ -50,6 +60,8 @@ export const PersonalBrowserStatus = Schema.Struct({
   generation: Schema.Int,
   /** The page the viewport shows, or null before any page exists. */
   page: Schema.NullOr(PersonalBrowserPage),
+  /** A bot blocked on the shared page until the user takes over and returns it. */
+  helpRequest: Schema.NullOr(PersonalBrowserHelpRequest),
   viewers: Schema.Int,
 });
 export type PersonalBrowserStatus = typeof PersonalBrowserStatus.Type;

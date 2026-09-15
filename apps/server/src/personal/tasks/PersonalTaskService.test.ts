@@ -517,6 +517,40 @@ it.effect("a waiting parent releases its slot so both children run under concurr
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+it.effect("browser help parks a task and resumes it with a server-authored continuation", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("browser-help");
+    const rootThread = threadOf(root);
+    const firstTurn = yield* beginTurn(harness, rootThread);
+
+    const waiting = yield* service.waitForBrowser({ taskId: root.taskId });
+    expect(waiting.status).toBe("waiting_for_browser");
+    yield* endTurn(harness, rootThread, firstTurn, "I need browser help.");
+
+    yield* service.resumeFromUser({
+      taskId: root.taskId,
+      noteId: "browser-help:1",
+      note: "The user finished helping in the browser. Continue the task.",
+      restartSession: false,
+    });
+    yield* service.drain;
+
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    const continuation = turnStarts(harness).at(-1)!;
+    expect(continuation.threadId).toBe(rootThread);
+    expect(continuation.message.text).toContain("[Task continuation]");
+    expect(continuation.message.text).toContain(
+      "The user finished helping in the browser. Continue the task.",
+    );
+    expect(continuation.message.context?.records[0]).toMatchObject({
+      kind: "personal-task",
+    });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 it.effect("a child's completion re-queues its parent exactly once", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {

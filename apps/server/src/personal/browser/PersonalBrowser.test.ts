@@ -1,8 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  PersonalBotId,
   PersonalBrowserInputMessage,
+  PersonalTaskId,
   ThreadId,
+  type PersonalTask,
   type PreviewAutomationRequest,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -13,11 +16,13 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as BrowserLease from "./BrowserLease.ts";
 import type { BrowserDriver, BrowserElementHandle, BrowserPage, ScreencastMeta } from "./driver.ts";
 import * as PersonalBrowser from "./PersonalBrowser.ts";
@@ -203,6 +208,28 @@ const memoryProtectionRepository = () => {
   return { saved, layer };
 };
 
+interface TaskHarness {
+  readonly waits: PersonalTaskId[];
+  readonly resumes: Array<{
+    readonly taskId: PersonalTaskId;
+    readonly note: string;
+  }>;
+}
+
+const taskServiceLayer = (harness: TaskHarness) =>
+  Layer.mock(PersonalTaskService.PersonalTaskService)({
+    waitForBrowser: ({ taskId }) =>
+      Effect.sync(() => {
+        harness.waits.push(taskId);
+        return {} as PersonalTask;
+      }),
+    resumeFromUser: ({ taskId, note }) =>
+      Effect.sync(() => {
+        harness.resumes.push({ taskId, note });
+        return {} as PersonalTask;
+      }),
+  });
+
 const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
   driver: BrowserDriver,
   repository: Layer.Layer<
@@ -215,23 +242,26 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
     never,
     ProtectionContext
   >,
+  taskHarness: TaskHarness = { waits: [], resumes: [] },
 ) =>
   PersonalBrowser.makeLayer({ driver, headless: true, executablePath: undefined }).pipe(
     Layer.provideMerge(BrowserLease.layer),
     Layer.provideMerge(repository),
     Layer.provideMerge(protections),
     Layer.provideMerge(PersonalBotRepository.layer),
+    Layer.provideMerge(taskServiceLayer(taskHarness)),
     Layer.provideMerge(PreviewManager.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-browser-" })),
     Layer.provideMerge(NodeServices.layer),
   );
 
-const makeLayer = (driver: BrowserDriver) =>
+const makeLayer = (driver: BrowserDriver, taskHarness?: TaskHarness) =>
   baseLayer(
     driver,
     PersonalBrowserLeaseRepository.layer,
     PersonalBrowserProtectionRepository.layer,
+    taskHarness,
   );
 
 /** A repository pre-seeded with one persisted row, recording every save. */
@@ -634,6 +664,110 @@ describe("PersonalBrowser", () => {
         ((yield* browser.handleAutomationRequest(request("status"))) as PreviewAutomationStatus)
           .tabId,
       ).toBeNull();
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  it.effect("records browser help and resumes its task when the user returns control", () => {
+    const fake = makeFakeDriver();
+    const taskHarness: TaskHarness = { waits: [], resumes: [] };
+    const taskId = PersonalTaskId.make("task-browser-help");
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+
+      const help = yield* browser.requestHelp({
+        threadId,
+        botId: PersonalBotId.make("bot-assistant"),
+        botName: "Assistant",
+        taskId,
+        reason: "CAPTCHA on example.com",
+      });
+      expect(help).toMatchObject({
+        threadId,
+        botName: "Assistant",
+        reason: "CAPTCHA on example.com",
+      });
+      expect((yield* browser.status("session-1")).helpRequest).toEqual(help);
+      expect(taskHarness.waits).toEqual([taskId]);
+
+      const taken = yield* browser.takeControl("session-1");
+      expect(taken.helpRequest).toEqual(help);
+      const returned = yield* browser.returnToAgent("session-1");
+      expect(returned.helpRequest).toBeNull();
+      expect(taskHarness.resumes).toEqual([
+        {
+          taskId,
+          note: "The user finished helping in the browser. Continue the task.",
+        },
+      ]);
+
+      const head = yield* browser.activity("session-1").pipe(Stream.take(1), Stream.runCollect);
+      const summaries =
+        head[0]?._tag === "Recent" ? head[0].events.map((event) => event.summary) : [];
+      expect(summaries).toContain("Assistant asked for help: CAPTCHA on example.com");
+      expect(summaries).toContain("You finished helping");
+    }).pipe(Effect.provide(makeLayer(fake.driver, taskHarness)));
+  });
+
+  it.effect("clears browser help when the browser closes", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      yield* browser.requestHelp({
+        threadId,
+        botId: PersonalBotId.make("bot-assistant"),
+        botName: "Assistant",
+        taskId: PersonalTaskId.make("task-browser-close"),
+        reason: "Login required",
+      });
+
+      const closed = yield* browser.closeBrowser({ sessionId: "session-1", byThreadId: null });
+      expect(closed.helpRequest).toBeNull();
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  it.effect("rejects browser help from a thread that does not hold the lease", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+
+      const error = yield* browser
+        .requestHelp({
+          threadId: ThreadId.make("thread-b"),
+          botId: PersonalBotId.make("bot-other"),
+          botName: "Other",
+          taskId: PersonalTaskId.make("task-other"),
+          reason: "2FA required",
+        })
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("currently controlling");
+      expect((yield* browser.status("session-1")).helpRequest).toBeNull();
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  it.effect("clears browser help when another thread takes the expired lease", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      yield* browser.requestHelp({
+        threadId,
+        botId: PersonalBotId.make("bot-assistant"),
+        botName: "Assistant",
+        taskId: PersonalTaskId.make("task-agent-switch"),
+        reason: "CAPTCHA",
+      });
+
+      yield* TestClock.adjust("91 seconds");
+      yield* browser.handleAutomationRequest({
+        ...request("navigate", { url: "t3.chat" }),
+        threadId: ThreadId.make("thread-b"),
+      });
+
+      expect((yield* browser.status("session-1")).helpRequest).toBeNull();
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 

@@ -113,7 +113,14 @@ const make = Effect.gen(function* () {
     if (Option.isNone(link)) {
       return yield* toolError("This thread does not belong to a personal bot.");
     }
-    return { threadId: scope.threadId, botId: link.value.botId };
+    const bot = yield* botRepository
+      .getBotById({ botId: link.value.botId })
+      .pipe(Effect.mapError(() => toolError("Could not look up this thread's bot.")));
+    return {
+      threadId: scope.threadId,
+      botId: link.value.botId,
+      botName: Option.isSome(bot) ? bot.value.name : "Bot",
+    };
   });
 
   const currentTurnId = Effect.fn("BotsToolkit.currentTurnId")(function* (threadId: ThreadId) {
@@ -267,6 +274,23 @@ const make = Effect.gen(function* () {
             labelOrOrigin: input.login,
           })
           .pipe(Effect.mapError(readable));
+      }),
+    request_browser_help: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* callerTask();
+        yield* browser
+          .requestHelp({
+            threadId: caller.threadId,
+            botId: caller.botId,
+            botName: caller.botName,
+            taskId: caller.task.taskId,
+            reason: input.reason,
+          })
+          .pipe(Effect.mapError(readable));
+        return {
+          requested: true as const,
+          note: "The user has been asked to take control. Tell them what you need in one sentence, then end your turn.",
+        };
       }),
     // Which thread opened the browser does not gate this: the browser is
     // shared, and a bot the user asked to close it should be able to. A human

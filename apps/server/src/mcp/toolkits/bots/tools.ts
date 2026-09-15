@@ -155,6 +155,19 @@ export const CloseBrowserResult = Schema.Struct({
 });
 export type CloseBrowserResult = typeof CloseBrowserResult.Type;
 
+export const RequestBrowserHelpInput = Schema.Struct({
+  reason: TrimmedNonEmptyString.check(Schema.isMaxLength(160)).annotate({
+    description: "Short reason the user must take over, for example 'CAPTCHA on amazon.co.uk'.",
+  }),
+});
+export type RequestBrowserHelpInput = typeof RequestBrowserHelpInput.Type;
+
+export const RequestBrowserHelpResult = Schema.Struct({
+  requested: Schema.Literal(true),
+  note: Schema.String,
+});
+export type RequestBrowserHelpResult = typeof RequestBrowserHelpResult.Type;
+
 const ListBotsTool = Tool.make("list_bots", {
   description:
     "List the personal bots you can delegate work to, with what each one is for. The roster changes at any time (the user creates, renames and deletes bots), so call this fresh before every delegate_task and never rely on a roster from earlier in the conversation.",
@@ -251,6 +264,20 @@ const CloseBrowserTool = Tool.make("close_browser", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const RequestBrowserHelpTool = Tool.make("request_browser_help", {
+  description:
+    "Ask the user to take over the shared browser when a CAPTCHA, human-verification check, login or 2FA prompt blocks you. Give one short reason, tell the user what you need in one sentence, then end your turn. Never try to solve a CAPTCHA yourself.",
+  parameters: RequestBrowserHelpInput,
+  success: RequestBrowserHelpResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Request browser help")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 export const BotsToolkit = Toolkit.make(
   ListBotsTool,
   DelegateTaskTool,
@@ -258,5 +285,6 @@ export const BotsToolkit = Toolkit.make(
   ListTasksTool,
   RequestSecretTool,
   UseLoginTool,
+  RequestBrowserHelpTool,
   CloseBrowserTool,
 );

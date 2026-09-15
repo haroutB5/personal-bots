@@ -206,6 +206,21 @@ it.effect("a disabled event type queues nothing", () => {
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+it.effect("browser help uses a specific needs-help notification", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* seedBot;
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/browser-help"));
+    yield* push.notifyTask(yield* makeTask({ status: "waiting_for_browser" }));
+    yield* push.drain;
+
+    expect(JSON.parse((yield* outbox)[0]!.payload).title).toBe(
+      "Assistant needs your help in the browser",
+    );
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 it.effect("404/410 from the push service deletes the subscription", () => {
   const harness: Harness = { sent: [], status: 410 };
   return Effect.gen(function* () {

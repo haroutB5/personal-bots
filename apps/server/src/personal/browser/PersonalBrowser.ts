@@ -24,8 +24,10 @@ import {
   type PersonalBrowserController,
   type PersonalBrowserFile,
   type PersonalBrowserFilesResult,
+  type PersonalBrowserHelpRequest,
   type PersonalBrowserStatus,
   type PersonalBrowserStreamItem,
+  type PersonalTaskId,
   type PreviewAutomationActionEvent,
   type PreviewAutomationClickInput,
   type PreviewAutomationEvaluateInput,
@@ -61,6 +63,7 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../../config.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { AGENT_LEASE_TTL_MS, BrowserLease, PERSONAL_BROWSER_PROFILE_ID } from "./BrowserLease.ts";
 import {
   type BrowserContextHandle,
@@ -113,6 +116,14 @@ export class PersonalBrowser extends Context.Service<
     readonly status: (sessionId: string) => Effect.Effect<PersonalBrowserStatus>;
     readonly takeControl: (sessionId: string) => Effect.Effect<PersonalBrowserStatus>;
     readonly returnToAgent: (sessionId: string) => Effect.Effect<PersonalBrowserStatus>;
+    /** Parks the caller's task and exposes why the user needs to take over. */
+    readonly requestHelp: (input: {
+      readonly threadId: ThreadId;
+      readonly botId: PersonalBotId;
+      readonly botName: string;
+      readonly taskId: PersonalTaskId;
+      readonly reason: string;
+    }) => Effect.Effect<PersonalBrowserHelpRequest, HostOperationError>;
     /**
      * Ends the shared browser session outright: every tab closed, Chrome
      * stopped, the lease released whoever held it, and the saved page dropped
@@ -316,6 +327,7 @@ export const make = (options: PersonalBrowserOptions) =>
     const config = yield* ServerConfig.ServerConfig;
     const previewManager = yield* PreviewManager.PreviewManager;
     const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const tasks = yield* PersonalTaskService.PersonalTaskService;
     const lease = yield* BrowserLease;
     const protections = yield* PersonalBrowserProtectionRepository;
     const runFork = yield* FiberSet.makeRuntime<never>();
@@ -395,6 +407,10 @@ export const make = (options: PersonalBrowserOptions) =>
     const statusDirty = yield* PubSub.unbounded<void>();
     const activityPubSub = yield* PubSub.unbounded<PersonalBrowserActivityEvent>();
     const recent: PersonalBrowserActivityEvent[] = [];
+    let activeHelp: {
+      readonly request: PersonalBrowserHelpRequest;
+      readonly taskId: PersonalTaskId;
+    } | null = null;
 
     const notify = PubSub.publish(statusDirty, undefined).pipe(Effect.asVoid);
 
@@ -492,6 +508,7 @@ export const make = (options: PersonalBrowserOptions) =>
           controller,
           generation: view.generation,
           page: pageInfo,
+          helpRequest: activeHelp?.request ?? null,
           viewers: viewers.size,
         } satisfies PersonalBrowserStatus;
       });
@@ -549,6 +566,7 @@ export const make = (options: PersonalBrowserOptions) =>
         runtime.detail = runtime.closing
           ? null
           : "Chrome exited. It restarts on the next browser action or when you take control.";
+        activeHelp = null;
         yield* Effect.forEach(
           tabs,
           (tab) =>
@@ -630,9 +648,23 @@ export const make = (options: PersonalBrowserOptions) =>
       }),
     );
 
-    // Lease changes (takeover, return, agent switch) are status changes.
+    // Lease changes (takeover, return, agent switch) are status changes. A
+    // human takeover keeps the request visible until control is returned; a
+    // different agent taking the lease makes the old request stale.
     yield* lease.changes.pipe(
-      Stream.runForEach(() => notify),
+      Stream.runForEach((view) =>
+        Effect.gen(function* () {
+          if (
+            activeHelp !== null &&
+            view.ownerType === "agent" &&
+            view.ownerId !== null &&
+            view.ownerId !== activeHelp.request.threadId
+          ) {
+            activeHelp = null;
+          }
+          yield* notify;
+        }),
+      ),
       Effect.forkScoped,
     );
 
@@ -648,6 +680,11 @@ export const make = (options: PersonalBrowserOptions) =>
       }
       return latest;
     };
+
+    const clearHelpForAgentSwitch = (threadId: ThreadId) =>
+      Effect.sync(() => {
+        if (activeHelp !== null && activeHelp.request.threadId !== threadId) activeHelp = null;
+      });
 
     const tabForRequest = (request: PreviewAutomationRequest): TabEntry | undefined => {
       if (request.tabId !== undefined) {
@@ -790,7 +827,9 @@ export const make = (options: PersonalBrowserOptions) =>
           yield* Effect.promise(() => tab.page.close().catch(() => undefined));
           yield* onTabPageClosed(tab);
         }
+        if (activeHelp?.request.threadId === threadId) activeHelp = null;
         yield* lease.releaseThread(threadId);
+        yield* notify;
       });
 
     /**
@@ -1116,6 +1155,7 @@ export const make = (options: PersonalBrowserOptions) =>
       if (request.operation === "status")
         return Effect.sync(() => statusOf(tabForRequest(request)));
       const execute = Effect.gen(function* () {
+        yield* clearHelpForAgentSwitch(request.threadId);
         const startedAt = yield* nowIso;
         // Belt and braces: no operation may outlive its own budget while
         // holding the lease, even one whose driver call ignores timeouts.
@@ -1190,6 +1230,7 @@ export const make = (options: PersonalBrowserOptions) =>
 
     const fillLogin: PersonalBrowser["Service"]["fillLogin"] = (input) => {
       const execute = Effect.gen(function* () {
+        yield* clearHelpForAgentSwitch(input.threadId);
         const source = latestTabForThread(input.threadId);
         if (source === undefined) {
           return yield* Effect.fail(
@@ -1334,18 +1375,83 @@ export const make = (options: PersonalBrowserOptions) =>
         return yield* status(sessionId);
       });
 
+    const requestHelp: PersonalBrowser["Service"]["requestHelp"] = (input) =>
+      lease.runExclusive(
+        Effect.gen(function* () {
+          const view = yield* lease.view;
+          if (
+            view.ownerType !== "agent" ||
+            view.ownerId !== input.threadId ||
+            !view.agentActive ||
+            view.takeoverPending
+          ) {
+            return yield* Effect.fail(
+              new HostOperationError(
+                "PreviewAutomationControlInterruptedError",
+                "Only the thread currently controlling the shared browser can request browser help.",
+              ),
+            );
+          }
+          if (activeHelp?.request.threadId === input.threadId) return activeHelp.request;
+          yield* tasks
+            .waitForBrowser({ taskId: input.taskId })
+            .pipe(
+              Effect.mapError(
+                (error) => new HostOperationError("PreviewAutomationExecutionError", error.message),
+              ),
+            );
+          const request: PersonalBrowserHelpRequest = {
+            threadId: input.threadId,
+            botId: input.botId,
+            botName: input.botName,
+            reason: input.reason,
+            requestedAt: yield* nowIso,
+          };
+          activeHelp = { request, taskId: input.taskId };
+          yield* recordActivity({
+            kind: "control",
+            summary: `${input.botName} asked for help: ${input.reason}`,
+            status: "succeeded",
+            threadId: input.threadId,
+            botName: input.botName,
+          });
+          yield* notify;
+          return request;
+        }),
+      );
+
     const returnToAgent: PersonalBrowser["Service"]["returnToAgent"] = (sessionId) =>
       Effect.gen(function* () {
         const before = yield* lease.view;
         yield* lease.returnToAgent;
         if (before.ownerType === "human") {
+          const finishedHelp = activeHelp;
+          activeHelp = null;
           yield* recordActivity({
             kind: "control",
-            summary: "Returned control to the agent",
+            summary:
+              finishedHelp === null ? "Returned control to the agent" : "You finished helping",
             status: "succeeded",
-            threadId: null,
-            botName: null,
+            threadId: finishedHelp?.request.threadId ?? null,
+            botName: finishedHelp?.request.botName ?? null,
           });
+          if (finishedHelp !== null) {
+            yield* tasks
+              .resumeFromUser({
+                taskId: finishedHelp.taskId,
+                noteId: `browser-help:${finishedHelp.request.requestedAt}`,
+                note: "The user finished helping in the browser. Continue the task.",
+                restartSession: false,
+              })
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("personal browser help continuation could not be queued", {
+                    threadId: finishedHelp.request.threadId,
+                    cause: Cause.pretty(cause),
+                  }),
+                ),
+              );
+          }
         }
         yield* notify;
         return yield* status(sessionId);
@@ -1387,6 +1493,7 @@ export const make = (options: PersonalBrowserOptions) =>
           runtime.phase = "offline";
           runtime.detail = null;
           runtime.lockedByPid = null;
+          activeHelp = null;
           // Keep loginUsed: the persistent profile retains authenticated
           // cookies across a Chrome close, so re-enabling page scripts here
           // would bypass the protection on the next launch.
@@ -1603,6 +1710,7 @@ export const make = (options: PersonalBrowserOptions) =>
     return PersonalBrowser.of({
       status,
       takeControl,
+      requestHelp,
       returnToAgent,
       closeBrowser,
       listFiles,

@@ -9,6 +9,7 @@ Memory belongs to this app. When the user asks you to remember something, call t
 Secrets such as API keys and tokens never go into memory: ask for them with request_secret.
 Saved website logins are used via use_login on the matching site; never ask the user to paste passwords into chat.
 For web pages, use your browser (preview) tools. They drive the shared browser the user can watch and take over in the Computer tab. Close it with close_browser when you are done browsing, or whenever the user asks you to close the browser.
+When a CAPTCHA, human-verification check, login or 2FA prompt blocks you in the shared browser, call request_browser_help with a short reason, tell the user in one sentence what you need, then end your turn. Never try to solve a CAPTCHA.
 You can hand work to the user's other bots with delegate_task. The bot roster changes at any time - the user creates, renames and deletes bots between and during chats - so never trust a remembered roster. Call list_bots for the current roster every time you consider delegating, and before telling the user a bot does or does not exist. When another bot fits a request better than you, delegate instead of doing it yourself.
 </app_rules>`;
 

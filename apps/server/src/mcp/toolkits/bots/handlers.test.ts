@@ -48,6 +48,10 @@ interface Harness {
   readonly dispatched: Array<OrchestrationCommand>;
   readonly sessions: Map<string, OrchestrationSession>;
   readonly loginUses: Array<{ readonly threadId: string; readonly labelOrOrigin: string }>;
+  readonly browserHelpRequests: Array<{
+    readonly threadId: ThreadId;
+    readonly reason: string;
+  }>;
   /** The shared browser as the tools see it: current state, and what closed it. */
   readonly browser: {
     state: PersonalBrowserStatus["state"];
@@ -65,6 +69,7 @@ const browserStatus = (harness: Harness): PersonalBrowserStatus => ({
   controller: harness.browser.controller,
   generation: 1,
   page: null,
+  helpRequest: null,
   viewers: 0,
 });
 
@@ -77,6 +82,17 @@ const makeLayer = (harness: Harness) =>
             const snapshot = browserStatus(harness);
             harness.browser.onStatusRead?.();
             return snapshot;
+          }),
+        requestHelp: (input) =>
+          Effect.sync(() => {
+            harness.browserHelpRequests.push({ threadId: input.threadId, reason: input.reason });
+            return {
+              threadId: input.threadId,
+              botId: input.botId,
+              botName: input.botName,
+              reason: input.reason,
+              requestedAt: "2026-09-15T10:00:00.000Z",
+            };
           }),
         // The real service re-checks human control inside the lease lock, so a
         // takeover that lands after the handler's read still refuses the close.
@@ -221,6 +237,7 @@ const withHarness = <A, E>(
     dispatched: [],
     sessions: new Map(),
     loginUses: [],
+    browserHelpRequests: [],
     browser: {
       state: "connected",
       controller: { _tag: "None" },
@@ -405,6 +422,23 @@ describe("bots toolkit handlers", () => {
         const second = yield* call("close_browser", {});
         expect(second.closed).toBe(false);
         expect(second.note).toContain("already closed");
+      }),
+    ),
+  );
+
+  it.effect("request_browser_help records a short request for the calling thread", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const result = yield* call("request_browser_help", {
+          reason: "CAPTCHA on amazon.co.uk",
+        });
+
+        expect(result.requested).toBe(true);
+        expect(result.note).toContain("end your turn");
+        expect(harness.browserHelpRequests).toEqual([
+          { threadId: CALLER_THREAD, reason: "CAPTCHA on amazon.co.uk" },
+        ]);
       }),
     ),
   );

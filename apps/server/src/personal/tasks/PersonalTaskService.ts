@@ -165,8 +165,12 @@ export class PersonalTaskService extends Context.Service<
     readonly waitForUser: (input: {
       readonly taskId: PersonalTaskId;
     }) => Effect.Effect<PersonalTask, PersonalTasksError>;
+    /** Parks a running task until the user finishes an action in the shared browser. */
+    readonly waitForBrowser: (input: {
+      readonly taskId: PersonalTaskId;
+    }) => Effect.Effect<PersonalTask, PersonalTasksError>;
     /**
-     * Re-queues a waiting_for_user task with `note` as its next turn's
+     * Re-queues a user- or browser-waiting task with `note` as its next turn's
      * opening. `restartSession` first stops the thread's provider session and
      * queues only once it is gone, so the next turn runs in a fresh process.
      */
@@ -740,11 +744,14 @@ export const make = Effect.gen(function* () {
   // allow: a note that needs a fresh provider process waits until the
   // thread's session is gone, so the next turn starts a new process (which
   // is when provider environments are built).
+  const isWaitingForUser = (status: PersonalTaskStatus) =>
+    status === "waiting_for_user" || status === "waiting_for_browser";
+
   const tryResume = Effect.fn("PersonalTaskService.tryResume")(function* (
     changed: Changed,
     task: PersonalTask,
   ) {
-    if (task.status !== "waiting_for_user") {
+    if (!isWaitingForUser(task.status)) {
       return;
     }
     const notes = yield* repository.listUndeliveredNotes(task.taskId);
@@ -1487,21 +1494,24 @@ export const make = Effect.gen(function* () {
       return Option.map(task, (value) => value.rootTaskId);
     }).pipe(toPublic("rootTaskIdForThread"));
 
-  const waitForUser: PersonalTaskService["Service"]["waitForUser"] = (input) =>
+  const parkForUser = (
+    input: { readonly taskId: PersonalTaskId },
+    waitingStatus: "waiting_for_user" | "waiting_for_browser",
+  ) =>
     lock
       .withPermit(
         Effect.gen(function* () {
           const task = yield* requireTask(input.taskId);
-          if (task.status === "waiting_for_user") {
+          if (task.status === waitingStatus) {
             return task;
           }
           if (task.status !== "running") {
             return yield* fail(
-              `Task '${task.taskId}' is ${task.status}; only a running task can wait for the user.`,
+              `Task '${task.taskId}' is ${task.status}; only a running task can wait.`,
             );
           }
           const changed: Changed = [];
-          const waiting = yield* writeTask(changed, task, { status: "waiting_for_user" });
+          const waiting = yield* writeTask(changed, task, { status: waitingStatus });
           if (waiting === null) {
             return yield* fail("The task changed while it was being parked; try again.");
           }
@@ -1509,14 +1519,20 @@ export const make = Effect.gen(function* () {
           return waiting;
         }),
       )
-      .pipe(toPublic("waitForUser"));
+      .pipe(toPublic(waitingStatus === "waiting_for_browser" ? "waitForBrowser" : "waitForUser"));
+
+  const waitForUser: PersonalTaskService["Service"]["waitForUser"] = (input) =>
+    parkForUser(input, "waiting_for_user");
+
+  const waitForBrowser: PersonalTaskService["Service"]["waitForBrowser"] = (input) =>
+    parkForUser(input, "waiting_for_browser");
 
   const resumeFromUser: PersonalTaskService["Service"]["resumeFromUser"] = (input) =>
     lock
       .withPermit(
         Effect.gen(function* () {
           const task = yield* requireTask(input.taskId);
-          if (task.status !== "waiting_for_user") {
+          if (!isWaitingForUser(task.status)) {
             return yield* fail(
               `Task '${task.taskId}' is ${task.status}; it is not waiting for you.`,
             );
@@ -1564,7 +1580,7 @@ export const make = Effect.gen(function* () {
       .withPermit(
         Effect.gen(function* () {
           const task = yield* requireTask(input.taskId);
-          if (task.status !== "waiting_for_user") {
+          if (!isWaitingForUser(task.status)) {
             return yield* fail(
               `Task '${task.taskId}' is ${task.status}; it is not waiting for you.`,
             );
@@ -1627,6 +1643,7 @@ export const make = Effect.gen(function* () {
     resolveCallerTask,
     rootTaskIdForThread,
     waitForUser,
+    waitForBrowser,
     resumeFromUser,
     failWaitingForUser,
   } satisfies PersonalTaskService["Service"];
