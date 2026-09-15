@@ -21,6 +21,8 @@ export interface UsageWindowRow {
   readonly usedPercent: number;
   /** Human countdown from `resetsAt`, or null when the window names no reset. */
   readonly resetLabel: string | null;
+  /** Local clock time for the reset, with a weekday when it is not today. */
+  readonly resetTimeLabel: string | null;
 }
 
 export type UsageCardStatus =
@@ -58,12 +60,33 @@ export function formatResetCountdown(resetsAt: string | undefined, now: number):
   return `resets in ${formatDuration(at - now)}`;
 }
 
+/** "Resets 14:30" today, or "Resets Mon 09:00" on another local day. */
+export function formatResetTime(resetsAt: string | undefined, now: number): string | null {
+  if (resetsAt === undefined) return null;
+  const at = Date.parse(resetsAt);
+  if (!Number.isFinite(at)) return null;
+  const reset = new Date(at);
+  const today = new Date(now);
+  const sameDay =
+    reset.getFullYear() === today.getFullYear() &&
+    reset.getMonth() === today.getMonth() &&
+    reset.getDate() === today.getDate();
+  const formatted = new Intl.DateTimeFormat(undefined, {
+    ...(sameDay ? {} : { weekday: "short" as const }),
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(reset);
+  return `Resets ${formatted}`;
+}
+
 function toRow(window: ServerProviderUsageWindow, now: number): UsageWindowRow {
   return {
     id: window.id,
     label: window.label,
     usedPercent: clampPercent(window.usedPercent),
     resetLabel: formatResetCountdown(window.resetsAt, now),
+    resetTimeLabel: formatResetTime(window.resetsAt, now),
   };
 }
 

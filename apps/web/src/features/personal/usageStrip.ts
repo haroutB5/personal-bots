@@ -38,16 +38,15 @@ export function formatStripPercent(percent: number | null): string {
  */
 export function usageStripAriaLabel(cells: ReadonlyArray<UsageStripCell>): string {
   const parts = cells.map((cell) => {
-    if (cell.sessionPercent === null && cell.weeklyPercent === null) {
-      return `${cell.title} usage not reported`;
-    }
     const session =
       cell.sessionPercent === null
-        ? `${cell.title} session not reported`
-        : `${cell.title} session ${cell.sessionPercent} percent`;
-    return cell.weeklyPercent === null
-      ? session
-      : `${session}, weekly ${cell.weeklyPercent} percent`;
+        ? "Session not reported"
+        : `Session ${cell.sessionPercent} percent used`;
+    const weekly =
+      cell.weeklyPercent === null
+        ? "Weekly not reported"
+        : `Weekly ${cell.weeklyPercent} percent used`;
+    return `${cell.title}, ${session}, ${weekly}`;
   });
   return `Usage: ${parts.join("; ")}. Open details.`;
 }

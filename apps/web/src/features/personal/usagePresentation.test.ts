@@ -2,7 +2,7 @@ import type { ServerProvider, ServerProviderUsageWindow } from "@t3tools/contrac
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatResetCountdown, selectUsageCards } from "./usagePresentation";
+import { formatResetCountdown, formatResetTime, selectUsageCards } from "./usagePresentation";
 
 const NOW = Date.parse("2026-09-13T12:00:00Z");
 
@@ -75,6 +75,21 @@ describe("formatResetCountdown", () => {
     expect(formatResetCountdown("2026-09-13T11:00:00Z", NOW)).toBe("resets now");
     expect(formatResetCountdown(undefined, NOW)).toBeNull();
     expect(formatResetCountdown("not-a-date", NOW)).toBeNull();
+  });
+});
+
+describe("formatResetTime", () => {
+  it("shows the local clock time today and adds a weekday on another day", () => {
+    const localNow = new Date(2026, 8, 13, 12, 0).getTime();
+    const today = new Date(2026, 8, 13, 14, 30).toISOString();
+    const monday = new Date(2026, 8, 14, 9, 0).toISOString();
+    expect(formatResetTime(today, localNow)).toBe("Resets 14:30");
+    expect(formatResetTime(monday, localNow)).toBe("Resets Mon 09:00");
+  });
+
+  it("returns null when the provider does not report a valid reset", () => {
+    expect(formatResetTime(undefined, NOW)).toBeNull();
+    expect(formatResetTime("not-a-date", NOW)).toBeNull();
   });
 });
 
