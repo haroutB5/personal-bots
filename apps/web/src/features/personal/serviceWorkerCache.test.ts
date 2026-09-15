@@ -6,7 +6,12 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 const source = NodeFS.readFileSync(new URL("../../../public/sw.js", import.meta.url), "utf8");
 
-function worker(storageFails: boolean, networkFails = false, hasShell = false) {
+function worker(
+  storageFails: boolean,
+  networkFails = false,
+  hasShell = false,
+  clients: unknown = undefined,
+) {
   const handlers = new Map<string, (event: unknown) => void>();
   const response = {
     ok: true,
@@ -28,11 +33,13 @@ function worker(storageFails: boolean, networkFails = false, hasShell = false) {
   const showNotification = vi.fn(async () => undefined);
   NodeVM.runInNewContext(source, {
     URL,
+    Response,
     self: {
       location: new URL("https://bots.example/sw.js?v=test"),
       addEventListener: (name: string, handler: (event: unknown) => void) =>
         handlers.set(name, handler),
       registration: { showNotification },
+      clients,
     },
     fetch,
     caches: {
@@ -43,7 +50,7 @@ function worker(storageFails: boolean, networkFails = false, hasShell = false) {
       open: async () => cache,
     },
   });
-  return { handlers, response, offline, fetch, showNotification };
+  return { handlers, response, offline, fetch, showNotification, cache };
 }
 
 describe("personal service worker", () => {
@@ -139,5 +146,36 @@ describe("personal service worker", () => {
       "Bots",
       expect.objectContaining({ body: "" }),
     );
+  });
+
+  it("hands the deep link to the open app even when focus is refused", async () => {
+    // iOS brings the installed app forward itself and can reject focus();
+    // the deep link must still arrive, and survive a dropped message.
+    const client = {
+      url: "https://bots.example/bots",
+      focus: vi.fn(async () => {
+        throw new Error("InvalidAccessError");
+      }),
+      postMessage: vi.fn(),
+    };
+    const openWindow = vi.fn(async () => undefined);
+    const app = worker(false, false, false, {
+      matchAll: async () => [client],
+      openWindow,
+    });
+    let result: Promise<unknown> | undefined;
+    app.handlers.get("notificationclick")!({
+      notification: { close: () => undefined, data: { url: "/bots/bot-1/thread-1" } },
+      waitUntil: (value: Promise<unknown>) => {
+        result = value;
+      },
+    });
+    await result;
+    expect(client.postMessage).toHaveBeenCalledWith({
+      type: "bots:navigate",
+      url: "/bots/bot-1/thread-1",
+    });
+    expect(app.cache.put).toHaveBeenCalledWith("/__bots-pending-nav__", expect.anything());
+    expect(openWindow).not.toHaveBeenCalled();
   });
 });

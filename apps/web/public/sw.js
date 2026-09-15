@@ -12,6 +12,9 @@ const VERSION = new URL(self.location.href).searchParams.get("v") || "dev";
 const CACHE_PREFIX = "bots-shell-";
 const CACHE_NAME = `${CACHE_PREFIX}${VERSION}`;
 const SHELL_KEY = "/__bots-shell__";
+// Deep link from the last notification tap; see the notificationclick handler.
+const PENDING_NAV_CACHE = "bots-pending-nav";
+const PENDING_NAV_KEY = "/__bots-pending-nav__";
 
 const NEVER_CACHE = [
   /^\/api(\/|$)/,
@@ -165,17 +168,30 @@ self.addEventListener("notificationclick", (event) => {
       : new URL("/bots", self.location.origin).href;
   event.waitUntil(
     (async () => {
+      const url = new URL(href).pathname + new URL(href).search;
+      // iOS can drop a message to an app it is still waking, so the page also
+      // reads this when it becomes visible. Its cache name sits outside
+      // CACHE_PREFIX, so activate never deletes it.
+      try {
+        const cache = await caches.open(PENDING_NAV_CACHE);
+        await cache.put(PENDING_NAV_KEY, new Response(JSON.stringify({ url, at: Date.now() })));
+      } catch {
+        // The message below still carries the link.
+      }
       const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       for (const client of windows) {
         if (new URL(client.url).origin !== self.location.origin) continue;
-        await client.focus();
         // Client.postMessage has no targetOrigin; the client is same-origin (checked above).
         /* eslint-disable unicorn/require-post-message-target-origin */
-        client.postMessage({
-          type: "bots:navigate",
-          url: new URL(href).pathname + new URL(href).search,
-        });
+        client.postMessage({ type: "bots:navigate", url });
         /* eslint-enable unicorn/require-post-message-target-origin */
+        // iOS brings the installed app forward itself and can refuse focus();
+        // that must not cost the deep link, so it runs last and never throws.
+        try {
+          await client.focus();
+        } catch {
+          // Already in front.
+        }
         return;
       }
       await self.clients.openWindow(href);

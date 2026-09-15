@@ -29,9 +29,36 @@ export function isNavigablePath(value: unknown): value is string {
   );
 }
 
+/** Must match PENDING_NAV_CACHE / PENDING_NAV_KEY in public/sw.js. */
+const PENDING_NAV_CACHE = "bots-pending-nav";
+const PENDING_NAV_KEY = "/__bots-pending-nav__";
+/** An older tap is not what the user is opening the app for now. */
+const PENDING_NAV_MAX_AGE_MS = 2 * 60_000;
+
+/**
+ * Takes (and clears) the deep link the worker saved for the last notification
+ * tap, or null when there is none, it is stale or it is not a safe path.
+ */
+export async function takePendingNavigation(now: number = Date.now()): Promise<string | null> {
+  if (typeof caches === "undefined") return null;
+  try {
+    const cache = await caches.open(PENDING_NAV_CACHE);
+    const response = await cache.match(PENDING_NAV_KEY);
+    if (response === undefined) return null;
+    await cache.delete(PENDING_NAV_KEY);
+    const data = (await response.json()) as { url?: unknown; at?: unknown } | null;
+    const fresh = typeof data?.at === "number" && now - data.at < PENDING_NAV_MAX_AGE_MS;
+    return fresh && isNavigablePath(data?.url) ? data.url : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Registers `/sw.js` (versioned by build, so each release gets a fresh shell
- * cache) and routes notification clicks from the worker into the router.
+ * cache) and routes notification clicks from the worker into the router: by
+ * message, and by the saved deep link when the app becomes visible (iOS can
+ * drop the message to an app it is still waking).
  */
 export function registerPersonalServiceWorker(navigate: (path: string) => void): void {
   if (
@@ -44,10 +71,25 @@ export function registerPersonalServiceWorker(navigate: (path: string) => void):
   ) {
     return;
   }
+  const go = (path: string) => {
+    if (`${window.location.pathname}${window.location.search}` !== path) navigate(path);
+  };
   navigator.serviceWorker.addEventListener("message", (event: MessageEvent) => {
     const data = event.data as { type?: unknown; url?: unknown } | null;
-    if (data?.type === "bots:navigate" && isNavigablePath(data.url)) navigate(data.url);
+    if (data?.type !== "bots:navigate" || !isNavigablePath(data.url)) return;
+    // The message won; clear the saved copy so a later resume does not repeat it.
+    void takePendingNavigation();
+    go(data.url);
   });
+  const onVisible = () => {
+    if (document.visibilityState !== "visible") return;
+    void takePendingNavigation().then((path) => {
+      if (path !== null) go(path);
+    });
+  };
+  document.addEventListener("visibilitychange", onVisible);
+  window.addEventListener("pageshow", onVisible);
+  onVisible();
   const register = () => {
     void navigator.serviceWorker
       .register(`/sw.js?v=${encodeURIComponent(APP_VERSION)}`, { scope: "/" })
