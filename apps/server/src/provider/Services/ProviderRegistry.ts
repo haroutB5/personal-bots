@@ -10,6 +10,7 @@ import type {
   ProviderInstanceId,
   ProviderDriverKind,
   ServerProvider,
+  ServerProviderSmokeCheck,
   ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -17,7 +18,20 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 
-export type ProviderMaintenanceActionKind = "update";
+export type ProviderMaintenanceActionKind = "update" | "smokeCheck";
+
+/** Volatile per-instance state projected onto `ServerProvider.updateState` / `.smokeCheck`. */
+export type ProviderMaintenanceActionStateInput =
+  | {
+      readonly instanceId: ProviderInstanceId;
+      readonly action: "update";
+      readonly state: ServerProviderUpdateState | null;
+    }
+  | {
+      readonly instanceId: ProviderInstanceId;
+      readonly action: "smokeCheck";
+      readonly state: ServerProviderSmokeCheck | null;
+    };
 
 export interface ProviderRegistryShape {
   /**
@@ -70,11 +84,9 @@ export interface ProviderRegistryShape {
    * projected onto `ServerProvider.updateState`; install/auth actions can
    * extend this action map without adding driver-scoped APIs.
    */
-  readonly setProviderMaintenanceActionState: (input: {
-    readonly instanceId: ProviderInstanceId;
-    readonly action: ProviderMaintenanceActionKind;
-    readonly state: ServerProviderUpdateState | null;
-  }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+  readonly setProviderMaintenanceActionState: (
+    input: ProviderMaintenanceActionStateInput,
+  ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
    * Stream of provider snapshot updates — one emission per aggregated

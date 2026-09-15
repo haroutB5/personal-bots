@@ -20,7 +20,11 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
-import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
+import {
+  ProviderRegistry,
+  type ProviderMaintenanceActionStateInput,
+  type ProviderRegistryShape,
+} from "./Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import {
   makeProviderMaintenanceCapabilities,
@@ -163,11 +167,8 @@ function makeRegistry(
 
     const setProviderMaintenanceActionState = Effect.fn(
       "providerMaintenanceRunner.test.setProviderMaintenanceActionState",
-    )(function* (input: {
-      readonly instanceId: ProviderInstanceId;
-      readonly action: "update";
-      readonly state: ServerProviderUpdateState | null;
-    }) {
+    )(function* (input: ProviderMaintenanceActionStateInput) {
+      if (input.action !== "update") return yield* Ref.get(providersRef);
       const updateState = input.state;
       if (updateState) {
         yield* Ref.update(updateStatesRef, (states) => [...states, updateState]);

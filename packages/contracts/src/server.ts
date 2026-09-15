@@ -185,6 +185,22 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
+export const ServerProviderSmokeCheckStatus = Schema.Literals(["checking", "passed", "failed"]);
+export type ServerProviderSmokeCheckStatus = typeof ServerProviderSmokeCheckStatus.Type;
+
+/**
+ * Outcome of the one-message test turn the server runs after a provider's
+ * installed version changes (personal bots). `version` is the version that was
+ * tested; a result for an older version says nothing about the current one.
+ */
+export const ServerProviderSmokeCheck = Schema.Struct({
+  status: ServerProviderSmokeCheckStatus,
+  version: TrimmedNonEmptyString,
+  checkedAt: Schema.NullOr(IsoDateTime),
+  message: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ServerProviderSmokeCheck = typeof ServerProviderSmokeCheck.Type;
+
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -235,6 +251,7 @@ export const ServerProvider = Schema.Struct({
   usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  smokeCheck: Schema.optionalKey(ServerProviderSmokeCheck),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 
