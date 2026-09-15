@@ -148,6 +148,8 @@ export function FilePreviewSheet({
       <SheetPopup
         side="bottom"
         showCloseButton={false}
+        forceBackdrop
+        backdropClassName="bg-background/70 backdrop-blur-md"
         className="personal-app max-h-[90dvh] rounded-t-[var(--personal-radius-card)] border-[var(--personal-border)] pb-[env(safe-area-inset-bottom)]"
       >
         {file !== null ? (

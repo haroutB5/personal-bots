@@ -65,6 +65,7 @@ function SheetPopup({
   keepMounted = false,
   transitionDurationMs,
   backdropClassName,
+  forceBackdrop = false,
   viewportClassName,
   side = "right",
   variant = "default",
@@ -75,6 +76,8 @@ function SheetPopup({
   keepMounted?: boolean;
   transitionDurationMs?: number;
   backdropClassName?: string;
+  /** Render the backdrop even when base-ui considers this dialog nested (it skips it by default). */
+  forceBackdrop?: boolean;
   viewportClassName?: string;
   side?: "right" | "left" | "top" | "bottom";
   variant?: "default" | "inset";
@@ -88,6 +91,7 @@ function SheetPopup({
   return (
     <SheetPortal keepMounted={keepMounted}>
       <SheetBackdrop
+        forceRender={forceBackdrop}
         className={cn(
           instant &&
             "transition-none! data-ending-style:opacity-100! data-starting-style:opacity-100!",
