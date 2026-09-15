@@ -370,13 +370,20 @@ export function ConversationScreen({
           <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
         </Link>
         {bot !== null ? (
-          <BotAvatar
-            shape={bot.avatarShape}
-            color={bot.avatarColor}
-            size={48}
-            label={bot.name}
-            motion={motionForConversationState(conversationState)}
-          />
+          <Link
+            to="/bots/$botId/edit"
+            params={{ botId: bot.botId }}
+            aria-label={`Edit ${bot.name}`}
+            className="flex min-h-11 shrink-0 items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          >
+            <BotAvatar
+              shape={bot.avatarShape}
+              color={bot.avatarColor}
+              size={48}
+              label={bot.name}
+              motion={motionForConversationState(conversationState)}
+            />
+          </Link>
         ) : headerName.status === "loading" ? (
           <span
             aria-hidden="true"
@@ -441,15 +448,6 @@ export function ConversationScreen({
               </MenuItem>
             ) : null}
             {interruptInput !== null || (bot !== null && providerWait) ? <MenuSeparator /> : null}
-            {bot !== null ? (
-              <MenuItem
-                onClick={() =>
-                  void navigate({ to: "/bots/$botId/edit", params: { botId: bot.botId } })
-                }
-              >
-                Edit bot
-              </MenuItem>
-            ) : null}
             {bot !== null ? (
               <MenuItem disabled={starting} onClick={() => void startNewChat()}>
                 New chat
