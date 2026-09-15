@@ -129,11 +129,22 @@ class FakePage implements BrowserPage {
   networkEntries() {
     return this.networkRecords;
   }
-  async startScreencast(_onFrame: (jpeg: Uint8Array, meta: ScreencastMeta) => void) {
+  /** The live screencast's frame callback, so a test can paint a frame. */
+  frameSink: ((jpeg: Uint8Array, meta: ScreencastMeta) => void) | null = null;
+  async startScreencast(onFrame: (jpeg: Uint8Array, meta: ScreencastMeta) => void) {
     this.screencasts++;
+    this.frameSink = onFrame;
     return async () => {
       this.stoppedScreencasts++;
+      if (this.frameSink === onFrame) this.frameSink = null;
     };
+  }
+  paint() {
+    this.frameSink?.(new Uint8Array([0xff, 0xd8, 0xff]), {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+    });
   }
   onClose() {}
   async close() {
@@ -1334,6 +1345,88 @@ describe("PersonalBrowser", () => {
         expect(leaks(error.message)).toBe(false);
         expect(leaks(error.detail)).toBe(false);
         expect(error.message).toContain(REDACTED_CREDENTIAL);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+  });
+
+  // A reveal-password widget on the credential tab would otherwise stream the
+  // plaintext to every phone watching. The person at the controls is never
+  // masked: it is their own screen, and they need it to type.
+  describe("screencast mask", () => {
+    const drain = (viewer: PersonalBrowser.ViewerHandle) =>
+      Effect.gen(function* () {
+        const items: Array<Uint8Array | string> = [];
+        while ((yield* Queue.size(viewer.outbox)) > 0) items.push(yield* Queue.take(viewer.outbox));
+        return items;
+      });
+
+    it.effect("withholds the credential tab while a bot drives, never while you do", () => {
+      const fake = makeFakeDriver();
+      asLoginBrowser(fake);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://example.com/sign-in" }),
+        );
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({
+              sessionId: "session-1",
+              canOperate: true,
+            });
+            const watcher = yield* browser.attachViewer({
+              sessionId: "session-2",
+              canOperate: false,
+            });
+            yield* browser.fillLogin({
+              threadId,
+              label: "Example",
+              expectedOrigin: "https://example.com",
+              username: "person@example.com",
+              password: "password-value",
+            });
+            const fillPage = fake.state.pages.at(-1)!;
+            yield* drain(viewer);
+            yield* drain(watcher);
+
+            // The bot holds the browser and the password is in the form.
+            fillPage.paint();
+            fillPage.paint();
+            for (const phone of [viewer, watcher]) {
+              const items = yield* drain(phone);
+              expect(items.some((item) => item instanceof Uint8Array)).toBe(false);
+              // One notice per hidden stretch, not one per withheld frame.
+              expect(items).toHaveLength(1);
+              expect(String(items[0])).toContain("FramesHidden");
+            }
+
+            // Take control: the person sees their own screen.
+            yield* browser.takeControl("session-1");
+            yield* drain(viewer);
+            fillPage.frameSink?.(new Uint8Array([0xff, 0xd8, 0xff]), {
+              width: 390,
+              height: 844,
+              deviceScaleFactor: 1,
+            });
+            expect((yield* drain(viewer)).some((item) => item instanceof Uint8Array)).toBe(true);
+
+            // Back to the bot, still on the form: hidden again.
+            yield* browser.returnToAgent("session-1");
+            yield* drain(viewer);
+            fillPage.paint();
+            const again = yield* drain(viewer);
+            expect(again.some((item) => item instanceof Uint8Array)).toBe(false);
+            expect(String(again[0])).toContain("FramesHidden");
+
+            // The page left the form: the view is live again.
+            yield* browser.handleAutomationRequest(
+              request("navigate", { url: "https://example.com/account" }),
+            );
+            yield* drain(viewer);
+            fillPage.paint();
+            expect((yield* drain(viewer)).some((item) => item instanceof Uint8Array)).toBe(true);
+          }),
+        );
       }).pipe(Effect.provide(makeLayer(fake.driver)));
     });
   });

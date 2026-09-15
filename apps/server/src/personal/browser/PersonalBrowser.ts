@@ -18,6 +18,7 @@ import {
   encodePersonalBrowserFrame,
   PersonalBrowserError,
   PersonalBrowserInputMessage,
+  PersonalBrowserViewerMessage,
   ThreadId,
   type PersonalBotId,
   type PersonalBrowserActivityEvent,
@@ -233,6 +234,10 @@ const HELP_ENDED_BY_SWITCH =
 const decodeInputMessage = Schema.decodeUnknownEffect(
   Schema.fromJsonString(PersonalBrowserInputMessage),
 );
+const encodeViewerMessage = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserViewerMessage));
+
+const FRAMES_HIDDEN_REASON =
+  "Hidden while a bot fills a saved password. The view returns when the page moves on, or when you take control.";
 
 const firstLine = (value: string) => value.split("\n")[0]?.trim() || "Unknown error";
 
@@ -423,6 +428,13 @@ export const make = (options: PersonalBrowserOptions) =>
     const pageTitles = new WeakMap<BrowserPage, string>();
     const viewers = new Map<number, ViewerHandle>();
     let viewerSequence = 0;
+    // Frames arrive on Playwright's callback, outside any effect, so the mask
+    // reads a plain copy of who holds the browser. Every lease change refreshes
+    // it; takeControl and returnToAgent also refresh it directly so the first
+    // frame after either already sees the new owner.
+    let humanInControl = (yield* lease.view).ownerType === "human";
+    // One FramesHidden notice per hidden stretch; a forwarded frame ends it.
+    let framesHidden = false;
     let screencast: { readonly page: BrowserPage; readonly stop: () => Promise<void> } | null =
       null;
     let lastPageInfoRefresh = 0;
@@ -597,9 +609,31 @@ export const make = (options: PersonalBrowserOptions) =>
       if (previous !== title) yield* notify;
     });
 
-    const onFrame = (jpeg: Uint8Array, meta: ScreencastMeta) => {
-      const frame = encodePersonalBrowserFrame(jpeg, meta);
-      for (const viewer of viewers.values()) Queue.offerUnsafe(viewer.outbox, frame);
+    /**
+     * Forwards one screencast frame to every attached phone, unless it shows
+     * the credential form a bot just filled while a bot (not a person) holds
+     * the browser: a reveal-password widget would stream the plaintext. The
+     * whole form stretch is withheld rather than guessing focus or reveal
+     * state, since either would mean reading the page. Take control always
+     * streams; it is the person's own screen, and they need it to type.
+     */
+    const onFrame = (page: BrowserPage, jpeg: Uint8Array, meta: ScreencastMeta) => {
+      const tab = [...runtime.tabs.values()].find((entry) => entry.page === page);
+      refreshCredentialProtection(tab);
+      if (tab?.loginProtected === true && !humanInControl) {
+        if (!framesHidden) {
+          framesHidden = true;
+          const notice = encodeViewerMessage({
+            _tag: "FramesHidden",
+            reason: FRAMES_HIDDEN_REASON,
+          });
+          for (const viewer of viewers.values()) Queue.offerUnsafe(viewer.outbox, notice);
+        }
+      } else {
+        framesHidden = false;
+        const frame = encodePersonalBrowserFrame(jpeg, meta);
+        for (const viewer of viewers.values()) Queue.offerUnsafe(viewer.outbox, frame);
+      }
       // Frames only arrive when the page repaints, so they double as a cheap
       // trigger for noticing human navigation (url/title) without polling.
       const now = performance.now();
@@ -619,9 +653,9 @@ export const make = (options: PersonalBrowserOptions) =>
           yield* Effect.promise(() => stop().catch(() => undefined));
         }
         if (target !== null && screencast === null) {
-          const stop = yield* Effect.tryPromise(() => target.startScreencast(onFrame)).pipe(
-            Effect.option,
-          );
+          const stop = yield* Effect.tryPromise(() =>
+            target.startScreencast((jpeg, meta) => onFrame(target, jpeg, meta)),
+          ).pipe(Effect.option);
           if (Option.isSome(stop)) screencast = { page: target, stop: stop.value };
         }
       }),
@@ -804,6 +838,7 @@ export const make = (options: PersonalBrowserOptions) =>
     yield* lease.changes.pipe(
       Stream.runForEach((view) =>
         Effect.gen(function* () {
+          humanInControl = view.ownerType === "human";
           if (
             activeHelp !== null &&
             view.ownerType === "agent" &&
@@ -1523,6 +1558,7 @@ export const make = (options: PersonalBrowserOptions) =>
       Effect.gen(function* () {
         const before = yield* lease.view;
         yield* lease.takeControl(sessionId);
+        humanInControl = true;
         // Another device taking over drops the previous controller's phone viewport.
         yield* syncHumanViewport;
         if (!(before.ownerType === "human" && before.ownerId === sessionId)) {
@@ -1591,6 +1627,7 @@ export const make = (options: PersonalBrowserOptions) =>
       Effect.gen(function* () {
         const before = yield* lease.view;
         yield* lease.returnToAgent;
+        humanInControl = (yield* lease.view).ownerType === "human";
         // The agent gets its own viewport back before it can run another op.
         yield* syncHumanViewport;
         if (before.ownerType === "human") {
@@ -1759,6 +1796,8 @@ export const make = (options: PersonalBrowserOptions) =>
           const outbox = yield* Queue.sliding<Uint8Array | string>(4);
           const viewer: ViewerHandle = { id: ++viewerSequence, ...input, outbox };
           viewers.set(viewer.id, viewer);
+          // A phone joining mid-stretch still gets the notice on the next frame.
+          framesHidden = false;
           yield* syncScreencast;
           yield* notify;
           return viewer;
