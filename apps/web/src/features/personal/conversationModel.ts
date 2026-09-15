@@ -2,6 +2,7 @@ import type { PendingApproval, PendingUserInput } from "@t3tools/client-runtime/
 import type {
   OrchestrationLatestTurn,
   OrchestrationSession,
+  PersonalBrowserStatus,
   PersonalTask,
 } from "@t3tools/contracts";
 
@@ -17,6 +18,7 @@ import { PERSONAL_TIME_ZONE } from "./greeting";
  */
 export type ConversationState =
   | "idle"
+  | "needs_help"
   | "working"
   | "waiting"
   | "delegating"
@@ -26,6 +28,7 @@ export type ConversationState =
 
 export const CONVERSATION_STATE_LABEL: Record<ConversationState, string> = {
   idle: "Idle",
+  needs_help: "Needs your help",
   working: "Working",
   waiting: "Waiting for you",
   // The screen names the bots ("Waiting for Developer") when it knows them.
@@ -57,9 +60,17 @@ export function deriveConversationState(input: {
   readonly latestTurn: OrchestrationLatestTurn | null;
   readonly pendingApprovals: ReadonlyArray<PendingApproval>;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
+  readonly browserStatus?: PersonalBrowserStatus | null;
+  readonly threadId?: string;
   /** The thread's task is parked waiting for delegated work (`waiting_for_agent`). */
   readonly waitingForAgent?: boolean;
 }): ConversationState {
+  if (
+    input.threadId !== undefined &&
+    input.browserStatus?.helpRequest?.threadId === input.threadId
+  ) {
+    return "needs_help";
+  }
   if (input.pendingApprovals.length > 0 || input.pendingUserInputs.length > 0) return "waiting";
   const wait = providerWaitState(input.session);
   if (wait !== null) return wait;

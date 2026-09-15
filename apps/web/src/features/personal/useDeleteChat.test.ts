@@ -53,7 +53,7 @@ function seedSnapshot(): void {
         name: `Bot ${key}`,
         avatarShape: "blob" as const,
         avatarColor: "#1A73E8" as const,
-        providerLabel: "Claude Code",
+        subtitle: "General assistant",
         previewLabel: null,
         previewAtMs: 0,
         threadId: `thread-${key}`,

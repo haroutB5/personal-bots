@@ -30,6 +30,7 @@ const status = (overrides: Partial<PersonalBrowserStatus> = {}): PersonalBrowser
   controller: { _tag: "None" },
   generation: 1,
   page: null,
+  helpRequest: null,
   viewers: 0,
   ...overrides,
 });
@@ -58,7 +59,7 @@ describe("computer feed", () => {
     );
   });
 
-  it("names the bot only while an agent lease is live", () => {
+  it("labels running, idle-lease and help states honestly", () => {
     expect(activeAgentLine(status())).toBeNull();
     expect(
       activeAgentLine(status({ controller: { _tag: "Human", self: true, connected: true } })),
@@ -73,8 +74,34 @@ describe("computer feed", () => {
             botName: "Developer",
           },
         }),
+        true,
       ),
     ).toBe("Developer is using the browser");
+    expect(
+      activeAgentLine(
+        status({
+          controller: {
+            _tag: "Agent",
+            threadId: ThreadId.make("t"),
+            botId: null,
+            botName: "Developer",
+          },
+        }),
+      ),
+    ).toBe("Developer left the browser open");
+    expect(
+      activeAgentLine(
+        status({
+          helpRequest: {
+            threadId: ThreadId.make("t"),
+            botId: PersonalBotId.make("bot-1"),
+            botName: "Developer",
+            reason: "CAPTCHA on example.com",
+            requestedAt: "2026-09-15T10:00:00.000Z",
+          },
+        }),
+      ),
+    ).toBe("Needs your help: CAPTCHA on example.com");
   });
 
   it("targets the leased bot's chat for Back to chat, else falls back", () => {
@@ -212,8 +239,21 @@ describe("closing the browser", () => {
           botName: "Developer",
         },
       }),
+      true,
     );
     expect(agent).toContain("Developer is using the browser");
+    expect(
+      closeBrowserConfirmMessage(
+        status({
+          controller: {
+            _tag: "Agent",
+            threadId: ThreadId.make("thread-a"),
+            botId: PersonalBotId.make("bot-1"),
+            botName: "Developer",
+          },
+        }),
+      ),
+    ).toContain("Developer left the browser open");
 
     // An unnamed bot still earns the prompt: the interruption is the point.
     expect(
@@ -226,6 +266,7 @@ describe("closing the browser", () => {
             botName: null,
           },
         }),
+        true,
       ),
     ).toContain("A bot is using the browser");
   });

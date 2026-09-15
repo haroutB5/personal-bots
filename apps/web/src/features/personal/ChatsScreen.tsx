@@ -12,12 +12,8 @@ import { primaryServerProvidersAtom } from "~/state/server";
 import { capContinuousMotion, motionForSummary } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
 import { BotRow, ROW_CLASS, snapshotPreviewLabel } from "./BotRow";
-import {
-  buildBotSummaries,
-  collectAttentionThreads,
-  filterBotSummaries,
-  providerLine,
-} from "./botSummaries";
+import { buildBotSummaries, collectAttentionThreads, filterBotSummaries } from "./botSummaries";
+import { useComputerFeed } from "./computer/computerState";
 import {
   buildChatsSnapshot,
   readChatsSnapshot,
@@ -35,7 +31,7 @@ import { useAppVersion } from "./appVersion";
 import { greetingLine, teamStatusLine } from "./greeting";
 import { SwipeToDelete } from "./SwipeToDelete";
 import { useDeleteBot } from "./useDeleteBot";
-import { usePersonalTasks } from "./usePersonalAutomation";
+import { usePersonalRoutines, usePersonalTasks } from "./usePersonalAutomation";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import {
@@ -118,7 +114,7 @@ function SnapshotBotRows({ snapshot, now }: { snapshot: ChatsSnapshot; now: numb
                 ) : null}
               </span>
               <span className="truncate text-sm leading-5 text-[var(--personal-text-secondary)]">
-                {row.providerLabel}
+                {row.subtitle}
               </span>
               <span className="truncate text-sm leading-5 text-[#3a3a3a]">{row.preview}</span>
             </span>
@@ -154,6 +150,8 @@ export function ChatsScreen(): JSX.Element {
   const profile = usePersonalProfile(environmentId);
   const allShells = useThreadShells();
   const providers = useAtomValue(primaryServerProvidersAtom);
+  const { feed: computerFeed } = useComputerFeed(environmentId);
+  const routinesQuery = usePersonalRoutines(environmentId);
   const now = useMinuteClock();
   const deleteBot = useDeleteBot(environmentId);
   const [query, setQuery] = useState("");
@@ -241,8 +239,17 @@ export function ChatsScreen(): JSX.Element {
             shells,
             providers,
             waitingByThread,
+            browserHelpThreadId: computerFeed.status?.helpRequest?.threadId ?? null,
+            routines: routinesQuery.data?.routines ?? [],
           }),
-    [list.data, providers, shells, waitingByThread],
+    [
+      computerFeed.status?.helpRequest?.threadId,
+      list.data,
+      providers,
+      routinesQuery.data,
+      shells,
+      waitingByThread,
+    ],
   );
   // Previews ride on `personalBots.list`; a message landing on a bot's newest
   // thread bumps that shell's updatedAt (already live), which refetches the
@@ -271,6 +278,16 @@ export function ChatsScreen(): JSX.Element {
   // animation however many bots are busy.
   const rowMotions = useMemo(() => capContinuousMotion(visible.map(motionForSummary)), [visible]);
   const attention = useMemo(() => collectAttentionThreads(summaries), [summaries]);
+  const helpRequest = computerFeed.status?.helpRequest ?? null;
+  const helpSummary =
+    helpRequest === null
+      ? null
+      : (summaries.find(
+          (summary) => summary.bot.botId === helpRequest.botId && summary.needsBrowserHelp,
+        ) ?? null);
+  const helpAlreadyCounted =
+    helpRequest !== null && attention.some((thread) => thread.id === helpRequest.threadId);
+  const reviewCount = attention.length + (helpSummary !== null && !helpAlreadyCounted ? 1 : 0);
   const runningCount = summaries.filter((summary) => summary.live).length;
   const firstAttention = attention[0] ?? null;
   const { label: versionLabel, updateAvailable } = useAppVersion();
@@ -279,6 +296,12 @@ export function ChatsScreen(): JSX.Element {
       ? null
       : (summaries.find((summary) => summary.attentionThreads.includes(firstAttention))?.bot ??
         null);
+  const firstReviewTarget =
+    helpRequest !== null && helpSummary !== null
+      ? { botId: helpSummary.bot.botId, threadId: helpRequest.threadId }
+      : firstAttention !== null && firstAttentionBot !== null
+        ? { botId: firstAttentionBot.botId, threadId: firstAttention.id }
+        : null;
 
   // Persist the render snapshot after each successful list fetch. The effect
   // only writes when the row content actually changed, so task-feed updates
@@ -290,7 +313,7 @@ export function ChatsScreen(): JSX.Element {
       name: summary.bot.name,
       avatarShape: summary.bot.avatarShape,
       avatarColor: summary.bot.avatarColor,
-      providerLabel: providerLine(summary.provider),
+      subtitle: summary.bot.title,
       previewLabel: snapshotPreviewLabel(summary, describeTurn),
       previewAtMs: summary.lastActivityMs,
       threadId: summary.newestThread === null ? null : (summary.newestThread.id as string),
@@ -349,7 +372,7 @@ export function ChatsScreen(): JSX.Element {
             {teamStatusLine({
               botCount: summaries.length,
               runningCount,
-              reviewCount: attention.length,
+              reviewCount,
             })}
           </p>
         ) : null}
@@ -449,10 +472,10 @@ export function ChatsScreen(): JSX.Element {
             </p>
           )}
 
-          {firstAttention !== null && firstAttentionBot !== null ? (
+          {firstReviewTarget !== null ? (
             <Link
               to="/bots/$botId/$threadId"
-              params={{ botId: firstAttentionBot.botId, threadId: firstAttention.id }}
+              params={firstReviewTarget}
               className="mt-3 flex h-[50px] items-center gap-3 rounded-xl border border-[var(--personal-review-border)] bg-[var(--personal-review-bg)] px-4 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
             >
               <span
@@ -460,9 +483,9 @@ export function ChatsScreen(): JSX.Element {
                 className="size-2 shrink-0 rounded-full bg-[var(--personal-review)]"
               />
               <span className="min-w-0 flex-1 truncate text-[15px] font-medium text-[var(--personal-text)]">
-                {attention.length === 1
+                {reviewCount === 1
                   ? "1 item needs your review"
-                  : `${attention.length} items need your review`}
+                  : `${reviewCount} items need your review`}
               </span>
               <ChevronRight
                 aria-hidden="true"

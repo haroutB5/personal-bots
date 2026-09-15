@@ -3,12 +3,15 @@ import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/stat
 import {
   isProviderAvailable,
   type PersonalBot,
+  type PersonalRoutine,
   type PersonalBotThread,
   type PersonalBotThreadNewestMessage,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
-import { providerWaitState } from "./conversationModel";
+import { conversationStateLabel, providerWaitState } from "./conversationModel";
+import { routineNextRunLabel } from "./taskPresentation";
 
 export interface BotProviderStatus {
   readonly label: string;
@@ -28,10 +31,15 @@ export interface BotSummary {
   readonly live: boolean;
   /** A linked thread is stuck on a provider rate limit. */
   readonly rateLimited: boolean;
+  readonly rateLimitedThread: EnvironmentThreadShell | null;
   /** Linked threads waiting on the user (approval or requested input). */
   readonly attentionThreads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly hasPendingApprovals: boolean;
+  readonly hasPendingUserInput: boolean;
+  readonly needsBrowserHelp: boolean;
   /** "Waiting for Developer": a linked thread's task is parked on delegated work. */
   readonly waitingFor: string | null;
+  readonly nextRoutine: PersonalRoutine | null;
   readonly lastActivityMs: number | null;
 }
 
@@ -82,6 +90,46 @@ export function threadNeedsAttention(shell: EnvironmentThreadShell): boolean {
   return shell.hasPendingApprovals || shell.hasPendingUserInput;
 }
 
+export type BotStatusTone = "review" | "normal";
+
+export function botStatus(
+  summary: BotSummary,
+  now: number,
+): {
+  readonly label: string;
+  readonly tone: BotStatusTone;
+} {
+  if (summary.needsBrowserHelp) return { label: "Needs your help", tone: "review" };
+  if (summary.hasPendingApprovals) return { label: "Needs approval", tone: "review" };
+  if (summary.hasPendingUserInput) return { label: "Needs your reply", tone: "review" };
+  if (summary.live) return { label: "Working", tone: "normal" };
+  if (summary.rateLimitedThread !== null) {
+    return {
+      label: conversationStateLabel(
+        "rate_limited",
+        summary.rateLimitedThread.session,
+        new Date(now),
+      ),
+      tone: "review",
+    };
+  }
+  if (summary.waitingFor !== null) return { label: summary.waitingFor, tone: "normal" };
+  if (summary.nextRoutine !== null) {
+    return {
+      label: routineNextRunLabel(summary.nextRoutine).replace(/^Next: /, "Next run "),
+      tone: "normal",
+    };
+  }
+  if (!summary.provider.available) {
+    return { label: "Unavailable · tap to fix", tone: "review" };
+  }
+  return { label: "Ready", tone: "normal" };
+}
+
+export function botStatusLine(summary: BotSummary, now: number): string {
+  return botStatus(summary, now).label;
+}
+
 function updatedMs(shell: EnvironmentThreadShell): number {
   const parsed = Date.parse(shell.updatedAt);
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -99,6 +147,8 @@ export function buildBotSummaries(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   /** From `waitingLabelsByThread`: thread id to "Waiting for Developer". */
   readonly waitingByThread?: ReadonlyMap<string, string>;
+  readonly browserHelpThreadId?: string | null;
+  readonly routines?: ReadonlyArray<PersonalRoutine>;
 }): BotSummary[] {
   const shellsById = new Map(input.shells.map((shell) => [shell.id as string, shell] as const));
   const shellsByBot = new Map<string, EnvironmentThreadShell[]>();
@@ -121,6 +171,20 @@ export function buildBotSummaries(input: {
       (left, right) => updatedMs(right) - updatedMs(left),
     );
     const newestThread = shells[0] ?? null;
+    const rateLimitedThread = shells.find(isThreadRateLimited) ?? null;
+    const nextRoutine =
+      (input.routines ?? [])
+        .filter(
+          (routine) =>
+            routine.botId === bot.botId &&
+            routine.trigger === "schedule" &&
+            routine.enabled &&
+            routine.nextDueAt !== null,
+        )
+        .toSorted(
+          (left, right) =>
+            DateTime.toEpochMillis(left.nextDueAt!) - DateTime.toEpochMillis(right.nextDueAt!),
+        )[0] ?? null;
     return {
       bot,
       provider: resolveBotProvider(bot.modelSelection.instanceId, input.providers),
@@ -129,12 +193,22 @@ export function buildBotSummaries(input: {
         newestThread === null ? null : (newestMessageByThread.get(newestThread.id) ?? null),
       threadTitles: shells.map((shell) => shell.title),
       live: shells.some(isThreadLive),
-      rateLimited: shells.some(isThreadRateLimited),
+      rateLimited: rateLimitedThread !== null,
+      rateLimitedThread,
       attentionThreads: shells.filter(threadNeedsAttention),
+      hasPendingApprovals: shells.some((shell) => shell.hasPendingApprovals),
+      hasPendingUserInput: shells.some((shell) => shell.hasPendingUserInput),
+      needsBrowserHelp: input.links.some(
+        (link) =>
+          link.botId === bot.botId &&
+          link.archivedAt === null &&
+          link.threadId === input.browserHelpThreadId,
+      ),
       waitingFor:
         shells
           .map((shell) => input.waitingByThread?.get(shell.id) ?? null)
           .find((label) => label !== null) ?? null,
+      nextRoutine,
       lastActivityMs: newestThread === null ? null : updatedMs(newestThread),
     };
   });

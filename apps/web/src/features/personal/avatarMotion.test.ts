@@ -48,6 +48,7 @@ describe("motionForConversationState", () => {
     expect(motionForConversationState("idle")).toBe("idle");
     expect(motionForConversationState("working")).toBe("working");
     expect(motionForConversationState("waiting")).toBe("waiting");
+    expect(motionForConversationState("needs_help")).toBe("waiting");
     expect(motionForConversationState("delegating")).toBe("waiting");
     expect(motionForConversationState("rate_limited")).toBe("blocked");
     expect(motionForConversationState("retrying")).toBe("blocked");

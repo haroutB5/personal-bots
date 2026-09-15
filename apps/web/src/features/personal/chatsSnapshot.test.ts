@@ -48,7 +48,7 @@ function row(botId: string, overrides: Partial<ChatsSnapshotRowInput> = {}): Cha
     name: `Bot ${botId}`,
     avatarShape: "blob",
     avatarColor: "#1A73E8",
-    providerLabel: "Claude Code",
+    subtitle: "General assistant",
     previewLabel: "Delegated to Developer",
     previewAtMs: 1_757_800_000_000,
     threadId: `thread-${botId}`,
@@ -71,7 +71,7 @@ describe("buildChatsSnapshot", () => {
     });
 
     expect(snapshot).toEqual({
-      version: 1,
+      version: 2,
       environmentId: "env-1",
       savedAtMs: 1_757_800_000_000,
       rows: [
@@ -80,7 +80,7 @@ describe("buildChatsSnapshot", () => {
           name: "Ada",
           avatarShape: "blob",
           avatarColor: "#1A73E8",
-          providerLabel: "Claude Code",
+          subtitle: "General assistant",
           preview: "first line",
         }),
       ],
@@ -94,7 +94,7 @@ describe("buildChatsSnapshot", () => {
         "name",
         "preview",
         "previewAtMs",
-        "providerLabel",
+        "subtitle",
         "threadId",
         "threadTitle",
       ].toSorted(),
@@ -191,7 +191,7 @@ describe("chats snapshot storage", () => {
     );
 
     expect(readChatsSnapshot("env-2")).toBeNull();
-    expect(storage.getItem("t3code:chats-snapshot:v1")).toBeNull();
+    expect(storage.getItem("t3code:chats-snapshot:v2")).toBeNull();
   });
 
   it("returns null without an environment and never writes", () => {
@@ -203,21 +203,21 @@ describe("chats snapshot storage", () => {
 
   it("drops corrupt entries instead of throwing", () => {
     const storage = stubWindow();
-    storage.setItem("t3code:chats-snapshot:v1", "not-json{{{");
+    storage.setItem("t3code:chats-snapshot:v2", "not-json{{{");
 
     expect(readChatsSnapshot("env-1")).toBeNull();
-    expect(storage.getItem("t3code:chats-snapshot:v1")).toBeNull();
+    expect(storage.getItem("t3code:chats-snapshot:v2")).toBeNull();
   });
 
   it("rejects wrong-shape payloads instead of rendering them", () => {
     const storage = stubWindow();
     storage.setItem(
-      "t3code:chats-snapshot:v1",
-      JSON.stringify({ environmentId: "env-1", snapshot: { version: 2, rows: [] } }),
+      "t3code:chats-snapshot:v2",
+      JSON.stringify({ environmentId: "env-1", snapshot: { version: 1, rows: [] } }),
     );
 
     expect(readChatsSnapshot("env-1")).toBeNull();
-    expect(storage.getItem("t3code:chats-snapshot:v1")).toBeNull();
+    expect(storage.getItem("t3code:chats-snapshot:v2")).toBeNull();
   });
 
   it("survives quota failures on write without throwing", () => {
@@ -261,7 +261,7 @@ describe("chats snapshot storage", () => {
 
     expect(dropChatFromSnapshot("env-1", (entry) => entry.botId === "a")).toBeNull();
     expect(readChatsSnapshot("env-1")).toBeNull();
-    expect(storage.getItem("t3code:chats-snapshot:v1")).toBeNull();
+    expect(storage.getItem("t3code:chats-snapshot:v2")).toBeNull();
   });
 
   it("leaves the snapshot alone when nothing matches, and no-ops without an environment", () => {

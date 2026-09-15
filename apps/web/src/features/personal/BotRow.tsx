@@ -8,7 +8,7 @@ import { cn } from "~/lib/utils";
 
 import type { AvatarMotion } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
-import { type BotSummary, providerLine } from "./botSummaries";
+import { botStatus, type BotSummary } from "./botSummaries";
 import { readServerTurn, type ServerTurn } from "./delegationModel";
 import { formatRelativeTime } from "./relativeTime";
 import { useStartBotChat } from "./startBotChat";
@@ -78,7 +78,8 @@ export const BotRow = memo(function BotRow({
   motion?: AvatarMotion | undefined;
 }): JSX.Element {
   const preview = previewOf(summary, describeTurn);
-  const { bot, newestThread, provider, live, rateLimited, waitingFor, lastActivityMs } = summary;
+  const { bot, newestThread, provider, live, lastActivityMs } = summary;
+  const status = botStatus(summary, now);
   const { start, starting } = useStartBotChat(environmentId, bot.botId);
 
   const content: ReactNode = (
@@ -100,22 +101,6 @@ export const BotRow = memo(function BotRow({
               <span aria-hidden="true" className="size-2 rounded-full bg-[var(--personal-live)]" />
               <span className="sr-only">, working</span>
             </span>
-          ) : rateLimited ? (
-            <span className="ml-2 flex shrink-0 items-center gap-1.5 text-[13px] leading-[22px] text-[var(--personal-text-secondary)]">
-              <span
-                aria-hidden="true"
-                className="size-2 rounded-full bg-[var(--personal-review)]"
-              />
-              Rate limited
-            </span>
-          ) : waitingFor !== null ? (
-            <span className="ml-2 flex min-w-0 items-center gap-1.5 text-[13px] leading-[22px] text-[var(--personal-text-secondary)]">
-              <span
-                aria-hidden="true"
-                className="size-2 shrink-0 rounded-full bg-[var(--personal-text-tertiary)]"
-              />
-              <span className="truncate">{waitingFor}</span>
-            </span>
           ) : null}
           {lastActivityMs !== null ? (
             <time
@@ -129,29 +114,17 @@ export const BotRow = memo(function BotRow({
         <span
           className={cn(
             "truncate text-sm leading-5",
-            provider.available
-              ? "text-[var(--personal-text-secondary)]"
-              : "text-[var(--personal-review)]",
+            status.tone === "review"
+              ? "text-[var(--personal-review)]"
+              : "text-[var(--personal-text-secondary)]",
           )}
         >
-          {providerLine(provider)}
+          {status.label}
         </span>
         <span className="truncate text-sm leading-5 text-[#3a3a3a]">{preview}</span>
       </span>
     </>
   );
-
-  if (newestThread !== null) {
-    return (
-      <Link
-        to="/bots/$botId/$threadId"
-        params={{ botId: bot.botId, threadId: newestThread.id }}
-        className={ROW_CLASS}
-      >
-        {content}
-      </Link>
-    );
-  }
 
   if (!provider.available) {
     return (
@@ -159,6 +132,18 @@ export const BotRow = memo(function BotRow({
         to="/bots/$botId/edit"
         params={{ botId: bot.botId }}
         aria-label={`${bot.name}: provider unavailable, edit bot`}
+        className={ROW_CLASS}
+      >
+        {content}
+      </Link>
+    );
+  }
+
+  if (newestThread !== null) {
+    return (
+      <Link
+        to="/bots/$botId/$threadId"
+        params={{ botId: bot.botId, threadId: newestThread.id }}
         className={ROW_CLASS}
       >
         {content}

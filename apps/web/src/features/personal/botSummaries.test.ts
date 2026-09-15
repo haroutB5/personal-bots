@@ -1,10 +1,19 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { PersonalBot, type PersonalBotThread, type ServerProvider } from "@t3tools/contracts";
+import {
+  PersonalBot,
+  type PersonalBotThread,
+  type PersonalRoutine,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildBotSummaries,
+  botStatus,
+  botStatusLine,
+  type BotSummary,
   collectAttentionThreads,
   filterBotSummaries,
   isThreadLive,
@@ -168,6 +177,28 @@ describe("buildBotSummaries", () => {
     expect([isThreadLive(retrying), isThreadRateLimited(retrying)]).toEqual([true, false]);
   });
 
+  it("links browser help and the next enabled scheduled routine to their bot", () => {
+    const routine = {
+      routineId: "routine-1",
+      botId: bots[0]!.botId,
+      trigger: "schedule",
+      enabled: true,
+      nextDueAt: DateTime.makeUnsafe("2026-09-14T08:00:00.000Z"),
+      timeZone: "Europe/London",
+    } as PersonalRoutine;
+    const [summary] = buildBotSummaries({
+      bots: [bots[0]!],
+      links: [link("assistant", "t-old")],
+      shells: [shell("t-old", "2026-09-13T08:00:00.000Z")],
+      providers: [provider("codex")],
+      browserHelpThreadId: "t-old",
+      routines: [routine],
+    });
+
+    expect(summary?.needsBrowserHelp).toBe(true);
+    expect(summary?.nextRoutine).toBe(routine);
+  });
+
   it("searches bot names and thread titles", () => {
     expect(filterBotSummaries(summaries, "plan").map((summary) => summary.bot.name)).toEqual([
       "Planner",
@@ -198,5 +229,79 @@ describe("buildBotSummaries previews", () => {
     });
     expect(summaries[0]?.newestThread?.id).toBe("t-new");
     expect(summaries[0]?.newestMessage).toEqual(newest);
+  });
+});
+
+describe("botStatusLine", () => {
+  const [ready] = buildBotSummaries({
+    bots: [bot("assistant", "Assistant", "codex", 0)],
+    links: [link("assistant", "thread-a")],
+    shells: [shell("thread-a", "2026-09-13T09:00:00.000Z")],
+    providers: [provider("codex")],
+  });
+  const summary = (overrides: Partial<BotSummary> = {}): BotSummary => ({
+    ...ready!,
+    ...overrides,
+  });
+  const now = Date.parse("2026-09-13T04:00:00.000Z");
+
+  it("covers every status branch in priority order", () => {
+    expect(
+      botStatusLine(
+        summary({
+          needsBrowserHelp: true,
+          hasPendingApprovals: true,
+          hasPendingUserInput: true,
+          live: true,
+        }),
+        now,
+      ),
+    ).toBe("Needs your help");
+    expect(botStatusLine(summary({ hasPendingApprovals: true }), now)).toBe("Needs approval");
+    expect(botStatusLine(summary({ hasPendingUserInput: true }), now)).toBe("Needs your reply");
+    expect(botStatusLine(summary({ live: true }), now)).toBe("Working");
+
+    const limited = shell("limited", "2026-09-13T09:00:00.000Z", {
+      session: {
+        status: "error",
+        providerRetry: {
+          kind: "rate_limited",
+          provider: "codex",
+          observedAt: "2026-09-13T03:47:16.087Z",
+          retryAt: "2026-09-13T09:47:16.087Z",
+        },
+      },
+    });
+    expect(botStatusLine(summary({ rateLimitedThread: limited }), now)).toBe(
+      "Rate limited · retry ~10:47",
+    );
+    expect(botStatusLine(summary({ waitingFor: "Waiting for Developer" }), now)).toBe(
+      "Waiting for Developer",
+    );
+
+    const routine = {
+      botId: ready!.bot.botId,
+      trigger: "schedule",
+      enabled: true,
+      nextDueAt: DateTime.makeUnsafe("2026-09-14T08:00:00.000Z"),
+      timeZone: "Europe/London",
+    } as PersonalRoutine;
+    expect(botStatusLine(summary({ nextRoutine: routine }), now)).toBe(
+      "Next run Mon 14 Sep, 09:00",
+    );
+    expect(botStatusLine(summary({ provider: { label: "Codex", available: false } }), now)).toBe(
+      "Unavailable · tap to fix",
+    );
+    expect(botStatusLine(summary(), now)).toBe("Ready");
+  });
+
+  it("uses the review tone for needs-you and actionable unavailable states", () => {
+    expect(botStatus(summary({ needsBrowserHelp: true }), now).tone).toBe("review");
+    expect(botStatus(summary({ hasPendingApprovals: true }), now).tone).toBe("review");
+    expect(botStatus(summary({ hasPendingUserInput: true }), now).tone).toBe("review");
+    expect(botStatus(summary({ provider: { label: "Codex", available: false } }), now).tone).toBe(
+      "review",
+    );
+    expect(botStatus(summary({ live: true }), now).tone).toBe("normal");
   });
 });

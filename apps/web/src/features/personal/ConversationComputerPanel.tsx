@@ -9,6 +9,7 @@ import { cn } from "~/lib/utils";
 import { ComputerBrowserPane } from "./computer/ComputerScreen";
 import {
   computerIsActiveForChat,
+  computerNeedsHelpForChat,
   computerPanelDetail,
   describeComputerState,
   type ComputerDotTone,
@@ -31,6 +32,7 @@ export function ConversationComputerPanel({
   expanded,
   onExpandedChange,
   onBrowserClosed,
+  conversationState = "other",
 }: {
   readonly environmentId: EnvironmentId | null;
   readonly botId: string;
@@ -39,16 +41,22 @@ export function ConversationComputerPanel({
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
   readonly onBrowserClosed: () => void;
+  readonly conversationState?: "working" | "needs_help" | "other";
 }): JSX.Element | null {
   const { feed, error, loading } = useComputerFeed(environmentId);
   const [fullScreen, setFullScreen] = useState(false);
   const fullScreenToggleRef = useRef<HTMLButtonElement | null>(null);
   const fullScreenRef = useRef<HTMLElement | null>(null);
   const activeForChat = computerIsActiveForChat(feed.status, { botId, threadId });
-  const visible = manuallyVisible || activeForChat;
+  const needsHelp = computerNeedsHelpForChat(feed.status, { botId, threadId });
+  const visible = manuallyVisible || activeForChat || needsHelp;
+  const displayExpanded = expanded || needsHelp;
+  useEffect(() => {
+    if (needsHelp && !expanded) onExpandedChange(true);
+  }, [expanded, needsHelp, onExpandedChange]);
   // External closure can hide the mounted panel without going through its
   // Close button. Drop full screen then, including its body scroll lock.
-  if (fullScreen && (!visible || !expanded)) setFullScreen(false);
+  if (fullScreen && (!visible || !displayExpanded)) setFullScreen(false);
 
   // The browser closing (Close button, close_browser tool, crash-teardown)
   // retires the bar: a "Browser not running" strip is dead chrome. Transition-
@@ -85,9 +93,15 @@ export function ConversationComputerPanel({
   if (!visible) return null;
 
   const reachable = environmentId !== null && error === null;
-  const state = describeComputerState({ status: feed.status, reachable, loading });
-  const detail = computerPanelDetail(feed.status, state.label);
-  const DetailIcon = expanded ? ChevronDown : ChevronUp;
+  const agentTurnRunning = conversationState === "working";
+  const state = describeComputerState({
+    status: feed.status,
+    reachable,
+    loading,
+    agentTurnRunning,
+  });
+  const detail = computerPanelDetail(feed.status, state.label, agentTurnRunning);
+  const DetailIcon = displayExpanded ? ChevronDown : ChevronUp;
   // Rendered inside a collapse button inline, and inside a plain row full
   // screen, where there is nothing to collapse to.
   const title = (
@@ -124,16 +138,16 @@ export function ConversationComputerPanel({
         ) : (
           <button
             type="button"
-            aria-expanded={expanded}
+            aria-expanded={displayExpanded}
             aria-controls="conversation-computer-pane"
-            onClick={() => onExpandedChange(!expanded)}
+            onClick={() => onExpandedChange(!displayExpanded)}
             className="flex min-h-11 min-w-0 flex-1 items-center gap-2 px-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
           >
             {title}
             <DetailIcon aria-hidden="true" className="size-5 shrink-0" strokeWidth={1.75} />
           </button>
         )}
-        {expanded ? (
+        {displayExpanded ? (
           <button
             ref={fullScreenToggleRef}
             type="button"
@@ -153,10 +167,14 @@ export function ConversationComputerPanel({
         id="conversation-computer-pane"
         className={cn(
           "overflow-hidden transition-[max-height] duration-200 ease-out motion-reduce:transition-none",
-          fullScreen ? "min-h-0 flex-1 transition-none" : expanded ? "max-h-[68dvh]" : "max-h-0",
+          fullScreen
+            ? "min-h-0 flex-1 transition-none"
+            : displayExpanded
+              ? "max-h-[68dvh]"
+              : "max-h-0",
         )}
       >
-        {expanded ? (
+        {displayExpanded ? (
           <div
             className={cn(
               "overflow-y-auto border-t border-[var(--personal-border)] px-3 pb-3",

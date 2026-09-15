@@ -1,4 +1,10 @@
-import type { OrchestrationLatestTurn, OrchestrationSession } from "@t3tools/contracts";
+import {
+  PersonalBotId,
+  ThreadId,
+  type OrchestrationLatestTurn,
+  type OrchestrationSession,
+  type PersonalBrowserStatus,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { TimelineEntry } from "~/session-logic";
@@ -41,6 +47,44 @@ describe("deriveConversationState", () => {
         pendingUserInputs: [],
       }),
     ).toBe("waiting");
+  });
+
+  it("puts browser help above every other conversation state", () => {
+    const browserStatus: PersonalBrowserStatus = {
+      state: "connected",
+      detail: null,
+      lockedByPid: null,
+      controller: { _tag: "None" },
+      generation: 1,
+      page: null,
+      helpRequest: {
+        threadId: ThreadId.make("thread-a"),
+        botId: PersonalBotId.make("bot-a"),
+        botName: "Assistant",
+        reason: "CAPTCHA on example.com",
+        requestedAt: "2026-09-15T10:00:00.000Z",
+      },
+      viewers: 0,
+    };
+    expect(
+      deriveConversationState({
+        session: session("running"),
+        latestTurn: turn("running"),
+        pendingApprovals: [{ requestId: "r1" } as never],
+        pendingUserInputs: [],
+        browserStatus,
+        threadId: "thread-a",
+      }),
+    ).toBe("needs_help");
+    expect(
+      deriveConversationState({
+        session: null,
+        latestTurn: null,
+        ...none,
+        browserStatus,
+        threadId: "thread-b",
+      }),
+    ).toBe("idle");
   });
 
   it("reports errors from the session or the last turn", () => {

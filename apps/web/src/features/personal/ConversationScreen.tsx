@@ -41,6 +41,7 @@ import { BotAvatar } from "./BotAvatar";
 import { resolveBotProvider } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerPanel } from "./ConversationComputerPanel";
+import { useComputerFeed } from "./computer/computerState";
 import { ConversationRoutinesPanel } from "./ConversationRoutinesPanel";
 import {
   buildConversationItems,
@@ -79,6 +80,7 @@ const ICON_BUTTON =
 
 const STATE_DOT: Record<ConversationState, string> = {
   idle: "bg-[var(--personal-text-tertiary)]",
+  needs_help: "bg-[var(--personal-review)]",
   working: "bg-[var(--personal-live)]",
   waiting: "bg-[var(--personal-review)]",
   // Parked on another bot's work: not working itself, not needing the user.
@@ -167,6 +169,7 @@ export function ConversationScreen({
   const [computerPanelExpanded, setComputerPanelExpanded] = useState(false);
   const laptopOffline = useLaptopOffline();
   const connectionPhase = usePersonalConnectionPhase();
+  const { feed: computerFeed } = useComputerFeed(environmentId);
 
   // Delegation state comes from the live task feed (personalTasks.subscribe).
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
@@ -231,6 +234,8 @@ export function ConversationScreen({
     latestTurn: thread?.latestTurn ?? null,
     pendingApprovals: approvals,
     pendingUserInputs: userInputs,
+    browserStatus: computerFeed.status,
+    threadId,
     waitingForAgent: waitingLabel !== null,
   });
   const phase = derivePhase(thread?.session ?? null);
@@ -532,7 +537,7 @@ export function ConversationScreen({
             botId={botId}
             threadId={threadId}
             manuallyVisible={computerPanelVisible}
-            expanded={computerPanelExpanded}
+            expanded={computerPanelExpanded || conversationState === "needs_help"}
             onExpandedChange={(expanded) => {
               if (expanded) setComputerPanelVisible(true);
               setComputerPanelExpanded(expanded);
@@ -541,8 +546,13 @@ export function ConversationScreen({
               setComputerPanelVisible(false);
               setComputerPanelExpanded(false);
             }}
+            conversationState={
+              conversationState === "working" || conversationState === "needs_help"
+                ? conversationState
+                : "other"
+            }
           />
-          {!computerPanelExpanded ? (
+          {!computerPanelExpanded && conversationState !== "needs_help" ? (
             <ConversationRoutinesPanel environmentId={environmentId} botId={botId} />
           ) : null}
           <PersonalComposer

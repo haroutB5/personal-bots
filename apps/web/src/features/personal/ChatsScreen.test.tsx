@@ -87,6 +87,14 @@ vi.mock("./usePersonalAutomation", () => ({
     state.tasksCalls.push(environmentId);
     return { tasks: null, error: null };
   },
+  usePersonalRoutines: () => ({ data: { routines: [], occurrences: [] }, error: null }),
+}));
+vi.mock("./computer/computerState", () => ({
+  useComputerFeed: () => ({
+    feed: { status: null, events: [] },
+    error: null,
+    loading: false,
+  }),
 }));
 vi.mock("./useRefreshBotsForTaskThreads", () => ({ useRefreshBotsForTaskThreads: () => {} }));
 vi.mock("./useDeleteBot", () => ({ useDeleteBot: () => async () => state.deleteOutcome }));
@@ -117,7 +125,7 @@ function seedSnapshot() {
           name: "Cached Ada",
           avatarShape: "blob",
           avatarColor: "#1A73E8",
-          providerLabel: "Claude Code",
+          subtitle: "General assistant",
           previewLabel: "cached preview line",
           previewAtMs: 1_757_800_000_000,
           threadId: "thread-cached",
@@ -185,7 +193,7 @@ describe("ChatsScreen cold start", () => {
 
     const json = JSON.stringify(renderer!.toJSON());
     expect(json).toContain("Cached Ada");
-    expect(json).toContain("Claude Code");
+    expect(json).toContain("General assistant");
     expect(json).toContain("cached preview line");
     // Neutral live state: no working dot, no review row.
     expect(json).not.toContain("working");

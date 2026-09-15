@@ -42,6 +42,7 @@ export function motionForConversationState(state: ConversationState): AvatarMoti
     case "working":
       return "working";
     case "waiting":
+    case "needs_help":
     case "delegating":
       return "waiting";
     case "rate_limited":

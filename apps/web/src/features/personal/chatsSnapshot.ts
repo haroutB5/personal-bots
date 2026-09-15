@@ -15,7 +15,7 @@ import {
 /**
  * Cold-start snapshot for the Chats list. After each successful
  * `personalBots.list` the screen persists just enough to paint instantly on
- * the next launch: identity, avatar, provider label and a one-line preview.
+ * the next launch: identity, avatar, the bot's static title and a one-line preview.
  * Live state (working dots, rate limits, review row) is deliberately absent —
  * it needs live data and stays neutral until the list arrives.
  *
@@ -31,7 +31,7 @@ export const ChatsSnapshotRow = Schema.Struct({
   name: Schema.String,
   avatarShape: BotAvatarShapeSchema,
   avatarColor: BotAvatarColorSchema,
-  providerLabel: Schema.String,
+  subtitle: Schema.String,
   /**
    * One-line preview, already trimmed to {@link MAX_SNAPSHOT_PREVIEW_CHARS}.
    * Derived from a turn label or the thread title — never message text.
@@ -44,7 +44,7 @@ export const ChatsSnapshotRow = Schema.Struct({
 export type ChatsSnapshotRow = typeof ChatsSnapshotRow.Type;
 
 export const ChatsSnapshot = Schema.Struct({
-  version: Schema.Literal(1),
+  version: Schema.Literal(2),
   environmentId: Schema.String,
   savedAtMs: Schema.Finite,
   rows: Schema.Array(ChatsSnapshotRow),
@@ -56,7 +56,7 @@ const ChatsSnapshotEnvelope = Schema.Struct({
   snapshot: ChatsSnapshot,
 });
 
-const STORAGE_KEY = "t3code:chats-snapshot:v1";
+const STORAGE_KEY = "t3code:chats-snapshot:v2";
 /** Phone-first lists are short; beyond this the snapshot stops paying for itself. */
 export const MAX_SNAPSHOT_ROWS = 30;
 export const MAX_SNAPSHOT_PREVIEW_CHARS = 140;
@@ -71,7 +71,8 @@ export interface ChatsSnapshotRowInput {
   readonly name: string;
   readonly avatarShape: BotAvatarShape;
   readonly avatarColor: BotAvatarColor;
-  readonly providerLabel: string;
+  /** Static bot title only; a snapshot cannot know live status. */
+  readonly subtitle: string;
   /**
    * A server-authored turn label ("Delegated to Developer", …) and nothing
    * else. There is deliberately no field for the newest message's text: null
@@ -107,7 +108,7 @@ export function buildChatsSnapshot(input: {
     name: firstLine(row.name, MAX_SNAPSHOT_NAME_CHARS),
     avatarShape: row.avatarShape,
     avatarColor: row.avatarColor,
-    providerLabel: firstLine(row.providerLabel, MAX_SNAPSHOT_LABEL_CHARS),
+    subtitle: firstLine(row.subtitle, MAX_SNAPSHOT_LABEL_CHARS),
     preview: firstLine(row.previewLabel ?? row.threadTitle ?? "", MAX_SNAPSHOT_PREVIEW_CHARS),
     previewAtMs: row.previewAtMs,
     threadId: row.threadId,
@@ -116,7 +117,7 @@ export function buildChatsSnapshot(input: {
   }));
   const rows = [...sanitized];
   const probe: ChatsSnapshot = {
-    version: 1 as const,
+    version: 2 as const,
     environmentId: input.environmentId,
     savedAtMs: input.savedAtMs,
     rows,

@@ -46,12 +46,16 @@ export function describeComputerState(input: {
   readonly status: PersonalBrowserStatus | null;
   readonly reachable: boolean;
   readonly loading: boolean;
+  readonly agentTurnRunning?: boolean;
 }): ComputerStateLabel {
   if (!input.reachable) return { label: "Laptop offline", tone: "idle" };
   if (input.status === null) {
     return input.loading
       ? { label: "Connecting", tone: "pending" }
       : { label: "Laptop offline", tone: "idle" };
+  }
+  if (input.status.helpRequest !== null) {
+    return { label: "Needs your help", tone: "pending" };
   }
   switch (input.status.state) {
     case "connected":
@@ -90,11 +94,23 @@ export function computerIsActiveForChat(
   return target?.botId === chat.botId && target.threadId === chat.threadId;
 }
 
+/** Whether this exact conversation owns the open browser-help request. */
+export function computerNeedsHelpForChat(
+  status: PersonalBrowserStatus | null,
+  chat: BackToChatTarget,
+): boolean {
+  const help = status?.helpRequest;
+  return help?.botId === chat.botId && help.threadId === chat.threadId;
+}
+
 /** Compact label for the chat panel bar. */
 export function computerPanelDetail(
   status: PersonalBrowserStatus | null,
   stateLabel: string,
+  agentTurnRunning: boolean = false,
 ): string {
+  const agent = activeAgentLine(status, agentTurnRunning);
+  if (agent !== null) return agent;
   if (status !== null && hasLiveViewport(status)) {
     const pageTitle = status.page?.title.trim();
     if (pageTitle) return pageTitle;
@@ -102,10 +118,17 @@ export function computerPanelDetail(
   return stateLabel;
 }
 
-/** "<Bot> is using the browser" only while an agent lease is live. */
-export function activeAgentLine(status: PersonalBrowserStatus | null): string | null {
+/** Honest agent/browser relationship; callers must opt in to the running claim. */
+export function activeAgentLine(
+  status: PersonalBrowserStatus | null,
+  agentTurnRunning: boolean = false,
+): string | null {
+  if (status?.helpRequest !== null && status?.helpRequest !== undefined) {
+    return `Needs your help: ${status.helpRequest.reason}`;
+  }
   if (status?.controller._tag !== "Agent") return null;
-  return `${status.controller.botName ?? "An agent"} is using the browser`;
+  const name = status.controller.botName ?? "A bot";
+  return agentTurnRunning ? `${name} is using the browser` : `${name} left the browser open`;
 }
 
 /** Whether there is a browser session to close at all. */
@@ -119,10 +142,13 @@ export function canCloseBrowser(status: PersonalBrowserStatus | null): boolean {
  * interrupts it, while closing an idle browser (or one this device already
  * controls) is the plain, reversible thing the button says it is.
  */
-export function closeBrowserConfirmMessage(status: PersonalBrowserStatus | null): string | null {
+export function closeBrowserConfirmMessage(
+  status: PersonalBrowserStatus | null,
+  agentTurnRunning: boolean = false,
+): string | null {
   if (status?.controller._tag !== "Agent") return null;
-  const name = status.controller.botName ?? "A bot";
-  return `${name} is using the browser. Close it anyway?\nIts tabs are closed and the session ends.`;
+  const line = activeAgentLine(status, agentTurnRunning) ?? "A bot left the browser open";
+  return `${line}. Close it anyway?\nIts tabs are closed and the session ends.`;
 }
 
 export function hasLiveViewport(status: PersonalBrowserStatus | null): boolean {

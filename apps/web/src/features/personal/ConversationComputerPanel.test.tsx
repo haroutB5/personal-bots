@@ -35,6 +35,7 @@ const status = (threadId = "thread-a"): PersonalBrowserStatus => ({
   },
   generation: 1,
   page: { title: "T3 Code", url: "https://t3.codes" },
+  helpRequest: null,
   viewers: 0,
 });
 
@@ -156,7 +157,56 @@ describe("ConversationComputerPanel", () => {
     expect(
       renderer!.root.findAll((node) => node.children.includes("Live browser pane")),
     ).toHaveLength(0);
-    expect(renderer!.root.findAll((node) => node.children.includes("T3 Code"))).not.toHaveLength(0);
+    expect(
+      renderer!.root.findAll((node) => node.children.includes("Developer left the browser open")),
+    ).not.toHaveLength(0);
+  });
+
+  it("shows and expands browser help for this chat", () => {
+    const onExpandedChange = vi.fn();
+    useComputerFeed.mockReturnValue({
+      feed: {
+        status: {
+          ...status(),
+          helpRequest: {
+            threadId: ThreadId.make("thread-a"),
+            botId: PersonalBotId.make("bot-1"),
+            botName: "Developer",
+            reason: "CAPTCHA on example.com",
+            requestedAt: "2026-09-15T10:00:00.000Z",
+          },
+        },
+        events: [],
+      },
+      error: null,
+      loading: false,
+    });
+    let renderer: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <ConversationComputerPanel
+          environmentId={null}
+          botId="bot-1"
+          threadId="thread-a"
+          manuallyVisible={false}
+          expanded={false}
+          onExpandedChange={onExpandedChange}
+          onBrowserClosed={() => undefined}
+          conversationState="needs_help"
+        />,
+      );
+    });
+
+    expect(renderer!.root.findByProps({ "aria-expanded": true })).toBeDefined();
+    expect(onExpandedChange).toHaveBeenCalledWith(true);
+    expect(
+      renderer!.root.findAll((node) =>
+        node.children.includes("Needs your help: CAPTCHA on example.com"),
+      ),
+    ).not.toHaveLength(0);
+    expect(
+      renderer!.root.findAll((node) => node.children.includes("Live browser pane")),
+    ).not.toHaveLength(0);
   });
 
   it("stays hidden for another chat unless manually revealed", () => {
