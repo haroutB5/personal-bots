@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChevronLeft } from "lucide-react";
+import { Check, ChevronLeft } from "lucide-react";
 
 import { randomUUID } from "~/lib/utils";
 import { primaryServerProvidersAtom } from "~/state/server";
@@ -62,7 +62,9 @@ function ModelSearchField({
 }): JSX.Element {
   const [query, setQuery] = useState("");
   const selected = models.find((model) => model.slug === value);
-  const results = searchModels(models, query);
+  const trimmed = query.trim();
+  // Browsing shows every model; typing narrows the same list.
+  const results = trimmed.length === 0 ? models : searchModels(models, trimmed, 80);
   const pick = (slug: string) => {
     onChange(slug);
     setQuery("");
@@ -77,10 +79,10 @@ function ModelSearchField({
         onKeyDown={(event) => {
           if (event.key !== "Enter") return;
           event.preventDefault();
-          const first = results[0];
+          const first = trimmed.length > 0 ? results[0] : undefined;
           if (first !== undefined) pick(first.slug);
         }}
-        placeholder={selected === undefined ? "Type to search models" : modelOptionLabel(selected)}
+        placeholder={selected === undefined ? "Search models" : modelOptionLabel(selected)}
         aria-autocomplete="list"
         aria-controls="bot-model-results"
         aria-expanded={results.length > 0}
@@ -91,36 +93,41 @@ function ModelSearchField({
         enterKeyHint="search"
         className={`${FIELD_CLASS} h-11`}
       />
-      {query.trim().length === 0 ? (
-        <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
-          {selected === undefined
-            ? `${models.length} models. Type part of a name, e.g. "muse".`
+      <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
+        {trimmed.length > 0
+          ? results.length === 0
+            ? `No models match "${trimmed}".`
+            : `${results.length} matching`
+          : selected === undefined
+            ? `${models.length} models. Pick one, or type to narrow the list.`
             : `Selected: ${modelOptionLabel(selected)}`}
-        </p>
-      ) : results.length === 0 ? (
-        <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
-          No models match "{query.trim()}".
-        </p>
-      ) : (
+      </p>
+      {results.length > 0 ? (
         <ul
           id="bot-model-results"
           role="listbox"
-          aria-label="Matching models"
-          className="mt-1.5 divide-y divide-[var(--personal-border)] overflow-hidden rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-surface)]"
+          aria-label="Models"
+          className="mt-1.5 max-h-[264px] divide-y divide-[var(--personal-border)] overflow-y-auto overscroll-contain rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-surface)]"
         >
-          {results.map((model) => (
-            <li key={model.slug} role="option" aria-selected={model.slug === value}>
-              <button
-                type="button"
-                onClick={() => pick(model.slug)}
-                className="flex min-h-11 w-full items-center px-3.5 py-2 text-left text-[15px] text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
-              >
-                {modelOptionLabel(model)}
-              </button>
-            </li>
-          ))}
+          {results.map((model) => {
+            const isSelected = model.slug === value;
+            return (
+              <li key={model.slug} role="option" aria-selected={isSelected}>
+                <button
+                  type="button"
+                  onClick={() => pick(model.slug)}
+                  className={`flex min-h-11 w-full items-center gap-2 px-3.5 py-2 text-left text-[15px] text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)] ${isSelected ? "font-semibold" : ""}`}
+                >
+                  <span className="min-w-0 flex-1">{modelOptionLabel(model)}</span>
+                  {isSelected ? (
+                    <Check aria-hidden="true" className="size-4 shrink-0" strokeWidth={2} />
+                  ) : null}
+                </button>
+              </li>
+            );
+          })}
         </ul>
-      )}
+      ) : null}
     </>
   );
 }
