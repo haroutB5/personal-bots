@@ -116,6 +116,62 @@ function formatRetryTime(at: Date, now: Date, timeZone: string): string {
   return `${formatter(timeZone, { weekday: "short" }).format(at)} ${time}`;
 }
 
+export interface FriendlyTurnError {
+  /** Plain sentence for the chat. */
+  readonly message: string;
+  /** The provider's own first line, stack trace removed, for a "Details" toggle. */
+  readonly detail: string | null;
+}
+
+const GENERIC_TURN_FAILURE = "The last reply failed. Send your message again.";
+const DETAIL_MAX = 200;
+
+/**
+ * A session error as the owner should read it: never a raw exception or stack
+ * trace. Known failure kinds get a plain sentence; everything else a generic
+ * one. The original first line survives as `detail`.
+ */
+export function friendlyTurnError(raw: string): FriendlyTurnError {
+  const firstLine =
+    raw
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? "";
+  const withoutStack = firstLine
+    .replace(/\s+at\s+\S+\s+\(file:\/\/.*$/i, "")
+    .replace(/\s+at\s+file:\/\/.*$/i, "")
+    .trim();
+  const detail =
+    withoutStack.length === 0 || withoutStack === "The last turn failed."
+      ? null
+      : withoutStack.length > DETAIL_MAX
+        ? `${withoutStack.slice(0, DETAIL_MAX)}…`
+        : withoutStack;
+
+  const text = raw.toLowerCase();
+  let message = GENERIC_TURN_FAILURE;
+  if (/session limit|usage limit|rate[_ ]limit|\b429\b|hit your .*limit/.test(text)) {
+    const reset = /resets?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s?(?:am|pm)?)/i.exec(raw)?.[1];
+    message =
+      reset === undefined
+        ? "Usage limit reached. Try again later."
+        : `Usage limit reached. It resets at ${reset}.`;
+  } else if (/thread is closed|sessionclosed|session (?:was )?(?:closed|stopped)/.test(text)) {
+    message = "This chat's session ended. Send a message to start it again.";
+  } else if (
+    /not (?:logged|signed) in|unauthori[sz]ed|\b401\b|authentication (?:failed|required)|please run \/login/.test(
+      text,
+    )
+  ) {
+    message = "The provider isn't signed in on your computer.";
+  } else if (/timed? ?out|etimedout/.test(text)) {
+    message = "The reply took too long and was stopped. Try again.";
+  } else if (/enotfound|econnrefused|econnreset|fetch failed|network error/.test(text)) {
+    message = "Couldn't reach the provider. Check your computer's internet connection.";
+  }
+  return { message, detail: detail === message ? null : detail };
+}
+
 export type ConversationHeaderName =
   | { readonly status: "loading" }
   | { readonly status: "ready"; readonly name: string };

@@ -235,6 +235,7 @@ export function MessageList({
   respondingIds,
   onRespondToApproval,
   errorText,
+  errorDetail = null,
   loadEarlier,
   now,
   describeTurn,
@@ -256,6 +257,8 @@ export function MessageList({
   respondingIds: ReadonlySet<string>;
   onRespondToApproval: (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => void;
   errorText: string | null;
+  /** The provider's own line, shown behind a "Details" toggle under `errorText`. */
+  errorDetail?: string | null;
   loadEarlier: { readonly loading: boolean; readonly onLoad: () => void } | null;
   now: Date;
 }): JSX.Element {
@@ -441,12 +444,22 @@ export function MessageList({
         ) : null}
 
         {errorText !== null ? (
-          <p
+          <div
             role="alert"
             className="max-w-[90%] rounded-[var(--personal-radius-card)] border border-[#f1c9c5] bg-[#fdf3f2] px-3.5 py-2.5 text-sm break-words text-[#8c1d18]"
           >
-            {errorText}
-          </p>
+            <p>{errorText}</p>
+            {errorDetail ? (
+              <details className="mt-1.5">
+                <summary className="cursor-pointer text-[12px] font-medium select-none">
+                  Details
+                </summary>
+                <p className="mt-1 text-[12px] leading-snug break-words opacity-80">
+                  {errorDetail}
+                </p>
+              </details>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </div>

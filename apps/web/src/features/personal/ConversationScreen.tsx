@@ -49,6 +49,7 @@ import {
   type ConversationState,
   conversationStateLabel,
   deriveConversationState,
+  friendlyTurnError,
   placeDelegationCards,
   resolveConversationHeaderName,
 } from "./conversationModel";
@@ -349,6 +350,8 @@ export function ConversationScreen({
     conversationState === "error" || failedOnLimit
       ? (thread?.session?.lastError ?? "The last turn failed.")
       : null;
+  // Never a raw exception in the chat: a plain sentence, the provider's line behind "Details".
+  const sessionErrorInfo = sessionError === null ? null : friendlyTurnError(sessionError);
   // Offline: sending is blocked and the draft stays in this device's draft store.
   const disabledReason = laptopOffline
     ? connectionPhase === "offline" || connectionPhase === "error"
@@ -529,7 +532,8 @@ export function ConversationScreen({
             onRespondToApproval={(requestId, decision) =>
               void onRespondToApproval(requestId, decision)
             }
-            errorText={actionError ?? sessionError}
+            errorText={actionError ?? sessionErrorInfo?.message ?? null}
+            errorDetail={actionError === null ? (sessionErrorInfo?.detail ?? null) : null}
             loadEarlier={loadEarlier}
             now={now}
             describeTurn={describeTurn}

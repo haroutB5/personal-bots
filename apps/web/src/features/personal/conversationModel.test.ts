@@ -14,8 +14,56 @@ import {
   conversationStateLabel,
   deriveConversationState,
   formatDayDivider,
+  friendlyTurnError,
   resolveConversationHeaderName,
 } from "./conversationModel";
+
+describe("friendlyTurnError", () => {
+  it("turns a usage limit into a plain sentence with the reset time", () => {
+    expect(
+      friendlyTurnError("You've hit your session limit · resets 10:10pm (Europe/London)"),
+    ).toEqual({
+      message: "Usage limit reached. It resets at 10:10pm.",
+      detail: "You've hit your session limit · resets 10:10pm (Europe/London)",
+    });
+    expect(friendlyTurnError("API Error: 429 rate_limit_error").message).toBe(
+      "Usage limit reached. Try again later.",
+    );
+  });
+
+  it("explains a closed session and never shows the stack trace", () => {
+    const raw =
+      "ProviderAdapterSessionClosedError: claudeAgent adapter thread is closed: 7dc30102 at toSessionError (file:///C:/Users/Ht/.personal-bots/releases/x/dist/bin.mjs:120773:44) at toRequestError$1 (file:///C:/x.mjs:1:2)\n    at sendTurn (file:///C:/x.mjs:3:4)";
+    const friendly = friendlyTurnError(raw);
+    expect(friendly.message).toBe("This chat's session ended. Send a message to start it again.");
+    expect(friendly.detail).toBe(
+      "ProviderAdapterSessionClosedError: claudeAgent adapter thread is closed: 7dc30102",
+    );
+    expect(friendly.detail).not.toContain("file:///");
+  });
+
+  it("covers sign-in, timeouts and network failures", () => {
+    expect(friendlyTurnError("Error: Not logged in · Please run /login").message).toBe(
+      "The provider isn't signed in on your computer.",
+    );
+    expect(friendlyTurnError("Request timed out after 120000ms").message).toBe(
+      "The reply took too long and was stopped. Try again.",
+    );
+    expect(friendlyTurnError("fetch failed: getaddrinfo ENOTFOUND api.anthropic.com").message).toBe(
+      "Couldn't reach the provider. Check your computer's internet connection.",
+    );
+  });
+
+  it("falls back to a generic sentence and keeps a short detail line", () => {
+    const friendly = friendlyTurnError(`Error: something odd happened ${"x".repeat(400)}`);
+    expect(friendly.message).toBe("The last reply failed. Send your message again.");
+    expect(friendly.detail?.length).toBeLessThanOrEqual(201);
+    expect(friendlyTurnError("The last turn failed.")).toEqual({
+      message: "The last reply failed. Send your message again.",
+      detail: null,
+    });
+  });
+});
 
 const session = (status: OrchestrationSession["status"]) =>
   ({ status }) as unknown as OrchestrationSession;
