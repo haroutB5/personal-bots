@@ -78,7 +78,7 @@ import Migration0063 from "./Migrations/063_PersonalLogins.ts";
 import Migration0064 from "./Migrations/064_PersonalRoutineEventTriggers.ts";
 import Migration0065 from "./Migrations/065_PersonalBrowserProtection.ts";
 import Migration0066 from "./Migrations/066_DropPersonalLoginGrants.ts";
-import Migration0067 from "./Migrations/067_PersonalLoginSensitive.ts";
+import Migration0068 from "./Migrations/068_PersonalLoginSensitive.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -157,7 +157,9 @@ const migrationEntries = [
   [64, "PersonalRoutineEventTriggers", Migration0064],
   [65, "PersonalBrowserProtection", Migration0065],
   [66, "DropPersonalLoginGrants", Migration0066],
-  [67, "PersonalLoginSensitive", Migration0067],
+  // 67 is upstream's ProjectionThreadTitleState, registered by the upstream
+  // sync that merges before this; 68 must never be applied without it.
+  [68, "PersonalLoginSensitive", Migration0068],
   // Ids 052+ are contiguous. The migrator runs any id above the latest applied
   // one, so a new migration must take the next free id; never deploy a gap.
 ] as const;
