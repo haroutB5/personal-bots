@@ -28,17 +28,12 @@ import {
   waitingLabelsByThread,
 } from "./delegationModel";
 import { useAppVersion } from "./appVersion";
-import { greetingLine, teamStatusLine } from "./greeting";
 import { SwipeToDelete } from "./SwipeToDelete";
 import { useDeleteBot } from "./useDeleteBot";
 import { usePersonalRoutines, usePersonalTasks } from "./usePersonalAutomation";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
-import {
-  usePersonalBotsList,
-  usePersonalEnvironmentId,
-  usePersonalProfile,
-} from "./usePersonalBots";
+import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 import { formatRelativeTime } from "./relativeTime";
 
 const MINUTE_MS = 60_000;
@@ -147,7 +142,6 @@ function SnapshotBotRows({ snapshot, now }: { snapshot: ChatsSnapshot; now: numb
 export function ChatsScreen(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const list = usePersonalBotsList(environmentId);
-  const profile = usePersonalProfile(environmentId);
   const allShells = useThreadShells();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const { feed: computerFeed } = useComputerFeed(environmentId);
@@ -288,7 +282,6 @@ export function ChatsScreen(): JSX.Element {
   const helpAlreadyCounted =
     helpRequest !== null && attention.some((thread) => thread.id === helpRequest.threadId);
   const reviewCount = attention.length + (helpSummary !== null && !helpAlreadyCounted ? 1 : 0);
-  const runningCount = summaries.filter((summary) => summary.live).length;
   const firstAttention = attention[0] ?? null;
   const { label: versionLabel, updateAvailable } = useAppVersion();
   const firstAttentionBot =
@@ -369,21 +362,6 @@ export function ChatsScreen(): JSX.Element {
       </header>
 
       <PersonalUsageStrip now={now} />
-
-      <section className="mt-2" aria-live="polite">
-        <p className="text-2xl leading-8 font-bold tracking-[-0.3px] text-[var(--personal-text)]">
-          {greetingLine(new Date(now), profile.data?.displayName ?? "")}
-        </p>
-        {loaded ? (
-          <p className="mt-0.5 text-[18px] leading-6 text-[var(--personal-text-secondary)]">
-            {teamStatusLine({
-              botCount: summaries.length,
-              runningCount,
-              reviewCount,
-            })}
-          </p>
-        ) : null}
-      </section>
 
       {environmentId === null ? (
         <p className="mt-6 text-[15px] text-[var(--personal-text-secondary)]">
