@@ -48,6 +48,14 @@ const refreshBotsList = (
     registry.refresh(personalBotsList({ environmentId: target.environmentId, input: {} })),
   );
 
+const refreshFilesList = (
+  target: { readonly environmentId: EnvironmentId },
+  registry: { refresh: (atom: ReturnType<typeof personalFilesList>) => void },
+) =>
+  Effect.sync(() =>
+    registry.refresh(personalFilesList({ environmentId: target.environmentId, input: {} })),
+  );
+
 export const personalBotCreate = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-bots:create",
   tag: WS_METHODS.personalBotsCreate,
@@ -82,6 +90,12 @@ export const personalBotDeleteThread = createEnvironmentRpcCommand(connectionAto
   label: "personal-bots:delete-thread",
   tag: WS_METHODS.personalBotsDeleteThread,
   onSuccess: refreshBotsList,
+});
+
+export const personalFileDelete = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-files:delete",
+  tag: WS_METHODS.personalFilesDelete,
+  onSuccess: refreshFilesList,
 });
 
 export const personalProfileSet = createEnvironmentRpcCommand(connectionAtomRuntime, {

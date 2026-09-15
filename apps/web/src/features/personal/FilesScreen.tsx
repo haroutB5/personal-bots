@@ -26,6 +26,8 @@ import {
   groupFilesByBot,
 } from "./filesModel";
 import { formatRelativeTime } from "./relativeTime";
+import { SwipeToDelete } from "./SwipeToDelete";
+import { useDeleteFile } from "./useDeleteFile";
 import { usePersonalBotsList, usePersonalEnvironmentId, usePersonalFiles } from "./usePersonalBots";
 
 const EMPTY_FILES: ReadonlyArray<PersonalFile> = [];
@@ -124,8 +126,21 @@ export function FilesScreen(): JSX.Element {
   const connection = usePreparedConnection(environmentId);
   const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
   const now = useMinuteClock();
+  const deleteFile = useDeleteFile(environmentId);
   const [query, setQuery] = useState("");
   const [previewing, setPreviewing] = useState<PersonalFile | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const onDeleteFile = async (file: PersonalFile) => {
+    const outcome = await deleteFile(file);
+    if (outcome.status === "cancelled") return;
+    if (outcome.status === "failed") {
+      setDeleteError(outcome.message);
+      return;
+    }
+    setDeleteError(null);
+    setPreviewing((current) => (current?.fileId === file.fileId ? null : current));
+  };
 
   const files = filesList.data?.files ?? EMPTY_FILES;
   const bots = botsList.data?.bots;
@@ -173,6 +188,15 @@ export function FilesScreen(): JSX.Element {
             Try again
           </button>
         </div>
+      ) : null}
+
+      {deleteError !== null ? (
+        <p
+          role="alert"
+          className="mt-4 rounded-[var(--personal-radius-card)] border border-[#f1c9c5] bg-[#fdf3f2] px-3.5 py-2.5 text-sm break-words text-[#8c1d18]"
+        >
+          {deleteError}
+        </p>
       ) : null}
 
       {environmentId !== null && !loaded && loadError === null ? (
@@ -246,13 +270,18 @@ export function FilesScreen(): JSX.Element {
                       const kind = filePreviewKind(file);
                       return (
                         <li key={file.fileId}>
-                          <FileRow
-                            file={file}
-                            kind={kind}
-                            href={resolve(kind === "pdf" ? file.previewUrl : file.url)}
-                            now={now}
-                            onPreview={() => setPreviewing(file)}
-                          />
+                          <SwipeToDelete
+                            label={`Delete ${file.name}`}
+                            onDelete={() => onDeleteFile(file)}
+                          >
+                            <FileRow
+                              file={file}
+                              kind={kind}
+                              href={resolve(kind === "pdf" ? file.previewUrl : file.url)}
+                              now={now}
+                              onPreview={() => setPreviewing(file)}
+                            />
+                          </SwipeToDelete>
                         </li>
                       );
                     })}
@@ -268,6 +297,7 @@ export function FilesScreen(): JSX.Element {
         file={previewing}
         url={resolve(previewing?.url ?? null)}
         onClose={() => setPreviewing(null)}
+        onDelete={() => (previewing === null ? Promise.resolve() : onDeleteFile(previewing))}
       />
     </div>
   );

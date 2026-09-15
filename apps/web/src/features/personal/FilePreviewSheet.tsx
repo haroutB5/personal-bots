@@ -2,7 +2,7 @@ import type { JSX } from "react";
 import { useEffect, useState } from "react";
 
 import type { PersonalFile } from "@t3tools/contracts";
-import { Download, ExternalLink, X } from "lucide-react";
+import { Download, ExternalLink, Trash2, X } from "lucide-react";
 import ReactMarkdown, {
   type Components,
   type Options as ReactMarkdownOptions,
@@ -119,13 +119,25 @@ export function FilePreviewSheet({
   file,
   url,
   onClose,
+  onDelete,
 }: {
   file: PersonalFile | null;
   /** Resolved signed URL for `file`; null while the connection is not ready. */
   url: string | null;
   onClose: () => void;
+  onDelete: () => Promise<unknown>;
 }): JSX.Element {
   const kind = file === null ? null : filePreviewKind(file);
+  const [deleting, setDeleting] = useState(false);
+  const deleteFile = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      await onDelete();
+    } finally {
+      setDeleting(false);
+    }
+  };
   return (
     <Sheet
       open={file !== null}
@@ -182,6 +194,17 @@ export function FilePreviewSheet({
               ) : kind === "markdown" || kind === "text" ? (
                 <TextBody url={url} markdown={kind === "markdown"} />
               ) : null}
+            </div>
+            <div className="border-t border-[var(--personal-border)] px-5 py-3">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => void deleteFile()}
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[#d93025] px-4 text-[15px] font-semibold text-white outline-none focus-visible:ring-2 focus-visible:ring-[#d93025] focus-visible:ring-offset-2 disabled:opacity-50"
+              >
+                <Trash2 aria-hidden="true" className="size-[18px]" strokeWidth={1.75} />
+                {deleting ? "Deleting..." : "Delete file"}
+              </button>
             </div>
           </>
         ) : null}
