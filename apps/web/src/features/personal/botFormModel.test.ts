@@ -6,7 +6,13 @@ import {
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { describe, expect, it } from "vite-plus/test";
 
-import { botEffortDescriptor, defaultModelFor, modelOptionLabel } from "./botFormModel";
+import {
+  botEffortDescriptor,
+  defaultModelFor,
+  modelOptionLabel,
+  searchModels,
+  usesModelSearch,
+} from "./botFormModel";
 
 const select = (id: string, values: ReadonlyArray<string>) => ({
   id,
@@ -80,6 +86,59 @@ describe("defaultModelFor", () => {
       defaultModelFor(provider("opencode", [model({ slug: "openrouter/anthropic/claude" })])),
     ).toBe("");
     expect(defaultModelFor(undefined)).toBe("");
+  });
+});
+
+describe("searchModels", () => {
+  const catalog = [
+    model({ slug: "openrouter/aion/aion-2.0", name: "Aion-2.0", subProvider: "OpenRouter" }),
+    model({
+      slug: "openrouter/meta/muse-spark-1.3",
+      name: "Muse Spark 1.3",
+      subProvider: "OpenRouter",
+    }),
+    model({
+      slug: "opencode/muse-spark-1.3-contributor-free",
+      name: "Muse Spark 1.3 Free",
+      subProvider: "OpenCode Zen",
+    }),
+    model({
+      slug: "opencode/muse-spark-1.2-contributor-free",
+      name: "Muse Spark 1.2 Free",
+      subProvider: "OpenCode Zen",
+    }),
+    model({ slug: "opencode/big-pickle", name: "Big Pickle", subProvider: "OpenCode Zen" }),
+  ];
+
+  it("matches every typed word across name, sub-provider and slug, any case", () => {
+    expect(searchModels(catalog, "muse 1.3 free").map((entry) => entry.slug)).toEqual([
+      "opencode/muse-spark-1.3-contributor-free",
+    ]);
+    expect(searchModels(catalog, "ZEN pickle").map((entry) => entry.slug)).toEqual([
+      "opencode/big-pickle",
+    ]);
+    expect(searchModels(catalog, "contributor").length).toBe(2);
+  });
+
+  it("puts names that start with the query first, keeping catalogue order otherwise", () => {
+    expect(searchModels(catalog, "spark").map((entry) => entry.slug)).toEqual([
+      "openrouter/meta/muse-spark-1.3",
+      "opencode/muse-spark-1.3-contributor-free",
+      "opencode/muse-spark-1.2-contributor-free",
+    ]);
+    expect(searchModels(catalog, "muse s")[0]?.slug).toBe("openrouter/meta/muse-spark-1.3");
+  });
+
+  it("shows nothing for an empty query and caps the list", () => {
+    expect(searchModels(catalog, "   ")).toEqual([]);
+    expect(searchModels(catalog, "o", 2).length).toBe(2);
+  });
+
+  it("only switches to search for long lists", () => {
+    expect(usesModelSearch(catalog)).toBe(false);
+    expect(usesModelSearch(Array.from({ length: 40 }, (_, i) => model({ slug: `m${i}` })))).toBe(
+      true,
+    );
   });
 });
 

@@ -24,6 +24,8 @@ import {
   defaultModelFor,
   EFFORT_OPTION_IDS,
   modelOptionLabel,
+  searchModels,
+  usesModelSearch,
 } from "./botFormModel";
 import { resolveBotProvider, providerLine } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
@@ -43,6 +45,84 @@ const TITLE_MAX = 60;
 
 function isSelectable(provider: ServerProvider): boolean {
   return resolveBotProvider(provider.instanceId, [provider]).available;
+}
+
+/**
+ * Type-to-search model field for providers with long catalogues (OpenCode
+ * lists hundreds): a native picker of that length is unusable on a phone.
+ */
+function ModelSearchField({
+  models,
+  value,
+  onChange,
+}: {
+  readonly models: ServerProvider["models"];
+  readonly value: string;
+  readonly onChange: (slug: string) => void;
+}): JSX.Element {
+  const [query, setQuery] = useState("");
+  const selected = models.find((model) => model.slug === value);
+  const results = searchModels(models, query);
+  const pick = (slug: string) => {
+    onChange(slug);
+    setQuery("");
+  };
+  return (
+    <>
+      <input
+        id="bot-model"
+        type="search"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          const first = results[0];
+          if (first !== undefined) pick(first.slug);
+        }}
+        placeholder={selected === undefined ? "Type to search models" : modelOptionLabel(selected)}
+        aria-autocomplete="list"
+        aria-controls="bot-model-results"
+        aria-expanded={results.length > 0}
+        autoComplete="off"
+        autoCapitalize="off"
+        autoCorrect="off"
+        spellCheck={false}
+        enterKeyHint="search"
+        className={`${FIELD_CLASS} h-11`}
+      />
+      {query.trim().length === 0 ? (
+        <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
+          {selected === undefined
+            ? `${models.length} models. Type part of a name, e.g. "muse".`
+            : `Selected: ${modelOptionLabel(selected)}`}
+        </p>
+      ) : results.length === 0 ? (
+        <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
+          No models match "{query.trim()}".
+        </p>
+      ) : (
+        <ul
+          id="bot-model-results"
+          role="listbox"
+          aria-label="Matching models"
+          className="mt-1.5 divide-y divide-[var(--personal-border)] overflow-hidden rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-surface)]"
+        >
+          {results.map((model) => (
+            <li key={model.slug} role="option" aria-selected={model.slug === value}>
+              <button
+                type="button"
+                onClick={() => pick(model.slug)}
+                className="flex min-h-11 w-full items-center px-3.5 py-2 text-left text-[15px] text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
+              >
+                {modelOptionLabel(model)}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
 }
 
 interface BotDraft {
@@ -357,21 +437,29 @@ function BotForm({
           <label htmlFor="bot-model" className={LABEL_CLASS}>
             Model
           </label>
-          <select
-            id="bot-model"
-            value={draft.model}
-            onChange={(event) => update({ model: event.target.value })}
-            className={`${FIELD_CLASS} h-11`}
-          >
-            {models.some((model) => model.slug === draft.model) ? null : (
-              <option value={draft.model}>{draft.model}</option>
-            )}
-            {models.map((model) => (
-              <option key={model.slug} value={model.slug}>
-                {modelOptionLabel(model)}
-              </option>
-            ))}
-          </select>
+          {usesModelSearch(models) ? (
+            <ModelSearchField
+              models={models}
+              value={draft.model}
+              onChange={(slug) => update({ model: slug })}
+            />
+          ) : (
+            <select
+              id="bot-model"
+              value={draft.model}
+              onChange={(event) => update({ model: event.target.value })}
+              className={`${FIELD_CLASS} h-11`}
+            >
+              {models.some((model) => model.slug === draft.model) ? null : (
+                <option value={draft.model}>{draft.model}</option>
+              )}
+              {models.map((model) => (
+                <option key={model.slug} value={model.slug}>
+                  {modelOptionLabel(model)}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       ) : null}
 

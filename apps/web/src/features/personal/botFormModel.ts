@@ -23,6 +23,35 @@ export function modelOptionLabel(model: Pick<ServerProviderModel, "name" | "subP
   return model.subProvider ? `${model.name} · ${model.subProvider}` : model.name;
 }
 
+/** Past this many models a native picker is unusable on a phone; type to search instead. */
+export const MODEL_SEARCH_THRESHOLD = 20;
+
+export function usesModelSearch(models: ReadonlyArray<unknown>): boolean {
+  return models.length > MODEL_SEARCH_THRESHOLD;
+}
+
+/**
+ * Models matching every typed word (name, sub-provider or slug, any case).
+ * Names that start with the first word come first; otherwise catalogue order.
+ */
+export function searchModels<M extends Pick<ServerProviderModel, "slug" | "name" | "subProvider">>(
+  models: ReadonlyArray<M>,
+  query: string,
+  limit = 8,
+): M[] {
+  const tokens = query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const first = tokens[0];
+  if (first === undefined) return [];
+  const leading: M[] = [];
+  const others: M[] = [];
+  for (const model of models) {
+    const haystack = `${model.name} ${model.subProvider ?? ""} ${model.slug}`.toLocaleLowerCase();
+    if (!tokens.every((token) => haystack.includes(token))) continue;
+    (model.name.toLocaleLowerCase().startsWith(first) ? leading : others).push(model);
+  }
+  return [...leading, ...others].slice(0, limit);
+}
+
 /** The selected model's effort control, if its provider offers one. */
 export function botEffortDescriptor(
   provider: ServerProvider | undefined,
