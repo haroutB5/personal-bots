@@ -7,6 +7,7 @@ import {
   type PersonalLoginCreateInput,
   type PersonalLoginDeleteInput,
   type PersonalLoginsListResult,
+  type PersonalLoginSetSensitiveInput,
   type PersonalLoginUpdateInput,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -76,6 +77,10 @@ export class PersonalLoginService extends Context.Service<
       input: PersonalLoginUpdateInput,
     ) => Effect.Effect<PersonalLogin, PersonalLoginsError>;
     readonly remove: (input: PersonalLoginDeleteInput) => Effect.Effect<void, PersonalLoginsError>;
+    /** Marks or unmarks a sensitive site; no password is read or required. */
+    readonly setSensitive: (
+      input: PersonalLoginSetSensitiveInput,
+    ) => Effect.Effect<PersonalLogin, PersonalLoginsError>;
     readonly use: (
       input: UsePersonalLoginInput,
     ) => Effect.Effect<UsePersonalLoginResult, PersonalLoginsError>;
@@ -131,6 +136,7 @@ export const make = Effect.gen(function* () {
     label: login.label,
     origin: login.origin,
     username: login.username,
+    sensitive: login.sensitive,
     createdAt: login.createdAt,
     updatedAt: login.updatedAt,
   });
@@ -156,6 +162,8 @@ export const make = Effect.gen(function* () {
       loginId: input.loginId,
       ...metadata,
       secretRef: NodeCrypto.randomUUID(),
+      // New logins start unmarked; the list's switch is the only way to mark one.
+      sensitive: false,
       createdAt: now,
       updatedAt: now,
     };
@@ -271,7 +279,17 @@ export const make = Effect.gen(function* () {
   const use: PersonalLoginService["Service"]["use"] = (input) =>
     accessLock.withPermit(useUnlocked(input));
 
-  return PersonalLoginService.of({ list, create, update, remove, use });
+  const setSensitive: PersonalLoginService["Service"]["setSensitive"] = (input) =>
+    accessLock.withPermit(
+      Effect.gen(function* () {
+        const updatedAt = yield* DateTime.now;
+        const updated = yield* db("update", repository.setSensitive({ ...input, updatedAt }));
+        if (Option.isNone(updated)) return yield* fail("Saved login was not found.");
+        return present(updated.value);
+      }),
+    );
+
+  return PersonalLoginService.of({ list, create, update, remove, setSensitive, use });
 });
 
 export const layer = Layer.effect(PersonalLoginService, make);

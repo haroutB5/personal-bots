@@ -16,6 +16,12 @@ export const PersonalLogin = Schema.Struct({
   label: TrimmedNonEmptyString,
   origin: TrimmedNonEmptyString,
   username: Schema.String,
+  /**
+   * The user marked this origin as a sensitive site. After a bot has had it
+   * open in the shared browser, anything that could carry what it saw to a
+   * different origin waits for the user's approval.
+   */
+  sensitive: Schema.Boolean,
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
 });
@@ -50,6 +56,13 @@ export type PersonalLoginUpdateInput = typeof PersonalLoginUpdateInput.Type;
 
 export const PersonalLoginDeleteInput = Schema.Struct({ loginId: PersonalLoginId });
 export type PersonalLoginDeleteInput = typeof PersonalLoginDeleteInput.Type;
+
+/** Marks or unmarks a saved login as a sensitive site. Needs no password. */
+export const PersonalLoginSetSensitiveInput = Schema.Struct({
+  loginId: PersonalLoginId,
+  sensitive: Schema.Boolean,
+});
+export type PersonalLoginSetSensitiveInput = typeof PersonalLoginSetSensitiveInput.Type;
 
 export class PersonalLoginsError extends Schema.TaggedError<PersonalLoginsError>()(
   "PersonalLoginsError",

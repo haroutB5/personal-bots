@@ -17,6 +17,8 @@ export interface StoredPersonalLogin {
   readonly origin: string;
   readonly username: string;
   readonly secretRef: string;
+  /** User-marked sensitive site; gates cross-origin egress in the shared browser. */
+  readonly sensitive: boolean;
   readonly createdAt: DateTime.Utc;
   readonly updatedAt: DateTime.Utc;
 }
@@ -29,6 +31,8 @@ const LoginRow = Schema.Struct({
   origin: Schema.String,
   username: Schema.String,
   secretRef: Schema.String,
+  /** SQLite keeps the flag as 0/1. */
+  sensitive: Schema.Int,
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
 });
@@ -40,6 +44,7 @@ const LOGIN_COLUMNS = `
   l.origin AS "origin",
   l.username AS "username",
   l.secret_ref AS "secretRef",
+  l.sensitive AS "sensitive",
   l.created_at AS "createdAt",
   l.updated_at AS "updatedAt"
 `;
@@ -63,6 +68,17 @@ export class PersonalLoginRepository extends Context.Service<
     readonly remove: (
       loginId: PersonalLoginId,
     ) => Effect.Effect<boolean, PersonalLoginRepositoryError>;
+    /** Sets the sensitive-site flag; `None` when no such login exists. */
+    readonly setSensitive: (input: {
+      readonly loginId: PersonalLoginId;
+      readonly sensitive: boolean;
+      readonly updatedAt: DateTime.Utc;
+    }) => Effect.Effect<Option.Option<StoredPersonalLogin>, PersonalLoginRepositoryError>;
+    /** Origins of every login the user marked sensitive. */
+    readonly sensitiveOrigins: () => Effect.Effect<
+      ReadonlyArray<string>,
+      PersonalLoginRepositoryError
+    >;
   }
 >()("t3/personal/secrets/PersonalLoginRepository") {}
 
@@ -81,6 +97,10 @@ export const make = Effect.gen(function* () {
   const decodeRows = (operation: string, rows: ReadonlyArray<unknown>) =>
     Effect.forEach(rows, (row) =>
       decodeLoginRow(row).pipe(
+        Effect.map((decoded): StoredPersonalLogin => ({
+          ...decoded,
+          sensitive: decoded.sensitive !== 0,
+        })),
         Effect.mapError((cause) =>
           PersistenceDecodeError.fromSchemaError(`PersonalLoginRepository.${operation}`, cause),
         ),
@@ -148,7 +168,35 @@ export const make = Effect.gen(function* () {
       sql`DELETE FROM personal_logins WHERE login_id = ${loginId} RETURNING login_id`,
     ).pipe(Effect.map((rows) => rows.length > 0));
 
-  return PersonalLoginRepository.of({ list, get, create, update, remove });
+  const setSensitive: PersonalLoginRepository["Service"]["setSensitive"] = (input) =>
+    query(
+      "setSensitive",
+      sql`
+        UPDATE personal_logins
+        SET sensitive = ${input.sensitive ? 1 : 0},
+            updated_at = ${DateTime.formatIso(input.updatedAt)}
+        WHERE login_id = ${input.loginId}
+        RETURNING login_id
+      `,
+    ).pipe(Effect.flatMap((rows) => (rows.length === 0 ? Effect.succeedNone : get(input.loginId))));
+
+  const sensitiveOrigins: PersonalLoginRepository["Service"]["sensitiveOrigins"] = () =>
+    query(
+      "sensitiveOrigins",
+      sql<{ readonly origin: string }>`
+        SELECT DISTINCT origin FROM personal_logins WHERE sensitive <> 0
+      `,
+    ).pipe(Effect.map((rows) => rows.map((row) => row.origin)));
+
+  return PersonalLoginRepository.of({
+    list,
+    get,
+    create,
+    update,
+    remove,
+    setSensitive,
+    sensitiveOrigins,
+  });
 });
 
 export const layer = Layer.effect(PersonalLoginRepository, make);

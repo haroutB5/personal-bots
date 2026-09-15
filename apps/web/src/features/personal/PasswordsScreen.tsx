@@ -21,6 +21,7 @@ import {
 import {
   personalLoginCreate,
   personalLoginDelete,
+  personalLoginSetSensitive,
   personalLoginUpdate,
   usePersonalLogins,
 } from "./usePersonalLogins";
@@ -245,6 +246,7 @@ export function PasswordsScreen(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const loginsQuery = usePersonalLogins(environmentId);
   const removeLogin = useAtomCommand(personalLoginDelete);
+  const setSensitive = useAtomCommand(personalLoginSetSensitive);
   const [editing, setEditing] = useState<PersonalLogin | "new" | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -261,6 +263,17 @@ export function PasswordsScreen(): JSX.Element {
     setBusyId(null);
     setError(commandFailureMessage(result, "Could not delete that login."));
     if (editing !== "new" && editing?.loginId === login.loginId) setEditing(null);
+  };
+
+  const onToggleSensitive = async (login: PersonalLogin) => {
+    if (environmentId === null) return;
+    setBusyId(login.loginId);
+    const result = await setSensitive({
+      environmentId,
+      input: { loginId: login.loginId, sensitive: !login.sensitive },
+    });
+    setBusyId(null);
+    setError(commandFailureMessage(result, "Could not change that login."));
   };
 
   return (
@@ -290,6 +303,11 @@ export function PasswordsScreen(): JSX.Element {
         Any bot can use saved logins on their exact site. Passwords are encrypted on this computer,
         but bots run under your computer account and share one signed-in browser, so only save
         accounts you trust every bot to use.
+      </p>
+      <p className="mt-2 text-[14px] leading-snug text-[var(--personal-text-secondary)]">
+        Sensitive sites (your bank, your email): once a bot has one open, anything it does in the
+        browser that could send what it saw to a different site asks you first. Everything else runs
+        unattended.
       </p>
 
       {error === null ? null : (
@@ -323,6 +341,25 @@ export function PasswordsScreen(): JSX.Element {
                 </span>
                 <span className="block truncate text-[13px] text-[var(--personal-text-secondary)]">
                   {login.username}
+                </span>
+              </button>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={login.sensitive}
+                aria-label={`Sensitive site: ${login.label}`}
+                disabled={busyId === login.loginId}
+                onClick={() => void onToggleSensitive(login)}
+                className="flex h-11 shrink-0 items-center gap-2 px-2 text-[13px] text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+              >
+                <span aria-hidden="true">Sensitive</span>
+                <span
+                  aria-hidden="true"
+                  className={`relative inline-flex h-6 w-10 shrink-0 items-center rounded-full border border-[var(--personal-border)] ${login.sensitive ? "bg-[var(--personal-primary)]" : "bg-[var(--personal-fill-muted)]"}`}
+                >
+                  <span
+                    className={`inline-block size-5 rounded-full bg-[var(--personal-surface)] shadow ${login.sensitive ? "translate-x-[16px]" : "translate-x-0.5"}`}
+                  />
                 </span>
               </button>
               <button

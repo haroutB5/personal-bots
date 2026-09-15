@@ -292,6 +292,7 @@ import {
   PersonalLoginsError,
   PersonalLoginsListResult,
   PersonalLoginUpdateInput,
+  PersonalLoginSetSensitiveInput,
 } from "./personalLogins.ts";
 // personal browser
 import {
@@ -511,6 +512,7 @@ export const WS_METHODS = {
   personalLoginsCreate: "personalLogins.create",
   personalLoginsUpdate: "personalLogins.update",
   personalLoginsDelete: "personalLogins.delete",
+  personalLoginsSetSensitive: "personalLogins.setSensitive",
 
   // personal browser
   personalBrowserStatus: "personalBrowser.status",
@@ -1139,6 +1141,12 @@ const WsPersonalLoginsUpdateRpc = Rpc.make(WS_METHODS.personalLoginsUpdate, {
 const WsPersonalLoginsDeleteRpc = Rpc.make(WS_METHODS.personalLoginsDelete, {
   payload: PersonalLoginDeleteInput,
   success: Schema.Struct({}),
+  error: PersonalLoginsRpcError,
+});
+
+const WsPersonalLoginsSetSensitiveRpc = Rpc.make(WS_METHODS.personalLoginsSetSensitive, {
+  payload: PersonalLoginSetSensitiveInput,
+  success: PersonalLogin,
   error: PersonalLoginsRpcError,
 });
 
@@ -1858,6 +1866,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPersonalLoginsCreateRpc,
   WsPersonalLoginsUpdateRpc,
   WsPersonalLoginsDeleteRpc,
+  WsPersonalLoginsSetSensitiveRpc,
   // personal browser
   WsPersonalBrowserStatusRpc,
   WsPersonalBrowserTakeControlRpc,
