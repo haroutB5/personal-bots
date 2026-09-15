@@ -8,22 +8,23 @@ import {
   type ModelSelection,
   type PersonalBot,
   PersonalBotId,
-  type SelectProviderOptionDescriptor,
   type ServerProvider,
 } from "@t3tools/contracts";
-import {
-  getModelSelectionStringOptionValue,
-  getProviderOptionDescriptors,
-} from "@t3tools/shared/model";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 
 import { randomUUID } from "~/lib/utils";
-import { getProviderModelCapabilities } from "~/providerModels";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatarPicker } from "./BotAvatarPicker";
+import {
+  botEffortDescriptor,
+  defaultModelFor,
+  EFFORT_OPTION_IDS,
+  modelOptionLabel,
+} from "./botFormModel";
 import { resolveBotProvider, providerLine } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
 import { useDeleteBot } from "./useDeleteBot";
@@ -44,16 +45,6 @@ function isSelectable(provider: ServerProvider): boolean {
   return resolveBotProvider(provider.instanceId, [provider]).available;
 }
 
-function defaultModelFor(provider: ServerProvider | undefined): string {
-  if (provider === undefined) return "";
-  return (
-    provider.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
-    provider.models.find((model) => !model.isCustom)?.slug ??
-    provider.models[0]?.slug ??
-    ""
-  );
-}
-
 interface BotDraft {
   name: string;
   title: string;
@@ -66,9 +57,6 @@ interface BotDraft {
   /** Reasoning effort option id; "" keeps the model's default. */
   effort: string;
 }
-
-/** Claude calls the option `effort`, Codex `reasoningEffort`. */
-const EFFORT_OPTION_IDS = ["effort", "reasoningEffort"];
 
 function draftFromBot(bot: PersonalBot): BotDraft {
   return {
@@ -185,20 +173,7 @@ function BotForm({
     if (patch.name !== undefined && patch.name.trim().length > 0) setNameError(null);
   };
 
-  // The selected model's effort control, if its provider offers one.
-  const effortDescriptor: SelectProviderOptionDescriptor | null =
-    selectedProvider === undefined || draft.model === ""
-      ? null
-      : (getProviderOptionDescriptors({
-          caps: getProviderModelCapabilities(
-            selectedProvider.models,
-            draft.model,
-            selectedProvider.driver,
-          ),
-        }).find(
-          (descriptor): descriptor is SelectProviderOptionDescriptor =>
-            descriptor.type === "select" && EFFORT_OPTION_IDS.includes(descriptor.id),
-        ) ?? null);
+  const effortDescriptor = botEffortDescriptor(selectedProvider, draft.model);
   // A saved effort the new model does not offer falls back to its default.
   const effortValue =
     effortDescriptor?.options.some((option) => option.id === draft.effort) === true
@@ -393,7 +368,7 @@ function BotForm({
             )}
             {models.map((model) => (
               <option key={model.slug} value={model.slug}>
-                {model.name}
+                {modelOptionLabel(model)}
               </option>
             ))}
           </select>
