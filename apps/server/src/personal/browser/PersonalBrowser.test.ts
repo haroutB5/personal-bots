@@ -167,7 +167,14 @@ const configureLoginPage = (page: FakePage) => {
 const makeFakeDriver = () => {
   const page = new FakePage();
   const pages: FakePage[] = [page];
-  const state = { launches: 0, page, pages, onNewPage: null as ((page: FakePage) => void) | null };
+  const state = {
+    launches: 0,
+    page,
+    pages,
+    onNewPage: null as ((page: FakePage) => void) | null,
+    /** Chrome exiting on its own: fires the context's close listener. */
+    crash: () => {},
+  };
   const driver: BrowserDriver = {
     launch: async () => {
       state.launches++;
@@ -179,7 +186,9 @@ const makeFakeDriver = () => {
           pages.push(created);
           return created;
         },
-        onClose: () => {},
+        onClose: (listener) => {
+          state.crash = listener;
+        },
         close: async () => {},
       };
     },
@@ -718,8 +727,12 @@ describe("PersonalBrowser", () => {
     }).pipe(Effect.provide(makeLayer(fake.driver, taskHarness)));
   });
 
-  it.effect("clears browser help when the browser closes", () => {
+  // QA v1.10.0 BUG-1: every clear path other than Return to bot left the task
+  // parked on waiting_for_browser, with nothing left that could resume it.
+  it.effect("closing the browser during a help request resumes the parked task", () => {
     const fake = makeFakeDriver();
+    const taskHarness: TaskHarness = { waits: [], resumes: [] };
+    const taskId = PersonalTaskId.make("task-browser-close");
     return Effect.gen(function* () {
       const browser = yield* PersonalBrowser.PersonalBrowser;
       yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
@@ -727,13 +740,42 @@ describe("PersonalBrowser", () => {
         threadId,
         botId: PersonalBotId.make("bot-assistant"),
         botName: "Assistant",
-        taskId: PersonalTaskId.make("task-browser-close"),
+        taskId,
         reason: "Login required",
       });
 
       const closed = yield* browser.closeBrowser({ sessionId: "session-1", byThreadId: null });
       expect(closed.helpRequest).toBeNull();
-    }).pipe(Effect.provide(makeLayer(fake.driver)));
+      expect(taskHarness.resumes).toEqual([
+        { taskId, note: expect.stringContaining("The shared browser was closed") },
+      ]);
+    }).pipe(Effect.provide(makeLayer(fake.driver, taskHarness)));
+  });
+
+  it.effect("a Chrome crash during a help request resumes the parked task", () => {
+    const fake = makeFakeDriver();
+    const taskHarness: TaskHarness = { waits: [], resumes: [] };
+    const taskId = PersonalTaskId.make("task-browser-crash");
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      yield* browser.requestHelp({
+        threadId,
+        botId: PersonalBotId.make("bot-assistant"),
+        botName: "Assistant",
+        taskId,
+        reason: "2FA code",
+      });
+
+      fake.state.crash();
+      // The close callback runs on a background fiber; wait for its effects.
+      yield* awaitCondition(Effect.sync(() => taskHarness.resumes.length > 0));
+      expect(taskHarness.resumes).toEqual([
+        { taskId, note: expect.stringContaining("Chrome exited") },
+      ]);
+      const after = yield* browser.status("session-1");
+      expect(after).toMatchObject({ state: "crashed", helpRequest: null });
+    }).pipe(Effect.provide(makeLayer(fake.driver, taskHarness)));
   });
 
   it.effect("rejects browser help from a thread that does not hold the lease", () => {
@@ -757,8 +799,10 @@ describe("PersonalBrowser", () => {
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 
-  it.effect("clears browser help when another thread takes the expired lease", () => {
+  it.effect("another thread taking the expired lease ends the help and resumes its task", () => {
     const fake = makeFakeDriver();
+    const taskHarness: TaskHarness = { waits: [], resumes: [] };
+    const taskId = PersonalTaskId.make("task-agent-switch");
     return Effect.gen(function* () {
       const browser = yield* PersonalBrowser.PersonalBrowser;
       yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
@@ -766,7 +810,7 @@ describe("PersonalBrowser", () => {
         threadId,
         botId: PersonalBotId.make("bot-assistant"),
         botName: "Assistant",
-        taskId: PersonalTaskId.make("task-agent-switch"),
+        taskId,
         reason: "CAPTCHA",
       });
 
@@ -777,7 +821,11 @@ describe("PersonalBrowser", () => {
       });
 
       expect((yield* browser.status("session-1")).helpRequest).toBeNull();
-    }).pipe(Effect.provide(makeLayer(fake.driver)));
+      // Resumed exactly once, even though both the op and the lease stream see it.
+      expect(taskHarness.resumes).toEqual([
+        { taskId, note: expect.stringContaining("Another chat started using the shared browser") },
+      ]);
+    }).pipe(Effect.provide(makeLayer(fake.driver, taskHarness)));
   });
 
   it.effect("closing the browser ends the session and leaves nothing to restore", () => {

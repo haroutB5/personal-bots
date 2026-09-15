@@ -220,6 +220,15 @@ const MAX_LISTED_FILES = 300;
 const PHONE_DEVICE_SCALE_FACTOR = 2;
 const ARTIFACT_SCAN_DEPTH = 3;
 
+// Continuations for a help request that ended without Return to bot. The bot's
+// task is parked on waiting_for_browser, and only a resume brings it back.
+const HELP_ENDED_BY_CLOSE =
+  "The shared browser was closed before the user finished helping, so your browser help request was cancelled. Tell the user in one sentence what you still need. Reopen the page only if the task still needs it, and call request_browser_help again if you get blocked.";
+const HELP_ENDED_BY_CRASH =
+  "Chrome exited before the user finished helping, so your browser help request was cancelled. Reopen the page and call request_browser_help again if you are still blocked, or tell the user in one sentence what you still need.";
+const HELP_ENDED_BY_SWITCH =
+  "Another chat started using the shared browser before the user finished helping, so your browser help request was cancelled. Tell the user in one sentence what you still need, or call request_browser_help again once you have the browser back.";
+
 const decodeInputMessage = Schema.decodeUnknownEffect(
   Schema.fromJsonString(PersonalBrowserInputMessage),
 );
@@ -429,6 +438,34 @@ export const make = (options: PersonalBrowserOptions) =>
     } | null = null;
 
     const notify = PubSub.publish(statusDirty, undefined).pipe(Effect.asVoid);
+
+    /**
+     * Ends a help request the user never finished and resumes the bot with
+     * `note`. The task is parked on waiting_for_browser until something resumes
+     * it, so every way a request can disappear other than Return to bot has to
+     * come through here, or the task waits forever.
+     */
+    const abandonHelp = (note: string) =>
+      Effect.gen(function* () {
+        const pending = activeHelp;
+        if (pending === null) return;
+        activeHelp = null;
+        yield* tasks
+          .resumeFromUser({
+            taskId: pending.taskId,
+            noteId: `browser-help:${pending.request.requestedAt}:ended`,
+            note,
+            restartSession: false,
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("personal browser help could not be ended", {
+                threadId: pending.request.threadId,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
+      });
 
     const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
@@ -658,7 +695,7 @@ export const make = (options: PersonalBrowserOptions) =>
         runtime.detail = runtime.closing
           ? null
           : "Chrome exited. It restarts on the next browser action or when you take control.";
-        activeHelp = null;
+        yield* abandonHelp(runtime.closing ? HELP_ENDED_BY_CLOSE : HELP_ENDED_BY_CRASH);
         yield* Effect.forEach(
           tabs,
           (tab) =>
@@ -753,7 +790,7 @@ export const make = (options: PersonalBrowserOptions) =>
             view.ownerId !== null &&
             view.ownerId !== activeHelp.request.threadId
           ) {
-            activeHelp = null;
+            yield* abandonHelp(HELP_ENDED_BY_SWITCH);
           }
           // Control moving anywhere else hands the page its own viewport back.
           yield* syncHumanViewport;
@@ -777,9 +814,9 @@ export const make = (options: PersonalBrowserOptions) =>
     };
 
     const clearHelpForAgentSwitch = (threadId: ThreadId) =>
-      Effect.sync(() => {
-        if (activeHelp !== null && activeHelp.request.threadId !== threadId) activeHelp = null;
-      });
+      activeHelp !== null && activeHelp.request.threadId !== threadId
+        ? abandonHelp(HELP_ENDED_BY_SWITCH)
+        : Effect.void;
 
     const tabForRequest = (request: PreviewAutomationRequest): TabEntry | undefined => {
       if (request.tabId !== undefined) {
@@ -924,6 +961,7 @@ export const make = (options: PersonalBrowserOptions) =>
           yield* Effect.promise(() => tab.page.close().catch(() => undefined));
           yield* onTabPageClosed(tab);
         }
+        // Not a resume: the thread is being deleted, and the delete cancels its task.
         if (activeHelp?.request.threadId === threadId) activeHelp = null;
         yield* lease.releaseThread(threadId);
         yield* notify;
@@ -1597,7 +1635,7 @@ export const make = (options: PersonalBrowserOptions) =>
           runtime.phase = "offline";
           runtime.detail = null;
           runtime.lockedByPid = null;
-          activeHelp = null;
+          yield* abandonHelp(HELP_ENDED_BY_CLOSE);
           // Keep loginUsed: the persistent profile retains authenticated
           // cookies across a Chrome close, so re-enabling page scripts here
           // would bypass the protection on the next launch.
