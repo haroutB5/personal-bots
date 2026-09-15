@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFs from "node:fs";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
@@ -14,7 +14,7 @@ import { UPSTREAM_MIGRATION_IDS } from "./upstreamMigrationIds.ts";
 
 const persistenceDir = import.meta.dirname;
 const migrationsDir = NodePath.join(persistenceDir, "Migrations");
-const registrySource = NodeFs.readFileSync(NodePath.join(persistenceDir, "Migrations.ts"), "utf8");
+const registrySource = NodeFS.readFileSync(NodePath.join(persistenceDir, "Migrations.ts"), "utf8");
 
 const importedFiles = new Map<string, string>();
 for (const match of registrySource.matchAll(
@@ -31,7 +31,7 @@ const registered = [...registrySource.matchAll(/^\s*\[(\d+), "([^"]+)", (\w+)\],
   }),
 );
 
-const migrationFiles = NodeFs.readdirSync(migrationsDir)
+const migrationFiles = NodeFS.readdirSync(migrationsDir)
   .filter((file) => /^\d{3}_\w+\.ts$/.test(file) && !file.endsWith(".test.ts"))
   .map((file) => file.slice(0, -".ts".length));
 

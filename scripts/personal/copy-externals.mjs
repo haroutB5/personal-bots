@@ -8,23 +8,24 @@
 //
 // Usage: node copy-externals.mjs <apps/server dir> <target node_modules dir>
 // Prints one JSON summary line. Exits non-zero when a root is missing.
-import * as NodeFs from "node:fs";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { pathToFileURL } from "node:url";
+import * as NodeURL from "node:url";
 
 const [serverDirArg, targetArg] = process.argv.slice(2);
 if (!serverDirArg || !targetArg) {
   console.error("usage: node copy-externals.mjs <apps/server dir> <target node_modules dir>");
   process.exit(2);
 }
-const serverDir = NodeFs.realpathSync(serverDirArg);
+const serverDir = NodeFS.realpathSync(serverDirArg);
 const target = NodePath.resolve(targetArg);
 const repoRoot = NodePath.resolve(serverDir, "..", "..");
 const { selectCliRuntimeExternalDependencies } = await import(
-  pathToFileURL(NodePath.join(repoRoot, "scripts", "lib", "cli-external-packages.ts")).href
+  NodeURL.pathToFileURL(NodePath.join(repoRoot, "scripts", "lib", "cli-external-packages.ts")).href
 );
 
-const readJson = (file) => JSON.parse(NodeFs.readFileSync(file, "utf8"));
+const readJson = (file) => JSON.parse(NodeFS.readFileSync(file, "utf8"));
 const serverPackage = readJson(NodePath.join(serverDir, "package.json"));
 const roots = Object.keys(selectCliRuntimeExternalDependencies(serverPackage.dependencies ?? {}));
 
@@ -33,8 +34,8 @@ function findPackageDir(fromDir, name) {
   let dir = fromDir;
   for (;;) {
     const candidate = NodePath.join(dir, "node_modules", name);
-    if (NodeFs.existsSync(NodePath.join(candidate, "package.json"))) {
-      return NodeFs.realpathSync(candidate);
+    if (NodeFS.existsSync(NodePath.join(candidate, "package.json"))) {
+      return NodeFS.realpathSync(candidate);
     }
     const parent = NodePath.dirname(dir);
     if (parent === dir) return null;
@@ -43,7 +44,7 @@ function findPackageDir(fromDir, name) {
 }
 
 function copyPackage(source, destination) {
-  NodeFs.cpSync(source, destination, {
+  NodeFS.cpSync(source, destination, {
     recursive: true,
     dereference: true,
     // Dependencies are placed by this script, never copied from inside a package.
@@ -51,20 +52,11 @@ function copyPackage(source, destination) {
   });
 }
 
-NodeFs.mkdirSync(target, { recursive: true });
+NodeFS.mkdirSync(target, { recursive: true });
 const topLevel = new Map(); // name -> real source dir placed at target/<name>
 const placed = new Set(); // `${realDir}|${destination}`
-let bytes = 0;
-const missingRoots = [];
-const queue = roots.map((name) => ({
-  name,
-  fromDir: serverDir,
-  parentDest: null,
-  optional: false,
-}));
-for (const name of roots) {
-  if (findPackageDir(serverDir, name) === null) missingRoots.push(name);
-}
+const missingRoots = roots.filter((name) => findPackageDir(serverDir, name) === null);
+const queue = roots.map((name) => ({ name, fromDir: serverDir, parentDest: null }));
 
 while (queue.length > 0) {
   const { name, fromDir, parentDest } = queue.shift();
@@ -87,43 +79,45 @@ while (queue.length > 0) {
   const key = `${realDir}|${destination}`;
   if (placed.has(key)) continue;
   placed.add(key);
-  if (!NodeFs.existsSync(destination)) copyPackage(realDir, destination);
+  if (!NodeFS.existsSync(destination)) copyPackage(realDir, destination);
 
   const manifest = readJson(NodePath.join(realDir, "package.json"));
-  for (const dep of Object.keys(manifest.dependencies ?? {})) {
-    queue.push({ name: dep, fromDir: realDir, parentDest: destination, optional: false });
-  }
-  for (const dep of Object.keys(manifest.optionalDependencies ?? {})) {
-    queue.push({ name: dep, fromDir: realDir, parentDest: destination, optional: true });
+  for (const dep of [
+    ...Object.keys(manifest.dependencies ?? {}),
+    ...Object.keys(manifest.optionalDependencies ?? {}),
+  ]) {
+    queue.push({ name: dep, fromDir: realDir, parentDest: destination });
   }
 }
 
 // node-pty ships every platform's prebuilds (~58 MB); only this one loads.
 const prebuilds = NodePath.join(target, "node-pty", "prebuilds");
-if (NodeFs.existsSync(prebuilds)) {
-  const keep = `${process.platform}-${process.arch}`;
-  for (const entry of NodeFs.readdirSync(prebuilds)) {
-    if (entry !== keep)
-      NodeFs.rmSync(NodePath.join(prebuilds, entry), { recursive: true, force: true });
+if (NodeFS.existsSync(prebuilds)) {
+  // A plain build script, not Effect code: the host platform is the answer.
+  // oxlint-disable-next-line t3code/no-global-process-runtime
+  const keep = `${NodeOS.platform()}-${NodeOS.arch()}`;
+  for (const entry of NodeFS.readdirSync(prebuilds)) {
+    if (entry !== keep) {
+      NodeFS.rmSync(NodePath.join(prebuilds, entry), { recursive: true, force: true });
+    }
   }
 }
 
 function sizeOf(dir) {
   let total = 0;
-  for (const entry of NodeFs.readdirSync(dir, { withFileTypes: true })) {
+  for (const entry of NodeFS.readdirSync(dir, { withFileTypes: true })) {
     const file = NodePath.join(dir, entry.name);
-    total += entry.isDirectory() ? sizeOf(file) : NodeFs.statSync(file).size;
+    total += entry.isDirectory() ? sizeOf(file) : NodeFS.statSync(file).size;
   }
   return total;
 }
-bytes = sizeOf(target);
 
 console.log(
   JSON.stringify({
     roots,
     missingRoots,
     packages: placed.size,
-    megabytes: Math.round(bytes / 1e5) / 10,
+    megabytes: Math.round(sizeOf(target) / 1e5) / 10,
   }),
 );
 if (missingRoots.length > 0) process.exit(1);

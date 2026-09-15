@@ -15,15 +15,18 @@
 // Prints one JSON line with the outcome.
 //
 // Usage: node scripts/personal/sync/resolve-migrations.ts [--base <sha>] [--upstream <ref>]
-import { execFileSync } from "node:child_process";
-import * as NodeFs from "node:fs";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 
 const MIGRATIONS_TS = "apps/server/src/persistence/Migrations.ts";
 const MIGRATIONS_DIR = "apps/server/src/persistence/Migrations/";
 const MAP_TS = "apps/server/src/persistence/upstreamMigrationIds.ts";
 
 function git(...args: string[]): string {
-  return execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).trim();
+  return NodeChildProcess.execFileSync("git", args, {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  }).trim();
 }
 
 function arg(name: string): string | undefined {
@@ -73,7 +76,7 @@ if (nonAdditive.length > 0) {
   });
 }
 
-let mapSource = NodeFs.readFileSync(MAP_TS, "utf8");
+let mapSource = NodeFS.readFileSync(MAP_TS, "utf8");
 const mapped = new Map(
   [...mapSource.matchAll(/"(\d{3}_\w+)":\s*(\d+)/g)].map((match) => [match[1]!, Number(match[2])]),
 );
@@ -116,7 +119,7 @@ if (
   finish(0, { status: "resolved", appended, note: "no new upstream migrations" });
 }
 
-NodeFs.writeFileSync(MIGRATIONS_TS, registry.replace(/\n+$/, "\n"));
-NodeFs.writeFileSync(MAP_TS, mapSource);
+NodeFS.writeFileSync(MIGRATIONS_TS, registry.replace(/\n+$/, "\n"));
+NodeFS.writeFileSync(MAP_TS, mapSource);
 git("add", MIGRATIONS_TS, MAP_TS);
 finish(0, { status: "resolved", appended, maxId: nextId - 1 });
