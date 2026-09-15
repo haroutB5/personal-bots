@@ -65,9 +65,11 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../../config.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import * as PersonalLoginRepository from "../secrets/PersonalLoginRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { AGENT_LEASE_TTL_MS, BrowserLease, PERSONAL_BROWSER_PROFILE_ID } from "./BrowserLease.ts";
 import { makeCredentialRedactor } from "./credentialRedactor.ts";
+import { type EgressApproval, type EgressIntent, egressNeedingApproval } from "./egressGuard.ts";
 import {
   type BrowserContextHandle,
   type BrowserDriver,
@@ -458,7 +460,117 @@ export const make = (options: PersonalBrowserOptions) =>
     let activeHelp: {
       readonly request: PersonalBrowserHelpRequest;
       readonly taskId: PersonalTaskId;
+      /** Set when this request is the user's approval for a guarded destination. */
+      readonly approval: EgressApproval | null;
     } | null = null;
+
+    // Sensitive-site egress guard (policy in egressGuard.ts). What a bot has
+    // had open is kept per thread and per delegation tree, since a delegated
+    // brief can carry it; in memory only, like the provider session that saw
+    // the page. It governs the shared browser and nothing else.
+    const logins = yield* PersonalLoginRepository.PersonalLoginRepository;
+    let sensitiveOrigins: ReadonlySet<string> = new Set();
+    const exposures = new Map<
+      string,
+      { readonly sources: Set<string>; readonly approved: Set<string> }
+    >();
+    // The approval a thread was refused for, until its next request_browser_help
+    // turns it into the question the user actually sees.
+    const pendingApprovals = new Map<string, EgressApproval>();
+
+    const refreshSensitiveOrigins = logins.sensitiveOrigins().pipe(
+      Effect.map((origins) => {
+        sensitiveOrigins = new Set(origins);
+      }),
+      Effect.catch((cause) =>
+        Effect.logWarning("Sensitive sites could not be read; keeping the last known list.", {
+          cause,
+        }),
+      ),
+    );
+
+    /** An http(s) origin, or null for about:blank and anything without one. */
+    const webOrigin = (url: string): string | null => {
+      try {
+        const { origin } = new URL(url);
+        return origin === "null" ? null : origin;
+      } catch {
+        return null;
+      }
+    };
+
+    /** A thread's own key, plus its delegation tree's when it works in one. */
+    const exposureKeys = (threadId: string) =>
+      tasks.rootTaskIdForThread(ThreadId.make(threadId)).pipe(
+        Effect.map(
+          Option.match({
+            onNone: () => [`thread:${threadId}`],
+            onSome: (root) => [`thread:${threadId}`, `root:${root}`],
+          }),
+        ),
+        Effect.catchCause(() => Effect.succeed([`thread:${threadId}`])),
+      );
+
+    const exposureOf = (keys: ReadonlyArray<string>) => {
+      const sources = new Set<string>();
+      const approved = new Set<string>();
+      for (const key of keys) {
+        const entry = exposures.get(key);
+        if (entry === undefined) continue;
+        for (const source of entry.sources) sources.add(source);
+        for (const destination of entry.approved) approved.add(destination);
+      }
+      return { sources, approved };
+    };
+
+    const recordExposure = (
+      keys: ReadonlyArray<string>,
+      update: (entry: { readonly sources: Set<string>; readonly approved: Set<string> }) => void,
+    ) => {
+      for (const key of keys) {
+        let entry = exposures.get(key);
+        if (entry === undefined) {
+          entry = { sources: new Set(), approved: new Set() };
+          exposures.set(key, entry);
+        }
+        update(entry);
+      }
+    };
+
+    /** Remembers that the thread has had `url` open when it is a sensitive site. */
+    const exposeIfSensitive = (threadId: string, url: string) =>
+      Effect.gen(function* () {
+        const origin = webOrigin(url);
+        if (origin === null || !sensitiveOrigins.has(origin)) return;
+        const keys = yield* exposureKeys(threadId);
+        recordExposure(keys, (entry) => entry.sources.add(origin));
+      });
+
+    /**
+     * Refuses an action that needs the user's approval. The bot is told to
+     * ask with request_browser_help; that request then shows the user this
+     * server-written question instead of the bot's own reason.
+     */
+    const guardEgress = (threadId: string, intent: EgressIntent) =>
+      Effect.gen(function* () {
+        const keys = yield* exposureKeys(threadId);
+        const approval = egressNeedingApproval({
+          exposure: exposureOf(keys),
+          intent,
+          sensitive: sensitiveOrigins,
+        });
+        if (approval === null) return;
+        pendingApprovals.set(threadId, approval);
+        return yield* Effect.fail(
+          new HostOperationError(
+            "PreviewAutomationExecutionError",
+            `Paused: this could carry what you saw on ${approval.sources.join(", ")} (a site the user marked sensitive) to ${approval.destination}. Call request_browser_help now with a one-line reason, tell the user in one sentence what you want to do, then end your turn. You continue automatically if they approve; do not try another route.`,
+          ),
+        );
+      });
+
+    const approvalQuestion = (approval: EgressApproval) =>
+      `Allow sending what the bot saw on ${approval.sources.join(", ")} to ${approval.destination}? Take control, then Return to bot to allow. Close the browser to refuse.`;
 
     const notify = PubSub.publish(statusDirty, undefined).pipe(Effect.asVoid);
 
@@ -1133,6 +1245,9 @@ export const make = (options: PersonalBrowserOptions) =>
             const resolved = input.url === undefined ? undefined : resolveBrowserUrl(input.url);
             if (resolved !== undefined && !resolved.ok) return yield* rejectUrl(resolved.reason);
             const url = resolved?.ok ? resolved.url : undefined;
+            if (url !== undefined) {
+              yield* guardEgress(request.threadId, { kind: "navigate", target: webOrigin(url) });
+            }
             const reused = input.reuseExistingTab === false ? undefined : tabForRequest(request);
             const tab = reused ?? (yield* createTab(request.threadId, url));
             if (url !== undefined) yield* navigateTab(tab, url, "load", timeoutMs);
@@ -1147,6 +1262,10 @@ export const make = (options: PersonalBrowserOptions) =>
                 ? resolveBrowserNavigationTarget(input.target)
                 : resolveBrowserUrl(input.url ?? "");
             if (!resolved.ok) return yield* rejectUrl(resolved.reason);
+            yield* guardEgress(request.threadId, {
+              kind: "navigate",
+              target: webOrigin(resolved.url),
+            });
             // Navigating a thread with no tab yet opens one, like a fresh browser window.
             const tab =
               tabForRequest(request) ?? (yield* createTab(request.threadId, resolved.url));
@@ -1180,6 +1299,13 @@ export const make = (options: PersonalBrowserOptions) =>
           return yield* rejectUrl(
             "This tab contains a saved login, so page reads, queries, and model-provided typing are disabled. Submit the form, then open a new tab to continue.",
           );
+        }
+        // Text typed here could be submitted to this page's origin, and a page
+        // script can read and fetch() anywhere in one call.
+        if (request.operation === "type" || request.operation === "press") {
+          yield* guardEgress(request.threadId, { kind: "type", page: webOrigin(tab.page.url()) });
+        } else if (request.operation === "evaluate") {
+          yield* guardEgress(request.threadId, { kind: "script", page: webOrigin(tab.page.url()) });
         }
         switch (request.operation) {
           case "snapshot": {
@@ -1351,6 +1477,7 @@ export const make = (options: PersonalBrowserOptions) =>
         // holding the lease, even one whose driver call ignores timeouts.
         // (Effect.timeoutFail does not exist in this Effect version; a
         // timeoutOption mapped to the broker's timeout tag is equivalent.)
+        yield* refreshSensitiveOrigins;
         const bounded = runOperation(request).pipe(
           Effect.timeoutOption(request.timeoutMs + 1_000),
           Effect.flatMap((result) =>
@@ -1366,6 +1493,11 @@ export const make = (options: PersonalBrowserOptions) =>
         );
         const exit = yield* Effect.exit(Effect.andThen(ensureLaunched, bounded));
         const tab = Exit.isSuccess(exit) ? exit.value.tab : tabForRequest(request);
+        // Whatever the op returned, the bot has now had this page open; a failed
+        // or timed-out op may still have loaded it.
+        if (tab !== undefined && openPage(tab.page)) {
+          yield* exposeIfSensitive(request.threadId, tab.page.url());
+        }
         const completedAt = yield* nowIso;
         if (tab !== undefined) {
           tab.timeline.push({
@@ -1518,6 +1650,9 @@ export const make = (options: PersonalBrowserOptions) =>
         .pipe(
           Effect.tap(({ tab }) =>
             Effect.gen(function* () {
+              // Signed in on a sensitive site: the page after this is its account.
+              yield* refreshSensitiveOrigins;
+              yield* exposeIfSensitive(input.threadId, input.expectedOrigin);
               tab.timeline.push({
                 id: NodeCrypto.randomUUID(),
                 action: "type",
@@ -1603,17 +1738,21 @@ export const make = (options: PersonalBrowserOptions) =>
                 (error) => new HostOperationError("PreviewAutomationExecutionError", error.message),
               ),
             );
+          // A pending approval replaces whatever the bot wrote: the user decides
+          // on the server's account of where the data would go, not the page's.
+          const approval = pendingApprovals.get(input.threadId) ?? null;
+          pendingApprovals.delete(input.threadId);
           const request: PersonalBrowserHelpRequest = {
             threadId: input.threadId,
             botId: input.botId,
             botName: input.botName,
-            reason: input.reason,
+            reason: approval === null ? input.reason : approvalQuestion(approval),
             requestedAt: yield* nowIso,
           };
-          activeHelp = { request, taskId: input.taskId };
+          activeHelp = { request, taskId: input.taskId, approval };
           yield* recordActivity({
             kind: "control",
-            summary: `${input.botName} asked for help: ${input.reason}`,
+            summary: `${input.botName} asked for help: ${request.reason}`,
             status: "succeeded",
             threadId: input.threadId,
             botName: input.botName,
@@ -1642,11 +1781,19 @@ export const make = (options: PersonalBrowserOptions) =>
             botName: finishedHelp?.request.botName ?? null,
           });
           if (finishedHelp !== null) {
+            const approval = finishedHelp.approval;
+            if (approval !== null) {
+              const keys = yield* exposureKeys(finishedHelp.request.threadId);
+              recordExposure(keys, (entry) => entry.approved.add(approval.key));
+            }
             yield* tasks
               .resumeFromUser({
                 taskId: finishedHelp.taskId,
                 noteId: `browser-help:${finishedHelp.request.requestedAt}`,
-                note: "The user finished helping in the browser. Continue the task.",
+                note:
+                  approval === null
+                    ? "The user finished helping in the browser. Continue the task."
+                    : `The user approved ${approval.destination}. Retry that step; any other destination still needs their approval.`,
                 restartSession: false,
               })
               .pipe(
