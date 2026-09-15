@@ -24,10 +24,13 @@ import * as PreviewManager from "../../preview/Manager.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as BrowserLease from "./BrowserLease.ts";
+import { REDACTED_CREDENTIAL } from "./credentialRedactor.ts";
 import type {
   BrowserDriver,
   BrowserElementHandle,
   BrowserPage,
+  ConsoleRecord,
+  NetworkRecord,
   ScreencastMeta,
   ViewportOverride,
 } from "./driver.ts";
@@ -99,7 +102,7 @@ class FakePage implements BrowserPage {
   async screenshotPng() {
     return new Uint8Array([137, 80, 78, 71]);
   }
-  async accessibilityTree() {
+  async accessibilityTree(): Promise<unknown> {
     return { nodes: [] };
   }
   readonly viewports: Array<ViewportOverride | null> = [];
@@ -118,11 +121,13 @@ class FakePage implements BrowserPage {
   async mouseWheel() {}
   async keyPress() {}
   async insertText() {}
+  readonly consoleRecords: ConsoleRecord[] = [];
+  readonly networkRecords: NetworkRecord[] = [];
   consoleEntries() {
-    return [];
+    return this.consoleRecords;
   }
   networkEntries() {
-    return [];
+    return this.networkRecords;
   }
   async startScreencast(_onFrame: (jpeg: Uint8Array, meta: ScreencastMeta) => void) {
     this.screencasts++;
@@ -1188,6 +1193,149 @@ describe("PersonalBrowser", () => {
       expect(fake.state.page.stoppedScreencasts).toBe(1);
       expect((yield* browser.status("session-1")).viewers).toBe(0);
     }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  // The belt over the structural rails: whatever a site does with a filled
+  // password afterwards, the value never comes back out of the browser service.
+  describe("saved-password redaction", () => {
+    const SECRET = "Correct-Horse-9";
+    const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+    const leaks = (value: unknown) => {
+      if (value === undefined) return false;
+      const text = encodeJson(value).toLowerCase();
+      return (
+        text.includes(SECRET.toLowerCase()) ||
+        text.includes(encodeURIComponent(SECRET).toLowerCase())
+      );
+    };
+
+    const signIn = (browser: PersonalBrowser.PersonalBrowser["Service"]) =>
+      Effect.gen(function* () {
+        yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://example.com/sign-in" }),
+        );
+        yield* browser.fillLogin({
+          threadId,
+          label: "Example",
+          expectedOrigin: "https://example.com",
+          username: "person@example.com",
+          password: SECRET,
+        });
+        // Leaving the form reopens the tab to reads, which is where an echo shows.
+        yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://example.com/account" }),
+        );
+      });
+
+    it.effect("masks it in snapshot text, elements, console, network and the AX tree", () => {
+      const fake = makeFakeDriver();
+      asLoginBrowser(fake);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* signIn(browser);
+        const page = fake.state.pages.at(-1)!;
+        page.consoleRecords.push({ level: "log", text: `debug pw=${SECRET}`, timestamp: "t" });
+        page.networkRecords.push({
+          url: `https://example.com/in?pw=${encodeURIComponent(SECRET)}`,
+          method: "GET",
+          status: 200,
+          failed: false,
+          timestamp: "t",
+        });
+        page.accessibilityTree = async () => ({ nodes: [{ name: SECRET.toUpperCase() }] });
+        page.evaluateImpl = async () => ({
+          url: page.currentUrl,
+          title: `Hello ${SECRET}`,
+          loading: false,
+          visibleText: `Your password is ${SECRET}`,
+          interactiveElements: [
+            {
+              tag: "input",
+              role: null,
+              name: SECRET,
+              selector: "#pw",
+              x: 0,
+              y: 0,
+              width: 1,
+              height: 1,
+            },
+          ],
+        });
+
+        const snapshot = yield* browser.handleAutomationRequest(request("snapshot"));
+
+        expect(leaks(snapshot)).toBe(false);
+        expect(encodeJson(snapshot)).toContain(REDACTED_CREDENTIAL);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("masks it in urls, the saved restart page, errors and the activity feed", () => {
+      const fake = makeFakeDriver();
+      asLoginBrowser(fake);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const lease = yield* BrowserLease.BrowserLease;
+        yield* signIn(browser);
+
+        const navigated = yield* browser.handleAutomationRequest(
+          request("navigate", { url: `https://example.com/welcome/${SECRET}` }),
+        );
+        const status = yield* browser.handleAutomationRequest(request("status"));
+        expect(leaks(navigated)).toBe(false);
+        expect(leaks(status)).toBe(false);
+        expect(leaks((yield* browser.status("session-1")).page)).toBe(false);
+        expect(leaks((yield* lease.view).lastUrl)).toBe(false);
+
+        fake.state.pages.at(-1)!.clickLocator = async () => {
+          throw new Error(`locator.click: nothing matches text=${SECRET}`);
+        };
+        const failed = yield* browser
+          .handleAutomationRequest(request("click", { locator: `text=${SECRET}` }))
+          .pipe(Effect.asVoid, Effect.flip);
+        expect(leaks(failed.message)).toBe(false);
+        expect(leaks(failed.detail)).toBe(false);
+
+        const head = yield* browser.activity("session-1").pipe(Stream.take(1), Stream.runCollect);
+        expect(head[0]?._tag).toBe("Recent");
+        expect(leaks(head)).toBe(false);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("masks it in an error the driver raises while the fill is under way", () => {
+      const fake = makeFakeDriver();
+      asLoginBrowser(fake);
+      fake.state.onNewPage = (page) => {
+        configureLoginPage(page);
+        page.resolveElementImpl = () => ({
+          fill: async () => {
+            throw new Error(`fill: value ${SECRET} rejected`);
+          },
+          dispose: async () => {},
+        });
+        page.countLocatorImpl = (locator) => {
+          if (locator.includes("autocomplete")) throw new Error(`echo ${SECRET}`);
+          return 1;
+        };
+      };
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://example.com/sign-in" }),
+        );
+        const error = yield* browser
+          .fillLogin({
+            threadId,
+            label: "Example",
+            expectedOrigin: "https://example.com",
+            username: "person@example.com",
+            password: SECRET,
+          })
+          .pipe(Effect.asVoid, Effect.flip);
+        expect(leaks(error.message)).toBe(false);
+        expect(leaks(error.detail)).toBe(false);
+        expect(error.message).toContain(REDACTED_CREDENTIAL);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
   });
 
   describe("phone viewport", () => {

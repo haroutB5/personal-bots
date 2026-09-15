@@ -66,6 +66,7 @@ import * as PreviewManager from "../../preview/Manager.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { AGENT_LEASE_TTL_MS, BrowserLease, PERSONAL_BROWSER_PROFILE_ID } from "./BrowserLease.ts";
+import { makeCredentialRedactor } from "./credentialRedactor.ts";
 import {
   type BrowserContextHandle,
   type BrowserDriver,
@@ -369,6 +370,16 @@ export const make = (options: PersonalBrowserOptions) =>
       // again in this profile.
       taintedOrigins: new Set<string>(),
     };
+    // Every password this process fills is masked in whatever leaves this
+    // service afterwards: op results, errors, the timeline, the activity feed
+    // and the page URL saved for a restart. See credentialRedactor.ts.
+    const redactor = makeCredentialRedactor();
+    const redactError = (error: HostOperationError) =>
+      new HostOperationError(
+        error.tag,
+        redactor.redactText(error.message),
+        redactor.redact(error.detail),
+      );
     // Restored while the layer is still being built, so no tool call can reach
     // the shared browser before the protections that gate its persistent,
     // still-authenticated profile are back in place.
@@ -478,6 +489,7 @@ export const make = (options: PersonalBrowserOptions) =>
     }) {
       const event: PersonalBrowserActivityEvent = {
         ...input,
+        summary: redactor.redactText(input.summary),
         id: NodeCrypto.randomUUID(),
         at: yield* nowIso,
       };
@@ -550,7 +562,15 @@ export const make = (options: PersonalBrowserOptions) =>
           };
         }
         const page = runtime.phase === "connected" ? viewportPage() : null;
-        const pageInfo = page === null ? null : { url: page.url(), title: titleFor(page) };
+        const viewportTab =
+          page === null ? undefined : [...runtime.tabs.values()].find((tab) => tab.page === page);
+        const pageInfo =
+          page === null
+            ? null
+            : redactor.redact({
+                url: viewportTab === undefined ? page.url() : safeUrl(viewportTab, page.url()),
+                title: titleFor(page),
+              });
         return {
           state:
             runtime.phase === "connected" && pageInfo !== null && looksLikeLoginPage(pageInfo.url)
@@ -1288,7 +1308,7 @@ export const make = (options: PersonalBrowserOptions) =>
       // Fast path: status never launches Chrome, never takes the lease and
       // never waits behind an in-flight op (MCP gives it a 500ms budget).
       if (request.operation === "status")
-        return Effect.sync(() => statusOf(tabForRequest(request)));
+        return Effect.sync(() => redactor.redact(statusOf(tabForRequest(request))));
       const execute = Effect.gen(function* () {
         yield* clearHelpForAgentSwitch(request.threadId);
         const startedAt = yield* nowIso;
@@ -1319,7 +1339,9 @@ export const make = (options: PersonalBrowserOptions) =>
             status: Exit.isSuccess(exit) ? "succeeded" : "failed",
             startedAt,
             completedAt,
-            ...(Exit.isFailure(exit) ? { error: firstLine(String(Cause.squash(exit.cause))) } : {}),
+            ...(Exit.isFailure(exit)
+              ? { error: redactor.redactText(firstLine(String(Cause.squash(exit.cause)))) }
+              : {}),
           });
           if (tab.timeline.length > TIMELINE_LIMIT)
             tab.timeline.splice(0, tab.timeline.length - TIMELINE_LIMIT);
@@ -1334,13 +1356,17 @@ export const make = (options: PersonalBrowserOptions) =>
         });
         // Remember the page for a post-restart reopen. Only real pages count:
         // about:blank and chrome:// URLs would restore to nothing useful.
+        // A URL carrying a filled password is not worth reopening; the lease
+        // keeps the page before it instead of persisting the value.
         if (Exit.isSuccess(exit) && openPage(exit.value.tab.page)) {
           const current = safeUrl(exit.value.tab, exit.value.tab.page.url());
-          if (/^https?:\/\//i.test(current)) yield* lease.recordPageUrl(current);
+          if (/^https?:\/\//i.test(current) && redactor.redactText(current) === current) {
+            yield* lease.recordPageUrl(current);
+          }
         }
         return yield* Exit.match(exit, {
-          onSuccess: ({ result }) => Effect.succeed(result as unknown),
-          onFailure: (cause) => Effect.failCause(cause),
+          onSuccess: ({ result }) => Effect.succeed(redactor.redact(result as unknown)),
+          onFailure: (cause) => Effect.failCause(cause).pipe(Effect.mapError(redactError)),
         });
       });
       return lease
@@ -1364,6 +1390,9 @@ export const make = (options: PersonalBrowserOptions) =>
     };
 
     const fillLogin: PersonalBrowser["Service"]["fillLogin"] = (input) => {
+      // Learned before any driver call, so even an error raised mid-fill that
+      // echoes the value is masked on its way out.
+      redactor.remember(input.password);
       const execute = Effect.gen(function* () {
         yield* clearHelpForAgentSwitch(input.threadId);
         const source = latestTabForThread(input.threadId);
@@ -1485,6 +1514,7 @@ export const make = (options: PersonalBrowserOptions) =>
               new HostOperationError("PreviewAutomationControlInterruptedError", rejected.message),
             ),
           ),
+          Effect.mapError(redactError),
           Effect.ensuring(notify),
         );
     };
