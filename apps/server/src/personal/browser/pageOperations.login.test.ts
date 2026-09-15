@@ -133,6 +133,46 @@ describe("saved-login browser fill", () => {
     expect(fake.filled).toEqual([]);
   });
 
+  // The fill compares browser-normalized origins, so look-alikes that differ
+  // only in spelling are refused and spellings of the same origin are not.
+  describe("origin normalization", () => {
+    const refused = [
+      ["a subdomain", "https://login.example.com/sign-in"],
+      ["a non-default port", "https://example.com:8443/sign-in"],
+      ["plain http", "http://example.com/sign-in"],
+      // Comet's "perplexity.ai." spoof: a trailing dot is a different origin.
+      ["a trailing-dot host", "https://example.com./sign-in"],
+      // Cyrillic "а" in place of Latin "a"; the URL parser turns it to punycode.
+      ["an IDN look-alike", "https://exаmple.com/sign-in"],
+      ["the look-alike's punycode form", "https://xn--exmple-4nf.com/sign-in"],
+      ["a look-alike suffix", "https://example.com.attacker.example/sign-in"],
+    ] as const;
+
+    for (const [name, url] of refused) {
+      it(`refuses ${name}`, async () => {
+        const fake = makePage(url);
+
+        await expect(fill(fake.page)).rejects.toThrow("only be used on https://example.com");
+        expect(fake.typed).toEqual([]);
+        expect(fake.filled).toEqual([]);
+      });
+    }
+
+    const accepted = [
+      ["an uppercase host", "https://EXAMPLE.com/sign-in"],
+      ["an explicit default port", "https://example.com:443/sign-in"],
+    ] as const;
+
+    for (const [name, url] of accepted) {
+      it(`fills ${name}, which is the same origin`, async () => {
+        const fake = makePage(url);
+
+        await expect(fill(fake.page)).resolves.toEqual(["username", "password"]);
+        expect(fake.filled).toHaveLength(1);
+      });
+    }
+  });
+
   it("rechecks origin after username entry before typing the password", async () => {
     const fake = makePage("https://example.com/sign-in");
     fake.page.typeText = async (input) => {

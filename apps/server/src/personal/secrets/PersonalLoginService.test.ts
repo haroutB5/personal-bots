@@ -69,6 +69,40 @@ const makeLayer = (
     ),
   );
 
+// A saved origin is compared to the page with plain string equality, so only
+// the one canonical spelling of an origin may be stored.
+describe("normalizePersonalLoginOrigin", () => {
+  const accepted = [
+    "https://example.com",
+    "https://example.com:8443",
+    "https://sub.example.com",
+    "https://xn--exmple-4nf.com",
+  ];
+  for (const origin of accepted) {
+    it(`accepts ${origin}`, () => {
+      expect(PersonalLoginService.normalizePersonalLoginOrigin(origin)).toBe(origin);
+    });
+  }
+
+  const refused = [
+    ["plain http", "http://example.com"],
+    ["a trailing-dot host", "https://example.com."],
+    ["a trailing-dot host with a port", "https://example.com.:8443"],
+    ["an uppercase host", "https://EXAMPLE.com"],
+    ["a trailing slash", "https://example.com/"],
+    ["a path", "https://example.com/login"],
+    ["an explicit default port", "https://example.com:443"],
+    ["user info", "https://person@example.com"],
+    // Stored only as the punycode the browser would report, never as Unicode.
+    ["an IDN look-alike in Unicode", "https://exаmple.com"],
+  ] as const;
+  for (const [name, origin] of refused) {
+    it(`refuses ${name}`, () => {
+      expect(PersonalLoginService.normalizePersonalLoginOrigin(origin)).toBeNull();
+    });
+  }
+});
+
 describe("PersonalLoginService use", () => {
   it.effect("keeps the old password and origin when a metadata update fails", () => {
     const oldKey = PersonalLoginService.personalLoginStoreKey(login.secretRef);

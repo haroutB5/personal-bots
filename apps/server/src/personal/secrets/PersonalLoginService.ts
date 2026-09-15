@@ -25,13 +25,21 @@ import * as PersonalLoginRepository from "./PersonalLoginRepository.ts";
 
 export const personalLoginStoreKey = (secretRef: string) => `personal-login-${secretRef}`;
 
-/** Only canonical https origins are persisted, so equality is an exact browser-origin check. */
+/**
+ * Only canonical https origins are persisted, so equality is an exact
+ * browser-origin check. The parser already lowercases the host, drops a
+ * default port and turns an IDN into punycode, so any of those spellings fails
+ * the round-trip below. A trailing-dot host is refused outright: it is a
+ * distinct origin from the one the user meant (Comet's "perplexity.ai."
+ * spoof) and would never match the page they actually sign in on.
+ */
 export const normalizePersonalLoginOrigin = (input: string): string | null => {
   const value = input.trim();
   try {
     const parsed = new URL(value);
     if (
       parsed.protocol !== "https:" ||
+      parsed.hostname.endsWith(".") ||
       parsed.username !== "" ||
       parsed.password !== "" ||
       parsed.pathname !== "/" ||

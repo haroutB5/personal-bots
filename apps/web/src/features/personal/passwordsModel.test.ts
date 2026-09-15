@@ -34,4 +34,17 @@ describe("password form model", () => {
       password: "Re-enter the password to save.",
     });
   });
+
+  // Mirrors the server: a trailing-dot host is a different origin than the
+  // one the user meant, and would never match the page they sign in on.
+  it("refuses a trailing-dot host", () => {
+    expect(
+      validatePasswordDraft({
+        label: "Example",
+        origin: "https://example.com.",
+        username: "",
+        password: "entered-now",
+      }).origin,
+    ).toBe("Enter an exact HTTPS origin, such as https://example.com.");
+  });
 });
