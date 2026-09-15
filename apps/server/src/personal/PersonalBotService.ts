@@ -36,6 +36,7 @@ import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEng
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
+import { PERSONAL_THREAD_TITLE } from "./personalThreadTitles.ts";
 
 const PERSONAL_META_SEEDED = "seeded";
 const PERSONAL_META_PROJECT_ID = "personalProjectId";
@@ -43,7 +44,6 @@ const PERSONAL_META_DISPLAY_NAME = "displayName";
 const PERSONAL_PROFILE_DISPLAY_NAME_MAX_LENGTH = 80;
 const PERSONAL_WORKSPACE_DIRNAME = "personal-workspace";
 const PERSONAL_PROJECT_TITLE = "Personal";
-const PERSONAL_THREAD_TITLE = "New chat";
 
 const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");

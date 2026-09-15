@@ -16,7 +16,6 @@ import * as Stream from "effect/Stream";
 import {
   CommandId,
   ComposerContextId,
-  MessageId,
   PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
   PERSONAL_TASK_RETRYABLE_STATUSES,
   PERSONAL_TASK_TERMINAL_STATUSES,
@@ -53,6 +52,7 @@ import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
+import { personalTaskMessageId } from "../personalThreadTitles.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 
 /** Global cap on active provider turns started by the dispatcher. */
@@ -228,7 +228,7 @@ const minutesFrom = (now: DateTime.Utc, minutes: number) => DateTime.add(now, { 
 
 /** The user message that starts an attempt's turn; deterministic so a re-dispatch dedupes. */
 const attemptMessageId = (attempt: PersonalTaskAttempt) =>
-  MessageId.make(`personal-task-${attempt.taskId}-${attempt.attempt}`);
+  personalTaskMessageId(attempt.taskId, attempt.attempt);
 
 const sourceLabel = (task: PersonalTask, delegatorName: string | null) => {
   switch (task.source) {

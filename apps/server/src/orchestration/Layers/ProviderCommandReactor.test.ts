@@ -75,6 +75,7 @@ import { ServerActivation } from "../../serverActivation.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
+import { personalTaskMessageId } from "../../personal/personalThreadTitles.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -2556,41 +2557,204 @@ describe("ProviderCommandReactor", () => {
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({ input: prompt });
   });
 
-  it("keeps the title of a personal bot thread on the first turn", async () => {
-    // Bot chats, tasks and routines all run in threads linked in
-    // personal_bot_threads; their titles come from the personal services, so
-    // automatic title generation must leave them alone. The same setup without
-    // the link generates a title (see the client-seeded title test above).
-    const now = "2026-01-01T00:00:00.000Z";
-    const seededTitle = "Weekly grocery run";
-    const harness = await createHarness({ initialTitle: seededTitle, personalBotThread: true });
-    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
+  describe("personal bot thread titles", () => {
+    // Bot chats are created as "New chat" and linked in personal_bot_threads.
+    // The composer sends the first message's seed with the turn; the server
+    // shows it at once and lets one AI title replace it.
+    const personalSeed = "Plan the weekly grocery run";
+    const startPersonalFirstTurn = (
+      harness: Awaited<ReturnType<typeof createHarness>>,
+      messageId: MessageId,
+    ) =>
+      harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-turn-start-${messageId}`),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId,
+            role: "user",
+            text: "Plan the weekly grocery run for four people.",
+            attachments: [],
+          },
+          titleSeed: personalSeed,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+    const readThread = async (harness: Awaited<ReturnType<typeof createHarness>>) =>
+      (await harness.readModel()).threads.find((entry) => entry.id === ThreadId.make("thread-1"));
 
-    await harness.runEffect(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-personal-title"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-personal-title"),
-          role: "user",
-          text: "Weekly grocery run",
-          attachments: [],
-        },
-        titleSeed: seededTitle,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
+    it("shows a user-started chat's first message, then its AI title", async () => {
+      const harness = await createHarness({ initialTitle: "New chat", personalBotThread: true });
+      const release = await harness.runEffect(Deferred.make<void>());
+      harness.generateThreadTitle.mockReturnValue(
+        Deferred.await(release).pipe(Effect.as({ title: "Weekly groceries" })),
+      );
+
+      await startPersonalFirstTurn(harness, asMessageId("user-message-personal-chat"));
+      await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+      const seeded = await readThread(harness);
+      expect(seeded?.title).toBe(personalSeed);
+      expect(seeded?.titleState?.source).toBe("generated");
+
+      await harness.runEffect(Deferred.succeed(release, undefined));
+      await waitFor(async () => (await readThread(harness))?.title === "Weekly groceries");
+      await harness.drain();
+      expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+      expect((await readThread(harness))?.titleState?.source).toBe("generated");
+    });
+
+    it("keeps the first-message seed when title generation fails", async () => {
+      // The harness generator always fails; the retries run on a real clock,
+      // so the seed must already be the title after the first failure.
+      const harness = await createHarness({ initialTitle: "New chat", personalBotThread: true });
+
+      await startPersonalFirstTurn(harness, asMessageId("user-message-personal-fail"));
+      await waitFor(() => harness.generateThreadTitle.mock.calls.length >= 1);
+      expect((await readThread(harness))?.title).toBe(personalSeed);
+    });
+
+    it("keeps the first-message seed when the generator returns no title", async () => {
+      const harness = await createHarness({ initialTitle: "New chat", personalBotThread: true });
+      harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "New thread" }));
+
+      await startPersonalFirstTurn(harness, asMessageId("user-message-personal-empty"));
+      await waitFor(async () => (await readThread(harness))?.titleState?.needsRefinement === true);
+      expect((await readThread(harness))?.title).toBe(personalSeed);
+    });
+
+    it("keeps the title of a task or routine thread", async () => {
+      const harness = await createHarness({ initialTitle: "New chat", personalBotThread: true });
+      harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
+
+      await startPersonalFirstTurn(harness, personalTaskMessageId("task-1", 1));
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+
+      expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+      expect((await readThread(harness))?.title).toBe("New chat");
+    });
+
+    it("keeps a chat the user renamed before the first message", async () => {
+      const harness = await createHarness({ initialTitle: "New chat", personalBotThread: true });
+      harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-personal-rename"),
+          threadId: ThreadId.make("thread-1"),
+          title: "Groceries",
+        }),
+      );
+
+      await startPersonalFirstTurn(harness, asMessageId("user-message-personal-renamed"));
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+
+      expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+      expect((await readThread(harness))?.title).toBe("Groceries");
+    });
+
+    it("does not seed a thread that is not a bot chat", async () => {
+      const harness = await createHarness({ initialTitle: "New chat" });
+      harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
+
+      await startPersonalFirstTurn(harness, asMessageId("user-message-not-personal"));
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+
+      expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+      expect((await readThread(harness))?.title).toBe("New chat");
+    });
+
+    effectIt.effect("never refines the title of a personal bot thread", () =>
+      // Same sequence as "refines a vague title once when initial generation
+      // finishes after completion", which refines an unlinked thread.
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness({ personalBotThread: true }));
+        const threadId = ThreadId.make("thread-1");
+        const turnId = TurnId.make("title-first-turn");
+        const createdAt = "2026-01-01T00:00:01.000Z";
+        harness.generateThreadTitle.mockReturnValue(
+          Effect.succeed({ title: "Fix QR pairing expiry" }),
+        );
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("title-turn"),
+          threadId,
+          message: {
+            messageId: MessageId.make("title-user"),
+            role: "user",
+            text: "Fix this",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt,
+        });
+        yield* Effect.promise(() => harness.drain());
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("title-running"),
+          threadId,
+          createdAt,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make("title-answer"),
+          threadId,
+          messageId: MessageId.make("title-assistant"),
+          turnId,
+          delta: "The QR pairing token expires before the phone redeems it.",
+          createdAt,
+        });
+        const ready = (commandId: string) =>
+          harness.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(commandId),
+            threadId,
+            createdAt,
+            session: {
+              threadId,
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: createdAt,
+            },
+          });
+        yield* ready("title-ready");
+        yield* harness.engine.dispatch({
+          type: "thread.title.generate.complete",
+          commandId: CommandId.make("initial-title"),
+          threadId,
+          expectedTitle: "Thread",
+          expectedVersion: null,
+          title: "Investigate issue",
+          needsRefinement: true,
+        });
+        yield* Effect.promise(() => harness.drain());
+        yield* ready("title-ready-again");
+        yield* Effect.promise(() => harness.drain());
+
+        expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads[0];
+        expect(thread?.title).toBe("Investigate issue");
+        expect(thread?.titleState?.needsRefinement).toBe(true);
       }),
     );
-
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    await harness.drain();
-
-    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.title).toBe(seededTitle);
   });
 
   it("generates a worktree branch name for the first turn", async () => {

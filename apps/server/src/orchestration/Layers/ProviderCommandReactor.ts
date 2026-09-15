@@ -2,8 +2,10 @@ import {
   type ChatAttachment,
   CommandId,
   EventId,
+  type MessageId,
   type ModelSelection,
   type OrchestrationEvent,
+  type OrchestrationThreadShell,
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
@@ -35,6 +37,10 @@ import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
 import { personalBotSystemInstructions } from "../../personal/personalBotInstructions.ts";
+import {
+  isPersonalTaskMessageId,
+  PERSONAL_THREAD_TITLE,
+} from "../../personal/personalThreadTitles.ts";
 import * as PersonalMemoryService from "../../personal/memory/PersonalMemoryService.ts";
 import {
   ProviderAdapterRequestError,
@@ -266,11 +272,12 @@ const make = Effect.gen(function* () {
       return joined.length > 0 ? joined : undefined;
     });
   /**
-   * Personal bot threads (bot chats, and the task and routine threads that
-   * run through them) keep the title the personal services gave them:
-   * automatic title generation and refinement skip any thread linked in
-   * personal_bot_threads. An explicit "regenerate title" still runs. A failed
-   * lookup counts as not personal, which keeps upstream behaviour.
+   * Whether a thread is linked in personal_bot_threads (bot chats, and the
+   * task and routine threads that run through them). Title refinement skips
+   * these threads, and a user-started chat's first message seeds its title
+   * (see personalFirstTurnTitleThread). An explicit "regenerate title" still
+   * runs. A failed lookup counts as not personal, which keeps upstream
+   * behaviour.
    */
   const isPersonalBotThread = (threadId: ThreadId) =>
     personalBots.getThreadLink({ threadId }).pipe(
@@ -1077,6 +1084,58 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /**
+   * The thread state the first-turn title generator judges, or null to leave
+   * the title alone.
+   * - A task or routine turn (message id from PersonalTaskService) keeps the
+   *   thread's title.
+   * - A bot chat the user started is still on its placeholder title. Its
+   *   first-message seed becomes the title now, as a generated (not manual)
+   *   title, so the chat never stays on the placeholder even when generation
+   *   fails, and the AI title can replace the seed once. Refinement stays off
+   *   for personal bot threads (maybeRefineThreadTitle).
+   * - A manual rename wins, and every other thread is returned unchanged.
+   * Never fails: a title problem must not fail the turn start.
+   */
+  const personalFirstTurnTitleThread = Effect.fn("personalFirstTurnTitleThread")(
+    function* (input: {
+      readonly thread: OrchestrationThreadShell;
+      readonly messageId: MessageId;
+      readonly titleSeed: string | undefined;
+    }) {
+      const { thread, titleSeed } = input;
+      if (isPersonalTaskMessageId(input.messageId)) return null;
+      const title = thread.title.trim();
+      if (
+        titleSeed === undefined ||
+        thread.titleState?.source === "manual" ||
+        (title !== PERSONAL_THREAD_TITLE && title !== DEFAULT_THREAD_TITLE) ||
+        !(yield* isPersonalBotThread(thread.id))
+      ) {
+        return thread;
+      }
+      yield* orchestrationEngine.dispatch({
+        type: "thread.title.generate.complete",
+        commandId: yield* serverCommandId("personal-thread-title-seed"),
+        threadId: thread.id,
+        title: titleSeed,
+        expectedTitle: thread.title,
+        expectedVersion: thread.titleState?.version ?? null,
+        needsRefinement: false,
+      });
+      return (yield* resolveThreadShell(thread.id)) ?? null;
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("provider command reactor failed to seed a personal thread title", {
+            threadId: input.thread.id,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(null)),
+        ),
+      ),
+  );
+
   const maybeRefineThreadTitle = Effect.fn("maybeRefineThreadTitle")(function* (
     threadId: ThreadId,
   ) {
@@ -1426,16 +1485,21 @@ const make = Effect.gen(function* () {
         ...generationInput,
       }).pipe(Effect.forkScoped);
 
+      const titleThread = yield* personalFirstTurnTitleThread({
+        thread,
+        messageId: event.payload.messageId,
+        titleSeed: event.payload.titleSeed,
+      });
       if (
-        thread.titleState?.source !== "manual" &&
-        canReplaceThreadTitle(thread.title, event.payload.titleSeed) &&
-        !(yield* isPersonalBotThread(event.payload.threadId))
+        titleThread !== null &&
+        titleThread.titleState?.source !== "manual" &&
+        canReplaceThreadTitle(titleThread.title, event.payload.titleSeed)
       ) {
         yield* maybeGenerateThreadTitleForFirstTurn({
           threadId: event.payload.threadId,
           cwd: generationCwd,
-          expectedTitle: thread.title,
-          expectedVersion: thread.titleState?.version ?? null,
+          expectedTitle: titleThread.title,
+          expectedVersion: titleThread.titleState?.version ?? null,
           ...generationInput,
         }).pipe(Effect.forkScoped);
       }
