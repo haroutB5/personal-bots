@@ -38,7 +38,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { motionForConversationState } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
-import { resolveBotProvider } from "./botSummaries";
+import { conversationHeaderStatus, resolveBotProvider } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerPanel } from "./ConversationComputerPanel";
 import { useComputerFeed } from "./computer/computerState";
@@ -253,6 +253,7 @@ export function ConversationScreen({
       : conversationStateLabel(conversationState, thread?.session ?? null, now);
   const provider =
     bot === null ? null : resolveBotProvider(bot.modelSelection.instanceId, providers);
+  const headerStatus = conversationHeaderStatus(conversationState, stateLabel, provider);
 
   // Optimistic rows hide once the server echoes the same client message id.
   const visiblePending = useMemo(() => {
@@ -411,7 +412,7 @@ export function ConversationScreen({
                         : "shrink-0"
                     }
                   >
-                    {provider !== null ? `${provider.label} · ${stateLabel}` : stateLabel}
+                    {headerStatus}
                   </span>
                 </p>
               ) : null}
@@ -452,7 +453,7 @@ export function ConversationScreen({
                         : "shrink-0"
                     }
                   >
-                    {provider !== null ? `${provider.label} · ${stateLabel}` : stateLabel}
+                    {headerStatus}
                   </span>
                 </p>
               ) : null}

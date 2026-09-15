@@ -68,6 +68,12 @@ export const personalBotUpdate = createEnvironmentRpcCommand(connectionAtomRunti
   onSuccess: refreshBotsList,
 });
 
+/** "Check again" on a Settings provider row; the verdict arrives on the provider snapshot. */
+export const personalProviderRecheck = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-bots:recheck-provider",
+  tag: WS_METHODS.personalBotsRecheckProvider,
+});
+
 export const personalBotDelete = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-bots:delete",
   tag: WS_METHODS.personalBotsDelete,

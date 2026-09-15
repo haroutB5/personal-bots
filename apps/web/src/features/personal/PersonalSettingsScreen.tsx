@@ -31,6 +31,8 @@ import {
 } from "./usePersonalBots";
 import { diagnosticsEnabled, setDiagnosticsEnabled } from "./DiagnosticsOverlay";
 import { useAppVersion } from "./appVersion";
+import { PersonalProviderRows } from "./PersonalProviderRows";
+import { buildProviderUpdateRows } from "./providerUpdateRows";
 
 const SECTION_TITLE =
   "mb-2 px-1 text-[13px] font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase";
@@ -122,6 +124,8 @@ export function PersonalSettingsScreen(): JSX.Element {
     [list.data],
   );
 
+  const providerRows = useMemo(() => buildProviderUpdateRows(providers, bots), [providers, bots]);
+
   const openDeveloperView = () => {
     setDeveloperView(true);
     void navigate({ to: "/" });
@@ -206,6 +210,20 @@ export function PersonalSettingsScreen(): JSX.Element {
           </li>
         </ul>
       </section>
+
+      {environmentId !== null && providerRows.length > 0 ? (
+        <section aria-labelledby="settings-providers">
+          <h2 id="settings-providers" className={SECTION_TITLE}>
+            Providers
+          </h2>
+          <ul className={`${CARD} divide-y divide-[var(--personal-border)]`}>
+            <PersonalProviderRows environmentId={environmentId} rows={providerRows} />
+          </ul>
+          <p className="mt-2 px-1 text-[13px] text-[var(--personal-text-secondary)]">
+            After an update, each bot switches to the new version once its current reply ends.
+          </p>
+        </section>
+      ) : null}
 
       <section aria-labelledby="settings-plugins">
         <h2 id="settings-plugins" className={SECTION_TITLE}>
