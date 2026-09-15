@@ -216,7 +216,9 @@ type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][nu
 async function waitForThread(
   readModel: () => Promise<ProviderRuntimeTestReadModel>,
   predicate: (thread: ProviderRuntimeTestThread) => boolean,
-  timeoutMs = 2000,
+  // A ceiling, not a delay: a passing wait returns as soon as the predicate
+  // holds. 2s timed out 4-9 random tests per run on the fork's Windows host.
+  timeoutMs = 10_000,
   threadId: ThreadId = asThreadId("thread-1"),
 ) {
   const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
