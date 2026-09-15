@@ -1,10 +1,47 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  clampPersonalBrowserViewport,
   decodePersonalBrowserFrame,
   encodePersonalBrowserFrame,
   PERSONAL_BROWSER_FRAME_HEADER_BYTES,
+  PersonalBrowserInputMessage,
 } from "./personalBrowser.ts";
+
+describe("personal browser phone viewport", () => {
+  it("clamps the phone's box into usable bounds, rounding to whole CSS pixels", () => {
+    expect(clampPersonalBrowserViewport({ width: 390.4, height: 663.6 })).toEqual({
+      width: 390,
+      height: 664,
+    });
+    // A landscape phone's short box still gets a usable page height.
+    expect(clampPersonalBrowserViewport({ width: 844, height: 300 })).toEqual({
+      width: 844,
+      height: 480,
+    });
+    expect(clampPersonalBrowserViewport({ width: 100, height: 5_000 })).toEqual({
+      width: 320,
+      height: 1_400,
+    });
+    expect(clampPersonalBrowserViewport({ width: 2_000, height: 700 })).toEqual({
+      width: 1_024,
+      height: 700,
+    });
+  });
+
+  it("decodes a Viewport message and refuses a zero, absurd or non-finite size", () => {
+    const decode = Schema.decodeUnknownSync(PersonalBrowserInputMessage);
+    expect(decode({ _tag: "Viewport", width: 390, height: 700 })).toEqual({
+      _tag: "Viewport",
+      width: 390,
+      height: 700,
+    });
+    expect(() => decode({ _tag: "Viewport", width: 0, height: 700 })).toThrow();
+    expect(() => decode({ _tag: "Viewport", width: 390, height: 20_000 })).toThrow();
+    expect(() => decode({ _tag: "Viewport", width: Number.NaN, height: 700 })).toThrow();
+  });
+});
 
 describe("personal browser viewport frames", () => {
   it("round-trips the viewport size and device scale with the JPEG bytes", () => {

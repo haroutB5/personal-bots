@@ -24,7 +24,13 @@ import * as PreviewManager from "../../preview/Manager.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as BrowserLease from "./BrowserLease.ts";
-import type { BrowserDriver, BrowserElementHandle, BrowserPage, ScreencastMeta } from "./driver.ts";
+import type {
+  BrowserDriver,
+  BrowserElementHandle,
+  BrowserPage,
+  ScreencastMeta,
+  ViewportOverride,
+} from "./driver.ts";
 import * as PersonalBrowser from "./PersonalBrowser.ts";
 import * as PersonalBrowserLeaseRepository from "./PersonalBrowserLeaseRepository.ts";
 import * as PersonalBrowserProtectionRepository from "./PersonalBrowserProtectionRepository.ts";
@@ -96,7 +102,10 @@ class FakePage implements BrowserPage {
   async accessibilityTree() {
     return { nodes: [] };
   }
-  async setViewport() {}
+  readonly viewports: Array<ViewportOverride | null> = [];
+  async setViewport(size: ViewportOverride | null) {
+    this.viewports.push(size);
+  }
   async viewportSize() {
     return { width: 390, height: 844 };
   }
@@ -1131,5 +1140,139 @@ describe("PersonalBrowser", () => {
       expect(fake.state.page.stoppedScreencasts).toBe(1);
       expect((yield* browser.status("session-1")).viewers).toBe(0);
     }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  describe("phone viewport", () => {
+    const viewportMessage = (width: number, height: number) =>
+      encodeInput({ _tag: "Viewport", width, height });
+    const phone = (width: number, height: number) => ({
+      width,
+      height,
+      deviceScaleFactor: 2,
+      mobile: true,
+    });
+
+    it.effect(
+      "lays the page out for the controlling phone, then restores the agent's resize",
+      () => {
+        const fake = makeFakeDriver();
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          const page = fake.state.page;
+          yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+          yield* browser.handleAutomationRequest(
+            request("resize", { mode: "freeform", width: 800, height: 600 }),
+          );
+          expect(page.viewports).toEqual([{ width: 800, height: 600 }]);
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const viewer = yield* browser.attachViewer({
+                sessionId: "session-1",
+                canOperate: true,
+              });
+              expect(page.screencasts).toBe(1);
+              yield* browser.takeControl("session-1");
+
+              yield* browser.handleViewerMessage(viewer, viewportMessage(390.4, 700));
+              expect(page.viewports.at(-1)).toEqual(phone(390, 700));
+              // The screencast restarts so frames carry the new device scale.
+              expect(page.screencasts).toBe(2);
+
+              // The same box again changes nothing.
+              yield* browser.handleViewerMessage(viewer, viewportMessage(390, 700));
+              expect(page.viewports).toHaveLength(2);
+
+              // A box outside the bounds is clamped, not refused.
+              yield* browser.handleViewerMessage(viewer, viewportMessage(100, 5_000));
+              expect(page.viewports.at(-1)).toEqual(phone(320, 1_400));
+
+              yield* browser.returnToAgent("session-1");
+              // Exactly the agent's own preview_resize, not a cleared override.
+              expect(page.viewports.at(-1)).toEqual({ width: 800, height: 600 });
+              expect(yield* Queue.size(viewer.outbox)).toBe(0);
+            }),
+          );
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      },
+    );
+
+    it.effect("never resizes for a watcher, and undoes it when the controller disconnects", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const page = fake.state.page;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const watcher = yield* browser.attachViewer({
+              sessionId: "session-2",
+              canOperate: true,
+            });
+            // The bot holds the browser: a watching phone never reshapes its page.
+            yield* browser.handleViewerMessage(watcher, viewportMessage(390, 700));
+            const readOnly = yield* browser.attachViewer({
+              sessionId: "session-1",
+              canOperate: false,
+            });
+            yield* browser.takeControl("session-1");
+            yield* browser.handleViewerMessage(readOnly, viewportMessage(390, 700));
+            yield* browser.handleViewerMessage(watcher, viewportMessage(390, 700));
+            expect(page.viewports).toEqual([]);
+            // Refused silently: it is client housekeeping, not a user action.
+            expect(yield* Queue.size(watcher.outbox)).toBe(0);
+            expect(yield* Queue.size(readOnly.outbox)).toBe(0);
+
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const controller = yield* browser.attachViewer({
+                  sessionId: "session-1",
+                  canOperate: true,
+                });
+                yield* browser.handleViewerMessage(controller, viewportMessage(390, 700));
+                expect(page.viewports).toEqual([phone(390, 700)]);
+              }),
+            );
+            // The phone's socket dropped while it still held control; with no
+            // agent resize to go back to, the override is cleared.
+            expect(page.viewports).toEqual([phone(390, 700), null]);
+            expect((yield* browser.status("session-1")).controller).toMatchObject({
+              _tag: "Human",
+              self: true,
+            });
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("another device taking control drops the first phone's viewport", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const page = fake.state.page;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const first = yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+            const second = yield* browser.attachViewer({
+              sessionId: "session-2",
+              canOperate: true,
+            });
+            yield* browser.takeControl("session-1");
+            yield* browser.handleViewerMessage(first, viewportMessage(390, 700));
+            expect(page.viewports).toEqual([phone(390, 700)]);
+
+            yield* browser.takeControl("session-2");
+            expect(page.viewports).toEqual([phone(390, 700), null]);
+
+            // The first phone's late resize lands after it lost control.
+            yield* browser.handleViewerMessage(first, viewportMessage(400, 800));
+            expect(page.viewports).toHaveLength(2);
+
+            yield* browser.handleViewerMessage(second, viewportMessage(820, 1_100));
+            expect(page.viewports.at(-1)).toEqual(phone(820, 1_100));
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
   });
 });

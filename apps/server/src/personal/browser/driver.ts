@@ -15,6 +15,12 @@ export interface ViewportSize {
   readonly height: number;
 }
 
+/** A device-metrics override. Defaults keep the window's own scale, desktop mode. */
+export interface ViewportOverride extends ViewportSize {
+  readonly deviceScaleFactor?: number;
+  readonly mobile?: boolean;
+}
+
 export interface ScreencastMeta extends ViewportSize {
   readonly deviceScaleFactor: number;
 }
@@ -81,7 +87,7 @@ export interface BrowserPage {
   screenshotPng(): Promise<Uint8Array>;
   accessibilityTree(): Promise<unknown>;
   /** `null` clears the override so the page follows the window again. */
-  setViewport(size: ViewportSize | null): Promise<void>;
+  setViewport(size: ViewportOverride | null): Promise<void>;
   viewportSize(): Promise<ViewportSize>;
   setColorScheme(scheme: "light" | "dark" | null): Promise<void>;
   bringToFront(): Promise<void>;
@@ -282,8 +288,8 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
       await session.send("Emulation.setDeviceMetricsOverride", {
         width: size.width,
         height: size.height,
-        deviceScaleFactor: 0,
-        mobile: false,
+        deviceScaleFactor: size.deviceScaleFactor ?? 0,
+        mobile: size.mobile ?? false,
       });
     },
     viewportSize: async () =>

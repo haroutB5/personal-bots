@@ -14,6 +14,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import {
+  clampPersonalBrowserViewport,
   encodePersonalBrowserFrame,
   PersonalBrowserError,
   PersonalBrowserInputMessage,
@@ -71,6 +72,8 @@ import {
   type BrowserPage,
   makePlaywrightDriver,
   type ScreencastMeta,
+  type ViewportOverride,
+  type ViewportSize,
 } from "./driver.ts";
 import {
   captureSnapshot,
@@ -213,6 +216,8 @@ const FILL_NAVIGATE_TIMEOUT_MS = 20_000;
 const TIMELINE_LIMIT = 20;
 const PAGE_INFO_REFRESH_MS = 1_500;
 const MAX_LISTED_FILES = 300;
+/** A 390px phone gets 780px frames: exactly the screencast's maxWidth, so crisp and uncapped. */
+const PHONE_DEVICE_SCALE_FACTOR = 2;
 const ARTIFACT_SCAN_DEPTH = 3;
 
 const decodeInputMessage = Schema.decodeUnknownEffect(
@@ -401,9 +406,20 @@ export const make = (options: PersonalBrowserOptions) =>
     let screencast: { readonly page: BrowserPage; readonly stop: () => Promise<void> } | null =
       null;
     let lastPageInfoRefresh = 0;
+    // The agent's own preview_resize per page, so a human's phone viewport is
+    // undone back to exactly what the agent chose rather than to the window.
+    const agentViewports = new WeakMap<BrowserPage, ViewportSize>();
+    // What the controlling phone asked for, and where it is applied right now.
+    let humanViewport: {
+      readonly sessionId: string;
+      readonly viewerId: number;
+      readonly size: ViewportSize;
+    } | null = null;
+    let appliedViewport: { readonly page: BrowserPage; readonly size: ViewportSize } | null = null;
 
     const launchLock = yield* Semaphore.make(1);
     const screencastLock = yield* Semaphore.make(1);
+    const viewportLock = yield* Semaphore.make(1);
     const statusDirty = yield* PubSub.unbounded<void>();
     const activityPubSub = yield* PubSub.unbounded<PersonalBrowserActivityEvent>();
     const recent: PersonalBrowserActivityEvent[] = [];
@@ -554,6 +570,80 @@ export const make = (options: PersonalBrowserOptions) =>
       }),
     );
 
+    /**
+     * Stops the screencast on `page` and lets syncScreencast start a new one.
+     * A screencast reads the page's device scale once, when it starts, so a
+     * metrics change needs a fresh one for the frames to match it.
+     */
+    const restartScreencastOn = (page: BrowserPage) =>
+      screencastLock
+        .withPermit(
+          Effect.gen(function* () {
+            if (screencast === null || screencast.page !== page) return;
+            const { stop } = screencast;
+            screencast = null;
+            yield* Effect.promise(() => stop().catch(() => undefined));
+          }),
+        )
+        .pipe(Effect.andThen(syncScreencast));
+
+    const setPageViewport = (page: BrowserPage, size: ViewportOverride | null) =>
+      Effect.promise(() =>
+        page.setViewport(size).then(
+          () => true,
+          () => false,
+        ),
+      );
+
+    /**
+     * Reconciles the phone viewport with who holds the browser. It is applied
+     * to the viewport page only while the session that asked for it holds
+     * human control and the viewer it came from is still attached. Otherwise
+     * the page gets back exactly what it had: the agent's own preview_resize,
+     * or no override at all. It follows the viewport page, so a tab change
+     * takes it off the old tab instead of leaving that tab phone-sized.
+     */
+    const syncHumanViewport = viewportLock.withPermit(
+      Effect.gen(function* () {
+        const view = yield* lease.view;
+        const held =
+          humanViewport !== null &&
+          view.ownerType === "human" &&
+          view.ownerId === humanViewport.sessionId &&
+          viewers.has(humanViewport.viewerId)
+            ? humanViewport
+            : null;
+        humanViewport = held;
+        const target = held !== null && runtime.phase === "connected" ? viewportPage() : null;
+        const current = appliedViewport;
+        if (
+          current !== null &&
+          held !== null &&
+          current.page === target &&
+          current.size.width === held.size.width &&
+          current.size.height === held.size.height
+        ) {
+          return;
+        }
+        if (current !== null) {
+          appliedViewport = null;
+          if (current.page !== target && openPage(current.page)) {
+            yield* setPageViewport(current.page, agentViewports.get(current.page) ?? null);
+            yield* restartScreencastOn(current.page);
+          }
+        }
+        if (held !== null && target !== null) {
+          const applied = yield* setPageViewport(target, {
+            ...held.size,
+            deviceScaleFactor: PHONE_DEVICE_SCALE_FACTOR,
+            mobile: true,
+          });
+          if (applied) appliedViewport = { page: target, size: held.size };
+          yield* restartScreencastOn(target);
+        }
+      }),
+    );
+
     const onContextClosed = (serial: number) =>
       Effect.gen(function* () {
         if (serial !== runtime.contextSerial) return;
@@ -562,6 +652,8 @@ export const make = (options: PersonalBrowserOptions) =>
         runtime.tabs.clear();
         runtime.activeTabId = null;
         screencast = null;
+        // Its page died with Chrome; a relaunch re-applies it if still wanted.
+        appliedViewport = null;
         runtime.phase = runtime.closing ? "offline" : "crashed";
         runtime.detail = runtime.closing
           ? null
@@ -637,6 +729,7 @@ export const make = (options: PersonalBrowserOptions) =>
         runtime.phase = "connected";
         yield* notify;
         yield* syncScreencast;
+        yield* syncHumanViewport;
         return context;
       }),
     );
@@ -662,6 +755,8 @@ export const make = (options: PersonalBrowserOptions) =>
           ) {
             activeHelp = null;
           }
+          // Control moving anywhere else hands the page its own viewport back.
+          yield* syncHumanViewport;
           yield* notify;
         }),
       ),
@@ -715,6 +810,7 @@ export const make = (options: PersonalBrowserOptions) =>
         runtime.activeTabId = tab.tabId;
         yield* attempt({}, () => tab.page.bringToFront()).pipe(Effect.ignore);
         yield* syncScreencast;
+        yield* syncHumanViewport;
         yield* notify;
       });
 
@@ -749,6 +845,7 @@ export const make = (options: PersonalBrowserOptions) =>
           .close({ threadId: tab.threadId, tabId: tab.tabId })
           .pipe(Effect.ignore);
         yield* syncScreencast;
+        yield* syncHumanViewport;
         yield* notify;
       });
 
@@ -1077,11 +1174,11 @@ export const make = (options: PersonalBrowserOptions) =>
               try: () => resolvePreviewViewport(input),
               catch: (cause) => classifyPageError(cause),
             });
-            yield* attempt({}, () =>
-              tab.page.setViewport(
-                setting._tag === "fill" ? null : { width: setting.width, height: setting.height },
-              ),
-            );
+            const override =
+              setting._tag === "fill" ? null : { width: setting.width, height: setting.height };
+            yield* attempt({}, () => tab.page.setViewport(override));
+            if (override === null) agentViewports.delete(tab.page);
+            else agentViewports.set(tab.page, override);
             yield* previewManager
               .resize({ threadId: tab.threadId, tabId: tab.tabId, viewport: setting })
               .pipe(Effect.ignore);
@@ -1358,6 +1455,8 @@ export const make = (options: PersonalBrowserOptions) =>
       Effect.gen(function* () {
         const before = yield* lease.view;
         yield* lease.takeControl(sessionId);
+        // Another device taking over drops the previous controller's phone viewport.
+        yield* syncHumanViewport;
         if (!(before.ownerType === "human" && before.ownerId === sessionId)) {
           yield* recordActivity({
             kind: "control",
@@ -1424,6 +1523,8 @@ export const make = (options: PersonalBrowserOptions) =>
       Effect.gen(function* () {
         const before = yield* lease.view;
         yield* lease.returnToAgent;
+        // The agent gets its own viewport back before it can run another op.
+        yield* syncHumanViewport;
         if (before.ownerType === "human") {
           const finishedHelp = activeHelp;
           activeHelp = null;
@@ -1475,6 +1576,9 @@ export const make = (options: PersonalBrowserOptions) =>
           // deliberate, so it must not be reported as a crash.
           runtime.contextSerial++;
           runtime.closing = true;
+          // Every page is about to close: nothing to restore, nothing to move.
+          humanViewport = null;
+          appliedViewport = null;
           for (const tab of tabs) {
             yield* Effect.promise(() => tab.page.close().catch(() => undefined));
             yield* onTabPageClosed(tab);
@@ -1595,6 +1699,8 @@ export const make = (options: PersonalBrowserOptions) =>
           Effect.gen(function* () {
             viewers.delete(viewer.id);
             yield* Queue.shutdown(viewer.outbox);
+            // A phone that disconnects mid-control leaves the page as it found it.
+            yield* syncHumanViewport;
             yield* syncScreencast;
             yield* notify;
           }),
@@ -1632,6 +1738,9 @@ export const make = (options: PersonalBrowserOptions) =>
           return page.goForward();
         case "Reload":
           return page.reload();
+        case "Viewport":
+          // Handled by syncHumanViewport before dispatch; never a page action.
+          return;
       }
     };
 
@@ -1639,20 +1748,30 @@ export const make = (options: PersonalBrowserOptions) =>
       Effect.gen(function* () {
         const decoded = yield* decodeInputMessage(raw).pipe(Effect.option);
         if (Option.isNone(decoded)) return yield* rejectInput(viewer, "Malformed input message.");
+        const message = decoded.value;
+        // A viewport request is the client's own housekeeping, not something
+        // the user did, so refusing it (a race with Return to bot) is silent.
+        const refuse = (reason: string) =>
+          message._tag === "Viewport" ? Effect.void : rejectInput(viewer, reason);
         if (!viewer.canOperate) {
-          return yield* rejectInput(
-            viewer,
-            "This session is read-only and cannot control the browser.",
-          );
+          return yield* refuse("This session is read-only and cannot control the browser.");
         }
         if (!(yield* lease.isHumanController(viewer.sessionId))) {
-          return yield* rejectInput(viewer, "Take control before interacting with the browser.");
+          return yield* refuse("Take control before interacting with the browser.");
+        }
+        if (message._tag === "Viewport") {
+          humanViewport = {
+            sessionId: viewer.sessionId,
+            viewerId: viewer.id,
+            size: clampPersonalBrowserViewport(message),
+          };
+          return yield* syncHumanViewport;
         }
         const page = runtime.phase === "connected" ? viewportPage() : null;
         if (page === null) return yield* rejectInput(viewer, "The browser has no open page yet.");
         const exit = yield* Effect.exit(
           Effect.tryPromise({
-            try: () => dispatchHumanInput(page, decoded.value),
+            try: () => dispatchHumanInput(page, message),
             catch: (cause) => classifyPageError(cause),
           }),
         );

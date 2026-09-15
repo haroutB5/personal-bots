@@ -139,6 +139,34 @@ const ViewportCoordinate = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(-10
 const InputModifiers = Schema.optional(
   Schema.Array(Schema.Literals(["Alt", "Control", "Meta", "Shift"])),
 );
+const ViewportExtent = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(1)).check(
+  Schema.isLessThanOrEqualTo(10_000),
+);
+
+/**
+ * The phone viewport a human controller may ask for, in CSS pixels. Anything
+ * outside is clamped rather than refused: a landscape phone reports a short
+ * box, and it should get the nearest usable page, not an error.
+ */
+export const PERSONAL_BROWSER_VIEWPORT_BOUNDS = {
+  minWidth: 320,
+  maxWidth: 1024,
+  minHeight: 480,
+  maxHeight: 1400,
+} as const;
+
+export function clampPersonalBrowserViewport(size: {
+  readonly width: number;
+  readonly height: number;
+}): { readonly width: number; readonly height: number } {
+  const bounds = PERSONAL_BROWSER_VIEWPORT_BOUNDS;
+  const clamp = (value: number, min: number, max: number) =>
+    Math.min(max, Math.max(min, Math.round(value)));
+  return {
+    width: clamp(size.width, bounds.minWidth, bounds.maxWidth),
+    height: clamp(size.height, bounds.minHeight, bounds.maxHeight),
+  };
+}
 
 /**
  * Client -> server JSON messages on the viewport socket. Coordinates are CSS
@@ -170,6 +198,15 @@ export const PersonalBrowserInputMessage = Schema.Union([
   Schema.TaggedStruct("Back", {}),
   Schema.TaggedStruct("Forward", {}),
   Schema.TaggedStruct("Reload", {}),
+  /**
+   * The controller's full-screen box, so the page lays out for the phone
+   * instead of the laptop window. Held only while that session keeps control
+   * and its viewer stays attached; the server clamps it to the bounds above.
+   */
+  Schema.TaggedStruct("Viewport", {
+    width: ViewportExtent,
+    height: ViewportExtent,
+  }),
 ]);
 export type PersonalBrowserInputMessage = typeof PersonalBrowserInputMessage.Type;
 
