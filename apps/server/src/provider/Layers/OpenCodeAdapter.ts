@@ -43,8 +43,13 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
+import {
+  PERSONAL_BOT_OPENCODE_AGENTS,
+  personalBotOpenCodeEnvironment,
+} from "../opencodeBotIsolation.ts";
+import { openCodeRetryInfo } from "./openCodeRetryInfo.ts";
 import {
   buildOpenCodePermissionRules,
   OpenCodeRuntime,
@@ -339,6 +344,15 @@ interface OpenCodeSessionContext {
   readonly server: OpenCodeServerConnection;
   readonly directory: string;
   openCodeSessionId: string;
+  /** Started for a personal bot: isolated config, built-in agents only. */
+  readonly personalBot: boolean;
+  /**
+   * The start input's bot instructions: the per-turn `system` fallback for a
+   * turn that arrives without its own.
+   */
+  readonly systemInstructions: string | undefined;
+  /** A retry wait was put on the session and must be cleared once work resumes. */
+  announcedRetry: boolean;
   readonly relatedSessionIds: Set<string>;
   readonly resolvedRequestIds: Set<string>;
   readonly autoRepliedRequestIds: Set<string>;
@@ -458,6 +472,11 @@ export interface OpenCodeAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  /**
+   * The app-owned `XDG_CONFIG_HOME` personal-bot sessions run under (see
+   * `opencodeBotIsolation.ts`). Absent means bot sessions refuse to start.
+   */
+  readonly personalBotConfigHome?: string;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -2580,6 +2599,20 @@ export function makeOpenCodeAdapter(
             });
           }
 
+          // Work resumed after a wait: take the wait off the session.
+          if (event.properties.status.type === "busy" && context.announcedRetry) {
+            context.announcedRetry = false;
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                raw: event,
+              })),
+              type: "session.state.changed",
+              payload: { state: "running", reason: "opencode_retry_cleared" },
+            });
+          }
+
           if (event.properties.status.type === "retry") {
             yield* emit({
               ...(yield* buildEventBase({
@@ -2593,10 +2626,28 @@ export function makeOpenCodeAdapter(
                 detail: event.properties.status,
               },
             });
+            // OpenCode keeps retrying on its own, possibly for a long time:
+            // put the wait on the session so the thread reads "Rate limited"
+            // or "Retrying", not "Working".
+            context.announcedRetry = true;
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                raw: event,
+              })),
+              type: "session.state.changed",
+              payload: {
+                state: "running",
+                reason: "opencode_retry",
+                retry: openCodeRetryInfo(event.properties.status),
+              },
+            });
             break;
           }
 
           if (event.properties.status.type === "idle" && turnId) {
+            context.announcedRetry = false;
             if (context.cancellation?.turnId === turnId) {
               context.cancellation.deferredIdleEvent = event;
               break;
@@ -2640,6 +2691,7 @@ export function makeOpenCodeAdapter(
             }
           }
           yield* cancelIdleReconciliation(context);
+          context.announcedRetry = false;
           const terminalCancellation =
             activeTurnId !== undefined && cancellation?.turnId === activeTurnId
               ? cancellation
@@ -2820,6 +2872,27 @@ export function makeOpenCodeAdapter(
           deleteContextIfCurrent(existing);
         }
 
+        // A bot never joins a server it does not own: an external server
+        // carries the owner's config and never gets the app's MCP server.
+        const personalBot = input.personalBot === true;
+        const personalBotConfigHome = options?.personalBotConfigHome;
+        if (personalBot && serverUrl.trim().length > 0) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue:
+              "Bots can't use an external OpenCode server. Clear the OpenCode server URL in Settings > Providers.",
+          });
+        }
+        if (personalBot && personalBotConfigHome === undefined) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue:
+              "OpenCode could not prepare the bots' private settings folder, so bots can't run.",
+          });
+        }
+
         const started = yield* Effect.gen(function* () {
           const sessionScope = yield* Scope.make();
           const startedExit = yield* Effect.exit(
@@ -2828,15 +2901,25 @@ export function makeOpenCodeAdapter(
               // we provide below — closing `sessionScope` kills the child
               // process automatically. No manual `server.close()` needed.
               const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+              // Device variables and a bot's PB_SECRET_* reach the server
+              // process, and through it every shell command it runs.
+              const sessionEnvironment = McpProviderSession.withProviderSessionEnvironment(
+                options?.environment ?? process.env,
+                mcpSession,
+              );
               const server = yield* openCodeRuntime.connectToOpenCodeServer({
                 binaryPath,
                 directory,
                 serverUrl,
                 ...(serverPassword ? { serverPassword } : {}),
-                environment: McpProviderSession.withAgentDeviceEnvironment(
-                  options?.environment ?? process.env,
-                  mcpSession,
-                ),
+                environment:
+                  personalBot && personalBotConfigHome !== undefined
+                    ? personalBotOpenCodeEnvironment({
+                        base: sessionEnvironment,
+                        configHome: personalBotConfigHome,
+                        model: input.modelSelection?.model,
+                      })
+                    : sessionEnvironment,
               });
               const client = openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
@@ -2985,6 +3068,9 @@ export function makeOpenCodeAdapter(
           server: started.server,
           directory,
           openCodeSessionId: started.openCodeSession.id,
+          personalBot,
+          systemInstructions: input.systemInstructions,
+          announcedRetry: false,
           relatedSessionIds: new Set([started.openCodeSession.id]),
           resolvedRequestIds: new Set(),
           autoRepliedRequestIds: new Set(),
@@ -3134,7 +3220,14 @@ export function makeOpenCodeAdapter(
           // prompt into the running session, so the active turn id is reused.
           const steeringTurnId = context.activeTurnId;
           const turnId = steeringTurnId ?? freshTurnId;
-          const agent = getModelSelectionStringOptionValue(modelSelection, "agent");
+          const requestedAgent = getModelSelectionStringOptionValue(modelSelection, "agent");
+          // A bot's server has only the built-in agents; the owner's are not there.
+          const agent =
+            context.personalBot &&
+            requestedAgent !== undefined &&
+            !PERSONAL_BOT_OPENCODE_AGENTS.has(requestedAgent)
+              ? undefined
+              : requestedAgent;
           const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
           const pendingIdleReconciliation = context.pendingIdleReconciliation;
           const priorAwaitingBusy = context.awaitingBusyAfterInterruption;
@@ -3220,10 +3313,15 @@ export function makeOpenCodeAdapter(
                 ...(context.activeAgent ? { agent: context.activeAgent } : {}),
                 ...(context.activeVariant ? { variant: context.activeVariant } : {}),
                 // OpenCode appends this after its own agent/provider prompts.
-                system: buildRuntimeInstructions({
-                  harness: "OpenCode",
-                  model: `${parsedModel.providerID}/${parsedModel.modelID}`,
-                }),
+                // Its instructions slot is per prompt, so a bot's persona and
+                // app rules ride on every turn (falling back to the start's).
+                system: withBotInstructions(
+                  buildRuntimeInstructions({
+                    harness: "OpenCode",
+                    model: `${parsedModel.providerID}/${parsedModel.modelID}`,
+                  }),
+                  input.systemInstructions ?? context.systemInstructions,
+                ),
                 parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
               },
               { signal },

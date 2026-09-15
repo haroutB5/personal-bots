@@ -26,13 +26,16 @@ import type {
 
 import {
   ApprovalRequestId,
+  EnvironmentId,
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderRuntimeEvent,
   ThreadId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -131,8 +134,15 @@ const runtimeMock = {
     questionListImplementation: null as (() => Promise<Array<QuestionRequest>>) | null,
     sessionUpdateCalls: [] as Array<{ sessionID: string; permission: unknown }>,
     forkCalls: [] as Array<{ sessionID: string; directory?: string; messageID?: string }>,
+    connectInputs: [] as Array<{
+      serverUrl: string | null | undefined;
+      environment: NodeJS.ProcessEnv | undefined;
+    }>,
+    mcpAddCalls: [] as Array<unknown>,
   },
   reset() {
+    this.state.connectInputs.length = 0;
+    this.state.mcpAddCalls.length = 0;
     this.state.startCalls.length = 0;
     this.state.sessionCreateUrls.length = 0;
     this.state.sessionCreateInputs.length = 0;
@@ -212,9 +222,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         isRunning: Effect.succeed(true),
       };
     }),
-  connectToOpenCodeServer: ({ serverUrl, serverPassword }) =>
+  connectToOpenCodeServer: ({ serverUrl, serverPassword, environment }) =>
     Effect.gen(function* () {
-      const url = serverUrl ?? "http://127.0.0.1:4301";
+      runtimeMock.state.connectInputs.push({ serverUrl, environment });
+      const url = serverUrl || "http://127.0.0.1:4301";
       // Always register a finalizer so the closeCalls/closeError probes fire;
       // production attaches none for external servers.
       yield* Effect.addFinalizer(() =>
@@ -488,6 +499,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           };
         },
       },
+      mcp: {
+        add: async (input: unknown) => {
+          runtimeMock.state.mcpAddCalls.push(input);
+          return { data: {} };
+        },
+      },
       permission: {
         list: async () => {
           runtimeMock.state.permissionListCalls += 1;
@@ -605,6 +622,31 @@ beforeEach(() => {
   runtimeMock.reset();
 });
 
+// Personal bots only ever run on a server the adapter spawns itself.
+const localOpenCodeSettings = Schema.decodeSync(OpenCodeSettings)({ binaryPath: "fake-opencode" });
+const BOT_CONFIG_HOME = "C:/state/opencode-bots";
+const BOT_MODEL = "opencode/muse-spark-1.3-contributor-free";
+
+const botMcpSession = (threadId: ThreadId): McpProviderSession.McpProviderSessionConfig => ({
+  environmentId: EnvironmentId.make("env-test"),
+  threadId,
+  providerSessionId: "provider-session-test",
+  providerInstanceId: ProviderInstanceId.make("opencode"),
+  endpoint: "http://127.0.0.1:5000/mcp",
+  authorizationHeader: "Bearer thread-token",
+  capabilities: new Set(["bots", "personal", "preview"]),
+  personalSecretEnvironment: { PB_SECRET_GITHUB_TOKEN: "s3cret" },
+});
+
+const withMcpSession = (config: McpProviderSession.McpProviderSessionConfig) =>
+  Effect.acquireRelease(
+    Effect.sync(() => McpProviderSession.setMcpProviderSession(config)),
+    () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(config.threadId)),
+  );
+
+const retryOf = (event: ProviderRuntimeEvent) =>
+  event.type === "session.state.changed" ? event.payload.retry : undefined;
+
 const advanceTestClock = (ms: number) =>
   TestClock.adjust(`${ms} millis`).pipe(Effect.andThen(Effect.yieldNow));
 
@@ -669,6 +711,224 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.deepEqual(runtimeMock.state.authHeaders, [
         `Basic ${btoa("opencode:secret-password")}`,
       ]);
+    }),
+  );
+
+  it.effect("starts a bot on an isolated server with its secrets and only the app's MCP", () =>
+    Effect.gen(function* () {
+      const adapter = yield* makeOpenCodeAdapter(localOpenCodeSettings, {
+        personalBotConfigHome: BOT_CONFIG_HOME,
+        environment: { PATH: "p", XDG_CONFIG_HOME: "C:/owner/config" },
+      });
+      const threadId = asThreadId("thread-opencode-bot-start");
+      yield* withMcpSession(botMcpSession(threadId));
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+        personalBot: true,
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), BOT_MODEL),
+      });
+
+      const env = runtimeMock.state.connectInputs[0]?.environment ?? {};
+      NodeAssert.equal(env.XDG_CONFIG_HOME, BOT_CONFIG_HOME);
+      NodeAssert.equal(env.T3_OWNER_XDG_CONFIG_HOME, "C:/owner/config");
+      NodeAssert.equal(env.PB_SECRET_GITHUB_TOKEN, "s3cret");
+      NodeAssert.equal(env.OPENCODE_DISABLE_CLAUDE_CODE, "1");
+      NodeAssert.equal(env.OPENCODE_DISABLE_EXTERNAL_SKILLS, "1");
+      NodeAssert.match(
+        env.OPENCODE_CONFIG_CONTENT ?? "",
+        /"small_model":"opencode\/muse-spark-1\.3-contributor-free"/,
+      );
+      NodeAssert.deepEqual(runtimeMock.state.mcpAddCalls, [
+        {
+          name: "t3-code",
+          config: {
+            type: "remote",
+            url: "http://127.0.0.1:5000/mcp",
+            headers: { Authorization: "Bearer thread-token" },
+            oauth: false,
+          },
+        },
+      ]);
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a non-bot session on the owner's own OpenCode config", () =>
+    Effect.gen(function* () {
+      const adapter = yield* makeOpenCodeAdapter(localOpenCodeSettings, {
+        personalBotConfigHome: BOT_CONFIG_HOME,
+        environment: { PATH: "p", XDG_CONFIG_HOME: "C:/owner/config" },
+      });
+      const threadId = asThreadId("thread-opencode-plain-start");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const env = runtimeMock.state.connectInputs[0]?.environment ?? {};
+      NodeAssert.equal(env.XDG_CONFIG_HOME, "C:/owner/config");
+      NodeAssert.equal(env.OPENCODE_DISABLE_CLAUDE_CODE, undefined);
+      NodeAssert.equal(env.T3_OWNER_XDG_CONFIG_HOME, undefined);
+      NodeAssert.equal(env.PB_SECRET_GITHUB_TOKEN, undefined);
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a bot on an external server or without its isolation home", () =>
+    Effect.gen(function* () {
+      const external = yield* OpenCodeAdapter;
+      const externalExit = yield* Effect.exit(
+        external.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId: asThreadId("thread-opencode-bot-external"),
+          runtimeMode: "full-access",
+          personalBot: true,
+        }),
+      );
+      NodeAssert.ok(Exit.isFailure(externalExit));
+      NodeAssert.match(
+        String((Cause.squash(externalExit.cause) as { issue?: string }).issue),
+        /external OpenCode server/,
+      );
+
+      const unisolated = yield* makeOpenCodeAdapter(localOpenCodeSettings);
+      const unisolatedExit = yield* Effect.exit(
+        unisolated.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId: asThreadId("thread-opencode-bot-no-home"),
+          runtimeMode: "full-access",
+          personalBot: true,
+        }),
+      );
+      NodeAssert.ok(Exit.isFailure(unisolatedExit));
+      // Neither attempt ever reached a server.
+      NodeAssert.deepEqual(runtimeMock.state.connectInputs, []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("sends a bot's instructions with every prompt and keeps it on built-in agents", () =>
+    Effect.gen(function* () {
+      const adapter = yield* makeOpenCodeAdapter(localOpenCodeSettings, {
+        personalBotConfigHome: BOT_CONFIG_HOME,
+      });
+      const startThread = asThreadId("thread-opencode-bot-start-instructions");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: startThread,
+        runtimeMode: "full-access",
+        personalBot: true,
+        systemInstructions: "You are Ada.",
+      });
+      // A turn without its own instructions (e.g. a continuation) uses the start's.
+      yield* adapter.sendTurn({
+        threadId: startThread,
+        input: "hello",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), BOT_MODEL, [
+          { id: "agent", value: "ms" },
+        ]),
+      });
+      const first = runtimeMock.state.promptCalls[0] as { system: string; agent?: string };
+      NodeAssert.match(first.system, /<bot_instructions>You are Ada\.<\/bot_instructions>/);
+      NodeAssert.match(first.system, /<runtime_info>/);
+      NodeAssert.equal(first.agent, undefined);
+
+      const turnThread = asThreadId("thread-opencode-bot-turn-instructions");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: turnThread,
+        runtimeMode: "full-access",
+        personalBot: true,
+        systemInstructions: "You are Ada.",
+      });
+      yield* adapter.sendTurn({
+        threadId: turnThread,
+        input: "plan it",
+        systemInstructions: "You are Ada.\n\nKnown facts (from memory): likes tea",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), BOT_MODEL, [
+          { id: "agent", value: "plan" },
+        ]),
+      });
+      const second = runtimeMock.state.promptCalls[1] as { system: string; agent?: string };
+      NodeAssert.match(second.system, /likes tea/);
+      NodeAssert.equal(second.agent, "plan");
+
+      yield* adapter.stopSession(startThread);
+      yield* adapter.stopSession(turnThread);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("puts OpenCode's retry wait on the session and clears it when work resumes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-retry-wait");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const emitEvent = makeOpenCodeEventQueue();
+      const statesFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) => event.threadId === threadId && event.type === "session.state.changed",
+        ),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const send = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "hi",
+          modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), BOT_MODEL),
+        })
+        .pipe(Effect.forkChild);
+      emitEvent({
+        id: "evt-retry-busy-1",
+        type: "session.status",
+        properties: { sessionID, status: { type: "busy" } },
+      });
+      yield* Fiber.join(send);
+
+      const next = Date.parse("2026-09-15T10:47:16.000Z");
+      emitEvent({
+        id: "evt-retry-1",
+        type: "session.status",
+        properties: {
+          sessionID,
+          status: { type: "retry", attempt: 1, message: "Rate limit exceeded", next },
+        },
+      });
+      emitEvent({
+        id: "evt-retry-2",
+        type: "session.status",
+        properties: {
+          sessionID,
+          status: { type: "retry", attempt: 2, message: "502 Bad Gateway", next },
+        },
+      });
+      emitEvent({
+        id: "evt-retry-busy-2",
+        type: "session.status",
+        properties: { sessionID, status: { type: "busy" } },
+      });
+
+      const states = Array.from(yield* Fiber.join(statesFiber).pipe(Effect.timeout("2 seconds")));
+      NodeAssert.deepEqual(
+        states.map((event) => retryOf(event)?.kind),
+        ["rate_limited", "retrying", undefined],
+      );
+      NodeAssert.equal(retryOf(states[0]!)?.retryAt, "2026-09-15T10:47:16.000Z");
+      NodeAssert.equal(retryOf(states[0]!)?.attempt, 1);
+
+      yield* adapter.stopSession(threadId);
     }),
   );
 
