@@ -27,14 +27,13 @@ import {
   Hand,
   Keyboard,
   Lock,
+  MoreHorizontal,
   MousePointer2,
   MousePointerClick,
   Power,
-  Reply,
   RotateCw,
 } from "lucide-react";
 import {
-  type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
@@ -45,6 +44,7 @@ import {
 } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
 import { usePersonalEnvironmentId } from "../usePersonalBots";
@@ -207,6 +207,8 @@ export function ComputerBrowserPane(props: {
   readonly reachable: boolean;
   readonly onBackToChat?: () => void;
   readonly fullScreen?: boolean;
+  readonly compact?: boolean;
+  readonly onOpenFullScreen?: () => void;
   /** Told after the browser is actually closed, so a host panel can stand down. */
   readonly onClosed?: () => void;
 }) {
@@ -226,6 +228,8 @@ export function ComputerBrowserPane(props: {
   const agentLine = activeAgentLine(status);
   const page = status?.page ?? null;
   const canClose = canCloseBrowser(status);
+  const compact = props.compact === true;
+  const fullScreen = props.fullScreen === true;
 
   const onClient = useCallback((client: ViewportClient | null) => {
     sendRef.current = client?.send ?? null;
@@ -275,44 +279,99 @@ export function ComputerBrowserPane(props: {
     }
   };
 
+  const controlDisabled = environmentId === null || !props.reachable || status === null || pending;
+  const openAndToggleControl = () => {
+    props.onOpenFullScreen?.();
+    void toggleControl();
+  };
+
   return (
     // A plain wrapper, not a fragment: going full screen must not change the
     // shape of this subtree, or React would remount LiveViewport and the
     // screencast socket would reconnect.
-    <div>
-      <AddressBar page={page} editable={inControl && inputReady} onSend={send} />
+    <div className={cn(fullScreen && "flex h-full min-h-0 flex-col")}>
+      <BrowserToolbar
+        page={page}
+        showBack={fullScreen === true}
+        {...(props.onBackToChat === undefined ? {} : { onBackToChat: props.onBackToChat })}
+        canReload={inputReady && page !== null}
+        canClose={canClose}
+        closeDisabled={environmentId === null || !props.reachable || pending}
+        onReload={() => {
+          send({ _tag: "Reload" });
+        }}
+        onClose={() => {
+          void close();
+        }}
+        {...(compact ? { className: "hidden" } : {})}
+      />
 
-      <div className="mt-2.5 overflow-hidden rounded-[12px] border border-[var(--personal-border)] bg-[var(--personal-surface)]">
+      <div
+        className={cn(
+          "relative overflow-hidden border border-[var(--personal-border)] bg-[var(--personal-surface)]",
+          compact
+            ? "h-[200px] rounded-none border-x-0 border-y-0"
+            : fullScreen
+              ? "min-h-0 flex-1 rounded-none border-x-0"
+              : "mt-2.5 rounded-[12px]",
+        )}
+      >
         {environmentId !== null && hasLiveViewport(status) ? (
           <LiveViewport
             environmentId={environmentId}
             active={pageVisible}
-            interactive={inControl}
+            interactive={!compact && inControl}
+            fit={fullScreen === true}
             onClient={onClient}
           />
         ) : (
           <ViewportPlaceholder status={status} reachable={props.reachable} />
         )}
+        {compact ? (
+          <>
+            <button
+              type="button"
+              aria-label="Open browser full screen"
+              onClick={props.onOpenFullScreen}
+              className="absolute inset-0 z-10 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
+            />
+            <button
+              type="button"
+              disabled={controlDisabled}
+              onClick={openAndToggleControl}
+              className="absolute right-3 bottom-3 z-20 flex h-9 items-center gap-1.5 rounded-full bg-[var(--personal-primary)] px-3 text-[13px] font-semibold text-[var(--personal-primary-text)] shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50"
+            >
+              {inControl ? (
+                <Bot className="size-4" strokeWidth={ICON_STROKE} />
+              ) : (
+                <MousePointer2 className="size-4" strokeWidth={ICON_STROKE} />
+              )}
+              {inControl ? "Return to bot" : "Take control"}
+            </button>
+          </>
+        ) : null}
       </div>
 
-      {agentLine !== null ? (
-        <p className="mt-2.5 flex items-center gap-2 text-[13px] text-[var(--personal-text-secondary)]">
-          <StatusDot tone="live" />
-          {agentLine}
-        </p>
-      ) : otherDeviceInControl ? (
-        <p className="mt-2.5 flex items-center gap-2 text-[13px] text-[var(--personal-text-secondary)]">
-          <StatusDot tone="pending" />
-          {controller.connected
-            ? "You are controlling the browser from another device"
-            : "Controlled from another device (disconnected). Take control here or return it to the agent."}
-        </p>
-      ) : null}
+      <div className={cn("min-h-0", compact && "hidden", fullScreen && "px-3")}>
+        {agentLine !== null ? (
+          <p className="mt-2.5 flex items-center gap-2 text-[13px] text-[var(--personal-text-secondary)]">
+            <StatusDot tone="live" />
+            {agentLine}
+          </p>
+        ) : otherDeviceInControl ? (
+          <p className="mt-2.5 flex items-center gap-2 text-[13px] text-[var(--personal-text-secondary)]">
+            <StatusDot tone="pending" />
+            {controller.connected
+              ? "You are controlling the browser from another device"
+              : "Controlled from another device (disconnected). Take control here or return it to the agent."}
+          </p>
+        ) : null}
+      </div>
 
-      <div className="mt-2.5 grid gap-2.5">
+      <div className={cn("mt-2.5", compact && "hidden", fullScreen && "shrink-0 px-3 pb-3")}>
         <button
           type="button"
-          disabled={environmentId === null || !props.reachable || status === null || pending}
+          disabled={controlDisabled}
           onClick={() => void toggleControl()}
           className="flex h-11 items-center justify-center gap-2 rounded-[10px] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] disabled:opacity-50"
         >
@@ -321,101 +380,91 @@ export function ComputerBrowserPane(props: {
           ) : (
             <MousePointer2 className="size-[18px]" strokeWidth={ICON_STROKE} />
           )}
-          {inControl ? "Return to agent" : "Take control"}
+          {inControl ? "Return to bot" : "Take control"}
         </button>
-        {props.onBackToChat !== undefined || canClose ? (
-          <div
-            className={cn(
-              "grid gap-2.5",
-              props.onBackToChat !== undefined && canClose ? "grid-cols-2" : "grid-cols-1",
-            )}
-          >
-            {props.onBackToChat !== undefined ? (
-              <button
-                type="button"
-                onClick={props.onBackToChat}
-                className="flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[15px] font-semibold"
-              >
-                <Reply className="size-[18px]" strokeWidth={ICON_STROKE} />
-                Back to chat
-              </button>
-            ) : null}
-            {canClose ? (
-              <button
-                type="button"
-                aria-label="Close browser"
-                disabled={environmentId === null || !props.reachable || pending}
-                onClick={() => void close()}
-                className="flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[15px] font-semibold text-[var(--personal-danger)] disabled:opacity-50"
-              >
-                <Power className="size-[18px]" strokeWidth={ICON_STROKE} />
-                Close browser
-              </button>
-            ) : null}
-          </div>
-        ) : null}
       </div>
 
       {closeError !== null ? (
-        <p role="alert" className="mt-2.5 text-[13px] text-[var(--personal-danger)]">
+        <p
+          role="alert"
+          className={cn(
+            "mt-2.5 text-[13px] text-[var(--personal-danger)]",
+            fullScreen && "px-3 pb-3",
+          )}
+        >
           {closeError}
         </p>
       ) : null}
 
-      {!props.fullScreen ? <ActivityCard events={props.events} /> : null}
+      {!props.fullScreen && !compact ? <ActivityCard events={props.events} /> : null}
     </div>
   );
 }
 
-function AddressBar(props: {
+function addressLabel(page: PersonalBrowserStatus["page"]): string {
+  if (page === null) return "No page open";
+  const title = page.title.trim();
+  if (title.length > 0) return title;
+  try {
+    return new URL(page.url).host || page.url;
+  } catch {
+    return page.url;
+  }
+}
+
+function BrowserToolbar(props: {
   readonly page: PersonalBrowserStatus["page"];
-  readonly editable: boolean;
-  readonly onSend: (message: PersonalBrowserInputMessage) => void;
+  readonly showBack: boolean;
+  readonly onBackToChat?: () => void;
+  readonly canReload: boolean;
+  readonly canClose: boolean;
+  readonly closeDisabled: boolean;
+  readonly onReload: () => void;
+  readonly onClose: () => void;
+  readonly className?: string;
 }) {
   const { page } = props;
   const secure = page?.url.startsWith("https://") ?? false;
-  const label = page === null ? "No page open" : page.title || page.url;
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const url = new FormData(event.currentTarget).get("url");
-    if (typeof url === "string" && url.trim().length > 0) {
-      props.onSend({ _tag: "Navigate", url: url.trim() });
-    }
-  };
   return (
-    <div className="mt-3 flex h-10 items-center gap-2 rounded-[10px] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] pl-3">
-      {secure ? (
-        <Lock className="size-4 shrink-0" strokeWidth={ICON_STROKE} aria-label="Secure page" />
-      ) : (
-        <Globe className="size-4 shrink-0" strokeWidth={ICON_STROKE} aria-hidden />
-      )}
-      {props.editable ? (
-        <form className="min-w-0 flex-1" onSubmit={submit}>
-          <input
-            key={page?.url ?? ""}
-            name="url"
-            defaultValue={page?.url ?? ""}
-            aria-label="Address"
-            inputMode="url"
-            autoCapitalize="off"
-            autoCorrect="off"
-            enterKeyHint="go"
-            className="w-full bg-transparent text-[16px] outline-none"
-          />
-        </form>
-      ) : (
-        <span className="min-w-0 flex-1 truncate text-[14px]">{label}</span>
-      )}
-      {props.editable ? (
+    <div className={cn("flex min-h-14 shrink-0 items-center gap-1 px-1", props.className)}>
+      {props.showBack && props.onBackToChat !== undefined ? (
         <button
           type="button"
-          aria-label="Reload"
-          onClick={() => props.onSend({ _tag: "Reload" })}
-          className="flex size-11 shrink-0 items-center justify-center"
+          aria-label="Back to chat"
+          onClick={props.onBackToChat}
+          className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >
-          <RotateCw className="size-4" strokeWidth={ICON_STROKE} />
+          <ChevronLeft className="size-[22px]" strokeWidth={ICON_STROKE} />
         </button>
       ) : null}
+      <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-[10px] bg-[var(--personal-fill-muted)] px-3">
+        {secure ? (
+          <Lock className="size-4 shrink-0" strokeWidth={ICON_STROKE} aria-label="Secure page" />
+        ) : (
+          <Globe className="size-4 shrink-0" strokeWidth={ICON_STROKE} aria-hidden />
+        )}
+        <span className="min-w-0 flex-1 truncate text-[14px]">{addressLabel(page)}</span>
+      </div>
+      <Menu>
+        <MenuTrigger
+          aria-label="Browser options"
+          className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+        >
+          <MoreHorizontal className="size-5" strokeWidth={ICON_STROKE} />
+        </MenuTrigger>
+        <MenuPopup align="end" className="personal-app w-48">
+          <MenuItem disabled={!props.canReload} onClick={props.onReload}>
+            <RotateCw />
+            Reload
+          </MenuItem>
+          {props.canClose ? (
+            <MenuItem variant="destructive" disabled={props.closeDisabled} onClick={props.onClose}>
+              <Power />
+              Close browser
+            </MenuItem>
+          ) : null}
+        </MenuPopup>
+      </Menu>
     </div>
   );
 }
@@ -452,6 +501,7 @@ function LiveViewport(props: {
   readonly environmentId: EnvironmentId;
   readonly active: boolean;
   readonly interactive: boolean;
+  readonly fit?: boolean;
   readonly onClient: (client: ViewportClient | null) => void;
 }) {
   const { environmentId, active, interactive, onClient } = props;
@@ -619,14 +669,22 @@ function LiveViewport(props: {
   };
 
   return (
-    <div className="relative">
+    <div
+      className={cn(
+        "relative",
+        props.fit && "flex h-full min-h-0 items-center justify-center overflow-hidden",
+      )}
+    >
       <canvas
         ref={canvasRef}
         tabIndex={interactive ? 0 : -1}
         aria-label={
           interactive ? "Shared browser, you are in control" : "Shared browser, live view"
         }
-        className="block w-full bg-[var(--personal-fill-muted)] outline-none"
+        className={cn(
+          "block bg-[var(--personal-fill-muted)] outline-none",
+          props.fit ? "h-full max-h-full w-auto max-w-full" : "w-full",
+        )}
         style={{
           aspectRatio: aspect === null ? "390 / 560" : `${aspect}`,
           touchAction: interactive ? "none" : "auto",
