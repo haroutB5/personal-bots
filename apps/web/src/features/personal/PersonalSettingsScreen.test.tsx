@@ -10,6 +10,11 @@ const state = vi.hoisted(() => ({
     readonly value?: { readonly displayName: string };
     readonly cause?: unknown;
   },
+  reload: vi.fn(),
+  versionInfo: { label: "v1.9.4", updateAvailable: false } as {
+    label: string | null;
+    updateAvailable: boolean;
+  },
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
@@ -25,6 +30,7 @@ vi.mock("./usePersonalBots", () => ({
   usePersonalBotsList: () => ({ data: { bots: [] } }),
   usePersonalProfile: () => ({ data: { displayName: "Harout" } }),
 }));
+vi.mock("./appVersion", () => ({ useAppVersion: () => state.versionInfo }));
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -32,6 +38,8 @@ afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = undefined;
   state.result = { _tag: "Success", value: { displayName: "Harout" } };
+  state.reload.mockClear();
+  state.versionInfo = { label: "v1.9.4", updateAvailable: false };
   vi.unstubAllGlobals();
 });
 
@@ -75,5 +83,30 @@ describe("Settings display name", () => {
     const input = renderer!.root.findByProps({ id: "personal-display-name" });
     expect(input.props["aria-invalid"]).toBe(false);
     expect(input.props.value).toBe("Ada");
+  });
+});
+
+describe("Settings About", () => {
+  it("shows the installed version", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    await act(async () => {
+      renderer = create(<PersonalSettingsScreen />);
+    });
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Version 1.9.4");
+  });
+
+  it("offers an available update from the About row", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", { location: { reload: state.reload } });
+    state.versionInfo = { label: "v1.9.5", updateAvailable: true };
+    await act(async () => {
+      renderer = create(<PersonalSettingsScreen />);
+    });
+
+    const update = renderer!.root.findByProps({
+      "aria-label": "Update to v1.9.5 - tap to refresh",
+    });
+    act(() => update.props.onClick());
+    expect(state.reload).toHaveBeenCalledTimes(1);
   });
 });

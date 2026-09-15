@@ -9,6 +9,7 @@ import {
   Brain,
   CalendarClock,
   ChevronRight,
+  Info,
   KeyRound,
   Network,
   SquareTerminal,
@@ -29,6 +30,7 @@ import {
   usePersonalProfile,
 } from "./usePersonalBots";
 import { diagnosticsEnabled, setDiagnosticsEnabled } from "./DiagnosticsOverlay";
+import { useAppVersion } from "./appVersion";
 
 const SECTION_TITLE =
   "mb-2 px-1 text-[13px] font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase";
@@ -113,6 +115,8 @@ export function PersonalSettingsScreen(): JSX.Element {
   const profile = usePersonalProfile(environmentId);
   const list = usePersonalBotsList(environmentId);
   const providers = useAtomValue(primaryServerProvidersAtom);
+  const { label: versionLabel, updateAvailable } = useAppVersion();
+  const versionNumber = versionLabel?.replace(/^v/, "") ?? null;
   const bots = useMemo(
     () => (list.data?.bots ?? []).toSorted((left, right) => left.sortOrder - right.sortOrder),
     [list.data],
@@ -291,6 +295,49 @@ export function PersonalSettingsScreen(): JSX.Element {
             </li>
           ))}
         </ul>
+      </section>
+
+      <section aria-labelledby="settings-about">
+        <h2 id="settings-about" className={SECTION_TITLE}>
+          About
+        </h2>
+        {updateAvailable && versionLabel !== null ? (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            aria-label={`Update to ${versionLabel} - tap to refresh`}
+            className={`${CARD} ${SETTINGS_ROW} w-full text-left`}
+          >
+            <Info
+              aria-hidden="true"
+              className="size-5 shrink-0 text-[var(--personal-text)]"
+              strokeWidth={1.75}
+            />
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="text-[15px] font-semibold text-[var(--personal-text)]">About</span>
+              <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
+                Version {versionNumber} · Update available
+              </span>
+            </span>
+            <span className="shrink-0 text-[13px] font-semibold text-[var(--personal-primary)]">
+              Update
+            </span>
+          </button>
+        ) : (
+          <div className={`${CARD} ${SETTINGS_ROW}`}>
+            <Info
+              aria-hidden="true"
+              className="size-5 shrink-0 text-[var(--personal-text)]"
+              strokeWidth={1.75}
+            />
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="text-[15px] font-semibold text-[var(--personal-text)]">About</span>
+              <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
+                {versionNumber === null ? "Development build" : `Version ${versionNumber}`}
+              </span>
+            </span>
+          </div>
+        )}
       </section>
 
       <section aria-labelledby="settings-developer">
