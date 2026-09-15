@@ -10,12 +10,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
   buildClaudeCapabilitiesProbeQueryOptions,
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
+  CLAUDE_USAGE_READ_TIMEOUT_MS,
   probeClaudeCapabilities,
 } from "./ClaudeProvider.ts";
 
@@ -189,8 +192,48 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
   );
 });
 
-it.effect("preserves initialized capabilities when optional usage times out", () =>
-  Effect.gen(function* () {
+/** Structured fields of every log line, so a test can find the one it expects. */
+const captureLogFields = () => {
+  const fields: Array<Record<string, unknown>> = [];
+  const logger = Logger.make<unknown, void>((options) => {
+    const parts = Array.isArray(options.message) ? options.message : [options.message];
+    for (const part of parts) {
+      if (typeof part === "object" && part !== null) fields.push(part as Record<string, unknown>);
+    }
+  });
+  return { fields, layer: Logger.layer([logger], { mergeWithExisting: false }) };
+};
+
+it.effect("logs why a usage read failed and still returns the account", () => {
+  const logs = captureLogFields();
+  return Effect.gen(function* () {
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+      () =>
+        ({
+          initializationResult: async () => ({
+            account: { email: "dev@example.com", subscriptionType: "max", tokenSource: "oauth" },
+            commands: [],
+          }),
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () =>
+            Promise.reject(new Error("get_usage failed: 429 rate_limit_error")),
+        }) as unknown as ReturnType<typeof ClaudeSdk.query>,
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const capabilities = yield* probeClaudeCapabilities(
+      decodeClaudeSettings({ binaryPath: "claude" }),
+    );
+    assert.equal(capabilities?.subscriptionType, "max");
+    assert.equal(capabilities?.usage, undefined);
+    const failure = logs.fields.find((field) => "timeoutMs" in field);
+    assert.exists(failure);
+    assert.equal(failure.timedOut, false);
+    assert.include(String(failure.error), "429 rate_limit_error");
+  }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, logs.layer)));
+});
+
+it.effect("preserves initialized capabilities when optional usage times out", () => {
+  const logs = captureLogFields();
+  return Effect.gen(function* () {
     const usageStarted = yield* Deferred.make<void>();
     let abortSignal: AbortSignal | undefined;
     const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
@@ -211,7 +254,7 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
       decodeClaudeSettings({ binaryPath: "claude" }),
     ).pipe(Effect.forkChild);
     yield* Deferred.await(usageStarted);
-    yield* TestClock.adjust("4 seconds");
+    yield* TestClock.adjust(`${CLAUDE_USAGE_READ_TIMEOUT_MS} millis`);
     const capabilities = yield* Fiber.join(probe);
     assert.equal(capabilities?.email, "dev@example.com");
     assert.equal(capabilities?.subscriptionType, "pro");
@@ -221,5 +264,11 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
     ]);
     assert.equal(capabilities?.usage, undefined);
     assert.equal(abortSignal?.aborted, true);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
+    const failure = logs.fields.find((field) => "timeoutMs" in field);
+    assert.exists(failure);
+    assert.equal(failure.timedOut, true);
+    assert.equal(failure.timeoutMs, CLAUDE_USAGE_READ_TIMEOUT_MS);
+    assert.equal(failure.elapsedMs, CLAUDE_USAGE_READ_TIMEOUT_MS);
+    assert.equal(failure.error, "timed out");
+  }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, logs.layer)));
+});
