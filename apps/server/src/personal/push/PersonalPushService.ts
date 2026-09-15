@@ -145,7 +145,12 @@ export function pushPayloadForTask(
         ? `${botName} hit a problem`
         : `${botName} finished`;
   const body = task.title.length > 120 ? `${task.title.slice(0, 117)}...` : task.title;
-  return { title, body, url: `/tasks/${task.taskId}`, tag: `task-${task.taskId}` };
+  // Take control lives in the bot's chat, so browser help opens the chat.
+  const url =
+    task.status === "waiting_for_browser" && task.threadId !== null
+      ? `/bots/${encodeURIComponent(task.botId)}/${encodeURIComponent(task.threadId)}`
+      : `/tasks/${task.taskId}`;
+  return { title, body, url, tag: `task-${task.taskId}` };
 }
 
 const SubscriptionRow = Schema.Struct({

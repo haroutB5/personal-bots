@@ -21,7 +21,10 @@ describe("personalBotSystemInstructions", () => {
     assert.include(text, "Never write memory to files");
     assert.include(text, "ask for them with request_secret");
     assert.include(text, "use your browser (preview) tools");
-    assert.include(text, "Computer tab");
+    // QA v1.10.0 BUG-6: the Computer tab is gone and resume is automatic.
+    assert.include(text, "browser panel in this chat");
+    assert.include(text, "You continue automatically when they return control");
+    assert.notInclude(text, "Computer tab");
   });
 
   it("still gives a bot with blank instructions and title its name and the app rules", () => {

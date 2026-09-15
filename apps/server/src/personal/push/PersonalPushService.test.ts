@@ -5,6 +5,7 @@ import {
   PersonalBotId,
   PersonalTaskId,
   ProviderInstanceId,
+  ThreadId,
   type PersonalTask,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -212,12 +213,15 @@ it.effect("browser help uses a specific needs-help notification", () => {
     yield* seedBot;
     const push = yield* PersonalPushService.PersonalPushService;
     yield* push.subscribe(subscription("https://web.push.apple.com/browser-help"));
-    yield* push.notifyTask(yield* makeTask({ status: "waiting_for_browser" }));
+    yield* push.notifyTask(
+      yield* makeTask({ status: "waiting_for_browser", threadId: ThreadId.make("thread-help") }),
+    );
     yield* push.drain;
 
-    expect(JSON.parse((yield* outbox)[0]!.payload).title).toBe(
-      "Assistant needs your help in the browser",
-    );
+    const payload = JSON.parse((yield* outbox)[0]!.payload);
+    expect(payload.title).toBe("Assistant needs your help in the browser");
+    // QA v1.10.0 BUG-7: Take control lives in the chat, not on the task page.
+    expect(payload.url).toBe(`/bots/${BOT}/thread-help`);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 

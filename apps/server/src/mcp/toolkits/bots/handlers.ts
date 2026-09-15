@@ -289,7 +289,7 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(readable));
         return {
           requested: true as const,
-          note: "The user has been asked to take control. Tell them what you need in one sentence, then end your turn.",
+          note: "The user has been asked to take control from the browser panel in this chat. Tell them in one sentence what to do there, then end your turn. You continue automatically when they return control; do not ask them to tell you.",
         };
       }),
     // Which thread opened the browser does not gate this: the browser is
