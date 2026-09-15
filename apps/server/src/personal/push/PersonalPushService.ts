@@ -23,6 +23,7 @@ import {
   type PersonalPushSettings,
   type PersonalPushSubscribeInput,
   type PersonalTask,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
@@ -39,6 +40,7 @@ import {
   type VapidKeyPair,
   type WebPushRequest,
 } from "./webPushCrypto.ts";
+import { ViewingPresence } from "./viewingPresence.ts";
 
 export const PERSONAL_PUSH_VAPID_SECRET = "personal-push-vapid";
 const PREFERENCES_META_KEY = "pushPreferences";
@@ -218,6 +220,16 @@ export class PersonalPushService extends Context.Service<
     ) => Effect.Effect<PersonalPushPreferences, PersonalPushError>;
     /** Queues the notification a task transition earns (deduped per transition). */
     readonly notifyTask: (task: PersonalTask) => Effect.Effect<void>;
+    /**
+     * One connection says which chat it has open and visible (null = none).
+     * Notifications for that chat are held back while it is being read.
+     */
+    readonly reportViewing: (input: {
+      readonly connectionId: string;
+      readonly threadId: ThreadId | null;
+    }) => Effect.Effect<void>;
+    /** The connection went away: it views nothing. */
+    readonly dropConnection: (connectionId: string) => Effect.Effect<void>;
     /** Queues the one "provider is failing for your bots" alert for this version. */
     readonly notifyProviderBroken: (input: {
       readonly instanceId: string;
@@ -541,10 +553,35 @@ export const make = Effect.gen(function* () {
       .setMeta({ key: PREFERENCES_META_KEY, value: encodePreferences(preferences) })
       .pipe(Effect.as(preferences), storageFailure("preferences"));
 
+  const presence = new ViewingPresence();
+
+  const reportViewing: PersonalPushService["Service"]["reportViewing"] = (input) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      presence.report(input.connectionId, input.threadId, DateTime.toEpochMillis(now));
+    });
+
+  const dropConnection: PersonalPushService["Service"]["dropConnection"] = (connectionId) =>
+    Effect.sync(() => presence.drop(connectionId));
+
   const notifyTask: PersonalPushService["Service"]["notifyTask"] = (task) =>
     Effect.gen(function* () {
       const kind = pushEventForTask(task);
       if (kind === null) return;
+      // The user is reading this chat right now: they can see it happen, so a
+      // notification would only buzz the phone in their hand. Tasks with no
+      // chat of their own (and provider alerts) always notify.
+      if (task.threadId !== null) {
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+        if (presence.isViewing(task.threadId, nowMs)) {
+          yield* Effect.logDebug("personal notification held back: the chat is open", {
+            taskId: task.taskId,
+            threadId: task.threadId,
+            kind,
+          });
+          return;
+        }
+      }
       const preferences = yield* readPreferences;
       if (!preferences[PREFERENCE_FOR[kind]]) return;
       const bot = yield* botRepository.getBotById({ botId: task.botId });
@@ -606,6 +643,8 @@ export const make = Effect.gen(function* () {
     test,
     setPreferences,
     notifyTask,
+    reportViewing,
+    dropConnection,
     notifyProviderBroken,
     sweep: kick,
     drain: worker.drain,
