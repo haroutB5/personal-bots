@@ -153,6 +153,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       this is false — no update would ever repaint it. Absent on older
       servers, which may still publish, so only an explicit false skips. */
   agentActivityPublishing: Schema.optionalKey(Schema.Boolean),
+  /** Server runs repository clones for new projects in the background and
+      streams their progress (`projectClone.*`, `subscribeProjectClones`).
+      Absent on older servers, where clients must clone with the blocking
+      `sourceControl.cloneRepository` call instead. */
+  projectCloneTracking: Schema.optionalKey(Schema.Boolean),
   /** Server detects `platform.machine` and persists the `environmentIcon`
       setting. Older servers drop the key on write, so clients show the
       picker inert rather than offering a choice that would never stick. */
@@ -192,6 +197,8 @@ export type RepositoryIdentityLocator = typeof RepositoryIdentityLocator.Type;
 export const RepositoryIdentity = Schema.Struct({
   canonicalKey: TrimmedNonEmptyString,
   locator: RepositoryIdentityLocator,
+  /** Repository browser URL resolved from the server's configured hosting account. */
+  webUrl: Schema.optionalKey(TrimmedNonEmptyString),
   rootPath: Schema.optionalKey(TrimmedNonEmptyString),
   displayName: Schema.optionalKey(TrimmedNonEmptyString),
   provider: Schema.optionalKey(TrimmedNonEmptyString),

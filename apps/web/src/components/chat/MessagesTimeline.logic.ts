@@ -28,7 +28,13 @@ import {
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
-import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
+import type { QueuedComposerMessage } from "../../queuedMessageStore";
+import {
+  type MessageId,
+  type OrchestrationLatestTurn,
+  type TurnId,
+  type WorktreeSetupSnapshot,
+} from "@t3tools/contracts";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 
 const TIMELINE_MINIMAP_ITEM_SPACING = 8;
@@ -389,6 +395,22 @@ export type MessagesTimelineRow =
       kind: "thinking";
       id: string;
       createdAt: string | null;
+    }
+  | {
+      kind: "worktree-setup";
+      id: string;
+      createdAt: string | null;
+      snapshot: WorktreeSetupSnapshot;
+      /** The agent already started; render only the script row under the turn header. */
+      embedded: boolean;
+    }
+  | {
+      kind: "queued-message";
+      id: string;
+      createdAt: string;
+      queuedMessage: QueuedComposerMessage;
+      /** Oldest queued message, the one the next boundary sends. */
+      isNext: boolean;
     };
 
 export interface StableMessagesTimelineRowsState {
@@ -577,7 +599,6 @@ function deriveTurnFolds(input: {
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestTurn: TimelineLatestTurn | null;
   unfoldedTurnIds: ReadonlySet<TurnId>;
-  liveAgentTaskIds: ReadonlySet<string> | undefined;
 }): ReadonlyMap<string, TurnFold> {
   interface TurnGroup {
     entries: Array<TimelineEntry>;
@@ -658,26 +679,12 @@ function deriveTurnFolds(input: {
       if (!isCompaction && index > terminalEntryIndex && !isSingleTrailingActivity) {
         continue;
       }
-      // User input stays visible after the surrounding work settles.
-      if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) {
+      // User input and subagent batches stay visible after their turn settles.
+      if (
+        entry.kind === "work" &&
+        (entry.entry.questionAnswer !== undefined || entry.entry.agentSpawn !== undefined)
+      ) {
         continue;
-      }
-      // Workflows outlive their launching turn (dynamic spawns, background
-      // execution), so a spawn row with a live member or coordinator stays
-      // outside the fold instead of hiding a still-running fleet. Settled
-      // spawns fold with the rest of the turn. Without a live set (no agent
-      // panel model, as in the held paint during a thread switch) every
-      // spawn row stays out.
-      if (entry.kind === "work" && entry.entry.agentSpawn !== undefined) {
-        const live = input.liveAgentTaskIds;
-        const { workflowId, agentTaskIds } = entry.entry.agentSpawn;
-        if (
-          live === undefined ||
-          (workflowId !== null && live.has(workflowId)) ||
-          agentTaskIds.some((taskId) => live.has(taskId))
-        ) {
-          continue;
-        }
       }
       hiddenEntryIds.add(entry.id);
     }
@@ -870,13 +877,12 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt: string | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   supportsConversationRollback: boolean;
-  /**
-   * Task ids of subagents still working; their spawn row stays outside turn
-   * folds. Undefined means unknown, which keeps every spawn row out.
-   */
+  /** Task ids of subagents still working, used by the active tool indicator. */
   liveAgentTaskIds?: ReadonlySet<string> | undefined;
-  /** Spawn rows the user opened stay visible while their turn fold is collapsed. */
-  expandedSpawnEntryIds?: ReadonlySet<string> | undefined;
+  /** Live bootstrap progress. Renders a stage card under the first user message. */
+  worktreeSetup?: WorktreeSetupSnapshot | null;
+  /** Messages sent during the running turn, rendered after the live rows. */
+  queuedMessages?: ReadonlyArray<QueuedComposerMessage>;
 }): MessagesTimelineRow[] {
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
   for (const summary of input.turnDiffSummaries) {
@@ -911,15 +917,11 @@ export function deriveMessagesTimelineRows(input: {
     terminalAssistantMessageIds,
     latestTurn: input.latestTurn ?? null,
     unfoldedTurnIds: activeVisualResponseTurnIds,
-    liveAgentTaskIds: input.liveAgentTaskIds,
   });
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
     if (!input.expandedTurnIds?.has(fold.turnId)) {
       for (const entryId of fold.hiddenEntryIds) {
-        // An opened spawn row keeps its fold membership but is not pulled
-        // away mid-read when its last member settles.
-        if (input.expandedSpawnEntryIds?.has(entryId)) continue;
         collapsedEntryIds.add(entryId);
       }
     }
@@ -1271,8 +1273,65 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
+  // Until the agent's turn is live, the setup card takes the place of the
+  // working and thinking placeholders. It stays after a failed or cancelled
+  // setup so the outcome and its actions remain visible until the thread
+  // state moves on. "Live" means the turn is in the timeline, not just that
+  // the server dispatched it: the card must not collapse in the gap between.
+  const setupHandedOff =
+    input.worktreeSetup !== null &&
+    input.worktreeSetup !== undefined &&
+    worktreeSetupAgentStarted(input.worktreeSetup) &&
+    input.latestTurn?.startedAt != null;
+  if (input.worktreeSetup && !setupHandedOff) {
+    const setupRow = {
+      kind: "worktree-setup",
+      id: WORKTREE_SETUP_ROW_ID,
+      createdAt: input.worktreeSetup.startedAt,
+      snapshot: input.worktreeSetup,
+      embedded: false,
+    } as const;
+    // Sit directly under the first user message: a finished snapshot can
+    // outlive the first assistant reply, and it belongs to the send, not the
+    // end of the thread.
+    const firstUserRowIndex = nextRows.findIndex(
+      (row) => row.kind === "message" && row.message.role === "user",
+    );
+    if (firstUserRowIndex >= 0) {
+      nextRows.splice(firstUserRowIndex + 1, 0, setupRow);
+    } else {
+      nextRows.push(setupRow);
+    }
+    return attachTrailingToolGroupsToAssistant(nextRows);
+  }
+
   if (input.isWorking && activeTurnHeaderIndex === input.timelineEntries.length) {
     appendWorkingRow();
+  }
+  // An async setup script outlives the handoff. The turn owns the header, so
+  // the script's row sits first under it, ahead of the agent's own work. A
+  // script that already finished (or never ran) has nothing left to show.
+  const setupScriptStage = input.worktreeSetup?.stages.find((stage) => stage.id === "setup-script");
+  if (
+    input.worktreeSetup &&
+    setupHandedOff &&
+    (setupScriptStage?.status === "running" || setupScriptStage?.status === "failed")
+  ) {
+    const setupRow = {
+      kind: "worktree-setup",
+      id: WORKTREE_SETUP_ROW_ID,
+      createdAt: input.worktreeSetup.startedAt,
+      snapshot: input.worktreeSetup,
+      embedded: true,
+    } as const;
+    const workingRowIndex = nextRows.findIndex((row) => row.kind === "working");
+    if (workingRowIndex >= 0) {
+      nextRows.splice(workingRowIndex + 1, 0, setupRow);
+    } else {
+      // The turn already finished (or has not been dispatched yet): the row
+      // trails the reply so a still-running script stays visible after it.
+      nextRows.push(setupRow);
+    }
   }
   if (input.isWorking && (!hasActivityRow || latestToolFailed)) {
     nextRows.push({
@@ -1281,8 +1340,24 @@ export function deriveMessagesTimelineRows(input: {
       createdAt: input.activeTurnStartedAt,
     });
   }
+  const rows = attachTrailingToolGroupsToAssistant(nextRows);
+  input.queuedMessages?.forEach((queuedMessage, index) => {
+    rows.push({
+      kind: "queued-message",
+      id: `queued-message:${queuedMessage.id}`,
+      createdAt: queuedMessage.createdAt,
+      queuedMessage,
+      isNext: index === 0,
+    });
+  });
+  return rows;
+}
 
-  return attachTrailingToolGroupsToAssistant(nextRows);
+export const WORKTREE_SETUP_ROW_ID = "worktree-setup-row";
+
+/** True once the bootstrap handed off to the agent (async setup script may still run). */
+export function worktreeSetupAgentStarted(snapshot: WorktreeSetupSnapshot): boolean {
+  return snapshot.stages.some((stage) => stage.id === "agent" && stage.status === "done");
 }
 
 type MessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimelineRows>[0];
@@ -1387,6 +1462,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "working":
     case "thinking":
       return a.createdAt === (b as typeof a).createdAt;
+    case "worktree-setup":
+      return a.snapshot === (b as typeof a).snapshot;
 
     case "assistant-meta": {
       const bm = b as typeof a;
@@ -1410,6 +1487,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "queued-message": {
+      const bq = b as typeof a;
+      return a.queuedMessage === bq.queuedMessage && a.isNext === bq.isNext;
+    }
 
     case "work": {
       const bw = b as typeof a;

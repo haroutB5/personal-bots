@@ -78,6 +78,9 @@ import Migration0063 from "./Migrations/063_PersonalLogins.ts";
 import Migration0064 from "./Migrations/064_PersonalRoutineEventTriggers.ts";
 import Migration0065 from "./Migrations/065_PersonalBrowserProtection.ts";
 import Migration0066 from "./Migrations/066_DropPersonalLoginGrants.ts";
+// Upstream T3 Code migrations, appended at our next free id. The id map lives in
+// ./upstreamMigrationIds.ts; the file keeps upstream's name so later merges stay clean.
+import MigrationUpstream0052 from "./Migrations/052_ProjectionThreadTitleState.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -156,8 +159,12 @@ const migrationEntries = [
   [64, "PersonalRoutineEventTriggers", Migration0064],
   [65, "PersonalBrowserProtection", Migration0065],
   [66, "DropPersonalLoginGrants", Migration0066],
-  // Ids 052+ are contiguous. The migrator runs any id above the latest applied
-  // one, so a new migration must take the next free id; never deploy a gap.
+  // Upstream 052_ProjectionThreadTitleState, renumbered (see upstreamMigrationIds.ts).
+  [67, "ProjectionThreadTitleState", MigrationUpstream0052],
+  // Ids are contiguous. The migrator runs only ids above the latest applied
+  // one, so every new migration (ours or upstream's) takes the next free id;
+  // never deploy a gap. Upstream migrations keep their file name and are
+  // recorded in upstreamMigrationIds.ts. Migrations.registry.test.ts enforces this.
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

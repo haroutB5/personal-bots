@@ -30,7 +30,6 @@ import { Route as SettingsConnectionsRouteImport } from './routes/settings.conne
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
-import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as PersonalTasksRouteImport } from './routes/_personal.tasks'
 import { Route as PersonalFilesRouteImport } from './routes/_personal.files'
 import { Route as PersonalComputerRouteImport } from './routes/_personal.computer'
@@ -156,11 +155,6 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   path: '/projects/$projectKey',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ConnectCallbackRoute = ConnectCallbackRouteImport.update({
-  id: '/connect_/callback',
-  path: '/connect/callback',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const PersonalTasksRoute = PersonalTasksRouteImport.update({
   id: '/tasks',
   path: '/tasks',
@@ -282,7 +276,6 @@ export interface FileRoutesByFullPath {
   '/computer': typeof PersonalComputerRoute
   '/files': typeof PersonalFilesRoute
   '/tasks': typeof PersonalTasksRoute
-  '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -324,7 +317,6 @@ export interface FileRoutesByTo {
   '/computer': typeof PersonalComputerRoute
   '/files': typeof PersonalFilesRoute
   '/tasks': typeof PersonalTasksRoute
-  '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -368,7 +360,6 @@ export interface FileRoutesById {
   '/_personal/computer': typeof PersonalComputerRoute
   '/_personal/files': typeof PersonalFilesRoute
   '/_personal/tasks': typeof PersonalTasksRoute
-  '/connect_/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -413,7 +404,6 @@ export interface FileRouteTypes {
     | '/computer'
     | '/files'
     | '/tasks'
-    | '/connect/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -455,7 +445,6 @@ export interface FileRouteTypes {
     | '/computer'
     | '/files'
     | '/tasks'
-    | '/connect/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -498,7 +487,6 @@ export interface FileRouteTypes {
     | '/_personal/computer'
     | '/_personal/files'
     | '/_personal/tasks'
-    | '/connect_/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -538,7 +526,6 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRouteWithChildren
   UsageRoute: typeof UsageRoute
   WelcomeRoute: typeof WelcomeRoute
-  ConnectCallbackRoute: typeof ConnectCallbackRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
 }
 
@@ -689,13 +676,6 @@ declare module '@tanstack/react-router' {
       path: '/projects/$projectKey'
       fullPath: '/projects/$projectKey'
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/connect_/callback': {
-      id: '/connect_/callback'
-      path: '/connect/callback'
-      fullPath: '/connect/callback'
-      preLoaderRoute: typeof ConnectCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_personal/tasks': {
@@ -945,7 +925,6 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRouteWithChildren,
   UsageRoute: UsageRoute,
   WelcomeRoute: WelcomeRoute,
-  ConnectCallbackRoute: ConnectCallbackRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
 }
 export const routeTree = rootRouteImport

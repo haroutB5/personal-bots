@@ -249,7 +249,10 @@ describe("attachmentUploadQueue", () => {
   });
 
   it("uploads generic files and sends file attachment references", async () => {
-    const file = makeFile("report");
+    const file = {
+      ...makeFile("report"),
+      source: { _tag: "pasted-text" as const },
+    };
     startAttachmentUpload({ environmentId: firstEnvironment, image: file });
     await flushUploadStart();
 
@@ -279,6 +282,7 @@ describe("attachmentUploadQueue", () => {
         name: "report.pdf",
         mimeType: "application/pdf",
         sizeBytes: 3,
+        source: { _tag: "pasted-text" },
       },
     ]);
   });
