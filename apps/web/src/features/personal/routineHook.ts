@@ -62,5 +62,5 @@ export function routineTriggerStatusLabel(routine: RoutineTriggerFields): string
   if (!routine.enabled) return "Paused";
   return routine.lastFiredAt === null
     ? "Waiting for its first event"
-    : `Last fired ${formatLocalDateTime(DateTime.toEpochMillis(routine.lastFiredAt), routine.timeZone)}`;
+    : `Last fired ${formatLocalDateTime(DateTime.toEpochMillis(routine.lastFiredAt))}`;
 }

@@ -184,10 +184,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: PersonalRoutineI
               <DetailRow label="Last fired">
                 {routine.lastFiredAt === null
                   ? "Never"
-                  : formatLocalDateTime(
-                      DateTime.toEpochMillis(routine.lastFiredAt),
-                      routine.timeZone,
-                    )}
+                  : formatLocalDateTime(DateTime.toEpochMillis(routine.lastFiredAt))}
               </DetailRow>
               <DetailRow label="Status">
                 {routine.enabled ? "Listening for events" : "Paused"}

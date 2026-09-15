@@ -97,11 +97,15 @@ export function formatLocalDateTime(
   return `${pick("weekday")} ${pick("day")} ${month}, ${pick("hour")}:${pick("minute")}`;
 }
 
-/** Scheduled routines only: an event routine has no next run. See `routineHook`. */
+/**
+ * Scheduled routines only: an event routine has no next run. See `routineHook`.
+ * Shown in the user's zone like every other time in the app; the routine's own
+ * zone decides when it fires, not how the instant reads.
+ */
 export function routineNextRunLabel(
-  routine: Pick<PersonalRoutine, "enabled" | "nextDueAt" | "timeZone">,
+  routine: Pick<PersonalRoutine, "enabled" | "nextDueAt">,
 ): string {
   if (!routine.enabled) return "Paused";
   if (routine.nextDueAt === null) return "No more runs";
-  return `Next: ${formatLocalDateTime(DateTime.toEpochMillis(routine.nextDueAt), routine.timeZone)}`;
+  return `Next: ${formatLocalDateTime(DateTime.toEpochMillis(routine.nextDueAt))}`;
 }

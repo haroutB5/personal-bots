@@ -62,4 +62,14 @@ describe("formatLocalDateTime", () => {
     expect(routineNextRunLabel({ ...routine, enabled: false })).toBe("Paused");
     expect(routineNextRunLabel({ ...routine, nextDueAt: null })).toBe("No more runs");
   });
+
+  // QA v1.10.0 BUG-9: a UTC routine read "Thu 17 Sep, 23:00" to a user in BST.
+  it("shows a routine's next run in the user's zone, not the routine's", () => {
+    const utc = {
+      enabled: true,
+      nextDueAt: DateTime.makeUnsafe("2026-09-17T23:00:00Z"),
+      timeZone: "UTC",
+    } as PersonalRoutine;
+    expect(routineNextRunLabel(utc)).toBe("Next: Fri 18 Sep, 00:00");
+  });
 });

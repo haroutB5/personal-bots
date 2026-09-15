@@ -399,10 +399,12 @@ export function ConversationScreen({
                     className={cn("size-2 shrink-0 rounded-full", STATE_DOT[conversationState])}
                   />
                   {bot.title !== "" ? (
-                    <>
-                      <span className="min-w-0 truncate">{bot.title}</span>
-                      <span aria-hidden="true">·</span>
-                    </>
+                    // The separator truncates with the title: a squeezed title
+                    // must not leave a lone "·" beside the dot.
+                    <span className="min-w-0 truncate">
+                      {bot.title}
+                      <span aria-hidden="true"> ·</span>
+                    </span>
                   ) : null}
                   <span
                     className={
