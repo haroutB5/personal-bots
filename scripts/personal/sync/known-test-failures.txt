@@ -1,0 +1,12 @@
+# Test failures that are pre-existing on this Windows laptop, not caused by a
+# merge. upstream-sync.ps1 ignores a FAIL line that contains one of these
+# substrings; any other FAIL line makes the gate red. Remove an entry once it
+# passes here. One substring per line; # starts a comment.
+
+# Symlink creation needs Developer Mode / admin on Windows (EPERM).
+CursorProvider.test.ts > Cursor skills > treats a symlinked skill outside the root as a package boundary
+# Expects a JSON-escaped Windows path with single backslashes.
+userInputAttachments.test.ts > question answer paths > keeps selected values intact and appends an actual readable server path
+# Environment-dependent (known before the fork's first sync).
+connectCliAuth.test.ts
+McpHttpServer.test.ts > saves the snapshot PNG

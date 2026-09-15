@@ -1,0 +1,54 @@
+{
+  "$comment": "Structured output for the upstream-sync agents (claude -p --json-schema, codex exec --output-schema). Strict: every property required, no extra keys; use [] or \"\" when a field does not apply.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "reasons", "relevant", "decisions", "userChanges", "pushText"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["ok", "resolved", "nothing_relevant", "needs_judgment"],
+      "description": "triage: ok | nothing_relevant | needs_judgment. resolve: resolved | needs_judgment. needs_judgment means the merge itself cannot be done safely by a script (not a product decision: those go in decisions)."
+    },
+    "reasons": { "type": "array", "items": { "type": "string" } },
+    "relevant": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sha", "title", "class", "benefit", "risk"],
+        "properties": {
+          "sha": { "type": "string" },
+          "title": { "type": "string" },
+          "class": { "type": "string", "enum": ["fix", "improvement", "inert", "needs_decision"] },
+          "benefit": { "type": "string" },
+          "risk": { "type": "string" }
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "description": "Upstream changes the job must NOT ship without the user: held back, everything else ships.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "shas", "area", "whatChanged", "options", "recommendation", "holdBy"],
+        "properties": {
+          "id": { "type": "string", "description": "short kebab-case key, stable across weeks" },
+          "shas": { "type": "array", "items": { "type": "string" } },
+          "area": { "type": "string" },
+          "whatChanged": { "type": "string" },
+          "options": { "type": "array", "items": { "type": "string" } },
+          "recommendation": { "type": "string" },
+          "holdBy": {
+            "type": "string",
+            "enum": ["revert", "keep_ours"],
+            "description": "revert: git revert the listed upstream commits after the merge. keep_ours: the resolve agent keeps our behaviour with the smallest pin."
+          }
+        }
+      }
+    },
+    "userChanges": { "type": "array", "items": { "type": "string" } },
+    "summary": { "type": "string", "maxLength": 3000 },
+    "pushText": { "type": "string", "maxLength": 600 }
+  }
+}

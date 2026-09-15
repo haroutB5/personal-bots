@@ -1,0 +1,4 @@
+{
+  "$comment": "Upstream changes held back for the owner's decision by the weekly upstream sync (scripts/personal/upstream-sync.ps1). Each entry was reverted after the merge (holdBy=revert, revertCommit set) or kept on our side (holdBy=keep_ours). To ship one: git revert <revertCommit> (or undo the pin), then remove the entry.",
+  "held": []
+}

@@ -1,0 +1,832 @@
+<#
+.SYNOPSIS
+Weekly upstream sync: merges pingdotgg/t3code main into personal-bots/main,
+gates, builds, rehearses the migrations, deploys, and rolls back on a failed
+smoke. Fully automatic (the owner's decision, 2026-09-15).
+
+.DESCRIPTION
+A deterministic script owns every step that can hurt: fetch, merge, gates,
+build, deploy, rollback, push and notify. An LLM is called only for judgment:
+the triage (claude -p, read-only) and conflict / red-gate repair (codex exec,
+fallback claude -p), inside this sync worktree, with no push or deploy tools.
+The script re-runs every gate itself; it never trusts an agent's claim.
+
+Policy:
+- Fixes and improvements ship with no question.
+- Upstream changes that need a product decision from the owner (the triage's
+  `decisions`) are held back: reverted after the merge (or kept on our side by
+  the resolve agent), recorded in scripts\personal\sync\held-upstream.json, and
+  the owner gets a short decision request. Everything else still ships.
+- Stop without deploying on: red gates after one repair round, a merge the
+  triage marks needs_judgment, a non-additive or modified upstream migration,
+  too many commits/conflicts, a moved main, or a failed build/rehearsal.
+- Deploy when every gate passes; a failed smoke rolls back to the previous
+  release (binary only; the database is never restored automatically).
+
+-Mode Auto     deploy + push on green (the scheduled default).
+-Mode DryRun   stop after build + rehearsal; notify "ready to ship".
+-PreflightOnly steps 0-1 only: read-only checks and what a run would do.
+
+Runs from the sync worktree (default C:\Claude\AI\personal-bots-sync), never
+from the main checkout. Runtime state, logs and the notify token live in
+%USERPROFILE%\.personal-bots\upstream-sync (never in git).
+Windows PowerShell 5.1 compatible.
+
+.EXAMPLE
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\upstream-sync.ps1 -PreflightOnly
+#>
+[CmdletBinding()]
+param(
+    [ValidateSet('Auto', 'DryRun')][string]$Mode = 'Auto',
+    [switch]$Force,
+    [switch]$PreflightOnly,
+    [string]$MainRepo = 'C:\Claude\AI\personal-bots',
+    [string]$Node
+)
+
+. (Join-Path $PSScriptRoot 'common.ps1')
+$OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+
+$SyncRepo = $PbRepoRoot
+$SyncDir = Join-Path $PSScriptRoot 'sync'
+$SyncHome = Join-Path $PbHome 'upstream-sync'
+$StateFile = Join-Path $SyncHome 'state.json'
+$LockFile = Join-Path $SyncHome 'lock'
+$HookTokenFile = Join-Path $SyncHome 'hook-token'
+$UrgotAlerts = 'C:\Claude\AI\urgot\data\alerts\personal-bots-sync.md'
+$SchemaFile = Join-Path $SyncDir 'verdict.schema.json'
+$HeldFile = Join-Path $SyncDir 'held-upstream.json'
+$KnownFailuresFile = Join-Path $SyncDir 'known-test-failures.txt'
+$Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$RunDir = Join-Path (Join-Path $SyncHome 'runs') $Stamp
+$OriginMain = 'origin/personal-bots/main'
+$UpstreamMain = 'upstream/main'
+$MaxCommits = 400
+$MaxConflicts = 15
+$AgentTimeoutSeconds = 45 * 60
+$RelevantPaths = @(
+    'apps/server/', 'apps/web/', 'packages/contracts/', 'packages/shared/', 'packages/client-runtime/',
+    'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'patches/', 'vite.config.ts', 'scripts/lib/'
+)
+$paths = Get-PbPaths -Root dev
+$nodeExe = Resolve-NodeExe -Node $Node
+$powershellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$env:PATH = "$(Join-Path $SyncRepo 'node_modules\.bin');$(Split-Path -Parent $nodeExe);$env:PATH"
+
+$script:LogToFile = $false
+$script:StopResult = $null
+$script:StopMessage = $null
+$script:Triage = $null
+
+# ---------------------------------------------------------------- helpers
+
+function Write-SyncLog([string]$Text) {
+    $line = '{0} {1}' -f (Get-Date -Format 'HH:mm:ss'), $Text
+    Write-Host $line
+    if ($script:LogToFile) { Add-Content -LiteralPath (Join-Path $RunDir 'sync.log') -Value $line -Encoding UTF8 }
+}
+
+function Stop-Sync([string]$Result, [string]$Message) {
+    $script:StopResult = $Result
+    $script:StopMessage = $Message
+    throw "SYNC-STOP: $Result"
+}
+
+# Quotes one argument by the Windows argv rules (CommandLineToArgvW), so long
+# prompts, JSON and quotes reach native programs intact (PS 5.1 does not escape).
+function ConvertTo-WinArg([string]$Value) {
+    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') { return $Value }
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append('"')
+    $slashes = 0
+    foreach ($ch in $Value.ToCharArray()) {
+        if ($ch -eq '\') { $slashes++; continue }
+        if ($ch -eq '"') {
+            [void]$builder.Append('\' * ($slashes * 2 + 1))
+            [void]$builder.Append('"')
+            $slashes = 0
+            continue
+        }
+        if ($slashes -gt 0) { [void]$builder.Append('\' * $slashes); $slashes = 0 }
+        [void]$builder.Append($ch)
+    }
+    [void]$builder.Append('\' * ($slashes * 2))
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
+function Invoke-Proc {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$ArgList = @(),
+        [string]$WorkingDirectory = $SyncRepo,
+        [string]$StdinText,
+        [int]$TimeoutSeconds = 3600,
+        [string]$LogPath
+    )
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $FilePath
+    $psi.Arguments = (@($ArgList | ForEach-Object { ConvertTo-WinArg ([string]$_) }) -join ' ')
+    $psi.WorkingDirectory = $WorkingDirectory
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $outTask = $proc.StandardOutput.ReadToEndAsync()
+    $errTask = $proc.StandardError.ReadToEndAsync()
+    if ($StdinText) {
+        $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($StdinText)
+        $proc.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+    }
+    $proc.StandardInput.Close()
+    $timedOut = $false
+    if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
+        $timedOut = $true
+        [void](Stop-PbProcessTree -ProcessId $proc.Id)
+        $proc.WaitForExit()
+    }
+    $out = $outTask.Result
+    $err = $errTask.Result
+    if ($LogPath) {
+        Set-Content -LiteralPath $LogPath -Value ($out + "`n--- stderr ---`n" + $err) -Encoding UTF8
+    }
+    $code = $proc.ExitCode
+    if ($timedOut) { $code = 124 }
+    return [pscustomobject]@{ Code = $code; Out = [string]$out; Err = [string]$err; TimedOut = $timedOut }
+}
+
+function Invoke-Git {
+    param([string[]]$GitArgs, [switch]$AllowFail, [string]$Repo = $SyncRepo)
+    $res = Invoke-Proc -FilePath 'git' -ArgList (@('-C', $Repo) + $GitArgs) -WorkingDirectory $Repo -TimeoutSeconds 1800
+    if ($res.Code -ne 0 -and -not $AllowFail) {
+        throw ("git {0} failed ({1}): {2}" -f ($GitArgs -join ' '), $res.Code, $res.Err.Trim())
+    }
+    return $res
+}
+
+function Get-GitText {
+    param([string[]]$GitArgs, [string]$Repo = $SyncRepo)
+    return (Invoke-Git -GitArgs $GitArgs -Repo $Repo).Out.Trim()
+}
+
+function Get-GitLines {
+    param([string[]]$GitArgs, [string]$Repo = $SyncRepo)
+    $text = (Invoke-Git -GitArgs $GitArgs -Repo $Repo).Out
+    return @($text -split "`r?`n" | Where-Object { $_.Length -gt 0 })
+}
+
+function Read-SyncState {
+    if (-not (Test-Path -LiteralPath $StateFile -PathType Leaf)) { return $null }
+    try { return (Get-Content -LiteralPath $StateFile -Raw | ConvertFrom-Json) } catch { return $null }
+}
+
+function Save-SyncState([hashtable]$Changes) {
+    $state = [ordered]@{
+        lastSyncedUpstream        = $null
+        lastRunAt                 = $null
+        lastResult                = $null
+        lastRelease               = $null
+        previousRelease           = $null
+        consecutivePreflightSkips = 0
+        mode                      = $Mode
+        lastRunDir                = $null
+    }
+    $old = Read-SyncState
+    if ($old) { foreach ($prop in $old.PSObject.Properties) { $state[$prop.Name] = $prop.Value } }
+    foreach ($key in $Changes.Keys) { $state[$key] = $Changes[$key] }
+    $state.lastRunAt = (Get-Date).ToUniversalTime().ToString('o')
+    $state.mode = $Mode
+    $state.lastRunDir = $RunDir
+    Set-Content -LiteralPath $StateFile -Value ($state | ConvertTo-Json -Depth 5) -Encoding UTF8
+}
+
+function Get-LiveRelease {
+    $state = Read-PbServerState -Paths $paths
+    if ($state -and $state.release) { return [string]$state.release }
+    return $null
+}
+
+function Get-RuntimePort {
+    $runtime = Read-PbRuntimeState -BaseDir $paths.BaseDir
+    if ($runtime -and $runtime.port) { return [int]$runtime.port }
+    return 38472
+}
+
+function Show-Toast([string]$Title, [string]$Text) {
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+        $icon = New-Object System.Windows.Forms.NotifyIcon
+        $icon.Icon = [System.Drawing.SystemIcons]::Warning
+        $icon.Visible = $true
+        $icon.ShowBalloonTip(15000, $Title, $Text, [System.Windows.Forms.ToolTipIcon]::Warning)
+        Start-Sleep -Seconds 16
+        $icon.Dispose()
+    } catch { }
+}
+
+# v1 notify path: POST the text to the "Sync reports" bot's event routine
+# (loopback only). The bot repeats it in its chat and the routine_result push
+# reaches the phone. Returns $true on 202.
+function Send-HookMessage([string]$Message) {
+    if (-not (Test-Path -LiteralPath $HookTokenFile -PathType Leaf)) { return $false }
+    $token = (Get-Content -LiteralPath $HookTokenFile -Raw).Trim()
+    if (-not $token) { return $false }
+    if ($Message.Length -gt 3000) { $Message = $Message.Substring(0, 2990) + ' [...]' }
+    $body = [System.Text.Encoding]::UTF8.GetBytes((@{ message = $Message } | ConvertTo-Json -Compress))
+    $uri = 'http://127.0.0.1:{0}/api/personal/hooks/{1}' -f (Get-RuntimePort), $token
+    for ($attempt = 0; $attempt -lt 2; $attempt++) {
+        try {
+            $response = Invoke-WebRequest -UseBasicParsing -Method Post -Uri $uri -Body $body -ContentType 'application/json' -TimeoutSec 20
+            if ($response.StatusCode -eq 202) { return $true }
+            return $false
+        } catch {
+            $status = $null
+            $wait = 35
+            if ($_.Exception.Response) {
+                $status = [int]$_.Exception.Response.StatusCode
+                $retryAfter = $_.Exception.Response.Headers['Retry-After']
+                if ($retryAfter) { $wait = [math]::Min(60, [int]$retryAfter + 1) }
+            }
+            if ($status -ne 429) { return $false }
+            Start-Sleep -Seconds $wait
+        }
+    }
+    return $false
+}
+
+function Send-Notify([string]$Message, [switch]$Alert) {
+    Write-SyncLog "NOTIFY: $Message"
+    if ($script:LogToFile) { Set-Content -LiteralPath (Join-Path $RunDir 'summary.md') -Value $Message -Encoding UTF8 }
+    $sent = $false
+    if (-not $Alert) { $sent = Send-HookMessage -Message $Message }
+    if (-not $sent) {
+        # Fallback when the server is down or the routine is not set up:
+        # ALERT.md in the run, the orchestrator's alert file (surfaced in its
+        # greeting digest), and a Windows toast. Never Telegram.
+        if ($script:LogToFile) { Set-Content -LiteralPath (Join-Path $RunDir 'ALERT.md') -Value $Message -Encoding UTF8 }
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $UrgotAlerts) | Out-Null
+            Add-Content -LiteralPath $UrgotAlerts -Value ("- {0} {1} (run: {2})" -f (Get-Date -Format 'yyyy-MM-dd HH:mm'), ($Message -replace "`r?`n", ' '), $RunDir) -Encoding UTF8
+        } catch { }
+        $short = $Message
+        if ($short.Length -gt 240) { $short = $short.Substring(0, 237) + '...' }
+        Show-Toast -Title 'Bots upstream sync' -Text $short
+    }
+}
+
+function Get-KnownFailures {
+    if (-not (Test-Path -LiteralPath $KnownFailuresFile)) { return @() }
+    return @(Get-Content -LiteralPath $KnownFailuresFile | ForEach-Object { $_.Trim() } |
+            Where-Object { $_.Length -gt 0 -and -not $_.StartsWith('#') })
+}
+
+function Get-VitestFailures([string]$Output) {
+    $clean = $Output -replace "\x1b\[[0-9;]*m", ''
+    $lines = @($clean -split "`r?`n" | Where-Object { $_ -match '^\s*FAIL\s+\S+' } |
+            ForEach-Object { ($_ -replace '^\s*FAIL\s+', '').Trim() } | Sort-Object -Unique)
+    return $lines
+}
+
+# ---------------------------------------------------------------- gates
+
+function Get-GateList([string]$Base, [string]$New) {
+    $serverTests = @('src/personal', 'src/mcp/toolkits', 'src/provider', 'src/persistence',
+        'src/orchestration/Layers/ProviderCommandReactor.test.ts')
+    $touched = @()
+    if ($Base -and $New) {
+        $touched = @(Get-GitLines -GitArgs @('diff', '--name-only', $Base, $New, '--',
+                'apps/server/src/orchestration', 'apps/server/src/usage', 'apps/server/src/cli', 'apps/server/src/project') |
+                Where-Object { $_ -match '\.test\.ts$' } | ForEach-Object { $_.Substring('apps/server/'.Length) })
+    }
+    if ($touched.Count -gt 40) {
+        $serverTests += @('src/orchestration', 'src/usage', 'src/cli', 'src/project')
+    } else {
+        $serverTests += $touched
+    }
+    $serverTests = @($serverTests | Sort-Object -Unique)
+    $webTests = @('src/features/personal', 'src/authBootstrap.test.ts', 'src/lib/attachmentUploadQueue.test.ts')
+    $tsc = '..\..\node_modules\.bin\tsc.cmd'
+    $vp = Join-Path $SyncRepo 'node_modules\.bin\vp.cmd'
+    return @(
+        @{ Name = 'typecheck-contracts'; Dir = 'packages\contracts'; File = $tsc; Args = @('--noEmit'); Kind = 'exit' },
+        @{ Name = 'typecheck-shared'; Dir = 'packages\shared'; File = $tsc; Args = @('--noEmit'); Kind = 'exit' },
+        @{ Name = 'typecheck-client-runtime'; Dir = 'packages\client-runtime'; File = $tsc; Args = @('--noEmit'); Kind = 'exit' },
+        @{ Name = 'typecheck-server'; Dir = 'apps\server'; File = $tsc; Args = @('--noEmit'); Kind = 'exit' },
+        @{ Name = 'typecheck-web'; Dir = 'apps\web'; File = $tsc; Args = @('--noEmit'); Kind = 'exit' },
+        # Never an unfiltered `vp test run` in apps\server: it wedges for 15+ minutes.
+        @{ Name = 'test-server'; Dir = 'apps\server'; File = $vp; Args = (@('test', 'run') + $serverTests); Kind = 'vitest' },
+        @{ Name = 'test-web'; Dir = 'apps\web'; File = $vp; Args = (@('test', 'run', '--project', 'unit') + $webTests); Kind = 'vitest' },
+        @{ Name = 'test-root'; Dir = '.'; File = $vp; Args = @('test', 'run', 'scripts/lib/cli-external-packages.test.ts'); Kind = 'vitest' }
+    )
+}
+
+# Runs every gate. A vitest FAIL that matches known-test-failures.txt is
+# ignored; other failing files get one isolated re-run (timing flakes on this
+# laptop), and only failures that repeat count. Returns the red descriptions.
+function Invoke-Gates([object[]]$Gates, [string]$Label) {
+    $known = Get-KnownFailures
+    $red = New-Object System.Collections.Generic.List[string]
+    foreach ($gate in $Gates) {
+        $dir = Join-Path $SyncRepo $gate.Dir
+        $log = Join-Path $RunDir ('gate-{0}-{1}.log' -f $Label, $gate.Name)
+        Write-SyncLog "gate $($gate.Name) ..."
+        $res = Invoke-Proc -FilePath $gate.File -ArgList $gate.Args -WorkingDirectory $dir -TimeoutSeconds 2400 -LogPath $log
+        if ($gate.Kind -eq 'exit') {
+            if ($res.Code -ne 0) { $red.Add("$($gate.Name) exited $($res.Code) (log $log)") | Out-Null }
+            continue
+        }
+        if ($res.Code -eq 0) { continue }
+        $failures = @(Get-VitestFailures -Output ($res.Out + "`n" + $res.Err))
+        $unknown = @($failures | Where-Object { $line = $_; -not ($known | Where-Object { $line.Contains($_) }) })
+        if ($failures.Count -eq 0) {
+            $red.Add("$($gate.Name) exited $($res.Code) with no FAIL lines (crash or timeout; log $log)") | Out-Null
+            continue
+        }
+        if ($unknown.Count -eq 0) {
+            Write-SyncLog "gate $($gate.Name): only known pre-existing failures"
+            continue
+        }
+        $files = @($unknown | ForEach-Object { ($_ -split '\s+>\s+')[0] } | Sort-Object -Unique)
+        Write-SyncLog "gate $($gate.Name): re-running $($files.Count) failing file(s) once"
+        $rerunLog = Join-Path $RunDir ('gate-{0}-{1}-rerun.log' -f $Label, $gate.Name)
+        $rerunArgs = @('test', 'run')
+        if ($gate.Args -contains '--project') { $rerunArgs += @('--project', 'unit') }
+        $rerun = Invoke-Proc -FilePath $gate.File -ArgList ($rerunArgs + $files) -WorkingDirectory $dir -TimeoutSeconds 1800 -LogPath $rerunLog
+        if ($rerun.Code -eq 0) {
+            Write-SyncLog "gate $($gate.Name): passed on re-run (flaky: $($unknown -join '; '))"
+            continue
+        }
+        # Only a test that fails in BOTH runs counts. ProviderRuntimeIngestion's
+        # 2 s poll deadline flakes a different handful of tests per run on this
+        # laptop (4-5 of 67 on pre-merge main too, 2026-09-15), so a whole-file
+        # re-run is never fully green; a real regression repeats.
+        $rerunFailures = @(Get-VitestFailures -Output ($rerun.Out + "`n" + $rerun.Err))
+        $repeated = @($rerunFailures | Where-Object { $unknown -contains $_ })
+        if ($repeated.Count -gt 0) {
+            $red.Add("$($gate.Name): $($repeated -join '; ') (log $rerunLog)") | Out-Null
+        } elseif ($rerunFailures.Count -eq 0) {
+            $red.Add("$($gate.Name) re-run exited $($rerun.Code) with no FAIL lines (log $rerunLog)") | Out-Null
+        } else {
+            Write-SyncLog "gate $($gate.Name): no test failed twice (flaky: first $($unknown -join '; '); re-run $($rerunFailures -join '; '))"
+        }
+    }
+    return , $red.ToArray()
+}
+
+# ---------------------------------------------------------------- agents
+
+function Get-SchemaArg {
+    return ((Get-Content -LiteralPath $SchemaFile -Raw) -replace '\s*\r?\n\s*', ' ').Trim()
+}
+
+function ConvertFrom-AgentJson([string]$Text) {
+    $trimmed = $Text.Trim()
+    if (-not $trimmed) { return $null }
+    try { $outer = $trimmed | ConvertFrom-Json } catch { return $null }
+    if ($outer.PSObject.Properties.Name -contains 'structured_output' -and $outer.structured_output) { return $outer.structured_output }
+    if ($outer.PSObject.Properties.Name -contains 'status') { return $outer }
+    if ($outer.PSObject.Properties.Name -contains 'result' -and $outer.result -is [string]) {
+        $inner = ($outer.result -replace '^\s*```(json)?', '' -replace '```\s*$', '').Trim()
+        try { return ($inner | ConvertFrom-Json) } catch { return $null }
+    }
+    return $null
+}
+
+function Invoke-TriageAgent([string]$InputText) {
+    $claude = Join-Path $env:USERPROFILE '.local\bin\claude.exe'
+    $runbook = Get-Content -LiteralPath (Join-Path $SyncDir 'runbook-triage.md') -Raw
+    # --safe-mode: no CLAUDE.md, hooks, plugins, skills or MCP; OAuth (the Max
+    # plan) still works. Not --bare: that forces API-key billing. dontAsk +
+    # --permission-prompts none: anything outside the allow-list is denied.
+    $claudeArgs = @('-p', '--model', 'opus', '--effort', 'medium', '--safe-mode',
+        '--permission-mode', 'dontAsk', '--permission-prompts', 'none',
+        '--tools', 'Read,Grep,Glob,Bash',
+        '--allowedTools', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git diff *)', 'Bash(git merge-base *)',
+        '--append-system-prompt', $runbook,
+        '--output-format', 'json', '--json-schema', (Get-SchemaArg),
+        '--no-session-persistence', '--name', 'upstream-sync-triage')
+    $res = Invoke-Proc -FilePath $claude -ArgList $claudeArgs -StdinText $InputText -TimeoutSeconds $AgentTimeoutSeconds `
+        -LogPath (Join-Path $RunDir 'triage-agent.log')
+    $verdict = ConvertFrom-AgentJson -Text $res.Out
+    if ($res.Code -ne 0 -or -not $verdict) {
+        Stop-Sync 'stopped-red' "The triage agent failed (exit $($res.Code)); nothing merged. Log: $RunDir\triage-agent.log"
+    }
+    Set-Content -LiteralPath (Join-Path $RunDir 'triage.json') -Value ($verdict | ConvertTo-Json -Depth 10) -Encoding UTF8
+    return $verdict
+}
+
+function Invoke-ResolveAgent([string]$Task, [string]$Name, [object[]]$Gates) {
+    $gateText = @($Gates | ForEach-Object { "- ($($_.Dir)) $([System.IO.Path]::GetFileName($_.File)) $($_.Args -join ' ')" }) -join "`n"
+    $triageText = ''
+    if ($script:Triage) { $triageText = $script:Triage | ConvertTo-Json -Depth 10 }
+    $prompt = (Get-Content -LiteralPath (Join-Path $SyncDir 'runbook-resolve.md') -Raw) +
+    "`n`n## Task`n$Task`n`n## Triage verdict`n$triageText`n`n## Gate commands (run from the directory in parentheses)`n$gateText`n`n## Known pre-existing failures (ignore)`n" +
+    ((Get-KnownFailures) -join "`n") + "`n"
+    Set-Content -LiteralPath (Join-Path $RunDir "$Name-prompt.md") -Value $prompt -Encoding UTF8
+    $headBefore = Get-GitText -GitArgs @('rev-parse', 'HEAD')
+    $mainBefore = (Invoke-Git -GitArgs @('status', '--porcelain') -Repo $MainRepo).Out
+    $verdictFile = Join-Path $RunDir "$Name-verdict.json"
+    $verdict = $null
+    $codexJs = Join-Path $env:APPDATA 'npm\node_modules\@openai\codex\bin\codex.js'
+    if (Test-Path -LiteralPath $codexJs) {
+        Write-SyncLog "$Name`: codex exec (gpt-5.6-sol high) ..."
+        $res = Invoke-Proc -FilePath $nodeExe -ArgList @($codexJs, 'exec', '--approve-for-me', '-m', 'gpt-5.6-sol',
+            '-c', 'model_reasoning_effort="high"', '-C', $SyncRepo, '--output-schema', $SchemaFile, '-o', $verdictFile) `
+            -StdinText $prompt -TimeoutSeconds $AgentTimeoutSeconds -LogPath (Join-Path $RunDir "$Name-codex.log")
+        if ($res.Code -eq 0 -and (Test-Path -LiteralPath $verdictFile)) {
+            $verdict = ConvertFrom-AgentJson -Text (Get-Content -LiteralPath $verdictFile -Raw)
+        }
+    }
+    if (-not $verdict) {
+        Write-SyncLog "$Name`: codex gave no verdict; falling back to claude -p (Opus 5 medium) ..."
+        $claude = Join-Path $env:USERPROFILE '.local\bin\claude.exe'
+        $claudeArgs = @('-p', '--model', 'opus', '--effort', 'medium', '--safe-mode',
+            '--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
+            '--allowedTools', 'Bash(vp *)', 'Bash(git diff *)', 'Bash(git status *)', 'Bash(git show *)', 'Bash(git log *)',
+            'Bash(git add *)', 'Bash(git grep *)', 'Bash(node *)',
+            '--disallowedTools', 'Bash(git push *)', 'Bash(git commit *)', 'Bash(git reset *)', 'Bash(git checkout *)',
+            'Bash(git switch *)', 'Bash(git stash *)', 'Bash(git rebase *)', 'Bash(powershell *)', 'Bash(pwsh *)',
+            '--output-format', 'json', '--json-schema', (Get-SchemaArg), '--no-session-persistence', '--name', "upstream-sync-$Name")
+        $res = Invoke-Proc -FilePath $claude -ArgList $claudeArgs -StdinText $prompt -TimeoutSeconds $AgentTimeoutSeconds `
+            -LogPath (Join-Path $RunDir "$Name-claude.log")
+        $verdict = ConvertFrom-AgentJson -Text $res.Out
+    }
+    if ((Get-GitText -GitArgs @('rev-parse', 'HEAD')) -ne $headBefore) {
+        Stop-Sync 'stopped-judgment' "The $Name agent moved HEAD in the sync worktree. Nothing deployed; inspect $SyncRepo."
+    }
+    if ((Invoke-Git -GitArgs @('status', '--porcelain') -Repo $MainRepo).Out -ne $mainBefore) {
+        Stop-Sync 'stopped-judgment' "The main checkout changed while the $Name agent ran. Nothing deployed; check $MainRepo."
+    }
+    if (-not $verdict) {
+        Stop-Sync 'stopped-red' "The $Name agent produced no verdict (codex and claude). Branch kept in $SyncRepo."
+    }
+    Set-Content -LiteralPath $verdictFile -Value ($verdict | ConvertTo-Json -Depth 10) -Encoding UTF8
+    return $verdict
+}
+
+# ---------------------------------------------------------------- steps
+
+function Get-TriageInput([string]$Base, [string]$New, [string[]]$Conflicts) {
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("# Upstream sync input") | Out-Null
+    $lines.Add("merge-base $Base, upstream/main $New, fork main $(Get-GitText -GitArgs @('rev-parse', '--short=12', $OriginMain))") | Out-Null
+    $lines.Add('') | Out-Null
+    $lines.Add('## New upstream commits (oldest first) with the top-level areas they touch') | Out-Null
+    $current = $null
+    $areas = @{}
+    $order = New-Object System.Collections.Generic.List[string]
+    foreach ($line in (Get-GitLines -GitArgs @('log', '--reverse', '--format=@@%h %s', '--name-only', "$Base..$New"))) {
+        if ($line.StartsWith('@@')) { $current = $line.Substring(2); $order.Add($current) | Out-Null; $areas[$current] = @{}; continue }
+        if ($current) {
+            $parts = $line -split '/'
+            $area = if ($parts.Count -ge 3) { ($parts[0..2] -join '/') } else { $line }
+            $areas[$current][$area] = $true
+        }
+    }
+    foreach ($commit in $order) { $lines.Add("- $commit  [$((@($areas[$commit].Keys) | Sort-Object) -join ', ')]") | Out-Null }
+    $lines.Add('') | Out-Null
+    $lines.Add('## Files changed on both sides since the merge-base (ours | upstream)') | Out-Null
+    $ours = @(Get-GitLines -GitArgs @('diff', '--name-only', $Base, $OriginMain))
+    $theirs = @(Get-GitLines -GitArgs @('diff', '--name-only', $Base, $New))
+    $both = @($ours | Where-Object { $theirs -contains $_ })
+    foreach ($file in ($both | Select-Object -First 120)) {
+        $o = Get-GitText -GitArgs @('diff', '--shortstat', $Base, $OriginMain, '--', $file)
+        $t = Get-GitText -GitArgs @('diff', '--shortstat', $Base, $New, '--', $file)
+        $lines.Add("- $file | ours: $o | upstream: $t") | Out-Null
+    }
+    $lines.Add('') | Out-Null
+    $lines.Add('## Upstream migration changes') | Out-Null
+    foreach ($m in (Get-GitLines -GitArgs @('diff', '--name-status', $Base, $New, '--', 'apps/server/src/persistence/Migrations/'))) { $lines.Add("- $m") | Out-Null }
+    $lines.Add('') | Out-Null
+    $lines.Add('## Dry-merge conflicts') | Out-Null
+    foreach ($c in $Conflicts) { $lines.Add("- $c") | Out-Null }
+    $lines.Add('') | Out-Null
+    $lines.Add('## Decisions already pending with the owner (held-upstream.json)') | Out-Null
+    $lines.Add((Get-Content -LiteralPath $HeldFile -Raw)) | Out-Null
+    return ($lines -join "`n")
+}
+
+function Get-MaxMigrationId {
+    $source = Get-Content -LiteralPath (Join-Path $SyncRepo 'apps\server\src\persistence\Migrations.ts') -Raw
+    $ids = @([regex]::Matches($source, '(?m)^\s*\[(\d+), "[^"]+", \w+\],$') | ForEach-Object { [int]$_.Groups[1].Value })
+    return ($ids | Measure-Object -Maximum).Maximum
+}
+
+function Get-DecisionText([object[]]$Decisions) {
+    $parts = @()
+    foreach ($d in $Decisions) {
+        $parts += ("Needs your call ({0}): {1} Options: {2}. Recommended: {3}" -f $d.id, $d.whatChanged, (@($d.options) -join ' / '), $d.recommendation)
+    }
+    return ($parts -join "`n")
+}
+
+function Invoke-PsScript([string]$Name, [string[]]$ScriptArgs, [int]$TimeoutSeconds = 3600) {
+    $log = Join-Path $RunDir ("{0}.log" -f [System.IO.Path]::GetFileNameWithoutExtension($Name))
+    $res = Invoke-Proc -FilePath $powershellExe -ArgList (@('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot $Name)) + $ScriptArgs) `
+        -WorkingDirectory $SyncRepo -TimeoutSeconds $TimeoutSeconds -LogPath $log
+    Write-SyncLog ("{0} exited {1}" -f $Name, $res.Code)
+    return $res
+}
+
+function Invoke-Sync {
+    # ---- 0. preflight (no side effects)
+    if ((Resolve-Path -LiteralPath $SyncRepo).Path -eq (Resolve-Path -LiteralPath $MainRepo).Path) {
+        Stop-Sync 'stopped-judgment' 'upstream-sync.ps1 must run from the sync worktree, not the main checkout.'
+    }
+    [void](Invoke-Git -GitArgs @('fetch', 'origin'))
+    [void](Invoke-Git -GitArgs @('fetch', 'upstream'))
+    $originMain = Get-GitText -GitArgs @('rev-parse', $OriginMain)
+    $localMain = Get-GitText -GitArgs @('rev-parse', 'personal-bots/main')
+    if ($localMain -ne $originMain -and
+        (Invoke-Git -GitArgs @('merge-base', '--is-ancestor', $originMain, $localMain) -AllowFail).Code -eq 0) {
+        Stop-Sync 'stopped-judgment' 'personal-bots/main has unpushed commits. Push or drop them before the sync can run.'
+    }
+    $mainDirty = @((Invoke-Git -GitArgs @('status', '--porcelain', '--untracked-files=no') -Repo $MainRepo).Out -split "`r?`n" | Where-Object { $_ })
+    if ($mainDirty.Count -gt 0) {
+        $old = Read-SyncState
+        $skips = 1
+        if ($old -and $old.lastResult -eq 'skipped-preflight') { $skips = [int]$old.consecutivePreflightSkips + 1 }
+        if (-not $PreflightOnly) { Save-SyncState @{ lastResult = 'skipped-preflight'; consecutivePreflightSkips = $skips } }
+        if ($skips -ge 3 -and -not $PreflightOnly) {
+            Send-Notify "Bots upstream sync skipped $skips days in a row: the main checkout has uncommitted work ($($mainDirty.Count) file(s)). Commit or stash it and the next run will sync."
+        }
+        Write-SyncLog "main checkout has uncommitted work ($($mainDirty.Count) file(s)); retrying tomorrow"
+        $script:StopResult = 'skipped-preflight'
+        return
+    }
+    $live = Get-LiveRelease
+    $originShort = $originMain.Substring(0, 12)
+    if (-not $live -or $live -ne $originShort) {
+        Stop-Sync 'stopped-judgment' "main has undeployed commits (live release '$live', origin main $originShort). Deploy or revert first; the sync only ever deploys the upstream delta."
+    }
+    $syncDirty = @((Invoke-Git -GitArgs @('status', '--porcelain')).Out -split "`r?`n" | Where-Object { $_ })
+    if ($syncDirty.Count -gt 0) {
+        Stop-Sync 'stopped-judgment' "The sync worktree $SyncRepo is dirty; an earlier run needs attention."
+    }
+    $base = Get-GitText -GitArgs @('merge-base', $OriginMain, $UpstreamMain)
+    $state = Read-SyncState
+    if ($state -and $state.lastSyncedUpstream -and $state.lastSyncedUpstream -ne $base) {
+        Stop-Sync 'stopped-judgment' "State drift: state.json says synced through $($state.lastSyncedUpstream) but the merge-base is $base."
+    }
+    $drive = Get-PSDrive -Name ($SyncRepo.Substring(0, 1))
+    if ($drive.Free -lt 5GB) { Stop-Sync 'stopped-judgment' "Less than 5 GB free on $($drive.Name):." }
+
+    # ---- 1. anything new, anything for us
+    $new = Get-GitText -GitArgs @('rev-parse', $UpstreamMain)
+    $newShort = $new.Substring(0, 9)
+    if ($new -eq $base) {
+        Write-SyncLog 'upstream has nothing new'
+        if (-not $PreflightOnly) { Save-SyncState @{ lastResult = 'skipped-no-new'; lastSyncedUpstream = $base; consecutivePreflightSkips = 0 } }
+        $script:StopResult = 'skipped-no-new'
+        return
+    }
+    $commitCount = [int](Get-GitText -GitArgs @('rev-list', '--count', "$base..$new"))
+    $relevantCount = [int](Get-GitText -GitArgs (@('rev-list', '--count', "$base..$new", '--') + $RelevantPaths))
+    $mergeTree = Invoke-Git -GitArgs @('merge-tree', '--write-tree', '--name-only', '--no-messages', $OriginMain, $new) -AllowFail
+    $conflicts = @(($mergeTree.Out -split "`r?`n" | Where-Object { $_ }) | Select-Object -Skip 1)
+    Write-SyncLog "upstream $newShort`: $commitCount new commit(s), $relevantCount touching our build, $($conflicts.Count) conflicted path(s)"
+    if ($PreflightOnly) {
+        Write-SyncLog "preflight OK. Conflicts: $($conflicts -join ', ')"
+        $script:StopResult = 'preflight-ok'
+        return
+    }
+    if ($relevantCount -eq 0 -and -not $Force) {
+        Save-SyncState @{ lastResult = 'skipped-no-relevant'; consecutivePreflightSkips = 0 }
+        Send-Notify "Bots upstream sync: $commitCount new upstream commit(s), none touching the Bots build. Nothing merged."
+        $script:StopResult = 'skipped-no-relevant'
+        return
+    }
+    if ($commitCount -gt $MaxCommits) { Stop-Sync 'stopped-judgment' "$commitCount upstream commits (limit $MaxCommits). Merge this one by hand." }
+    if ($conflicts.Count -gt $MaxConflicts) { Stop-Sync 'stopped-judgment' "$($conflicts.Count) conflicted paths (limit $MaxConflicts). Merge this one by hand." }
+
+    # ---- 2. triage (read-only agent)
+    $triageInput = Get-TriageInput -Base $base -New $new -Conflicts $conflicts
+    Set-Content -LiteralPath (Join-Path $RunDir 'triage-input.md') -Value $triageInput -Encoding UTF8
+    Write-SyncLog 'triage (claude -p, Opus 5 medium, read-only) ...'
+    $script:Triage = Invoke-TriageAgent -InputText $triageInput
+    $decisions = @($script:Triage.decisions)
+    if ($script:Triage.status -eq 'needs_judgment') {
+        Stop-Sync 'stopped-judgment' ("Bots upstream sync stopped for a human (upstream $newShort): " + (@($script:Triage.reasons) -join '; '))
+    }
+    if ($script:Triage.status -eq 'nothing_relevant' -and -not $Force) {
+        Save-SyncState @{ lastResult = 'skipped-no-relevant'; consecutivePreflightSkips = 0 }
+        Send-Notify ("Bots upstream sync: nothing relevant in $commitCount upstream commit(s). " + $script:Triage.summary)
+        $script:StopResult = 'skipped-no-relevant'
+        return
+    }
+
+    # ---- 3. merge on the sync branch
+    $branch = 'sync/upstream-' + (Get-Date -Format 'yyyyMMdd')
+    if ((Invoke-Git -GitArgs @('rev-parse', '--verify', '--quiet', "refs/heads/$branch") -AllowFail).Code -eq 0) {
+        $branch = $branch + '-' + (Get-Date -Format 'HHmm')
+    }
+    [void](Invoke-Git -GitArgs @('switch', '-c', $branch, $OriginMain))
+    $mainEnv = Join-Path $MainRepo '.env'
+    if (Test-Path -LiteralPath $mainEnv) { Copy-Item -LiteralPath $mainEnv -Destination (Join-Path $SyncRepo '.env') -Force }
+    $merge = Invoke-Git -GitArgs @('merge', '--no-ff', '--no-commit', $new) -AllowFail
+    Write-SyncLog "git merge exited $($merge.Code)"
+    $unmerged = @(Get-GitLines -GitArgs @('diff', '--name-only', '--diff-filter=U'))
+    $upstreamMigrations = @(Get-GitLines -GitArgs @('diff', '--name-only', '--diff-filter=A', $base, $new, '--', 'apps/server/src/persistence/Migrations/'))
+    if ($unmerged -contains 'apps/server/src/persistence/Migrations.ts' -or $upstreamMigrations.Count -gt 0) {
+        $mig = Invoke-Proc -FilePath $nodeExe -ArgList @('--disable-warning=ExperimentalWarning', 'scripts/personal/sync/resolve-migrations.ts', '--base', $base, '--upstream', $new) `
+            -LogPath (Join-Path $RunDir 'resolve-migrations.log')
+        Write-SyncLog "resolve-migrations: $($mig.Out.Trim())"
+        if ($mig.Code -eq 2) { Stop-Sync 'stopped-judgment' "Upstream migrations need a human: $($mig.Out.Trim())" }
+        if ($mig.Code -ne 0) { Stop-Sync 'stopped-red' "resolve-migrations.ts failed: $($mig.Out.Trim()) $($mig.Err.Trim())" }
+    }
+    $routeTreeConflict = $unmerged -contains 'apps/web/src/routeTree.gen.ts'
+    if ($routeTreeConflict) { [void](Invoke-Git -GitArgs @('checkout', '--ours', '--', 'apps/web/src/routeTree.gen.ts')) }
+    $gates = Get-GateList -Base $base -New $new
+    $remaining = @(Get-GitLines -GitArgs @('diff', '--name-only', '--diff-filter=U') |
+            Where-Object { $_ -ne 'apps/web/src/routeTree.gen.ts' -and $_ -ne 'apps/server/src/persistence/Migrations.ts' })
+    if ($remaining.Count -gt 0) {
+        $verdict = Invoke-ResolveAgent -Name 'resolve' -Gates $gates -Task ("Resolve these merge conflicts (merging upstream $new into $OriginMain):`n" + (($remaining | ForEach-Object { "- $_" }) -join "`n") + "`nThe triage's dry-merge list and the files changed on both sides are in the triage verdict below.")
+        if ($verdict.status -ne 'resolved') { Stop-Sync 'stopped-judgment' ("Merge conflicts need a human: " + (@($verdict.reasons) -join '; ')) }
+    }
+    if ($routeTreeConflict) { [void](Invoke-Git -GitArgs @('add', 'apps/web/src/routeTree.gen.ts')) }
+    if (@(Get-GitLines -GitArgs @('ls-files', '-u')).Count -gt 0) { Stop-Sync 'stopped-judgment' 'Unmerged paths remain after the resolve step.' }
+    $markers = Invoke-Git -GitArgs @('grep', '-nE', '^(<<<<<<<|>>>>>>>)( |$)', '--', '.', ':!*.md') -AllowFail
+    if ($markers.Code -eq 0 -and $markers.Out.Trim()) { Stop-Sync 'stopped-judgment' "Conflict markers remain: $($markers.Out.Trim().Split("`n")[0])" }
+
+    # ---- 4. install, regenerate, commit the merge (local branch only)
+    Invoke-PbNative -FilePath 'vp' -Arguments @('i') -WorkingDirectory $SyncRepo
+    $gen = Invoke-Proc -FilePath $nodeExe -ArgList @('scripts/personal/sync/gen-route-tree.mjs') -LogPath (Join-Path $RunDir 'gen-route-tree.log')
+    if ($gen.Code -ne 0) { Stop-Sync 'stopped-red' "Route tree regeneration failed: $($gen.Err.Trim())" }
+    [void](Invoke-Git -GitArgs @('add', 'pnpm-lock.yaml', 'apps/web/src/routeTree.gen.ts'))
+    [void](Invoke-Git -GitArgs @('commit', '-m', "merge: upstream/main $newShort into personal-bots/main (weekly sync)", '-m', "Automated by scripts/personal/upstream-sync.ps1 (run $Stamp)."))
+
+    # ---- 5. hold back what needs the owner's decision
+    $held = @()
+    foreach ($decision in $decisions) {
+        $holdBy = [string]$decision.holdBy
+        $revertCommit = $null
+        if ($holdBy -eq 'revert') {
+            $shas = @($decision.shas)
+            [array]::Reverse($shas)
+            $revert = Invoke-Git -GitArgs (@('revert', '--no-commit') + $shas) -AllowFail
+            if ($revert.Code -eq 0) {
+                [void](Invoke-Git -GitArgs @('commit', '-m', "revert(sync): hold $($decision.id) for the owner's decision", '-m', ("Upstream: " + (@($decision.shas) -join ', ') + "`n" + $decision.whatChanged)))
+                $revertCommit = Get-GitText -GitArgs @('rev-parse', '--short=12', 'HEAD')
+            } else {
+                [void](Invoke-Git -GitArgs @('revert', '--abort') -AllowFail)
+                Write-SyncLog "revert of $($decision.id) does not apply cleanly; keeping our side instead"
+                $holdBy = 'keep_ours'
+            }
+        }
+        if ($holdBy -eq 'keep_ours') {
+            $verdict = Invoke-ResolveAgent -Name ("hold-" + $decision.id) -Gates $gates -Task ("Hold decision '$($decision.id)' for the owner: keep our current behaviour for: $($decision.whatChanged) (upstream commits $(@($decision.shas) -join ', ')). Smallest pin; add a test that fails if upstream's behaviour returns.")
+            if ($verdict.status -ne 'resolved') { Stop-Sync 'stopped-judgment' "Could not hold '$($decision.id)' back: $(@($verdict.reasons) -join '; ')" }
+            [void](Invoke-Git -GitArgs @('commit', '-m', "fix(sync): keep our behaviour for $($decision.id) (held for the owner)"))
+            $revertCommit = Get-GitText -GitArgs @('rev-parse', '--short=12', 'HEAD')
+        }
+        $held += [ordered]@{
+            id = $decision.id; shas = @($decision.shas); area = $decision.area; whatChanged = $decision.whatChanged
+            options = @($decision.options); recommendation = $decision.recommendation; holdBy = $holdBy
+            revertCommit = $revertCommit; heldAt = (Get-Date -Format 'yyyy-MM-dd'); upstream = $newShort
+        }
+    }
+    if ($held.Count -gt 0) {
+        $heldDoc = Get-Content -LiteralPath $HeldFile -Raw | ConvertFrom-Json
+        $all = @($heldDoc.held) + $held
+        $out = [ordered]@{ '$comment' = $heldDoc.'$comment'; held = $all }
+        Set-Content -LiteralPath $HeldFile -Value ($out | ConvertTo-Json -Depth 10) -Encoding UTF8
+        [void](Invoke-Git -GitArgs @('add', 'scripts/personal/sync/held-upstream.json'))
+        [void](Invoke-Git -GitArgs @('commit', '-m', ("chore(sync): record held upstream decisions (" + (@($held | ForEach-Object { $_.id }) -join ', ') + ")")))
+    }
+
+    # ---- 6. version bump (minor per sync)
+    $versionFile = Join-Path $PSScriptRoot 'app-version.txt'
+    $oldVersion = (Get-Content -LiteralPath $versionFile -First 1).Trim()
+    if ($oldVersion -notmatch '^(\d+)\.(\d+)\.(\d+)$') { Stop-Sync 'stopped-red' "app-version.txt holds '$oldVersion', not x.y.z." }
+    $newVersion = '{0}.{1}.0' -f $Matches[1], ([int]$Matches[2] + 1)
+    Set-Content -LiteralPath $versionFile -Value $newVersion -Encoding ASCII
+    [void](Invoke-Git -GitArgs @('add', 'scripts/personal/app-version.txt'))
+    [void](Invoke-Git -GitArgs @('commit', '-m', "chore(bots): v$newVersion (weekly upstream sync $newShort)"))
+
+    # ---- 7. gates (script re-runs everything; one repair round)
+    $red = Invoke-Gates -Gates $gates -Label 'first'
+    if ($red.Count -gt 0) {
+        Write-SyncLog "red gates: $($red -join ' | ')"
+        $verdict = Invoke-ResolveAgent -Name 'repair' -Gates $gates -Task ("These gates are red after the merge. Fix the cause (never skip or delete a test):`n" + (($red | ForEach-Object { "- $_" }) -join "`n"))
+        if (@(Get-GitLines -GitArgs @('status', '--porcelain')).Count -gt 0) {
+            [void](Invoke-Git -GitArgs @('add', '-A'))
+            [void](Invoke-Git -GitArgs @('commit', '-m', "fix(sync): repair gates after merging upstream $newShort"))
+        }
+        $red = Invoke-Gates -Gates $gates -Label 'second'
+        if ($red.Count -gt 0) {
+            Stop-Sync 'stopped-red' ("Bots upstream sync stopped: gates still red after one repair round (branch $branch kept, nothing deployed): " + ($red -join ' | '))
+        }
+    }
+
+    # ---- 8. build + rehearsal on a copy of a fresh backup (never the live DB)
+    $build = Invoke-PsScript -Name 'build.ps1' -ScriptArgs @('-NoActivate', '-CopyExternals') -TimeoutSeconds 2400
+    if ($build.Code -ne 0) { Stop-Sync 'stopped-red' "build.ps1 failed (exit $($build.Code)); nothing deployed. Log: $RunDir\build.log" }
+    $release = Get-GitText -GitArgs @('rev-parse', '--short=12', 'HEAD')
+    $backup = Invoke-PsScript -Name 'backup.ps1' -ScriptArgs @()
+    if ($backup.Code -ne 0) { Stop-Sync 'stopped-red' "backup.ps1 failed (exit $($backup.Code)); nothing deployed." }
+    $maxId = Get-MaxMigrationId
+    $rehearsal = Invoke-PsScript -Name 'restore-test.ps1' -ScriptArgs @('-Release', $release, '-ExpectMigration', [string]$maxId, '-Seconds', '60')
+    if ($rehearsal.Code -ne 0) { Stop-Sync 'stopped-red' "Migration rehearsal failed on a backup copy (expected migration $maxId); nothing deployed. $($rehearsal.Out.Trim())" }
+
+    $decisionText = Get-DecisionText -Decisions $decisions
+    $summary = [string]$script:Triage.pushText
+    if (-not $summary) { $summary = [string]$script:Triage.summary }
+    if ($Mode -eq 'DryRun') {
+        Save-SyncState @{ lastResult = 'dry-run-green'; lastRelease = $release; consecutivePreflightSkips = 0 }
+        Send-Notify ("Bots $newVersion is ready to ship (upstream $newShort, $commitCount commits; dry run: nothing deployed). $summary`n$decisionText`nShip: restart.ps1 -Release $release, then push $branch.")
+        $script:StopResult = 'dry-run-green'
+        return
+    }
+
+    # ---- 9. deploy, smoke, push or roll back
+    [void](Invoke-Git -GitArgs @('fetch', 'origin'))
+    if ((Get-GitText -GitArgs @('rev-parse', $OriginMain)) -ne $originMain) {
+        Stop-Sync 'stopped-judgment' "personal-bots/main moved during the sync; nothing deployed. Re-run (branch $branch kept)."
+    }
+    $previousRelease = Get-LiveRelease
+    $logFile = Join-Path $paths.LogsDir ('server-{0}.log' -f (Get-Date -Format 'yyyyMMdd'))
+    $logOffset = 0
+    if (Test-Path -LiteralPath $logFile) { $logOffset = (Get-Item -LiteralPath $logFile).Length }
+    $restart = Invoke-PsScript -Name 'restart.ps1' -ScriptArgs @('-Release', $release) -TimeoutSeconds 300
+    $smoke = Invoke-PsScript -Name 'smoke.ps1' -ScriptArgs @('-ExpectRelease', $release, '-LogFile', $logFile, '-LogFromByte', [string]$logOffset) -TimeoutSeconds 900
+    if ($restart.Code -eq 0 -and $smoke.Code -eq 0) {
+        $push = Invoke-Git -GitArgs @('push', 'origin', "HEAD:refs/heads/personal-bots/main") -AllowFail
+        if ($push.Code -ne 0) {
+            Save-SyncState @{ lastResult = 'deployed-push-rejected'; lastRelease = $release; previousRelease = $previousRelease }
+            Send-Notify "Bots $newVersion is live (release $release) but the push to personal-bots/main was rejected (main moved). Never forced: merge $branch by hand. $($push.Err.Trim())" -Alert
+            $script:StopResult = 'deployed-push-rejected'
+            return
+        }
+        Save-SyncState @{ lastResult = 'deployed'; lastRelease = $release; previousRelease = $previousRelease; lastSyncedUpstream = $new; consecutivePreflightSkips = 0 }
+        Send-Notify ("Bots $newVersion is live (upstream $newShort, $commitCount commits). $summary`nGates green; rollback ready ($previousRelease). Open Bots twice to load it.`n$decisionText")
+        $script:StopResult = 'deployed'
+        return
+    }
+
+    Write-SyncLog "smoke failed (restart $($restart.Code), smoke $($smoke.Code)); rolling back to $previousRelease"
+    $back = Invoke-PsScript -Name 'restart.ps1' -ScriptArgs @('-Release', $previousRelease) -TimeoutSeconds 300
+    $backSmoke = Invoke-PsScript -Name 'smoke.ps1' -ScriptArgs @('-ExpectRelease', $previousRelease, '-StableSeconds', '60') -TimeoutSeconds 600
+    $restoreHelp = "Manual DB restore only if you decide it is needed: stop.ps1; copy the newest backups\<stamp>\state.sqlite over dev\userdata\state.sqlite (delete state.sqlite-wal/-shm first, keep secrets\); restart.ps1 -Release $previousRelease."
+    if ($back.Code -eq 0 -and $backSmoke.Code -eq 0) {
+        Save-SyncState @{ lastResult = 'rolled-back'; lastRelease = $previousRelease; previousRelease = $release }
+        Send-Notify ("Bots upstream sync rolled back: $newVersion (release $release) failed the live smoke, so $previousRelease is live again. Branch $branch kept, not pushed. Smoke: " + (($smoke.Out -split "`r?`n" | Where-Object { $_ -match 'FAIL' }) -join ' | ') + "`n$restoreHelp")
+        $script:StopResult = 'rolled-back'
+        return
+    }
+    Save-SyncState @{ lastResult = 'down'; lastRelease = $null; previousRelease = $previousRelease }
+    Send-Notify ("Bots is DOWN: $newVersion failed its smoke and the rollback to $previousRelease also failed. Supervisor left alone. Logs: $RunDir. $restoreHelp") -Alert
+    $script:StopResult = 'down'
+}
+
+# ---------------------------------------------------------------- main
+
+New-Item -ItemType Directory -Force -Path $SyncHome | Out-Null
+if (Test-Path -LiteralPath $LockFile) {
+    $lock = $null
+    try { $lock = Get-Content -LiteralPath $LockFile -Raw | ConvertFrom-Json } catch { $lock = $null }
+    if ($lock -and (Get-Process -Id ([int]$lock.pid) -ErrorAction SilentlyContinue)) {
+        Write-Host "Another upstream sync is running (pid $($lock.pid), since $($lock.startedAt))."
+        exit 0
+    }
+}
+if (-not $PreflightOnly) {
+    New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
+    $script:LogToFile = $true
+    Set-Content -LiteralPath $LockFile -Value (@{ pid = $PID; startedAt = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json) -Encoding ASCII
+}
+
+$exitCode = 0
+try {
+    Write-SyncLog "upstream sync $Stamp, mode $Mode$(if ($PreflightOnly) { ' (preflight only)' }), sync worktree $SyncRepo"
+    Invoke-Sync
+    Write-SyncLog "result: $script:StopResult"
+    if (@('rolled-back', 'down', 'deployed-push-rejected') -contains $script:StopResult) { $exitCode = 1 }
+} catch {
+    if ($script:StopResult) {
+        Write-SyncLog "stopped: $script:StopResult - $script:StopMessage"
+        if (-not $PreflightOnly) {
+            Save-SyncState @{ lastResult = $script:StopResult }
+            $message = $script:StopMessage
+            if ($script:Triage -and $script:Triage.decisions -and @($script:Triage.decisions).Count -gt 0) {
+                $message = $message + "`n" + (Get-DecisionText -Decisions @($script:Triage.decisions))
+            }
+            Send-Notify $message
+        }
+    } else {
+        $detail = $_.Exception.Message
+        Write-SyncLog "ERROR: $detail"
+        if (-not $PreflightOnly) {
+            Save-SyncState @{ lastResult = 'error' }
+            Send-Notify "Bots upstream sync hit an error and stopped before deploying anything it had not smoked: $detail (log $RunDir\sync.log)"
+        }
+    }
+    $exitCode = 1
+} finally {
+    if (-not $PreflightOnly -and (Test-Path -LiteralPath $LockFile)) { Remove-Item -LiteralPath $LockFile -Force }
+}
+exit $exitCode
