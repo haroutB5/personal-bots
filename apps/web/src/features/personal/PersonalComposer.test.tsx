@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
     files: [{ type: "file", id: "file-1", name: "notes.txt" }],
   },
   start: vi.fn(),
+  metadata: vi.fn(),
   waitUploads: vi.fn(),
   release: vi.fn(),
   retry: vi.fn(),
@@ -45,7 +46,8 @@ vi.mock("~/state/threads", () => ({
   threadEnvironment: { startTurn: "start", updateMetadata: "metadata" },
 }));
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: (command: string) => (command === "start" ? state.start : vi.fn()),
+  useAtomCommand: (command: string) =>
+    command === "start" ? state.start : command === "metadata" ? state.metadata : vi.fn(),
 }));
 vi.mock("~/lib/attachmentUploadQueue", () => ({
   startAttachmentUpload: vi.fn(),
@@ -84,6 +86,7 @@ beforeEach(async () => {
     files: [{ type: "file", id: "file-1", name: "notes.txt" }],
   };
   state.start.mockReset().mockResolvedValue({ _tag: "Success" });
+  state.metadata.mockReset().mockResolvedValue({ _tag: "Success" });
   state.waitUploads.mockReset().mockResolvedValue(undefined);
   state.release.mockClear();
   state.retry.mockClear();
@@ -139,6 +142,16 @@ describe("personal composer sends", () => {
     expect(state.start).toHaveBeenCalledOnce();
     expect(state.draft.prompt).toBe("");
     expect(state.draft.files).toEqual([]);
+  });
+
+  it("names a new chat only through the turn's title seed", async () => {
+    // A metadata rename would be a manual title and block the server's AI title.
+    const newChat = { ...props.thread, messages: [] } as unknown as Thread;
+    await act(async () => renderer.update(<PersonalComposer {...props} thread={newChat} />));
+    await act(async () => renderer.root.findByProps({ "aria-label": "Send" }).props.onClick());
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(state.start.mock.calls[0]?.[0]).toMatchObject({ input: { titleSeed: "Send this" } });
+    expect(state.metadata).not.toHaveBeenCalled();
   });
 
   it("shows upload progress and exposes a failed attachment retry", async () => {

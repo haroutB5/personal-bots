@@ -112,9 +112,6 @@ export function PersonalComposer({
   const removeImage = useComposerDraftStore((store) => store.removeImage);
   const removeFile = useComposerDraftStore((store) => store.removeFile);
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
-  const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
-    reportFailure: false,
-  });
   const serverConfig = useServerConfigs().get(environmentId) ?? null;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -291,10 +288,9 @@ export function PersonalComposer({
         },
       ]);
 
-      // First message names the chat, like the upstream composer does.
-      if (thread.messages.length === 0) {
-        await updateMetadata({ environmentId, input: { threadId, title: titleSeed } });
-      }
+      // The server names a new chat from `titleSeed` when the turn starts, as
+      // a replaceable title the AI title then refines once. A metadata rename
+      // here would count as the user's own title and block the AI title.
       const result = await startTurn({
         environmentId,
         input: {
