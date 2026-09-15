@@ -212,8 +212,8 @@ describe("ChatsScreen cold start", () => {
     await flushRaf();
     await flushRaf();
     expect(state.tasksCalls).toEqual([null, "env-1"]);
-    // Static version chrome moved to Settings.
-    expect(json).not.toContain("Bots v9.9.9-test");
+    // The running version sits small beside the Bots heading, always visible.
+    expect(json).toContain("v9.9.9-test");
     // No provider data yet: the usage strip stays out of the layout entirely.
     expect(json).not.toContain("Open details");
   });
