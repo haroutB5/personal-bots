@@ -363,12 +363,12 @@ export function ChatsScreen(): JSX.Element {
 
       <PersonalUsageStrip now={now} />
 
-      <section className="mt-4" aria-live="polite">
+      <section className="mt-2" aria-live="polite">
         <p className="text-2xl leading-8 font-bold tracking-[-0.3px] text-[var(--personal-text)]">
           {greetingLine(new Date(now), profile.data?.displayName ?? "")}
         </p>
         {loaded ? (
-          <p className="mt-1 text-[18px] leading-6 text-[var(--personal-text-secondary)]">
+          <p className="mt-0.5 text-[18px] leading-6 text-[var(--personal-text-secondary)]">
             {teamStatusLine({
               botCount: summaries.length,
               runningCount,
@@ -431,7 +431,7 @@ export function ChatsScreen(): JSX.Element {
 
       {loaded && summaries.length > 0 ? (
         <>
-          <div className="relative mt-4">
+          <div className="relative mt-2.5">
             <Search
               aria-hidden="true"
               className="pointer-events-none absolute top-1/2 left-3.5 size-[18px] -translate-y-1/2 text-[var(--personal-text-secondary)]"
@@ -503,21 +503,15 @@ export function ChatsScreen(): JSX.Element {
         <ChatsSkeletonRows />
       ) : null}
 
-      {versionLabel !== null ? (
+      {versionLabel !== null && updateAvailable ? (
         <div className="mt-auto pt-8">
-          {updateAvailable ? (
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="mx-auto flex min-h-11 items-center justify-center rounded-full px-4 text-[13px] font-semibold text-[var(--personal-primary)]"
-            >
-              Update to {versionLabel} - tap to refresh
-            </button>
-          ) : (
-            <p className="text-center text-[11px] leading-4 text-[var(--personal-text-secondary)]">
-              Bots {versionLabel}
-            </p>
-          )}
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mx-auto flex min-h-11 items-center justify-center rounded-full px-4 text-[13px] font-semibold text-[var(--personal-primary)]"
+          >
+            Update to {versionLabel} - tap to refresh
+          </button>
         </div>
       ) : null}
     </div>

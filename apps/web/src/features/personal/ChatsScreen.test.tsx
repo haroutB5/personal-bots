@@ -21,6 +21,11 @@ const state = vi.hoisted(() => ({
   rafQueue: [] as Array<FrameRequestCallback>,
   timeouts: new Map<number, () => void>(),
   nextTimeoutId: 1,
+  reload: vi.fn(),
+  versionInfo: { label: "v9.9.9-test", updateAvailable: false } as {
+    label: string | null;
+    updateAvailable: boolean;
+  },
 }));
 
 function createLocalStorageStub(): Storage {
@@ -62,6 +67,7 @@ function stubWindow() {
     clearTimeout: (id: number) => {
       state.timeouts.delete(id);
     },
+    location: { reload: state.reload },
   });
   vi.stubGlobal("localStorage", localStorage);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -101,7 +107,7 @@ vi.mock("./useDeleteBot", () => ({ useDeleteBot: () => async () => state.deleteO
 vi.mock("./startBotChat", () => ({
   useStartBotChat: () => ({ start: vi.fn(), starting: false }),
 }));
-vi.mock("./appVersion", () => ({ useAppVersion: () => "v9.9.9-test" }));
+vi.mock("./appVersion", () => ({ useAppVersion: () => state.versionInfo }));
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -164,6 +170,8 @@ afterEach(async () => {
   state.tasksCalls.length = 0;
   state.rafQueue.length = 0;
   state.timeouts.clear();
+  state.reload.mockClear();
+  state.versionInfo = { label: "v9.9.9-test", updateAvailable: false };
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -204,10 +212,25 @@ describe("ChatsScreen cold start", () => {
     await flushRaf();
     await flushRaf();
     expect(state.tasksCalls).toEqual([null, "env-1"]);
-    // Footer pins to the bottom instead of floating mid-screen.
-    expect(json).toContain("mt-auto");
+    // Static version chrome moved to Settings.
+    expect(json).not.toContain("Bots v9.9.9-test");
     // No provider data yet: the usage strip stays out of the layout entirely.
     expect(json).not.toContain("Open details");
+  });
+
+  it("keeps the actionable update prompt on the home screen", async () => {
+    stubWindow();
+    state.versionInfo = { label: "v9.9.10-test", updateAvailable: true };
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+
+    const update = renderer!.root
+      .findAllByType("button")
+      .find((button) => JSON.stringify(button.props.children).includes("Update to"));
+    expect(update).toBeDefined();
+    act(() => update!.props.onClick());
+    expect(state.reload).toHaveBeenCalledTimes(1);
   });
 
   it("replaces the snapshot seamlessly when live data arrives", async () => {

@@ -101,12 +101,14 @@ describe("PersonalUsageStrip", () => {
     const buttons = renderer!.root.findAllByType("button");
     expect(buttons).toHaveLength(1);
     expect(buttons[0]!.props["aria-label"]).toBe(
-      "Usage: Claude session 26 percent, weekly 8 percent; Codex session 12 percent. Open details.",
+      "Usage: Claude, Session 26 percent used, Weekly 8 percent used; Codex, Session 12 percent used, Weekly not reported. Open details.",
     );
     const json = JSON.stringify(renderer!.toJSON());
     expect(json.indexOf("Claude")).toBeLessThan(json.indexOf("Codex"));
     expect(json).toContain("26%");
-    expect(json).toContain("wk ");
+    expect(json).toContain("Session");
+    expect(json).toContain("Weekly");
+    expect(json).toContain("used");
     expect(json).toContain("12%");
     // Chrome, not content: the sheet stays closed until asked for.
     expect(json).not.toContain("resets in");
@@ -138,6 +140,7 @@ describe("PersonalUsageStrip", () => {
     });
 
     const json = JSON.stringify(renderer!.toJSON());
+    expect(json).toContain("Resets");
     expect(json).toContain("resets in 2h 30m");
     expect(json).toContain("resets in 7d 0h");
     expect(json).toContain("26% used");

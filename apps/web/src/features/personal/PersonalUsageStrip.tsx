@@ -65,7 +65,8 @@ function WindowRow({ card, row }: { readonly card: UsageCard; readonly row: Usag
         ) : null}
       </div>
       <span className="text-[13px] text-[var(--personal-text-secondary)] tabular-nums">
-        {row.resetLabel ?? "Reset time not reported"}
+        {row.resetTimeLabel ?? "Reset time not reported"}
+        {row.resetTimeLabel !== null && row.resetLabel !== null ? ` · ${row.resetLabel}` : ""}
       </span>
     </div>
   );
@@ -216,24 +217,16 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
         onClick={() => setOpen(true)}
         aria-label={usageStripAriaLabel(cells)}
         aria-haspopup="dialog"
-        className="mt-1 flex min-h-11 w-full items-center gap-5 rounded-[var(--personal-radius-button)] text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+        className="mt-0.5 grid min-h-11 w-full grid-cols-2 items-center gap-3 rounded-[var(--personal-radius-button)] text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
       >
         {cells.map((cell) => (
-          <span key={cell.driver} className="flex min-w-0 flex-1 flex-col gap-1">
-            <span className="flex items-baseline justify-between gap-2">
-              <span className="truncate text-[12px] leading-4 text-[var(--personal-text-secondary)]">
-                {cell.title}
-              </span>
-              <span className="shrink-0 text-[12px] leading-4 tabular-nums">
-                <span className="font-semibold text-[var(--personal-text-secondary)]">
-                  {formatStripPercent(cell.sessionPercent)}
-                </span>
-                {cell.weeklyPercent !== null ? (
-                  <span className="pl-1.5 text-[var(--personal-text-tertiary)]">
-                    wk {cell.weeklyPercent}%
-                  </span>
-                ) : null}
-              </span>
+          <span key={cell.driver} className="flex min-w-0 flex-col gap-0.5">
+            <span className="truncate text-[12px] leading-4 font-semibold text-[var(--personal-text-secondary)]">
+              {cell.title}
+            </span>
+            <span className="whitespace-nowrap text-[11px] leading-4 text-[var(--personal-text-tertiary)] tabular-nums">
+              Session {formatStripPercent(cell.sessionPercent)} · Weekly{" "}
+              {formatStripPercent(cell.weeklyPercent)} used
             </span>
             <StripCellBar percent={cell.sessionPercent} />
           </span>

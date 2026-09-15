@@ -9,6 +9,7 @@ function row(overrides: Partial<UsageWindowRow> = {}): UsageWindowRow {
     label: "5-hour session",
     usedPercent: 26,
     resetLabel: "resets in 2h 30m",
+    resetTimeLabel: "Resets 14:30",
     ...overrides,
   };
 }
@@ -84,7 +85,7 @@ describe("usageStripAriaLabel", () => {
       { driver: "codex", title: "Codex", sessionPercent: 12, weeklyPercent: null },
     ]);
     expect(label).toBe(
-      "Usage: Claude session 26 percent, weekly 8 percent; Codex session 12 percent. Open details.",
+      "Usage: Claude, Session 26 percent used, Weekly 8 percent used; Codex, Session 12 percent used, Weekly not reported. Open details.",
     );
   });
 
@@ -94,7 +95,7 @@ describe("usageStripAriaLabel", () => {
       { driver: "codex", title: "Codex", sessionPercent: null, weeklyPercent: 4 },
     ]);
     expect(label).toBe(
-      "Usage: Claude usage not reported; Codex session not reported, weekly 4 percent. Open details.",
+      "Usage: Claude, Session not reported, Weekly not reported; Codex, Session not reported, Weekly 4 percent used. Open details.",
     );
   });
 });

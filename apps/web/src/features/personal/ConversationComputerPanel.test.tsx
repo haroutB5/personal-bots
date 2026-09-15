@@ -14,12 +14,29 @@ const { paneMounts, paneUnmounts, useComputerFeed } = vi.hoisted(() => ({
 
 vi.mock("./computer/computerState", () => ({ useComputerFeed }));
 vi.mock("./computer/ComputerScreen", () => ({
-  ComputerBrowserPane: ({ fullScreen }: { fullScreen?: boolean }) => {
+  ComputerBrowserPane: ({
+    fullScreen,
+    onOpenFullScreen,
+    onBackToChat,
+  }: {
+    fullScreen?: boolean;
+    onOpenFullScreen?: () => void;
+    onBackToChat?: () => void;
+  }) => {
     useEffect(() => {
       paneMounts();
       return paneUnmounts;
     }, []);
-    return <div data-full-screen={fullScreen}>Live browser pane</div>;
+    return (
+      <div data-full-screen={fullScreen}>
+        Live browser pane
+        {fullScreen ? (
+          <button type="button" aria-label="Back to chat" onClick={onBackToChat} />
+        ) : (
+          <button type="button" aria-label="Open browser full screen" onClick={onOpenFullScreen} />
+        )}
+      </div>
+    );
   },
 }));
 
@@ -255,7 +272,7 @@ describe("ConversationComputerPanel", () => {
     expect(onExpandedChange).toHaveBeenCalledWith(false);
   });
 
-  it("moves the same browser pane full screen and restores it on exit", () => {
+  it("opens the same browser pane from the preview and restores it on back", () => {
     let renderer: ReactTestRenderer;
     act(() => {
       renderer = create(
@@ -270,10 +287,12 @@ describe("ConversationComputerPanel", () => {
         />,
       );
     });
-    expect(renderer!.root.findByProps({ "aria-label": "Full screen" })).toBeDefined();
+    expect(renderer!.root.findByProps({ "aria-label": "Open browser full screen" })).toBeDefined();
     expect(paneMounts).toHaveBeenCalledTimes(1);
 
-    act(() => renderer!.root.findByProps({ "aria-label": "Full screen" }).props.onClick());
+    act(() =>
+      renderer!.root.findByProps({ "aria-label": "Open browser full screen" }).props.onClick(),
+    );
 
     expect(renderer!.root.findByProps({ role: "dialog" }).props["aria-label"]).toBe(
       "Computer full screen",
@@ -286,7 +305,7 @@ describe("ConversationComputerPanel", () => {
     expect(paneUnmounts).not.toHaveBeenCalled();
     expect(document.body.style.overflow).toBe("hidden");
 
-    act(() => renderer!.root.findByProps({ "aria-label": "Exit full screen" }).props.onClick());
+    act(() => renderer!.root.findByProps({ "aria-label": "Back to chat" }).props.onClick());
 
     expect(renderer!.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
     expect(renderer!.root.findAllByProps({ "data-full-screen": false })).toHaveLength(1);
@@ -310,7 +329,9 @@ describe("ConversationComputerPanel", () => {
         />,
       );
     });
-    act(() => renderer!.root.findByProps({ "aria-label": "Full screen" }).props.onClick());
+    act(() =>
+      renderer!.root.findByProps({ "aria-label": "Open browser full screen" }).props.onClick(),
+    );
     act(() => {
       window.dispatchEvent(Object.assign(new Event("keydown"), { key: "Escape" }));
     });
@@ -331,7 +352,9 @@ describe("ConversationComputerPanel", () => {
     act(() => {
       renderer = create(<ConversationComputerPanel {...props} />);
     });
-    act(() => renderer!.root.findByProps({ "aria-label": "Full screen" }).props.onClick());
+    act(() =>
+      renderer!.root.findByProps({ "aria-label": "Open browser full screen" }).props.onClick(),
+    );
     expect(document.body.style.overflow).toBe("hidden");
     useComputerFeed.mockReturnValue({
       feed: { status: { ...status(), state: "offline", controller: { _tag: "None" } }, events: [] },
