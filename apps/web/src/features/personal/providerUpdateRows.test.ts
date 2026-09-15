@@ -2,7 +2,11 @@ import { PersonalBot, type ServerProvider } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildProviderUpdateRows, providerUpdateRow } from "./providerUpdateRows";
+import {
+  buildProviderUpdateRows,
+  providerUpdateRow,
+  withPendingAction,
+} from "./providerUpdateRows";
 
 const decodeBot = Schema.decodeUnknownSync(PersonalBot);
 
@@ -130,6 +134,33 @@ describe("providerUpdateRow", () => {
     );
     expect(checking.status?.text).toBe("Testing 2.1.264 with one message…");
     expect(checking.canCheck).toBe(false);
+  });
+});
+
+describe("withPendingAction", () => {
+  it("answers a tap at once, before the snapshot catches up", () => {
+    // Check again refreshes the provider first (seconds) before the server
+    // publishes its checking state; the row must not look untouched.
+    const row = providerUpdateRow(claude({ versionAdvisory: advisory() }), "Claude Code");
+    expect(withPendingAction(row, "check")).toMatchObject({
+      status: { text: "Checking…", tone: "normal" },
+      canCheck: false,
+      canUpdate: false,
+    });
+    expect(withPendingAction(row, "update").status?.text).toBe("Starting update…");
+    expect(withPendingAction(row, null)).toBe(row);
+  });
+
+  it("lets the server's own state win once it arrives", () => {
+    const checking = providerUpdateRow(
+      claude({
+        smokeCheck: { status: "checking", version: "2.1.263", checkedAt: null, message: null },
+      }),
+      "Claude Code",
+    );
+    expect(withPendingAction(checking, "check").status?.text).toBe(
+      "Testing 2.1.263 with one message…",
+    );
   });
 });
 

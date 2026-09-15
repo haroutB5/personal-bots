@@ -8,7 +8,11 @@ import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
-import type { ProviderUpdateRow } from "./providerUpdateRows";
+import {
+  type ProviderRowAction,
+  type ProviderUpdateRow,
+  withPendingAction,
+} from "./providerUpdateRows";
 import { personalProviderRecheck } from "./usePersonalBots";
 
 const ROW_BUTTON =
@@ -31,16 +35,17 @@ export function PersonalProviderRows({
   });
   const recheck = useAtomCommand(personalProviderRecheck, { reportFailure: false });
   // Requests in flight (the snapshot takes over once the server answers).
-  const [sending, setSending] = useState<ReadonlySet<string>>(() => new Set());
+  const [sending, setSending] = useState<ReadonlyMap<string, ProviderRowAction>>(() => new Map());
   const [errors, setErrors] = useState<ReadonlyMap<string, string>>(() => new Map());
 
   const send = async (
     instanceId: string,
+    action: ProviderRowAction,
     request: () => ReturnType<typeof recheck> | ReturnType<typeof updateProvider>,
     fallback: string,
   ) => {
     if (sending.has(instanceId)) return;
-    setSending((previous) => new Set(previous).add(instanceId));
+    setSending((previous) => new Map(previous).set(instanceId, action));
     const result = await request();
     const failure = commandFailureMessage(result, fallback);
     setErrors((previous) => {
@@ -50,7 +55,7 @@ export function PersonalProviderRows({
       return next;
     });
     setSending((previous) => {
-      const next = new Set(previous);
+      const next = new Map(previous);
       next.delete(instanceId);
       return next;
     });
@@ -58,8 +63,12 @@ export function PersonalProviderRows({
 
   return (
     <>
-      {rows.map((row) => {
-        const inFlight = sending.has(row.instanceId);
+      {rows.map((snapshotRow) => {
+        const pending = sending.get(snapshotRow.instanceId) ?? null;
+        const inFlight = pending !== null;
+        // Status and detail answer the tap at once; the buttons keep their
+        // place (disabled) so the row does not jump while the request runs.
+        const row = withPendingAction(snapshotRow, pending);
         const error = errors.get(row.instanceId) ?? null;
         const driver = row.driver;
         return (
@@ -92,14 +101,15 @@ export function PersonalProviderRows({
                   ) : null}
                 </span>
               </span>
-              {row.canUpdate && driver !== null ? (
+              {snapshotRow.canUpdate && driver !== null ? (
                 <button
                   type="button"
                   disabled={inFlight}
-                  aria-busy={inFlight}
+                  aria-busy={pending === "update"}
                   onClick={() =>
                     void send(
                       row.instanceId,
+                      "update",
                       () =>
                         updateProvider({
                           environmentId,
@@ -113,22 +123,23 @@ export function PersonalProviderRows({
                   Update
                 </button>
               ) : null}
-              {row.canCheck ? (
+              {snapshotRow.canCheck ? (
                 <button
                   type="button"
                   disabled={inFlight}
-                  aria-busy={inFlight}
+                  aria-busy={pending === "check"}
                   aria-label={`Check ${row.label} again`}
                   onClick={() =>
                     void send(
                       row.instanceId,
+                      "check",
                       () => recheck({ environmentId, input: { instanceId: row.instanceId } }),
                       `Couldn't check ${row.label}.`,
                     )
                   }
                   className={`${ROW_BUTTON} px-3 text-[var(--personal-primary)]`}
                 >
-                  Check again
+                  {pending === "check" ? "Checking…" : "Check again"}
                 </button>
               ) : null}
             </div>

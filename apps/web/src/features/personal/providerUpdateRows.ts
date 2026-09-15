@@ -65,6 +65,31 @@ export function buildProviderUpdateRows(
   return rows;
 }
 
+export type ProviderRowAction = "check" | "update";
+
+/**
+ * The row while a tap's request is still in flight. Check again refreshes the
+ * provider before the server publishes its own checking state, which takes
+ * seconds; without this the row looks untouched. Server state that is already
+ * in progress (testing, updating) wins.
+ */
+export function withPendingAction(
+  row: ProviderUpdateRow,
+  action: ProviderRowAction | null,
+): ProviderUpdateRow {
+  if (action === null) return row;
+  const serverBusy = row.busy || !row.canCheck;
+  return {
+    ...row,
+    status: serverBusy
+      ? row.status
+      : { text: action === "check" ? "Checking…" : "Starting update…", tone: "normal" },
+    detail: serverBusy ? row.detail : null,
+    canUpdate: false,
+    canCheck: false,
+  };
+}
+
 export function providerUpdateRow(snapshot: ServerProvider, label: string): ProviderUpdateRow {
   const update = snapshot.updateState;
   const advisory = snapshot.versionAdvisory;
