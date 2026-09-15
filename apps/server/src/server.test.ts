@@ -106,6 +106,7 @@ import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.t
 import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
+import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import {
   isThreadDetailEvent,
@@ -773,6 +774,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(PersonalRoutineService.PersonalRoutineService)({}),
           Layer.mock(PersonalMemoryService.PersonalMemoryService)({}),
           Layer.mock(PersonalPushService.PersonalPushService)({}),
+          Layer.mock(PersonalProviderUpdates.PersonalProviderUpdates)({}),
           Layer.mock(PersonalBotRepository.PersonalBotRepository)({}),
           Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
             current: Effect.succeed([]),

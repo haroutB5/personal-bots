@@ -174,6 +174,7 @@ import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
 import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
+import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -673,6 +674,7 @@ const makeWsRpcLayer = (
       const personalRoutines = yield* PersonalRoutineService.PersonalRoutineService;
       const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
       const personalPush = yield* PersonalPushService.PersonalPushService;
+      const personalProviderUpdates = yield* PersonalProviderUpdates.PersonalProviderUpdates;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -2428,6 +2430,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalBotsSetProfile, personalBots.setProfile(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalBotsRecheckProvider]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsRecheckProvider,
+            personalProviderUpdates.recheck(input).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.personalBotsListFiles]: (_input) =>
           observeRpcEffect(
             WS_METHODS.personalBotsListFiles,

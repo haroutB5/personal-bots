@@ -488,6 +488,7 @@ export const WS_METHODS = {
   personalBotsGetProfile: "personalBots.getProfile",
   personalBotsSetProfile: "personalBots.setProfile",
   personalBotsListFiles: "personalBots.listFiles",
+  personalBotsRecheckProvider: "personalBots.recheckProvider",
   personalFilesDelete: "personalFiles.delete",
 
   // Personal tasks methods
@@ -1021,6 +1022,13 @@ const WsPersonalBotsGetProfileRpc = Rpc.make(WS_METHODS.personalBotsGetProfile, 
 const WsPersonalBotsSetProfileRpc = Rpc.make(WS_METHODS.personalBotsSetProfile, {
   payload: PersonalProfileSetInput,
   success: PersonalProfile,
+  error: PersonalBotsRpcError,
+});
+
+// "Check again" on a provider row: refresh it and re-run the bots' test message.
+const WsPersonalBotsRecheckProviderRpc = Rpc.make(WS_METHODS.personalBotsRecheckProvider, {
+  payload: Schema.Struct({ instanceId: ProviderInstanceId }),
+  success: Schema.Struct({}),
   error: PersonalBotsRpcError,
 });
 
@@ -1833,6 +1841,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPersonalBotsGetProfileRpc,
   WsPersonalBotsSetProfileRpc,
   WsPersonalBotsListFilesRpc,
+  WsPersonalBotsRecheckProviderRpc,
   WsPersonalFilesDeleteRpc,
   WsPersonalTasksListRpc,
   WsPersonalTasksGetRpc,
