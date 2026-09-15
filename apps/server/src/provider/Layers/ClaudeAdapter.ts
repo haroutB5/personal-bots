@@ -1459,11 +1459,11 @@ const CLAUDE_SETTING_SOURCES = [
  * Auto-memory and claude.ai connectors are read regardless of settingSources,
  * so both are switched off by setting and by env var. Built-in tools stay.
  */
-const PERSONAL_BOT_CLAUDE_SETTINGS = {
+export const PERSONAL_BOT_CLAUDE_SETTINGS = {
   autoMemoryEnabled: false,
   disableClaudeAiConnectors: true,
 } as const;
-const PERSONAL_BOT_CLAUDE_ENVIRONMENT = {
+export const PERSONAL_BOT_CLAUDE_ENVIRONMENT = {
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
   ENABLE_CLAUDEAI_MCP_SERVERS: "false",
 } as const;

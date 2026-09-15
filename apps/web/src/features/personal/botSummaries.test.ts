@@ -80,11 +80,16 @@ function provider(instanceId: string, overrides: Partial<ServerProvider> = {}): 
 describe("resolveBotProvider", () => {
   it("names a live instance and flags a missing or unavailable one", () => {
     const providers = [provider("codex"), provider("claudeAgent", { availability: "unavailable" })];
-    expect(resolveBotProvider("codex", providers)).toEqual({ label: "Codex", available: true });
+    expect(resolveBotProvider("codex", providers)).toEqual({
+      label: "Codex",
+      available: true,
+      broken: false,
+    });
     expect(providerLine(resolveBotProvider("claudeAgent", providers))).toMatch(/· unavailable$/);
     expect(resolveBotProvider("gone_instance", providers)).toEqual({
       label: "Gone Instance",
       available: false,
+      broken: false,
     });
   });
 });
@@ -289,9 +294,12 @@ describe("botStatusLine", () => {
     expect(botStatusLine(summary({ nextRoutine: routine }), now)).toBe(
       "Next run Mon 14 Sep, 09:00",
     );
-    expect(botStatusLine(summary({ provider: { label: "Codex", available: false } }), now)).toBe(
-      "Unavailable · tap to fix",
-    );
+    expect(
+      botStatusLine(
+        summary({ provider: { label: "Codex", available: false, broken: false } }),
+        now,
+      ),
+    ).toBe("Unavailable · tap to fix");
     expect(botStatusLine(summary(), now)).toBe("Ready");
   });
 
@@ -299,9 +307,10 @@ describe("botStatusLine", () => {
     expect(botStatus(summary({ needsBrowserHelp: true }), now).tone).toBe("review");
     expect(botStatus(summary({ hasPendingApprovals: true }), now).tone).toBe("review");
     expect(botStatus(summary({ hasPendingUserInput: true }), now).tone).toBe("review");
-    expect(botStatus(summary({ provider: { label: "Codex", available: false } }), now).tone).toBe(
-      "review",
-    );
+    expect(
+      botStatus(summary({ provider: { label: "Codex", available: false, broken: false } }), now)
+        .tone,
+    ).toBe("review");
     expect(botStatus(summary({ live: true }), now).tone).toBe("normal");
   });
 });

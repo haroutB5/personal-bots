@@ -18,7 +18,10 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
-vi.mock("~/state/server", () => ({ primaryServerProvidersAtom: {} }));
+vi.mock("~/state/server", () => ({
+  primaryServerProvidersAtom: {},
+  serverEnvironment: { updateProvider: {} },
+}));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => state.result }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
@@ -26,6 +29,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("./usePersonalBots", () => ({
   personalProfileSet: {},
+  personalProviderRecheck: {},
   usePersonalEnvironmentId: () => "env-1",
   usePersonalBotsList: () => ({ data: { bots: [] } }),
   usePersonalProfile: () => ({ data: { displayName: "Harout" } }),

@@ -153,6 +153,20 @@ export function pushPayloadForTask(
   return { title, body, url, tag: `task-${task.taskId}` };
 }
 
+/** "Claude Code 2.1.264 is failing for your bots", linking to the Settings provider row. */
+export function providerBrokenPushPayload(input: {
+  readonly instanceId: string;
+  readonly label: string;
+  readonly version: string;
+}): PersonalPushPayload {
+  return {
+    title: `${input.label} ${input.version} is failing for your bots`,
+    body: "A test message after the update failed. Open Settings to update or check again.",
+    url: "/bots/settings",
+    tag: `provider-${input.instanceId}`,
+  };
+}
+
 const SubscriptionRow = Schema.Struct({
   subscriptionId: PersonalPushSubscriptionId,
   endpoint: Schema.String,
@@ -204,6 +218,12 @@ export class PersonalPushService extends Context.Service<
     ) => Effect.Effect<PersonalPushPreferences, PersonalPushError>;
     /** Queues the notification a task transition earns (deduped per transition). */
     readonly notifyTask: (task: PersonalTask) => Effect.Effect<void>;
+    /** Queues the one "provider is failing for your bots" alert for this version. */
+    readonly notifyProviderBroken: (input: {
+      readonly instanceId: string;
+      readonly label: string;
+      readonly version: string;
+    }) => Effect.Effect<void>;
     /** Queues one pass: send due messages, expire and prune old rows. */
     readonly sweep: Effect.Effect<void>;
     /** Resolves when every queued send pass has finished. */
@@ -544,6 +564,27 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // A broken provider stops every bot on it, so it rides the "hit a problem"
+  // preference. One event per instance and version: a re-check that fails
+  // again for the same version dedupes in the outbox.
+  const notifyProviderBroken: PersonalPushService["Service"]["notifyProviderBroken"] = (input) =>
+    Effect.gen(function* () {
+      const preferences = yield* readPreferences;
+      if (!preferences.taskFailed) return;
+      const eventId = `provider-broken:${input.instanceId}:${input.version}`;
+      const queued = yield* enqueue(eventId, providerBrokenPushPayload(input));
+      if (queued > 0) yield* kick;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal notifications could not queue a provider alert", {
+              instanceId: input.instanceId,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
+
   const start: PersonalPushService["Service"]["start"] = () =>
     Effect.gen(function* () {
       if (Option.isSome(tasks)) {
@@ -565,6 +606,7 @@ export const make = Effect.gen(function* () {
     test,
     setPreferences,
     notifyTask,
+    notifyProviderBroken,
     sweep: kick,
     drain: worker.drain,
     start,

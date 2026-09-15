@@ -10,13 +10,19 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { conversationStateLabel, providerWaitState } from "./conversationModel";
+import {
+  type ConversationState,
+  conversationStateLabel,
+  providerWaitState,
+} from "./conversationModel";
 import { routineNextRunLabel } from "./taskPresentation";
 
 export interface BotProviderStatus {
   readonly label: string;
   /** False when the bot's instance is missing, disabled or unavailable. */
   readonly available: boolean;
+  /** The test message after an update failed on the version installed now. */
+  readonly broken: boolean;
 }
 
 export interface BotSummary {
@@ -57,14 +63,40 @@ export function resolveBotProvider(
 ): BotProviderStatus {
   const snapshot = providers.find((candidate) => candidate.instanceId === instanceId);
   if (snapshot === undefined) {
-    return { label: humanizeInstanceId(instanceId), available: false };
+    return { label: humanizeInstanceId(instanceId), available: false, broken: false };
   }
   const label = resolveProviderInstanceDisplayName(snapshot);
   return {
     // The bots UI names Anthropic's runtime by its product name.
     label: label === "Claude" ? "Claude Code" : label,
     available: snapshot.enabled && isProviderAvailable(snapshot),
+    broken: isProviderBroken(snapshot),
   };
+}
+
+/** The bots' test message failed on the installed version; a verdict for another version says nothing. */
+export function isProviderBroken(
+  snapshot: Pick<ServerProvider, "version" | "smokeCheck">,
+): boolean {
+  return (
+    snapshot.smokeCheck?.status === "failed" && snapshot.smokeCheck.version === snapshot.version
+  );
+}
+
+/**
+ * The chat header's status text. A failed post-update test replaces the state
+ * label unless the bot is waiting on the user.
+ */
+export function conversationHeaderStatus(
+  state: ConversationState,
+  stateLabel: string,
+  provider: BotProviderStatus | null,
+): string {
+  if (provider === null) return stateLabel;
+  if (provider.broken && state !== "needs_help" && state !== "waiting") {
+    return `Update broke ${provider.label}`;
+  }
+  return `${provider.label} · ${stateLabel}`;
 }
 
 /** "Claude Code", or "Claude Code · unavailable" when the bot cannot run. */
@@ -102,6 +134,10 @@ export function botStatus(
   if (summary.needsBrowserHelp) return { label: "Needs your help", tone: "review" };
   if (summary.hasPendingApprovals) return { label: "Needs approval", tone: "review" };
   if (summary.hasPendingUserInput) return { label: "Needs your reply", tone: "review" };
+  // Below the needs-you states, above everything else: the bot's next turn will fail.
+  if (summary.provider.broken) {
+    return { label: `Update broke ${summary.provider.label}`, tone: "review" };
+  }
   if (summary.live) return { label: "Working", tone: "normal" };
   if (summary.rateLimitedThread !== null) {
     return {

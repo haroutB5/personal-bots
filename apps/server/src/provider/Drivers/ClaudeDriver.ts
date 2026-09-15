@@ -37,7 +37,12 @@ import {
   probeClaudeCapabilities,
 } from "../Layers/ClaudeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
-import { resolveClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
+import {
+  resolveClaudeCatalogApiModelId,
+  resolveClaudeModelCatalog,
+} from "../ClaudeModelCatalog.ts";
+import { runClaudeSmokeTest } from "../providerSmokeTest.ts";
+import { resolveClaudeSdkExecutablePath } from "./ClaudeExecutable.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import {
@@ -59,7 +64,11 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import {
+  makeClaudeCapabilitiesCacheKey,
+  makeClaudeContinuationGroupKey,
+  makeClaudeEnvironment,
+} from "./ClaudeHome.ts";
 import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -243,6 +252,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
               Effect.provideService(Path.Path, path),
             );
 
+      // Same executable resolution and environment as the adapter's sessions.
+      const smokeTest: NonNullable<ProviderInstance["smokeTest"]> = ({ model }) =>
+        Effect.gen(function* () {
+          const environment = yield* makeClaudeEnvironment(effectiveConfig, processEnv);
+          const executablePath = yield* resolveClaudeSdkExecutablePath(
+            effectiveConfig.binaryPath,
+            environment,
+          );
+          const catalog = yield* modelCatalog;
+          yield* runClaudeSmokeTest({
+            instanceId,
+            executablePath,
+            environment,
+            model: resolveClaudeCatalogApiModelId(catalog, { instanceId, model }),
+          });
+        }).pipe(
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+        );
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -257,6 +286,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         snapshotForCwd,
         adapter,
         textGeneration,
+        smokeTest,
       } satisfies ProviderInstance;
     }),
 };

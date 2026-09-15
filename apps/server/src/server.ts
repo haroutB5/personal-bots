@@ -93,6 +93,7 @@ import {
 } from "./personal/routines/hookRoutes.ts";
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
+import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -500,6 +501,7 @@ const PersonalReactorsLive = Layer.effectDiscard(
     yield* (yield* PersonalRoutineService.PersonalRoutineService).start();
     yield* (yield* PersonalMemoryService.PersonalMemoryService).start();
     yield* (yield* PersonalPushService.PersonalPushService).start();
+    yield* (yield* PersonalProviderUpdates.PersonalProviderUpdates).start();
   }),
 );
 
@@ -507,6 +509,8 @@ const PersonalReactorsLive = Layer.effectDiscard(
 // opened by earlier steps). SqlClient, orchestration and providers come from
 // the runtime layers the whole group is merged above.
 const PersonalLayerLive = PersonalReactorsLive.pipe(
+  // Consumes the push service below and the provider/orchestration runtime.
+  Layer.provideMerge(PersonalProviderUpdates.layer),
   Layer.provideMerge(
     PersonalPushService.layer.pipe(
       Layer.provide(PersonalPushService.transportLive),

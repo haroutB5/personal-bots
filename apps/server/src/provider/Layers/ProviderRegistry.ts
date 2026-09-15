@@ -27,6 +27,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderSmokeCheck,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -42,7 +43,11 @@ import * as Semaphore from "effect/Semaphore";
 
 import { ServerConfig } from "../../config.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
+import {
+  ProviderRegistry,
+  type ProviderMaintenanceActionStateInput,
+  type ProviderRegistryShape,
+} from "../Services/ProviderRegistry.ts";
 import {
   hydrateCachedProvider,
   isCachedProviderCorrelated,
@@ -361,7 +366,13 @@ export const ProviderRegistryLive = Layer.effect(
       ReadonlyMap<ProviderInstance, ReadonlySet<string>>
     >(new Map());
     const maintenanceActionStatesRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
+      ReadonlyMap<
+        ProviderInstanceId,
+        {
+          readonly update?: ServerProviderUpdateState | undefined;
+          readonly smokeCheck?: ServerProviderSmokeCheck | undefined;
+        }
+      >
     >(new Map());
 
     // Live-source registry — the dynamic counterpart to the boot-time
@@ -392,7 +403,13 @@ export const ProviderRegistryLive = Layer.effect(
           cacheDir: config.providerStatusCacheDir,
           instanceId: key,
         }).pipe(Effect.provideService(Path.Path, path));
-        const { workspaceSnapshots: _workspaceSnapshots, ...machineProvider } = provider;
+        // The smoke check is re-projected from personal state on boot; a cached
+        // copy would show a stale verdict before that.
+        const {
+          workspaceSnapshots: _workspaceSnapshots,
+          smokeCheck: _smokeCheck,
+          ...machineProvider
+        } = provider;
         yield* writeProviderStatusCache({ filePath, provider: machineProvider }).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
@@ -405,14 +422,16 @@ export const ProviderRegistryLive = Layer.effect(
       provider: ServerProvider,
     ) {
       const maintenanceActionStates = yield* Ref.get(maintenanceActionStatesRef);
-      const updateState = maintenanceActionStates.get(provider.instanceId)?.update;
-      if (!updateState) {
-        const { updateState: _updateState, ...providerWithoutUpdateState } = provider;
-        return providerWithoutUpdateState;
-      }
+      const actions = maintenanceActionStates.get(provider.instanceId);
+      const {
+        updateState: _updateState,
+        smokeCheck: _smokeCheck,
+        ...providerWithoutActionState
+      } = provider;
       return {
-        ...provider,
-        updateState,
+        ...providerWithoutActionState,
+        ...(actions?.update ? { updateState: actions.update } : {}),
+        ...(actions?.smokeCheck ? { smokeCheck: actions.smokeCheck } : {}),
       };
     });
 
@@ -483,18 +502,17 @@ export const ProviderRegistryLive = Layer.effect(
     });
 
     const setProviderMaintenanceActionState = Effect.fn("setProviderMaintenanceActionState")(
-      function* (input: {
-        readonly instanceId: ProviderInstanceId;
-        readonly action: "update";
-        readonly state: ServerProviderUpdateState | null;
-      }) {
+      function* (input: ProviderMaintenanceActionStateInput) {
         yield* Ref.update(maintenanceActionStatesRef, (previous) => {
           const previousActions = previous.get(input.instanceId);
           const nextActions = { ...previousActions };
-          if (input.state === null || input.state.status === "idle") {
-            delete nextActions[input.action];
+          if (input.action === "smokeCheck") {
+            if (input.state === null) delete nextActions.smokeCheck;
+            else nextActions.smokeCheck = input.state;
+          } else if (input.state === null || input.state.status === "idle") {
+            delete nextActions.update;
           } else {
-            nextActions[input.action] = input.state;
+            nextActions.update = input.state;
           }
 
           const next = new Map(previous);

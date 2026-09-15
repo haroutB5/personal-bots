@@ -52,6 +52,7 @@ import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
+import { runCodexSmokeTest } from "../providerSmokeTest.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -337,6 +338,21 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
             ),
           );
 
+      // Same binary, home and launch args as the adapter's app-server sessions.
+      const smokeTest: NonNullable<ProviderInstance["smokeTest"]> = ({ model }) =>
+        runCodexSmokeTest({
+          instanceId,
+          binaryPath: effectiveConfig.binaryPath,
+          homePath: effectiveConfig.homePath,
+          launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+          environment: processEnv,
+          model,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, pathService),
+        );
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -349,6 +365,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         consumeResetCredit,
         adapter,
         textGeneration,
+        smokeTest,
       } satisfies ProviderInstance;
     }),
 };

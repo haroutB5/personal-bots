@@ -86,6 +86,15 @@ export interface ProviderInstance {
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
   readonly auth?: ProviderAuthController;
+  /**
+   * Runs one minimal isolated turn ("reply with one word") through the same
+   * executable and personal-bot isolation a bot session uses, then exits.
+   * Fails with the provider's own error text. Absent on drivers bots never
+   * run on.
+   */
+  readonly smokeTest?: (input: {
+    readonly model: string;
+  }) => Effect.Effect<void, ProviderDriverError>;
 }
 
 export interface ProviderContinuationIdentity {
