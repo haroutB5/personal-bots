@@ -175,6 +175,8 @@ describe("ProviderCommandReactor", () => {
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
     readonly unreadableHistory?: boolean;
+    /** Links thread-1 to a personal bot, as bot chats, tasks and routines are. */
+    readonly personalBotThread?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
@@ -543,6 +545,22 @@ describe("ProviderCommandReactor", () => {
               'old-unreadable-message', 'thread-1', NULL, 'assistant',
               'Old assistant output', 'invalid json', 0, ${now}, ${now}
             )
+          `;
+        }),
+      );
+    }
+    if (input?.personalBotThread === true) {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            INSERT INTO personal_bots (
+              bot_id, name, avatar_shape, avatar_color, model_selection_json, created_at, updated_at
+            ) VALUES ('bot-1', 'Helper', 'circle', 'blue', '{}', ${now}, ${now})
+          `;
+          yield* sql`
+            INSERT INTO personal_bot_threads (thread_id, bot_id, created_at)
+            VALUES ('thread-1', 'bot-1', ${now})
           `;
         }),
       );
@@ -2536,6 +2554,43 @@ describe("ProviderCommandReactor", () => {
         ?.text,
     ).toBe(prompt);
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({ input: prompt });
+  });
+
+  it("keeps the title of a personal bot thread on the first turn", async () => {
+    // Bot chats, tasks and routines all run in threads linked in
+    // personal_bot_threads; their titles come from the personal services, so
+    // automatic title generation must leave them alone. The same setup without
+    // the link generates a title (see the client-seeded title test above).
+    const now = "2026-01-01T00:00:00.000Z";
+    const seededTitle = "Weekly grocery run";
+    const harness = await createHarness({ initialTitle: seededTitle, personalBotThread: true });
+    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-personal-title"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-personal-title"),
+          role: "user",
+          text: "Weekly grocery run",
+          attachments: [],
+        },
+        titleSeed: seededTitle,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.drain();
+
+    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.title).toBe(seededTitle);
   });
 
   it("generates a worktree branch name for the first turn", async () => {

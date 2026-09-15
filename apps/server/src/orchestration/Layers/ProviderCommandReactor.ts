@@ -265,6 +265,23 @@ const make = Effect.gen(function* () {
         .join("\n\n");
       return joined.length > 0 ? joined : undefined;
     });
+  /**
+   * Personal bot threads (bot chats, and the task and routine threads that
+   * run through them) keep the title the personal services gave them:
+   * automatic title generation and refinement skip any thread linked in
+   * personal_bot_threads. An explicit "regenerate title" still runs. A failed
+   * lookup counts as not personal, which keeps upstream behaviour.
+   */
+  const isPersonalBotThread = (threadId: ThreadId) =>
+    personalBots.getThreadLink({ threadId }).pipe(
+      Effect.map(Option.isSome),
+      Effect.catchCause((cause) =>
+        Effect.logDebug("personal bot thread lookup failed; treating thread as not personal", {
+          threadId,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(false)),
+      ),
+    );
   /** Environment settings with the thread's project overrides applied. */
   const projectSettingsForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const settings = yield* serverSettingsService.getSettings;
@@ -1072,6 +1089,7 @@ const make = Effect.gen(function* () {
       thread.session?.status !== "ready"
     )
       return;
+    if (yield* isPersonalBotThread(threadId)) return;
     const detail = yield* resolveThreadDetail(threadId);
     if (!detail || detail.messages.filter((message) => message.role === "user").length !== 1)
       return;
@@ -1410,7 +1428,8 @@ const make = Effect.gen(function* () {
 
       if (
         thread.titleState?.source !== "manual" &&
-        canReplaceThreadTitle(thread.title, event.payload.titleSeed)
+        canReplaceThreadTitle(thread.title, event.payload.titleSeed) &&
+        !(yield* isPersonalBotThread(event.payload.threadId))
       ) {
         yield* maybeGenerateThreadTitleForFirstTurn({
           threadId: event.payload.threadId,
