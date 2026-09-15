@@ -60,9 +60,12 @@ Get-ChildItem $env:USERPROFILE\.personal-bots\releases
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\restart.ps1 -Release <sha>
 ```
 
-Releases share the checkout's `apps\server\node_modules` through a junction, so
-run `vp i` before building, not while a server is running. To delete an old
-release, remove the junction first, then the folder:
+By default a release shares the checkout's `apps\server\node_modules` through
+a junction, so run `vp i` before building, not while a server is running.
+`build.ps1 -CopyExternals` copies the runtime externals into the release
+instead (`VERSION` says `externals=copied`), so it keeps working after a later
+`vp i`; the weekly upstream sync always builds that way. To delete an old
+release, remove the junction first (if it has one), then the folder:
 
 ```powershell
 cmd /c rmdir "%USERPROFILE%\.personal-bots\releases\<sha>\node_modules"
@@ -71,6 +74,67 @@ Remove-Item -Recurse "$env:USERPROFILE\.personal-bots\releases\<sha>"
 
 Never delete a release folder with `rm -rf` from Git Bash: it follows the
 junction and empties the checkout's `node_modules`.
+
+Agents and people working in this repo: run `git pull --ff-only` before new
+work. The weekly upstream sync pushes merges to `personal-bots/main`.
+
+## Weekly upstream sync
+
+Every Saturday at 09:00 the "Personal Bots Upstream Sync" task merges
+pingdotgg/t3code `main` into `personal-bots/main` and ships it on its own:
+
+1. Preflight: skips (and retries the next 3 mornings) while the main checkout
+   has uncommitted work; stops if main has unpushed or undeployed commits.
+2. Triage (`claude -p`, read-only): fixes and improvements ship; changes that
+   need your decision (defaults, titling, auth, retention, provider behaviour,
+   shared layout, migrations that alter personal data) are held back and you
+   get a short question. Held items live in `scripts\personal\sync\held-upstream.json`.
+3. Merge in the sync worktree `C:\Claude\AI\personal-bots-sync`. Upstream
+   migrations are renumbered to our next free id (`sync\resolve-migrations.ts`,
+   map in `apps\server\src\persistence\upstreamMigrationIds.ts`); other
+   conflicts go to `codex exec` (fallback `claude -p`) with no push or deploy
+   rights.
+4. Gates (typecheck, targeted tests; one repair round), minor version bump,
+   `build.ps1 -NoActivate -CopyExternals`, `backup.ps1`, and a migration
+   rehearsal (`restore-test.ps1 -Release <new> -ExpectMigration <max>`) on a
+   copy of that fresh backup.
+5. Deploy: `restart.ps1 -Release <new>`, then `smoke.ps1`. Green: plain push of
+   the sync branch to `personal-bots/main`. Red: automatic rollback to the
+   previous release (binary only; the database is never restored for you).
+6. A report reaches the "Sync reports" bot chat (and a push). If the server is
+   down it goes to `C:\Claude\AI\urgot\data\alerts\personal-bots-sync.md` and a
+   Windows toast.
+
+Run by hand:
+
+```powershell
+# Read-only: what would a run do?
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\Claude\AI\personal-bots-sync\scripts\personal\upstream-sync.ps1 -PreflightOnly
+# Everything except deploy and push:
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\Claude\AI\personal-bots-sync\scripts\personal\upstream-sync.ps1 -Mode DryRun
+```
+
+State, logs and each run's triage/summary are in
+`%USERPROFILE%\.personal-bots\upstream-sync\` (`state.json`, `runs\<stamp>\`).
+A stopped run keeps its `sync/upstream-<date>` branch for inspection; the
+launcher refuses to start while the sync worktree is dirty.
+
+One-time setup:
+
+1. Sync worktree: `git worktree add ..\personal-bots-sync --detach origin/personal-bots/main`,
+   then `vp i` in it.
+2. Notifications: in Bots, create a bot "Sync reports" on Claude Code with
+   `claude-haiku-4-5`, instructions "Reply with the payload's `message` field
+   verbatim. Use no tools." Add an event routine to it and copy the token (the
+   last part of its hook URL) into
+   `%USERPROFILE%\.personal-bots\upstream-sync\hook-token`. Keep "Routine
+   results" push notifications on.
+3. `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\install-sync-task.ps1`
+   (current user, no admin).
+
+Ship a held decision: `git revert <revertCommit>` from its entry in
+`held-upstream.json` (or undo the pin for `keep_ours`), remove the entry, then
+build and restart as usual.
 
 ## Start at logon
 
