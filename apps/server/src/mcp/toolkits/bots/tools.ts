@@ -225,7 +225,7 @@ const ListTasksTool = Tool.make("list_tasks", {
 
 const RequestSecretTool = Tool.make("request_secret", {
   description:
-    "Ask the user for an API key or token through a secure form. Never use this for website passwords; use use_login for a login the user has granted. Never ask for secrets in chat and never print one. After calling this, end your turn: you are resumed in a fresh session where the value is the environment variable PB_SECRET_<NAME> for shell commands.",
+    "Ask the user for an API key or token through a secure form. Never use this for website passwords: those are the user's saved logins, filled by use_login. Never ask for secrets in chat and never print one. After calling this, end your turn: you are resumed in a fresh session where the value is the environment variable PB_SECRET_<NAME> for shell commands.",
   parameters: RequestSecretInput,
   success: RequestSecretResult,
   failure: BotsToolFailure,
@@ -239,7 +239,7 @@ const RequestSecretTool = Tool.make("request_secret", {
 
 const UseLoginTool = Tool.make("use_login", {
   description:
-    "Fill a saved website login. Pass the login label or exact origin. The login must be granted to you and your current tab must already be on that exact origin. The server then opens a fresh tab of its own on that page, fills the password there and closes your tab on that origin, because a page script you ran earlier could otherwise read the value. Your next browser call lands on the new tab, so submit with a known button or Enter; reads stay disabled on the credential-bearing tab, and the fill is refused outright on any origin where preview_evaluate has been used.",
+    "Fill a saved website login. Pass the login label or exact origin. Every bot may use every saved login, but only while your current tab is already on that exact origin. The server then opens a fresh tab of its own on that page, fills the username and password there and closes your tab on that origin, because a page script you ran earlier could otherwise read the value. You never receive the password; never type or paste one yourself. Your next browser call lands on the new tab, so submit with a known button or Enter; reads stay disabled on the credential-bearing tab, and the fill is refused outright on any origin where preview_evaluate has been used. If the site then asks for a 2FA or one-time code, call request_browser_help.",
   parameters: UseLoginInput,
   success: UseLoginResult,
   failure: BotsToolFailure,
@@ -266,7 +266,7 @@ const CloseBrowserTool = Tool.make("close_browser", {
 
 const RequestBrowserHelpTool = Tool.make("request_browser_help", {
   description:
-    "Ask the user to take over the shared browser when a CAPTCHA, human-verification check, login or 2FA prompt blocks you. Give one short reason, tell the user what you need in one sentence, then end your turn. Never try to solve a CAPTCHA yourself.",
+    "Ask the user to take over the shared browser when a CAPTCHA, human-verification check, login, 2FA or one-time-code prompt blocks you, or when a browser action was paused because it could carry data from a site the user marked sensitive to another site (the user then sees the server's own description of that action). Give one short reason, tell the user what you need in one sentence, then end your turn. Never try to solve a CAPTCHA yourself.",
   parameters: RequestBrowserHelpInput,
   success: RequestBrowserHelpResult,
   failure: BotsToolFailure,
