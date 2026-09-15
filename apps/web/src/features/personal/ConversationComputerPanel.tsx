@@ -54,6 +54,15 @@ export function ConversationComputerPanel({
   useEffect(() => {
     if (needsHelp && !expanded) onExpandedChange(true);
   }, [expanded, needsHelp, onExpandedChange]);
+  // Taking control here pins the panel open. Once help ends and the lease
+  // goes back to the bot, neither needsHelp nor an active agent lease holds it
+  // on screen, so Return to bot would drop full screen and hide the panel
+  // until the bot's next browser op (QA v1.10.0 BUG-5).
+  const inControlHere =
+    feed.status?.controller._tag === "Human" && feed.status.controller.self === true;
+  useEffect(() => {
+    if (visible && inControlHere && !manuallyVisible) onExpandedChange(true);
+  }, [inControlHere, manuallyVisible, onExpandedChange, visible]);
   // External closure can hide the mounted panel without going through its
   // Close button. Drop full screen then, including its body scroll lock.
   if (fullScreen && (!visible || !displayExpanded)) setFullScreen(false);

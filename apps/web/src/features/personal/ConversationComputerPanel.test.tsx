@@ -1,5 +1,5 @@
 import type { ReactTestRenderer } from "react-test-renderer";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { act, create } from "react-test-renderer";
 import { PersonalBotId, ThreadId, type PersonalBrowserStatus } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -312,6 +312,76 @@ describe("ConversationComputerPanel", () => {
     expect(paneMounts).toHaveBeenCalledTimes(1);
     expect(paneUnmounts).not.toHaveBeenCalled();
     expect(document.body.style.overflow).toBe("");
+  });
+
+  // QA v1.10.0 BUG-5: Return to bot cleared the help request and, with no
+  // active agent lease yet, the panel vanished and full screen dropped.
+  it("stays full screen and mounted through Return to bot after helping", () => {
+    const help = {
+      threadId: ThreadId.make("thread-a"),
+      botId: PersonalBotId.make("bot-1"),
+      botName: "Developer",
+      reason: "CAPTCHA",
+      requestedAt: "2026-09-15T10:00:00.000Z",
+    };
+    const feedWith = (next: PersonalBrowserStatus) => ({
+      feed: { status: next, events: [] },
+      error: null,
+      loading: false,
+    });
+    // The chat screen's own panel state, driven only by the panel's callbacks.
+    function ChatHarness({ conversationState }: { conversationState: "needs_help" | "other" }) {
+      const [visible, setVisible] = useState(false);
+      const [expanded, setExpanded] = useState(false);
+      return (
+        <ConversationComputerPanel
+          environmentId={null}
+          botId="bot-1"
+          threadId="thread-a"
+          manuallyVisible={visible}
+          expanded={expanded || conversationState === "needs_help"}
+          onExpandedChange={(next) => {
+            if (next) setVisible(true);
+            setExpanded(next);
+          }}
+          onBrowserClosed={() => {
+            setVisible(false);
+            setExpanded(false);
+          }}
+          conversationState={conversationState}
+        />
+      );
+    }
+
+    useComputerFeed.mockReturnValue(feedWith({ ...status(), helpRequest: help }));
+    let renderer: ReactTestRenderer;
+    act(() => {
+      renderer = create(<ChatHarness conversationState="needs_help" />);
+    });
+    act(() =>
+      renderer!.root.findByProps({ "aria-label": "Open browser full screen" }).props.onClick(),
+    );
+    // The user takes control while the request is still open.
+    useComputerFeed.mockReturnValue(
+      feedWith({
+        ...status(),
+        controller: { _tag: "Human", self: true, connected: true },
+        helpRequest: help,
+      }),
+    );
+    act(() => renderer!.update(<ChatHarness conversationState="needs_help" />));
+    // Return to bot: help cleared, and the bot has not touched the browser yet.
+    useComputerFeed.mockReturnValue(
+      feedWith({ ...status(), controller: { _tag: "None" }, helpRequest: null }),
+    );
+    act(() => renderer!.update(<ChatHarness conversationState="other" />));
+
+    expect(renderer!.root.findByProps({ role: "dialog" }).props["aria-label"]).toBe(
+      "Computer full screen",
+    );
+    expect(paneMounts).toHaveBeenCalledTimes(1);
+    expect(paneUnmounts).not.toHaveBeenCalled();
+    act(() => renderer!.unmount());
   });
 
   it("exits full screen on Escape", () => {
