@@ -920,9 +920,12 @@ describe("ProviderRuntimeIngestion", () => {
         },
       },
     });
+    // 10s ceiling like the other cold-harness waits here: the first events on a
+    // fresh harness can exceed the 2s default on a loaded Windows machine.
     const failed = await waitForThread(
       harness.readModel,
       (entry) => entry.session?.status === "error" && entry.session.providerRetry !== undefined,
+      10_000,
     );
     expect(failed.session?.lastError).toBe("Codex usage limit reached.");
     expect(failed.session?.providerRetry?.retryAt).toBe("2026-09-13T15:00:00.000Z");
@@ -937,6 +940,7 @@ describe("ProviderRuntimeIngestion", () => {
     const next = await waitForThread(
       harness.readModel,
       (entry) => entry.session?.activeTurnId === "turn-next",
+      10_000,
     );
     expect(next.session?.status).toBe("running");
     expect(next.session?.providerRetry).toBeUndefined();
