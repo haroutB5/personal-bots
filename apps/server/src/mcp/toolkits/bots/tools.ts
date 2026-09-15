@@ -155,9 +155,15 @@ export const CloseBrowserResult = Schema.Struct({
 });
 export type CloseBrowserResult = typeof CloseBrowserResult.Type;
 
+/** Longest reason the user is shown; a longer one is cut to fit, never refused. */
+export const BROWSER_HELP_REASON_MAX_LENGTH = 160;
+
+// No length check on the input: a validation error here reaches the bot as a
+// bare schema message, and a bot the egress guard just paused then has no way
+// to ask for help at all. The handler shortens the reason instead.
 export const RequestBrowserHelpInput = Schema.Struct({
-  reason: TrimmedNonEmptyString.check(Schema.isMaxLength(160)).annotate({
-    description: "Short reason the user must take over, for example 'CAPTCHA on amazon.co.uk'.",
+  reason: TrimmedNonEmptyString.annotate({
+    description: `One short line saying why the user must take over, for example 'CAPTCHA on amazon.co.uk'. Anything past ${BROWSER_HELP_REASON_MAX_LENGTH} characters is cut off.`,
   }),
 });
 export type RequestBrowserHelpInput = typeof RequestBrowserHelpInput.Type;

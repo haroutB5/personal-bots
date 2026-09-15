@@ -18,7 +18,13 @@ import * as PersonalSecretService from "../../../personal/secrets/PersonalSecret
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { BotsToolError, BotsToolkit, type DelegateTaskInput, type TaskSummary } from "./tools.ts";
+import {
+  BotsToolError,
+  BotsToolkit,
+  BROWSER_HELP_REASON_MAX_LENGTH,
+  type DelegateTaskInput,
+  type TaskSummary,
+} from "./tools.ts";
 
 /**
  * A tool call is not a viewer session, so there is no session id to pass.
@@ -31,6 +37,22 @@ export const DELEGATE_NOTE =
   "You will receive the result in a follow-up message; end your turn now.";
 export const REQUEST_SECRET_NOTE =
   "Requested. The user will enter it in a secure form; you'll be resumed. Never ask for it in chat.";
+
+/**
+ * The help reason as the user sees it: one line, at most
+ * `BROWSER_HELP_REASON_MAX_LENGTH` characters, ending in an ellipsis when cut.
+ * Counted in code points so an emoji is never split in half.
+ */
+export const shortenBrowserHelpReason = (reason: string): string => {
+  const characters = Array.from(reason.replace(/\s+/g, " ").trim());
+  if (characters.length <= BROWSER_HELP_REASON_MAX_LENGTH) {
+    return characters.join("");
+  }
+  return `${characters
+    .slice(0, BROWSER_HELP_REASON_MAX_LENGTH - 1)
+    .join("")
+    .trimEnd()}…`;
+};
 
 const toolError = (reason: string) => new BotsToolError({ reason });
 
@@ -284,7 +306,7 @@ const make = Effect.gen(function* () {
             botId: caller.botId,
             botName: caller.botName,
             taskId: caller.task.taskId,
-            reason: input.reason,
+            reason: shortenBrowserHelpReason(input.reason),
           })
           .pipe(Effect.mapError(readable));
         return {
