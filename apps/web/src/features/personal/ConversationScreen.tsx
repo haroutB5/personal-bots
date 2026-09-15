@@ -374,7 +374,7 @@ export function ConversationScreen({
             to="/bots/$botId/edit"
             params={{ botId: bot.botId }}
             aria-label={`Edit ${bot.name}`}
-            className="flex min-h-11 shrink-0 items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-[var(--personal-radius-button)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
           >
             <BotAvatar
               shape={bot.avatarShape}
@@ -383,51 +383,77 @@ export function ConversationScreen({
               label={bot.name}
               motion={motionForConversationState(conversationState)}
             />
-          </Link>
-        ) : headerName.status === "loading" ? (
-          <span
-            aria-hidden="true"
-            className="size-12 shrink-0 rounded-full bg-[var(--personal-fill-muted)]"
-          />
-        ) : null}
-        <div className="min-w-0 flex-1">
-          {headerName.status === "loading" ? (
-            <>
-              <h1 className="sr-only">Loading chat</h1>
-              <span
-                aria-hidden="true"
-                className="block h-5 w-32 max-w-full rounded-md bg-[var(--personal-fill-muted)]"
-              />
-            </>
-          ) : (
-            <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
-              {headerName.name}
-            </h1>
-          )}
-          {provider !== null || conversationState !== "idle" ? (
-            <p className="flex min-w-0 items-center gap-1.5 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
-              <span
-                aria-hidden="true"
-                className={cn("size-2 shrink-0 rounded-full", STATE_DOT[conversationState])}
-              />
-              {bot !== null && bot.title !== "" ? (
-                <>
-                  <span className="min-w-0 truncate">{bot.title}</span>
-                  <span aria-hidden="true">·</span>
-                </>
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
+                {bot.name}
+              </h1>
+              {provider !== null || conversationState !== "idle" ? (
+                <p className="flex min-w-0 items-center gap-1.5 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
+                  <span
+                    aria-hidden="true"
+                    className={cn("size-2 shrink-0 rounded-full", STATE_DOT[conversationState])}
+                  />
+                  {bot.title !== "" ? (
+                    <>
+                      <span className="min-w-0 truncate">{bot.title}</span>
+                      <span aria-hidden="true">·</span>
+                    </>
+                  ) : null}
+                  <span
+                    className={
+                      providerWait || conversationState === "delegating"
+                        ? "min-w-0 truncate"
+                        : "shrink-0"
+                    }
+                  >
+                    {provider !== null ? `${provider.label} · ${stateLabel}` : stateLabel}
+                  </span>
+                </p>
               ) : null}
+            </div>
+          </Link>
+        ) : (
+          <>
+            {headerName.status === "loading" ? (
               <span
-                className={
-                  providerWait || conversationState === "delegating"
-                    ? "min-w-0 truncate"
-                    : "shrink-0"
-                }
-              >
-                {provider !== null ? `${provider.label} · ${stateLabel}` : stateLabel}
-              </span>
-            </p>
-          ) : null}
-        </div>
+                aria-hidden="true"
+                className="size-12 shrink-0 rounded-full bg-[var(--personal-fill-muted)]"
+              />
+            ) : null}
+            <div className="min-w-0 flex-1">
+              {headerName.status === "loading" ? (
+                <>
+                  <h1 className="sr-only">Loading chat</h1>
+                  <span
+                    aria-hidden="true"
+                    className="block h-5 w-32 max-w-full rounded-md bg-[var(--personal-fill-muted)]"
+                  />
+                </>
+              ) : (
+                <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
+                  {headerName.name}
+                </h1>
+              )}
+              {provider !== null || conversationState !== "idle" ? (
+                <p className="flex min-w-0 items-center gap-1.5 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
+                  <span
+                    aria-hidden="true"
+                    className={cn("size-2 shrink-0 rounded-full", STATE_DOT[conversationState])}
+                  />
+                  <span
+                    className={
+                      providerWait || conversationState === "delegating"
+                        ? "min-w-0 truncate"
+                        : "shrink-0"
+                    }
+                  >
+                    {provider !== null ? `${provider.label} · ${stateLabel}` : stateLabel}
+                  </span>
+                </p>
+              ) : null}
+            </div>
+          </>
+        )}
         <Menu>
           <MenuTrigger
             render={<button type="button" aria-label="Chat options" className={ICON_BUTTON} />}

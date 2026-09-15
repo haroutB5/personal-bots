@@ -192,16 +192,30 @@ function TeamDiagram({
           .filter(Boolean)
           .join(", ");
         return (
-          <Link
+          <div
             key={bot.botId}
-            to="/bots/$botId"
-            params={{ botId: bot.botId }}
-            aria-label={label}
-            className="absolute z-10 flex w-24 flex-col items-center rounded-[var(--personal-radius-button)] bg-[var(--personal-bg)] text-center outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]"
+            className="absolute z-10 flex w-24 flex-col items-center bg-[var(--personal-bg)] text-center"
             style={nodeStyle(position.x, position.y)}
           >
-            <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={NODE_SIZE} label="" />
-            <span className="mt-2 flex max-w-24 items-center gap-1.5">
+            <Link
+              to="/bots/$botId"
+              params={{ botId: bot.botId }}
+              aria-label={label}
+              className="flex size-16 shrink-0 rounded-full outline-none active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]"
+            >
+              <BotAvatar
+                shape={bot.avatarShape}
+                color={bot.avatarColor}
+                size={NODE_SIZE}
+                label=""
+              />
+            </Link>
+            <Link
+              to="/bots/$botId/edit"
+              params={{ botId: bot.botId }}
+              aria-label={`Edit ${bot.name}`}
+              className="flex min-h-11 max-w-24 items-center gap-1.5 rounded-[var(--personal-radius-button)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            >
               {live ? (
                 <span
                   aria-hidden="true"
@@ -211,13 +225,13 @@ function TeamDiagram({
               <span className="truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
                 {bot.name}
               </span>
-            </span>
+            </Link>
             {bot.title.trim().length > 0 ? (
-              <span className="max-w-24 truncate text-xs leading-4 text-[var(--personal-text-secondary)]">
+              <span className="-mt-3 max-w-24 truncate text-xs leading-4 text-[var(--personal-text-secondary)]">
                 {bot.title}
               </span>
             ) : null}
-          </Link>
+          </div>
         );
       })}
     </div>
