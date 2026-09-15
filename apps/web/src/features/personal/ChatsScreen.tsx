@@ -335,7 +335,14 @@ export function ChatsScreen(): JSX.Element {
   return (
     <div className="flex min-h-full min-w-0 flex-col px-5 pb-6">
       <header className="flex h-14 items-center justify-between">
-        <h1 className="text-[28px] leading-none font-bold text-[var(--personal-text)]">Bots</h1>
+        <div className="flex min-w-0 items-baseline gap-1.5">
+          <h1 className="text-[28px] leading-none font-bold text-[var(--personal-text)]">Bots</h1>
+          {versionLabel !== null ? (
+            <span className="text-[12px] leading-none font-medium text-[var(--personal-text-secondary)] tabular-nums">
+              {versionLabel}
+            </span>
+          ) : null}
+        </div>
         <div className="flex items-center gap-4">
           <Link to="/bots/team" aria-label="Team" className={ICON_BUTTON}>
             <Network
