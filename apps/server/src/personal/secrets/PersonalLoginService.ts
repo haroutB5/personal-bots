@@ -7,6 +7,7 @@ import {
   type PersonalLoginCreateInput,
   type PersonalLoginDeleteInput,
   type PersonalLoginsListResult,
+  type PersonalLoginSetSensitiveInput,
   type PersonalLoginUpdateInput,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -25,13 +26,21 @@ import * as PersonalLoginRepository from "./PersonalLoginRepository.ts";
 
 export const personalLoginStoreKey = (secretRef: string) => `personal-login-${secretRef}`;
 
-/** Only canonical https origins are persisted, so equality is an exact browser-origin check. */
+/**
+ * Only canonical https origins are persisted, so equality is an exact
+ * browser-origin check. The parser already lowercases the host, drops a
+ * default port and turns an IDN into punycode, so any of those spellings fails
+ * the round-trip below. A trailing-dot host is refused outright: it is a
+ * distinct origin from the one the user meant (Comet's "perplexity.ai."
+ * spoof) and would never match the page they actually sign in on.
+ */
 export const normalizePersonalLoginOrigin = (input: string): string | null => {
   const value = input.trim();
   try {
     const parsed = new URL(value);
     if (
       parsed.protocol !== "https:" ||
+      parsed.hostname.endsWith(".") ||
       parsed.username !== "" ||
       parsed.password !== "" ||
       parsed.pathname !== "/" ||
@@ -68,6 +77,10 @@ export class PersonalLoginService extends Context.Service<
       input: PersonalLoginUpdateInput,
     ) => Effect.Effect<PersonalLogin, PersonalLoginsError>;
     readonly remove: (input: PersonalLoginDeleteInput) => Effect.Effect<void, PersonalLoginsError>;
+    /** Marks or unmarks a sensitive site; no password is read or required. */
+    readonly setSensitive: (
+      input: PersonalLoginSetSensitiveInput,
+    ) => Effect.Effect<PersonalLogin, PersonalLoginsError>;
     readonly use: (
       input: UsePersonalLoginInput,
     ) => Effect.Effect<UsePersonalLoginResult, PersonalLoginsError>;
@@ -123,6 +136,7 @@ export const make = Effect.gen(function* () {
     label: login.label,
     origin: login.origin,
     username: login.username,
+    sensitive: login.sensitive,
     createdAt: login.createdAt,
     updatedAt: login.updatedAt,
   });
@@ -148,6 +162,8 @@ export const make = Effect.gen(function* () {
       loginId: input.loginId,
       ...metadata,
       secretRef: NodeCrypto.randomUUID(),
+      // New logins start unmarked; the list's switch is the only way to mark one.
+      sensitive: false,
       createdAt: now,
       updatedAt: now,
     };
@@ -263,7 +279,17 @@ export const make = Effect.gen(function* () {
   const use: PersonalLoginService["Service"]["use"] = (input) =>
     accessLock.withPermit(useUnlocked(input));
 
-  return PersonalLoginService.of({ list, create, update, remove, use });
+  const setSensitive: PersonalLoginService["Service"]["setSensitive"] = (input) =>
+    accessLock.withPermit(
+      Effect.gen(function* () {
+        const updatedAt = yield* DateTime.now;
+        const updated = yield* db("update", repository.setSensitive({ ...input, updatedAt }));
+        if (Option.isNone(updated)) return yield* fail("Saved login was not found.");
+        return present(updated.value);
+      }),
+    );
+
+  return PersonalLoginService.of({ list, create, update, remove, setSensitive, use });
 });
 
 export const layer = Layer.effect(PersonalLoginService, make);

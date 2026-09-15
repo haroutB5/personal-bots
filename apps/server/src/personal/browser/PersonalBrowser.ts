@@ -18,6 +18,7 @@ import {
   encodePersonalBrowserFrame,
   PersonalBrowserError,
   PersonalBrowserInputMessage,
+  PersonalBrowserViewerMessage,
   ThreadId,
   type PersonalBotId,
   type PersonalBrowserActivityEvent,
@@ -64,8 +65,11 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../../config.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import * as PersonalLoginRepository from "../secrets/PersonalLoginRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { AGENT_LEASE_TTL_MS, BrowserLease, PERSONAL_BROWSER_PROFILE_ID } from "./BrowserLease.ts";
+import { makeCredentialRedactor } from "./credentialRedactor.ts";
+import { type EgressApproval, type EgressIntent, egressNeedingApproval } from "./egressGuard.ts";
 import {
   type BrowserContextHandle,
   type BrowserDriver,
@@ -232,6 +236,10 @@ const HELP_ENDED_BY_SWITCH =
 const decodeInputMessage = Schema.decodeUnknownEffect(
   Schema.fromJsonString(PersonalBrowserInputMessage),
 );
+const encodeViewerMessage = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserViewerMessage));
+
+const FRAMES_HIDDEN_REASON =
+  "Hidden while a bot fills a saved password. The view returns when the page moves on, or when you take control.";
 
 const firstLine = (value: string) => value.split("\n")[0]?.trim() || "Unknown error";
 
@@ -369,6 +377,16 @@ export const make = (options: PersonalBrowserOptions) =>
       // again in this profile.
       taintedOrigins: new Set<string>(),
     };
+    // Every password this process fills is masked in whatever leaves this
+    // service afterwards: op results, errors, the timeline, the activity feed
+    // and the page URL saved for a restart. See credentialRedactor.ts.
+    const redactor = makeCredentialRedactor();
+    const redactError = (error: HostOperationError) =>
+      new HostOperationError(
+        error.tag,
+        redactor.redactText(error.message),
+        redactor.redact(error.detail),
+      );
     // Restored while the layer is still being built, so no tool call can reach
     // the shared browser before the protections that gate its persistent,
     // still-authenticated profile are back in place.
@@ -412,6 +430,13 @@ export const make = (options: PersonalBrowserOptions) =>
     const pageTitles = new WeakMap<BrowserPage, string>();
     const viewers = new Map<number, ViewerHandle>();
     let viewerSequence = 0;
+    // Frames arrive on Playwright's callback, outside any effect, so the mask
+    // reads a plain copy of who holds the browser. Every lease change refreshes
+    // it; takeControl and returnToAgent also refresh it directly so the first
+    // frame after either already sees the new owner.
+    let humanInControl = (yield* lease.view).ownerType === "human";
+    // One FramesHidden notice per hidden stretch; a forwarded frame ends it.
+    let framesHidden = false;
     let screencast: { readonly page: BrowserPage; readonly stop: () => Promise<void> } | null =
       null;
     let lastPageInfoRefresh = 0;
@@ -435,7 +460,117 @@ export const make = (options: PersonalBrowserOptions) =>
     let activeHelp: {
       readonly request: PersonalBrowserHelpRequest;
       readonly taskId: PersonalTaskId;
+      /** Set when this request is the user's approval for a guarded destination. */
+      readonly approval: EgressApproval | null;
     } | null = null;
+
+    // Sensitive-site egress guard (policy in egressGuard.ts). What a bot has
+    // had open is kept per thread and per delegation tree, since a delegated
+    // brief can carry it; in memory only, like the provider session that saw
+    // the page. It governs the shared browser and nothing else.
+    const logins = yield* PersonalLoginRepository.PersonalLoginRepository;
+    let sensitiveOrigins: ReadonlySet<string> = new Set();
+    const exposures = new Map<
+      string,
+      { readonly sources: Set<string>; readonly approved: Set<string> }
+    >();
+    // The approval a thread was refused for, until its next request_browser_help
+    // turns it into the question the user actually sees.
+    const pendingApprovals = new Map<string, EgressApproval>();
+
+    const refreshSensitiveOrigins = logins.sensitiveOrigins().pipe(
+      Effect.map((origins) => {
+        sensitiveOrigins = new Set(origins);
+      }),
+      Effect.catch((cause) =>
+        Effect.logWarning("Sensitive sites could not be read; keeping the last known list.", {
+          cause,
+        }),
+      ),
+    );
+
+    /** An http(s) origin, or null for about:blank and anything without one. */
+    const webOrigin = (url: string): string | null => {
+      try {
+        const { origin } = new URL(url);
+        return origin === "null" ? null : origin;
+      } catch {
+        return null;
+      }
+    };
+
+    /** A thread's own key, plus its delegation tree's when it works in one. */
+    const exposureKeys = (threadId: string) =>
+      tasks.rootTaskIdForThread(ThreadId.make(threadId)).pipe(
+        Effect.map(
+          Option.match({
+            onNone: () => [`thread:${threadId}`],
+            onSome: (root) => [`thread:${threadId}`, `root:${root}`],
+          }),
+        ),
+        Effect.catchCause(() => Effect.succeed([`thread:${threadId}`])),
+      );
+
+    const exposureOf = (keys: ReadonlyArray<string>) => {
+      const sources = new Set<string>();
+      const approved = new Set<string>();
+      for (const key of keys) {
+        const entry = exposures.get(key);
+        if (entry === undefined) continue;
+        for (const source of entry.sources) sources.add(source);
+        for (const destination of entry.approved) approved.add(destination);
+      }
+      return { sources, approved };
+    };
+
+    const recordExposure = (
+      keys: ReadonlyArray<string>,
+      update: (entry: { readonly sources: Set<string>; readonly approved: Set<string> }) => void,
+    ) => {
+      for (const key of keys) {
+        let entry = exposures.get(key);
+        if (entry === undefined) {
+          entry = { sources: new Set(), approved: new Set() };
+          exposures.set(key, entry);
+        }
+        update(entry);
+      }
+    };
+
+    /** Remembers that the thread has had `url` open when it is a sensitive site. */
+    const exposeIfSensitive = (threadId: string, url: string) =>
+      Effect.gen(function* () {
+        const origin = webOrigin(url);
+        if (origin === null || !sensitiveOrigins.has(origin)) return;
+        const keys = yield* exposureKeys(threadId);
+        recordExposure(keys, (entry) => entry.sources.add(origin));
+      });
+
+    /**
+     * Refuses an action that needs the user's approval. The bot is told to
+     * ask with request_browser_help; that request then shows the user this
+     * server-written question instead of the bot's own reason.
+     */
+    const guardEgress = (threadId: string, intent: EgressIntent) =>
+      Effect.gen(function* () {
+        const keys = yield* exposureKeys(threadId);
+        const approval = egressNeedingApproval({
+          exposure: exposureOf(keys),
+          intent,
+          sensitive: sensitiveOrigins,
+        });
+        if (approval === null) return;
+        pendingApprovals.set(threadId, approval);
+        return yield* Effect.fail(
+          new HostOperationError(
+            "PreviewAutomationExecutionError",
+            `Paused: this could carry what you saw on ${approval.sources.join(", ")} (a site the user marked sensitive) to ${approval.destination}. Call request_browser_help now with a one-line reason, tell the user in one sentence what you want to do, then end your turn. You continue automatically if they approve; do not try another route.`,
+          ),
+        );
+      });
+
+    const approvalQuestion = (approval: EgressApproval) =>
+      `Allow sending what the bot saw on ${approval.sources.join(", ")} to ${approval.destination}? Take control, then Return to bot to allow. Close the browser to refuse.`;
 
     const notify = PubSub.publish(statusDirty, undefined).pipe(Effect.asVoid);
 
@@ -478,6 +613,7 @@ export const make = (options: PersonalBrowserOptions) =>
     }) {
       const event: PersonalBrowserActivityEvent = {
         ...input,
+        summary: redactor.redactText(input.summary),
         id: NodeCrypto.randomUUID(),
         at: yield* nowIso,
       };
@@ -550,7 +686,15 @@ export const make = (options: PersonalBrowserOptions) =>
           };
         }
         const page = runtime.phase === "connected" ? viewportPage() : null;
-        const pageInfo = page === null ? null : { url: page.url(), title: titleFor(page) };
+        const viewportTab =
+          page === null ? undefined : [...runtime.tabs.values()].find((tab) => tab.page === page);
+        const pageInfo =
+          page === null
+            ? null
+            : redactor.redact({
+                url: viewportTab === undefined ? page.url() : safeUrl(viewportTab, page.url()),
+                title: titleFor(page),
+              });
         return {
           state:
             runtime.phase === "connected" && pageInfo !== null && looksLikeLoginPage(pageInfo.url)
@@ -577,9 +721,31 @@ export const make = (options: PersonalBrowserOptions) =>
       if (previous !== title) yield* notify;
     });
 
-    const onFrame = (jpeg: Uint8Array, meta: ScreencastMeta) => {
-      const frame = encodePersonalBrowserFrame(jpeg, meta);
-      for (const viewer of viewers.values()) Queue.offerUnsafe(viewer.outbox, frame);
+    /**
+     * Forwards one screencast frame to every attached phone, unless it shows
+     * the credential form a bot just filled while a bot (not a person) holds
+     * the browser: a reveal-password widget would stream the plaintext. The
+     * whole form stretch is withheld rather than guessing focus or reveal
+     * state, since either would mean reading the page. Take control always
+     * streams; it is the person's own screen, and they need it to type.
+     */
+    const onFrame = (page: BrowserPage, jpeg: Uint8Array, meta: ScreencastMeta) => {
+      const tab = [...runtime.tabs.values()].find((entry) => entry.page === page);
+      refreshCredentialProtection(tab);
+      if (tab?.loginProtected === true && !humanInControl) {
+        if (!framesHidden) {
+          framesHidden = true;
+          const notice = encodeViewerMessage({
+            _tag: "FramesHidden",
+            reason: FRAMES_HIDDEN_REASON,
+          });
+          for (const viewer of viewers.values()) Queue.offerUnsafe(viewer.outbox, notice);
+        }
+      } else {
+        framesHidden = false;
+        const frame = encodePersonalBrowserFrame(jpeg, meta);
+        for (const viewer of viewers.values()) Queue.offerUnsafe(viewer.outbox, frame);
+      }
       // Frames only arrive when the page repaints, so they double as a cheap
       // trigger for noticing human navigation (url/title) without polling.
       const now = performance.now();
@@ -599,9 +765,9 @@ export const make = (options: PersonalBrowserOptions) =>
           yield* Effect.promise(() => stop().catch(() => undefined));
         }
         if (target !== null && screencast === null) {
-          const stop = yield* Effect.tryPromise(() => target.startScreencast(onFrame)).pipe(
-            Effect.option,
-          );
+          const stop = yield* Effect.tryPromise(() =>
+            target.startScreencast((jpeg, meta) => onFrame(target, jpeg, meta)),
+          ).pipe(Effect.option);
           if (Option.isSome(stop)) screencast = { page: target, stop: stop.value };
         }
       }),
@@ -784,6 +950,7 @@ export const make = (options: PersonalBrowserOptions) =>
     yield* lease.changes.pipe(
       Stream.runForEach((view) =>
         Effect.gen(function* () {
+          humanInControl = view.ownerType === "human";
           if (
             activeHelp !== null &&
             view.ownerType === "agent" &&
@@ -1078,6 +1245,9 @@ export const make = (options: PersonalBrowserOptions) =>
             const resolved = input.url === undefined ? undefined : resolveBrowserUrl(input.url);
             if (resolved !== undefined && !resolved.ok) return yield* rejectUrl(resolved.reason);
             const url = resolved?.ok ? resolved.url : undefined;
+            if (url !== undefined) {
+              yield* guardEgress(request.threadId, { kind: "navigate", target: webOrigin(url) });
+            }
             const reused = input.reuseExistingTab === false ? undefined : tabForRequest(request);
             const tab = reused ?? (yield* createTab(request.threadId, url));
             if (url !== undefined) yield* navigateTab(tab, url, "load", timeoutMs);
@@ -1092,6 +1262,10 @@ export const make = (options: PersonalBrowserOptions) =>
                 ? resolveBrowserNavigationTarget(input.target)
                 : resolveBrowserUrl(input.url ?? "");
             if (!resolved.ok) return yield* rejectUrl(resolved.reason);
+            yield* guardEgress(request.threadId, {
+              kind: "navigate",
+              target: webOrigin(resolved.url),
+            });
             // Navigating a thread with no tab yet opens one, like a fresh browser window.
             const tab =
               tabForRequest(request) ?? (yield* createTab(request.threadId, resolved.url));
@@ -1125,6 +1299,13 @@ export const make = (options: PersonalBrowserOptions) =>
           return yield* rejectUrl(
             "This tab contains a saved login, so page reads, queries, and model-provided typing are disabled. Submit the form, then open a new tab to continue.",
           );
+        }
+        // Text typed here could be submitted to this page's origin, and a page
+        // script can read and fetch() anywhere in one call.
+        if (request.operation === "type" || request.operation === "press") {
+          yield* guardEgress(request.threadId, { kind: "type", page: webOrigin(tab.page.url()) });
+        } else if (request.operation === "evaluate") {
+          yield* guardEgress(request.threadId, { kind: "script", page: webOrigin(tab.page.url()) });
         }
         switch (request.operation) {
           case "snapshot": {
@@ -1288,7 +1469,7 @@ export const make = (options: PersonalBrowserOptions) =>
       // Fast path: status never launches Chrome, never takes the lease and
       // never waits behind an in-flight op (MCP gives it a 500ms budget).
       if (request.operation === "status")
-        return Effect.sync(() => statusOf(tabForRequest(request)));
+        return Effect.sync(() => redactor.redact(statusOf(tabForRequest(request))));
       const execute = Effect.gen(function* () {
         yield* clearHelpForAgentSwitch(request.threadId);
         const startedAt = yield* nowIso;
@@ -1296,6 +1477,7 @@ export const make = (options: PersonalBrowserOptions) =>
         // holding the lease, even one whose driver call ignores timeouts.
         // (Effect.timeoutFail does not exist in this Effect version; a
         // timeoutOption mapped to the broker's timeout tag is equivalent.)
+        yield* refreshSensitiveOrigins;
         const bounded = runOperation(request).pipe(
           Effect.timeoutOption(request.timeoutMs + 1_000),
           Effect.flatMap((result) =>
@@ -1311,6 +1493,11 @@ export const make = (options: PersonalBrowserOptions) =>
         );
         const exit = yield* Effect.exit(Effect.andThen(ensureLaunched, bounded));
         const tab = Exit.isSuccess(exit) ? exit.value.tab : tabForRequest(request);
+        // Whatever the op returned, the bot has now had this page open; a failed
+        // or timed-out op may still have loaded it.
+        if (tab !== undefined && openPage(tab.page)) {
+          yield* exposeIfSensitive(request.threadId, tab.page.url());
+        }
         const completedAt = yield* nowIso;
         if (tab !== undefined) {
           tab.timeline.push({
@@ -1319,7 +1506,9 @@ export const make = (options: PersonalBrowserOptions) =>
             status: Exit.isSuccess(exit) ? "succeeded" : "failed",
             startedAt,
             completedAt,
-            ...(Exit.isFailure(exit) ? { error: firstLine(String(Cause.squash(exit.cause))) } : {}),
+            ...(Exit.isFailure(exit)
+              ? { error: redactor.redactText(firstLine(String(Cause.squash(exit.cause)))) }
+              : {}),
           });
           if (tab.timeline.length > TIMELINE_LIMIT)
             tab.timeline.splice(0, tab.timeline.length - TIMELINE_LIMIT);
@@ -1334,13 +1523,17 @@ export const make = (options: PersonalBrowserOptions) =>
         });
         // Remember the page for a post-restart reopen. Only real pages count:
         // about:blank and chrome:// URLs would restore to nothing useful.
+        // A URL carrying a filled password is not worth reopening; the lease
+        // keeps the page before it instead of persisting the value.
         if (Exit.isSuccess(exit) && openPage(exit.value.tab.page)) {
           const current = safeUrl(exit.value.tab, exit.value.tab.page.url());
-          if (/^https?:\/\//i.test(current)) yield* lease.recordPageUrl(current);
+          if (/^https?:\/\//i.test(current) && redactor.redactText(current) === current) {
+            yield* lease.recordPageUrl(current);
+          }
         }
         return yield* Exit.match(exit, {
-          onSuccess: ({ result }) => Effect.succeed(result as unknown),
-          onFailure: (cause) => Effect.failCause(cause),
+          onSuccess: ({ result }) => Effect.succeed(redactor.redact(result as unknown)),
+          onFailure: (cause) => Effect.failCause(cause).pipe(Effect.mapError(redactError)),
         });
       });
       return lease
@@ -1364,6 +1557,9 @@ export const make = (options: PersonalBrowserOptions) =>
     };
 
     const fillLogin: PersonalBrowser["Service"]["fillLogin"] = (input) => {
+      // Learned before any driver call, so even an error raised mid-fill that
+      // echoes the value is masked on its way out.
+      redactor.remember(input.password);
       const execute = Effect.gen(function* () {
         yield* clearHelpForAgentSwitch(input.threadId);
         const source = latestTabForThread(input.threadId);
@@ -1454,6 +1650,9 @@ export const make = (options: PersonalBrowserOptions) =>
         .pipe(
           Effect.tap(({ tab }) =>
             Effect.gen(function* () {
+              // Signed in on a sensitive site: the page after this is its account.
+              yield* refreshSensitiveOrigins;
+              yield* exposeIfSensitive(input.threadId, input.expectedOrigin);
               tab.timeline.push({
                 id: NodeCrypto.randomUUID(),
                 action: "type",
@@ -1485,6 +1684,7 @@ export const make = (options: PersonalBrowserOptions) =>
               new HostOperationError("PreviewAutomationControlInterruptedError", rejected.message),
             ),
           ),
+          Effect.mapError(redactError),
           Effect.ensuring(notify),
         );
     };
@@ -1493,6 +1693,7 @@ export const make = (options: PersonalBrowserOptions) =>
       Effect.gen(function* () {
         const before = yield* lease.view;
         yield* lease.takeControl(sessionId);
+        humanInControl = true;
         // Another device taking over drops the previous controller's phone viewport.
         yield* syncHumanViewport;
         if (!(before.ownerType === "human" && before.ownerId === sessionId)) {
@@ -1537,17 +1738,21 @@ export const make = (options: PersonalBrowserOptions) =>
                 (error) => new HostOperationError("PreviewAutomationExecutionError", error.message),
               ),
             );
+          // A pending approval replaces whatever the bot wrote: the user decides
+          // on the server's account of where the data would go, not the page's.
+          const approval = pendingApprovals.get(input.threadId) ?? null;
+          pendingApprovals.delete(input.threadId);
           const request: PersonalBrowserHelpRequest = {
             threadId: input.threadId,
             botId: input.botId,
             botName: input.botName,
-            reason: input.reason,
+            reason: approval === null ? input.reason : approvalQuestion(approval),
             requestedAt: yield* nowIso,
           };
-          activeHelp = { request, taskId: input.taskId };
+          activeHelp = { request, taskId: input.taskId, approval };
           yield* recordActivity({
             kind: "control",
-            summary: `${input.botName} asked for help: ${input.reason}`,
+            summary: `${input.botName} asked for help: ${request.reason}`,
             status: "succeeded",
             threadId: input.threadId,
             botName: input.botName,
@@ -1561,6 +1766,7 @@ export const make = (options: PersonalBrowserOptions) =>
       Effect.gen(function* () {
         const before = yield* lease.view;
         yield* lease.returnToAgent;
+        humanInControl = (yield* lease.view).ownerType === "human";
         // The agent gets its own viewport back before it can run another op.
         yield* syncHumanViewport;
         if (before.ownerType === "human") {
@@ -1575,11 +1781,19 @@ export const make = (options: PersonalBrowserOptions) =>
             botName: finishedHelp?.request.botName ?? null,
           });
           if (finishedHelp !== null) {
+            const approval = finishedHelp.approval;
+            if (approval !== null) {
+              const keys = yield* exposureKeys(finishedHelp.request.threadId);
+              recordExposure(keys, (entry) => entry.approved.add(approval.key));
+            }
             yield* tasks
               .resumeFromUser({
                 taskId: finishedHelp.taskId,
                 noteId: `browser-help:${finishedHelp.request.requestedAt}`,
-                note: "The user finished helping in the browser. Continue the task.",
+                note:
+                  approval === null
+                    ? "The user finished helping in the browser. Continue the task."
+                    : `The user approved ${approval.destination}. Retry that step; any other destination still needs their approval.`,
                 restartSession: false,
               })
               .pipe(
@@ -1729,6 +1943,8 @@ export const make = (options: PersonalBrowserOptions) =>
           const outbox = yield* Queue.sliding<Uint8Array | string>(4);
           const viewer: ViewerHandle = { id: ++viewerSequence, ...input, outbox };
           viewers.set(viewer.id, viewer);
+          // A phone joining mid-stretch still gets the notice on the next frame.
+          framesHidden = false;
           yield* syncScreencast;
           yield* notify;
           return viewer;

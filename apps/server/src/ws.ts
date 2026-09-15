@@ -3138,6 +3138,12 @@ const makeWsRpcLayer = (
             personalLogins.remove(input).pipe(Effect.as({})),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.personalLoginsSetSensitive]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalLoginsSetSensitive,
+            personalLogins.setSensitive(input),
+            { "rpc.aggregate": "server" },
+          ),
         // personal browser (control is bound to this connection's auth session)
         [WS_METHODS.personalBrowserStatus]: (_input) =>
           observeRpcEffect(

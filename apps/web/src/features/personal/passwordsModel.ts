@@ -34,8 +34,10 @@ export const validatePasswordDraft = (draft: PasswordDraft): PasswordDraftErrors
   const origin = draft.origin.trim();
   try {
     const parsed = new URL(origin);
+    // Mirrors normalizePersonalLoginOrigin on the server, trailing-dot host included.
     if (
       parsed.protocol !== "https:" ||
+      parsed.hostname.endsWith(".") ||
       parsed.username !== "" ||
       parsed.password !== "" ||
       parsed.pathname !== "/" ||

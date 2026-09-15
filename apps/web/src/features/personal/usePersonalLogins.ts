@@ -40,6 +40,12 @@ export const personalLoginDelete = createEnvironmentRpcCommand(connectionAtomRun
   onSuccess: refreshLogins,
 });
 
+export const personalLoginSetSensitive = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-logins:set-sensitive",
+  tag: WS_METHODS.personalLoginsSetSensitive,
+  onSuccess: refreshLogins,
+});
+
 export function usePersonalLogins(environmentId: EnvironmentId | null) {
   const atom = useMemo(
     () => (environmentId === null ? null : personalLoginsList({ environmentId, input: {} })),

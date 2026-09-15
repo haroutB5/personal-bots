@@ -213,6 +213,13 @@ export type PersonalBrowserInputMessage = typeof PersonalBrowserInputMessage.Typ
 /** Server -> client JSON text messages; binary messages are viewport frames. */
 export const PersonalBrowserViewerMessage = Schema.Union([
   Schema.TaggedStruct("InputRejected", { reason: Schema.String }),
+  /**
+   * Frames are being withheld because a saved password was just filled into
+   * the page on screen. The next frame means the view is live again (the page
+   * left the sign-in form, or a person took control). Older clients do not
+   * decode this tag and simply keep the last frame they drew.
+   */
+  Schema.TaggedStruct("FramesHidden", { reason: Schema.String }),
 ]);
 export type PersonalBrowserViewerMessage = typeof PersonalBrowserViewerMessage.Type;
 

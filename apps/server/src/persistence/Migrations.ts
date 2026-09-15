@@ -81,6 +81,7 @@ import Migration0066 from "./Migrations/066_DropPersonalLoginGrants.ts";
 // Upstream T3 Code migrations, appended at our next free id. The id map lives in
 // ./upstreamMigrationIds.ts; the file keeps upstream's name so later merges stay clean.
 import MigrationUpstream0052 from "./Migrations/052_ProjectionThreadTitleState.ts";
+import Migration0068 from "./Migrations/068_PersonalLoginSensitive.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -161,6 +162,7 @@ const migrationEntries = [
   [66, "DropPersonalLoginGrants", Migration0066],
   // Upstream 052_ProjectionThreadTitleState, renumbered (see upstreamMigrationIds.ts).
   [67, "ProjectionThreadTitleState", MigrationUpstream0052],
+  [68, "PersonalLoginSensitive", Migration0068],
   // Ids are contiguous. The migrator runs only ids above the latest applied
   // one, so every new migration (ours or upstream's) takes the next free id;
   // never deploy a gap. Upstream migrations keep their file name and are

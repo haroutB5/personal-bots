@@ -22,6 +22,7 @@ const login: PersonalLoginRepository.StoredPersonalLogin = {
   origin: "https://example.com",
   username: "person@example.com",
   secretRef: "opaque-secret-ref",
+  sensitive: false,
   createdAt: now,
   updatedAt: now,
 };
@@ -41,6 +42,9 @@ const makeLayer = (
           create: () => Effect.void,
           update: () => Effect.succeed(true),
           remove: () => Effect.succeed(true),
+          setSensitive: (input) =>
+            Effect.succeed(Option.some({ ...login, sensitive: input.sensitive })),
+          sensitiveOrigins: () => Effect.succeed([]),
           ...repository,
         }),
       ),
@@ -68,6 +72,96 @@ const makeLayer = (
       }),
     ),
   );
+
+// A saved origin is compared to the page with plain string equality, so only
+// the one canonical spelling of an origin may be stored.
+describe("normalizePersonalLoginOrigin", () => {
+  const accepted = [
+    "https://example.com",
+    "https://example.com:8443",
+    "https://sub.example.com",
+    "https://xn--exmple-4nf.com",
+  ];
+  for (const origin of accepted) {
+    it(`accepts ${origin}`, () => {
+      expect(PersonalLoginService.normalizePersonalLoginOrigin(origin)).toBe(origin);
+    });
+  }
+
+  const refused = [
+    ["plain http", "http://example.com"],
+    ["a trailing-dot host", "https://example.com."],
+    ["a trailing-dot host with a port", "https://example.com.:8443"],
+    ["an uppercase host", "https://EXAMPLE.com"],
+    ["a trailing slash", "https://example.com/"],
+    ["a path", "https://example.com/login"],
+    ["an explicit default port", "https://example.com:443"],
+    ["user info", "https://person@example.com"],
+    // Stored only as the punycode the browser would report, never as Unicode.
+    ["an IDN look-alike in Unicode", "https://exаmple.com"],
+  ] as const;
+  for (const [name, origin] of refused) {
+    it(`refuses ${name}`, () => {
+      expect(PersonalLoginService.normalizePersonalLoginOrigin(origin)).toBeNull();
+    });
+  }
+});
+
+// Marking a site sensitive is a toggle on the list, so unlike an edit it must
+// not demand the password again, and it never touches the secret store.
+describe("PersonalLoginService setSensitive", () => {
+  it.effect("marks and unmarks a login without reading or writing any password", () => {
+    const touched: string[] = [];
+    const record = (operation: string) =>
+      Effect.sync(() => {
+        touched.push(operation);
+      });
+    return Effect.gen(function* () {
+      const service = yield* PersonalLoginService.PersonalLoginService;
+      const marked = yield* service.setSensitive({ loginId: login.loginId, sensitive: true });
+      expect(marked).toMatchObject({ loginId: login.loginId, sensitive: true });
+      expect(marked).not.toHaveProperty("secretRef");
+      const cleared = yield* service.setSensitive({ loginId: login.loginId, sensitive: false });
+      expect(cleared.sensitive).toBe(false);
+      expect(touched).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        makeLayer(
+          [],
+          {},
+          {
+            get: () => Effect.as(record("get"), Option.none()),
+            set: () => record("set"),
+            create: () => record("create"),
+            remove: () => record("remove"),
+          },
+        ),
+      ),
+    );
+  });
+
+  it.effect("reports a login that no longer exists", () =>
+    Effect.gen(function* () {
+      const service = yield* PersonalLoginService.PersonalLoginService;
+      const error = yield* service
+        .setSensitive({ loginId: login.loginId, sensitive: true })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("Saved login was not found.");
+    }).pipe(Effect.provide(makeLayer([], { setSensitive: () => Effect.succeedNone }))),
+  );
+
+  it.effect("lists the flag with every login", () =>
+    Effect.gen(function* () {
+      const service = yield* PersonalLoginService.PersonalLoginService;
+      const result = yield* service.list();
+      expect(result.logins.map((entry) => entry.sensitive)).toEqual([true]);
+    }).pipe(
+      Effect.provide(
+        makeLayer([], { list: () => Effect.succeed([{ ...login, sensitive: true }]) }),
+      ),
+    ),
+  );
+});
 
 describe("PersonalLoginService use", () => {
   it.effect("keeps the old password and origin when a metadata update fails", () => {

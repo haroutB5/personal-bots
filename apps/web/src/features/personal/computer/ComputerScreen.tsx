@@ -590,6 +590,8 @@ function LiveViewport(props: {
     if (!active || access === null || canvas === null || gaveUp) return;
     const context = canvas.getContext("2d");
     let client: ViewportClient | null = null;
+    // The FramesHidden notice currently shown, so the next frame clears only it.
+    let hiddenNotice: string | null = null;
     const connect = () => {
       client = connectViewport(viewportStreamUrl(access), {
         onOpen: () => {
@@ -609,8 +611,18 @@ function LiveViewport(props: {
             const next = meta.width / meta.height;
             return previous !== null && Math.abs(previous - next) < 0.001 ? previous : next;
           });
+          // A frame after FramesHidden means the view is live again.
+          if (hiddenNotice !== null) {
+            const shown = hiddenNotice;
+            hiddenNotice = null;
+            setNotice((current) => (current === shown ? null : current));
+          }
         },
         onRejected: setNotice,
+        onHidden: (reason) => {
+          hiddenNotice = reason;
+          setNotice(reason);
+        },
         onClosed: (opened) => {
           clientRef.current = null;
           onClient(null);

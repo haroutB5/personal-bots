@@ -16,6 +16,8 @@ export interface ViewportClientCallbacks {
   readonly onOpen: () => void;
   readonly onFrame: (bitmap: ImageBitmap, meta: PersonalBrowserFrameMeta) => void;
   readonly onRejected: (reason: string) => void;
+  /** Frames are withheld (a saved password is on screen); the next frame ends it. */
+  readonly onHidden: (reason: string) => void;
   /** `opened=false` means the upgrade was refused (usually an expired ticket). */
   readonly onClosed: (opened: boolean) => void;
 }
@@ -62,7 +64,9 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
   socket.addEventListener("message", (event: MessageEvent<unknown>) => {
     if (typeof event.data === "string") {
       const message = decodeViewerMessage(event.data);
-      if (Option.isSome(message)) callbacks.onRejected(message.value.reason);
+      if (Option.isNone(message)) return;
+      if (message.value._tag === "FramesHidden") callbacks.onHidden(message.value.reason);
+      else callbacks.onRejected(message.value.reason);
       return;
     }
     if (!(event.data instanceof ArrayBuffer)) return;

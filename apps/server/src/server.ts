@@ -86,6 +86,7 @@ import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
+import * as PersonalLoginRepository from "./personal/secrets/PersonalLoginRepository.ts";
 import * as PersonalSessionAccess from "./personal/secrets/PersonalSessionAccess.ts";
 // personal browser
 import * as PersonalBrowserLease from "./personal/browser/BrowserLease.ts";
@@ -576,6 +577,8 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(PersonalBrowserLease.layer),
   Layer.provideMerge(PersonalBrowserLeaseRepository.layer),
   Layer.provideMerge(PersonalBrowserProtectionRepository.layer),
+  // The browser's egress guard reads which saved logins are sensitive sites.
+  Layer.provideMerge(PersonalLoginRepository.layer),
   // Personal bots. Order matters: each step's output feeds requirements
   // opened by EARLIER steps, so consumers come first — the seed needs the
   // service, the service needs the repository, the repository needs SqlClient
