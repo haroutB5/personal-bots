@@ -210,7 +210,20 @@ const make = Effect.gen(function* () {
     if (!cwd) {
       return undefined;
     }
-    if (!(yield* checkpointStore.isGitRepository(cwd))) {
+    const isRepository = yield* checkpointStore.isGitRepository(cwd).pipe(
+      // A slow or failing git probe (a cold process start on Windows took over
+      // 5 s once) means "no checkpoint this turn", never a failed turn or a
+      // failed step in the chat.
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause)
+          : Effect.logDebug("checkpoint repository probe failed; skipping the checkpoint", {
+              cwd,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as(false)),
+      ),
+    );
+    if (!isRepository) {
       return undefined;
     }
     return cwd;
