@@ -347,6 +347,7 @@ import {
   PersonalPushSubscribeResult,
   PersonalPushTestInput,
   PersonalPushTestResult,
+  PersonalPushViewingInput,
 } from "./personalPush.ts";
 import { VcsError } from "./vcs.ts";
 
@@ -567,6 +568,7 @@ export const WS_METHODS = {
   personalPushUnsubscribe: "personalPush.unsubscribe",
   personalPushTest: "personalPush.test",
   personalPushSetPreferences: "personalPush.setPreferences",
+  personalPushReportViewing: "personalPush.reportViewing",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -1377,6 +1379,12 @@ const WsPersonalPushSetPreferencesRpc = Rpc.make(WS_METHODS.personalPushSetPrefe
   error: PersonalPushRpcError,
 });
 
+const WsPersonalPushReportViewingRpc = Rpc.make(WS_METHODS.personalPushReportViewing, {
+  payload: PersonalPushViewingInput,
+  success: Schema.Struct({}),
+  error: EnvironmentAuthorizationError,
+});
+
 const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   payload: ProjectSearchEntriesInput,
   success: ProjectSearchEntriesResult,
@@ -1975,6 +1983,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPersonalPushUnsubscribeRpc,
   WsPersonalPushTestRpc,
   WsPersonalPushSetPreferencesRpc,
+  WsPersonalPushReportViewingRpc,
   WsProjectCloneStartRpc,
   WsProjectCloneCancelRpc,
   WsProjectCloneRetryRpc,

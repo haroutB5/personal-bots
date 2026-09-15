@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const PersonalPushSubscriptionId = TrimmedNonEmptyString.pipe(
   Schema.brand("PersonalPushSubscriptionId"),
@@ -74,6 +74,16 @@ export type PersonalPushTestInput = typeof PersonalPushTestInput.Type;
 
 export const PersonalPushTestResult = Schema.Struct({ queued: Schema.Number });
 export type PersonalPushTestResult = typeof PersonalPushTestResult.Type;
+
+/**
+ * Which chat this connection has open and visible right now; null = none.
+ * The server holds back that chat's notifications while it is being viewed.
+ * Sent on open, visibility change and as a heartbeat; entries expire.
+ */
+export const PersonalPushViewingInput = Schema.Struct({
+  threadId: Schema.NullOr(ThreadId),
+});
+export type PersonalPushViewingInput = typeof PersonalPushViewingInput.Type;
 
 /** What a notification carries: never message text, only a title and a deep link. */
 export const PersonalPushPayload = Schema.Struct({
