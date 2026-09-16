@@ -2,7 +2,7 @@ import type { JSX } from "react";
 import { memo, useMemo, useState } from "react";
 
 import type { EnvironmentId, PersonalBot, PersonalTask } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Check, Ellipsis, X } from "lucide-react";
 
 import { workEntryDisplayLabel } from "~/components/chat/MessagesTimeline.logic";
@@ -110,9 +110,25 @@ export const DelegationCard = memo(function DelegationCard({
   return (
     <section
       aria-label={`${name}: ${task.title}`}
-      className="max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-3.5"
+      className={cn(
+        "relative max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-3.5",
+        // Nothing to open yet (the child has no thread): the card stays flat,
+        // so it never invites a tap that would do nothing.
+        threadId !== null && "active:bg-[var(--personal-fill-muted)]",
+      )}
     >
-      <div className="flex min-w-0 items-center gap-3">
+      {threadId === null ? null : (
+        // Stretched link: the whole card opens the child's chat, while the
+        // controls below sit on top of it as positioned siblings, so a tap on
+        // Interrupt or the menu never falls through to the card.
+        <Link
+          to="/bots/$botId/$threadId"
+          params={{ botId: task.botId, threadId }}
+          aria-label={`Open ${name}'s chat for this task`}
+          className="absolute inset-0 rounded-[var(--personal-radius-card)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+        />
+      )}
+      <div className="relative flex min-w-0 items-center gap-3">
         {bot !== null ? (
           <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={34} label={bot.name} />
         ) : (
@@ -131,7 +147,20 @@ export const DelegationCard = memo(function DelegationCard({
             </p>
           ) : null}
         </div>
-        {threadId !== null || card.canCancel ? (
+        {card.canCancel ? (
+          // Stopping a running bot is the one thing worth reaching for in a
+          // hurry, so it is a button on the card, not a menu item.
+          <button
+            type="button"
+            disabled={cancelling}
+            aria-busy={cancelling}
+            onClick={() => void onCancel()}
+            className="flex h-9 shrink-0 items-center rounded-full border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 text-[13px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+          >
+            {task.status === "running" ? "Interrupt" : "Cancel"}
+          </button>
+        ) : null}
+        {threadId !== null ? (
           <Menu>
             <MenuTrigger
               render={
@@ -145,23 +174,16 @@ export const DelegationCard = memo(function DelegationCard({
               <Ellipsis aria-hidden="true" className="size-5" strokeWidth={1.75} />
             </MenuTrigger>
             <MenuPopup align="end" className="min-w-44">
-              {threadId !== null ? (
-                <MenuItem
-                  onClick={() =>
-                    void navigate({
-                      to: "/bots/$botId/$threadId",
-                      params: { botId: task.botId, threadId },
-                    })
-                  }
-                >
-                  Open chat
-                </MenuItem>
-              ) : null}
-              {card.canCancel ? (
-                <MenuItem disabled={cancelling} onClick={() => void onCancel()}>
-                  Cancel task
-                </MenuItem>
-              ) : null}
+              <MenuItem
+                onClick={() =>
+                  void navigate({
+                    to: "/bots/$botId/$threadId",
+                    params: { botId: task.botId, threadId },
+                  })
+                }
+              >
+                Open chat
+              </MenuItem>
             </MenuPopup>
           </Menu>
         ) : null}
