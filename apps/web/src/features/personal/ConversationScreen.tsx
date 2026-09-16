@@ -3,7 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
+import {
+  derivePendingRequests,
+  type PendingUserInput,
+} from "@t3tools/client-runtime/pending-requests";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -66,6 +69,11 @@ import {
   waitingLabelsByThread,
 } from "./delegationModel";
 import { MessageList, type PendingOutgoingMessage } from "./MessageList";
+import {
+  deriveQuestionCards,
+  deriveUserInputResolutions,
+  type UserInputAnswers,
+} from "./questionCards";
 import { setPersonalPreference, usePersonalPreference } from "./personalPreferences";
 import { diagnosticsEnabled, DiagnosticsOverlay } from "./DiagnosticsOverlay";
 import { useKeyboardInset } from "./useKeyboardInset";
@@ -197,6 +205,12 @@ export function ConversationScreen({
   const respondToApproval = useAtomCommand(threadEnvironment.respondToApproval, {
     reportFailure: false,
   });
+  const respondToUserInput = useAtomCommand(threadEnvironment.respondToUserInput, {
+    reportFailure: false,
+  });
+  const dismissUserInput = useAtomCommand(threadEnvironment.dismissUserInput, {
+    reportFailure: false,
+  });
   const archiveThread = useAtomCommand(personalBotArchiveThread);
   const { start: startNewChat, starting } = useStartBotChat(environmentId, bot?.botId ?? null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -274,6 +288,36 @@ export function ConversationScreen({
     [botsById, environmentId, providers, waitingLabels],
   );
   const { approvals, userInputs } = useMemo(() => derivePendingRequests(activities), [activities]);
+  // Answering removes the request from `userInputs` the moment the server
+  // resolves it. Remembering every request this screen has shown keeps the card
+  // in place afterwards, showing the answer instead of leaving a gap where the
+  // question was. Scoped to the open thread, so history stays out of the way.
+  const [seenUserInputs, setSeenUserInputs] = useState<{
+    threadId: ThreadId;
+    requests: ReadonlyMap<string, PendingUserInput>;
+  }>(() => ({ threadId, requests: new Map() }));
+  // Adjusted during render rather than in an effect: the card must never blink
+  // out between the answer landing and the memory catching up.
+  const sameThreadAsSeen = seenUserInputs.threadId === threadId;
+  if (
+    !sameThreadAsSeen ||
+    userInputs.some((request) => !seenUserInputs.requests.has(request.requestId))
+  ) {
+    const requests = new Map(sameThreadAsSeen ? seenUserInputs.requests : []);
+    for (const request of userInputs) requests.set(request.requestId, request);
+    setSeenUserInputs({ threadId, requests });
+  }
+  const questionCards = useMemo(
+    () =>
+      deriveQuestionCards(
+        userInputs,
+        // A thread switch that has not settled yet must not show the previous
+        // chat's cards.
+        seenUserInputs.threadId === threadId ? seenUserInputs.requests : new Map(),
+        deriveUserInputResolutions(activities),
+      ),
+    [activities, seenUserInputs, threadId, userInputs],
+  );
   const conversationState = deriveConversationState({
     session: thread?.session ?? null,
     latestTurn: thread?.latestTurn ?? null,
@@ -330,6 +374,55 @@ export function ConversationScreen({
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       setActionError(error instanceof Error ? error.message : "Couldn't send your decision.");
+    } else {
+      setActionError(null);
+    }
+    setRespondingIds((current) => {
+      const next = new Set(current);
+      next.delete(requestId);
+      return next;
+    });
+  };
+
+  // Answering a question the bot asked. The same RPC the developer view uses;
+  // the card here is only a phone-shaped front for it.
+  const onAnswerQuestion = async (requestId: string, answers: UserInputAnswers) => {
+    if (environmentId === null) return;
+    setRespondingIds((current) => new Set(current).add(requestId));
+    const result = await respondToUserInput({
+      environmentId,
+      input: { threadId, requestId: requestId as ApprovalRequestId, answers },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      const fallback = "Couldn't send your answer. Try again.";
+      setActionError(
+        error instanceof Error ? friendlyTurnError(error.message, fallback).message : fallback,
+      );
+    } else {
+      setActionError(null);
+    }
+    setRespondingIds((current) => {
+      const next = new Set(current);
+      next.delete(requestId);
+      return next;
+    });
+  };
+
+  // Closes an async question without replying: the bot is not messaged.
+  const onDismissQuestion = async (requestId: string) => {
+    if (environmentId === null) return;
+    setRespondingIds((current) => new Set(current).add(requestId));
+    const result = await dismissUserInput({
+      environmentId,
+      input: { threadId, requestId: requestId as ApprovalRequestId },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      const fallback = "Couldn't close this question. Try again.";
+      setActionError(
+        error instanceof Error ? friendlyTurnError(error.message, fallback).message : fallback,
+      );
     } else {
       setActionError(null);
     }
@@ -539,11 +632,13 @@ export function ConversationScreen({
             botName={botName ?? "Bot"}
             workspaceRoot={thread.worktreePath ?? project?.workspaceRoot}
             approvals={approvals}
-            userInputs={userInputs}
+            questionCards={questionCards}
             respondingIds={respondingIds}
             onRespondToApproval={(requestId, decision) =>
               void onRespondToApproval(requestId, decision)
             }
+            onAnswerQuestion={(requestId, answers) => void onAnswerQuestion(requestId, answers)}
+            onDismissQuestion={(requestId) => void onDismissQuestion(requestId)}
             errorText={actionError ?? sessionErrorInfo?.message ?? null}
             errorDetail={actionError === null ? (sessionErrorInfo?.detail ?? null) : null}
             loadEarlier={loadEarlier}

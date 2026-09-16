@@ -1,7 +1,7 @@
 import type { JSX, ReactNode } from "react";
 import { memo, useEffect, useMemo, useRef } from "react";
 
-import type { PendingApproval, PendingUserInput } from "@t3tools/client-runtime/pending-requests";
+import type { PendingApproval } from "@t3tools/client-runtime/pending-requests";
 import type {
   ApprovalRequestId,
   EnvironmentId,
@@ -10,7 +10,6 @@ import type {
   ProviderApprovalOption,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
 import { ChevronRight, FileText } from "lucide-react";
 
 import { useAssetUrls } from "~/assets/assetUrls";
@@ -22,6 +21,8 @@ import type { ChatMessage } from "~/types";
 
 import { type ConversationItem, formatDayDivider } from "./conversationModel";
 import type { ServerTurn } from "./delegationModel";
+import { QuestionCard } from "./QuestionCard";
+import type { QuestionCardItem, UserInputAnswers } from "./questionCards";
 import { ToolDetails } from "./ToolDetails";
 
 /** A message the user sent that the server has not echoed back yet. */
@@ -231,9 +232,11 @@ export function MessageList({
   botName,
   workspaceRoot,
   approvals,
-  userInputs,
+  questionCards,
   respondingIds,
   onRespondToApproval,
+  onAnswerQuestion,
+  onDismissQuestion,
   errorText,
   errorDetail = null,
   loadEarlier,
@@ -253,9 +256,12 @@ export function MessageList({
   botName: string;
   workspaceRoot: string | undefined;
   approvals: ReadonlyArray<PendingApproval>;
-  userInputs: ReadonlyArray<PendingUserInput>;
+  /** Questions the bot asked: waiting, answered here, or closed elsewhere. */
+  questionCards: ReadonlyArray<QuestionCardItem>;
   respondingIds: ReadonlySet<string>;
   onRespondToApproval: (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => void;
+  onAnswerQuestion: (requestId: string, answers: UserInputAnswers) => void;
+  onDismissQuestion: (requestId: string) => void;
   errorText: string | null;
   /** The provider's own line, shown behind a "Details" toggle under `errorText`. */
   errorDetail?: string | null;
@@ -427,21 +433,16 @@ export function MessageList({
           />
         ))}
 
-        {userInputs.length > 0 ? (
-          <section className="rounded-[var(--personal-radius-card)] border border-[var(--personal-review-border)] bg-[var(--personal-review-bg)] p-3.5 text-[15px] text-[var(--personal-text)]">
-            <p className="font-semibold">{botName} asked you a question.</p>
-            <p className="mt-1 text-sm text-[var(--personal-text-secondary)]">
-              Answering questions isn't in this view yet.
-            </p>
-            <Link
-              to="/$environmentId/$threadId"
-              params={{ environmentId, threadId: threadRef.threadId }}
-              className="mt-3 flex h-11 items-center justify-center rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[15px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-            >
-              Answer in Developer view
-            </Link>
-          </section>
-        ) : null}
+        {questionCards.map((card) => (
+          <QuestionCard
+            key={card.requestId}
+            card={card}
+            botName={botName}
+            responding={respondingIds.has(card.requestId)}
+            onAnswer={onAnswerQuestion}
+            onDismiss={onDismissQuestion}
+          />
+        ))}
 
         {errorText !== null ? (
           <div

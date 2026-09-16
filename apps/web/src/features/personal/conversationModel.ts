@@ -130,8 +130,15 @@ const DETAIL_MAX = 200;
  * A session error as the owner should read it: never a raw exception or stack
  * trace. Known failure kinds get a plain sentence; everything else a generic
  * one. The original first line survives as `detail`.
+ *
+ * `fallback` replaces the generic sentence for callers whose failure is not a
+ * failed reply (answering a question, closing one), so the unrecognised case
+ * still names what actually went wrong.
  */
-export function friendlyTurnError(raw: string): FriendlyTurnError {
+export function friendlyTurnError(
+  raw: string,
+  fallback: string = GENERIC_TURN_FAILURE,
+): FriendlyTurnError {
   const firstLine =
     raw
       .split("\n")
@@ -149,7 +156,7 @@ export function friendlyTurnError(raw: string): FriendlyTurnError {
         : withoutStack;
 
   const text = raw.toLowerCase();
-  let message = GENERIC_TURN_FAILURE;
+  let message = fallback;
   if (/session limit|usage limit|rate[_ ]limit|\b429\b|hit your .*limit/.test(text)) {
     const reset = /resets?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s?(?:am|pm)?)/i.exec(raw)?.[1];
     message =
