@@ -93,6 +93,13 @@ const SCROLL_SLOP_PX = 8;
 const VIEWPORT_DEBOUNCE_MS = 250;
 /** The placeholder's ratio, used until the first frame says otherwise. */
 const DEFAULT_ASPECT = 390 / 560;
+/**
+ * Kept in the offscreen field so a Backspace at the start of it is observable.
+ * iOS does not reliably fire `keydown` for Backspace on an empty field; it does
+ * always fire `input`, and with a zero-width space parked before the caret that
+ * input arrives as "the value went empty", which is unambiguous.
+ */
+const KEYBOARD_SENTINEL = "\u200b";
 const SPECIAL_KEYS = new Set([
   "Enter",
   "Backspace",
@@ -115,6 +122,19 @@ const DOT_COLORS: Record<ComputerDotTone, string> = {
   problem: "#E5323B",
   idle: "var(--personal-text-tertiary)",
 };
+
+/**
+ * Park the offscreen field back on just the sentinel with the caret after it,
+ * so the next keystroke is either text to insert or a deletion of the sentinel.
+ */
+function resetKeyboardField(field: HTMLInputElement): void {
+  field.value = KEYBOARD_SENTINEL;
+  try {
+    field.setSelectionRange(KEYBOARD_SENTINEL.length, KEYBOARD_SENTINEL.length);
+  } catch {
+    // Selection is unavailable on some input types; the value reset is enough.
+  }
+}
 
 function StatusDot({ tone }: { readonly tone: ComputerDotTone }) {
   return (
@@ -578,6 +598,10 @@ function LiveViewport(props: {
     scrolling: boolean;
   } | null>(null);
   const [aspect, setAspect] = useState<number | null>(null);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  // The user asked for the keyboard by name, so a tap that lands on a link must
+  // not take it away again.
+  const keyboardPinnedRef = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   // `attempt` re-runs the effect after a drop; consecutive failures live in a
   // ref so a successful open never restarts a healthy socket.
@@ -622,6 +646,12 @@ function LiveViewport(props: {
         onHidden: (reason) => {
           hiddenNotice = reason;
           setNotice(reason);
+        },
+        onFocusChanged: (editable) => {
+          // The tap that raised this keyboard did not land on a field, so put
+          // it back down. Focusing had to happen inside the touch handler; only
+          // the correction can wait for the laptop to answer.
+          if (!editable && !keyboardPinnedRef.current) keyboardRef.current?.blur();
         },
         onClosed: (opened) => {
           clientRef.current = null;
@@ -709,10 +739,26 @@ function LiveViewport(props: {
     return meta === null || width <= 0 ? 1 : meta.width / width;
   };
 
+  /**
+   * Raise the phone's own keyboard. iOS only honours `focus()` from inside the
+   * handler for the touch that asked for it, which is why this is called
+   * optimistically on every tap and undone later by `FocusChanged`, rather than
+   * waiting to hear that the tap hit a field.
+   */
+  const openKeyboard = () => {
+    const field = keyboardRef.current;
+    if (field === null) return;
+    field.focus({ preventScroll: true });
+    resetKeyboardField(field);
+  };
+
   const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (!interactive) return;
     event.currentTarget.setPointerCapture(event.pointerId);
-    event.currentTarget.focus({ preventScroll: true });
+    // Touch keeps focus on the offscreen field: moving it to the canvas is what
+    // dismisses the keyboard on iOS the moment you tap the page. A mouse has no
+    // such keyboard and wants the canvas focused for hardware keys.
+    if (event.pointerType === "mouse") event.currentTarget.focus({ preventScroll: true });
     gestureRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -759,10 +805,14 @@ function LiveViewport(props: {
     const gesture = gestureRef.current;
     gestureRef.current = null;
     if (!interactive || gesture === null || gesture.pointerId !== event.pointerId) return;
+    const tapped = event.pointerType !== "mouse" && !gesture.scrolling;
+    // Raise the keyboard first: iOS only honours `focus()` while this handler
+    // is still running, so it must not sit behind a mapping that can bail out.
+    if (tapped) openKeyboard();
     const point = pointAt(event.clientX, event.clientY);
     if (point === null) return;
     if (event.pointerType === "mouse") send({ _tag: "Pointer", action: "up", ...point });
-    else if (!gesture.scrolling) send({ _tag: "Pointer", action: "tap", ...point });
+    else if (tapped) send({ _tag: "Pointer", action: "tap", ...point });
   };
   const onWheel = (event: ReactWheelEvent<HTMLCanvasElement>) => {
     if (!interactive) return;
@@ -835,23 +885,55 @@ function LiveViewport(props: {
         <>
           <input
             ref={keyboardRef}
+            type="text"
             aria-label="Type into the shared browser"
             className="absolute bottom-0 left-0 size-px opacity-0"
             autoCapitalize="off"
             autoCorrect="off"
             autoComplete="off"
+            spellCheck={false}
+            onFocus={(event) => {
+              setKeyboardOpen(true);
+              resetKeyboardField(event.currentTarget);
+            }}
+            onBlur={() => {
+              setKeyboardOpen(false);
+              keyboardPinnedRef.current = false;
+            }}
             onKeyDown={onKeyDown}
             onInput={(event) => {
-              const text = event.currentTarget.value;
-              event.currentTarget.value = "";
+              const field = event.currentTarget;
+              const raw = field.value;
+              resetKeyboardField(field);
+              // The sentinel was deleted: that keystroke was a Backspace that
+              // `keydown` never reported (iOS on an otherwise empty field).
+              if (raw.length === 0) {
+                send({ _tag: "Key", key: "Backspace" });
+                return;
+              }
+              const text = raw.split(KEYBOARD_SENTINEL).join("");
               if (text.length > 0) send({ _tag: "InsertText", text });
             }}
           />
           <button
             type="button"
-            aria-label="Show keyboard"
-            onClick={() => keyboardRef.current?.focus()}
-            className="absolute right-2 bottom-2 flex size-11 items-center justify-center rounded-full border border-[var(--personal-border)] bg-[var(--personal-surface)]"
+            aria-label={keyboardOpen ? "Hide keyboard" : "Show keyboard"}
+            aria-pressed={keyboardOpen}
+            onClick={() => {
+              if (keyboardOpen) {
+                keyboardPinnedRef.current = false;
+                keyboardRef.current?.blur();
+                return;
+              }
+              keyboardPinnedRef.current = true;
+              openKeyboard();
+            }}
+            className={cn(
+              "absolute right-2 bottom-2 flex size-11 items-center justify-center rounded-full border border-[var(--personal-border)]",
+              keyboardOpen
+                ? "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
+                : "bg-[var(--personal-surface)]",
+            )}
           >
             <Keyboard className="size-5" strokeWidth={ICON_STROKE} />
           </button>

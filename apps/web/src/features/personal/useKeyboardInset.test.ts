@@ -10,6 +10,10 @@ class FakeViewport extends EventTarget {
   offsetTop = 0;
 }
 
+/** Just enough of an element for the hook's typable-focus check. */
+const COMPOSER = { tagName: "TEXTAREA" };
+const SEND_BUTTON = { tagName: "BUTTON" };
+
 let renderer: ReactTestRenderer | null = null;
 let lastInset = -1;
 
@@ -29,6 +33,19 @@ function probeWith(shell: RefObject<HTMLElement | null>) {
   return Probe;
 }
 
+/** `focusout` carries the element focus is moving to; the hook reads it. */
+function focusOutEvent(relatedTarget: unknown): Event {
+  return Object.assign(new Event("focusout"), { relatedTarget });
+}
+
+function delegate(target: EventTarget) {
+  return {
+    addEventListener: target.addEventListener.bind(target),
+    removeEventListener: target.removeEventListener.bind(target),
+    dispatchEvent: target.dispatchEvent.bind(target),
+  };
+}
+
 describe("useKeyboardInset", () => {
   const viewport = new FakeViewport();
   let scrollTo: ReturnType<typeof vi.fn>;
@@ -38,6 +55,12 @@ describe("useKeyboardInset", () => {
     innerHeight: number;
     scrollY: number;
     scrollTo: ReturnType<typeof vi.fn>;
+    dispatchEvent: (event: Event) => boolean;
+  };
+  let fakeDocument: {
+    scrollingElement: { scrollTop: number };
+    activeElement: unknown;
+    dispatchEvent: (event: Event) => boolean;
   };
 
   beforeEach(() => {
@@ -47,9 +70,22 @@ describe("useKeyboardInset", () => {
     viewport.offsetTop = 0;
     scrollTo = vi.fn();
     scroller = { scrollTop: 0 };
-    fakeWindow = { visualViewport: viewport, innerHeight: 873, scrollY: 0, scrollTo };
+    fakeWindow = {
+      visualViewport: viewport,
+      innerHeight: 873,
+      scrollY: 0,
+      scrollTo,
+      ...delegate(new EventTarget()),
+    };
+    fakeDocument = {
+      scrollingElement: scroller,
+      // Every geometry case below is "the keyboard is up", which on a phone
+      // always means a typable element holds focus.
+      activeElement: COMPOSER,
+      ...delegate(new EventTarget()),
+    };
     vi.stubGlobal("window", fakeWindow);
-    vi.stubGlobal("document", { scrollingElement: scroller });
+    vi.stubGlobal("document", fakeDocument);
   });
 
   afterEach(() => {
@@ -141,5 +177,99 @@ describe("useKeyboardInset", () => {
       viewport.dispatchEvent(new Event("resize"));
     });
     expect(lastInset).toBe(373);
+  });
+
+  it("clears the inset on blur even when the closing resize was swallowed", () => {
+    // The reported bug: iOS delivers one coalesced resize part-way through the
+    // dismiss animation and nothing after it, so the geometry never returns to
+    // zero and the composer stays stranded mid-screen.
+    const shell = makeShell(873);
+    act(() => {
+      renderer = create(createElement(probeWith(shell)));
+    });
+    viewport.height = 487;
+    act(() => {
+      viewport.dispatchEvent(new Event("resize"));
+    });
+    expect(lastInset).toBe(386);
+
+    // Keyboard dismissed: the field blurs, the geometry still reads mid-animation.
+    viewport.height = 700;
+    fakeDocument.activeElement = null;
+    act(() => {
+      fakeDocument.dispatchEvent(focusOutEvent(null));
+    });
+    expect(lastInset).toBe(0);
+  });
+
+  it("keeps the inset while focus hands off between two fields", () => {
+    const shell = makeShell(873);
+    act(() => {
+      renderer = create(createElement(probeWith(shell)));
+    });
+    viewport.height = 487;
+    act(() => {
+      viewport.dispatchEvent(new Event("resize"));
+    });
+    expect(lastInset).toBe(386);
+
+    act(() => {
+      fakeDocument.dispatchEvent(focusOutEvent({ tagName: "INPUT", type: "text" }));
+    });
+    expect(lastInset).toBe(386);
+  });
+
+  it("clears the inset when focus moves to a button", () => {
+    const shell = makeShell(873);
+    act(() => {
+      renderer = create(createElement(probeWith(shell)));
+    });
+    viewport.height = 487;
+    act(() => {
+      viewport.dispatchEvent(new Event("resize"));
+    });
+    expect(lastInset).toBe(386);
+
+    fakeDocument.activeElement = SEND_BUTTON;
+    act(() => {
+      fakeDocument.dispatchEvent(focusOutEvent(SEND_BUTTON));
+    });
+    expect(lastInset).toBe(0);
+  });
+
+  it("recovers on a window resize when the visual viewport event is missed", () => {
+    const shell = makeShell(873);
+    act(() => {
+      renderer = create(createElement(probeWith(shell)));
+    });
+    viewport.height = 487;
+    act(() => {
+      viewport.dispatchEvent(new Event("resize"));
+    });
+    expect(lastInset).toBe(386);
+
+    // Layout viewport restored; only `window` reports it this time.
+    fakeWindow.innerHeight = 873;
+    viewport.height = 873;
+    act(() => {
+      fakeWindow.dispatchEvent(new Event("resize"));
+    });
+    expect(lastInset).toBe(0);
+  });
+
+  it("re-measures when a field is focused", () => {
+    const shell = makeShell(873);
+    fakeDocument.activeElement = SEND_BUTTON;
+    act(() => {
+      renderer = create(createElement(probeWith(shell)));
+    });
+    expect(lastInset).toBe(0);
+
+    viewport.height = 487;
+    fakeDocument.activeElement = COMPOSER;
+    act(() => {
+      fakeDocument.dispatchEvent(new Event("focusin"));
+    });
+    expect(lastInset).toBe(386);
   });
 });

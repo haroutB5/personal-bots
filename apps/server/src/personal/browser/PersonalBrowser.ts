@@ -2065,6 +2065,45 @@ export const make = (options: PersonalBrowserOptions) =>
         Effect.asVoid,
       );
 
+    /**
+     * Is the focused element one a phone keyboard is for? Evaluated in the page
+     * rather than inferred from a hit test, so a custom editor that moves focus
+     * in its own click handler is judged by where focus actually ended up.
+     */
+    const FOCUS_PROBE = `(() => {
+      const element = document.activeElement;
+      if (!element || element === document.body) return false;
+      if (element.isContentEditable === true) return true;
+      const tag = element.tagName;
+      if (element.disabled === true || element.readOnly === true) return false;
+      if (tag === "TEXTAREA") return true;
+      if (tag !== "INPUT") return false;
+      const type = String(element.getAttribute("type") || "text").toLowerCase();
+      return ["button","checkbox","color","file","hidden","image","radio","range","reset","submit"].indexOf(type) === -1;
+    })()`;
+
+    /**
+     * Tell the tapping viewer whether its keyboard should stay up. A probe that
+     * fails says nothing: leaving an already-raised keyboard alone is far less
+     * disruptive than yanking it down on a guess.
+     */
+    const reportFocus = (viewer: ViewerHandle, page: BrowserPage) =>
+      Effect.tryPromise({
+        try: () => page.evaluate(FOCUS_PROBE),
+        catch: (cause) => classifyPageError(cause),
+      }).pipe(
+        Effect.option,
+        Effect.flatMap((probed) =>
+          Option.isNone(probed)
+            ? Effect.void
+            : Queue.offer(
+                viewer.outbox,
+                JSON.stringify({ _tag: "FocusChanged", editable: probed.value === true }),
+              ),
+        ),
+        Effect.asVoid,
+      );
+
     const dispatchHumanInput = async (page: BrowserPage, message: PersonalBrowserInputMessage) => {
       switch (message._tag) {
         case "Pointer":
@@ -2132,6 +2171,12 @@ export const make = (options: PersonalBrowserOptions) =>
         if (Exit.isFailure(exit)) {
           const error = Cause.squash(exit.cause);
           yield* rejectInput(viewer, error instanceof Error ? error.message : "Input failed.");
+          return;
+        }
+        // A tap is the only input that can move focus on the page, and the only
+        // one the phone raises its own keyboard for.
+        if (message._tag === "Pointer" && message.action === "tap") {
+          yield* reportFocus(viewer, page);
         }
       });
 

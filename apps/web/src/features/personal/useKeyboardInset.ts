@@ -1,6 +1,45 @@
 import type { RefObject } from "react";
 import { useEffect, useState } from "react";
 
+/** Input types the on-screen keyboard never opens for. */
+const NON_TEXT_INPUT_TYPES = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "hidden",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);
+
+/**
+ * Whether this node is something the on-screen keyboard opens for.
+ *
+ * Deliberately duck-typed rather than `instanceof`: the only properties read
+ * are ones every relevant element has, and the hook is exercised against
+ * lightweight stand-ins.
+ */
+function keyboardTarget(node: unknown): boolean {
+  if (node === null || typeof node !== "object") return false;
+  const element = node as {
+    tagName?: unknown;
+    type?: unknown;
+    readOnly?: unknown;
+    isContentEditable?: unknown;
+  };
+  const tag = typeof element.tagName === "string" ? element.tagName.toUpperCase() : "";
+  if (element.readOnly === true) return false;
+  if (tag === "TEXTAREA") return true;
+  if (tag === "INPUT") {
+    const type = typeof element.type === "string" ? element.type.toLowerCase() : "text";
+    return !NON_TEXT_INPUT_TYPES.has(type);
+  }
+  return element.isContentEditable === true;
+}
+
 /**
  * How far the conversation shell's bottom edge sits below the visible
  * viewport's bottom edge - i.e. the padding needed to lift the composer
@@ -20,6 +59,20 @@ import { useEffect, useState } from "react";
  * pan), and Chromium's resizes-content where the shell itself shrinks and
  * the overlap is 0.
  *
+ * Geometry alone is not enough to know the keyboard went back DOWN. iOS
+ * coalesces `visualViewport` events during the dismiss animation, and the last
+ * one delivered can carry a height from the middle of that animation - after
+ * which nothing else fires and the inset latches at a part-way value, leaving
+ * the composer stranded mid-screen with dead space under it. Two independent
+ * signals close that hole, neither of them a timer:
+ *
+ *  - Focus. The keyboard can only cover the composer while something typable
+ *    is focused, and iOS blurs the field on every way down (Done, swipe-down,
+ *    tapping elsewhere). Nothing typable focused therefore means inset 0,
+ *    whatever the last geometry event claimed.
+ *  - `window.resize`. The layout viewport growing back fires this even when
+ *    the `visualViewport` resize for the same step was swallowed.
+ *
  * Leftover document pan is reset only when the shell is fully visible again
  * (overlap <= 1); resetting while typing drags the composer back under the
  * keyboard.
@@ -29,7 +82,21 @@ export function useKeyboardInset(shellRef?: RefObject<HTMLElement | null>): numb
   useEffect(() => {
     const viewport = window.visualViewport;
     if (!viewport) return;
+
+    const resetPan = () => {
+      const scroller = document.scrollingElement;
+      if (scroller && scroller.scrollTop > 0) scroller.scrollTop = 0;
+      if (window.scrollY > 0) window.scrollTo(0, 0);
+    };
+
     const update = () => {
+      // No typable element focused: no keyboard, so no overlap. Checked before
+      // the geometry so a stale mid-animation height can never latch.
+      if (!keyboardTarget(document.activeElement ?? null)) {
+        setInset(0);
+        resetPan();
+        return;
+      }
       const shell = shellRef?.current ?? null;
       // The applied padding lifts the composer inside the shell without
       // moving the shell's rect (its height is constrained by the 100dvh
@@ -39,18 +106,29 @@ export function useKeyboardInset(shellRef?: RefObject<HTMLElement | null>): numb
       const visibleBottom = viewport.offsetTop + viewport.height;
       const covered = shellBottom - visibleBottom;
       setInset(covered > 1 ? Math.round(covered) : 0);
-      if (covered <= 1) {
-        const scroller = document.scrollingElement;
-        if (scroller && scroller.scrollTop > 0) scroller.scrollTop = 0;
-        if (window.scrollY > 0) window.scrollTo(0, 0);
-      }
+      if (covered <= 1) resetPan();
     };
+
+    // Moving between two fields keeps the keyboard up; re-measuring on the
+    // focusout half of that hand-off would blink the composer down and back.
+    const onFocusOut = (event: Event) => {
+      const next = (event as FocusEvent).relatedTarget;
+      if (keyboardTarget(next)) return;
+      update();
+    };
+
     update();
     viewport.addEventListener("resize", update);
     viewport.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    document.addEventListener("focusin", update);
+    document.addEventListener("focusout", onFocusOut);
     return () => {
       viewport.removeEventListener("resize", update);
       viewport.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+      document.removeEventListener("focusin", update);
+      document.removeEventListener("focusout", onFocusOut);
     };
   }, [shellRef]);
   return inset;
