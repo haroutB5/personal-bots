@@ -38,7 +38,11 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { motionForConversationState } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
-import { conversationHeaderStatus, resolveBotProvider } from "./botSummaries";
+import {
+  type ConversationHeaderParts,
+  conversationHeaderParts,
+  resolveBotProvider,
+} from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerPanel } from "./ConversationComputerPanel";
 import { useComputerFeed } from "./computer/computerState";
@@ -62,6 +66,7 @@ import {
   waitingLabelsByThread,
 } from "./delegationModel";
 import { MessageList, type PendingOutgoingMessage } from "./MessageList";
+import { setPersonalPreference, usePersonalPreference } from "./personalPreferences";
 import { diagnosticsEnabled, DiagnosticsOverlay } from "./DiagnosticsOverlay";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { useReportViewingThread } from "./useReportViewingThread";
@@ -91,6 +96,39 @@ const STATE_DOT: Record<ConversationState, string> = {
   retrying: "bg-[var(--personal-review)]",
   error: "bg-[#b3261e]",
 };
+
+/**
+ * Header subtitle: the state dot, the bot's role, then the provider and what
+ * the bot is doing. Only the role truncates. The status used to share one
+ * truncating span with the provider, so a long role turned "Waiting for you"
+ * into "Wait…" - the one part of the line worth reading.
+ */
+function ConversationSubtitle({
+  state,
+  title,
+  parts,
+}: {
+  state: ConversationState;
+  title: string;
+  parts: ConversationHeaderParts;
+}): JSX.Element {
+  return (
+    <p className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
+      <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", STATE_DOT[state])} />
+      {title !== "" ? (
+        // The separator truncates with the role: a squeezed role must not
+        // leave a lone "·" beside the dot.
+        <span className="min-w-0 flex-1 truncate">
+          {title}
+          <span aria-hidden="true"> ·</span>
+        </span>
+      ) : null}
+      <span className="shrink-0 whitespace-nowrap">
+        {parts.prefix === null ? parts.status : `${parts.prefix} · ${parts.status}`}
+      </span>
+    </p>
+  );
+}
 
 const EMPTY_MESSAGES: ReadonlyArray<ChatMessage> = [];
 const EMPTY_ACTIVITIES: ReadonlyArray<never> = [];
@@ -198,6 +236,8 @@ export function ConversationScreen({
     threadId: ThreadId;
     projection: TimelineEntriesProjection;
   } | null>(null);
+  const showToolSteps = usePersonalPreference("showToolSteps");
+  const showRoutinesStrip = usePersonalPreference("showRoutinesStrip");
   const baseItems = useMemo(() => {
     const previous = projectionRef.current;
     const projection = deriveTimelineEntriesWithState(
@@ -207,8 +247,8 @@ export function ConversationScreen({
       previous?.threadId === threadId ? previous.projection : null,
     );
     projectionRef.current = { threadId, projection };
-    return buildConversationItems(projection.entries);
-  }, [threadId, messages, proposedPlans, workEntries]);
+    return buildConversationItems(projection.entries, { showToolSteps });
+  }, [threadId, messages, proposedPlans, workEntries, showToolSteps]);
   const items = useMemo(() => placeDelegationCards(baseItems, children), [baseItems, children]);
   const describeTurn = useCallback(
     (turn: ServerTurn) => serverTurnLabel(turn, resolveTurnChildren(turn, tasks), nameOf),
@@ -258,7 +298,7 @@ export function ConversationScreen({
       : conversationStateLabel(conversationState, thread?.session ?? null, now);
   const provider =
     bot === null ? null : resolveBotProvider(bot.modelSelection.instanceId, providers);
-  const headerStatus = conversationHeaderStatus(conversationState, stateLabel, provider);
+  const headerParts = conversationHeaderParts(conversationState, stateLabel, provider);
 
   // Optimistic rows hide once the server echoes the same client message id.
   const visiblePending = useMemo(() => {
@@ -401,29 +441,11 @@ export function ConversationScreen({
                 {bot.name}
               </h1>
               {provider !== null || conversationState !== "idle" ? (
-                <p className="flex min-w-0 items-center gap-1.5 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
-                  <span
-                    aria-hidden="true"
-                    className={cn("size-2 shrink-0 rounded-full", STATE_DOT[conversationState])}
-                  />
-                  {bot.title !== "" ? (
-                    // The separator truncates with the title: a squeezed title
-                    // must not leave a lone "·" beside the dot.
-                    <span className="min-w-0 truncate">
-                      {bot.title}
-                      <span aria-hidden="true"> ·</span>
-                    </span>
-                  ) : null}
-                  <span
-                    className={
-                      providerWait || conversationState === "delegating"
-                        ? "min-w-0 truncate"
-                        : "shrink-0"
-                    }
-                  >
-                    {headerStatus}
-                  </span>
-                </p>
+                <ConversationSubtitle
+                  state={conversationState}
+                  title={bot.title}
+                  parts={headerParts}
+                />
               ) : null}
             </div>
           </Link>
@@ -450,21 +472,7 @@ export function ConversationScreen({
                 </h1>
               )}
               {provider !== null || conversationState !== "idle" ? (
-                <p className="flex min-w-0 items-center gap-1.5 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
-                  <span
-                    aria-hidden="true"
-                    className={cn("size-2 shrink-0 rounded-full", STATE_DOT[conversationState])}
-                  />
-                  <span
-                    className={
-                      providerWait || conversationState === "delegating"
-                        ? "min-w-0 truncate"
-                        : "shrink-0"
-                    }
-                  >
-                    {headerStatus}
-                  </span>
-                </p>
+                <ConversationSubtitle state={conversationState} title="" parts={headerParts} />
               ) : null}
             </div>
           </>
@@ -563,8 +571,12 @@ export function ConversationScreen({
                 : "other"
             }
           />
-          {!computerPanelExpanded && conversationState !== "needs_help" ? (
-            <ConversationRoutinesPanel environmentId={environmentId} botId={botId} />
+          {showRoutinesStrip && !computerPanelExpanded && conversationState !== "needs_help" ? (
+            <ConversationRoutinesPanel
+              environmentId={environmentId}
+              botId={botId}
+              onHide={() => setPersonalPreference("showRoutinesStrip", false)}
+            />
           ) : null}
           <PersonalComposer
             environmentId={environmentId}

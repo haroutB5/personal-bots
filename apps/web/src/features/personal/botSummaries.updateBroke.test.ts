@@ -3,7 +3,12 @@ import { PersonalBot, type PersonalBotThread, type ServerProvider } from "@t3too
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { botStatus, buildBotSummaries, conversationHeaderStatus } from "./botSummaries";
+import {
+  botStatus,
+  buildBotSummaries,
+  conversationHeaderParts,
+  conversationHeaderStatus,
+} from "./botSummaries";
 
 const decodeBot = Schema.decodeUnknownSync(PersonalBot);
 const NOW = Date.parse("2026-09-15T10:00:00.000Z");
@@ -98,5 +103,20 @@ describe("Update broke", () => {
       "Claude Code · Idle",
     );
     expect(conversationHeaderStatus("idle", "Idle", null)).toBe("Idle");
+  });
+
+  it("keeps the live status apart from the provider so it never truncates", () => {
+    const provider = { label: "Claude Code", available: true, broken: false };
+    // The header renders `status` in its own shrink-0 span; sharing one span
+    // with the provider is what turned "Waiting for you" into "Wait…".
+    expect(conversationHeaderParts("waiting", "Waiting for you", provider)).toEqual({
+      prefix: "Claude Code",
+      status: "Waiting for you",
+    });
+    expect(conversationHeaderParts("idle", "Idle", null)).toEqual({ prefix: null, status: "Idle" });
+    expect(conversationHeaderParts("idle", "Idle", { ...provider, broken: true })).toEqual({
+      prefix: null,
+      status: "Update broke Claude Code",
+    });
   });
 });
