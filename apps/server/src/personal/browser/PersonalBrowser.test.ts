@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   PersonalBotId,
   PersonalBrowserInputMessage,
+  PersonalBrowserViewerMessage,
   PersonalLoginId,
   PersonalTaskId,
   ThreadId,
@@ -42,6 +43,7 @@ import * as PersonalBrowserLeaseRepository from "./PersonalBrowserLeaseRepositor
 import * as PersonalBrowserProtectionRepository from "./PersonalBrowserProtectionRepository.ts";
 
 const encodeInput = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserInputMessage));
+const encodeViewer = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserViewerMessage));
 
 /** A page that records what it was asked to do; `goto` can be held open. */
 class FakePage implements BrowserPage {
@@ -702,13 +704,13 @@ describe("PersonalBrowser", () => {
 
           yield* tap();
           expect(yield* Queue.take(viewer.outbox)).toBe(
-            JSON.stringify({ _tag: "FocusChanged", editable: true }),
+            encodeViewer({ _tag: "FocusChanged", editable: true }),
           );
 
           focused = false;
           yield* tap();
           expect(yield* Queue.take(viewer.outbox)).toBe(
-            JSON.stringify({ _tag: "FocusChanged", editable: false }),
+            encodeViewer({ _tag: "FocusChanged", editable: false }),
           );
 
           // A probe that throws says nothing rather than yanking the keyboard
