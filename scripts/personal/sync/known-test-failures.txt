@@ -5,6 +5,9 @@
 
 # Symlink creation needs Developer Mode / admin on Windows (EPERM).
 CursorProvider.test.ts > Cursor skills > treats a symlinked skill outside the root as a package boundary
+AgentSessionScanner.test.ts > AgentSessionScanner > scan > returns the imported project ID through a realpath alias
+AgentSessionScanner.test.ts > AgentSessionScanner > scan > matches a persisted project alias to a transcript realpath
+AgentSessionScanner.test.ts > AgentSessionScanner > scan > excludes sandboxes reached through a symlink into the worktrees dir
 # Expects a JSON-escaped Windows path with single backslashes.
 userInputAttachments.test.ts > question answer paths > keeps selected values intact and appends an actual readable server path
 # Environment-dependent (known before the fork's first sync).
