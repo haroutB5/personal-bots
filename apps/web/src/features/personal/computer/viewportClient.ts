@@ -18,6 +18,8 @@ export interface ViewportClientCallbacks {
   readonly onRejected: (reason: string) => void;
   /** Frames are withheld (a saved password is on screen); the next frame ends it. */
   readonly onHidden: (reason: string) => void;
+  /** Whether the last tap left a typable element focused on the remote page. */
+  readonly onFocusChanged: (editable: boolean) => void;
   /** `opened=false` means the upgrade was refused (usually an expired ticket). */
   readonly onClosed: (opened: boolean) => void;
 }
@@ -65,9 +67,17 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
     if (typeof event.data === "string") {
       const message = decodeViewerMessage(event.data);
       if (Option.isNone(message)) return;
-      if (message.value._tag === "FramesHidden") callbacks.onHidden(message.value.reason);
-      else callbacks.onRejected(message.value.reason);
-      return;
+      switch (message.value._tag) {
+        case "FramesHidden":
+          callbacks.onHidden(message.value.reason);
+          return;
+        case "FocusChanged":
+          callbacks.onFocusChanged(message.value.editable);
+          return;
+        default:
+          callbacks.onRejected(message.value.reason);
+          return;
+      }
     }
     if (!(event.data instanceof ArrayBuffer)) return;
     const frame = decodePersonalBrowserFrame(new Uint8Array(event.data));

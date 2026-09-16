@@ -220,6 +220,16 @@ export const PersonalBrowserViewerMessage = Schema.Union([
    * decode this tag and simply keep the last frame they drew.
    */
   Schema.TaggedStruct("FramesHidden", { reason: Schema.String }),
+  /**
+   * Sent after a human tap: whether that tap left a typable element focused on
+   * the remote page.
+   *
+   * A phone cannot raise its own keyboard outside a touch handler, so the
+   * client focuses its offscreen field optimistically on every tap and uses
+   * this to put the keyboard straight back down when the tap turned out to hit
+   * a link or a button. Older clients do not decode this tag and ignore it.
+   */
+  Schema.TaggedStruct("FocusChanged", { editable: Schema.Boolean }),
 ]);
 export type PersonalBrowserViewerMessage = typeof PersonalBrowserViewerMessage.Type;
 

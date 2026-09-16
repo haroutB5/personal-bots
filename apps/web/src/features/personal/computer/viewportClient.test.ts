@@ -25,13 +25,14 @@ class FakeSocket {
 }
 
 const connect = () => {
-  const calls = { rejected: [] as string[], hidden: [] as string[] };
+  const calls = { rejected: [] as string[], hidden: [] as string[], focus: [] as boolean[] };
   vi.stubGlobal("WebSocket", FakeSocket);
   connectViewport("ws://laptop/stream", {
     onOpen: () => {},
     onFrame: () => {},
     onRejected: (reason) => calls.rejected.push(reason),
     onHidden: (reason) => calls.hidden.push(reason),
+    onFocusChanged: (editable) => calls.focus.push(editable),
     onClosed: () => {},
   });
   return { calls, socket: FakeSocket.last! };
@@ -53,5 +54,18 @@ describe("viewport client messages", () => {
 
     expect(calls.hidden).toEqual(["Hidden while a saved password is filled."]);
     expect(calls.rejected).toEqual(["Take control before interacting."]);
+  });
+
+  // Post-tap focus reports drive the phone's own keyboard and must never be
+  // mistaken for a rejection, which would paint a notice over the frame.
+  it("routes post-tap focus reports apart from rejections", () => {
+    const { calls, socket } = connect();
+
+    socket.receive('{"_tag":"FocusChanged","editable":true}');
+    socket.receive('{"_tag":"FocusChanged","editable":false}');
+
+    expect(calls.focus).toEqual([true, false]);
+    expect(calls.rejected).toEqual([]);
+    expect(calls.hidden).toEqual([]);
   });
 });

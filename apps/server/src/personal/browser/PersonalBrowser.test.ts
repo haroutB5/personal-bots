@@ -678,6 +678,56 @@ describe("PersonalBrowser", () => {
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 
+  // The phone raises its own keyboard inside the tap handler, before anyone
+  // knows what the tap hit; this report is the only thing that can put it back
+  // down when the tap landed on a link.
+  it.effect("reports whether a human tap left a typable element focused", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      yield* browser.takeControl("session-1");
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const viewer = yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+          const tap = () =>
+            browser.handleViewerMessage(
+              viewer,
+              encodeInput({ _tag: "Pointer", action: "tap", x: 10, y: 20 }),
+            );
+
+          let focused: unknown = true;
+          fake.state.page.evaluateImpl = (expression) =>
+            Promise.resolve(expression.includes("activeElement") ? focused : null);
+
+          yield* tap();
+          expect(yield* Queue.take(viewer.outbox)).toBe(
+            JSON.stringify({ _tag: "FocusChanged", editable: true }),
+          );
+
+          focused = false;
+          yield* tap();
+          expect(yield* Queue.take(viewer.outbox)).toBe(
+            JSON.stringify({ _tag: "FocusChanged", editable: false }),
+          );
+
+          // A probe that throws says nothing rather than yanking the keyboard
+          // down on a guess: the next thing on the queue is the later message.
+          fake.state.page.evaluateImpl = (expression) =>
+            expression.includes("activeElement")
+              ? Promise.reject(new Error("detached frame"))
+              : Promise.resolve(null);
+          yield* tap();
+          yield* browser.handleViewerMessage(
+            viewer,
+            encodeInput({ _tag: "Navigate", url: "javascript:alert(1)" }),
+          );
+          expect(yield* Queue.take(viewer.outbox)).toContain("InputRejected");
+        }),
+      );
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
   it.effect("records the agent's page so a later restart can reopen it", () => {
     const fake = makeFakeDriver();
     return Effect.gen(function* () {
