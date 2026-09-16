@@ -3,13 +3,22 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildTeamConnectors,
+  buildTeamDropZones,
   buildTeamGroups,
   buildTeamGroupsLayout,
+  crossTeamDelegationPath,
   delegationConnectorPath,
   deriveDelegationLinks,
+  hitTestTeamDropZone,
+  orthogonalPath,
   RECENT_DELEGATION_WINDOW_MS,
+  teamConnectorLanes,
   teamDiagramSummary,
+  teamDropHint,
+  teamDropOutcome,
   type TeamDiagramPoint,
+  type TeamDropBot,
 } from "./teamDiagramModel";
 
 /** The phone geometry TeamScreen actually renders with. */
@@ -116,6 +125,307 @@ describe("buildTeamGroupsLayout", () => {
     // Every bot is placed, and the canvas covers the lowest one.
     expect([...layout.bots.keys()].toSorted()).toEqual(ROSTER.map((bot) => bot.botId).toSorted());
     expect(layout.svgHeight).toBeGreaterThan(at("planner").y);
+  });
+});
+
+/** The band that made the owner's screenshot read as one chain: five dev bots. */
+const CROWDED = [
+  { botId: "cto", team: "dev" as const, lead: true },
+  { botId: "frontend", team: "dev" as const },
+  { botId: "backend", team: "dev" as const },
+  { botId: "devops", team: "dev" as const },
+  { botId: "security", team: "dev" as const },
+  { botId: "assistant", team: "assistant" as const, lead: true },
+  { botId: "planner", team: "assistant" as const },
+];
+const CONNECTOR_OPTIONS = {
+  width: LAYOUT.width,
+  leadSize: LAYOUT.leadSize,
+  nodeSize: LAYOUT.nodeSize,
+  labelWidth: 96,
+};
+/** `LABEL_SPACE` in the model: the name and title printed under a node. */
+const LABEL_SPACE = 48;
+
+function pointsOf(path: string): TeamDiagramPoint[] {
+  const numbers = path.match(/-?[\d.]+/g)?.map(Number) ?? [];
+  const points: TeamDiagramPoint[] = [];
+  for (let index = 0; index + 1 < numbers.length; index += 2) {
+    points.push({ x: numbers[index]!, y: numbers[index + 1]! });
+  }
+  return points;
+}
+
+/** Every point the connector passes through, corners included, at 2-unit steps. */
+function samplesOf(path: string): TeamDiagramPoint[] {
+  const corners = pointsOf(path);
+  const samples: TeamDiagramPoint[] = [];
+  for (let index = 0; index + 1 < corners.length; index += 1) {
+    const from = corners[index]!;
+    const to = corners[index + 1]!;
+    const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / 2));
+    for (let step = 0; step <= steps; step += 1) {
+      samples.push({
+        x: from.x + ((to.x - from.x) * step) / steps,
+        y: from.y + ((to.y - from.y) * step) / steps,
+      });
+    }
+  }
+  return samples;
+}
+
+describe("orthogonalPath", () => {
+  it("rounds each corner and collapses repeated points", () => {
+    expect(
+      orthogonalPath(
+        [
+          { x: 0, y: 0 },
+          { x: 0, y: 0 },
+          { x: 0, y: 100 },
+          { x: 80, y: 100 },
+        ],
+        10,
+      ),
+    ).toBe("M 0 0 L 0 90 Q 0 100 10 100 L 80 100");
+    expect(orthogonalPath([{ x: 5, y: 5 }], 10)).toBe("");
+  });
+});
+
+describe("buildTeamConnectors", () => {
+  const groups = buildTeamGroups(CROWDED);
+  const layout = buildTeamGroupsLayout(groups, LAYOUT);
+  const connectors = buildTeamConnectors(groups, layout, CONNECTOR_OPTIONS);
+  const sizeOf = (botId: string) =>
+    botId === "cto" || botId === "assistant" ? LAYOUT.leadSize : LAYOUT.nodeSize;
+
+  /** Bots a line passes over — its avatar or the name column printed under it. */
+  function botsCrossedBy(path: string): string[] {
+    const samples = samplesOf(path);
+    expect(samples.length).toBeGreaterThan(1);
+    return [...layout.bots]
+      .filter(([botId, node]) => {
+        const size = sizeOf(botId);
+        return samples.some(
+          (sample) =>
+            (Math.abs(sample.x - node.x) <= CONNECTOR_OPTIONS.labelWidth / 2 &&
+              sample.y >= node.y + size / 2 &&
+              sample.y <= node.y + size / 2 + LABEL_SPACE) ||
+            Math.hypot(sample.x - node.x, sample.y - node.y) < size / 2 + 2,
+        );
+      })
+      .map(([botId]) => botId);
+  }
+
+  it("never draws a line across a bot it does not connect to", () => {
+    // The screenshot bug: the owner's straight line to the assistant's lead ran
+    // down the centre through the whole dev band, so Security looked like it
+    // reported into the other team, and the two teams read as one chain.
+    const straightOwnerLine = orthogonalPath([layout.owner, layout.bots.get("assistant")!], 0);
+    // Negative control: the line this replaced really is caught by the check.
+    expect(botsCrossedBy(straightOwnerLine)).toContain("cto");
+
+    for (const connector of connectors) {
+      expect(`${connector.key}: ${botsCrossedBy(connector.d).join(",")}`).toBe(
+        `${connector.key}: `,
+      );
+    }
+  });
+
+  it("keeps both lanes to the left of every name column", () => {
+    const lanes = teamConnectorLanes(layout, CONNECTOR_OPTIONS);
+    const leftmostColumn = [...layout.bots.values()].reduce(
+      (min, node) => Math.min(min, node.x - CONNECTOR_OPTIONS.labelWidth / 2),
+      LAYOUT.width,
+    );
+    expect(lanes.owner).toBeGreaterThan(0);
+    expect(lanes.owner).toBeLessThan(lanes.member);
+    expect(lanes.member).toBeLessThan(leftmostColumn);
+    expect(lanes.cross).toBeGreaterThan(LAYOUT.width / 2);
+  });
+
+  it("gives each team one owner line and its own member trunk", () => {
+    expect(connectors.filter((line) => line.kind === "owner").map((line) => line.key)).toEqual([
+      "owner:dev",
+      "owner:assistant",
+    ]);
+    expect(
+      connectors.filter((line) => line.key.startsWith("trunk:")).map((line) => line.key),
+    ).toEqual(["trunk:dev", "trunk:assistant"]);
+    // One arrow per member, arriving from above, plus the two owner lines.
+    const arrows = connectors.filter((line) => line.arrow);
+    expect(arrows).toHaveLength(2 + 5);
+    for (const drop of arrows.filter((line) => line.key.startsWith("drop:"))) {
+      const [start, end] = pointsOf(drop.d);
+      expect(start!.x).toBe(end!.x);
+      expect(start!.y).toBeLessThan(end!.y);
+    }
+  });
+
+  it("does not reach into a band it does not own", () => {
+    const devBand = layout.bands.find((band) => band.team === "dev")!;
+    for (const connector of connectors.filter((line) => line.key.endsWith(":assistant"))) {
+      for (const sample of samplesOf(connector.d)) {
+        // Crossing the dev band is unavoidable for a line that starts above it,
+        // but only ever out in the owner lane, never among the dev bots.
+        if (sample.y > devBand.top && sample.y < devBand.bottom) {
+          expect(sample.x).toBeLessThan(40);
+        }
+      }
+    }
+  });
+});
+
+describe("crossTeamDelegationPath", () => {
+  it("routes a cross-team handoff down the right lane, not through the diagram", () => {
+    const path = crossTeamDelegationPath(
+      { x: 100, y: 200 },
+      { x: 175, y: 600 },
+      { lane: 342, nodeSize: 64 },
+    );
+    const samples = samplesOf(path);
+    // Everything between the two bots' rows sits out in the lane.
+    for (const sample of samples) {
+      if (sample.y > 240 && sample.y < 560) expect(sample.x).toBeGreaterThan(330);
+    }
+    expect(samples.at(0)!.x).toBe(136);
+    expect(samples.at(-1)!.x).toBe(217);
+  });
+});
+
+describe("buildTeamDropZones", () => {
+  const layout = buildTeamGroupsLayout(buildTeamGroups(CROWDED), LAYOUT);
+  const zones = buildTeamDropZones(layout, {
+    width: LAYOUT.width,
+    leadSize: LAYOUT.leadSize,
+    nodeSize: LAYOUT.nodeSize,
+  });
+
+  it("offers a lead slot and a chief node per team, then the whole band", () => {
+    expect(zones.map((zone) => zone.id)).toEqual([
+      "lead:dev",
+      "lead:assistant",
+      "chief:dev",
+      "chief:assistant",
+      "band:dev",
+      "band:assistant",
+    ]);
+  });
+
+  it("prefers the lead slot, then the chief, then the band under the finger", () => {
+    const at = (botId: string) => layout.bots.get(botId)!;
+    const cto = at("cto");
+    expect(hitTestTeamDropZone(zones, { x: cto.x + 60, y: cto.y })?.id).toBe("lead:dev");
+    expect(hitTestTeamDropZone(zones, cto)?.id).toBe("chief:dev");
+    expect(hitTestTeamDropZone(zones, at("security"))?.id).toBe("band:dev");
+    expect(hitTestTeamDropZone(zones, at("planner"))?.id).toBe("band:assistant");
+    // Above the first band — the owner's own row — is not a drop target.
+    expect(hitTestTeamDropZone(zones, layout.owner)).toBeNull();
+    expect(hitTestTeamDropZone(zones, { x: cto.x, y: layout.svgHeight + 200 })).toBeNull();
+  });
+
+  it("never lets the lead slot run off the right edge", () => {
+    for (const zone of zones) {
+      expect(zone.rect.x).toBeGreaterThanOrEqual(0);
+      expect(zone.rect.x + zone.rect.width).toBeLessThanOrEqual(LAYOUT.width);
+    }
+  });
+});
+
+describe("teamDropOutcome", () => {
+  const roster: ReadonlyArray<TeamDropBot> = [
+    { botId: "cto", name: "CTO", team: "dev", lead: true },
+    { botId: "security", name: "Security", team: "dev" },
+    { botId: "assistant", name: "Assistant", team: "assistant", lead: true },
+    { botId: "planner", name: "Planner", team: "assistant" },
+  ];
+  const bot = (botId: string) => roster.find((entry) => entry.botId === botId)!;
+
+  it("moves a member to the other team as a member", () => {
+    expect(teamDropOutcome(bot("security"), { kind: "team", team: "assistant" }, roster)).toEqual({
+      kind: "update",
+      message: "Security moved to the Assistant's team.",
+      update: { team: "assistant", lead: false },
+    });
+  });
+
+  it("promotes onto the lead slot, which the server swaps in one write", () => {
+    expect(teamDropOutcome(bot("planner"), { kind: "lead", team: "dev" }, roster)).toEqual({
+      kind: "update",
+      message: "Planner now leads the Dev team.",
+      update: { team: "dev", lead: true },
+    });
+    // Same team, lead slot: still a promotion, and it demotes the current lead.
+    expect(teamDropOutcome(bot("planner"), { kind: "lead", team: "assistant" }, roster)).toEqual({
+      kind: "update",
+      message: "Planner now leads the Assistant's team.",
+      update: { team: "assistant", lead: true },
+    });
+  });
+
+  it("does nothing when the drop changes nothing", () => {
+    expect(teamDropOutcome(bot("security"), { kind: "team", team: "dev" }, roster).kind).toBe(
+      "none",
+    );
+    expect(teamDropOutcome(bot("cto"), { kind: "lead", team: "dev" }, roster)).toEqual({
+      kind: "none",
+      message: "CTO already leads the Dev team.",
+    });
+  });
+
+  it("refuses to leave a team with members but no lead", () => {
+    const outcome = teamDropOutcome(bot("cto"), { kind: "team", team: "assistant" }, roster);
+    expect(outcome.kind).toBe("blocked");
+    expect(outcome.message).toContain("Make someone else the lead");
+    // Even onto the other team's lead slot: the dev team still loses its head.
+    expect(teamDropOutcome(bot("cto"), { kind: "lead", team: "assistant" }, roster).kind).toBe(
+      "blocked",
+    );
+  });
+
+  it("lets the last bot on a team leave, lead or not", () => {
+    const soloRoster: ReadonlyArray<TeamDropBot> = [
+      { botId: "cto", name: "CTO", team: "dev", lead: true },
+      { botId: "assistant", name: "Assistant", team: "assistant", lead: true },
+    ];
+    expect(
+      teamDropOutcome(soloRoster[0]!, { kind: "team", team: "assistant" }, soloRoster),
+    ).toEqual({
+      kind: "update",
+      message: "CTO moved to the Assistant's team.",
+      update: { team: "assistant", lead: false },
+    });
+  });
+
+  it("treats a bot from a server without teams as a member of the assistant's", () => {
+    const legacy: TeamDropBot = { botId: "scout", name: "Scout" };
+    expect(teamDropOutcome(legacy, { kind: "team", team: "assistant" }, [legacy]).kind).toBe(
+      "none",
+    );
+    expect(teamDropOutcome(legacy, { kind: "team", team: "dev" }, [legacy]).kind).toBe("update");
+  });
+});
+
+describe("teamDropHint", () => {
+  const roster: ReadonlyArray<TeamDropBot> = [
+    { botId: "planner", name: "Planner", team: "assistant" },
+  ];
+  const zone = (kind: "team" | "lead") => ({
+    id: "z",
+    target: { kind, team: "dev" as const },
+    label: "Dev team",
+    rect: { x: 0, y: 0, width: 1, height: 1 },
+  });
+
+  it("says what letting go would do, and that nothing happens off-target", () => {
+    expect(teamDropHint(roster[0]!, zone("team"), roster)).toBe(
+      "Let go to make it so: Planner moved to the Dev team.",
+    );
+    expect(teamDropHint(roster[0]!, zone("lead"), roster)).toBe(
+      "Let go to make it so: Planner now leads the Dev team.",
+    );
+    expect(teamDropHint(roster[0]!, null, roster)).toBe(
+      "Planner is over nothing. Let go to leave the team as it is.",
+    );
   });
 });
 

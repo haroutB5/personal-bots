@@ -220,6 +220,225 @@ export function deriveDelegationLinks(
 
 const pathNumber = (value: number) => Number(value.toFixed(2));
 
+/**
+ * An elbowed polyline with rounded corners. Every connector that is meant to
+ * read as "reports to" is drawn this way, so a line only ever leaves a node
+ * sideways into a lane and arrives at a node from directly above it. A
+ * straight line between two centres cannot say that on a phone-width diagram:
+ * it passes across whatever happens to sit between them, which is how the
+ * owner's line to the assistant's lead used to look like Security reporting
+ * down into the other team.
+ */
+export function orthogonalPath(points: ReadonlyArray<TeamDiagramPoint>, radius: number): string {
+  const corners: TeamDiagramPoint[] = [];
+  for (const point of points) {
+    const previous = corners.at(-1);
+    if (previous !== undefined && previous.x === point.x && previous.y === point.y) continue;
+    corners.push(point);
+  }
+  const first = corners[0];
+  if (first === undefined || corners.length < 2) return "";
+
+  const parts = [`M ${pathNumber(first.x)} ${pathNumber(first.y)}`];
+  for (let index = 1; index < corners.length - 1; index += 1) {
+    const previous = corners[index - 1]!;
+    const corner = corners[index]!;
+    const next = corners[index + 1]!;
+    const inLength = Math.hypot(corner.x - previous.x, corner.y - previous.y);
+    const outLength = Math.hypot(next.x - corner.x, next.y - corner.y);
+    const bend = Math.min(radius, inLength / 2, outLength / 2);
+    const enter = {
+      x: corner.x + ((previous.x - corner.x) / inLength) * bend,
+      y: corner.y + ((previous.y - corner.y) / inLength) * bend,
+    };
+    const leave = {
+      x: corner.x + ((next.x - corner.x) / outLength) * bend,
+      y: corner.y + ((next.y - corner.y) / outLength) * bend,
+    };
+    parts.push(
+      `L ${pathNumber(enter.x)} ${pathNumber(enter.y)}`,
+      `Q ${pathNumber(corner.x)} ${pathNumber(corner.y)} ${pathNumber(leave.x)} ${pathNumber(leave.y)}`,
+    );
+  }
+  const last = corners.at(-1)!;
+  parts.push(`L ${pathNumber(last.x)} ${pathNumber(last.y)}`);
+  return parts.join(" ");
+}
+
+export interface TeamConnectorOptions {
+  readonly width: number;
+  readonly leadSize: number;
+  readonly nodeSize: number;
+  /** Width of a node's opaque name column; lanes stay outside it. */
+  readonly labelWidth: number;
+}
+
+export type TeamConnectorKind = "owner" | "member";
+
+export interface TeamConnector {
+  readonly key: string;
+  readonly kind: TeamConnectorKind;
+  readonly d: string;
+  /** Only a connector that ends on a node carries the arrow head. */
+  readonly arrow: boolean;
+}
+
+/** Where the two vertical lanes run, plus the mirror lane cross-team arcs use. */
+export interface TeamConnectorLanes {
+  readonly owner: number;
+  readonly member: number;
+  readonly cross: number;
+}
+
+const CORNER_RADIUS = 10;
+
+/**
+ * The two left-hand lanes. Both sit clear of every node's name column, so a
+ * vertical run never passes behind a name and never lines two members up as if
+ * one fed the other.
+ */
+export function teamConnectorLanes(
+  layout: TeamGroupsLayout,
+  options: TeamConnectorOptions,
+): TeamConnectorLanes {
+  const half = Math.max(1, options.labelWidth) / 2;
+  const leftmost = [layout.owner, ...layout.bots.values()].reduce(
+    (min, position) => Math.min(min, position.x - half),
+    options.width,
+  );
+  const member = Math.max(8, Math.min(26, leftmost - 10));
+  const owner = Math.max(3, member - 13);
+  return { owner, member, cross: options.width - owner };
+}
+
+/**
+ * Every "reports to" line in the diagram: the owner reaching each team's lead
+ * down the outer lane, and each lead reaching its own members down that team's
+ * own lane and along one bus per row. Nothing is drawn between two members, and
+ * no line crosses a band it does not belong to.
+ */
+export function buildTeamConnectors(
+  groups: ReadonlyArray<TeamGroup>,
+  layout: TeamGroupsLayout,
+  options: TeamConnectorOptions,
+): TeamConnector[] {
+  const lanes = teamConnectorLanes(layout, options);
+  const leadRadius = options.leadSize / 2;
+  const nodeRadius = options.nodeSize / 2;
+  const connectors: TeamConnector[] = [];
+
+  for (const group of groups) {
+    const lead = group.leadBotId === null ? undefined : layout.bots.get(group.leadBotId);
+    // Each row of members gets its own bus, fed from the band's own lane.
+    const rows = new Map<number, TeamBotPosition[]>();
+    for (const botId of group.memberBotIds) {
+      const position = layout.bots.get(botId);
+      if (position === undefined) continue;
+      const row = rows.get(position.row) ?? [];
+      row.push(position);
+      rows.set(position.row, row);
+    }
+    const busOf = (row: ReadonlyArray<TeamBotPosition>) => row[0]!.y - nodeRadius - 14;
+
+    if (lead !== undefined) {
+      connectors.push({
+        key: `owner:${group.team}`,
+        kind: "owner",
+        arrow: true,
+        d: orthogonalPath(
+          [
+            { x: layout.owner.x - leadRadius - 4, y: layout.owner.y },
+            { x: lanes.owner, y: layout.owner.y },
+            { x: lanes.owner, y: lead.y },
+            { x: lead.x - leadRadius - 10, y: lead.y },
+          ],
+          CORNER_RADIUS,
+        ),
+      });
+    }
+
+    const sortedRows = [...rows.entries()].toSorted(([left], [right]) => left - right);
+    const lowestBus = sortedRows.at(-1);
+    if (lowestBus === undefined) continue;
+
+    // The trunk: out of the lead (or the owner, for a team with no lead) into
+    // this band's lane, down to the last row's bus.
+    const trunkFrom =
+      lead === undefined
+        ? { x: layout.owner.x - leadRadius - 4, y: layout.owner.y }
+        : { x: lead.x - leadRadius - 4, y: lead.y };
+    connectors.push({
+      key: `trunk:${group.team}`,
+      kind: "member",
+      arrow: false,
+      d: orthogonalPath(
+        [
+          trunkFrom,
+          { x: lanes.member, y: trunkFrom.y },
+          { x: lanes.member, y: busOf(lowestBus[1]) },
+        ],
+        CORNER_RADIUS,
+      ),
+    });
+
+    for (const [row, positions] of sortedRows) {
+      const busY = busOf(positions);
+      const furthest = positions.reduce((max, position) => Math.max(max, position.x), lanes.member);
+      connectors.push({
+        key: `bus:${group.team}:${String(row)}`,
+        kind: "member",
+        arrow: false,
+        d: orthogonalPath(
+          [
+            { x: lanes.member, y: busY },
+            { x: furthest, y: busY },
+          ],
+          CORNER_RADIUS,
+        ),
+      });
+      for (const position of positions) {
+        connectors.push({
+          key: `drop:${group.team}:${String(row)}:${String(position.column)}`,
+          kind: "member",
+          arrow: true,
+          d: orthogonalPath(
+            [
+              { x: position.x, y: busY },
+              { x: position.x, y: position.y - nodeRadius - 8 },
+            ],
+            CORNER_RADIUS,
+          ),
+        });
+      }
+    }
+  }
+
+  return connectors;
+}
+
+/**
+ * A handoff the owner allowed across the two teams, routed down the right-hand
+ * lane instead of cutting through both bands. The bowed
+ * {@link delegationConnectorPath} is right for two bots standing side by side;
+ * over the height of the whole diagram it reads as a reporting line.
+ */
+export function crossTeamDelegationPath(
+  from: TeamDiagramPoint,
+  to: TeamDiagramPoint,
+  options: { readonly lane: number; readonly nodeSize: number },
+): string {
+  const radius = options.nodeSize / 2;
+  return orthogonalPath(
+    [
+      { x: from.x + radius + 4, y: from.y },
+      { x: options.lane, y: from.y },
+      { x: options.lane, y: to.y },
+      { x: to.x + radius + 10, y: to.y },
+    ],
+    CORNER_RADIUS,
+  );
+}
+
 /** Curved edge-to-edge path for a directional link between two bot nodes. */
 export function delegationConnectorPath(
   from: TeamDiagramPoint,
@@ -268,6 +487,197 @@ export function delegationConnectorPath(
   };
 
   return `M ${pathNumber(start.x)} ${pathNumber(start.y)} Q ${pathNumber(control.x)} ${pathNumber(control.y)} ${pathNumber(end.x)} ${pathNumber(end.y)}`;
+}
+
+export interface TeamDiagramRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * What a drop means. `team` is "join this team as a member" (the team's band or
+ * its chief's node); `lead` is "take this team's lead seat", which also moves
+ * the bot to that team.
+ */
+export interface TeamDropTarget {
+  readonly kind: "team" | "lead";
+  readonly team: PersonalBotTeam;
+}
+
+export interface TeamDropZone {
+  readonly id: string;
+  readonly target: TeamDropTarget;
+  /** What the zone says on screen while a bot is in the air. */
+  readonly label: string;
+  readonly rect: TeamDiagramRect;
+}
+
+export interface TeamDropZoneOptions {
+  readonly width: number;
+  readonly leadSize: number;
+  readonly nodeSize: number;
+}
+
+/** How wide the "Make lead" pill is, and the gap it keeps from the lead node. */
+const LEAD_ZONE_WIDTH = 104;
+const LEAD_ZONE_GAP = 8;
+
+/**
+ * Every place a lifted bot can land, most specific first, so hit-testing can
+ * take the first match: the lead pills, then the chief nodes, then the whole
+ * band. Hit-testing is ordered here rather than in the component so "which team
+ * does this drop mean" stays a pure question.
+ */
+export function buildTeamDropZones(
+  layout: TeamGroupsLayout,
+  options: TeamDropZoneOptions,
+): TeamDropZone[] {
+  const leadRadius = Math.max(1, options.leadSize) / 2;
+  const leadZones: TeamDropZone[] = [];
+  const chiefZones: TeamDropZone[] = [];
+  const bandZones: TeamDropZone[] = [];
+
+  for (const band of layout.bands) {
+    const lead = band.leadBotId === null ? undefined : layout.bots.get(band.leadBotId);
+    const teamLabel = PERSONAL_BOT_TEAM_LABELS[band.team];
+    if (lead !== undefined) {
+      const left = lead.x + leadRadius + LEAD_ZONE_GAP;
+      const width = Math.min(LEAD_ZONE_WIDTH, Math.max(0, options.width - LEAD_ZONE_GAP - left));
+      if (width >= 44) {
+        leadZones.push({
+          id: `lead:${band.team}`,
+          target: { kind: "lead", team: band.team },
+          label: "Make lead",
+          rect: { x: left, y: lead.y - leadRadius, width, height: options.leadSize },
+        });
+      }
+      chiefZones.push({
+        id: `chief:${band.team}`,
+        target: { kind: "team", team: band.team },
+        label: teamLabel,
+        rect: {
+          x: lead.x - leadRadius,
+          y: lead.y - leadRadius,
+          width: options.leadSize,
+          height: options.leadSize,
+        },
+      });
+    }
+    bandZones.push({
+      id: `band:${band.team}`,
+      target: { kind: "team", team: band.team },
+      label: teamLabel,
+      rect: {
+        x: 0,
+        y: band.top,
+        width: options.width,
+        height: Math.max(0, band.bottom - band.top),
+      },
+    });
+  }
+
+  return [...leadZones, ...chiefZones, ...bandZones];
+}
+
+export function hitTestTeamDropZone(
+  zones: ReadonlyArray<TeamDropZone>,
+  point: TeamDiagramPoint,
+): TeamDropZone | null {
+  return (
+    zones.find(
+      (zone) =>
+        point.x >= zone.rect.x &&
+        point.x <= zone.rect.x + zone.rect.width &&
+        point.y >= zone.rect.y &&
+        point.y <= zone.rect.y + zone.rect.height,
+    ) ?? null
+  );
+}
+
+/**
+ * What a drop would do. `update` is exactly the `personalBots.update` patch to
+ * send; `lead: true` makes the server demote the team's previous lead in the
+ * same write, so the diagram can never show two Lead badges.
+ */
+export type TeamDropOutcome =
+  | { readonly kind: "none"; readonly message: string }
+  | { readonly kind: "blocked"; readonly message: string }
+  | {
+      readonly kind: "update";
+      readonly message: string;
+      readonly update: { readonly team: PersonalBotTeam; readonly lead: boolean };
+    };
+
+export interface TeamDropBot {
+  readonly botId: string;
+  readonly name: string;
+  readonly team?: PersonalBotTeam;
+  readonly lead?: boolean;
+}
+
+/**
+ * A team is never left with members but no lead, so a lead can only move out
+ * once somebody else has the seat. Moving the last bot off a team is fine: the
+ * team simply stops being drawn.
+ */
+export function teamDropOutcome(
+  bot: TeamDropBot,
+  target: TeamDropTarget,
+  roster: ReadonlyArray<TeamDropBot>,
+): TeamDropOutcome {
+  const from = botTeam(bot);
+  const to = target.team;
+  const toLabel = PERSONAL_BOT_TEAM_LABELS[to];
+  const leaving = from !== to;
+
+  if (leaving && isTeamLead(bot)) {
+    const staying = roster.filter((other) => other.botId !== bot.botId && botTeam(other) === from);
+    if (staying.length > 0) {
+      return {
+        kind: "blocked",
+        message: `${bot.name} leads the ${PERSONAL_BOT_TEAM_LABELS[from]}. Make someone else the lead there first, then move ${bot.name}.`,
+      };
+    }
+  }
+
+  if (target.kind === "lead") {
+    if (!leaving && isTeamLead(bot)) {
+      return { kind: "none", message: `${bot.name} already leads the ${toLabel}.` };
+    }
+    return {
+      kind: "update",
+      message: `${bot.name} now leads the ${toLabel}.`,
+      update: { team: to, lead: true },
+    };
+  }
+
+  if (!leaving) {
+    return {
+      kind: "none",
+      message: isTeamLead(bot)
+        ? `${bot.name} already leads the ${toLabel}.`
+        : `${bot.name} is already on the ${toLabel}.`,
+    };
+  }
+  return {
+    kind: "update",
+    message: `${bot.name} moved to the ${toLabel}.`,
+    update: { team: to, lead: false },
+  };
+}
+
+/** What the live region says while a bot hangs over a target, or over nothing. */
+export function teamDropHint(
+  bot: TeamDropBot,
+  zone: TeamDropZone | null,
+  roster: ReadonlyArray<TeamDropBot>,
+): string {
+  if (zone === null) return `${bot.name} is over nothing. Let go to leave the team as it is.`;
+  const outcome = teamDropOutcome(bot, zone.target, roster);
+  if (outcome.kind === "update") return `Let go to make it so: ${outcome.message}`;
+  return outcome.message;
 }
 
 /** The whole diagram as one sentence, for the SVG's accessible name. */
