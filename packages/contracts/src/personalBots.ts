@@ -30,6 +30,25 @@ export type BotAvatarColor = typeof BotAvatarColor.Type;
 /** Short role label shown under the bot's name, e.g. "Personal assistant". */
 export const PersonalBotTitle = Schema.String.check(Schema.isMaxLength(60));
 
+/**
+ * The two bot teams. Every bot is on exactly one, and one bot per team is its
+ * lead. Delegation is scoped to the caller's own team (see the bots toolkit).
+ */
+export const PersonalBotTeam = Schema.Literals(["dev", "assistant"]);
+export type PersonalBotTeam = typeof PersonalBotTeam.Type;
+
+/** Team names as the user reads them, on the Team screen and in refusals. */
+export const PERSONAL_BOT_TEAM_LABELS: Readonly<Record<PersonalBotTeam, string>> = {
+  dev: "Dev team",
+  assistant: "Assistant's team",
+};
+
+/** Presentation order wherever both teams are shown: the dev team, then the assistant's. */
+export const PERSONAL_BOT_TEAM_ORDER: ReadonlyArray<PersonalBotTeam> = ["dev", "assistant"];
+
+/** New bots join the assistant's team as an ordinary member. */
+export const DEFAULT_PERSONAL_BOT_TEAM: PersonalBotTeam = "assistant";
+
 export const PersonalBot = Schema.Struct({
   botId: PersonalBotId,
   name: Schema.String,
@@ -42,10 +61,28 @@ export const PersonalBot = Schema.Struct({
   modelSelection: ModelSelection,
   enabled: Schema.Boolean,
   sortOrder: Schema.Number,
+  /**
+   * Team membership, lead flag and the Chats pin. Optional on the wire only so
+   * a client that updated before the server still decodes an older
+   * `personalBots.list`; the server always sends all three. Read them through
+   * {@link botTeam}, {@link isTeamLead} and {@link isBotPinned} rather than
+   * directly, so the fallback lives in one place.
+   */
+  team: Schema.optionalKey(PersonalBotTeam),
+  lead: Schema.optionalKey(Schema.Boolean),
+  pinned: Schema.optionalKey(Schema.Boolean),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
 });
 export type PersonalBot = typeof PersonalBot.Type;
+
+/** The bot's team; a bot from a server too old to have teams reads as a member of the assistant's. */
+export const botTeam = (bot: { readonly team?: PersonalBotTeam }): PersonalBotTeam =>
+  bot.team ?? DEFAULT_PERSONAL_BOT_TEAM;
+
+export const isTeamLead = (bot: { readonly lead?: boolean }): boolean => bot.lead === true;
+
+export const isBotPinned = (bot: { readonly pinned?: boolean }): boolean => bot.pinned === true;
 
 /**
  * The newest user/assistant message of a linked thread, for the chats list
@@ -79,6 +116,10 @@ export const PersonalBotCreateInput = Schema.Struct({
   avatarShape: BotAvatarShape,
   avatarColor: BotAvatarColor,
   modelSelection: ModelSelection,
+  /** Omitted means the assistant's team, not a lead, not pinned. */
+  team: Schema.optional(PersonalBotTeam),
+  lead: Schema.optional(Schema.Boolean),
+  pinned: Schema.optional(Schema.Boolean),
 });
 export type PersonalBotCreateInput = typeof PersonalBotCreateInput.Type;
 
@@ -93,6 +134,10 @@ export const PersonalBotUpdateInput = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   enabled: Schema.optional(Schema.Boolean),
   sortOrder: Schema.optional(Schema.Number),
+  team: Schema.optional(PersonalBotTeam),
+  /** Setting this true clears the lead flag on the team's previous lead. */
+  lead: Schema.optional(Schema.Boolean),
+  pinned: Schema.optional(Schema.Boolean),
 });
 export type PersonalBotUpdateInput = typeof PersonalBotUpdateInput.Type;
 

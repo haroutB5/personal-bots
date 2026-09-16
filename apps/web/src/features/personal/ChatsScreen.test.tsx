@@ -1,10 +1,11 @@
 import { PersonalBot } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { ChatsScreen } from "./ChatsScreen";
 import { buildChatsSnapshot, writeChatsSnapshot } from "./chatsSnapshot";
+import { SwipeToDelete } from "./SwipeToDelete";
 
 const decodeBot = Schema.decodeUnknownSync(PersonalBot);
 
@@ -22,6 +23,7 @@ const state = vi.hoisted(() => ({
   timeouts: new Map<number, () => void>(),
   nextTimeoutId: 1,
   reload: vi.fn(),
+  togglePin: vi.fn(),
   versionInfo: { label: "v9.9.9-test", updateAvailable: false } as {
     label: string | null;
     updateAvailable: boolean;
@@ -104,6 +106,7 @@ vi.mock("./computer/computerState", () => ({
 }));
 vi.mock("./useRefreshBotsForTaskThreads", () => ({ useRefreshBotsForTaskThreads: () => {} }));
 vi.mock("./useDeleteBot", () => ({ useDeleteBot: () => async () => state.deleteOutcome }));
+vi.mock("./usePinBot", () => ({ useTogglePinBot: () => state.togglePin }));
 vi.mock("./startBotChat", () => ({
   useStartBotChat: () => ({ start: vi.fn(), starting: false }),
 }));
@@ -142,7 +145,11 @@ function seedSnapshot() {
   );
 }
 
-function bot(botId: string, name: string) {
+function bot(
+  botId: string,
+  name: string,
+  team: { team?: "dev" | "assistant"; lead?: boolean; pinned?: boolean } = {},
+) {
   return decodeBot({
     botId,
     name,
@@ -156,6 +163,7 @@ function bot(botId: string, name: string) {
     sortOrder: 0,
     createdAt: "2026-09-01T10:00:00.000Z",
     updatedAt: "2026-09-01T10:00:00.000Z",
+    ...team,
   });
 }
 
@@ -167,6 +175,7 @@ afterEach(async () => {
   state.shells = [];
   state.refresh.mockClear();
   state.deleteOutcome = { status: "done" };
+  state.togglePin.mockClear();
   state.tasksCalls.length = 0;
   state.rafQueue.length = 0;
   state.timeouts.clear();
@@ -291,6 +300,65 @@ describe("ChatsScreen delete failures", () => {
       });
       expect(renderer!.root.findAllByProps({ role: "alert" })).toEqual([]);
     }
+  });
+});
+
+/**
+ * The two heads sit in a Pinned box at the top so they are one tap away; the
+ * rest of the roster keeps the list it always had. A pinned bot belongs to the
+ * box only — listing it twice would make the short list longer, not shorter.
+ */
+describe("ChatsScreen pinned box", () => {
+  async function renderBots(bots: ReturnType<typeof bot>[]) {
+    stubWindow();
+    state.listData = { bots, threads: [], personalProjectId: null };
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+  }
+
+  const rowLabels = (scope: ReactTestInstance) =>
+    scope.findAllByType(SwipeToDelete).map((row) => row.props.label as string);
+
+  it("does not render the box at all when nothing is pinned", async () => {
+    await renderBots([bot("bot-scout", "Scout")]);
+
+    expect(renderer!.root.findAllByProps({ "aria-label": "Pinned" })).toEqual([]);
+    expect(rowLabels(renderer!.root)).toEqual(["Delete Scout"]);
+  });
+
+  it("puts the leads in the box, CTO first, and lists every bot exactly once", async () => {
+    await renderBots([
+      bot("bot-assistant", "Assistant", { lead: true, pinned: true }),
+      bot("bot-scout", "Scout"),
+      bot("bot-cto", "CTO", { team: "dev", lead: true, pinned: true }),
+    ]);
+
+    const box = renderer!.root.findByProps({ "aria-label": "Pinned" });
+    expect(rowLabels(box)).toEqual(["Delete CTO", "Delete Assistant"]);
+    // Once in the whole screen each: the box does not duplicate the list.
+    expect(rowLabels(renderer!.root).toSorted()).toEqual([
+      "Delete Assistant",
+      "Delete CTO",
+      "Delete Scout",
+    ]);
+  });
+
+  it("offers Pin on an unpinned row and Unpin on a pinned one", async () => {
+    await renderBots([
+      bot("bot-cto", "CTO", { team: "dev", lead: true, pinned: true }),
+      bot("bot-scout", "Scout"),
+    ]);
+
+    const scout = renderer!.root.findByProps({ label: "Delete Scout" });
+    const cto = renderer!.root.findByProps({ label: "Delete CTO" });
+    expect(scout.props.secondaryAction.text).toBe("Pin");
+    expect(cto.props.secondaryAction.text).toBe("Unpin");
+
+    await act(async () => {
+      await scout.props.secondaryAction.run();
+    });
+    expect(state.togglePin).toHaveBeenCalledTimes(1);
   });
 });
 

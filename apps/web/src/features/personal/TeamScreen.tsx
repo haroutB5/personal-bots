@@ -1,7 +1,7 @@
 import type { CSSProperties, JSX } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { PersonalBot } from "@t3tools/contracts";
+import { botTeam, type PersonalBot, type PersonalBotTeam } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 
 import { useThreadShells } from "~/state/entities";
@@ -10,7 +10,8 @@ import { BotAvatar } from "./BotAvatar";
 import { PersonalPageHeader } from "./BotForm";
 import { isThreadLive } from "./botSummaries";
 import {
-  buildTeamLayout,
+  buildTeamGroups,
+  buildTeamGroupsLayout,
   delegationConnectorPath,
   deriveDelegationLinks,
   teamDiagramSummary,
@@ -23,10 +24,22 @@ import {
 } from "./usePersonalBots";
 
 const NODE_SIZE = 64;
+/** Leads are drawn a size up, so each team reads as one head and its members. */
+const LEAD_SIZE = 76;
 const DEFAULT_WIDTH = 320;
 
-function nodeStyle(x: number, y: number): CSSProperties {
-  return { left: x, top: y - NODE_SIZE / 2, transform: "translateX(-50%)" };
+const LAYOUT_OPTIONS = {
+  leadSize: LEAD_SIZE,
+  nodeSize: NODE_SIZE,
+  gapX: 32,
+  gapY: 80,
+  bandGap: 56,
+  headingSpace: 28,
+  perRow: 4,
+};
+
+function nodeStyle(x: number, y: number, size: number): CSSProperties {
+  return { left: x, top: y - size / 2, transform: "translateX(-50%)" };
 }
 
 function initialOf(name: string): string {
@@ -61,27 +74,31 @@ function TeamDiagram({
     return () => observer.disconnect();
   }, []);
 
-  const botIds = useMemo(() => bots.map((bot) => bot.botId as string), [bots]);
+  const groups = useMemo(() => buildTeamGroups(bots), [bots]);
   const layout = useMemo(
-    () =>
-      buildTeamLayout(botIds, {
-        width,
-        nodeSize: NODE_SIZE,
-        gapX: 32,
-        gapY: 80,
-        perRow: 4,
-      }),
-    [botIds, width],
+    () => buildTeamGroupsLayout(groups, { ...LAYOUT_OPTIONS, width }),
+    [groups, width],
   );
-  const botIdSet = useMemo(() => new Set(botIds), [botIds]);
+  const botIdSet = useMemo(() => new Set(bots.map((bot) => bot.botId as string)), [bots]);
+  const teamById = useMemo(
+    () =>
+      new Map<string, PersonalBotTeam>(
+        bots.map((bot) => [bot.botId as string, botTeam(bot)] as const),
+      ),
+    [bots],
+  );
+  const leadIds = useMemo(
+    () => new Set(groups.flatMap((group) => (group.leadBotId === null ? [] : [group.leadBotId]))),
+    [groups],
+  );
   const [openedAt] = useState(Date.now);
   const delegationLinks = useMemo(
     () => deriveDelegationLinks(tasks, botIdSet, openedAt),
     [botIdSet, openedAt, tasks],
   );
   const summary = useMemo(
-    () => teamDiagramSummary(ownerName, bots, delegationLinks),
-    [bots, delegationLinks, ownerName],
+    () => teamDiagramSummary(ownerName, groups, bots, delegationLinks),
+    [bots, delegationLinks, groups, ownerName],
   );
 
   return (
@@ -128,18 +145,30 @@ function TeamDiagram({
           >
             <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--personal-team-recent)" />
           </marker>
+          <marker
+            id="team-cross-arrow"
+            viewBox="0 0 10 10"
+            refX="8"
+            refY="5"
+            markerWidth="6"
+            markerHeight="6"
+            orient="auto-start-reverse"
+          >
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--personal-review)" />
+          </marker>
         </defs>
 
-        {bots.map((bot) => {
-          const position = layout.bots.get(bot.botId);
-          if (position === undefined) return null;
+        {/* You to each team's lead, and each lead to its own members. */}
+        {layout.bands.map((band) => {
+          const lead = band.leadBotId === null ? undefined : layout.bots.get(band.leadBotId);
+          if (lead === undefined) return null;
           return (
             <line
-              key={`owner:${bot.botId}`}
+              key={`owner:${band.team}`}
               x1={layout.owner.x}
-              y1={layout.owner.y + NODE_SIZE / 2 + 4}
-              x2={position.x}
-              y2={position.y - NODE_SIZE / 2 - 10}
+              y1={layout.owner.y + LEAD_SIZE / 2 + 4}
+              x2={lead.x}
+              y2={lead.y - LEAD_SIZE / 2 - 10}
               stroke="var(--personal-team-line)"
               strokeWidth="1.5"
               markerEnd="url(#team-owner-arrow)"
@@ -148,21 +177,57 @@ function TeamDiagram({
           );
         })}
 
+        {groups.flatMap((group) => {
+          const lead = group.leadBotId === null ? undefined : layout.bots.get(group.leadBotId);
+          return group.memberBotIds.flatMap((botId) => {
+            const member = layout.bots.get(botId);
+            if (member === undefined) return [];
+            const from = lead ?? layout.owner;
+            return [
+              <line
+                key={`member:${botId}`}
+                x1={from.x}
+                y1={from.y + LEAD_SIZE / 2 + 4}
+                x2={member.x}
+                y2={member.y - NODE_SIZE / 2 - 10}
+                stroke="var(--personal-team-line)"
+                strokeWidth="1.5"
+                markerEnd="url(#team-owner-arrow)"
+                vectorEffect="non-scaling-stroke"
+              />,
+            ];
+          });
+        })}
+
         {delegationLinks.map((link) => {
           const from = layout.bots.get(link.from);
           const to = layout.bots.get(link.to);
           if (from === undefined || to === undefined) return null;
           const running = link.state === "running";
+          // A handoff across teams only exists because the owner allowed it,
+          // so it is drawn apart rather than hidden.
+          const crossTeam = teamById.get(link.from) !== teamById.get(link.to);
+          const stroke = crossTeam
+            ? "var(--personal-review)"
+            : running
+              ? "var(--personal-team-live)"
+              : "var(--personal-team-recent)";
           return (
             <path
               key={`${link.from}:${link.to}`}
               d={delegationConnectorPath(from, to, NODE_SIZE)}
               fill="none"
-              stroke={running ? "var(--personal-team-live)" : "var(--personal-team-recent)"}
+              stroke={stroke}
               strokeWidth={running ? 2.5 : 1.5}
-              strokeDasharray={running ? "8 5" : "4 7"}
+              strokeDasharray={crossTeam ? "2 6" : running ? "8 5" : "4 7"}
               strokeLinecap="round"
-              markerEnd={running ? "url(#team-live-arrow)" : "url(#team-recent-arrow)"}
+              markerEnd={
+                crossTeam
+                  ? "url(#team-cross-arrow)"
+                  : running
+                    ? "url(#team-live-arrow)"
+                    : "url(#team-recent-arrow)"
+              }
               vectorEffect="non-scaling-stroke"
             />
           );
@@ -171,7 +236,7 @@ function TeamDiagram({
 
       <div
         className="absolute z-10 flex w-24 flex-col items-center bg-[var(--personal-bg)] text-center"
-        style={nodeStyle(layout.owner.x, layout.owner.y)}
+        style={nodeStyle(layout.owner.x, layout.owner.y, LEAD_SIZE)}
       >
         <span className="flex size-16 items-center justify-center rounded-full bg-[var(--personal-primary)] text-2xl font-bold text-[var(--personal-primary-text)] ring-4 ring-[var(--personal-bg)]">
           {initialOf(ownerName)}
@@ -184,32 +249,52 @@ function TeamDiagram({
         )}
       </div>
 
+      {layout.bands.map((band) => (
+        <div
+          key={`heading:${band.team}`}
+          aria-hidden="true"
+          className="absolute inset-x-0 z-0 flex items-center gap-2"
+          style={{ top: band.labelY }}
+        >
+          <span className="text-xs font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase">
+            {band.label}
+          </span>
+          <span className="h-px flex-1 bg-[var(--personal-border)]" />
+        </div>
+      ))}
+
       {bots.map((bot) => {
         const position = layout.bots.get(bot.botId);
         if (position === undefined) return null;
         const live = liveBotIds.has(bot.botId);
-        const label = [bot.name, bot.title.trim(), live ? "working" : ""]
+        const isLead = leadIds.has(bot.botId);
+        const size = isLead ? LEAD_SIZE : NODE_SIZE;
+        const label = [bot.name, isLead ? "team lead" : "", bot.title.trim(), live ? "working" : ""]
           .filter(Boolean)
           .join(", ");
         return (
           <div
             key={bot.botId}
             className="absolute z-10 flex w-24 flex-col items-center bg-[var(--personal-bg)] text-center"
-            style={nodeStyle(position.x, position.y)}
+            style={nodeStyle(position.x, position.y, size)}
           >
             <Link
               to="/bots/$botId"
               params={{ botId: bot.botId }}
               aria-label={label}
-              className="flex size-16 shrink-0 rounded-full outline-none active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]"
+              className={`relative flex shrink-0 rounded-full outline-none active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] ${isLead ? "ring-2 ring-[var(--personal-primary)] ring-offset-2 ring-offset-[var(--personal-bg)]" : ""}`}
+              style={{ width: size, height: size }}
             >
-              <BotAvatar
-                shape={bot.avatarShape}
-                color={bot.avatarColor}
-                size={NODE_SIZE}
-                label=""
-              />
+              <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={size} label="" />
             </Link>
+            {isLead ? (
+              <span
+                aria-hidden="true"
+                className="mt-1 rounded-full bg-[var(--personal-primary)] px-1.5 text-[10px] leading-4 font-semibold text-[var(--personal-primary-text)]"
+              >
+                Lead
+              </span>
+            ) : null}
             <Link
               to="/bots/$botId/edit"
               params={{ botId: bot.botId }}
@@ -238,7 +323,7 @@ function TeamDiagram({
   );
 }
 
-/** /bots/team: owner-to-bot structure and current or recent bot delegations. */
+/** /bots/team: the two teams behind their leads, and current or recent handoffs. */
 export function TeamScreen(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const list = usePersonalBotsList(environmentId);
@@ -319,7 +404,7 @@ export function TeamScreen(): JSX.Element {
       {bots.length > 0 ? (
         <>
           <p className="mt-2 text-[15px] leading-5 text-[var(--personal-text-secondary)]">
-            Active and recent handoffs between your bots.
+            Two teams, each with its lead. Bots hand work to their own team.
           </p>
           <TeamDiagram bots={bots} ownerName={ownerName} tasks={tasks} liveBotIds={liveBotIds} />
           <div
@@ -346,6 +431,12 @@ export function TeamScreen(): JSX.Element {
                 <path d="M0 2H24" stroke="var(--personal-team-recent)" strokeDasharray="4 5" />
               </svg>
               Recent handoff
+            </span>
+            <span className="flex items-center gap-2">
+              <svg aria-hidden="true" width="24" height="4" viewBox="0 0 24 4">
+                <path d="M0 2H24" stroke="var(--personal-review)" strokeDasharray="2 6" />
+              </svg>
+              Across teams, you asked
             </span>
           </div>
         </>

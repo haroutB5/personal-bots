@@ -82,6 +82,7 @@ import Migration0066 from "./Migrations/066_DropPersonalLoginGrants.ts";
 // ./upstreamMigrationIds.ts; the file keeps upstream's name so later merges stay clean.
 import MigrationUpstream0052 from "./Migrations/052_ProjectionThreadTitleState.ts";
 import Migration0068 from "./Migrations/068_PersonalLoginSensitive.ts";
+import Migration0069 from "./Migrations/069_PersonalBotTeams.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -163,6 +164,7 @@ const migrationEntries = [
   // Upstream 052_ProjectionThreadTitleState, renumbered (see upstreamMigrationIds.ts).
   [67, "ProjectionThreadTitleState", MigrationUpstream0052],
   [68, "PersonalLoginSensitive", Migration0068],
+  [69, "PersonalBotTeams", Migration0069],
   // Ids are contiguous. The migrator runs only ids above the latest applied
   // one, so every new migration (ours or upstream's) takes the next free id;
   // never deploy a gap. Upstream migrations keep their file name and are

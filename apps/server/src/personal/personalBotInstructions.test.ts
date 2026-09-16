@@ -44,6 +44,17 @@ describe("personalBotSystemInstructions", () => {
     assert.notInclude(text, "granted");
   });
 
+  // The server refuses a cross-team delegate_task, so the rules have to say
+  // why and what to do instead; a bot that does not know cannot explain the
+  // refusal to the user.
+  it("explains that delegation stops at the bot's own team", () => {
+    const text = personalBotSystemInstructions(persona(""));
+
+    assert.include(text, "two teams");
+    assert.include(text, "list_bots shows only your own team");
+    assert.match(text, /other team[\s\S]*ask the user to name that bot|let them name it/u);
+  });
+
   it("still gives a bot with blank instructions and title its name and the app rules", () => {
     const text = personalBotSystemInstructions(persona("   ", " "));
 

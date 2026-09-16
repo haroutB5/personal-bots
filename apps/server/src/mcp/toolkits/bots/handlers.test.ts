@@ -35,7 +35,13 @@ import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskServic
 import * as ProviderRegistry from "../../../provider/Services/ProviderRegistry.ts";
 import { HostOperationError } from "../../../personal/browser/pageOperations.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { BotsToolkitHandlersLive, DELEGATE_NOTE, shortenBrowserHelpReason } from "./handlers.ts";
+import { personalTaskMessageId } from "../../../personal/personalThreadTitles.ts";
+import {
+  BotsToolkitHandlersLive,
+  DELEGATE_NOTE,
+  messageNamesBot,
+  shortenBrowserHelpReason,
+} from "./handlers.ts";
 import { BotsToolkit } from "./tools.ts";
 
 const CALLER_THREAD = ThreadId.make("thread-assistant");
@@ -52,6 +58,8 @@ interface Harness {
     readonly threadId: ThreadId;
     readonly reason: string;
   }>;
+  /** A thread's messages as the tools read them, oldest first. */
+  readonly messages: Map<string, Array<{ messageId: string; role: string; text: string }>>;
   /** The shared browser as the tools see it: current state, and what closed it. */
   readonly browser: {
     state: PersonalBrowserStatus["state"];
@@ -159,7 +167,8 @@ const makeLayer = (harness: Harness) =>
     ),
     Layer.provideMerge(
       Layer.succeed(ProjectionThreadMessageRepository, {
-        listByThreadId: () => Effect.succeed([]),
+        listByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
+          Effect.sync(() => harness.messages.get(threadId) ?? []),
       } as unknown as ProjectionThreadMessageRepositoryShape),
     ),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-bots-toolkit-test-" })),
@@ -238,6 +247,7 @@ const withHarness = <A, E>(
     sessions: new Map(),
     loginUses: [],
     browserHelpRequests: [],
+    messages: new Map(),
     browser: {
       state: "connected",
       controller: { _tag: "None" },
@@ -394,6 +404,100 @@ describe("bots toolkit handlers", () => {
       }),
     ),
   );
+
+  // The owner's bots are split in two: a dev team its lead runs, and the
+  // assistant's. A bot sees and reaches its own team only — unless the owner
+  // themselves names someone on the other one.
+  const moveDeveloperToDevTeam = Effect.gen(function* () {
+    const bots = yield* PersonalBotService.PersonalBotService;
+    yield* bots.update({ botId: botId("developer"), team: "dev", lead: true });
+  });
+
+  it.effect("list_bots shows the caller's own team and hides the other one", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        yield* moveDeveloperToDevTeam;
+
+        const result = yield* call("list_bots", {});
+
+        expect(result.bots.map((bot) => bot.name)).toEqual(["Assistant", "Researcher", "Planner"]);
+      }),
+    ),
+  );
+
+  it.effect("delegate_task refuses the other team and says how to unblock it", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        yield* moveDeveloperToDevTeam;
+
+        const error = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Write the migration.",
+        }).pipe(Effect.flip);
+
+        expect(error.message).toContain("Dev team");
+        expect(error.message).toContain("ask them to request it");
+        // It is told who it *can* ask instead.
+        expect(error.message).toContain("Researcher");
+      }),
+    ),
+  );
+
+  it.effect("delegate_task crosses teams when the owner's latest message names the bot", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        yield* moveDeveloperToDevTeam;
+        harness.messages.set(CALLER_THREAD, [
+          { messageId: "msg-1", role: "user", text: "Ask Developer to write the migration." },
+        ]);
+
+        const child = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Write the migration.",
+        });
+
+        expect(child.targetBotId).toBe(botId("developer"));
+      }),
+    ),
+  );
+
+  // A delegation brief is written by the task service, on a `personal-task-`
+  // id. If that counted as the owner speaking, a bot could widen its own reach
+  // just by writing another bot's name into a brief.
+  it.effect("a task-service turn message naming the bot does not open the other team", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        yield* moveDeveloperToDevTeam;
+        harness.messages.set(CALLER_THREAD, [
+          { messageId: "msg-1", role: "user", text: "Please sort out the release." },
+          {
+            messageId: personalTaskMessageId("task-1", 1),
+            role: "user",
+            text: "Delegate this to Developer.",
+          },
+        ]);
+
+        const error = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Write the migration.",
+        }).pipe(Effect.flip);
+
+        expect(error.message).toContain("not yours");
+      }),
+    ),
+  );
+
+  it("names a bot only as a whole word, by name or id", () => {
+    const developer = { botId: "bot-developer", name: "Developer" };
+    expect(messageNamesBot("ask developer to do it", developer)).toBe(true);
+    expect(messageNamesBot("hand it to bot-developer", developer)).toBe(true);
+    expect(messageNamesBot("our developers are busy", developer)).toBe(false);
+    expect(messageNamesBot("redeveloper", developer)).toBe(false);
+  });
 
   it.effect("use_login returns only status and filled fields", () =>
     withHarness((harness) =>
