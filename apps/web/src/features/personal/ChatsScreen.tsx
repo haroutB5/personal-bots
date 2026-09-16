@@ -2,7 +2,7 @@ import type { JSX } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
-import type { PersonalBotId, ThreadId } from "@t3tools/contracts";
+import { isBotPinned, type PersonalBotId, type ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { ChevronRight, Network, Plus, Search, Settings } from "lucide-react";
 
@@ -12,7 +12,14 @@ import { primaryServerProvidersAtom } from "~/state/server";
 import { capContinuousMotion, motionForSummary } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
 import { BotRow, ROW_CLASS, snapshotPreviewLabel } from "./BotRow";
-import { buildBotSummaries, collectAttentionThreads, filterBotSummaries } from "./botSummaries";
+import {
+  buildBotSummaries,
+  collectAttentionThreads,
+  filterBotSummaries,
+  partitionPinnedSummaries,
+  type BotSummary,
+} from "./botSummaries";
+import { useTogglePinBot } from "./usePinBot";
 import { useComputerFeed } from "./computer/computerState";
 import {
   buildChatsSnapshot,
@@ -271,6 +278,39 @@ export function ChatsScreen(): JSX.Element {
   // working bot animates, so the list never runs more than one continuous
   // animation however many bots are busy.
   const rowMotions = useMemo(() => capContinuousMotion(visible.map(motionForSummary)), [visible]);
+  // The pinned box and the list below it are one list split in two, so the
+  // motion cap is still decided across every visible row, not per section.
+  const motionByBotId = useMemo(
+    () =>
+      new Map(visible.map((summary, index) => [summary.bot.botId as string, rowMotions[index]])),
+    [rowMotions, visible],
+  );
+  const { pinned, rest } = useMemo(() => partitionPinnedSummaries(visible), [visible]);
+  const togglePin = useTogglePinBot(environmentId);
+  const renderRow = (summary: BotSummary) => {
+    const willPin = !isBotPinned(summary.bot);
+    return (
+      <li key={summary.bot.botId}>
+        <SwipeToDelete
+          label={`Delete ${summary.bot.name}`}
+          onDelete={() => onDeleteBot(summary.bot)}
+          secondaryAction={{
+            label: `${willPin ? "Pin" : "Unpin"} ${summary.bot.name}`,
+            text: willPin ? "Pin" : "Unpin",
+            run: () => togglePin(summary.bot),
+          }}
+        >
+          <BotRow
+            environmentId={environmentId!}
+            summary={summary}
+            now={now}
+            describeTurn={describeTurn}
+            motion={motionByBotId.get(summary.bot.botId)}
+          />
+        </SwipeToDelete>
+      </li>
+    );
+  };
   const attention = useMemo(() => collectAttentionThreads(summaries), [summaries]);
   const helpRequest = computerFeed.status?.helpRequest ?? null;
   const helpSummary =
@@ -433,24 +473,26 @@ export function ChatsScreen(): JSX.Element {
           </div>
 
           {visible.length > 0 ? (
-            <ul className="mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)]">
-              {visible.map((summary, index) => (
-                <li key={summary.bot.botId}>
-                  <SwipeToDelete
-                    label={`Delete ${summary.bot.name}`}
-                    onDelete={() => onDeleteBot(summary.bot)}
-                  >
-                    <BotRow
-                      environmentId={environmentId!}
-                      summary={summary}
-                      now={now}
-                      describeTurn={describeTurn}
-                      motion={rowMotions[index]}
-                    />
-                  </SwipeToDelete>
-                </li>
-              ))}
-            </ul>
+            <>
+              {pinned.length > 0 ? (
+                <section
+                  aria-label="Pinned"
+                  className="mt-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3.5 pb-1"
+                >
+                  <h2 className="pt-2.5 text-xs font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase">
+                    Pinned
+                  </h2>
+                  <ul className="divide-y divide-[var(--personal-border)]">
+                    {pinned.map(renderRow)}
+                  </ul>
+                </section>
+              ) : null}
+              {rest.length > 0 ? (
+                <ul className="mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)]">
+                  {rest.map(renderRow)}
+                </ul>
+              ) : null}
+            </>
           ) : (
             <p className="mt-6 text-center text-[15px] text-[var(--personal-text-secondary)]">
               No bots or chats match "{query.trim()}".

@@ -1,7 +1,11 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
+  botTeam,
+  isBotPinned,
   isProviderAvailable,
+  isTeamLead,
+  PERSONAL_BOT_TEAM_ORDER,
   type PersonalBot,
   type PersonalRoutine,
   type PersonalBotThread,
@@ -274,6 +278,29 @@ export function filterBotSummaries(
       summary.bot.name.toLocaleLowerCase().includes(needle) ||
       summary.threadTitles.some((title) => title.toLocaleLowerCase().includes(needle)),
   );
+}
+
+/**
+ * Splits the chats list into the pinned box and the list under it. Leads come
+ * first in the box — the dev lead, then the assistant's — and any other pinned
+ * bot keeps the order it already had. Every bot lands in exactly one of the
+ * two, so a pinned bot is never listed twice.
+ */
+export function partitionPinnedSummaries(summaries: ReadonlyArray<BotSummary>): {
+  readonly pinned: ReadonlyArray<BotSummary>;
+  readonly rest: ReadonlyArray<BotSummary>;
+} {
+  const rank = (summary: BotSummary) =>
+    isTeamLead(summary.bot)
+      ? PERSONAL_BOT_TEAM_ORDER.indexOf(botTeam(summary.bot))
+      : PERSONAL_BOT_TEAM_ORDER.length;
+  return {
+    // toSorted is stable, so equal ranks keep the incoming order.
+    pinned: summaries
+      .filter((summary) => isBotPinned(summary.bot))
+      .toSorted((left, right) => rank(left) - rank(right)),
+    rest: summaries.filter((summary) => !isBotPinned(summary.bot)),
+  };
 }
 
 /** Threads waiting on the user across all bots, most recent first. */

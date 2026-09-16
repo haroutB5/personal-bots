@@ -17,20 +17,31 @@ interface Drag {
   axis: "x" | "y" | null;
 }
 
+/** A second action revealed by swiping the other way, e.g. pin/unpin. */
+export interface SwipeSecondaryAction {
+  readonly label: string;
+  /** What the revealed button says. */
+  readonly text: string;
+  readonly run: () => Promise<unknown> | unknown;
+}
+
 /**
- * iOS-style swipe action: swipe a row left (or right) to reveal Delete on
- * that side; tap Delete to run `onDelete`, tap the row to close it. Vertical
- * drags scroll the list as usual. The row's own delete stays reachable from
- * the bot editor, so keyboard and screen reader users never need the gesture.
+ * iOS-style swipe action: swipe a row left to reveal Delete; tap it to run
+ * `onDelete`, tap the row to close it. With a `secondaryAction`, swiping the
+ * other way reveals that instead of a second Delete. Vertical drags scroll the
+ * list as usual. Both actions stay reachable from the bot editor, so keyboard
+ * and screen reader users never need the gesture.
  */
 export function SwipeToDelete({
   label,
   onDelete,
+  secondaryAction,
   children,
 }: {
   label: string;
   /** Resolves once the user confirmed or cancelled; the row closes either way. */
   onDelete: () => Promise<unknown>;
+  secondaryAction?: SwipeSecondaryAction | undefined;
   children: ReactNode;
 }): JSX.Element {
   const [offset, setOffset] = useState(0);
@@ -83,25 +94,33 @@ export function SwipeToDelete({
     }
   };
 
-  const runDelete = async () => {
+  const run = async (action: () => Promise<unknown> | unknown) => {
     try {
-      await onDelete();
+      await action();
     } finally {
       setOffset(0);
     }
   };
+
+  // Swiping right reveals the secondary action when there is one; swiping
+  // left is always Delete, so the destructive side never moves.
+  const revealed =
+    offset > 0 && secondaryAction !== undefined
+      ? { label: secondaryAction.label, text: secondaryAction.text, action: secondaryAction.run }
+      : { label, text: "Delete", action: onDelete };
+  const destructive = revealed.text === "Delete";
 
   return (
     <div className="relative overflow-hidden">
       {offset !== 0 ? (
         <button
           type="button"
-          onClick={() => void runDelete()}
-          aria-label={label}
-          className="absolute inset-y-0 flex w-[88px] items-center justify-center bg-[#d93025] text-[15px] font-semibold text-white outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white"
+          onClick={() => void run(revealed.action)}
+          aria-label={revealed.label}
+          className={`absolute inset-y-0 flex w-[88px] items-center justify-center text-[15px] font-semibold text-white outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white ${destructive ? "bg-[#d93025]" : "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"}`}
           style={offset < 0 ? { right: 0 } : { left: 0 }}
         >
-          Delete
+          {revealed.text}
         </button>
       ) : null}
       <div
