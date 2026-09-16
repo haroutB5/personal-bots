@@ -1,4 +1,4 @@
-import type { ChangeEvent, JSX, KeyboardEvent } from "react";
+import type { ChangeEvent, JSX, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -355,6 +355,16 @@ export function PersonalComposer({
     if (failure !== null) setError(failure);
   };
 
+  // Tapping a composer button must not blur the message field. iOS blurs on
+  // the button's default pointer action, which drops the keyboard and reflows
+  // the composer mid-tap, so the click that follows misses and the press is
+  // swallowed (Send appeared to need two taps). Preventing the default keeps
+  // focus, so the keyboard stays up and the layout never moves; the click
+  // itself is unaffected.
+  const keepKeyboardUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (document.activeElement === textareaRef.current) event.preventDefault();
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     // Touch keyboards keep Enter as a newline; the send button sends.
@@ -489,6 +499,7 @@ export function PersonalComposer({
         {showStop ? (
           <button
             type="button"
+            onPointerDown={keepKeyboardUp}
             onClick={() => void stop()}
             disabled={stopping}
             aria-busy={stopping}
@@ -500,6 +511,7 @@ export function PersonalComposer({
         ) : (
           <button
             type="button"
+            onPointerDown={keepKeyboardUp}
             onClick={() => void send()}
             disabled={!canSend}
             aria-busy={sending}

@@ -62,6 +62,7 @@ describe("useKeyboardInset", () => {
     activeElement: unknown;
     dispatchEvent: (event: Event) => boolean;
   };
+  let frames: Array<FrameRequestCallback | undefined>;
 
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -86,7 +87,24 @@ describe("useKeyboardInset", () => {
     };
     vi.stubGlobal("window", fakeWindow);
     vi.stubGlobal("document", fakeDocument);
+    frames = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (handle: number) => {
+      frames[handle - 1] = undefined;
+    });
   });
+
+  /** The collapse is deferred a frame, so the tests drive the frame by hand. */
+  function flushFrames() {
+    const pending = frames;
+    frames = [];
+    act(() => {
+      for (const frame of pending) frame?.(0);
+    });
+  }
 
   afterEach(() => {
     act(() => renderer?.unmount());
@@ -199,7 +217,58 @@ describe("useKeyboardInset", () => {
     act(() => {
       fakeDocument.dispatchEvent(focusOutEvent(null));
     });
+    flushFrames();
     expect(lastInset).toBe(0);
+  });
+
+  it("holds the inset for a frame so a tap on Send is not dropped", () => {
+    // The regression this guards: iOS blurs the field part-way through a tap on
+    // a composer button, before the click dispatches. Collapsing the inset
+    // there moves the composer out from under the finger, the click misses, and
+    // the press does nothing but dismiss the keyboard. Send needed two taps.
+    const shell = makeShell(873);
+    act(() => {
+      renderer = create(createElement(probeWith(shell)));
+    });
+    viewport.height = 487;
+    act(() => {
+      viewport.dispatchEvent(new Event("resize"));
+    });
+    expect(lastInset).toBe(386);
+
+    fakeDocument.activeElement = SEND_BUTTON;
+    act(() => {
+      fakeDocument.dispatchEvent(focusOutEvent(SEND_BUTTON));
+    });
+    // Still lifted: the click has not been dispatched yet.
+    expect(lastInset).toBe(386);
+
+    flushFrames();
+    expect(lastInset).toBe(0);
+  });
+
+  it("abandons the collapse when the field takes focus straight back", () => {
+    const shell = makeShell(873);
+    act(() => {
+      renderer = create(createElement(probeWith(shell)));
+    });
+    viewport.height = 487;
+    act(() => {
+      viewport.dispatchEvent(new Event("resize"));
+    });
+
+    fakeDocument.activeElement = SEND_BUTTON;
+    act(() => {
+      fakeDocument.dispatchEvent(focusOutEvent(SEND_BUTTON));
+    });
+    // The button handed focus straight back to the message field.
+    fakeDocument.activeElement = COMPOSER;
+    act(() => {
+      fakeDocument.dispatchEvent(new Event("focusin"));
+    });
+    flushFrames();
+
+    expect(lastInset).toBe(386);
   });
 
   it("keeps the inset while focus hands off between two fields", () => {
@@ -234,6 +303,7 @@ describe("useKeyboardInset", () => {
     act(() => {
       fakeDocument.dispatchEvent(focusOutEvent(SEND_BUTTON));
     });
+    flushFrames();
     expect(lastInset).toBe(0);
   });
 

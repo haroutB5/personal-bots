@@ -83,6 +83,8 @@ export function useKeyboardInset(shellRef?: RefObject<HTMLElement | null>): numb
     const viewport = window.visualViewport;
     if (!viewport) return;
 
+    let collapseFrame: number | undefined;
+
     const resetPan = () => {
       const scroller = document.scrollingElement;
       if (scroller && scroller.scrollTop > 0) scroller.scrollTop = 0;
@@ -111,10 +113,20 @@ export function useKeyboardInset(shellRef?: RefObject<HTMLElement | null>): numb
 
     // Moving between two fields keeps the keyboard up; re-measuring on the
     // focusout half of that hand-off would blink the composer down and back.
+    //
+    // The collapse waits a frame on purpose. iOS blurs the field partway
+    // through a tap on a button, before the click dispatches: collapsing the
+    // inset there drops the composer out from under the finger and the tap is
+    // lost, which is why Send used to need pressing twice. Deferring lets the
+    // click land first, and a re-focus in the meantime cancels it outright.
     const onFocusOut = (event: Event) => {
       const next = (event as FocusEvent).relatedTarget;
       if (keyboardTarget(next)) return;
-      update();
+      if (collapseFrame !== undefined) cancelAnimationFrame(collapseFrame);
+      collapseFrame = requestAnimationFrame(() => {
+        collapseFrame = undefined;
+        update();
+      });
     };
 
     update();
@@ -124,6 +136,7 @@ export function useKeyboardInset(shellRef?: RefObject<HTMLElement | null>): numb
     document.addEventListener("focusin", update);
     document.addEventListener("focusout", onFocusOut);
     return () => {
+      if (collapseFrame !== undefined) cancelAnimationFrame(collapseFrame);
       viewport.removeEventListener("resize", update);
       viewport.removeEventListener("scroll", update);
       window.removeEventListener("resize", update);
