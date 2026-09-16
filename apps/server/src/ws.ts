@@ -1,3 +1,5 @@
+import * as NodeCrypto from "node:crypto";
+
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -534,11 +536,22 @@ function readClientAnalyticsProps(request: HttpServerRequest.HttpServerRequest) 
   };
 }
 
+/**
+ * This connection's chat-presence handle. `reported` stays false until the
+ * client actually says what it is viewing, so a connection that never does
+ * costs nothing to clean up.
+ */
+interface ViewingConnection {
+  readonly connectionId: string;
+  reported: boolean;
+}
+
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  viewing: ViewingConnection,
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -3282,6 +3295,18 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.personalPushReportViewing]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalPushReportViewing,
+            Effect.suspend(() => {
+              viewing.reported = true;
+              return personalPush.reportViewing({
+                connectionId: viewing.connectionId,
+                threadId: input.threadId,
+              });
+            }).pipe(Effect.as({})),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
@@ -4077,6 +4102,12 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         );
         const clientOrigin = readClientConnectionOrigin(request);
         const clientAnalyticsProps = readClientAnalyticsProps(request);
+        // Chat presence is per connection, so two devices in two chats each
+        // hold back only their own.
+        const viewing: ViewingConnection = {
+          connectionId: NodeCrypto.randomUUID(),
+          reported: false,
+        };
         yield* sessions.recordClientConnection(session.sessionId, clientOrigin);
         yield* analytics.record("client.connected", clientAnalyticsProps);
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
@@ -4094,6 +4125,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientOrigin,
               clientAnalyticsProps,
               previewAutomationBroker,
+              viewing,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
@@ -4147,7 +4179,16 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
           () => rpcWebSocketHttpEffect,
-          () => sessions.markDisconnected(session.sessionId),
+          () =>
+            sessions
+              .markDisconnected(session.sessionId)
+              .pipe(
+                Effect.andThen(
+                  viewing.reported
+                    ? personalPush.dropConnection(viewing.connectionId)
+                    : Effect.void,
+                ),
+              ),
         );
       }).pipe(
         Effect.catchTags({

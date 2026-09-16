@@ -228,6 +228,121 @@ it.effect("browser help uses a specific needs-help notification", () => {
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+it.effect("a chat that is open on some connection holds back only its own notifications", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-16T09:00:00Z"));
+    yield* seedBot;
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    const open = ThreadId.make("thread-open");
+    const other = ThreadId.make("thread-other");
+    yield* push.reportViewing({ connectionId: "conn-1", threadId: open });
+
+    // The user is reading this chat: nothing is queued at all.
+    yield* push.notifyTask(
+      yield* makeTask({ status: "waiting_for_user", threadId: open, title: "Open chat" }),
+    );
+    yield* push.drain;
+    expect(yield* outbox).toEqual([]);
+
+    // Another chat, and a task with no chat of its own, still notify.
+    yield* push.notifyTask(
+      yield* makeTask({
+        taskId: PersonalTaskId.make("task-other"),
+        status: "waiting_for_user",
+        threadId: other,
+        title: "Other chat",
+      }),
+    );
+    yield* push.notifyTask(
+      yield* makeTask({ taskId: PersonalTaskId.make("task-none"), title: "No chat" }),
+    );
+    yield* push.drain;
+    expect((yield* outbox).map((row) => JSON.parse(row.payload).body)).toEqual([
+      "Other chat",
+      "No chat",
+    ]);
+
+    // A broken provider is not about any one chat, so it always notifies.
+    yield* push.notifyProviderBroken({
+      instanceId: ProviderInstanceId.make("claude"),
+      label: "Claude Code",
+      version: "2.1.264",
+    });
+    yield* push.drain;
+    expect((yield* outbox).length).toBe(3);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a chat stops holding notifications back when it is closed, hidden or stale", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-16T09:00:00Z"));
+    yield* seedBot;
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    const open = ThreadId.make("thread-open");
+    const waiting = (taskId: string) =>
+      makeTask({ status: "waiting_for_user", threadId: open, taskId: PersonalTaskId.make(taskId) });
+
+    // Backgrounded (the client reports no chat): notifications resume.
+    yield* push.reportViewing({ connectionId: "conn-1", threadId: open });
+    yield* push.reportViewing({ connectionId: "conn-1", threadId: null });
+    yield* push.notifyTask(yield* waiting("task-hidden"));
+    yield* push.drain;
+    expect((yield* outbox).length).toBe(1);
+
+    // The websocket closed: the connection views nothing.
+    yield* push.reportViewing({ connectionId: "conn-1", threadId: open });
+    yield* push.dropConnection("conn-1");
+    yield* push.notifyTask(yield* waiting("task-closed"));
+    yield* push.drain;
+    expect((yield* outbox).length).toBe(2);
+
+    // A phone that locks without saying so: the report expires on its own.
+    yield* push.reportViewing({ connectionId: "conn-1", threadId: open });
+    yield* TestClock.adjust("30 seconds");
+    yield* push.notifyTask(yield* waiting("task-fresh"));
+    yield* push.drain;
+    expect((yield* outbox).length).toBe(2);
+    yield* TestClock.adjust("30 seconds");
+    yield* push.notifyTask(yield* waiting("task-stale"));
+    yield* push.drain;
+    expect((yield* outbox).length).toBe(3);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a second device reading the same chat keeps holding it back", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-16T09:00:00Z"));
+    yield* seedBot;
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/phone"));
+    const open = ThreadId.make("thread-open");
+    yield* push.reportViewing({ connectionId: "phone", threadId: open });
+    yield* push.reportViewing({ connectionId: "laptop", threadId: open });
+
+    // The phone leaves; the laptop still has the chat open.
+    yield* push.dropConnection("phone");
+    yield* push.notifyTask(yield* makeTask({ status: "waiting_for_user", threadId: open }));
+    yield* push.drain;
+    expect(yield* outbox).toEqual([]);
+
+    yield* push.dropConnection("laptop");
+    yield* push.notifyTask(
+      yield* makeTask({
+        status: "waiting_for_user",
+        threadId: open,
+        taskId: PersonalTaskId.make("task-2"),
+      }),
+    );
+    yield* push.drain;
+    expect((yield* outbox).length).toBe(1);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 it.effect("404/410 from the push service deletes the subscription", () => {
   const harness: Harness = { sent: [], status: 410 };
   return Effect.gen(function* () {

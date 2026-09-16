@@ -158,6 +158,12 @@ export const personalPushSetPreferences = createEnvironmentRpcCommand(connection
   onSuccess: refreshPush,
 });
 
+/** Presence only: it changes nothing the UI reads, so it refreshes nothing. */
+export const personalPushReportViewing = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-push:report-viewing",
+  tag: WS_METHODS.personalPushReportViewing,
+});
+
 export function usePersonalTasks(environmentId: EnvironmentId | null) {
   const atom = useMemo(
     () => (environmentId === null ? null : personalTasksFeed({ environmentId, input: {} })),
