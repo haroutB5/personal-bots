@@ -215,6 +215,159 @@ function Remove-PbOldFiles {
         ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
 }
 
+# --- Release pruning -------------------------------------------------------
+# 62 release directories at ~196 MB each was 7.6 GB, because nothing had ever
+# deleted one. Remove-PbOldFiles above only ever covered logs and backups.
+
+<#
+.SYNOPSIS
+Which release directory names may be deleted. Pure: no filesystem access.
+
+.DESCRIPTION
+$Releases is anything with Name and LastWriteTime. The newest $Keep survive,
+and so does every name in $Protect whatever its age -- that is where the
+active release, the release the recorded server process is actually running,
+and the rollback target go. Everything else is returned, newest first.
+#>
+function Select-PbPrunableReleases {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Releases,
+        [int]$Keep = 5,
+        [AllowEmptyCollection()][string[]]$Protect = @()
+    )
+    $protected = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($name in $Protect) {
+        if ($name) { [void]$protected.Add(([string]$name).Trim()) }
+    }
+    $ordered = @($Releases | Sort-Object -Property LastWriteTime -Descending)
+    $kept = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    if ($Keep -gt 0) {
+        foreach ($item in @($ordered | Select-Object -First $Keep)) { [void]$kept.Add([string]$item.Name) }
+    }
+    $doomed = @()
+    foreach ($item in $ordered) {
+        $name = [string]$item.Name
+        if ($protected.Contains($name)) { continue }
+        if ($kept.Contains($name)) { continue }
+        $doomed += $name
+    }
+    return @($doomed)
+}
+
+# Bytes a release occupies, ignoring anything behind a reparse point: a
+# -CopyExternals release owns its node_modules, a junctioned one points at the
+# building checkout and none of it is ours to count.
+function Get-PbReleaseSizeBytes {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $total = [long]0
+    foreach ($entry in @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue)) {
+        if (($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+        if ($entry.PSIsContainer) {
+            $sum = (Get-ChildItem -LiteralPath $entry.FullName -Recurse -Force -File -ErrorAction SilentlyContinue |
+                    Measure-Object -Property Length -Sum).Sum
+            if ($sum) { $total += [long]$sum }
+        } else {
+            $total += [long]$entry.Length
+        }
+    }
+    return $total
+}
+
+# Deletes one release directory. Every reparse point directly inside it is
+# unlinked first and never followed: node_modules is often a junction into the
+# building checkout, and deleting through it would take the developer's tree
+# with it. cmd's rmdir then handles the depth that Remove-Item refuses.
+function Remove-PbReleaseDirectory {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    foreach ($entry in @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue)) {
+        if (($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) { continue }
+        if ($entry.PSIsContainer) {
+            [System.IO.Directory]::Delete($entry.FullName)
+        } else {
+            [System.IO.File]::Delete($entry.FullName)
+        }
+    }
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & $env:ComSpec /d /s /c ('rmdir /s /q "' + $Path + '"') 2>&1 | Out-Null
+    $ErrorActionPreference = $previous
+    return (-not (Test-Path -LiteralPath $Path))
+}
+
+<#
+.SYNOPSIS
+Deletes old release directories, keeping the newest $Keep plus everything in
+$Protect. -DryRun reports without touching anything.
+#>
+function Remove-PbOldReleases {
+    param(
+        [Parameter(Mandatory = $true)]$Paths,
+        [int]$Keep = 5,
+        [AllowEmptyCollection()][string[]]$Protect = @(),
+        [switch]$DryRun
+    )
+    if (-not (Test-Path -LiteralPath $Paths.ReleasesDir -PathType Container)) {
+        Write-Host 'No releases directory; nothing to prune.'
+        return
+    }
+
+    # Read the live guards here rather than trusting the caller: the active
+    # release, whatever the recorded process is really running, and the caller's
+    # own additions (the rollback target).
+    $protect = @($Protect)
+    if (Test-Path -LiteralPath $Paths.CurrentFile -PathType Leaf) {
+        $protect += (Get-Content -LiteralPath $Paths.CurrentFile -Raw).Trim()
+    }
+    $state = Read-PbServerState -Paths $Paths
+    if ($state) {
+        if ($state.release) { $protect += [string]$state.release }
+        if ($state.binPath) {
+            # ...\releases\<name>\dist\bin.mjs -- the directory actually loaded,
+            # whatever the release field claims.
+            $protect += Split-Path -Leaf (Split-Path -Parent (Split-Path -Parent ([string]$state.binPath)))
+        }
+    }
+    $protect = @($protect | Where-Object { $_ } | Select-Object -Unique)
+
+    $all = @(Get-ChildItem -LiteralPath $Paths.ReleasesDir -Directory -Force |
+            Select-Object -Property Name, LastWriteTime)
+    $doomed = Select-PbPrunableReleases -Releases $all -Keep $Keep -Protect $protect
+
+    Write-Host ("Releases: {0} present, keeping the newest {1} plus {2} protected ({3})." -f `
+            $all.Count, $Keep, $protect.Count, ($protect -join ', '))
+    if ($doomed.Count -eq 0) {
+        Write-Host '  Nothing to prune.'
+        return
+    }
+
+    $freed = [long]0
+    $removed = 0
+    foreach ($name in $doomed) {
+        # Belt and braces: never delete something the guards named, whatever the
+        # selection did.
+        if ($protect -contains $name) { throw "Refusing to prune protected release $name." }
+        $dir = Join-Path $Paths.ReleasesDir $name
+        $size = Get-PbReleaseSizeBytes -Path $dir
+        if ($DryRun) {
+            Write-Host ("  would remove {0} ({1:N1} MB)" -f $name, ($size / 1MB))
+            $freed += $size
+            continue
+        }
+        if (Remove-PbReleaseDirectory -Path $dir) {
+            Write-Host ("  removed {0} ({1:N1} MB)" -f $name, ($size / 1MB))
+            $freed += $size
+            $removed++
+        } else {
+            Write-Warning "  could not remove $dir; leaving it in place."
+        }
+    }
+    if ($DryRun) {
+        Write-Host ("Dry run: {0} release(s), {1:N2} GB would be freed." -f $doomed.Count, ($freed / 1GB))
+    } else {
+        Write-Host ("Pruned {0} release(s), {1:N2} GB freed." -f $removed, ($freed / 1GB))
+    }
+}
+
 function Invoke-PbNative {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,

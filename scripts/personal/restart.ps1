@@ -10,6 +10,13 @@ crash supervisor keeps running; otherwise start.ps1 runs directly.
 -Release <name> makes that release active (releases\current.txt) before the
 restart. Use it to roll back: restart.ps1 -Release <previous sha>
 
+Once the server is confirmed back up, old releases are pruned: the newest
+-KeepReleases survive, along with the active release, the one the new process
+is actually running, and the release that was running before this restart --
+the rollback target. -NoPrune skips it. This runs here rather than in
+build.ps1 because only here is the new release known to actually start, and
+only here is the rollback target known at all.
+
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\restart.ps1
 #>
@@ -17,13 +24,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\restart.ps1
 param(
     [ValidateSet('dev', 'prod')][string]$Root,
     [string]$Release,
-    [string]$Node
+    [string]$Node,
+    [int]$KeepReleases = 5,
+    [switch]$NoPrune
 )
 
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $paths = Get-PbPaths -Root dev
 $state = Read-PbServerState -Paths $paths
+# Read before the stop: this is what a rollback would go back to.
+$rollbackTarget = $null
+if ($state -and $state.release) { $rollbackTarget = [string]$state.release }
+
+function Invoke-PbPostRestartPrune {
+    if ($NoPrune) { return }
+    try {
+        Remove-PbOldReleases -Paths $paths -Keep $KeepReleases -Protect @($rollbackTarget)
+    } catch {
+        # A restart that worked is not a failure because a cleanup did not.
+        Write-Warning "Release pruning failed: $($_.Exception.Message)"
+    }
+}
 if (-not $Root) {
     if ($state -and $state.root) { $Root = [string]$state.root } else { $Root = 'dev' }
 }
@@ -55,6 +77,7 @@ if ($task -and $taskRoot -eq $Root -and -not $Node) {
         $next = Read-PbServerState -Paths $paths
         if ($next -and (Test-PbServerProcess -ProcessId ([int]$next.pid) -BinPath $next.binPath -BaseDir $next.baseDir)) {
             Write-Host "Personal Bots restarted through the '$PbTaskName' task (pid $($next.pid), release $($next.release))."
+            Invoke-PbPostRestartPrune
             exit 0
         }
         Start-Sleep -Milliseconds 500
@@ -65,3 +88,6 @@ if ($task -and $taskRoot -eq $Root -and -not $Node) {
 $startArgs = @{ Root = $Root }
 if ($Node) { $startArgs.Node = $Node }
 & (Join-Path $PSScriptRoot 'start.ps1') @startArgs
+# start.ps1 throws if the server did not come up, so reaching this line means
+# the release works.
+Invoke-PbPostRestartPrune
