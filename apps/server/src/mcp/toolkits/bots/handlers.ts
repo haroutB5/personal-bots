@@ -1,6 +1,9 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  botTeam,
+  DEFAULT_PERSONAL_BOT_TEAM,
+  PERSONAL_BOT_TEAM_LABELS,
   personalSecretEnvVar,
   type PersonalBot,
   type PersonalDelegationBrief,
@@ -12,6 +15,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectionThreadMessageRepository } from "../../../persistence/Services/ProjectionThreadMessages.ts";
+import { isPersonalTaskMessageId } from "../../../personal/personalThreadTitles.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import * as PersonalBrowser from "../../../personal/browser/PersonalBrowser.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
@@ -78,6 +83,24 @@ export function resolveTargetBot(
   return enabled.find((bot) => bot.name.trim().toLowerCase() === wanted) ?? null;
 }
 
+/**
+ * Does this message name the bot? Whole-word and case-insensitive, by name or
+ * by id, so "ask Planner to draft it" names Planner while "our planners" does
+ * not. This is how the owner lifts the cross-team delegation block, so it
+ * deliberately does not match a fragment of a longer word.
+ */
+export function messageNamesBot(
+  text: string,
+  bot: { readonly botId: string; readonly name: string },
+): boolean {
+  return [bot.name.trim(), bot.botId.trim()]
+    .filter((needle) => needle.length > 0)
+    .some((needle) => {
+      const escaped = needle.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+      return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(text);
+    });
+}
+
 function summarize(task: PersonalTask, names: ReadonlyMap<string, string>): TaskSummary {
   return {
     taskId: task.taskId,
@@ -115,6 +138,7 @@ const make = Effect.gen(function* () {
   const secrets = yield* PersonalSecretService.PersonalSecretService;
   const logins = yield* PersonalLoginService.PersonalLoginService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const threadMessages = yield* ProjectionThreadMessageRepository;
   const browser = yield* PersonalBrowser.PersonalBrowser;
 
   const listBots = botRepository
@@ -142,7 +166,28 @@ const make = Effect.gen(function* () {
       threadId: scope.threadId,
       botId: link.value.botId,
       botName: Option.isSome(bot) ? bot.value.name : "Bot",
+      team: Option.isSome(bot) ? botTeam(bot.value) : DEFAULT_PERSONAL_BOT_TEAM,
     };
+  });
+
+  /**
+   * "Unless I tell him": crossing teams needs the owner's own most recent
+   * message in this thread to name the target. Turn messages the task service
+   * writes carry a `personal-task-` id and are not the owner speaking, so a
+   * delegation brief that happens to mention a bot cannot authorise reaching
+   * it — otherwise one bot could widen its own reach by writing a name.
+   */
+  const ownerNamedBot = Effect.fn("BotsToolkit.ownerNamedBot")(function* (
+    threadId: ThreadId,
+    target: PersonalBot,
+  ) {
+    const messages = yield* threadMessages
+      .listByThreadId({ threadId })
+      .pipe(Effect.mapError(() => toolError("Could not read this chat's messages.")));
+    const latest = messages.findLast(
+      (message) => message.role === "user" && !isPersonalTaskMessageId(message.messageId),
+    );
+    return latest !== undefined && messageNamesBot(latest.text, target);
   });
 
   const currentTurnId = Effect.fn("BotsToolkit.currentTurnId")(function* (threadId: ThreadId) {
@@ -186,8 +231,10 @@ const make = Effect.gen(function* () {
         const caller = yield* callerBot();
         const bots = yield* listBots;
         return {
+          // Own team only. The other team is not this bot's to reach, and a
+          // roster it cannot delegate to would only invite it to try.
           bots: bots
-            .filter((bot) => bot.enabled)
+            .filter((bot) => bot.enabled && botTeam(bot) === caller.team)
             .map((bot) => ({
               botId: bot.botId,
               name: bot.name,
@@ -201,17 +248,32 @@ const make = Effect.gen(function* () {
     delegate_task: (input) =>
       Effect.gen(function* () {
         const caller = yield* callerTask();
+        // Resolved across both teams on purpose: a bot that exists but is out
+        // of reach deserves a better answer than "no such bot".
         const target = resolveTargetBot(yield* listBots, input.targetBot);
-        if (target === null) {
-          const available = (yield* listBots)
-            .filter((bot) => bot.enabled && bot.botId !== caller.botId)
+        const teamMates = (bots: ReadonlyArray<PersonalBot>) =>
+          bots
+            .filter(
+              (bot) => bot.enabled && bot.botId !== caller.botId && botTeam(bot) === caller.team,
+            )
             .map((bot) => bot.name);
+        if (target === null) {
+          const available = teamMates(yield* listBots);
           return yield* toolError(
             `No enabled bot is called '${input.targetBot}'. Available: ${available.join(", ") || "none"}.`,
           );
         }
         if (target.botId === caller.botId) {
           return yield* toolError("You cannot delegate a task to yourself.");
+        }
+        if (botTeam(target) !== caller.team) {
+          const asked = yield* ownerNamedBot(caller.threadId, target);
+          if (!asked) {
+            const available = teamMates(yield* listBots);
+            return yield* toolError(
+              `${target.name} is on the ${PERSONAL_BOT_TEAM_LABELS[botTeam(target)]}, not yours, so you cannot hand work over. Tell the user what you need from ${target.name} and ask them to request it; once their own latest message names ${target.name}, this works. On your team you can ask: ${available.join(", ") || "nobody"}.`,
+            );
+          }
         }
         const child = yield* tasks
           .delegate({
