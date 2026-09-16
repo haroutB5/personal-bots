@@ -51,6 +51,7 @@ import { ConversationComputerPanel } from "./ConversationComputerPanel";
 import { useComputerFeed } from "./computer/computerState";
 import { ConversationRoutinesPanel } from "./ConversationRoutinesPanel";
 import {
+  botLastSpokeAtMs,
   buildConversationItems,
   CONVERSATION_STATE_LABEL,
   type ConversationState,
@@ -264,6 +265,9 @@ export function ConversationScreen({
     return buildConversationItems(projection.entries, { showToolSteps });
   }, [threadId, messages, proposedPlans, workEntries, showToolSteps]);
   const items = useMemo(() => placeDelegationCards(baseItems, children), [baseItems, children]);
+  // Read off the items the composer's "Queued" notice is shown over, so the
+  // notice retires as soon as the bot answers the steered message.
+  const botSpokeAtMs = useMemo(() => botLastSpokeAtMs(baseItems), [baseItems]);
   const describeTurn = useCallback(
     (turn: ServerTurn) => serverTurnLabel(turn, resolveTurnChildren(turn, tasks), nameOf),
     [tasks, nameOf],
@@ -681,6 +685,7 @@ export function ConversationScreen({
             botModelSelection={bot?.modelSelection ?? null}
             disabledReason={disabledReason}
             working={turnBusy}
+            botLastSpokeAtMs={botSpokeAtMs}
             canInterrupt={interruptInput !== null}
             onInterrupt={onInterrupt}
             onPendingChange={(update) => setPending((current) => update(current))}

@@ -379,6 +379,28 @@ export function buildConversationItems(
   return items;
 }
 
+/**
+ * When the bot last said something, in epoch ms, or null if it has not spoken.
+ *
+ * Drives the composer's "Queued" notice. A message sent mid-turn reaches the
+ * running turn as a steer, so the bot often answers it long before the turn
+ * ends: keeping the notice up until then claims the bot has not seen a message
+ * it has already replied to. Anything the bot emits after the message was sent
+ * is proof that it has.
+ */
+export function botLastSpokeAtMs(items: ReadonlyArray<ConversationItem>): number | null {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item === undefined) continue;
+    const spoke =
+      (item.kind === "message" && item.message.role !== "user") ||
+      item.kind === "work" ||
+      item.kind === "plan";
+    if (spoke) return itemTimeMs(item);
+  }
+  return null;
+}
+
 /** A new turn starts here: the user spoke, the task service did, or a new day began. */
 export function isTurnBoundary(item: ConversationItem): boolean {
   return (

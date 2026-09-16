@@ -77,6 +77,7 @@ export function PersonalComposer({
   botModelSelection = null,
   disabledReason,
   working,
+  botLastSpokeAtMs,
   canInterrupt,
   onInterrupt,
   onPendingChange,
@@ -95,6 +96,8 @@ export function PersonalComposer({
   /** Why sending is impossible right now (e.g. provider unavailable), or null. */
   disabledReason: string | null;
   working: boolean;
+  /** When the bot last produced output, in epoch ms; null if it has not yet. */
+  botLastSpokeAtMs: number | null;
   canInterrupt: boolean;
   onInterrupt: () => Promise<string | null>;
   onPendingChange: (
@@ -121,8 +124,12 @@ export function PersonalComposer({
   const preparingRef = useRef(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** A message was accepted while the bot was still working on the last one. */
-  const [queuedMidTurn, setQueuedMidTurn] = useState(false);
+  /**
+   * When a message was accepted while the bot was still working, in epoch ms;
+   * null when nothing is waiting. Compared against the bot's own last output,
+   * because a steer is usually answered well before the turn ends.
+   */
+  const [queuedAtMs, setQueuedAtMs] = useState<number | null>(null);
 
   const prompt = draft.prompt;
   const attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment> = useMemo(
@@ -154,9 +161,11 @@ export function PersonalComposer({
   // Stop stays one tap away in the chat menu; the composer's single button
   // belongs to whichever action the draft implies.
   const showStop = canInterrupt && !hasContent;
-  // Derived, not cleared in an effect: the notice exists only for as long as
-  // the turn it is about, so the turn ending retires it with no extra render.
-  const queued = queuedMidTurn && working;
+  // Derived, not cleared in an effect: the turn ending retires the notice with
+  // no extra render, and so does the bot replying. Waiting only on the turn
+  // used to leave "Queued" on screen under an answer the bot had already given.
+  const queued =
+    queuedAtMs !== null && working && (botLastSpokeAtMs === null || botLastSpokeAtMs < queuedAtMs);
 
   // Grows with the draft (including drafts restored from storage) up to ~5 lines.
   useLayoutEffect(() => {
@@ -272,7 +281,7 @@ export function PersonalComposer({
     const midTurn = working;
     setSending(true);
     setError(null);
-    setQueuedMidTurn(false);
+    setQueuedAtMs(null);
     try {
       for (const attachment of snapshot) {
         startAttachmentUpload({ environmentId, image: attachment, draftTarget: threadRef });
@@ -332,7 +341,7 @@ export function PersonalComposer({
         onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
         setError(`${botName ?? "The bot"} didn't get that message. Try sending it again.`);
       } else {
-        setQueuedMidTurn(midTurn);
+        setQueuedAtMs(midTurn ? Date.now() : null);
         // Keep the draft (including attachments) until the server accepts it.
         // Only consume the submitted content, preserving edits made during upload.
         const current = useComposerDraftStore.getState().getComposerDraft(threadRef);

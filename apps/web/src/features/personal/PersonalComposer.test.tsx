@@ -72,6 +72,7 @@ const props = {
   botName: "Assistant",
   disabledReason: null,
   working: false,
+  botLastSpokeAtMs: null,
   canInterrupt: false,
   onInterrupt: async () => null,
   onPendingChange: vi.fn(),
@@ -230,6 +231,33 @@ describe("personal composer queues while the bot works", () => {
     state.draft.files = [];
     await act(async () => renderer.update(<PersonalComposer {...working} />));
     expect(renderer.root.findByProps({ "aria-label": "Stop" })).toBeDefined();
+  });
+
+  it("drops the queued notice once the bot answers, without waiting for the turn", async () => {
+    // The reported bug: a steered message is usually answered long before the
+    // turn ends, and "Queued. The bot gets it as soon as this turn finishes."
+    // stayed on screen underneath the reply it had already produced.
+    await act(async () => renderer.update(<PersonalComposer {...working} />));
+    await act(async () => renderer.root.findByProps({ "aria-label": sendLabel }).props.onClick());
+    expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(1);
+
+    await act(async () =>
+      renderer.update(<PersonalComposer {...working} botLastSpokeAtMs={Date.now() + 1} />),
+    );
+    expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(0);
+  });
+
+  it("keeps the queued notice while the only bot output predates the message", async () => {
+    const spokeBefore = Date.now() - 10_000;
+    await act(async () =>
+      renderer.update(<PersonalComposer {...working} botLastSpokeAtMs={spokeBefore} />),
+    );
+    await act(async () => renderer.root.findByProps({ "aria-label": sendLabel }).props.onClick());
+
+    await act(async () =>
+      renderer.update(<PersonalComposer {...working} botLastSpokeAtMs={spokeBefore} />),
+    );
+    expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(1);
   });
 
   it("drops the queued notice when the turn ends", async () => {
