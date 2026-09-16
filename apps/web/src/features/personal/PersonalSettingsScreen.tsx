@@ -30,6 +30,11 @@ import {
   usePersonalProfile,
 } from "./usePersonalBots";
 import { diagnosticsEnabled, setDiagnosticsEnabled } from "./DiagnosticsOverlay";
+import {
+  type PersonalPreference,
+  setPersonalPreference,
+  usePersonalPreference,
+} from "./personalPreferences";
 import { useAppVersion } from "./appVersion";
 import { PersonalProviderRows } from "./PersonalProviderRows";
 import { buildProviderUpdateRows } from "./providerUpdateRows";
@@ -106,6 +111,35 @@ function DisplayNameForm({
         </p>
       ) : null}
     </>
+  );
+}
+
+/** A device-local on/off row, styled like the Diagnostics toggle below it. */
+function PreferenceRow({
+  preference,
+  label,
+  hint,
+}: {
+  preference: PersonalPreference;
+  label: string;
+  hint: string;
+}): JSX.Element {
+  const enabled = usePersonalPreference(preference);
+  return (
+    <button
+      type="button"
+      onClick={() => setPersonalPreference(preference, !enabled)}
+      aria-pressed={enabled}
+      className={`${SETTINGS_ROW} w-full text-left`}
+    >
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="text-[15px] font-semibold text-[var(--personal-text)]">{label}</span>
+        <span className="text-[13px] text-[var(--personal-text-secondary)]">{hint}</span>
+      </span>
+      <span className="shrink-0 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
+        {enabled ? "On" : "Off"}
+      </span>
+    </button>
   );
 }
 
@@ -224,6 +258,28 @@ export function PersonalSettingsScreen(): JSX.Element {
           </p>
         </section>
       ) : null}
+
+      <section aria-labelledby="settings-chat">
+        <h2 id="settings-chat" className={SECTION_TITLE}>
+          Chat
+        </h2>
+        <ul className={`${CARD} divide-y divide-[var(--personal-border)]`}>
+          <li>
+            <PreferenceRow
+              preference="showToolSteps"
+              label="Show tool steps"
+              hint='The collapsed "2 steps" rows showing what a bot did between replies.'
+            />
+          </li>
+          <li>
+            <PreferenceRow
+              preference="showRoutinesStrip"
+              label="Show routines in chats"
+              hint="The Routines strip under a chat, listing that bot's scheduled work."
+            />
+          </li>
+        </ul>
+      </section>
 
       <section aria-labelledby="settings-plugins">
         <h2 id="settings-plugins" className={SECTION_TITLE}>

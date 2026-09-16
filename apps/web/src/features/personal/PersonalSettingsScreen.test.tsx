@@ -114,3 +114,40 @@ describe("Settings About", () => {
     expect(state.reload).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Settings chat preferences", () => {
+  const toggles = () =>
+    renderer!.root.findAll(
+      (node) => node.type === "button" && node.props["aria-pressed"] !== undefined,
+    );
+
+  it("starts with tool steps off and routines on, and persists both", async () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          store.set(key, value);
+        },
+        removeItem: (key: string) => {
+          store.delete(key);
+        },
+      },
+    });
+    await act(async () => {
+      renderer = create(<PersonalSettingsScreen />);
+    });
+
+    // Chat > Show tool steps, Chat > Show routines, Advanced > Diagnostics.
+    expect(toggles().map((toggle) => toggle.props["aria-pressed"])).toEqual([false, true, false]);
+
+    await act(async () => toggles()[0]!.props.onClick());
+    await act(async () => toggles()[1]!.props.onClick());
+
+    // "Off" for a default-on flag has to be written, not just left absent.
+    expect(store.get("personal-show-tool-steps")).toBe("1");
+    expect(store.get("personal-show-routines-strip")).toBe("0");
+    expect(toggles().map((toggle) => toggle.props["aria-pressed"])).toEqual([true, false, false]);
+  });
+});
