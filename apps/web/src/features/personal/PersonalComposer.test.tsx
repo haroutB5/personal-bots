@@ -103,13 +103,54 @@ afterEach(async () => {
 });
 
 describe("personal composer sends", () => {
-  it("retains text and attachments when the server rejects a message", async () => {
+  it("retains text and attachments when the server keeps rejecting a message", async () => {
+    vi.useFakeTimers();
     state.start.mockResolvedValue({ _tag: "Failure" });
-    await act(async () => renderer.root.findByProps({ "aria-label": "Send" }).props.onClick());
-    expect(state.start).toHaveBeenCalledOnce();
+    await act(async () => {
+      void renderer.root.findByProps({ "aria-label": "Send" }).props.onClick();
+      await vi.runAllTimersAsync();
+    });
+    // The first attempt plus the three retries, then it gives up.
+    expect(state.start).toHaveBeenCalledTimes(4);
     expect(state.draft.prompt).toBe("Send this");
     expect(state.draft.files).toHaveLength(1);
     expect(state.release).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("sends again on its own after a failure, without a second tap", async () => {
+    vi.useFakeTimers();
+    state.start
+      .mockResolvedValueOnce({ _tag: "Failure" })
+      .mockResolvedValue({ _tag: "Success" } as never);
+    await act(async () => {
+      void renderer.root.findByProps({ "aria-label": "Send" }).props.onClick();
+      await vi.runAllTimersAsync();
+    });
+    expect(state.start).toHaveBeenCalledTimes(2);
+    // Accepted on the retry: the draft is consumed and no error is shown.
+    expect(state.draft.prompt).toBe("");
+    expect(renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+    vi.useRealTimers();
+  });
+
+  it("counts a duplicate-id refusal as delivered rather than posting twice", async () => {
+    // The retry reuses the message id, so this is what a lost reply looks like
+    // on the way back: the first attempt did land.
+    vi.useFakeTimers();
+    state.start.mockReset();
+    state.start.mockRejectedValueOnce(new Error("network down")).mockResolvedValue({
+      _tag: "Failure",
+      cause: { detail: "Message 'm-1' already exists on thread 't-1'." },
+    } as never);
+    await act(async () => {
+      void renderer.root.findByProps({ "aria-label": "Send" }).props.onClick();
+      await vi.runAllTimersAsync();
+    });
+    expect(state.start).toHaveBeenCalledTimes(2);
+    expect(state.draft.prompt).toBe("");
+    expect(renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+    vi.useRealTimers();
   });
 
   it("preserves edits made during upload and releases accepted attachments", async () => {

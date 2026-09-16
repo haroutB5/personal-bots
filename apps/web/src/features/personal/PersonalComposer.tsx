@@ -57,6 +57,36 @@ function resizeTextarea(textarea: HTMLTextAreaElement | null, value: string): vo
   textarea.style.overflowY = value.length > 0 && textarea.scrollHeight > max ? "auto" : "hidden";
 }
 
+/** Waits between send attempts; the gaps grow so a brief outage is ridden out. */
+const SEND_RETRY_DELAYS_MS = [700, 2_000, 5_000] as const;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * True when a failed send actually landed. The decider refuses a second message
+ * with an id already on the thread, so a retry of a send whose *reply* was lost
+ * comes back as this failure: the message is on the thread, and re-sending it
+ * under a fresh id would post it twice.
+ */
+export function sendFailedBecauseItAlreadyLanded(failure: unknown): boolean {
+  return /already exists on thread/i.test(describeUnknown(failure));
+}
+
+/** Flattens an unknown failure to searchable text without assuming its shape. */
+function describeUnknown(value: unknown, depth = 0): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value !== "object") return String(value);
+  if (depth > 4) return "";
+  const parts: string[] = [];
+  for (const nested of Object.values(value as Record<string, unknown>)) {
+    parts.push(describeUnknown(nested, depth + 1));
+  }
+  return parts.join(" ");
+}
+
 function isCoarsePointer(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 }
@@ -123,6 +153,8 @@ export function PersonalComposer({
   const [preparing, setPreparing] = useState(false);
   const preparingRef = useRef(false);
   const [stopping, setStopping] = useState(false);
+  /** A send failed and is being tried again on its own. */
+  const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /**
    * When a message was accepted while the bot was still working, in epoch ms;
@@ -315,29 +347,50 @@ export function PersonalComposer({
       // The server names a new chat from `titleSeed` when the turn starts, as
       // a replaceable title the AI title then refines once. A metadata rename
       // here would count as the user's own title and block the AI title.
-      const result = await startTurn({
-        environmentId,
-        input: {
-          threadId,
-          message: {
-            messageId,
-            role: "user",
-            text: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-            attachments: uploaded,
-          },
-          modelSelection:
-            botModelSelection !== null &&
-            botModelSelection.instanceId === thread.modelSelection.instanceId
-              ? botModelSelection
-              : thread.modelSelection,
-          titleSeed,
-          runtimeMode: thread.runtimeMode,
-          interactionMode: thread.interactionMode,
-          createdAt,
-        },
-      });
+      // Retries keep the same message id on purpose. The server refuses an id
+      // it already holds, so a retry can never post the message twice, and that
+      // refusal is itself proof the first attempt landed.
+      // A dropped connection throws rather than returning a failure, and that
+      // is the case worth retrying most, so it is folded in here.
+      const attempt = async (): Promise<{ readonly _tag: string }> => {
+        try {
+          return await startTurn({
+            environmentId,
+            input: {
+              threadId,
+              message: {
+                messageId,
+                role: "user",
+                text: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+                attachments: uploaded,
+              },
+              modelSelection:
+                botModelSelection !== null &&
+                botModelSelection.instanceId === thread.modelSelection.instanceId
+                  ? botModelSelection
+                  : thread.modelSelection,
+              titleSeed,
+              runtimeMode: thread.runtimeMode,
+              interactionMode: thread.interactionMode,
+              createdAt,
+            },
+          });
+        } catch (thrown) {
+          return { _tag: "Failure", thrown } as { readonly _tag: string };
+        }
+      };
+
+      let result = await attempt();
+      for (const wait of SEND_RETRY_DELAYS_MS) {
+        if (result._tag !== "Failure" || sendFailedBecauseItAlreadyLanded(result)) break;
+        setRetrying(true);
+        await delay(wait);
+        result = await attempt();
+      }
+      setRetrying(false);
       setSending(false);
-      if (result._tag === "Failure") {
+      const landed = result._tag !== "Failure" || sendFailedBecauseItAlreadyLanded(result);
+      if (!landed) {
         onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
         setError(`${botName ?? "The bot"} didn't get that message. Try sending it again.`);
       } else {
@@ -349,6 +402,7 @@ export function PersonalComposer({
         for (const attachment of snapshot) removeAttachment(attachment);
       }
     } catch {
+      setRetrying(false);
       onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
       setError("Couldn't send that message. Your draft is still saved; try again.");
     } finally {
@@ -391,7 +445,12 @@ export function PersonalComposer({
           {statusText}
         </p>
       ) : null}
-      {queued && statusText === null ? (
+      {retrying ? (
+        <p role="status" className="px-1 pb-2 text-sm text-[var(--personal-text-secondary)]">
+          That didn't send. Trying again...
+        </p>
+      ) : null}
+      {queued && !retrying && statusText === null ? (
         // The message is already on the laptop and in the transcript; this says
         // why the bot has not answered it yet.
         <p role="status" className="px-1 pb-2 text-sm text-[var(--personal-text-secondary)]">
