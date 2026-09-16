@@ -361,41 +361,44 @@ describe("delegatedChildren and waiting labels", () => {
 
 describe("placeDelegationCards", () => {
   it("puts the card at the end of the delegating turn, before the continuation row", () => {
-    const items = buildConversationItems([
-      {
-        id: "u1",
-        kind: "message",
-        createdAt: "2026-09-13T04:02:00.000Z",
-        message: message({
+    const items = buildConversationItems(
+      [
+        {
           id: "u1",
-          text: "Ask the Developer for PONG",
+          kind: "message",
           createdAt: "2026-09-13T04:02:00.000Z",
-        }),
-      },
-      {
-        id: "w1",
-        kind: "work",
-        createdAt: "2026-09-13T04:02:05.000Z",
-        entry: entry("delegate_task", { createdAt: "2026-09-13T04:02:05.000Z" }),
-      },
-      {
-        id: "a1",
-        kind: "message",
-        createdAt: "2026-09-13T04:02:12.000Z",
-        message: message({
+          message: message({
+            id: "u1",
+            text: "Ask the Developer for PONG",
+            createdAt: "2026-09-13T04:02:00.000Z",
+          }),
+        },
+        {
+          id: "w1",
+          kind: "work",
+          createdAt: "2026-09-13T04:02:05.000Z",
+          entry: entry("delegate_task", { createdAt: "2026-09-13T04:02:05.000Z" }),
+        },
+        {
           id: "a1",
-          role: "assistant",
-          text: "I've asked the Developer.",
+          kind: "message",
           createdAt: "2026-09-13T04:02:12.000Z",
-        }),
-      },
-      {
-        id: "personal-task-root-2",
-        kind: "message",
-        createdAt: "2026-09-13T04:02:21.662Z",
-        message: message({ id: "personal-task-root-2", text: LEGACY_CONTINUATION }),
-      },
-    ]);
+          message: message({
+            id: "a1",
+            role: "assistant",
+            text: "I've asked the Developer.",
+            createdAt: "2026-09-13T04:02:12.000Z",
+          }),
+        },
+        {
+          id: "personal-task-root-2",
+          kind: "message",
+          createdAt: "2026-09-13T04:02:21.662Z",
+          message: message({ id: "personal-task-root-2", text: LEGACY_CONTINUATION }),
+        },
+      ],
+      { showToolSteps: true },
+    );
     expect(items.map((item) => item.kind)).toEqual([
       "divider",
       "message",

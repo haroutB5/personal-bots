@@ -295,31 +295,57 @@ export type ConversationItem =
  */
 export function buildConversationItems(
   entries: ReadonlyArray<TimelineEntry>,
-  timeZone: string = PERSONAL_TIME_ZONE,
+  options: {
+    readonly timeZone?: string;
+    /** Settings > Chat > "Show tool steps". Off by default: no work rows at all. */
+    readonly showToolSteps?: boolean;
+  } = {},
 ): ConversationItem[] {
+  const timeZone = options.timeZone ?? PERSONAL_TIME_ZONE;
+  const showToolSteps = options.showToolSteps ?? false;
   const items: ConversationItem[] = [];
+  /** The last row actually rendered: day dividers are about visible gaps. */
   let lastAt: Date | null = null;
+  /**
+   * The last entry of any kind, hidden work included. A bot that worked for an
+   * hour was not silent, so its reply must not inherit a "gap" divider just
+   * because the steps behind it are hidden.
+   */
+  let lastActivityAt: Date | null = null;
   let openWork: { id: string; entries: WorkLogEntry[] } | null = null;
+
+  const noteActivity = (createdAt: string) => {
+    const at = new Date(createdAt);
+    if (!Number.isNaN(at.getTime())) lastActivityAt = at;
+  };
 
   const pushDividerIfNeeded = (createdAt: string) => {
     const at = new Date(createdAt);
     if (Number.isNaN(at.getTime())) return;
+    const since = lastActivityAt ?? lastAt;
     if (
       lastAt === null ||
       dayKey(at, timeZone) !== dayKey(lastAt, timeZone) ||
-      at.getTime() - lastAt.getTime() >= DIVIDER_GAP_MS
+      (since !== null && at.getTime() - since.getTime() >= DIVIDER_GAP_MS)
     ) {
       openWork = null;
       items.push({ kind: "divider", id: `divider:${createdAt}`, at });
     }
     lastAt = at;
+    lastActivityAt = at;
   };
 
   for (const entry of entries) {
     if (entry.kind === "message" && entry.message.role === "system") continue;
     // Checkpoints are developer plumbing (undo snapshots of a git workspace);
-    // a bot chat never shows their steps, failed or not.
-    if (entry.kind === "work" && entry.entry.sourceActivityKind?.startsWith("checkpoint.")) {
+    // a bot chat never shows their steps, failed or not. With "Show tool steps"
+    // off (the default) every work entry is dropped the same way, so no work
+    // group is ever created and the transcript is just what was said.
+    if (
+      entry.kind === "work" &&
+      (!showToolSteps || entry.entry.sourceActivityKind?.startsWith("checkpoint.") === true)
+    ) {
+      noteActivity(entry.createdAt);
       continue;
     }
     pushDividerIfNeeded(entry.createdAt);

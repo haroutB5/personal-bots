@@ -2,7 +2,7 @@ import type { JSX } from "react";
 
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, X } from "lucide-react";
 
 import { routinesForBot } from "./conversationRoutinesModel";
 import { routineTriggerStatusLabel } from "./routineHook";
@@ -11,9 +11,12 @@ import { usePersonalRoutines } from "./usePersonalAutomation";
 export function ConversationRoutinesPanel({
   environmentId,
   botId,
+  onHide,
 }: {
   readonly environmentId: EnvironmentId | null;
   readonly botId: string;
+  /** Dismiss the strip for good; Settings > Chat brings it back. */
+  readonly onHide?: () => void;
 }): JSX.Element | null {
   const query = usePersonalRoutines(environmentId);
   const routines = routinesForBot(query.data?.routines ?? [], botId);
@@ -31,14 +34,26 @@ export function ConversationRoutinesPanel({
         >
           Routines
         </h2>
-        <Link
-          to="/tasks"
-          search={{ view: "scheduled" }}
-          className="flex min-h-11 items-center gap-0.5 rounded-md text-[13px] font-medium text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-        >
-          See all
-          <ChevronRight aria-hidden="true" className="size-4" strokeWidth={1.75} />
-        </Link>
+        <div className="flex shrink-0 items-center gap-1">
+          <Link
+            to="/tasks"
+            search={{ view: "scheduled" }}
+            className="flex min-h-11 items-center gap-0.5 rounded-md text-[13px] font-medium text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          >
+            See all
+            <ChevronRight aria-hidden="true" className="size-4" strokeWidth={1.75} />
+          </Link>
+          {onHide === undefined ? null : (
+            <button
+              type="button"
+              onClick={onHide}
+              aria-label="Hide routines"
+              className="-mr-2 flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            >
+              <X aria-hidden="true" className="size-4" strokeWidth={1.75} />
+            </button>
+          )}
+        </div>
       </div>
       <ul className="divide-y divide-[var(--personal-border)]">
         {routines.map((routine) => (

@@ -63,4 +63,35 @@ describe("ConversationRoutinesPanel", () => {
     expect(output).toContain("Paused");
     expect(output).toContain("See all");
   });
+
+  it("offers a hide control that reports the dismissal, and none without a handler", () => {
+    query.data = {
+      routines: [
+        {
+          routineId: "one",
+          botId: "bot-a",
+          title: "one",
+          enabled: false,
+          nextDueAt: null,
+          timeZone: "Europe/London",
+        },
+      ],
+    };
+    const onHide = vi.fn();
+    let renderer: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <ConversationRoutinesPanel environmentId={null} botId="bot-a" onHide={onHide} />,
+      );
+    });
+    const hide = renderer!.root.findByProps({ "aria-label": "Hide routines" });
+    act(() => hide.props.onClick());
+    expect(onHide).toHaveBeenCalledTimes(1);
+
+    let plain: ReactTestRenderer;
+    act(() => {
+      plain = create(<ConversationRoutinesPanel environmentId={null} botId="bot-a" />);
+    });
+    expect(plain!.root.findAllByProps({ "aria-label": "Hide routines" })).toEqual([]);
+  });
 });

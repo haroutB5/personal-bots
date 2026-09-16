@@ -297,6 +297,28 @@ const work = (id: string, createdAt: string) =>
   }) as unknown as TimelineEntry;
 
 describe("buildConversationItems", () => {
+  it("hides every work row by default, keeping what was said", () => {
+    const items = buildConversationItems([
+      message("u1", "user", "2026-09-13T20:38:00.000Z"),
+      work("w1", "2026-09-13T20:38:02.000Z"),
+      work("w2", "2026-09-13T20:38:03.000Z"),
+      message("a1", "assistant", "2026-09-13T20:38:04.000Z"),
+    ]);
+    expect(items.map((item) => item.kind)).toEqual(["divider", "message", "message"]);
+  });
+
+  it("does not open a gap divider across the work it hid", () => {
+    // An hour of hidden steps is not an hour of silence: the reply belongs to
+    // the same turn as the question that started it.
+    const items = buildConversationItems([
+      message("u1", "user", "2026-09-13T10:00:00.000Z"),
+      work("w1", "2026-09-13T10:30:00.000Z"),
+      work("w2", "2026-09-13T11:20:00.000Z"),
+      message("a1", "assistant", "2026-09-13T11:25:00.000Z"),
+    ]);
+    expect(items.map((item) => item.kind)).toEqual(["divider", "message", "message"]);
+  });
+
   it("never shows checkpoint steps in a bot chat", () => {
     const checkpointFailure = {
       id: "cp",
@@ -310,25 +332,31 @@ describe("buildConversationItems", () => {
         sourceActivityKind: "checkpoint.capture.failed",
       },
     } as unknown as TimelineEntry;
-    const items = buildConversationItems([
-      message("u1", "user", "2026-09-13T20:38:00.000Z"),
-      checkpointFailure,
-      work("w1", "2026-09-13T20:38:06.000Z"),
-    ]);
+    const items = buildConversationItems(
+      [
+        message("u1", "user", "2026-09-13T20:38:00.000Z"),
+        checkpointFailure,
+        work("w1", "2026-09-13T20:38:06.000Z"),
+      ],
+      { showToolSteps: true },
+    );
     const workItems = items.filter((item) => item.kind === "work");
     expect(workItems).toHaveLength(1);
     expect(workItems[0]).toMatchObject({ entries: [expect.objectContaining({ id: "w1" })] });
   });
 
   it("folds consecutive work into one group and skips system messages", () => {
-    const items = buildConversationItems([
-      message("u1", "user", "2026-09-13T20:38:00.000Z"),
-      message("s1", "system", "2026-09-13T20:38:01.000Z"),
-      work("w1", "2026-09-13T20:38:02.000Z"),
-      work("w2", "2026-09-13T20:38:03.000Z"),
-      message("a1", "assistant", "2026-09-13T20:38:04.000Z"),
-      work("w3", "2026-09-13T20:38:05.000Z"),
-    ]);
+    const items = buildConversationItems(
+      [
+        message("u1", "user", "2026-09-13T20:38:00.000Z"),
+        message("s1", "system", "2026-09-13T20:38:01.000Z"),
+        work("w1", "2026-09-13T20:38:02.000Z"),
+        work("w2", "2026-09-13T20:38:03.000Z"),
+        message("a1", "assistant", "2026-09-13T20:38:04.000Z"),
+        work("w3", "2026-09-13T20:38:05.000Z"),
+      ],
+      { showToolSteps: true },
+    );
     expect(items.map((item) => item.kind)).toEqual([
       "divider",
       "message",
