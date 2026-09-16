@@ -15,11 +15,30 @@ import * as ProcessRunner from "../processRunner.ts";
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
+/**
+ * "This directory is not a repository" is the one answer that cannot go stale
+ * on its own: nothing but a `git init` changes it, and that is a thing a person
+ * does, not something that drifts. Every other cached answer keeps the short
+ * TTL above.
+ *
+ * It gets its own, much longer TTL because the short one was the single
+ * largest source of this server's idle cost. The bots' workspaces are not
+ * repositories, so a one-minute negative TTL meant `git rev-parse
+ * --show-toplevel` was re-spawned against each of them every minute forever —
+ * 8 git spawns plus 13 conhosts per 7 minutes in a 2026-09-16 host
+ * measurement, most of an idle core on Windows, where every "cheap" check costs
+ * 2-4 process creations. The cost of caching is that a folder someone
+ * `git init`s is recognised up to one TTL later; `resolve(cwd, { refresh:
+ * true })` still sees it at once.
+ */
+const DEFAULT_NOT_A_REPOSITORY_CACHE_TTL = Duration.minutes(20);
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
   readonly positiveCacheTtl?: Duration.Input;
   readonly negativeCacheTtl?: Duration.Input;
+  /** How long git's "not a repository" answer is trusted. See the constant. */
+  readonly notARepositoryCacheTtl?: Duration.Input;
   readonly refine?: (
     identity: RepositoryIdentity,
   ) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
@@ -168,18 +187,16 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
       ),
     {
       capacity: cacheCapacity,
-      // A root that is not a git repository is cached for the negative TTL, the
-      // same as an unresolvable identity eleven lines below. Without it every
-      // caller re-spawns `git rev-parse` for a non-repo workspace root forever:
-      // a shell snapshot over four roots, three of them non-repos, measured
-      // 977-1816 ms and was the slowest endpoint in the app by three orders of
-      // magnitude. The cost of caching is that a folder that gets `git init`ed
-      // is recognised up to one TTL later, which the identity cache already
-      // accepts.
+      // A root that is not a git repository is cached for the long
+      // not-a-repository TTL. Without any caching every caller re-spawns `git
+      // rev-parse` for a non-repo workspace root forever: a shell snapshot over
+      // four roots, three of them non-repos, measured 977-1816 ms and was the
+      // slowest endpoint in the app by three orders of magnitude, and the same
+      // loop later turned out to be most of the server's idle CPU.
       timeToLive: Exit.match({
         onSuccess: (value) =>
           value === null
-            ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
+            ? (options.notARepositoryCacheTtl ?? DEFAULT_NOT_A_REPOSITORY_CACHE_TTL)
             : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
         onFailure: () => Duration.zero,
       }),

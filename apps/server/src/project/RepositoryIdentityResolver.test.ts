@@ -178,9 +178,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
    * git's definitive "no repository here", so it is cached like any other
    * negative answer; the transient-failure retry above (exit 1) is unchanged.
    */
-  it.effect("caches a non-repository root until the negative TTL expires", () => {
-    const calls: Array<ReadonlyArray<string>> = [];
-    const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+  const notARepositoryRunner = (calls: Array<ReadonlyArray<string>>) =>
+    Layer.succeed(ProcessRunner.ProcessRunner, {
       run: (input) =>
         Effect.sync(() => {
           calls.push(input.args);
@@ -196,13 +195,16 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
           };
         }),
     });
+
+  it.effect("caches a non-repository root until the not-a-repository TTL expires", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
     const resolverLayer = Layer.effect(
       RepositoryIdentityResolver.RepositoryIdentityResolver,
       RepositoryIdentityResolver.make({
-        negativeCacheTtl: Duration.millis(50),
+        notARepositoryCacheTtl: Duration.millis(50),
         positiveCacheTtl: Duration.seconds(1),
       }),
-    ).pipe(Layer.provide(processRunner));
+    ).pipe(Layer.provide(notARepositoryRunner(calls)));
 
     return Effect.gen(function* () {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -215,6 +217,41 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       yield* TestClock.adjust(Duration.millis(120));
       expect(yield* resolver.resolve("/not-a-repo")).toBeNull();
       expect(calls).toHaveLength(2);
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
+  });
+
+  /**
+   * The default this server actually runs with. A non-repository workspace root
+   * used to be re-tested every minute forever, which on Windows is 2-4 process
+   * creations a minute per root and was most of the idle CPU the 2026-09-16
+   * host audit measured. Nothing but a `git init` can change the answer, so it
+   * is trusted for far longer than the ordinary negative TTL — and `refresh`
+   * still bypasses it, which is how a freshly created repo is picked up at once.
+   */
+  it.effect("does not re-shell git at a non-repository minute after minute", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    const resolverLayer = Layer.effect(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+      RepositoryIdentityResolver.make(),
+    ).pipe(Layer.provide(notARepositoryRunner(calls)));
+
+    return Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      expect(yield* resolver.resolve("/not-a-repo")).toBeNull();
+
+      for (const _minute of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+        yield* TestClock.adjust(Duration.minutes(1));
+        expect(yield* resolver.resolve("/not-a-repo")).toBeNull();
+      }
+      expect(calls).toHaveLength(1);
+
+      // An explicit refresh is the escape hatch, and does not wait for the TTL.
+      expect(yield* resolver.resolve("/not-a-repo", { refresh: true })).toBeNull();
+      expect(calls).toHaveLength(2);
+
+      yield* TestClock.adjust(Duration.minutes(21));
+      expect(yield* resolver.resolve("/not-a-repo")).toBeNull();
+      expect(calls).toHaveLength(3);
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
   });
 

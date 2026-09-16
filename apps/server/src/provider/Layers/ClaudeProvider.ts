@@ -178,7 +178,14 @@ const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
 // was never measured for it. The probe runs off the UI path, so a longer wait
 // costs nothing visible while a timeout costs the reading. Bounded like the
 // auth probe; a warm read takes under a second.
-export const CLAUDE_USAGE_READ_TIMEOUT_MS = 10_000;
+//
+// Raised from 10s, and now literally the auth probe's budget: a 2026-09-16 host
+// measurement caught cold reads finishing at 11.6s and 14.4s on a RAM-starved
+// laptop, so every probe paid for a full SDK spawn and then threw the answer
+// away on a deadline it could not meet. The two waits are the same cold start,
+// so they share a number; one whole probe stays bounded at 50s, an order of
+// magnitude inside the 5-minute health interval.
+export const CLAUDE_USAGE_READ_TIMEOUT_MS = CAPABILITIES_PROBE_TIMEOUT_MS;
 
 const MAX_LOGGED_ERROR_LENGTH = 300;
 
