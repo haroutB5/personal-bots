@@ -17,19 +17,13 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { probeBackoffInterval } from "./probeBackoff.ts";
 import {
   applyUsageLimitsUpdate,
   resolveUsageLimitsAfterProbe,
   seedUsageLimits,
 } from "./providerUsageLimits.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
-
-/**
- * A probe that could not read usage gets one early retry instead of waiting a
- * whole health-check interval (5 minutes by default). Long enough for a
- * cold-started CLI to settle, short enough that a blip costs about a minute.
- */
-const USAGE_RETRY_DELAY: Duration.Input = "60 seconds";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
@@ -65,8 +59,6 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean;
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
-  /** Wait before the one early re-probe after a failed usage read. */
-  readonly usageRetryDelay?: Duration.Input;
 }): Effect.fn.Return<
   ServerProviderShape,
   ServerSettingsError,
@@ -87,10 +79,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
-  // Counts finished probes, so a pending usage retry can tell whether any
-  // probe ran while it waited.
-  const probeCountRef = yield* Ref.make(0);
-  const usageRetryDelay = input.usageRetryDelay ?? USAGE_RETRY_DELAY;
+  // How many probes in a row have come back unable to read usage. Drives the
+  // gap before the next one; see probeBackoff.ts.
+  const usageFailureStreakRef = yield* Ref.make(0);
   const scope = yield* Effect.scope;
 
   const publishEnrichedSnapshot = Effect.fn("publishEnrichedSnapshot")(function* (
@@ -141,41 +132,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     yield* Ref.set(enrichmentFiberRef, fiber);
   });
 
-  /**
-   * After a probe that could not read usage, probe once more after
-   * `usageRetryDelay`. The retry never schedules another, so a lasting
-   * failure falls back to the normal interval rather than a loop. It stands
-   * down if any other probe finished while it waited: that probe's own
-   * outcome already decided (and, if it failed too, scheduled its own retry).
-   */
-  const scheduleUsageRetry = (
-    instanceId: ServerProvider["instanceId"],
-    afterProbe: number,
-  ): Effect.Effect<void> =>
-    Effect.logInfo("provider usage read failed; retrying once", {
-      instanceId,
-      retryInMs: Duration.toMillis(Duration.fromInputUnsafe(usageRetryDelay)),
-    }).pipe(
-      Effect.andThen(Effect.sleep(usageRetryDelay)),
-      Effect.andThen(
-        refreshSemaphore.withPermits(1)(
-          Effect.gen(function* () {
-            if ((yield* Ref.get(probeCountRef)) !== afterProbe) {
-              return;
-            }
-            const settings = yield* input.getSettings;
-            yield* applySnapshotBase(settings, { forceRefresh: true, usageRetry: true });
-          }),
-        ),
-      ),
-      Effect.ignoreCause({ log: true }),
-      Effect.forkIn(scope),
-      Effect.asVoid,
-    );
-
   const applySnapshotBase = Effect.fn("applySnapshot")(function* (
     nextSettings: Settings,
-    options?: { readonly forceRefresh?: boolean; readonly usageRetry?: boolean },
+    options?: { readonly forceRefresh?: boolean },
   ) {
     const forceRefresh = options?.forceRefresh === true;
     const previousSettings = yield* Ref.get(settingsRef);
@@ -200,12 +159,19 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     }
 
     const probedSnapshot = yield* input.checkProvider;
-    const probeCount = yield* Ref.updateAndGet(probeCountRef, (count) => count + 1);
-    if (
-      options?.usageRetry !== true &&
-      probedSnapshot.usageLimits?.unavailable?.reason === "probeFailed"
-    ) {
-      yield* scheduleUsageRetry(probedSnapshot.instanceId, probeCount);
+    // A probe that could not read usage widens the gap before the next one;
+    // the first that can read it goes straight back to the configured
+    // interval. Every probe counts, including a manual refresh, so a pull to
+    // refresh that succeeds also clears a backoff the loop built up.
+    const usageProbeFailed = probedSnapshot.usageLimits?.unavailable?.reason === "probeFailed";
+    const failureStreak = yield* Ref.updateAndGet(usageFailureStreakRef, (streak) =>
+      usageProbeFailed ? streak + 1 : 0,
+    );
+    if (usageProbeFailed) {
+      yield* Effect.logInfo("provider usage read failed; backing off the next probe", {
+        instanceId: probedSnapshot.instanceId,
+        consecutiveFailures: failureStreak,
+      });
     }
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
       snapshotStateRef,
@@ -306,31 +272,22 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   ).pipe(Effect.forkScoped);
 
   yield* Effect.forever(
-    getRefreshInterval.pipe(
-      Effect.flatMap((refreshInterval) =>
-        Effect.raceFirst(
-          Effect.sleep(
-            Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) <= 0
-              ? "60 seconds"
-              : refreshInterval,
-          ).pipe(Effect.as(true)),
-          Queue.take(refreshIntervalChanges).pipe(Effect.as(false)),
-        ).pipe(
-          Effect.flatMap((intervalElapsed) =>
-            input.refreshOnInterval !== false &&
-            intervalElapsed &&
-            Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
-              ? hasProviderStatusDemand.pipe(
-                  Effect.flatMap((shouldRefresh) =>
-                    shouldRefresh ? refreshSnapshot().pipe(Effect.asVoid) : Effect.void,
-                  ),
-                )
-              : Effect.void,
-          ),
-        ),
-      ),
-      Effect.ignoreCause({ log: true }),
-    ),
+    Effect.gen(function* () {
+      // Read per iteration, so a settings change and the current failure
+      // streak both take effect on the very next wait.
+      const configuredInterval = yield* getRefreshInterval;
+      const refreshInterval = probeBackoffInterval(
+        configuredInterval,
+        yield* Ref.get(usageFailureStreakRef),
+      );
+      const enabled = Duration.toMillis(refreshInterval) > 0;
+      const intervalElapsed = yield* Effect.raceFirst(
+        Effect.sleep(enabled ? refreshInterval : "60 seconds").pipe(Effect.as(true)),
+        Queue.take(refreshIntervalChanges).pipe(Effect.as(false)),
+      );
+      if (input.refreshOnInterval === false || !intervalElapsed || !enabled) return;
+      if (yield* hasProviderStatusDemand) yield* Effect.asVoid(refreshSnapshot());
+    }).pipe(Effect.ignoreCause({ log: true })),
   ).pipe(Effect.forkScoped);
 
   yield* applySnapshot(initialSettings, { forceRefresh: true }).pipe(

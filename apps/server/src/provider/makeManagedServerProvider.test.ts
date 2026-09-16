@@ -731,7 +731,12 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
 
-  it.effect("re-probes once a minute after a failed usage read, never in a loop", () =>
+  /**
+   * Each probe cold-starts a provider CLI, so a host that cannot answer them
+   * must not be asked every five minutes all night. The gap doubles per
+   * consecutive failure instead: 5 -> 10 -> 20 -> 30 and no further.
+   */
+  it.effect("widens the gap between probes while usage reads keep failing", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const probes = yield* Ref.make(0);
@@ -744,59 +749,75 @@ describe("makeManagedServerProvider", () => {
           checkProvider: Ref.updateAndGet(probes, (count) => count + 1).pipe(
             Effect.as({ ...refreshedSnapshot, usageLimits: failedLimits }),
           ),
-          refreshInterval: "1 hour",
+          refreshInterval: "5 minutes",
         });
+        // The boot probe; the loop's first wait was already scheduled at the
+        // configured interval before its outcome was known.
         yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
         assert.strictEqual(yield* Ref.get(probes), 1);
 
-        yield* TestClock.adjust("59 seconds");
-        yield* Effect.yieldNow;
-        assert.strictEqual(yield* Ref.get(probes), 1);
-
-        const retried = yield* Stream.take(provider.streamChanges, 1).pipe(
-          Stream.runDrain,
-          Effect.forkChild,
-        );
-        yield* Effect.yieldNow;
-        yield* TestClock.adjust("1 second");
-        yield* Fiber.join(retried);
-        assert.strictEqual(yield* Ref.get(probes), 2);
-
-        // The retry failed too; it does not schedule another. The next probe
-        // is the regular interval's.
-        yield* TestClock.adjust("30 minutes");
+        yield* TestClock.adjust("5 minutes");
         yield* Effect.yieldNow;
         assert.strictEqual(yield* Ref.get(probes), 2);
+
+        // Two failures behind it, so the next wait is 20 minutes, not 5.
+        yield* TestClock.adjust("19 minutes");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(probes), 2);
+        yield* TestClock.adjust("1 minute");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(probes), 3);
+
+        // Doubling stops at the cap rather than walking off into hours.
+        yield* TestClock.adjust("29 minutes");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(probes), 3);
+        yield* TestClock.adjust("1 minute");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(probes), 4);
       }),
     ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
 
-  it.effect("drops the pending usage retry when another probe runs first", () =>
+  it.effect("returns to the configured cadence on the first usage read that works", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const probes = yield* Ref.make(0);
+        const failing = yield* Ref.make(true);
         const provider = yield* makeManagedServerProvider<TestSettings>({
           resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
           getSettings: Effect.succeed({ enabled: true }),
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
           initialSnapshot: () => Effect.succeed(initialSnapshot),
-          checkProvider: Ref.updateAndGet(probes, (count) => count + 1).pipe(
-            Effect.map((count) => ({
+          checkProvider: Ref.update(probes, (count) => count + 1).pipe(
+            Effect.andThen(Ref.get(failing)),
+            Effect.map((failed) => ({
               ...refreshedSnapshot,
-              usageLimits: count === 1 ? failedLimits : freshLimits,
+              usageLimits: failed ? failedLimits : freshLimits,
             })),
           ),
-          refreshInterval: "1 hour",
+          refreshInterval: "5 minutes",
         });
         yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
-        // The user pulls to refresh before the retry is due, and it reads usage.
-        assert.deepStrictEqual((yield* provider.refresh).usageLimits, freshLimits);
-        assert.strictEqual(yield* Ref.get(probes), 2);
-
-        yield* TestClock.adjust("2 minutes");
+        yield* TestClock.adjust("5 minutes");
         yield* Effect.yieldNow;
         assert.strictEqual(yield* Ref.get(probes), 2);
+
+        // The provider comes back, and the user pulls to refresh.
+        yield* Ref.set(failing, false);
+        assert.deepStrictEqual((yield* provider.refresh).usageLimits, freshLimits);
+        assert.strictEqual(yield* Ref.get(probes), 3);
+
+        // The wait already in flight still runs out at 20 minutes...
+        yield* TestClock.adjust("20 minutes");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(probes), 4);
+
+        // ...but the streak is clear, so the cadence is the configured one again.
+        yield* TestClock.adjust("5 minutes");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(probes), 5);
       }),
     ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );

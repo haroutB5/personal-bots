@@ -34,6 +34,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import { probeBackoffInterval } from "../provider/probeBackoff.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
@@ -71,6 +72,11 @@ export const make = Effect.gen(function* () {
     PubSub.shutdown,
   );
 
+  /**
+   * `unreachable` is only for a hub that was actually asked and did not
+   * answer; a missing management key is the user's own configuration, costs no
+   * request, and must not push the poll into backoff.
+   */
   const readSource = Effect.fn("UsageLimitSources.readSource")(function* (
     id: UsageLimitSourceId,
     config: UsageLimitSourceConfig,
@@ -78,14 +84,20 @@ export const make = Effect.gen(function* () {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const base = { id, kind: config.kind, label: sourceLabel(id, config), checkedAt } as const;
     if (config.managementKey.length === 0) {
-      return { ...base, accounts: [], error: "No management key configured." };
+      return {
+        snapshot: { ...base, accounts: [], error: "No management key configured." },
+        unreachable: false,
+      };
     }
     const accounts = yield* api.readAccounts(config).pipe(Effect.result);
     if (accounts._tag === "Failure") {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
-      return { ...base, accounts: [], error: accounts.failure.detail };
+      return {
+        snapshot: { ...base, accounts: [], error: accounts.failure.detail },
+        unreachable: true,
+      };
     }
-    return { ...base, accounts: accounts.success };
+    return { snapshot: { ...base, accounts: accounts.success }, unreachable: false };
   });
 
   const publish = (next: ReadonlyArray<UsageLimitSourceSnapshot>) =>
@@ -100,6 +112,9 @@ export const make = Effect.gen(function* () {
   // must not publish after the change's own refresh and resurrect a removed
   // source. Callers queue behind the in-flight run and see current settings.
   const refreshLock = yield* Semaphore.make(1);
+  // How many polls in a row left a configured hub unreachable, which widens
+  // the gap before the next one. See provider/probeBackoff.ts.
+  const failureStreakRef = yield* Ref.make(0);
   const refresh = Effect.gen(function* () {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.orElseSucceed((): ServerSettings | null => null),
@@ -107,12 +122,16 @@ export const make = Effect.gen(function* () {
     const entries = Object.entries(settings?.usageLimitSources ?? {}).filter(
       ([, config]) => config.enabled,
     );
-    const snapshots = yield* Effect.forEach(
+    const results = yield* Effect.forEach(
       entries,
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
       { concurrency: 4 },
     );
-    yield* publish(snapshots);
+    yield* Ref.set(
+      failureStreakRef,
+      results.some((result) => result.unreachable) ? (yield* Ref.get(failureStreakRef)) + 1 : 0,
+    );
+    yield* publish(results.map((result) => result.snapshot));
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
@@ -130,7 +149,7 @@ export const make = Effect.gen(function* () {
         });
       }
       const result = yield* api.consume(config, input.accountId, input.creditId);
-      const snapshot = yield* readSource(input.sourceId, config);
+      const { snapshot } = yield* readSource(input.sourceId, config);
       const previous = yield* Ref.get(stateRef);
       yield* publish(previous.map((source) => (source.id === input.sourceId ? snapshot : source)));
       return result;
@@ -152,14 +171,11 @@ export const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
   );
   yield* Effect.forever(
-    interval.pipe(
-      Effect.flatMap((wait) =>
-        Effect.sleep(Duration.toMillis(Duration.fromInputUnsafe(wait)) <= 0 ? "60 seconds" : wait),
-      ),
-      Effect.andThen(backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })),
-      Effect.flatMap((shouldRun) => (shouldRun ? refresh : Effect.void)),
-      Effect.ignoreCause({ log: true }),
-    ),
+    Effect.gen(function* () {
+      const wait = probeBackoffInterval(yield* interval, yield* Ref.get(failureStreakRef));
+      yield* Effect.sleep(Duration.toMillis(wait) <= 0 ? "60 seconds" : wait);
+      if (yield* backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })) yield* refresh;
+    }).pipe(Effect.ignoreCause({ log: true })),
   ).pipe(Effect.forkScoped);
 
   yield* refresh.pipe(Effect.forkScoped);
