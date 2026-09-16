@@ -16,9 +16,11 @@ import * as NodePath from "node:path";
 import {
   clampPersonalBrowserViewport,
   encodePersonalBrowserFrame,
+  PERSONAL_TASK_TERMINAL_STATUSES,
   PersonalBrowserError,
   PersonalBrowserInputMessage,
   PersonalBrowserViewerMessage,
+  PersonalTaskStatus,
   ThreadId,
   type PersonalBotId,
   type PersonalBrowserActivityEvent,
@@ -214,6 +216,23 @@ interface TabEntry {
 }
 
 const RECENT_ACTIVITY_LIMIT = 30;
+/**
+ * A headed Chrome nobody is using costs 300-600 MB and a compositor, and
+ * nothing ever closed it: the only shutdown paths were an explicit close, a
+ * thread release and a crash, so one page a bot opened and forgot sat there
+ * until someone noticed. After this long with no sign of use it closes itself,
+ * and the next browser action or Take control starts it again exactly as
+ * before. Checked once a tick, and any sign of use resets the count, so the
+ * browser has to be idle for the whole stretch, not merely at the moment the
+ * sweep happens to look.
+ */
+const IDLE_CLOSE_AFTER_TICKS = 10;
+const IDLE_CHECK_INTERVAL_MS = 60_000;
+const IDLE_CLOSE_SUMMARY = "Browser closed after 10 minutes with nobody using it";
+/** Statuses a task can still leave on its own; its thread may need the browser. */
+const LIVE_TASK_STATUSES = PersonalTaskStatus.literals.filter(
+  (status) => !PERSONAL_TASK_TERMINAL_STATUSES.includes(status),
+);
 const RESTORE_NAVIGATE_TIMEOUT_MS = 30_000;
 /** The server's own navigation of the fresh tab a saved login is filled into. */
 const FILL_NAVIGATE_TIMEOUT_MS = 20_000;
@@ -1810,10 +1829,23 @@ export const make = (options: PersonalBrowserOptions) =>
         return yield* status(sessionId);
       });
 
-    const closeBrowser: PersonalBrowser["Service"]["closeBrowser"] = (input) => {
-      // Under the launch lock so a close can never interleave with a launch and
-      // leave a live context behind an "offline" phase.
-      const teardown = launchLock.withPermit(
+    /**
+     * Gives up everything the browser holds and leaves it `offline`: every tab
+     * closed, Chrome stopped, the lease released, the saved page dropped and
+     * one activity line recorded. Idempotent, and the only teardown there is —
+     * the user's Close, a bot's close and the idle sweep all land here, so the
+     * phone's panel retires the same way whichever one fired.
+     *
+     * The caller holds the lease lock; this takes the launch lock so a close
+     * can never interleave with a launch and leave a live context behind an
+     * "offline" phase.
+     */
+    const teardownBrowser = (input: {
+      readonly sessionId: string;
+      readonly byThreadId: ThreadId | null;
+      readonly reason: "explicit" | "idle";
+    }) =>
+      launchLock.withPermit(
         Effect.gen(function* () {
           const leaseBefore = yield* lease.view;
           // "Nothing to close" is the whole idempotency test: no Chrome, no
@@ -1860,7 +1892,11 @@ export const make = (options: PersonalBrowserOptions) =>
             yield* recordActivity({
               kind: "control",
               summary:
-                bot === null ? "Browser closed by you" : `Browser closed by ${bot.name ?? "a bot"}`,
+                input.reason === "idle"
+                  ? IDLE_CLOSE_SUMMARY
+                  : bot === null
+                    ? "Browser closed by you"
+                    : `Browser closed by ${bot.name ?? "a bot"}`,
               status: "succeeded",
               threadId: input.byThreadId,
               botName: bot?.name ?? null,
@@ -1870,6 +1906,9 @@ export const make = (options: PersonalBrowserOptions) =>
           return yield* status(input.sessionId);
         }),
       );
+
+    const closeBrowser: PersonalBrowser["Service"]["closeBrowser"] = (input) => {
+      const teardown = teardownBrowser({ ...input, reason: "explicit" });
       // A bot's close is an agent operation like any other: the authority check
       // and the teardown run inside the same lease lock, so a takeover can no
       // longer land between "no human is in control" and Chrome exiting, and
@@ -1891,6 +1930,67 @@ export const make = (options: PersonalBrowserOptions) =>
               ),
             );
     };
+
+    /**
+     * Whether anything at all still depends on the browser being up. Read
+     * conservatively: every unknown is "in use", because closing under a bot
+     * mid-task loses its page, and the cost of being wrong the other way is
+     * one more idle minute.
+     *
+     * A bot between two tool calls is covered by its lease (it lapses 90s
+     * after the last op) and, for the long gaps, by its task still being
+     * live: a bot parked on `waiting_for_browser`, or thinking through a turn,
+     * holds its tab for as long as that takes.
+     */
+    const browserIsInUse = Effect.gen(function* () {
+      if (viewers.size > 0 || activeHelp !== null) return true;
+      const view = yield* lease.view;
+      // A person keeps control until they hand it back, and they may be typing
+      // into the Chrome window on the laptop with no viewer attached at all —
+      // signing in is exactly why the browser is headed by default.
+      if (view.ownerType === "human" || view.agentActive || view.inFlightThreadId !== null) {
+        return true;
+      }
+      const owners = new Set([...runtime.tabs.values()].map((tab) => String(tab.threadId)));
+      if (owners.size === 0) return false;
+      return yield* tasks.list({ statuses: LIVE_TASK_STATUSES }).pipe(
+        Effect.map(({ tasks: live }) =>
+          live.some((task) => task.threadId !== null && owners.has(task.threadId)),
+        ),
+        // Tasks unreadable: assume the browser is wanted rather than close on
+        // a failed query.
+        Effect.catchCause(() => Effect.succeed(true)),
+      );
+    });
+
+    let idleTicks = 0;
+    const idleSweep = Effect.gen(function* () {
+      if (runtime.phase !== "connected" || (yield* browserIsInUse)) {
+        idleTicks = 0;
+        return;
+      }
+      idleTicks += 1;
+      if (idleTicks < IDLE_CLOSE_AFTER_TICKS) return;
+      idleTicks = 0;
+      yield* lease.runExclusive(
+        Effect.gen(function* () {
+          // Re-read inside the lock: a takeover or an agent op can land between
+          // the check above and the lock being granted.
+          if (runtime.phase !== "connected" || (yield* browserIsInUse)) return;
+          yield* Effect.logInfo("closing the shared browser after an idle stretch", {
+            minutes: (IDLE_CLOSE_AFTER_TICKS * IDLE_CHECK_INTERVAL_MS) / 60_000,
+          });
+          yield* teardownBrowser({ sessionId: "", byThreadId: null, reason: "idle" });
+        }),
+      );
+    });
+
+    yield* Effect.forever(
+      Effect.sleep(IDLE_CHECK_INTERVAL_MS).pipe(
+        Effect.andThen(idleSweep),
+        Effect.ignoreCause({ log: true }),
+      ),
+    ).pipe(Effect.forkScoped);
 
     const listFiles: PersonalBrowser["Service"]["listFiles"] = Effect.tryPromise({
       try: () => scanArtifacts(artifactsDir),

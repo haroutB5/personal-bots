@@ -253,6 +253,8 @@ interface TaskHarness {
   }>;
   /** Thread id -> root task id, for threads that work in one delegation tree. */
   readonly roots?: ReadonlyMap<string, string>;
+  /** What `list` reports; the idle sweep asks it whether a tab's thread is busy. */
+  readonly live?: ReadonlyArray<PersonalTask>;
 }
 
 const taskServiceLayer = (harness: TaskHarness) =>
@@ -261,6 +263,7 @@ const taskServiceLayer = (harness: TaskHarness) =>
       Effect.succeed(
         Option.map(Option.fromNullishOr(harness.roots?.get(thread)), PersonalTaskId.make),
       ),
+    list: () => Effect.succeed({ tasks: harness.live ?? [] }),
     waitForBrowser: ({ taskId }) =>
       Effect.sync(() => {
         harness.waits.push(taskId);
@@ -933,6 +936,102 @@ describe("PersonalBrowser", () => {
       // Closed twice, and the browser still starts again on the next op.
       yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
       expect(fake.state.launches).toBe(2);
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  const recentSummaries = (browser: PersonalBrowser.PersonalBrowser["Service"]) =>
+    browser.activity("session-1").pipe(
+      Stream.take(1),
+      Stream.runCollect,
+      Effect.map((items) =>
+        items[0]?._tag === "Recent" ? items[0].events.map((event) => event.summary) : [],
+      ),
+    );
+
+  /**
+   * Nothing used to close the shared Chrome for being idle, so a page a bot
+   * opened and forgot kept a headed browser (300-600 MB plus a compositor)
+   * alive indefinitely. The count only advances on a tick where nothing at all
+   * is using the browser, which is why the live lease pushes the close out
+   * past the tenth minute rather than landing on it.
+   */
+  it.effect("closes itself after ten idle minutes and reopens on demand", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      const lease = yield* BrowserLease.BrowserLease;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      expect(fake.state.launches).toBe(1);
+
+      // The bot's lease is still live for the first sweep, so the idle stretch
+      // only starts once it lapses.
+      yield* TestClock.adjust("10 minutes");
+      expect((yield* browser.status("session-1")).state).toBe("connected");
+
+      yield* TestClock.adjust("1 minute");
+      const idle = yield* browser.status("session-1");
+      expect(idle.state).toBe("offline");
+      expect(idle.controller).toEqual({ _tag: "None" });
+      expect(fake.state.page.closed).toBe(true);
+      // The same end state an explicit close leaves, so a restart does not
+      // resurrect the session and the phone's panel retires cleanly.
+      expect(yield* lease.view).toMatchObject({ ownerId: null, lastUrl: null });
+      expect(yield* recentSummaries(browser)).toContain(
+        "Browser closed after 10 minutes with nobody using it",
+      );
+
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      expect(fake.state.launches).toBe(2);
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  it.effect("never closes under an attached viewer", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+          yield* TestClock.adjust("30 minutes");
+          expect((yield* browser.status("session-1")).state).toBe("connected");
+        }),
+      );
+      // The phone disconnects, and the stretch starts from there.
+      yield* TestClock.adjust("11 minutes");
+      expect((yield* browser.status("session-1")).state).toBe("offline");
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  it.effect("never closes under a bot whose task is still running", () => {
+    const fake = makeFakeDriver();
+    const harness: TaskHarness = {
+      waits: [],
+      resumes: [],
+      live: [{ threadId, status: "running" } as PersonalTask],
+    };
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      // Long past the lease's own 90s TTL: a bot thinking through a turn, or
+      // parked waiting for the user, still owns its tab.
+      yield* TestClock.adjust("30 minutes");
+      expect((yield* browser.status("session-1")).state).toBe("connected");
+      expect(fake.state.page.closed).toBe(false);
+    }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+  });
+
+  it.effect("never closes while a person holds control", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      // Take control with no viewer attached is the sign-in-on-the-laptop case:
+      // the person is typing into the Chrome window itself.
+      yield* browser.takeControl("session-1");
+      yield* TestClock.adjust("30 minutes");
+      expect((yield* browser.status("session-1")).state).toBe("connected");
+      expect(fake.state.page.closed).toBe(false);
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 
