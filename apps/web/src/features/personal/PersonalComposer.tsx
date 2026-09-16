@@ -121,6 +121,8 @@ export function PersonalComposer({
   const preparingRef = useRef(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** A message was accepted while the bot was still working on the last one. */
+  const [queuedMidTurn, setQueuedMidTurn] = useState(false);
 
   const prompt = draft.prompt;
   const attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment> = useMemo(
@@ -143,7 +145,18 @@ export function PersonalComposer({
       serverConfig?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null,
   });
   const hasContent = prompt.trim().length > 0 || attachments.length > 0;
-  const canSend = hasContent && !sending && !preparing && !working && disabledReason === null;
+  // Sending mid-turn is allowed: the server accepts the start unconditionally
+  // and every provider adapter folds the message into the running turn, so it
+  // reaches the bot when the current work yields. It is persisted the moment the
+  // command lands, which is what makes it survive closing the PWA - a draft held
+  // in this tab would not.
+  const canSend = hasContent && !sending && !preparing && disabledReason === null;
+  // Stop stays one tap away in the chat menu; the composer's single button
+  // belongs to whichever action the draft implies.
+  const showStop = canInterrupt && !hasContent;
+  // Derived, not cleared in an effect: the notice exists only for as long as
+  // the turn it is about, so the turn ending retires it with no extra render.
+  const queued = queuedMidTurn && working;
 
   // Grows with the draft (including drafts restored from storage) up to ~5 lines.
   useLayoutEffect(() => {
@@ -256,8 +269,10 @@ export function PersonalComposer({
     const text = prompt.trim();
     const snapshot = [...attachments];
     const messageId = newMessageId();
+    const midTurn = working;
     setSending(true);
     setError(null);
+    setQueuedMidTurn(false);
     try {
       for (const attachment of snapshot) {
         startAttachmentUpload({ environmentId, image: attachment, draftTarget: threadRef });
@@ -317,6 +332,7 @@ export function PersonalComposer({
         onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
         setError(`${botName ?? "The bot"} didn't get that message. Try sending it again.`);
       } else {
+        setQueuedMidTurn(midTurn);
         // Keep the draft (including attachments) until the server accepts it.
         // Only consume the submitted content, preserving edits made during upload.
         const current = useComposerDraftStore.getState().getComposerDraft(threadRef);
@@ -354,6 +370,13 @@ export function PersonalComposer({
       {statusText !== null ? (
         <p role="alert" className="px-1 pb-2 text-sm text-[var(--personal-text-secondary)]">
           {statusText}
+        </p>
+      ) : null}
+      {queued && statusText === null ? (
+        // The message is already on the laptop and in the transcript; this says
+        // why the bot has not answered it yet.
+        <p role="status" className="px-1 pb-2 text-sm text-[var(--personal-text-secondary)]">
+          Queued. {botName ?? "The bot"} gets it as soon as this turn finishes.
         </p>
       ) : null}
       {failedAttachmentNames.length > 0 ? (
@@ -463,7 +486,7 @@ export function PersonalComposer({
             className="block w-full resize-none bg-transparent py-[11px] text-base leading-[22px] text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)]"
           />
         </label>
-        {canInterrupt ? (
+        {showStop ? (
           <button
             type="button"
             onClick={() => void stop()}
@@ -479,8 +502,8 @@ export function PersonalComposer({
             type="button"
             onClick={() => void send()}
             disabled={!canSend}
-            aria-busy={sending || working}
-            aria-label="Send"
+            aria-busy={sending}
+            aria-label={working ? "Send, queued until this turn finishes" : "Send"}
             className={`${ROUND_BUTTON} bg-[var(--personal-primary)] text-[var(--personal-primary-text)] disabled:opacity-30`}
           >
             <ArrowUp aria-hidden="true" className="size-[22px]" strokeWidth={2} />

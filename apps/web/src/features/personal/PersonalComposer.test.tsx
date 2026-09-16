@@ -192,3 +192,54 @@ describe("personal composer sends", () => {
     });
   });
 });
+
+/**
+ * The server takes a mid-turn start unconditionally and every adapter folds it
+ * into the running turn, so the phone no longer has to hold the message until
+ * the bot is idle. Sending it is also what makes it survive closing the PWA:
+ * the draft store is this device's, the sent message is on the laptop.
+ */
+describe("personal composer queues while the bot works", () => {
+  const working = { ...props, working: true, canInterrupt: true };
+  const sendLabel = "Send, queued until this turn finishes";
+
+  it("sends mid-turn and says the message is waiting its turn", async () => {
+    await act(async () => renderer.update(<PersonalComposer {...working} />));
+
+    const send = renderer.root.findByProps({ "aria-label": sendLabel });
+    expect(send.props.disabled).toBe(false);
+    await act(async () => send.props.onClick());
+
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(state.draft.prompt).toBe("");
+    const status = renderer.root.findAllByProps({ role: "status" });
+    expect(status.some((node) => node.children.join("").includes("Queued"))).toBe(true);
+  });
+
+  it("says nothing about queueing for a message sent to an idle bot", async () => {
+    await act(async () => renderer.root.findByProps({ "aria-label": "Send" }).props.onClick());
+    expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(0);
+  });
+
+  it("stops offering Stop in the composer once there is something to send", async () => {
+    await act(async () => renderer.update(<PersonalComposer {...working} />));
+    expect(renderer.root.findAllByProps({ "aria-label": "Stop" })).toHaveLength(0);
+
+    // Stop comes back on an empty draft; the chat menu offers it either way.
+    state.draft.prompt = "";
+    state.draft.files = [];
+    await act(async () => renderer.update(<PersonalComposer {...working} />));
+    expect(renderer.root.findByProps({ "aria-label": "Stop" })).toBeDefined();
+  });
+
+  it("drops the queued notice when the turn ends", async () => {
+    await act(async () => renderer.update(<PersonalComposer {...working} />));
+    await act(async () => renderer.root.findByProps({ "aria-label": sendLabel }).props.onClick());
+    expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(1);
+
+    await act(async () =>
+      renderer.update(<PersonalComposer {...working} working={false} canInterrupt={false} />),
+    );
+    expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(0);
+  });
+});
