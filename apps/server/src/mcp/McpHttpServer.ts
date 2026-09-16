@@ -32,6 +32,7 @@ import {
 } from "./toolkits/preview/tools.ts";
 import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
+import { ProjectionThreadMessageRepositoryLive } from "../persistence/Layers/ProjectionThreadMessages.ts";
 import { BotsToolkitHandlersLive } from "./toolkits/bots/handlers.ts";
 import { BotsToolkit } from "./toolkits/bots/tools.ts";
 import { PersonalToolkitHandlersLive } from "./toolkits/personal/handlers.ts";
@@ -616,11 +617,15 @@ export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequest
 /**
  * Personal-bot tools; every handler requires the "bots" capability. The bot
  * repository is stateless SQL, so this route brings its own (as ws.ts does);
- * tasks and secrets are the server-lifetime services from the runtime.
+ * tasks and secrets are the server-lifetime services from the runtime. The
+ * message repository is here for the same reason: delegate_task reads the
+ * owner's own latest message in the thread to decide whether a handoff across
+ * teams was asked for.
  */
 export const BotsToolkitRegistrationLive = McpServer.toolkit(BotsToolkit).pipe(
   Layer.provide(BotsToolkitHandlersLive),
   Layer.provide(PersonalBotRepository.layer),
+  Layer.provide(ProjectionThreadMessageRepositoryLive),
 );
 
 export const PersonalToolkitRegistrationLive = McpServer.toolkit(PersonalToolkit).pipe(
