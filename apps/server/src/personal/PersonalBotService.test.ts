@@ -167,6 +167,52 @@ it.effect("update changes name and avatar; delete hides the bot from list", () =
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
 
+// Each team has exactly one lead, so promoting a bot has to demote whoever
+// led that team before — including when the promotion also moves the bot
+// across teams.
+it.effect("keeps one lead per team, and defaults a new bot to the assistant's team", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+
+    const cto = yield* service.create({
+      ...botInput("bot-cto"),
+      team: "dev",
+      lead: true,
+      pinned: true,
+    });
+    expect([cto.team, cto.lead, cto.pinned]).toEqual(["dev", true, true]);
+
+    // No team named: the assistant's team, an ordinary member, unpinned.
+    const scout = yield* service.create(botInput("bot-scout"));
+    expect([scout.team, scout.lead, scout.pinned]).toEqual(["assistant", false, false]);
+
+    const assistant = yield* service.create({ ...botInput("bot-assistant"), lead: true });
+    expect([assistant.team, assistant.lead]).toEqual(["assistant", true]);
+
+    // Moving Scout to the dev team as its lead demotes the CTO and leaves the
+    // assistant's lead alone.
+    const promoted = yield* service.update({
+      botId: PersonalBotId.make("bot-scout"),
+      team: "dev",
+      lead: true,
+    });
+    expect([promoted.team, promoted.lead]).toEqual(["dev", true]);
+
+    const listed = yield* service.list();
+    expect(
+      listed.bots
+        .filter((bot) => bot.lead === true)
+        .map((bot) => [bot.botId, bot.team])
+        .toSorted(),
+    ).toEqual([
+      ["bot-assistant", "assistant"],
+      ["bot-scout", "dev"],
+    ]);
+    expect(listed.bots.find((bot) => bot.botId === "bot-cto")?.lead).toBe(false);
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});
+
 it.effect("seedDefaultsIfNeeded creates the four default bots once, even after a delete", () => {
   const context = makeContext([claudeSnapshot(), codexSnapshot()]);
   return Effect.gen(function* () {

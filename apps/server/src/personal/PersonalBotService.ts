@@ -9,9 +9,12 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import {
+  botTeam,
   CommandId,
+  DEFAULT_PERSONAL_BOT_TEAM,
   isProviderAvailable,
   PersonalBotId,
+  type PersonalBotTeam,
   PersonalBotsError,
   PersonalBotThread,
   ProjectId,
@@ -56,6 +59,9 @@ interface SeedBotDefinition {
   readonly avatarShape: PersonalBot["avatarShape"];
   readonly avatarColor: string;
   readonly driver: typeof CLAUDE_DRIVER | typeof CODEX_DRIVER;
+  readonly team: PersonalBotTeam;
+  /** The team's lead, which is also pinned to the top of Chats. */
+  readonly lead: boolean;
 }
 
 const SEED_BOT_DEFINITIONS: ReadonlyArray<SeedBotDefinition> = [
@@ -67,6 +73,8 @@ const SEED_BOT_DEFINITIONS: ReadonlyArray<SeedBotDefinition> = [
     avatarShape: "blob",
     avatarColor: "#1A73E8",
     driver: CLAUDE_DRIVER,
+    team: "assistant",
+    lead: true,
   },
   {
     key: "developer",
@@ -76,6 +84,8 @@ const SEED_BOT_DEFINITIONS: ReadonlyArray<SeedBotDefinition> = [
     avatarShape: "roundedHexagon",
     avatarColor: "#F26A1B",
     driver: CODEX_DRIVER,
+    team: "assistant",
+    lead: false,
   },
   {
     key: "researcher",
@@ -85,6 +95,8 @@ const SEED_BOT_DEFINITIONS: ReadonlyArray<SeedBotDefinition> = [
     avatarShape: "scallopedCloud",
     avatarColor: "#F0457E",
     driver: CODEX_DRIVER,
+    team: "assistant",
+    lead: false,
   },
   {
     key: "planner",
@@ -94,6 +106,8 @@ const SEED_BOT_DEFINITIONS: ReadonlyArray<SeedBotDefinition> = [
     avatarShape: "roundedSquare",
     avatarColor: "#E5323B",
     driver: CLAUDE_DRIVER,
+    team: "assistant",
+    lead: false,
   },
 ];
 
@@ -235,6 +249,9 @@ export const make = Effect.gen(function* () {
               instanceId: instance.instanceId,
               model,
             },
+            team: definition.team,
+            lead: definition.lead,
+            pinned: definition.lead,
             sortOrder: index,
             createdAt: now,
             updatedAt: now,
@@ -349,15 +366,27 @@ export const make = Effect.gen(function* () {
         .listBots()
         .pipe(Effect.mapError(repositoryError("create")));
       const sortOrder = siblings.reduce((max, bot) => Math.max(max, bot.sortOrder), -1) + 1;
+      // A bot with no team named joins the assistant's team as a member.
+      const team = input.team ?? DEFAULT_PERSONAL_BOT_TEAM;
+      const lead = input.lead ?? false;
       yield* repository
         .createBot({
           ...input,
           title: input.title?.trim() ?? "",
+          team,
+          lead,
+          pinned: input.pinned ?? false,
           sortOrder,
           createdAt: now,
           updatedAt: now,
         })
         .pipe(Effect.mapError(repositoryError("create")));
+      // One lead per team: the bot just made lead displaces the previous one.
+      if (lead) {
+        yield* repository
+          .clearTeamLead({ team, exceptBotId: input.botId, updatedAt: now })
+          .pipe(Effect.mapError(repositoryError("create")));
+      }
       const inserted = yield* repository
         .getBotById({ botId: input.botId })
         .pipe(Effect.mapError(repositoryError("create")));
@@ -379,6 +408,17 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError(repositoryError("update")));
       if (Option.isNone(updated)) {
         return yield* notFound(`Personal bot '${input.botId}' was not found.`);
+      }
+      // One lead per team, read from the row as it now stands: a bot that
+      // changed team in this same call leads the team it landed on.
+      if (input.lead === true) {
+        yield* repository
+          .clearTeamLead({
+            team: botTeam(updated.value),
+            exceptBotId: input.botId,
+            updatedAt: now,
+          })
+          .pipe(Effect.mapError(repositoryError("update")));
       }
       return updated.value;
     });

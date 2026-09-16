@@ -13,6 +13,7 @@ import {
   ModelSelection,
   PersonalBot,
   PersonalBotId,
+  PersonalBotTeam,
   PersonalBotThread,
   ThreadId,
   type ModelSelection as ModelSelectionType,
@@ -38,6 +39,9 @@ export const CreatePersonalBotInput = Schema.Struct({
   avatarShape: BotAvatarShape,
   avatarColor: BotAvatarColor,
   modelSelection: ModelSelection,
+  team: PersonalBotTeam,
+  lead: Schema.Boolean,
+  pinned: Schema.Boolean,
   sortOrder: Schema.Number,
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
@@ -55,9 +59,20 @@ export const UpdatePersonalBotInput = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   enabled: Schema.optional(Schema.Boolean),
   sortOrder: Schema.optional(Schema.Number),
+  team: Schema.optional(PersonalBotTeam),
+  lead: Schema.optional(Schema.Boolean),
+  pinned: Schema.optional(Schema.Boolean),
   updatedAt: Schema.DateTimeUtcFromString,
 });
 export type UpdatePersonalBotInput = typeof UpdatePersonalBotInput.Type;
+
+/** Demotes every other lead of one team, so a team never has two. */
+export const ClearPersonalBotTeamLeadInput = Schema.Struct({
+  team: PersonalBotTeam,
+  exceptBotId: PersonalBotId,
+  updatedAt: Schema.DateTimeUtcFromString,
+});
+export type ClearPersonalBotTeamLeadInput = typeof ClearPersonalBotTeamLeadInput.Type;
 
 export const GetPersonalBotByIdInput = Schema.Struct({
   botId: PersonalBotId,
@@ -115,6 +130,13 @@ export class PersonalBotRepository extends Context.Service<
     readonly softDeleteBot: (
       input: SoftDeletePersonalBotInput,
     ) => Effect.Effect<void, PersonalBotRepositoryError>;
+    /**
+     * Clears the lead flag on every live bot of one team except the given one.
+     * The caller has just made that bot the lead, so this leaves exactly one.
+     */
+    readonly clearTeamLead: (
+      input: ClearPersonalBotTeamLeadInput,
+    ) => Effect.Effect<void, PersonalBotRepositoryError>;
     readonly insertThreadLink: (
       input: InsertPersonalBotThreadInput,
     ) => Effect.Effect<void, PersonalBotRepositoryError>;
@@ -169,6 +191,9 @@ const PersonalBotDbRow = Schema.Struct({
   modelSelection: Schema.fromJsonString(ModelSelection),
   enabled: Schema.Number,
   sortOrder: Schema.Number,
+  team: PersonalBotTeam,
+  lead: Schema.Number,
+  pinned: Schema.Number,
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -185,6 +210,9 @@ const PersonalBotRawDbRow = Schema.Struct({
   modelSelection: Schema.Unknown,
   enabled: Schema.Unknown,
   sortOrder: Schema.Unknown,
+  team: Schema.Unknown,
+  lead: Schema.Unknown,
+  pinned: Schema.Unknown,
   createdAt: Schema.Unknown,
   updatedAt: Schema.Unknown,
   deletedAt: Schema.Unknown,
@@ -267,6 +295,9 @@ function toPersonalBot(row: typeof PersonalBotDbRow.Type): PersonalBot {
     modelSelection: row.modelSelection as ModelSelectionType,
     enabled: row.enabled === 1,
     sortOrder: row.sortOrder,
+    team: row.team,
+    lead: row.lead === 1,
+    pinned: row.pinned === 1,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -330,6 +361,9 @@ export const make = Effect.gen(function* () {
           model_selection_json,
           enabled,
           sort_order,
+          team,
+          is_lead,
+          pinned,
           created_at,
           updated_at,
           deleted_at
@@ -345,6 +379,9 @@ export const make = Effect.gen(function* () {
           ${JSON.stringify(input.modelSelection)},
           1,
           ${input.sortOrder},
+          ${input.team},
+          ${input.lead ? 1 : 0},
+          ${input.pinned ? 1 : 0},
           ${input.createdAt},
           ${input.updatedAt},
           NULL
@@ -368,6 +405,9 @@ export const make = Effect.gen(function* () {
           model_selection_json AS "modelSelection",
           enabled AS "enabled",
           sort_order AS "sortOrder",
+          team AS "team",
+          is_lead AS "lead",
+          pinned AS "pinned",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -392,6 +432,9 @@ export const make = Effect.gen(function* () {
           model_selection_json AS "modelSelection",
           enabled AS "enabled",
           sort_order AS "sortOrder",
+          team AS "team",
+          is_lead AS "lead",
+          pinned AS "pinned",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -419,6 +462,9 @@ export const make = Effect.gen(function* () {
             ),
             enabled = COALESCE(${input.enabled === undefined ? null : input.enabled ? 1 : 0}, enabled),
             sort_order = COALESCE(${input.sortOrder ?? null}, sort_order),
+            team = COALESCE(${input.team ?? null}, team),
+            is_lead = COALESCE(${input.lead === undefined ? null : input.lead ? 1 : 0}, is_lead),
+            pinned = COALESCE(${input.pinned === undefined ? null : input.pinned ? 1 : 0}, pinned),
             updated_at = ${input.updatedAt}
         WHERE bot_id = ${input.botId}
         RETURNING
@@ -432,9 +478,26 @@ export const make = Effect.gen(function* () {
           model_selection_json AS "modelSelection",
           enabled AS "enabled",
           sort_order AS "sortOrder",
+          team AS "team",
+          is_lead AS "lead",
+          pinned AS "pinned",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
+      `,
+  });
+
+  const clearTeamLeadRow = SqlSchema.void({
+    Request: ClearPersonalBotTeamLeadInput,
+    execute: ({ team, exceptBotId, updatedAt }) =>
+      sql`
+        UPDATE personal_bots
+        SET is_lead = 0,
+            updated_at = ${updatedAt}
+        WHERE team = ${team}
+          AND bot_id <> ${exceptBotId}
+          AND is_lead = 1
+          AND deleted_at IS NULL
       `,
   });
 
@@ -684,6 +747,16 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const clearTeamLead: PersonalBotRepository["Service"]["clearTeamLead"] = (input) =>
+    clearTeamLeadRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "PersonalBotRepository.clearTeamLead:query",
+          "PersonalBotRepository.clearTeamLead:encodeRequest",
+        ),
+      ),
+    );
+
   const insertThreadLink: PersonalBotRepository["Service"]["insertThreadLink"] = (input) =>
     insertThreadLinkRow(input).pipe(
       Effect.mapError(
@@ -807,6 +880,7 @@ export const make = Effect.gen(function* () {
     listBots,
     updateBot,
     softDeleteBot,
+    clearTeamLead,
     insertThreadLink,
     getThreadLink,
     setThreadArchived,
