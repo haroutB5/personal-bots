@@ -4,10 +4,17 @@ import { useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type BotAvatarShape,
+  botTeam,
+  DEFAULT_PERSONAL_BOT_TEAM,
   type EnvironmentId,
+  isBotPinned,
+  isTeamLead,
   type ModelSelection,
+  PERSONAL_BOT_TEAM_LABELS,
+  PERSONAL_BOT_TEAM_ORDER,
   type PersonalBot,
   PersonalBotId,
+  type PersonalBotTeam,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -143,6 +150,9 @@ interface BotDraft {
   model: string;
   /** Reasoning effort option id; "" keeps the model's default. */
   effort: string;
+  team: PersonalBotTeam;
+  lead: boolean;
+  pinned: boolean;
 }
 
 function draftFromBot(bot: PersonalBot): BotDraft {
@@ -155,6 +165,9 @@ function draftFromBot(bot: PersonalBot): BotDraft {
     avatarColor: bot.avatarColor,
     instanceId: bot.modelSelection.instanceId,
     model: bot.modelSelection.model,
+    team: botTeam(bot),
+    lead: isTeamLead(bot),
+    pinned: isBotPinned(bot),
     effort:
       EFFORT_OPTION_IDS.map((id) =>
         getModelSelectionStringOptionValue(bot.modelSelection, id),
@@ -222,6 +235,9 @@ function BotForm({
       instanceId: first?.instanceId ?? "",
       model: defaultModelFor(first),
       effort: "",
+      team: DEFAULT_PERSONAL_BOT_TEAM,
+      lead: false,
+      pinned: false,
     };
   });
 
@@ -307,6 +323,9 @@ function BotForm({
       avatarShape: draft.avatarShape,
       avatarColor: draft.avatarColor,
       modelSelection: buildModelSelection(),
+      team: draft.team,
+      lead: draft.lead,
+      pinned: draft.pinned,
     };
     const result =
       bot === null
@@ -499,6 +518,58 @@ function BotForm({
           </p>
         </div>
       ) : null}
+
+      <div>
+        <label htmlFor="bot-team" className={LABEL_CLASS}>
+          Team
+        </label>
+        <select
+          id="bot-team"
+          value={draft.team}
+          onChange={(event) => update({ team: event.target.value as PersonalBotTeam })}
+          className={`${FIELD_CLASS} h-11`}
+        >
+          {PERSONAL_BOT_TEAM_ORDER.map((team) => (
+            <option key={team} value={team}>
+              {PERSONAL_BOT_TEAM_LABELS[team]}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
+          A bot hands work to its own team. Reaching the other team needs you to name the bot you
+          want in your message.
+        </p>
+      </div>
+
+      <label className="flex min-h-11 items-center gap-3 text-[15px] text-[var(--personal-text)]">
+        <input
+          type="checkbox"
+          checked={draft.lead}
+          onChange={(event) => update({ lead: event.target.checked })}
+          className="size-5 shrink-0"
+        />
+        <span className="min-w-0">
+          Team lead
+          <span className="block text-sm text-[var(--personal-text-secondary)]">
+            One per team. Making this bot the lead replaces the current one.
+          </span>
+        </span>
+      </label>
+
+      <label className="flex min-h-11 items-center gap-3 text-[15px] text-[var(--personal-text)]">
+        <input
+          type="checkbox"
+          checked={draft.pinned}
+          onChange={(event) => update({ pinned: event.target.checked })}
+          className="size-5 shrink-0"
+        />
+        <span className="min-w-0">
+          Pin to top
+          <span className="block text-sm text-[var(--personal-text-secondary)]">
+            Keeps this bot in the Pinned box at the top of Bots.
+          </span>
+        </span>
+      </label>
 
       <fieldset className="rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-4">
         <legend className="px-1 text-sm font-medium text-[var(--personal-text)]">Avatar</legend>
