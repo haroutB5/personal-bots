@@ -1,38 +1,59 @@
 import type { CSSProperties, JSX } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { botTeam, type PersonalBot, type PersonalBotTeam } from "@t3tools/contracts";
+import {
+  botTeam,
+  isTeamLead,
+  type EnvironmentId,
+  type PersonalBot,
+  type PersonalBotTeam,
+} from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 
 import { useThreadShells } from "~/state/entities";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatar } from "./BotAvatar";
 import { PersonalPageHeader } from "./BotForm";
 import { isThreadLive } from "./botSummaries";
+import { commandFailureMessage } from "./commandFeedback";
+import { friendlyTurnError } from "./conversationModel";
+import { useLaptopOffline } from "./PersonalOfflineBanner";
 import {
+  buildTeamConnectors,
+  buildTeamDropZones,
   buildTeamGroups,
   buildTeamGroupsLayout,
+  crossTeamDelegationPath,
   delegationConnectorPath,
   deriveDelegationLinks,
+  teamConnectorLanes,
   teamDiagramSummary,
+  teamDropHint,
+  teamDropOutcome,
+  type TeamDropZone,
 } from "./teamDiagramModel";
 import { usePersonalTasks } from "./usePersonalAutomation";
 import {
+  personalBotUpdate,
   usePersonalBotsList,
   usePersonalEnvironmentId,
   usePersonalProfile,
 } from "./usePersonalBots";
+import { useTeamBotDrag } from "./useTeamBotDrag";
 
 const NODE_SIZE = 64;
 /** Leads are drawn a size up, so each team reads as one head and its members. */
 const LEAD_SIZE = 76;
+/** The `w-24` name column under every node; the connector lanes stay clear of it. */
+const LABEL_WIDTH = 96;
 const DEFAULT_WIDTH = 320;
 
 const LAYOUT_OPTIONS = {
   leadSize: LEAD_SIZE,
   nodeSize: NODE_SIZE,
   gapX: 32,
-  gapY: 80,
+  gapY: 88,
   bandGap: 56,
   headingSpace: 28,
   perRow: 4,
@@ -46,19 +67,38 @@ function initialOf(name: string): string {
   return Array.from(name.trim())[0]?.toLocaleUpperCase() ?? "Y";
 }
 
+/** An optimistic team move, held until the refreshed list already says the same. */
+interface PendingMove {
+  readonly botId: string;
+  readonly team: PersonalBotTeam;
+  readonly lead: boolean;
+}
+
+interface MoveFeedback {
+  readonly tone: "info" | "error";
+  readonly text: string;
+}
+
 function TeamDiagram({
   bots,
   ownerName,
   tasks,
   liveBotIds,
+  environmentId,
 }: {
   readonly bots: ReadonlyArray<PersonalBot>;
   readonly ownerName: string;
   readonly tasks: Parameters<typeof deriveDelegationLinks>[0];
   readonly liveBotIds: ReadonlySet<string>;
+  readonly environmentId: EnvironmentId | null;
 }): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const [pending, setPending] = useState<PendingMove | null>(null);
+  const [feedback, setFeedback] = useState<MoveFeedback | null>(null);
+  const [liveHint, setLiveHint] = useState("");
+  const updateBot = useAtomCommand(personalBotUpdate);
+  const offline = useLaptopOffline();
 
   useEffect(() => {
     const element = containerRef.current;
@@ -74,18 +114,44 @@ function TeamDiagram({
     return () => observer.disconnect();
   }, []);
 
-  const groups = useMemo(() => buildTeamGroups(bots), [bots]);
+  // The optimistic move is done the moment the refreshed list says the same
+  // thing, so the overlay is dropped rather than left to fight the server.
+  if (pending !== null) {
+    const settled = bots.find((bot) => bot.botId === pending.botId);
+    if (
+      settled !== undefined &&
+      botTeam(settled) === pending.team &&
+      isTeamLead(settled) === pending.lead
+    ) {
+      setPending(null);
+    }
+  }
+
+  // The node jumps to its new place the moment the finger lets go, and stays
+  // there until the server agrees. A failed move clears `pending`, so the node
+  // snaps back to where it came from.
+  const shown = useMemo(() => {
+    if (pending === null) return bots;
+    return bots.map((bot) => {
+      if (bot.botId === pending.botId) return { ...bot, team: pending.team, lead: pending.lead };
+      // One lead per team, optimistically too: never two badges for a blink.
+      if (pending.lead && botTeam(bot) === pending.team) return { ...bot, lead: false };
+      return bot;
+    });
+  }, [bots, pending]);
+
+  const groups = useMemo(() => buildTeamGroups(shown), [shown]);
   const layout = useMemo(
     () => buildTeamGroupsLayout(groups, { ...LAYOUT_OPTIONS, width }),
     [groups, width],
   );
-  const botIdSet = useMemo(() => new Set(bots.map((bot) => bot.botId as string)), [bots]);
+  const botIdSet = useMemo(() => new Set(shown.map((bot) => bot.botId as string)), [shown]);
   const teamById = useMemo(
     () =>
       new Map<string, PersonalBotTeam>(
-        bots.map((bot) => [bot.botId as string, botTeam(bot)] as const),
+        shown.map((bot) => [bot.botId as string, botTeam(bot)] as const),
       ),
-    [bots],
+    [shown],
   );
   const leadIds = useMemo(
     () => new Set(groups.flatMap((group) => (group.leadBotId === null ? [] : [group.leadBotId]))),
@@ -97,229 +163,443 @@ function TeamDiagram({
     [botIdSet, openedAt, tasks],
   );
   const summary = useMemo(
-    () => teamDiagramSummary(ownerName, groups, bots, delegationLinks),
-    [bots, delegationLinks, groups, ownerName],
+    () => teamDiagramSummary(ownerName, groups, shown, delegationLinks),
+    [shown, delegationLinks, groups, ownerName],
+  );
+  const connectors = useMemo(
+    () =>
+      buildTeamConnectors(groups, layout, {
+        width,
+        leadSize: LEAD_SIZE,
+        nodeSize: NODE_SIZE,
+        labelWidth: LABEL_WIDTH,
+      }),
+    [groups, layout, width],
+  );
+  const lanes = useMemo(
+    () =>
+      teamConnectorLanes(layout, {
+        width,
+        leadSize: LEAD_SIZE,
+        nodeSize: NODE_SIZE,
+        labelWidth: LABEL_WIDTH,
+      }),
+    [layout, width],
+  );
+  const dropZones = useMemo(
+    () => buildTeamDropZones(layout, { width, leadSize: LEAD_SIZE, nodeSize: NODE_SIZE }),
+    [layout, width],
   );
 
-  return (
-    <div ref={containerRef} className="relative mt-6 w-full" style={{ height: layout.svgHeight }}>
-      <svg
-        role="img"
-        aria-label={summary}
-        viewBox={`0 0 ${width} ${layout.svgHeight}`}
-        width={width}
-        height={layout.svgHeight}
-        className="pointer-events-none absolute inset-0 size-full overflow-visible"
-      >
-        <defs>
-          <marker
-            id="team-owner-arrow"
-            viewBox="0 0 10 10"
-            refX="8"
-            refY="5"
-            markerWidth="6"
-            markerHeight="6"
-            orient="auto-start-reverse"
-          >
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--personal-team-line)" />
-          </marker>
-          <marker
-            id="team-live-arrow"
-            viewBox="0 0 10 10"
-            refX="8"
-            refY="5"
-            markerWidth="6"
-            markerHeight="6"
-            orient="auto-start-reverse"
-          >
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--personal-team-live)" />
-          </marker>
-          <marker
-            id="team-recent-arrow"
-            viewBox="0 0 10 10"
-            refX="8"
-            refY="5"
-            markerWidth="6"
-            markerHeight="6"
-            orient="auto-start-reverse"
-          >
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--personal-team-recent)" />
-          </marker>
-          <marker
-            id="team-cross-arrow"
-            viewBox="0 0 10 10"
-            refX="8"
-            refY="5"
-            markerWidth="6"
-            markerHeight="6"
-            orient="auto-start-reverse"
-          >
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--personal-review)" />
-          </marker>
-        </defs>
+  const dropBots = useMemo(
+    () =>
+      shown.map((bot) => ({
+        botId: bot.botId as string,
+        name: bot.name,
+        team: botTeam(bot),
+        lead: isTeamLead(bot),
+      })),
+    [shown],
+  );
+  const dropBot = useCallback(
+    (botId: string) => dropBots.find((bot) => bot.botId === botId) ?? null,
+    [dropBots],
+  );
 
-        {/* You to each team's lead, and each lead to its own members. */}
-        {layout.bands.map((band) => {
-          const lead = band.leadBotId === null ? undefined : layout.bots.get(band.leadBotId);
-          if (lead === undefined) return null;
-          return (
-            <line
-              key={`owner:${band.team}`}
-              x1={layout.owner.x}
-              y1={layout.owner.y + LEAD_SIZE / 2 + 4}
-              x2={lead.x}
-              y2={lead.y - LEAD_SIZE / 2 - 10}
+  const onDrop = useCallback(
+    (botId: string, zone: TeamDropZone | null) => {
+      const bot = dropBot(botId);
+      if (bot === null) return;
+      if (zone === null) {
+        setLiveHint(`${bot.name} stayed where it was.`);
+        return;
+      }
+      const outcome = teamDropOutcome(bot, zone.target, dropBots);
+      if (outcome.kind === "none") {
+        setLiveHint(outcome.message);
+        return;
+      }
+      if (outcome.kind === "blocked") {
+        setFeedback({ tone: "error", text: outcome.message });
+        return;
+      }
+      if (environmentId === null || offline) {
+        setFeedback({
+          tone: "error",
+          text: `Your computer is offline, so ${bot.name} can't be moved yet. Try again once it reconnects.`,
+        });
+        return;
+      }
+      setFeedback(null);
+      setPending({ botId, ...outcome.update });
+      void (async () => {
+        const result = await updateBot({
+          environmentId,
+          input: { botId: bot.botId as PersonalBot["botId"], ...outcome.update },
+        });
+        if (result._tag === "Success") {
+          setFeedback({ tone: "info", text: outcome.message });
+          return;
+        }
+        setPending(null);
+        const fallback = `${bot.name} couldn't be moved. Try again.`;
+        setFeedback({
+          tone: "error",
+          text: friendlyTurnError(commandFailureMessage(result, fallback) ?? fallback, fallback)
+            .message,
+        });
+      })();
+    },
+    [dropBot, dropBots, environmentId, offline, updateBot],
+  );
+
+  const { drag, handlersFor } = useTeamBotDrag({
+    containerRef,
+    zones: dropZones,
+    onLift: useCallback(
+      (botId: string) => {
+        const bot = dropBot(botId);
+        setFeedback(null);
+        setLiveHint(
+          bot === null ? "" : `${bot.name} lifted. Drag it onto a team, or onto a lead slot.`,
+        );
+      },
+      [dropBot],
+    ),
+    onHover: useCallback(
+      (botId: string, zone: TeamDropZone | null) => {
+        const bot = dropBot(botId);
+        if (bot !== null) setLiveHint(teamDropHint(bot, zone, dropBots));
+      },
+      [dropBot, dropBots],
+    ),
+    onDrop,
+    onCancel: useCallback(
+      (botId: string) => {
+        const bot = dropBot(botId);
+        setLiveHint(bot === null ? "" : `${bot.name} stayed where it was.`);
+      },
+      [dropBot],
+    ),
+  });
+
+  const dragged = drag === null ? null : dropBot(drag.botId);
+  /**
+   * While a bot is in the air: every landing that would change something, with
+   * the one refusal spelled out rather than dressed up as a valid target. The
+   * chief nodes are left out — the node itself lights up instead.
+   */
+  const activeZones =
+    dragged === null
+      ? []
+      : dropZones.flatMap((zone) => {
+          if (!zone.id.startsWith("band:") && !zone.id.startsWith("lead:")) return [];
+          const outcome = teamDropOutcome(dragged, zone.target, dropBots);
+          if (outcome.kind === "none") return [];
+          return [
+            {
+              zone,
+              blocked: outcome.kind === "blocked",
+              label: outcome.kind === "blocked" ? "Needs a new lead first" : zone.label,
+            },
+          ];
+        });
+
+  return (
+    <>
+      <p className="mt-2 text-[15px] leading-5 text-[var(--personal-text-secondary)]">
+        Press and hold a bot to move it to the other team, or onto a lead slot to put it in charge.
+        You can also change this from the bot&apos;s own page.
+      </p>
+      <span aria-live="polite" role="status" className="sr-only">
+        {liveHint}
+      </span>
+      {feedback === null ? null : (
+        <div
+          role={feedback.tone === "error" ? "alert" : "status"}
+          className={`mt-3 rounded-[var(--personal-radius-card)] border px-4 py-2.5 text-[15px] leading-snug ${
+            feedback.tone === "error"
+              ? "border-[var(--personal-review-border)] bg-[var(--personal-review-bg)] text-[var(--personal-text)]"
+              : "border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)]"
+          }`}
+        >
+          {feedback.text}
+        </div>
+      )}
+      <div ref={containerRef} className="relative mt-6 w-full" style={{ height: layout.svgHeight }}>
+        <svg
+          role="img"
+          aria-label={summary}
+          viewBox={`0 0 ${width} ${layout.svgHeight}`}
+          width={width}
+          height={layout.svgHeight}
+          className="pointer-events-none absolute inset-0 size-full overflow-visible"
+        >
+          <defs>
+            <marker
+              id="team-owner-arrow"
+              viewBox="0 0 10 10"
+              refX="8"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--personal-team-line)" />
+            </marker>
+            <marker
+              id="team-live-arrow"
+              viewBox="0 0 10 10"
+              refX="8"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--personal-team-live)" />
+            </marker>
+            <marker
+              id="team-recent-arrow"
+              viewBox="0 0 10 10"
+              refX="8"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--personal-team-recent)" />
+            </marker>
+            <marker
+              id="team-cross-arrow"
+              viewBox="0 0 10 10"
+              refX="8"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--personal-review)" />
+            </marker>
+          </defs>
+
+          {/*
+          You to each team's lead down the outer lane, and each lead to its own
+          members down that team's lane. Elbows, never straight centre lines:
+          a line that ran from the owner through the dev band to the
+          assistant's lead made the two teams read as one chain.
+        */}
+          {connectors.map((connector) => (
+            <path
+              key={connector.key}
+              d={connector.d}
+              fill="none"
               stroke="var(--personal-team-line)"
               strokeWidth="1.5"
-              markerEnd="url(#team-owner-arrow)"
-              vectorEffect="non-scaling-stroke"
-            />
-          );
-        })}
-
-        {groups.flatMap((group) => {
-          const lead = group.leadBotId === null ? undefined : layout.bots.get(group.leadBotId);
-          return group.memberBotIds.flatMap((botId) => {
-            const member = layout.bots.get(botId);
-            if (member === undefined) return [];
-            const from = lead ?? layout.owner;
-            return [
-              <line
-                key={`member:${botId}`}
-                x1={from.x}
-                y1={from.y + LEAD_SIZE / 2 + 4}
-                x2={member.x}
-                y2={member.y - NODE_SIZE / 2 - 10}
-                stroke="var(--personal-team-line)"
-                strokeWidth="1.5"
-                markerEnd="url(#team-owner-arrow)"
-                vectorEffect="non-scaling-stroke"
-              />,
-            ];
-          });
-        })}
-
-        {delegationLinks.map((link) => {
-          const from = layout.bots.get(link.from);
-          const to = layout.bots.get(link.to);
-          if (from === undefined || to === undefined) return null;
-          const running = link.state === "running";
-          // A handoff across teams only exists because the owner allowed it,
-          // so it is drawn apart rather than hidden.
-          const crossTeam = teamById.get(link.from) !== teamById.get(link.to);
-          const stroke = crossTeam
-            ? "var(--personal-review)"
-            : running
-              ? "var(--personal-team-live)"
-              : "var(--personal-team-recent)";
-          return (
-            <path
-              key={`${link.from}:${link.to}`}
-              d={delegationConnectorPath(from, to, NODE_SIZE)}
-              fill="none"
-              stroke={stroke}
-              strokeWidth={running ? 2.5 : 1.5}
-              strokeDasharray={crossTeam ? "2 6" : running ? "8 5" : "4 7"}
               strokeLinecap="round"
-              markerEnd={
-                crossTeam
-                  ? "url(#team-cross-arrow)"
-                  : running
-                    ? "url(#team-live-arrow)"
-                    : "url(#team-recent-arrow)"
-              }
+              markerEnd={connector.arrow ? "url(#team-owner-arrow)" : undefined}
               vectorEffect="non-scaling-stroke"
             />
+          ))}
+
+          {delegationLinks.map((link) => {
+            const from = layout.bots.get(link.from);
+            const to = layout.bots.get(link.to);
+            if (from === undefined || to === undefined) return null;
+            const running = link.state === "running";
+            // A handoff across teams only exists because the owner allowed it,
+            // so it is drawn apart rather than hidden.
+            const crossTeam = teamById.get(link.from) !== teamById.get(link.to);
+            const stroke = crossTeam
+              ? "var(--personal-review)"
+              : running
+                ? "var(--personal-team-live)"
+                : "var(--personal-team-recent)";
+            return (
+              <path
+                key={`${link.from}:${link.to}`}
+                d={
+                  crossTeam
+                    ? crossTeamDelegationPath(from, to, { lane: lanes.cross, nodeSize: NODE_SIZE })
+                    : delegationConnectorPath(from, to, NODE_SIZE)
+                }
+                fill="none"
+                stroke={stroke}
+                strokeWidth={running ? 2.5 : 1.5}
+                strokeDasharray={crossTeam ? "2 6" : running ? "8 5" : "4 7"}
+                strokeLinecap="round"
+                markerEnd={
+                  crossTeam
+                    ? "url(#team-cross-arrow)"
+                    : running
+                      ? "url(#team-live-arrow)"
+                      : "url(#team-recent-arrow)"
+                }
+                vectorEffect="non-scaling-stroke"
+              />
+            );
+          })}
+        </svg>
+
+        <div
+          className="absolute z-10 flex w-24 flex-col items-center bg-[var(--personal-bg)] text-center"
+          style={nodeStyle(layout.owner.x, layout.owner.y, LEAD_SIZE)}
+        >
+          <span className="flex size-16 items-center justify-center rounded-full bg-[var(--personal-primary)] text-2xl font-bold text-[var(--personal-primary-text)] ring-4 ring-[var(--personal-bg)]">
+            {initialOf(ownerName)}
+          </span>
+          <span className="mt-2 max-w-24 truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
+            {ownerName}
+          </span>
+          {ownerName === "You" ? null : (
+            <span className="text-xs leading-4 text-[var(--personal-text-secondary)]">You</span>
+          )}
+        </div>
+
+        {activeZones.map(({ zone, blocked, label }) => {
+          const active = drag?.zone?.id === zone.id;
+          const isLeadSlot = zone.target.kind === "lead";
+          const tone = blocked
+            ? "border-[var(--personal-review-border)] bg-[var(--personal-review-bg)]"
+            : active
+              ? "border-[var(--personal-primary)] bg-[color-mix(in_srgb,var(--personal-primary)_14%,transparent)]"
+              : "border-[var(--personal-border)] bg-[color-mix(in_srgb,var(--personal-text)_4%,transparent)]";
+          return (
+            <div
+              key={zone.id}
+              aria-hidden="true"
+              className={`pointer-events-none absolute z-20 flex rounded-[var(--personal-radius-card)] border-2 border-dashed ${
+                isLeadSlot ? "items-center justify-center" : "items-start justify-end p-2"
+              } ${tone}`}
+              style={{
+                left: zone.rect.x,
+                top: zone.rect.y,
+                width: zone.rect.width,
+                height: zone.rect.height,
+              }}
+            >
+              <span
+                className={`rounded-full px-2 py-0.5 text-center text-[11px] leading-4 font-semibold ${
+                  active && !blocked
+                    ? "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
+                    : "bg-[var(--personal-fill-muted)] text-[var(--personal-text-secondary)]"
+                }`}
+              >
+                {label}
+              </span>
+            </div>
           );
         })}
-      </svg>
 
-      <div
-        className="absolute z-10 flex w-24 flex-col items-center bg-[var(--personal-bg)] text-center"
-        style={nodeStyle(layout.owner.x, layout.owner.y, LEAD_SIZE)}
-      >
-        <span className="flex size-16 items-center justify-center rounded-full bg-[var(--personal-primary)] text-2xl font-bold text-[var(--personal-primary-text)] ring-4 ring-[var(--personal-bg)]">
-          {initialOf(ownerName)}
-        </span>
-        <span className="mt-2 max-w-24 truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
-          {ownerName}
-        </span>
-        {ownerName === "You" ? null : (
-          <span className="text-xs leading-4 text-[var(--personal-text-secondary)]">You</span>
-        )}
-      </div>
-
-      {layout.bands.map((band) => (
-        <div
-          key={`heading:${band.team}`}
-          aria-hidden="true"
-          className="absolute inset-x-0 z-0 flex items-center gap-2"
-          style={{ top: band.labelY }}
-        >
-          <span className="text-xs font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase">
-            {band.label}
-          </span>
-          <span className="h-px flex-1 bg-[var(--personal-border)]" />
-        </div>
-      ))}
-
-      {bots.map((bot) => {
-        const position = layout.bots.get(bot.botId);
-        if (position === undefined) return null;
-        const live = liveBotIds.has(bot.botId);
-        const isLead = leadIds.has(bot.botId);
-        const size = isLead ? LEAD_SIZE : NODE_SIZE;
-        const label = [bot.name, isLead ? "team lead" : "", bot.title.trim(), live ? "working" : ""]
-          .filter(Boolean)
-          .join(", ");
-        return (
+        {layout.bands.map((band) => (
           <div
-            key={bot.botId}
-            className="absolute z-10 flex w-24 flex-col items-center bg-[var(--personal-bg)] text-center"
-            style={nodeStyle(position.x, position.y, size)}
+            key={`heading:${band.team}`}
+            aria-hidden="true"
+            className="absolute inset-x-0 z-0 flex items-center gap-2"
+            style={{ top: band.labelY }}
           >
-            <Link
-              to="/bots/$botId"
-              params={{ botId: bot.botId }}
-              aria-label={label}
-              className={`relative flex shrink-0 rounded-full outline-none active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] ${isLead ? "ring-2 ring-[var(--personal-primary)] ring-offset-2 ring-offset-[var(--personal-bg)]" : ""}`}
-              style={{ width: size, height: size }}
-            >
-              <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={size} label="" />
-            </Link>
-            {isLead ? (
-              <span
-                aria-hidden="true"
-                className="mt-1 rounded-full bg-[var(--personal-primary)] px-1.5 text-[10px] leading-4 font-semibold text-[var(--personal-primary-text)]"
-              >
-                Lead
-              </span>
-            ) : null}
-            <Link
-              to="/bots/$botId/edit"
-              params={{ botId: bot.botId }}
-              aria-label={`Edit ${bot.name}`}
-              className="flex min-h-11 max-w-24 items-center gap-1.5 rounded-[var(--personal-radius-button)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-            >
-              {live ? (
-                <span
-                  aria-hidden="true"
-                  className="size-2 shrink-0 rounded-full bg-[var(--personal-team-live)]"
-                />
-              ) : null}
-              <span className="truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
-                {bot.name}
-              </span>
-            </Link>
-            {bot.title.trim().length > 0 ? (
-              <span className="-mt-3 max-w-24 truncate text-xs leading-4 text-[var(--personal-text-secondary)]">
-                {bot.title}
-              </span>
-            ) : null}
+            <span className="text-xs font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase">
+              {band.label}
+            </span>
+            <span className="h-px flex-1 bg-[var(--personal-border)]" />
           </div>
-        );
-      })}
-    </div>
+        ))}
+
+        {shown.map((bot) => {
+          const position = layout.bots.get(bot.botId);
+          if (position === undefined) return null;
+          const live = liveBotIds.has(bot.botId);
+          const isLead = leadIds.has(bot.botId);
+          const size = isLead ? LEAD_SIZE : NODE_SIZE;
+          const lifted = drag?.botId === bot.botId;
+          // A chief node is itself a drop target: landing on it joins its team.
+          const overChief = drag !== null && drag.zone?.id === `chief:${botTeam(bot)}` && isLead;
+          const label = [
+            bot.name,
+            isLead ? "team lead" : "",
+            bot.title.trim(),
+            live ? "working" : "",
+          ]
+            .filter(Boolean)
+            .join(", ");
+          return (
+            <div
+              key={bot.botId}
+              {...handlersFor(bot.botId)}
+              className={`absolute flex w-24 flex-col items-center text-center ${
+                lifted ? "z-40" : "z-10"
+              }`}
+              style={{
+                ...nodeStyle(position.x, position.y, size),
+                // pan-y keeps a flick scrolling the page; the long press that
+                // lifts a node blocks touchmove itself once it matures.
+                touchAction: "pan-y pinch-zoom",
+                WebkitTouchCallout: "none",
+                transform: lifted
+                  ? `translateX(-50%) translate(${String(drag.delta.x)}px, ${String(drag.delta.y)}px) scale(1.06)`
+                  : "translateX(-50%)",
+                transition: drag === null ? "transform 180ms ease" : "none",
+                filter: lifted ? "drop-shadow(0 8px 16px rgb(0 0 0 / 0.28))" : undefined,
+                opacity: drag !== null && !lifted ? 0.65 : 1,
+              }}
+            >
+              <Link
+                to="/bots/$botId"
+                params={{ botId: bot.botId }}
+                aria-label={label}
+                draggable={false}
+                className={`relative flex shrink-0 rounded-full outline-none active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] ${
+                  overChief
+                    ? "ring-4 ring-[var(--personal-primary)] ring-offset-2 ring-offset-[var(--personal-bg)]"
+                    : isLead
+                      ? "ring-2 ring-[var(--personal-primary)] ring-offset-2 ring-offset-[var(--personal-bg)]"
+                      : ""
+                }`}
+                style={{ width: size, height: size }}
+              >
+                <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={size} label="" />
+              </Link>
+              {/*
+              Only the text carries the page background. When the whole column
+              did, it tiled with its neighbours and hid every line drawn at or
+              below the avatars.
+            */}
+              <div className="flex w-24 flex-col items-center bg-[var(--personal-bg)]">
+                {isLead ? (
+                  <span
+                    aria-hidden="true"
+                    className="mt-1 rounded-full bg-[var(--personal-primary)] px-1.5 text-[10px] leading-4 font-semibold text-[var(--personal-primary-text)]"
+                  >
+                    Lead
+                  </span>
+                ) : null}
+                <Link
+                  to="/bots/$botId/edit"
+                  params={{ botId: bot.botId }}
+                  aria-label={`Edit ${bot.name}`}
+                  draggable={false}
+                  className="flex min-h-11 max-w-24 items-center gap-1.5 rounded-[var(--personal-radius-button)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+                >
+                  {live ? (
+                    <span
+                      aria-hidden="true"
+                      className="size-2 shrink-0 rounded-full bg-[var(--personal-team-live)]"
+                    />
+                  ) : null}
+                  <span className="truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
+                    {bot.name}
+                  </span>
+                </Link>
+                {bot.title.trim().length > 0 ? (
+                  <span className="-mt-3 max-w-24 truncate text-xs leading-4 text-[var(--personal-text-secondary)]">
+                    {bot.title}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }
 
@@ -406,7 +686,13 @@ export function TeamScreen(): JSX.Element {
           <p className="mt-2 text-[15px] leading-5 text-[var(--personal-text-secondary)]">
             Two teams, each with its lead. Bots hand work to their own team.
           </p>
-          <TeamDiagram bots={bots} ownerName={ownerName} tasks={tasks} liveBotIds={liveBotIds} />
+          <TeamDiagram
+            bots={bots}
+            ownerName={ownerName}
+            tasks={tasks}
+            liveBotIds={liveBotIds}
+            environmentId={environmentId}
+          />
           <div
             aria-label="Diagram key"
             className="mt-2 flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs text-[var(--personal-text-secondary)]"

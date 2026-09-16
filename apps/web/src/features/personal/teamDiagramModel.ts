@@ -417,10 +417,14 @@ export function buildTeamConnectors(
 }
 
 /**
- * A handoff the owner allowed across the two teams, routed down the right-hand
- * lane instead of cutting through both bands. The bowed
+ * A handoff the owner allowed across the two teams, routed up out of its row
+ * and down the right-hand lane instead of cutting through both bands. The bowed
  * {@link delegationConnectorPath} is right for two bots standing side by side;
  * over the height of the whole diagram it reads as a reporting line.
+ *
+ * Both ends leave and arrive from directly above their node, never sideways:
+ * a sideways exit at avatar height runs straight through whichever team-mates
+ * share the row, which is the same false reporting line in a different colour.
  */
 export function crossTeamDelegationPath(
   from: TeamDiagramPoint,
@@ -428,12 +432,16 @@ export function crossTeamDelegationPath(
   options: { readonly lane: number; readonly nodeSize: number },
 ): string {
   const radius = options.nodeSize / 2;
+  // Clear of the node, and clear of the row's own bus 14 above it.
+  const corridor = (point: TeamDiagramPoint) => point.y - radius - 26;
   return orthogonalPath(
     [
-      { x: from.x + radius + 4, y: from.y },
-      { x: options.lane, y: from.y },
-      { x: options.lane, y: to.y },
-      { x: to.x + radius + 10, y: to.y },
+      { x: from.x, y: from.y - radius - 6 },
+      { x: from.x, y: corridor(from) },
+      { x: options.lane, y: corridor(from) },
+      { x: options.lane, y: corridor(to) },
+      { x: to.x, y: corridor(to) },
+      { x: to.x, y: to.y - radius - 8 },
     ],
     CORNER_RADIUS,
   );

@@ -276,19 +276,36 @@ describe("buildTeamConnectors", () => {
 });
 
 describe("crossTeamDelegationPath", () => {
+  const groups = buildTeamGroups(CROWDED);
+  const layout = buildTeamGroupsLayout(groups, LAYOUT);
+  const lanes = teamConnectorLanes(layout, CONNECTOR_OPTIONS);
+
   it("routes a cross-team handoff down the right lane, not through the diagram", () => {
-    const path = crossTeamDelegationPath(
-      { x: 100, y: 200 },
-      { x: 175, y: 600 },
-      { lane: 342, nodeSize: 64 },
-    );
+    const from = layout.bots.get("frontend")!;
+    const to = layout.bots.get("planner")!;
+    const path = crossTeamDelegationPath(from, to, {
+      lane: lanes.cross,
+      nodeSize: LAYOUT.nodeSize,
+    });
     const samples = samplesOf(path);
-    // Everything between the two bots' rows sits out in the lane.
-    for (const sample of samples) {
-      if (sample.y > 240 && sample.y < 560) expect(sample.x).toBeGreaterThan(330);
+
+    // Both ends leave and arrive from straight above their own node, so the
+    // line never runs sideways through the bots sharing Frontend's row.
+    expect(samples.at(0)).toEqual({ x: from.x, y: from.y - 38 });
+    expect(samples.at(-1)).toEqual({ x: to.x, y: to.y - 40 });
+    for (const botId of ["backend", "devops", "security", "assistant", "cto"]) {
+      const node = layout.bots.get(botId)!;
+      const size = botId === "cto" || botId === "assistant" ? LAYOUT.leadSize : LAYOUT.nodeSize;
+      for (const sample of samples) {
+        expect(Math.hypot(sample.x - node.x, sample.y - node.y)).toBeGreaterThan(size / 2);
+      }
     }
-    expect(samples.at(0)!.x).toBe(136);
-    expect(samples.at(-1)!.x).toBe(217);
+    // Everything between the two rows sits out in the right-hand lane.
+    for (const sample of samples) {
+      if (sample.y > from.y + 40 && sample.y < to.y - 80) {
+        expect(sample.x).toBeGreaterThan(LAYOUT.width - 20);
+      }
+    }
   });
 });
 
