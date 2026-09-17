@@ -50,7 +50,11 @@ import {
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
-import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import {
+  makeClaudeAdapter,
+  PERSONAL_BOT_CLAUDE_SETTINGS,
+  type ClaudeAdapterLiveOptions,
+} from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -620,9 +624,17 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(Object.keys(options?.mcpServers ?? {}), ["t3-code"]);
       // Upstream may put its own keys here (052c7ae53 added
       // showThinkingSummaries); what a normal thread must not get is the
-      // bot-isolation pair, which would silence the owner's own memory.
-      assert.equal(options?.settings?.autoMemoryEnabled, undefined);
-      assert.equal(options?.settings?.disableClaudeAiConnectors, undefined);
+      // bot-isolation pair, which would silence the owner's own memory. Read
+      // the keys off the constant rather than restating them, and reject the
+      // string (settings-file path) shape, which would make this vacuous.
+      const normalSettings = options?.settings;
+      assert.notEqual(typeof normalSettings, "string");
+      const normalSettingsKeys = Object.keys(
+        typeof normalSettings === "object" ? normalSettings : {},
+      );
+      for (const key of Object.keys(PERSONAL_BOT_CLAUDE_SETTINGS)) {
+        assert.ok(!normalSettingsKeys.includes(key), `normal thread got bot setting '${key}'`);
+      }
       assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, undefined);
       assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, undefined);
     }).pipe(
