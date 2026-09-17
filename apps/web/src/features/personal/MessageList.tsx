@@ -22,9 +22,8 @@ import type { ChatMessage } from "~/types";
 import { type ConversationItem, formatDayDivider } from "./conversationModel";
 import type { ServerTurn } from "./delegationModel";
 import { QuestionCard } from "./QuestionCard";
-import type { QuestionCardItem, UserInputAnswers } from "./questionCards";
+import type { UserInputAnswers } from "./questionCards";
 import { SecretRequestCard } from "./SecretRequestCard";
-import type { SecretRequestCardItem } from "./secretRequestCards";
 import { ToolDetails } from "./ToolDetails";
 
 /** A message the user sent that the server has not echoed back yet. */
@@ -221,8 +220,10 @@ function ApprovalCard({
 
 /**
  * Chat rows (ui-spec Screen 2): dividers, right-aligned user bubbles, plain
- * markdown assistant text, collapsed tool activity, then anything waiting on
- * the user. Owns the scroller: it follows new content while the reader is at
+ * markdown assistant text, collapsed tool activity, and the cards the bot put
+ * in the conversation (questions, secrets, delegated work) in the order they
+ * happened. Only approvals, which vanish when decided, sit below the
+ * transcript. Owns the scroller: it follows new content while the reader is at
  * the bottom and leaves them alone once they scroll up.
  */
 export function MessageList({
@@ -234,8 +235,6 @@ export function MessageList({
   botName,
   workspaceRoot,
   approvals,
-  questionCards,
-  secretRequestCards,
   respondingIds,
   onRespondToApproval,
   onAnswerQuestion,
@@ -260,11 +259,12 @@ export function MessageList({
   working: boolean;
   botName: string;
   workspaceRoot: string | undefined;
+  /**
+   * Requests blocking the running turn. Unlike questions and secrets, an
+   * approval leaves no record once decided, so it is pinned below the
+   * transcript rather than placed in it.
+   */
   approvals: ReadonlyArray<PendingApproval>;
-  /** Questions the bot asked: waiting, answered here, or closed elsewhere. */
-  questionCards: ReadonlyArray<QuestionCardItem>;
-  /** Secrets the bot asked for: waiting, or settled from this device. */
-  secretRequestCards: ReadonlyArray<SecretRequestCardItem>;
   respondingIds: ReadonlySet<string>;
   onRespondToApproval: (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => void;
   onAnswerQuestion: (requestId: string, answers: UserInputAnswers) => void;
@@ -373,6 +373,28 @@ export function MessageList({
               );
             case "delegation":
               return <div key={item.id}>{renderDelegation(item.task)}</div>;
+            case "question":
+              return (
+                <QuestionCard
+                  key={item.id}
+                  card={item.card}
+                  botName={botName}
+                  responding={respondingIds.has(item.card.requestId)}
+                  onAnswer={onAnswerQuestion}
+                  onDismiss={onDismissQuestion}
+                />
+              );
+            case "secret":
+              return (
+                <SecretRequestCard
+                  key={item.id}
+                  card={item.card}
+                  botName={botName}
+                  responding={respondingIds.has(item.card.requestId)}
+                  onProvide={onProvideSecret}
+                  onDecline={onDeclineSecret}
+                />
+              );
             case "message":
               return item.message.role === "user" ? (
                 <UserMessage key={item.id} environmentId={environmentId} message={item.message} />
@@ -440,28 +462,6 @@ export function MessageList({
             botName={botName}
             responding={respondingIds.has(approval.requestId)}
             onRespond={onRespondToApproval}
-          />
-        ))}
-
-        {questionCards.map((card) => (
-          <QuestionCard
-            key={card.requestId}
-            card={card}
-            botName={botName}
-            responding={respondingIds.has(card.requestId)}
-            onAnswer={onAnswerQuestion}
-            onDismiss={onDismissQuestion}
-          />
-        ))}
-
-        {secretRequestCards.map((card) => (
-          <SecretRequestCard
-            key={card.requestId}
-            card={card}
-            botName={botName}
-            responding={respondingIds.has(card.requestId)}
-            onProvide={onProvideSecret}
-            onDecline={onDeclineSecret}
           />
         ))}
 

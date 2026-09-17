@@ -13,9 +13,23 @@ import * as DateTime from "effect/DateTime";
 import { act, create, type ReactTestRenderer, type ReactTestInstance } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
+import type { ConversationItem } from "./conversationModel";
 import { MessageList } from "./MessageList";
 import type { QuestionCardItem, UserInputAnswers } from "./questionCards";
 import type { SecretRequestCardItem } from "./secretRequestCards";
+
+/** Cards live in the transcript now, so tests hand them to `items` too. */
+const questionItem = (card: QuestionCardItem): ConversationItem => ({
+  kind: "question",
+  id: `question:${card.requestId}`,
+  card,
+});
+
+const secretItem = (card: SecretRequestCardItem): ConversationItem => ({
+  kind: "secret",
+  id: `secret:${card.requestId}`,
+  card,
+});
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: React.PropsWithChildren) => children,
@@ -60,8 +74,6 @@ const BASE_PROPS = {
   botName: "Assistant",
   workspaceRoot: undefined,
   approvals: [],
-  questionCards: [],
-  secretRequestCards: [],
   respondingIds: new Set<string>(),
   onRespondToApproval: () => {},
   onAnswerQuestion: () => {},
@@ -186,7 +198,7 @@ it("answers a single-select question with one tap, in this view", async () => {
     renderer = create(
       <MessageList
         {...BASE_PROPS}
-        questionCards={[pendingCard()]}
+        items={[questionItem(pendingCard())]}
         onAnswerQuestion={(requestId, answers) => answered.push([requestId, answers])}
       />,
     );
@@ -212,7 +224,9 @@ it("collects every pick before sending a multi-select answer", async () => {
     renderer = create(
       <MessageList
         {...BASE_PROPS}
-        questionCards={[pendingCard({ questions: [{ ...SCOPE_QUESTION, multiSelect: true }] })]}
+        items={[
+          questionItem(pendingCard({ questions: [{ ...SCOPE_QUESTION, multiSelect: true }] })),
+        ]}
         onAnswerQuestion={(requestId, answers) => answered.push([requestId, answers])}
       />,
     );
@@ -240,7 +254,7 @@ it("walks through several questions before submitting once", async () => {
     renderer = create(
       <MessageList
         {...BASE_PROPS}
-        questionCards={[pendingCard({ questions: [SCOPE_QUESTION, second] })]}
+        items={[questionItem(pendingCard({ questions: [SCOPE_QUESTION, second] }))]}
         onAnswerQuestion={(requestId, answers) => answered.push([requestId, answers])}
       />,
     );
@@ -260,7 +274,7 @@ it("sends a typed answer when the question allows one", async () => {
     renderer = create(
       <MessageList
         {...BASE_PROPS}
-        questionCards={[pendingCard()]}
+        items={[questionItem(pendingCard())]}
         onAnswerQuestion={(requestId, answers) => answered.push([requestId, answers])}
       />,
     );
@@ -279,7 +293,7 @@ it("closes an async question without answering it", async () => {
     renderer = create(
       <MessageList
         {...BASE_PROPS}
-        questionCards={[pendingCard()]}
+        items={[questionItem(pendingCard())]}
         onDismissQuestion={(requestId) => dismissed.push(requestId)}
       />,
     );
@@ -295,14 +309,14 @@ it("keeps the answer on screen once the question resolves", async () => {
     renderer = create(
       <MessageList
         {...BASE_PROPS}
-        questionCards={[
-          {
+        items={[
+          questionItem({
             kind: "answered",
             requestId: "req-1",
             createdAt: "2026-09-14T10:00:00.000Z",
             questions: [SCOPE_QUESTION],
             answers: { scope: "tests" },
-          },
+          }),
         ]}
       />,
     );
@@ -320,13 +334,13 @@ it("says so when a question is closed elsewhere", async () => {
     renderer = create(
       <MessageList
         {...BASE_PROPS}
-        questionCards={[
-          {
+        items={[
+          questionItem({
             kind: "closed",
             requestId: "req-1",
             createdAt: "2026-09-14T10:00:00.000Z",
             questions: [SCOPE_QUESTION],
-          },
+          }),
         ]}
       />,
     );
@@ -347,7 +361,7 @@ it("shows a secret the bot asked for, and sends the typed value once", async () 
     renderer = create(
       <MessageList
         {...BASE_PROPS}
-        secretRequestCards={[PENDING_SECRET]}
+        items={[secretItem(PENDING_SECRET)]}
         onProvideSecret={(requestId, value) => provided.push([requestId, value])}
       />,
     );
@@ -382,7 +396,7 @@ it("declines a secret request without providing a value", async () => {
     renderer = create(
       <MessageList
         {...BASE_PROPS}
-        secretRequestCards={[PENDING_SECRET]}
+        items={[secretItem(PENDING_SECRET)]}
         onDeclineSecret={(requestId) => declined.push(requestId)}
       />,
     );
@@ -404,14 +418,14 @@ it("keeps a settled secret request on screen with its ending", async () => {
     renderer = create(
       <MessageList
         {...BASE_PROPS}
-        secretRequestCards={[
-          {
+        items={[
+          secretItem({
             kind: "declined",
             requestId: "secret-1",
             createdAtMs: Date.parse("2026-09-14T10:00:00.000Z"),
             name: "GITHUB_TOKEN",
             label: "GitHub token",
-          },
+          }),
         ]}
       />,
     );
@@ -432,7 +446,7 @@ it("locks the secret card while the value is in flight", async () => {
     renderer = create(
       <MessageList
         {...BASE_PROPS}
-        secretRequestCards={[PENDING_SECRET]}
+        items={[secretItem(PENDING_SECRET)]}
         respondingIds={new Set(["secret-1"])}
       />,
     );
@@ -449,7 +463,7 @@ it("locks the card while the answer is in flight", async () => {
     renderer = create(
       <MessageList
         {...BASE_PROPS}
-        questionCards={[pendingCard()]}
+        items={[questionItem(pendingCard())]}
         respondingIds={new Set(["req-1"])}
         onAnswerQuestion={(requestId, answers) => answered.push([requestId, answers])}
       />,
@@ -460,4 +474,45 @@ it("locks the card while the answer is in flight", async () => {
   expect(
     renderer!.root.findAll((node) => node.children.includes("Sending your answer")),
   ).toHaveLength(1);
+});
+
+it("renders what the bot said next below the question it answered", async () => {
+  stubEnvironment();
+  const reply = {
+    kind: "message",
+    id: "a2",
+    message: {
+      id: MessageId.make("a2"),
+      role: "assistant",
+      text: "Heads-up set for 11:00.",
+      attachments: [],
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-09-14T10:02:00.000Z",
+      updatedAt: "2026-09-14T10:02:00.000Z",
+    },
+  } as const satisfies ConversationItem;
+  await act(async () => {
+    renderer = create(
+      <MessageList
+        {...BASE_PROPS}
+        items={[
+          questionItem({
+            kind: "answered",
+            requestId: "req-1",
+            createdAt: "2026-09-14T10:00:00.000Z",
+            questions: [SCOPE_QUESTION],
+            answers: { scope: "tests" },
+          }),
+          reply,
+        ]}
+      />,
+    );
+  });
+
+  const rendered = JSON.stringify(renderer!.toJSON());
+  const card = rendered.indexOf("Fix the failing tests");
+  const said = rendered.indexOf("Heads-up set for 11:00.");
+  expect(card).toBeGreaterThan(-1);
+  expect(said).toBeGreaterThan(card);
 });

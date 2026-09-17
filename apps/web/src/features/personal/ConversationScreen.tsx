@@ -63,6 +63,8 @@ import {
   deriveConversationState,
   friendlyTurnError,
   placeDelegationCards,
+  placeQuestionCards,
+  placeSecretRequestCards,
   resolveConversationHeaderName,
 } from "./conversationModel";
 import { DelegationCard } from "./DelegationCard";
@@ -292,7 +294,10 @@ export function ConversationScreen({
     // a no-op at runtime; it is listed only because the memo reads it.
   }, [threadId, messages, proposedPlans, workEntries, showToolSteps, projectionRef]);
   /* oxlint-enable react/refs */
-  const items = useMemo(() => placeDelegationCards(baseItems, children), [baseItems, children]);
+  const delegationItems = useMemo(
+    () => placeDelegationCards(baseItems, children),
+    [baseItems, children],
+  );
   // Read off the items the composer's "Queued" notice is shown over, so the
   // notice retires as soon as the bot answers the steered message.
   const botSpokeAtMs = useMemo(() => botLastSpokeAtMs(baseItems), [baseItems]);
@@ -369,6 +374,17 @@ export function ConversationScreen({
   const secretRequestCards = useMemo(
     () => deriveSecretRequestCards(pendingSecrets, threadId, seenSecrets, secretOutcomes),
     [pendingSecrets, secretOutcomes, seenSecrets, threadId],
+  );
+  // The cards the bot put in the conversation belong in it: an answered
+  // question keeps the spot where it was asked, so the bot's next reply reads
+  // below it instead of above a card stuck at the bottom of the chat.
+  const items = useMemo(
+    () =>
+      placeSecretRequestCards(
+        placeQuestionCards(delegationItems, questionCards),
+        secretRequestCards,
+      ),
+    [delegationItems, questionCards, secretRequestCards],
   );
 
   const conversationState = deriveConversationState({
@@ -745,8 +761,6 @@ export function ConversationScreen({
             botName={botName ?? "Bot"}
             workspaceRoot={thread.worktreePath ?? project?.workspaceRoot}
             approvals={approvals}
-            questionCards={questionCards}
-            secretRequestCards={secretRequestCards}
             respondingIds={respondingIds}
             onRespondToApproval={(requestId, decision) =>
               void onRespondToApproval(requestId, decision)

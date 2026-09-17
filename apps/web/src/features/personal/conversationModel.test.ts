@@ -17,9 +17,13 @@ import {
   deriveConversationState,
   formatDayDivider,
   friendlyTurnError,
+  placeQuestionCards,
+  placeSecretRequestCards,
   providerWaitState,
   resolveConversationHeaderName,
 } from "./conversationModel";
+import type { QuestionCardItem } from "./questionCards";
+import type { SecretRequestCardItem } from "./secretRequestCards";
 
 describe("friendlyTurnError", () => {
   it("turns a usage limit into a plain sentence with the reset time", () => {
@@ -485,6 +489,120 @@ describe("buildConversationItems", () => {
       "message",
       "divider",
       "message",
+    ]);
+  });
+});
+
+const question = (id: string, createdAt: string, kind: "pending" | "answered" | "closed") =>
+  (kind === "pending"
+    ? {
+        kind,
+        requestId: id,
+        createdAt,
+        request: { requestId: id, createdAt, questions: [], dismissible: true },
+      }
+    : kind === "answered"
+      ? { kind, requestId: id, createdAt, questions: [], answers: { scope: "tests" } }
+      : { kind, requestId: id, createdAt, questions: [] }) as unknown as QuestionCardItem;
+
+const secret = (id: string, createdAt: string, kind: "pending" | "provided") =>
+  (kind === "pending"
+    ? { kind, requestId: id, createdAtMs: Date.parse(createdAt), request: { requestId: id } }
+    : {
+        kind,
+        requestId: id,
+        createdAtMs: Date.parse(createdAt),
+        name: "GITHUB_TOKEN",
+        label: "GitHub token",
+      }) as unknown as SecretRequestCardItem;
+
+describe("placeQuestionCards", () => {
+  it("keeps what the bot said after an answer below the card it answered", () => {
+    // The bug: the card was rendered after the whole list, so every later
+    // paragraph from the bot appeared above the question it had asked.
+    const items = buildConversationItems([
+      message("u1", "user", "2026-09-16T10:00:00.000Z"),
+      message("a1", "assistant", "2026-09-16T10:00:10.000Z"),
+      message("a2", "assistant", "2026-09-16T10:01:30.000Z"),
+    ]);
+    const placed = placeQuestionCards(items, [
+      question("req-1", "2026-09-16T10:00:20.000Z", "answered"),
+    ]);
+    expect(placed.map((item) => item.id)).toEqual([
+      "divider:2026-09-16T10:00:00.000Z",
+      "u1",
+      "a1",
+      "question:req-1",
+      "a2",
+    ]);
+  });
+
+  it("leaves a question still waiting for an answer at the end of the chat", () => {
+    const items = buildConversationItems([
+      message("u1", "user", "2026-09-16T10:00:00.000Z"),
+      message("a1", "assistant", "2026-09-16T10:00:10.000Z"),
+      message("a2", "assistant", "2026-09-16T10:00:40.000Z"),
+    ]);
+    // Asked mid-turn, before `a2`: a bot that keeps working must not bury it.
+    const placed = placeQuestionCards(items, [
+      question("req-1", "2026-09-16T10:00:20.000Z", "pending"),
+    ]);
+    expect(placed.at(-1)?.id).toBe("question:req-1");
+  });
+
+  it("orders cards by id when their timestamps tie, and never moves a divider", () => {
+    const items = buildConversationItems([
+      message("u1", "user", "2026-09-16T10:00:00.000Z"),
+      message("a1", "assistant", "2026-09-16T12:00:00.000Z"),
+    ]);
+    expect(items.map((item) => item.kind)).toEqual(["divider", "message", "divider", "message"]);
+    const cards = [
+      question("req-b", "2026-09-16T10:00:05.000Z", "closed"),
+      question("req-a", "2026-09-16T10:00:05.000Z", "answered"),
+    ];
+    const placed = placeQuestionCards(items, cards);
+    expect(placed.map((item) => item.id)).toEqual([
+      "divider:2026-09-16T10:00:00.000Z",
+      "u1",
+      "question:req-a",
+      "question:req-b",
+      "divider:2026-09-16T12:00:00.000Z",
+      "a1",
+    ]);
+    // Same cards, opposite order in: same transcript out.
+    expect(placeQuestionCards(items, cards.toReversed()).map((item) => item.id)).toEqual(
+      placed.map((item) => item.id),
+    );
+  });
+
+  it("puts a question older than every loaded row first", () => {
+    const items = buildConversationItems([message("a1", "assistant", "2026-09-16T10:00:00.000Z")]);
+    expect(
+      placeQuestionCards(items, [question("req-1", "2026-09-15T09:00:00.000Z", "answered")]).map(
+        (item) => item.id,
+      ),
+    ).toEqual(["question:req-1", "divider:2026-09-16T10:00:00.000Z", "a1"]);
+  });
+});
+
+describe("placeSecretRequestCards", () => {
+  it("settles an answered secret into the flow and keeps an open one last", () => {
+    const items = buildConversationItems([
+      message("u1", "user", "2026-09-16T10:00:00.000Z"),
+      message("a1", "assistant", "2026-09-16T10:00:10.000Z"),
+      message("a2", "assistant", "2026-09-16T10:00:40.000Z"),
+    ]);
+    const placed = placeSecretRequestCards(items, [
+      secret("secret-1", "2026-09-16T10:00:20.000Z", "provided"),
+      secret("secret-2", "2026-09-16T10:00:30.000Z", "pending"),
+    ]);
+    expect(placed.map((item) => item.id)).toEqual([
+      "divider:2026-09-16T10:00:00.000Z",
+      "u1",
+      "a1",
+      "secret:secret-1",
+      "a2",
+      "secret:secret-2",
     ]);
   });
 });

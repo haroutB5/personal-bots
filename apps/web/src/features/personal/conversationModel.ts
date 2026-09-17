@@ -13,6 +13,8 @@ import type { TimelineEntry, WorkLogEntry } from "~/session-logic";
 
 import { readServerTurn, type ServerTurn, taskCreatedMs } from "./delegationModel";
 import { PERSONAL_TIME_ZONE } from "./greeting";
+import type { QuestionCardItem } from "./questionCards";
+import type { SecretRequestCardItem } from "./secretRequestCards";
 
 /**
  * Header state for a bot conversation, derived only from session/turn/request
@@ -339,7 +341,11 @@ export type ConversationItem =
       readonly entries: ReadonlyArray<WorkLogEntry>;
     }
   /** A task delegated from this thread, shown as a live card. */
-  | { readonly kind: "delegation"; readonly id: string; readonly task: PersonalTask };
+  | { readonly kind: "delegation"; readonly id: string; readonly task: PersonalTask }
+  /** A question the bot asked, at the point in the chat where it asked it. */
+  | { readonly kind: "question"; readonly id: string; readonly card: QuestionCardItem }
+  /** A secret the bot asked for, at the point in the chat where it asked. */
+  | { readonly kind: "secret"; readonly id: string; readonly card: SecretRequestCardItem };
 
 /**
  * Flattens the upstream timeline into chat rows: consecutive work entries
@@ -477,6 +483,10 @@ function itemTimeMs(item: ConversationItem): number {
       return Date.parse(item.entries.at(-1)?.createdAt ?? "");
     case "delegation":
       return taskCreatedMs(item.task);
+    case "question":
+      return Date.parse(item.card.createdAt);
+    case "secret":
+      return item.card.createdAtMs;
   }
 }
 
@@ -511,4 +521,84 @@ export function placeDelegationCards(
     times.splice(end + 1, 0, createdMs);
   }
   return placed;
+}
+
+interface TimedCard {
+  readonly item: ConversationItem;
+  readonly atMs: number;
+  /** Still waiting on the owner, so it must stay the last thing in the chat. */
+  readonly pending: boolean;
+}
+
+/**
+ * Drops each settled card back into the transcript at the moment it happened,
+ * and keeps every still-open one at the end.
+ *
+ * A question the owner has already answered is history: it belongs where the
+ * bot asked it, so whatever the bot said next reads below it instead of above
+ * it. A question still waiting for an answer is not history, and a bot that
+ * asks and keeps working would bury it mid-transcript, so open cards stay last
+ * (in ask order) where the scroller already parks the reader.
+ *
+ * Ordering is total and stable: cards sort by time then by id, and a card is
+ * inserted after every row at or before its own time, so equal timestamps never
+ * depend on map or query order. Day dividers are untouched — they were decided
+ * in `buildConversationItems` from the entries' own gaps, and inserting a card
+ * afterwards cannot invent or move one.
+ */
+function placeTimedCards(
+  items: ReadonlyArray<ConversationItem>,
+  cards: ReadonlyArray<TimedCard>,
+): ConversationItem[] {
+  if (cards.length === 0) return [...items];
+  const placed = [...items];
+  const times = items.map(itemTimeMs);
+  const open: ConversationItem[] = [];
+  const sorted = [...cards].sort(
+    (left, right) => left.atMs - right.atMs || left.item.id.localeCompare(right.item.id),
+  );
+  for (const card of sorted) {
+    if (card.pending || !Number.isFinite(card.atMs)) {
+      open.push(card.item);
+      continue;
+    }
+    let anchor = -1;
+    for (let index = 0; index < placed.length; index += 1) {
+      const at = times[index]!;
+      if (Number.isFinite(at) && at <= card.atMs) anchor = index;
+    }
+    placed.splice(anchor + 1, 0, card.item);
+    times.splice(anchor + 1, 0, card.atMs);
+  }
+  return [...placed, ...open];
+}
+
+/** Question cards, in the flow of the chat. See {@link placeTimedCards}. */
+export function placeQuestionCards(
+  items: ReadonlyArray<ConversationItem>,
+  cards: ReadonlyArray<QuestionCardItem>,
+): ConversationItem[] {
+  return placeTimedCards(
+    items,
+    cards.map((card) => ({
+      item: { kind: "question", id: `question:${card.requestId}`, card } as const,
+      atMs: Date.parse(card.createdAt),
+      pending: card.kind === "pending",
+    })),
+  );
+}
+
+/** Secret-request cards, in the flow of the chat. See {@link placeTimedCards}. */
+export function placeSecretRequestCards(
+  items: ReadonlyArray<ConversationItem>,
+  cards: ReadonlyArray<SecretRequestCardItem>,
+): ConversationItem[] {
+  return placeTimedCards(
+    items,
+    cards.map((card) => ({
+      item: { kind: "secret", id: `secret:${card.requestId}`, card } as const,
+      atMs: card.createdAtMs,
+      pending: card.kind === "pending",
+    })),
+  );
 }
