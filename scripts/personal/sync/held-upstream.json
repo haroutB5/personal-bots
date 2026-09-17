@@ -1,4 +1,12 @@
 {
   "$comment": "Upstream changes held back for the owner's decision by the weekly upstream sync (scripts/personal/upstream-sync.ps1). Each entry was reverted after the merge (holdBy=revert, revertCommit set) or kept on our side (holdBy=keep_ours). To ship one: git revert <revertCommit> (or undo the pin), then remove the entry.",
-  "held": []
+  "held": [],
+  "$acceptedComment": "Decisions the owner has already answered. A key listed here is settled: ship that upstream change like any other improvement, never hold it and never ask again. Remove an entry only if the owner changes his mind.",
+  "accepted": [
+    {
+      "key": "rich-text-composer-default",
+      "decidedOn": "2026-09-17",
+      "decision": "Take upstream's rich-text composer default (Tiptap, formatting and list continuation on by default). Do not pin composerRichTextEnabled to false."
+    }
+  ]
 }

@@ -181,7 +181,7 @@ export function PersonalSettingsScreen(): JSX.Element {
           />
         ) : null}
         <p className="mt-2 px-1 text-sm text-[var(--personal-text-secondary)]">
-          Used in the greeting on the Chats screen.
+          How your bots address you, and your name on the Team screen.
         </p>
       </section>
 
@@ -210,30 +210,11 @@ export function PersonalSettingsScreen(): JSX.Element {
               />
             </Link>
           </li>
-          {bots.map((bot) => (
-            <li key={bot.botId}>
-              <Link
-                to="/bots/$botId/edit"
-                params={{ botId: bot.botId }}
-                className="flex min-h-14 items-center gap-3 px-4 py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
-              >
-                <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={34} label="" />
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-[15px] font-semibold text-[var(--personal-text)]">
-                    {bot.name}
-                  </span>
-                  <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
-                    {providerLine(resolveBotProvider(bot.modelSelection.instanceId, providers))}
-                  </span>
-                </span>
-                <ChevronRight
-                  aria-hidden="true"
-                  className="size-5 shrink-0 text-[var(--personal-text-secondary)]"
-                  strokeWidth={1.75}
-                />
-              </Link>
-            </li>
-          ))}
+          {/*
+            The bot list itself is not repeated here: the Chats screen already
+            lists every bot, and tapping a chat's header avatar opens the same
+            editor. Two lists of the same thing is one to keep in sync.
+          */}
           <li>
             <Link
               to="/bots/new"

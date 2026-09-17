@@ -7,7 +7,8 @@ Policy (the owner's, final):
 - Fixes and improvements ship automatically. Do not ask about them.
 - A change that needs a product decision from the owner is NOT shipped: list it under `decisions` and the job holds it back (reverts those commits after the merge, or keeps our side) while shipping the rest. Product decisions are changes to user-visible defaults or behaviour: response streaming mode, thread titling, the auth/session model, data retention or deletion, provider behaviour (models, permissions, isolation, instructions), layout changes in shared components the Bots app shows, and migrations that alter existing personal data. A new opt-in setting with an unchanged default is NOT a decision.
 - Already decided, never ask again: take upstream's paragraph streaming default; upstream's automatic retitling must not rename personal bot/task/routine threads (a personal guard enforces this; a change that bypasses the guard IS a decision).
-- Do not re-ask a decision that is already in `held-upstream.json`; mention it in `summary` as still pending.
+- Do not re-ask a decision that is already in `held-upstream.json`'s `held`; mention it in `summary` as still pending.
+- A decision whose `key` appears in `held-upstream.json`'s `accepted` is settled: the owner has answered it. Ship those commits like any other improvement, never list them under `decisions`, and never ask again. Settled so far: `rich-text-composer-default` (take upstream's rich-text composer default; do not pin it off).
 
 For each relevant commit give `class` (fix | improvement | inert | needs_decision), benefit and risk. Omit purely inert commits from `relevant` unless they carry risk.
 
