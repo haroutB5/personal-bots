@@ -43,8 +43,12 @@ It is quiet on purpose: a clean probe logs one line and sends nothing. A
 notification means a conflict, a real (non-whitelisted) gate failure, or a
 backlog big enough that the Saturday run would refuse it.
 
-Runs from the sync worktree (default C:\Claude\AI\personal-bots-sync), never
-from the main checkout. Runtime state, logs and the notify token live in
+Auto and DryRun run from the sync worktree (default
+C:\Claude\AI\personal-bots-sync), never from the main checkout. Probe may run
+from either, because it is read-only towards the checkout it runs from; that
+matters, since the sync worktree is often parked mid-merge after a stopped
+sync, which is exactly when the warning is worth the most. It fingerprints
+every worktree before and after and logs whether each one is untouched. Runtime state, logs and the notify token live in
 %USERPROFILE%\.personal-bots\upstream-sync (never in git).
 Windows PowerShell 5.1 compatible.
 
@@ -64,7 +68,12 @@ param(
     # -Mode Probe only: notify when this many upstream commits are pending, and
     # repeat an unchanged finding at most once every this many days.
     [int]$ProbeBacklogWarn = 250,
-    [int]$ProbeRemindDays = 7
+    [int]$ProbeRemindDays = 7,
+    # -Mode Probe only: probe a specific upstream commit instead of
+    # upstream/main. Answers "would we be clean if we stopped here?" and is how
+    # the clean-merge path is rehearsed without waiting for upstream to be
+    # mergeable. Changes nothing else about the run.
+    [string]$ProbeUpstreamRef
 )
 
 . (Join-Path $PSScriptRoot 'common.ps1')
@@ -105,6 +114,7 @@ $env:PATH = "$(Join-Path $SyncRepo 'node_modules\.bin');$(Split-Path -Parent $no
 
 $script:LogToFile = $false
 $script:ProbeLog = $null
+$script:ProbeBefore = $null
 $script:StopResult = $null
 $script:StopMessage = $null
 $script:Triage = $null
@@ -911,9 +921,9 @@ function Get-ProbeGateList([string]$Root) {
     )
 }
 
-function Invoke-ProbeGates([string]$Tree, [string]$LogDir) {
-    $commit = Get-GitText -GitArgs @('commit-tree', $Tree, '-p', $OriginMain, '-p', $UpstreamMain,
-        '-m', 'probe: dry merge of upstream/main (unreferenced, never pushed)')
+function Invoke-ProbeGates([string]$Tree, [string]$Upstream, [string]$LogDir) {
+    $commit = Get-GitText -GitArgs @('commit-tree', $Tree, '-p', $OriginMain, '-p', $Upstream,
+        '-m', 'probe: dry merge of upstream (unreferenced, never pushed)')
     Write-SyncLog "scratch worktree at $ProbeScratch (unreferenced commit $($commit.Substring(0,9)))"
     [void](Invoke-Git -GitArgs @('worktree', 'add', '--detach', '--quiet', $ProbeScratch, $commit))
     # The scratch has no node_modules yet, so bootstrap with the sync worktree's
@@ -926,15 +936,62 @@ function Invoke-ProbeGates([string]$Tree, [string]$LogDir) {
     return , (Invoke-Gates -Gates (Get-ProbeGateList -Root $ProbeScratch) -Label 'probe' -Root $ProbeScratch -LogDir $LogDir)
 }
 
-function Invoke-Probe {
-    if ((Resolve-Path -LiteralPath $SyncRepo).Path -eq (Resolve-Path -LiteralPath $MainRepo).Path) {
-        throw 'upstream-sync.ps1 must run from the sync worktree, not the main checkout.'
+# Probe is read-only towards whatever checkout it runs from: it only reads
+# refs, writes loose objects and works inside its own scratch. So, unlike Auto,
+# it may run from the main checkout - which matters, because the sync worktree
+# is often parked mid-merge after a stopped sync, and that is exactly when the
+# early warning is worth the most. These snapshots turn "read-only" into
+# something the run proves rather than claims.
+function Get-ProbeRepoFingerprint([string]$Repo) {
+    if (-not (Test-Path -LiteralPath $Repo -PathType Container)) { return $null }
+    $head = (Invoke-Git -GitArgs @('rev-parse', 'HEAD') -Repo $Repo -AllowFail).Out.Trim()
+    $branch = (Invoke-Git -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD') -Repo $Repo -AllowFail).Out.Trim()
+    $dirty = @((Invoke-Git -GitArgs @('status', '--porcelain') -Repo $Repo -AllowFail).Out -split "`r?`n" | Where-Object { $_ }).Count
+    $branches = (Invoke-Git -GitArgs @('for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads', 'refs/tags', 'refs/stash') -Repo $Repo -AllowFail).Out.Trim()
+    return [pscustomobject]@{ Head = $head; Branch = $branch; Dirty = $dirty; Refs = $branches }
+}
+
+function Assert-ProbeLeftNoTrace($Before) {
+    $now = @(Get-ProbeWorktrees)
+    $strays = @($now | Where-Object { -not $Before.Contains(($_ -replace '/', '\')) })
+    if ($strays.Count -gt 0) { Write-SyncLog "probe WARNING: stray worktree(s) left behind: $($strays -join ', ')" }
+    else { Write-SyncLog "probe: no stray worktrees ($($now.Count) registered, same as before)" }
+    foreach ($repo in @($Before.Keys)) {
+        $after = Get-ProbeRepoFingerprint -Repo $repo
+        $was = $Before[$repo]
+        if (-not $was -or -not $after) { continue }
+        $changed = @()
+        if ($after.Head -ne $was.Head) { $changed += "HEAD $($was.Head.Substring(0,9)) -> $($after.Head.Substring(0,9))" }
+        if ($after.Branch -ne $was.Branch) { $changed += "branch $($was.Branch) -> $($after.Branch)" }
+        if ($after.Dirty -ne $was.Dirty) { $changed += "$($was.Dirty) -> $($after.Dirty) modified path(s)" }
+        if ($after.Refs -ne $was.Refs) { $changed += 'local branches/tags/stash changed' }
+        if ($changed.Count -gt 0) { Write-SyncLog "probe WARNING: $repo changed while the probe ran ($($changed -join '; '))" }
+        else { Write-SyncLog "probe: $repo untouched (HEAD $($after.Head.Substring(0,9)), $($after.Dirty) modified path(s), refs identical)" }
     }
+}
+
+function Get-ProbeWorktrees {
+    return @(Get-GitLines -GitArgs @('worktree', 'list', '--porcelain') | Where-Object { $_ -like 'worktree *' } |
+            ForEach-Object { $_.Substring('worktree '.Length) })
+}
+
+function Invoke-Probe {
+    $before = [ordered]@{}
+    foreach ($repo in (@($SyncRepo, $MainRepo) + (Get-ProbeWorktrees))) {
+        $full = $repo -replace '/', '\'
+        if (-not $before.Contains($full)) { $before[$full] = Get-ProbeRepoFingerprint -Repo $full }
+    }
+    $script:ProbeBefore = $before
     Remove-ProbeScratch
     [void](Invoke-Git -GitArgs @('fetch', 'origin'))
     [void](Invoke-Git -GitArgs @('fetch', 'upstream'))
-    $base = Get-GitText -GitArgs @('merge-base', $OriginMain, $UpstreamMain)
-    $new = Get-GitText -GitArgs @('rev-parse', $UpstreamMain)
+    $target = $UpstreamMain
+    if ($ProbeUpstreamRef) {
+        $target = $ProbeUpstreamRef
+        Write-SyncLog "probe: probing $target instead of $UpstreamMain (-ProbeUpstreamRef)"
+    }
+    $base = Get-GitText -GitArgs @('merge-base', $OriginMain, $target)
+    $new = Get-GitText -GitArgs @('rev-parse', $target)
     $newShort = $new.Substring(0, 9)
     if ($new -eq $base) {
         Write-SyncLog 'probe: upstream has nothing new'
@@ -975,7 +1032,7 @@ function Invoke-Probe {
         $logDir = Join-Path $SyncHome 'probe-gate-logs'
         New-Item -ItemType Directory -Force -Path $logDir | Out-Null
         Write-SyncLog "probe: merge is clean; running the two fast gates in the scratch worktree"
-        $red = @(Invoke-ProbeGates -Tree $tree -LogDir $logDir)
+        $red = @(Invoke-ProbeGates -Tree $tree -Upstream $new -LogDir $logDir)
         if ($red.Count -gt 0) {
             $result = 'gates-red'
             $sorted = @($red | Sort-Object)
@@ -1044,6 +1101,7 @@ if ($isProbe) {
         $exitCode = 1
     } finally {
         try { Remove-ProbeScratch } catch { Write-SyncLog "probe cleanup WARNING: $($_.Exception.Message)" }
+        if ($script:ProbeBefore) { try { Assert-ProbeLeftNoTrace -Before $script:ProbeBefore } catch { } }
         if (Test-Path -LiteralPath $ProbeLockFile) { Remove-Item -LiteralPath $ProbeLockFile -Force }
     }
     exit $exitCode
