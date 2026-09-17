@@ -283,11 +283,14 @@ export interface TeamConnector {
   readonly arrow: boolean;
 }
 
-/** Where the two vertical lanes run, plus the mirror lane cross-team arcs use. */
+/** Where the two vertical lanes run, plus the two mirrored lanes on the right. */
 export interface TeamConnectorLanes {
   readonly owner: number;
   readonly member: number;
+  /** Outer right lane: a handoff across the two teams. */
   readonly cross: number;
+  /** Inner right lane: a handoff between two rows of the same team. */
+  readonly delegation: number;
 }
 
 const CORNER_RADIUS = 10;
@@ -308,7 +311,10 @@ export function teamConnectorLanes(
   );
   const member = Math.max(8, Math.min(26, leftmost - 10));
   const owner = Math.max(3, member - 13);
-  return { owner, member, cross: options.width - owner };
+  // Rows are centred, so the right-hand mirror of a left lane clears the
+  // right-most name column by exactly as much as the original clears the
+  // left-most one.
+  return { owner, member, cross: options.width - owner, delegation: options.width - member };
 }
 
 /**
@@ -431,23 +437,52 @@ export function crossTeamDelegationPath(
   to: TeamDiagramPoint,
   options: { readonly lane: number; readonly nodeSize: number },
 ): string {
-  const radius = options.nodeSize / 2;
+  return laneDelegationPath(from, to, {
+    lane: options.lane,
+    fromSize: options.nodeSize,
+    toSize: options.nodeSize,
+  });
+}
+
+/**
+ * The same routing for a handoff between two rows of one team: up out of the
+ * row, along a lane, and down onto the target from directly above it. The bowed
+ * {@link delegationConnectorPath} only works for two bots standing side by side;
+ * between rows it sags across the row below and through whatever node sits in
+ * that column, which is the grey noise the diagram had.
+ *
+ * Leads are drawn a size up, so each end is cleared by its own silhouette
+ * rather than by one shared node size.
+ */
+export function laneDelegationPath(
+  from: TeamDiagramPoint,
+  to: TeamDiagramPoint,
+  options: {
+    readonly lane: number;
+    readonly fromSize: number;
+    readonly toSize: number;
+  },
+): string {
   // Clear of the node, and clear of the row's own bus 14 above it.
-  const corridor = (point: TeamDiagramPoint) => point.y - radius - 26;
+  const corridor = (point: TeamDiagramPoint, size: number) => point.y - size / 2 - 26;
   return orthogonalPath(
     [
-      { x: from.x, y: from.y - radius - 6 },
-      { x: from.x, y: corridor(from) },
-      { x: options.lane, y: corridor(from) },
-      { x: options.lane, y: corridor(to) },
-      { x: to.x, y: corridor(to) },
-      { x: to.x, y: to.y - radius - 8 },
+      { x: from.x, y: from.y - options.fromSize / 2 - 6 },
+      { x: from.x, y: corridor(from, options.fromSize) },
+      { x: options.lane, y: corridor(from, options.fromSize) },
+      { x: options.lane, y: corridor(to, options.toSize) },
+      { x: to.x, y: corridor(to, options.toSize) },
+      { x: to.x, y: to.y - options.toSize / 2 - 8 },
     ],
     CORNER_RADIUS,
   );
 }
 
-/** Curved edge-to-edge path for a directional link between two bot nodes. */
+/**
+ * Curved edge-to-edge path for a directional link between two bot nodes of the
+ * same row. Anything further apart than that goes down a lane instead; see
+ * {@link laneDelegationPath}.
+ */
 export function delegationConnectorPath(
   from: TeamDiagramPoint,
   to: TeamDiagramPoint,

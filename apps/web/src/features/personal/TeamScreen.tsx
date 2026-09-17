@@ -27,6 +27,7 @@ import {
   crossTeamDelegationPath,
   delegationConnectorPath,
   deriveDelegationLinks,
+  laneDelegationPath,
   teamConnectorLanes,
   teamDiagramSummary,
   teamDropHint,
@@ -409,6 +410,10 @@ function TeamDiagram({
             // A handoff across teams only exists because the owner allowed it,
             // so it is drawn apart rather than hidden.
             const crossTeam = teamById.get(link.from) !== teamById.get(link.to);
+            // Side by side in one row, the bow is the clearest line there is.
+            // Between rows it would sag across the row below and through
+            // whichever node shares that column, so it takes a lane instead.
+            const sameRow = !crossTeam && from.row === to.row;
             const stroke = crossTeam
               ? "var(--personal-review)"
               : running
@@ -420,7 +425,13 @@ function TeamDiagram({
                 d={
                   crossTeam
                     ? crossTeamDelegationPath(from, to, { lane: lanes.cross, nodeSize: NODE_SIZE })
-                    : delegationConnectorPath(from, to, NODE_SIZE)
+                    : sameRow
+                      ? delegationConnectorPath(from, to, NODE_SIZE)
+                      : laneDelegationPath(from, to, {
+                          lane: lanes.delegation,
+                          fromSize: leadIds.has(link.from) ? LEAD_SIZE : NODE_SIZE,
+                          toSize: leadIds.has(link.to) ? LEAD_SIZE : NODE_SIZE,
+                        })
                 }
                 fill="none"
                 stroke={stroke}
