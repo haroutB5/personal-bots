@@ -254,6 +254,12 @@ export function ConversationScreen({
   } | null>(null);
   const showToolSteps = usePersonalPreference("showToolSteps");
   const showRoutinesStrip = usePersonalPreference("showRoutinesStrip");
+  /* oxlint-disable react/refs -- The ref is a pure render cache, not UI state:
+     it only ever holds the last projection for the last thread, and dropping it
+     costs a full re-fold, never a different result. Moving the read or the
+     write out of render would change WHEN the timeline rebuilds (a frame late,
+     or on every delta), which is the one thing this incremental path exists to
+     avoid, so the rule is suppressed here rather than the pattern rewritten. */
   const baseItems = useMemo(() => {
     const previous = projectionRef.current;
     const projection = deriveTimelineEntriesWithState(
@@ -264,7 +270,10 @@ export function ConversationScreen({
     );
     projectionRef.current = { threadId, projection };
     return buildConversationItems(projection.entries, { showToolSteps });
-  }, [threadId, messages, proposedPlans, workEntries, showToolSteps]);
+    // `projectionRef` is stable for the component's life, so naming it here is
+    // a no-op at runtime; it is listed only because the memo reads it.
+  }, [threadId, messages, proposedPlans, workEntries, showToolSteps, projectionRef]);
+  /* oxlint-enable react/refs */
   const items = useMemo(() => placeDelegationCards(baseItems, children), [baseItems, children]);
   // Read off the items the composer's "Queued" notice is shown over, so the
   // notice retires as soon as the bot answers the steered message.
