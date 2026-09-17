@@ -13,6 +13,16 @@ export const PERSONAL_TURN_RETRY_DELAYS_MS = [5_000, 30_000] as const;
 
 export const PERSONAL_TURN_RETRY_MAX_ATTEMPTS = PERSONAL_TURN_RETRY_DELAYS_MS.length;
 
+/**
+ * How long to wait before the attempt that follows `attempts` already-spent
+ * ones, or null when they are spent. The single place the cap is enforced:
+ * both the decision below and the reactor's scheduler read it here, so the cap
+ * cannot be right in one of them and wrong in the other.
+ */
+export function nextRetryDelayMs(attempts: number): number | null {
+  return PERSONAL_TURN_RETRY_DELAYS_MS[attempts] ?? null;
+}
+
 /** What the reactor knows about the turn currently on a thread. */
 export interface TrackedTurn {
   /**
@@ -80,7 +90,7 @@ export function decideTurnRetry(input: {
   // spend a model run on a turn whose origin we cannot vouch for.
   if (tracked === null) return { kind: "skip", reason: "turn_not_tracked" };
   if (tracked.taskDriven) return { kind: "skip", reason: "task_driven" };
-  const delayMs = PERSONAL_TURN_RETRY_DELAYS_MS[tracked.attempts];
-  if (delayMs === undefined) return { kind: "exhausted" };
+  const delayMs = nextRetryDelayMs(tracked.attempts);
+  if (delayMs === null) return { kind: "exhausted" };
   return { kind: "retry", attempt: tracked.attempts + 1, delayMs };
 }

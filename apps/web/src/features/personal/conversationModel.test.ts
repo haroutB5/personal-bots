@@ -3,6 +3,7 @@ import {
   ThreadId,
   type OrchestrationLatestTurn,
   type OrchestrationSession,
+  type OrchestrationSessionProviderRetry,
   type PersonalBrowserStatus,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -10,11 +11,13 @@ import { describe, expect, it } from "vite-plus/test";
 import type { TimelineEntry } from "~/session-logic";
 
 import {
+  autoRetryNotice,
   buildConversationItems,
   conversationStateLabel,
   deriveConversationState,
   formatDayDivider,
   friendlyTurnError,
+  providerWaitState,
   resolveConversationHeaderName,
 } from "./conversationModel";
 
@@ -62,6 +65,83 @@ describe("friendlyTurnError", () => {
       message: "The last reply failed. Send your message again.",
       detail: null,
     });
+  });
+
+  it("names the provider-side fault that ended the owner's audit run", () => {
+    const raw = "Error from provider (Console): Upstream request failed: Endpoint is unavailable.";
+    const friendly = friendlyTurnError(raw);
+    expect(friendly.message).toBe("The provider's service didn't answer. Try again in a moment.");
+    expect(friendly.detail).toBe(raw);
+  });
+});
+
+const providerRetry = (
+  auto: "pending" | "exhausted" | undefined,
+  attempt = 1,
+  maxAttempts = 2,
+): OrchestrationSessionProviderRetry =>
+  ({
+    kind: "retrying",
+    attempt,
+    maxAttempts,
+    provider: "opencode",
+    observedAt: "2026-09-17T10:00:00.000Z",
+    ...(auto === undefined ? {} : { auto }),
+  }) as OrchestrationSessionProviderRetry;
+
+describe("autoRetryNotice", () => {
+  it("says nothing when no automatic retry is in play", () => {
+    expect(autoRetryNotice(null)).toBeNull();
+    expect(autoRetryNotice(undefined)).toBeNull();
+    // A provider's own wait is not ours to narrate.
+    expect(autoRetryNotice(providerRetry(undefined))).toBeNull();
+  });
+
+  it("counts the attempt while one is pending", () => {
+    expect(autoRetryNotice(providerRetry("pending", 1))).toBe(
+      "That reply failed. Trying again (1 of 2).",
+    );
+    expect(autoRetryNotice(providerRetry("pending", 2))).toBe(
+      "That reply failed. Trying again (2 of 2).",
+    );
+  });
+
+  it("admits it gave up rather than pretending it is still trying", () => {
+    const message = autoRetryNotice(providerRetry("exhausted", 2));
+    expect(message).toBe(
+      "That reply failed, and 2 automatic retries didn't help. Send your message again.",
+    );
+    expect(message).not.toContain("Trying again");
+  });
+});
+
+describe("providerWaitState with a server-driven retry", () => {
+  const failedSession = (auto: "pending" | "exhausted"): OrchestrationSession =>
+    ({ status: "error", providerRetry: providerRetry(auto) }) as unknown as OrchestrationSession;
+
+  it("reads a pending retry as retrying even though the turn already ended", () => {
+    // The wait is on a clock the server holds; the session sits in `error`.
+    expect(providerWaitState(failedSession("pending"))).toBe("retrying");
+    expect(
+      deriveConversationState({
+        session: failedSession("pending"),
+        latestTurn: null,
+        pendingApprovals: [],
+        pendingUserInputs: [],
+      }),
+    ).toBe("retrying");
+  });
+
+  it("goes back to plain error once the attempts are spent", () => {
+    expect(providerWaitState(failedSession("exhausted"))).toBeNull();
+    expect(
+      deriveConversationState({
+        session: failedSession("exhausted"),
+        latestTurn: null,
+        pendingApprovals: [],
+        pendingUserInputs: [],
+      }),
+    ).toBe("error");
   });
 });
 

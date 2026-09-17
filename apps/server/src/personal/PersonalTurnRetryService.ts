@@ -27,7 +27,7 @@ import { personalBotSystemInstructions } from "./personalBotInstructions.ts";
 import { isPersonalTaskMessageId } from "./personalThreadTitles.ts";
 import {
   decideTurnRetry,
-  PERSONAL_TURN_RETRY_DELAYS_MS,
+  nextRetryDelayMs,
   PERSONAL_TURN_RETRY_MAX_ATTEMPTS,
   type TurnRetryDecision,
 } from "./personalTurnRetryPolicy.ts";
@@ -238,8 +238,8 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const entry = tracked.get(threadId);
       if (entry === undefined) return;
-      const delayMs = PERSONAL_TURN_RETRY_DELAYS_MS[entry.attempts];
-      if (delayMs === undefined) {
+      const delayMs = nextRetryDelayMs(entry.attempts);
+      if (delayMs === null) {
         return yield* markSession(session, "exhausted", PERSONAL_TURN_RETRY_MAX_ATTEMPTS, null);
       }
       const attempt = entry.attempts + 1;
