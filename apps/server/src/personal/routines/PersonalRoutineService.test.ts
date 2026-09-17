@@ -717,3 +717,23 @@ it.effect("keeps an event routine's label editable without touching its schedule
     expect(updated.nextDueAt).toBeNull();
   }).pipe(Effect.provide(makeLayer())),
 );
+
+it.effect("moves an event routine to another time zone", () =>
+  // The update handler validates the zone for every routine, but the event
+  // branch used to write everything except the zone, so the call reported
+  // success and changed nothing.
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T10:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    yield* createEventRoutine;
+    const updated = yield* routines.update({
+      routineId: EVENT_ROUTINE,
+      timeZone: "America/New_York",
+    });
+    expect(updated.timeZone).toBe("America/New_York");
+    // Still an event routine: moving the zone must not grow a schedule.
+    expect(updated.schedule).toBeNull();
+    expect(updated.nextDueAt).toBeNull();
+  }).pipe(Effect.provide(makeLayer())),
+);

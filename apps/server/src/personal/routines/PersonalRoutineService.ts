@@ -555,6 +555,7 @@ export const make = Effect.gen(function* () {
                   title = ${input.title ?? current.title},
                   prompt = ${input.prompt ?? current.prompt},
                   event_label = ${eventLabel},
+                  time_zone = ${timeZone},
                   updated_at = ${DateTime.formatIso(now)}
               WHERE routine_id = ${input.routineId}
             `;
