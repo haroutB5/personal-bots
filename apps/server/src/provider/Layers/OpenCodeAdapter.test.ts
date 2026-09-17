@@ -879,14 +879,24 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  // Decision provider-native-slash-commands: `session.command` accepts no
-  // per-prompt system addendum and its catalog is not limited to the isolated
-  // agent set, so a bot turn starting with "/" must stay on the prompt path.
+  // Fork pin against upstream 0b83045d0 "feat(providers): expose native slash
+  // commands across clients (#11519)". `session.command` attaches no per-prompt
+  // system addendum, which is where a personal bot's persona rides, and its
+  // catalog is not limited to PERSONAL_BOT_OPENCODE_AGENTS. A bot turn starting
+  // with "/" therefore stays on the prompt path. Do not flatten this on a sync.
+  //
+  // The non-bot half is the positive control, in this test rather than a
+  // neighbouring one so the pin cannot pass vacuously: if a future sync drops
+  // the native command path entirely (or renames the mock's commandCalls), the
+  // "commandCalls.length === 0" half would still be green on its own. Both
+  // halves send byte-identical text, so the session's `personalBot` flag is the
+  // only difference that can explain the two outcomes.
   it.effect("keeps a bot's slash text on the prompt path with its instructions", () =>
     Effect.gen(function* () {
       const adapter = yield* makeOpenCodeAdapter(localOpenCodeSettings, {
         personalBotConfigHome: BOT_CONFIG_HOME,
       });
+      const slashText = "/review main\nfocus on authentication";
       const threadId = asThreadId("thread-opencode-bot-slash-command");
       yield* adapter.startSession({
         provider: ProviderDriverKind.make("opencode"),
@@ -897,17 +907,33 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       });
       yield* adapter.sendTurn({
         threadId,
-        input: "/review main\nfocus on authentication",
+        input: slashText,
         modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), BOT_MODEL),
       });
 
       NodeAssert.equal(runtimeMock.state.commandCalls.length, 0);
       const prompt = runtimeMock.state.promptCalls[0] as { parts: unknown; system: string };
-      NodeAssert.deepEqual(prompt.parts, [
-        { type: "text", text: "/review main\nfocus on authentication" },
-      ]);
+      NodeAssert.deepEqual(prompt.parts, [{ type: "text", text: slashText }]);
       NodeAssert.match(prompt.system, /<bot_instructions>You are Ada\.<\/bot_instructions>/);
 
+      const ownerThreadId = asThreadId("thread-opencode-owner-slash-command");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: ownerThreadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: ownerThreadId,
+        input: slashText,
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), BOT_MODEL),
+      });
+
+      // Upstream's behaviour, untouched for the owner's own threads.
+      NodeAssert.equal(runtimeMock.state.commandCalls.length, 1);
+      NodeAssert.equal(runtimeMock.state.commandCalls[0]?.command, "review");
+      NodeAssert.equal(runtimeMock.state.promptCalls.length, 1);
+
+      yield* adapter.stopSession(ownerThreadId);
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped),
   );

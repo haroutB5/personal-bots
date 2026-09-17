@@ -40,6 +40,19 @@ plugins, memories) can be switched off per process. See the
 [Claude](../../apps/server/src/provider/Layers/ClaudeAdapter.ts) and
 [Codex](../../apps/server/src/provider/Layers/codexLaunchArgs.ts) switches.
 
+A personal bot's persona travels as the per-turn system addendum, so any provider path that
+submits a turn without one answers as the raw model. Provider-native slash commands are exactly
+such a path: upstream `0b83045d0` ("expose native slash commands across clients", #11519) routes
+text matching a published command to `session.command`, which takes no system addendum, from a
+catalog that is not limited to the bot's isolated agent set. The fork pins bot sessions to the
+prompt path instead of teaching the command path to carry instructions, because the prompt path
+is the one a new upstream submission route inherits by default. Non-bot threads keep upstream's
+behaviour. The pin lives in
+[OpenCodeAdapter](../../apps/server/src/provider/Layers/OpenCodeAdapter.ts) beside the
+`PERSONAL_BOT_OPENCODE_AGENTS` filter, and its test asserts both halves — bot text on the prompt
+path with `<bot_instructions>`, owner text still reaching `session.command` — so a sync that
+flattens either one fails.
+
 The [Antigravity installer](../../apps/server/src/provider/AntigravityInstallation.ts) outlives
 client connections and provider-instance rebuilds. Releases are immutable, with an atomic pointer
 selecting the version for new processes. Running processes hold leases on their version. Updates

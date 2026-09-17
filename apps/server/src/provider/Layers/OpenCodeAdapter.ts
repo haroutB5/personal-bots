@@ -3203,10 +3203,23 @@ export function makeOpenCodeAdapter(
       }
 
       const text = input.input?.trim();
-      // Decision provider-native-slash-commands: bot sessions never take the
+      // FORK PIN against upstream 0b83045d0 "feat(providers): expose native
+      // slash commands across clients (#11519)". Bot sessions never take the
       // native command path. `session.command` accepts no per-prompt system
-      // addendum, so a "/..." turn would run without the bot's persona, and the
-      // provider's catalog is not limited to PERSONAL_BOT_OPENCODE_AGENTS.
+      // addendum, and that addendum is where a personal bot's persona rides
+      // (`personalBotSystemInstructions`), so a message that merely starts with
+      // "/" and happens to name a published command would answer as the raw
+      // model — silently. The published catalog is also not limited to
+      // PERSONAL_BOT_OPENCODE_AGENTS, so a command could reach an agent the
+      // bot's isolation excludes. Keeping bot text on the prompt path fixes
+      // both at once and fails safe: a new upstream command path inherits the
+      // pin for free, whereas teaching `session.command` to carry instructions
+      // would have to be re-done on every such change.
+      //
+      // The owner's own (non-bot) threads keep upstream's behaviour unchanged.
+      // A future sync that flattens this fails the paired test
+      // "keeps a bot's slash text on the prompt path with its instructions"
+      // in OpenCodeAdapter.test.ts. See docs/internals/providers.md.
       const commandMatch = context.personalBot
         ? undefined
         : text?.match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
