@@ -501,6 +501,60 @@ it.effect("create rejects an unknown time zone and a one-off in the past", () =>
   }).pipe(Effect.provide(makeLayer())),
 );
 
+it.effect("create refuses a routine that submits both a schedule and an event name", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-14T12:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const both = yield* Effect.flip(
+      routines.create({
+        routineId: PersonalRoutineId.make("both"),
+        botId: BOT,
+        title: "x",
+        prompt: "x",
+        schedule: { kind: "daily", time: "09:00" },
+        eventLabel: "PR merged",
+      }),
+    );
+    expect(both.message).toContain("not both");
+    // Refused whichever trigger the caller claims, so neither half is the one
+    // that silently wins.
+    const bothAsEvent = yield* Effect.flip(
+      routines.create({
+        routineId: PersonalRoutineId.make("both-event"),
+        botId: BOT,
+        title: "x",
+        prompt: "x",
+        trigger: "event",
+        schedule: { kind: "daily", time: "09:00" },
+        eventLabel: "PR merged",
+      }),
+    );
+    expect(bothAsEvent.message).toContain("not both");
+    expect(yield* listedRoutineIds).toEqual([]);
+
+    // Either half on its own is still a valid create.
+    const scheduled = yield* routines.create({
+      routineId: PersonalRoutineId.make("schedule-only"),
+      botId: BOT,
+      title: "x",
+      prompt: "x",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    expect(scheduled.eventLabel).toBeNull();
+    const event = yield* routines.create({
+      routineId: PersonalRoutineId.make("event-only"),
+      botId: BOT,
+      title: "x",
+      prompt: "x",
+      trigger: "event",
+      eventLabel: "PR merged",
+    });
+    expect(event.schedule).toBeNull();
+    expect(event.eventLabel).toBe("PR merged");
+  }).pipe(Effect.provide(makeLayer())),
+);
+
 it.effect("prunes ancient occurrence rows on tick and lists only the recent window", () =>
   Effect.gen(function* () {
     yield* setNow("2026-09-14T06:00:00Z");
