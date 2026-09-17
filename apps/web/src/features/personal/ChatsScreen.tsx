@@ -37,6 +37,8 @@ import {
 import { useAppVersion } from "./appVersion";
 import { SwipeToDelete } from "./SwipeToDelete";
 import { useDeleteBot } from "./useDeleteBot";
+import { threadIdsAwaitingSecret } from "./secretRequestCards";
+import { usePendingSecretRequests } from "./useSecretRequests";
 import { usePersonalRoutines, usePersonalTasks } from "./usePersonalAutomation";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
@@ -230,6 +232,13 @@ export function ChatsScreen(): JSX.Element {
     (turn: ServerTurn) => serverTurnLabel(turn, resolveTurnChildren(turn, tasks), nameOf),
     [tasks, nameOf],
   );
+  // A bot parked on `request_secret` looks idle everywhere else: its chat has
+  // no pending approval and no pending user input, only a request row.
+  const pendingSecretsQuery = usePendingSecretRequests(tasksArmed ? environmentId : null);
+  const secretRequestThreadIds = useMemo(
+    () => threadIdsAwaitingSecret(pendingSecretsQuery.data?.requests ?? []),
+    [pendingSecretsQuery.data],
+  );
   const summaries = useMemo(
     () =>
       list.data === null
@@ -241,6 +250,7 @@ export function ChatsScreen(): JSX.Element {
             providers,
             waitingByThread,
             browserHelpThreadId: computerFeed.status?.helpRequest?.threadId ?? null,
+            secretRequestThreadIds,
             routines: routinesQuery.data?.routines ?? [],
           }),
     [
@@ -248,6 +258,7 @@ export function ChatsScreen(): JSX.Element {
       list.data,
       providers,
       routinesQuery.data,
+      secretRequestThreadIds,
       shells,
       waitingByThread,
     ],

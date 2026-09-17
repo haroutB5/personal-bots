@@ -47,6 +47,8 @@ export interface BotSummary {
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
   readonly needsBrowserHelp: boolean;
+  /** A linked chat has a secret request the bot is parked on. */
+  readonly needsSecret: boolean;
   /** "Waiting for Developer": a linked thread's task is parked on delegated work. */
   readonly waitingFor: string | null;
   readonly nextRoutine: PersonalRoutine | null;
@@ -155,6 +157,9 @@ export function botStatus(
   readonly tone: BotStatusTone;
 } {
   if (summary.needsBrowserHelp) return { label: "Needs your help", tone: "review" };
+  // Above approvals and questions: a secret request parks the bot's task in
+  // waiting_for_user until it is answered or declined, and nothing else frees it.
+  if (summary.needsSecret) return { label: "Needs a secret", tone: "review" };
   if (summary.hasPendingApprovals) return { label: "Needs approval", tone: "review" };
   if (summary.hasPendingUserInput) return { label: "Needs your reply", tone: "review" };
   // Below the needs-you states, above everything else: the bot's next turn will fail.
@@ -207,6 +212,8 @@ export function buildBotSummaries(input: {
   /** From `waitingLabelsByThread`: thread id to "Waiting for Developer". */
   readonly waitingByThread?: ReadonlyMap<string, string>;
   readonly browserHelpThreadId?: string | null;
+  /** From `threadIdsAwaitingSecret`: chats with a pending secret request. */
+  readonly secretRequestThreadIds?: ReadonlySet<string>;
   readonly routines?: ReadonlyArray<PersonalRoutine>;
 }): BotSummary[] {
   const shellsById = new Map(input.shells.map((shell) => [shell.id as string, shell] as const));
@@ -262,6 +269,14 @@ export function buildBotSummaries(input: {
           link.botId === bot.botId &&
           link.archivedAt === null &&
           link.threadId === input.browserHelpThreadId,
+      ),
+      // Off the links, not the shells: a secret request keeps its chat's
+      // hasPendingUserInput false, so only the request row knows about it.
+      needsSecret: input.links.some(
+        (link) =>
+          link.botId === bot.botId &&
+          link.archivedAt === null &&
+          (input.secretRequestThreadIds?.has(link.threadId) ?? false),
       ),
       waitingFor:
         shells
