@@ -5,6 +5,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   derivePendingRequests,
+  deriveUserInputHistory,
   type PendingUserInput,
 } from "@t3tools/client-runtime/pending-requests";
 import {
@@ -344,17 +345,21 @@ export function ConversationScreen({
     for (const request of userInputs) requests.set(request.requestId, request);
     setSeenUserInputs({ threadId, requests });
   }
-  const questionCards = useMemo(
-    () =>
-      deriveQuestionCards(
-        userInputs,
-        // A thread switch that has not settled yet must not show the previous
-        // chat's cards.
-        seenUserInputs.threadId === threadId ? seenUserInputs.requests : new Map(),
-        deriveUserInputResolutions(activities),
-      ),
-    [activities, seenUserInputs, threadId, userInputs],
-  );
+  const questionCards = useMemo(() => {
+    // Every question ever asked on this thread, so reopening a chat still shows
+    // what was asked and answered instead of a reply to an invisible question.
+    // The in-session memory layers on top: a question answered a moment ago has
+    // left `pending` before its resolution reaches the activity stream.
+    const asked = new Map<string, PendingUserInput>(
+      deriveUserInputHistory(activities).map((request) => [request.requestId as string, request]),
+    );
+    // A thread switch that has not settled yet must not show the previous
+    // chat's cards.
+    if (seenUserInputs.threadId === threadId) {
+      for (const [requestId, request] of seenUserInputs.requests) asked.set(requestId, request);
+    }
+    return deriveQuestionCards(userInputs, asked, deriveUserInputResolutions(activities));
+  }, [activities, seenUserInputs, threadId, userInputs]);
   // Secrets the bot asked for. `listPending` drops a row the moment it is
   // answered, so the same seen/outcome memory as the question cards keeps the
   // card in place with its ending instead of leaving a hole in the transcript.

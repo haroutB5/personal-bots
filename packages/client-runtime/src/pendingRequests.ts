@@ -194,3 +194,33 @@ export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThr
     userInputs: [...userInputs.values()].sort(byCreatedAt),
   };
 }
+
+/**
+ * Every question the bot has ever asked on this thread, answered or not.
+ *
+ * `derivePendingRequests` drops a question the moment it resolves, which is
+ * right for "what still blocks the turn" but wrong for a transcript: reopening
+ * a chat would show the bot's reply with no sign of the question it answers.
+ * The asking activity carries the questions, so the record survives a reload.
+ */
+export function deriveUserInputHistory(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyArray<PendingUserInput> {
+  const asked = new Map<ApprovalRequestId, PendingUserInput>();
+  for (const activity of activities) {
+    if (activity.kind !== "user-input.requested") continue;
+    const payload = Predicate.isObject(activity.payload) ? activity.payload : undefined;
+    if (!payload || !isRequestId(payload.requestId)) continue;
+    const questions = parseQuestions(payload.questions);
+    if (questions.length === 0) continue;
+    // First ask wins: a re-delivered request keeps the time it was first shown.
+    if (asked.has(payload.requestId)) continue;
+    asked.set(payload.requestId, {
+      requestId: payload.requestId,
+      createdAt: activity.createdAt,
+      questions,
+      dismissible: payload.responseMode === "message",
+    });
+  }
+  return [...asked.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}

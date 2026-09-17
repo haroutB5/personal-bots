@@ -1,6 +1,6 @@
 import { EventId, TurnId, type OrchestrationThreadActivity } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { derivePendingRequests } from "./pendingRequests.ts";
+import { derivePendingRequests, deriveUserInputHistory } from "./pendingRequests.ts";
 
 let nextActivityId = 0;
 
@@ -413,6 +413,46 @@ describe("pending questions", () => {
         ],
       },
     ]);
+  });
+
+  it("keeps an answered question in the history a reopened chat renders from", () => {
+    // derivePendingRequests drops a resolved question, which is right for "what
+    // still blocks the turn" and wrong for a transcript: without this history a
+    // reopened chat shows the bot's reply under no question at all.
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "asked",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-answered",
+          questions: [
+            {
+              id: "fruit",
+              header: "Fruit",
+              question: "Which fruit?",
+              options: [{ label: "Banana", description: "Yellow" }],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "answered",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "user-input.resolved",
+        summary: "User input submitted",
+        tone: "info",
+        payload: { requestId: "req-answered", answers: { fruit: "Banana" } },
+      }),
+    ];
+
+    expect(derivePendingRequests(activities).userInputs).toEqual([]);
+    const history = deriveUserInputHistory(activities);
+    expect(history.map((request) => request.requestId)).toEqual(["req-answered"]);
+    expect(history[0]?.questions[0]?.question).toBe("Which fruit?");
   });
 
   it("clears stale pending user-input prompts when the provider reports an orphaned request", () => {
