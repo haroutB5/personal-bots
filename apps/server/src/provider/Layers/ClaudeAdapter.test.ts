@@ -558,9 +558,14 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(options?.strictMcpConfig, true);
       assert.deepEqual(Object.keys(options?.mcpServers ?? {}), ["t3-code"]);
       // Auto-memory and claude.ai connectors sit outside settingSources.
+      // Exact on purpose: every key here reaches a bot session, so a sync that
+      // adds one should fail until someone decides whether a bot may have it.
+      // `showThinkingSummaries` (upstream 052c7ae53, #11784) is derived from
+      // the turn's own thinking display, not from the owner's config.
       assert.deepEqual(options?.settings, {
         autoMemoryEnabled: false,
         disableClaudeAiConnectors: true,
+        showThinkingSummaries: true,
       });
       assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "1");
       assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
@@ -613,7 +618,11 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(options?.settingSources, ["user", "project", "local"]);
       assert.equal(options?.strictMcpConfig, undefined);
       assert.deepEqual(Object.keys(options?.mcpServers ?? {}), ["t3-code"]);
-      assert.equal(options?.settings, undefined);
+      // Upstream may put its own keys here (052c7ae53 added
+      // showThinkingSummaries); what a normal thread must not get is the
+      // bot-isolation pair, which would silence the owner's own memory.
+      assert.equal(options?.settings?.autoMemoryEnabled, undefined);
+      assert.equal(options?.settings?.disableClaudeAiConnectors, undefined);
       assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, undefined);
       assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, undefined);
     }).pipe(
