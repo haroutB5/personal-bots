@@ -43,6 +43,8 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
+import { continuationSystemInstructions } from "./personal/continuationInstructions.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
@@ -485,6 +487,9 @@ export const reconcileProviderSessions = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const providerService = yield* ProviderService.ProviderService;
   const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  // Optional: a build without the personal stack still continues its turns,
+  // it just has no bot persona to restore.
+  const personalBots = yield* Effect.serviceOption(PersonalBotRepository.PersonalBotRepository);
   const settings = yield* ServerSettings.ServerSettingsService;
   const restartSettings = yield* settings.getSettings.pipe(
     Effect.map(Option.some),
@@ -701,12 +706,19 @@ export const reconcileProviderSessions = Effect.gen(function* () {
               });
             }
             const capabilities = yield* providerService.getCapabilities(providerInstanceId);
+            // Without this a bot chat resumed after a restart answers as the
+            // raw model: the persona is set when a session starts, and this
+            // turn is continuing on a session that started after the restart.
+            const systemInstructions = Option.isSome(personalBots)
+              ? yield* continuationSystemInstructions(personalBots.value, thread.id)
+              : undefined;
             yield* providerService.sendTurn({
               threadId: thread.id,
               ...(capabilities.promptlessTurnContinuation === true
                 ? { continuation: true }
                 : { input: SERVER_UPDATE_CONTINUATION_PROMPT }),
               interactionMode: thread.interactionMode,
+              ...(systemInstructions !== undefined ? { systemInstructions } : {}),
             });
           });
           const continuationExit = yield* Effect.exit(continuation);

@@ -34,6 +34,8 @@ import * as ProjectionSnapshotQuery from "../src/orchestration/Services/Projecti
 import { makeSqlitePersistenceLive } from "../src/persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../src/persistence/ProviderSessionRuntime.ts";
 import * as ExternalLauncher from "../src/process/externalLauncher.ts";
+import * as PersonalBotRepository from "../src/personal/PersonalBotRepository.ts";
+import { personalBotSystemInstructions } from "../src/personal/personalBotInstructions.ts";
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
 import * as ProviderService from "../src/provider/Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../src/provider/Services/ProviderSessionDirectory.ts";
@@ -49,6 +51,8 @@ const providerInstanceId = ProviderInstanceId.make("codex");
 const projectId = ProjectId.make("project-startup-orphan");
 const threadId = ThreadId.make("thread-startup-orphan");
 const stoppedBindingThreadId = ThreadId.make("thread-startup-orphan-stopped-binding");
+/** The bot whose chat the interrupted turn belongs to. */
+const RESUMED_BOT = { name: "Planner", title: "Planner", instructions: "Plan carefully." };
 const resumeCursor = { schemaVersion: 1, sessionId: "provider-session-before-restart" };
 const stoppedBindingResumeCursor = {
   schemaVersion: 1,
@@ -456,6 +460,11 @@ it.effect.each(["opt-in desktop restart", "marked remote update"] as const)(
                 Effect.as({ threadId, turnId: TurnId.make("continued-turn") }),
               ),
           }),
+          // A bot chat: the continuation must carry the bot's persona, or the
+          // resumed turn answers as the raw model instead of as the bot.
+          Effect.provideService(PersonalBotRepository.PersonalBotRepository, {
+            getInstructionsForThread: () => Effect.succeed(Option.some(RESUMED_BOT)),
+          } as unknown as PersonalBotRepository.PersonalBotRepository["Service"]),
           Effect.provide(
             ServerSettings.layerTest({
               continueThreadsAfterServerUpdate: restart === "opt-in desktop restart",
@@ -470,6 +479,7 @@ it.effect.each(["opt-in desktop restart", "marked remote update"] as const)(
           threadId,
           continuation: true,
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          systemInstructions: personalBotSystemInstructions(RESUMED_BOT),
         });
       }).pipe(
         Effect.provide(

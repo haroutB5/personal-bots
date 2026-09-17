@@ -23,7 +23,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
-import { personalBotSystemInstructions } from "./personalBotInstructions.ts";
+import { continuationSystemInstructions } from "./continuationInstructions.ts";
 import { isPersonalTaskMessageId } from "./personalThreadTitles.ts";
 import {
   decideTurnRetry,
@@ -175,14 +175,8 @@ export const make = Effect.gen(function* () {
       return yield* new PersonalTurnRetryNotRoutable({ threadId });
     }
     const capabilities = yield* providerService.getCapabilities(instanceId);
-    // The bot's persona is set per session, but some adapters take it per turn,
-    // so pass it here too rather than letting a retried turn answer as itself.
-    const persona = yield* personalBots
-      .getInstructionsForThread({ threadId })
-      .pipe(Effect.orElseSucceed(() => Option.none()));
-    const systemInstructions = Option.isSome(persona)
-      ? personalBotSystemInstructions(persona.value)
-      : undefined;
+    // Shared with the restart-continuation path so the two cannot drift apart.
+    const systemInstructions = yield* continuationSystemInstructions(personalBots, threadId);
     yield* providerService.sendTurn({
       threadId,
       ...(capabilities.promptlessTurnContinuation === true
