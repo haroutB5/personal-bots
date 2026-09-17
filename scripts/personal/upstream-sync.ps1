@@ -933,7 +933,12 @@ function Invoke-ProbeGates([string]$Tree, [string]$Upstream, [string]$LogDir) {
         -WorkingDirectory $ProbeScratch -TimeoutSeconds 1800 -LogPath (Join-Path $LogDir 'probe-install.log')
     Write-SyncLog "scratch install exited $($install.Code)"
     if ($install.Code -ne 0) { return , @("install: vp i failed on the merged tree (exit $($install.Code); log $LogDir\probe-install.log)") }
-    return , (Invoke-Gates -Gates (Get-ProbeGateList -Root $ProbeScratch) -Label 'probe' -Root $ProbeScratch -LogDir $LogDir)
+    # Assign, never @(): Invoke-Gates returns a comma-wrapped array so that an
+    # empty result survives, and wrapping that in @() turns "no red gates" into
+    # one element that prints as "System.String[]" - a probe that cannot tell
+    # green from red. Auto assigns directly for the same reason.
+    $gateRed = Invoke-Gates -Gates (Get-ProbeGateList -Root $ProbeScratch) -Label 'probe' -Root $ProbeScratch -LogDir $LogDir
+    return , $gateRed
 }
 
 # Probe is read-only towards whatever checkout it runs from: it only reads
@@ -963,10 +968,15 @@ function Assert-ProbeLeftNoTrace($Before) {
         $changed = @()
         if ($after.Head -ne $was.Head) { $changed += "HEAD $($was.Head.Substring(0,9)) -> $($after.Head.Substring(0,9))" }
         if ($after.Branch -ne $was.Branch) { $changed += "branch $($was.Branch) -> $($after.Branch)" }
-        if ($after.Dirty -ne $was.Dirty) { $changed += "$($was.Dirty) -> $($after.Dirty) modified path(s)" }
         if ($after.Refs -ne $was.Refs) { $changed += 'local branches/tags/stash changed' }
         if ($changed.Count -gt 0) { Write-SyncLog "probe WARNING: $repo changed while the probe ran ($($changed -join '; '))" }
-        else { Write-SyncLog "probe: $repo untouched (HEAD $($after.Head.Substring(0,9)), $($after.Dirty) modified path(s), refs identical)" }
+        else { Write-SyncLog "probe: $repo untouched (HEAD $($after.Head.Substring(0,9)), branch $($after.Branch), refs identical)" }
+        # The modified-path count is reported, never warned about: the owner
+        # editing his own checkout while the probe runs is normal, and the
+        # probe writes to no checkout, only to its own scratch.
+        if ($after.Dirty -ne $was.Dirty) {
+            Write-SyncLog "probe: $repo has $($was.Dirty) -> $($after.Dirty) modified path(s) (someone else was editing; not the probe)"
+        }
     }
 }
 
@@ -1032,7 +1042,7 @@ function Invoke-Probe {
         $logDir = Join-Path $SyncHome 'probe-gate-logs'
         New-Item -ItemType Directory -Force -Path $logDir | Out-Null
         Write-SyncLog "probe: merge is clean; running the two fast gates in the scratch worktree"
-        $red = @(Invoke-ProbeGates -Tree $tree -Upstream $new -LogDir $logDir)
+        $red = Invoke-ProbeGates -Tree $tree -Upstream $new -LogDir $logDir
         if ($red.Count -gt 0) {
             $result = 'gates-red'
             $sorted = @($red | Sort-Object)

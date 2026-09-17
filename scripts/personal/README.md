@@ -114,6 +114,41 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\Claude\AI\personal-bots-s
 powershell -NoProfile -ExecutionPolicy Bypass -File C:\Claude\AI\personal-bots-sync\scripts\personal\upstream-sync.ps1 -Mode DryRun
 ```
 
+### Nightly probe (early warning)
+
+Upstream moves at roughly 44 commits a day, so a conflict that appears on
+Sunday is only discovered by the Saturday run five days later. `-Mode Probe`
+is the warning in between. It is pure script: no agent, no LLM, no build, no
+migration rehearsal, no deploy, no push, and it writes nothing the Saturday
+run reads (no `state.json`, no `held-upstream.json`, no sync branch).
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\Claude\AI\personal-bots\scripts\personal\upstream-sync.ps1 -Mode Probe
+```
+
+It fetches, dry-merges with `git merge-tree` (no ref, no index, no worktree)
+and reports how many upstream commits are pending, whether the merge is clean
+and which files conflict. `routeTree.gen.ts` and `Migrations.ts` are not
+findings: the Saturday run resolves those itself. A clean merge that touches
+our build is checked out into a throwaway detached worktree at
+`%USERPROFILE%\.personal-bots\upstream-sync\probe-scratch`, installed, and put
+through the two fast gates only (`apps\server src\personal`, `apps\web
+--project unit src\features\personal`); the scratch is then removed, and each
+run also removes any scratch a killed run left behind before it starts. About
+30 s when there is a conflict, a few minutes on the clean path.
+
+It is quiet on purpose. A clean probe writes one line to
+`%USERPROFILE%\.personal-bots\upstream-sync\probe.log` and sends nothing. A
+push means a real conflict, a non-whitelisted gate failure, or a backlog the
+Saturday run would refuse (`-ProbeBacklogWarn`, default 250). An unchanged
+finding repeats at most once a week (`-ProbeRemindDays`). Its memory is
+`probe-state.json`. `-ProbeUpstreamRef <sha>` probes one upstream commit
+instead of `upstream/main`. Probe honours the sync lock (a running sync always
+wins) and holds its own `probe-lock`, so a slow probe can never make the
+Saturday run skip a week. It is the only mode that may run from the main
+checkout, because the sync worktree is often parked mid-merge after a stopped
+sync, which is exactly when the warning matters most.
+
 State, logs and each run's triage/summary are in
 `%USERPROFILE%\.personal-bots\upstream-sync\` (`state.json`, `runs\<stamp>\`).
 A stopped run keeps its `sync/upstream-<date>` branch for inspection; the
