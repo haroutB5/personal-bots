@@ -232,8 +232,8 @@ const PersonalBotThreadRawDbRow = Schema.Struct({
   archivedAt: Schema.Unknown,
 });
 
-// The list carries each thread's newest non-system message so the chats list
-// can show a preview without a live thread subscription per row.
+// The list carries each thread's newest shown message so the chats list can
+// show a preview without a live thread subscription per row.
 const PersonalBotThreadListDbRow = Schema.Struct({
   ...PersonalBotThreadDbRow.fields,
   newestMessageId: Schema.NullOr(MessageId),
@@ -561,9 +561,11 @@ export const make = Effect.gen(function* () {
       `,
   });
 
-  // One indexed point lookup per link for the newest non-system message
+  // One indexed point lookup per link for the newest message the list can show
   // (idx_projection_thread_messages_thread_created_id); the preview text is
-  // capped at the length the list can show.
+  // capped at the length the list can show. `reasoning` is a provider's
+  // thinking trace, never something the bot said, so it is skipped alongside
+  // `system`.
   const listThreadLinkRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: PersonalBotThreadListRawDbRow,
@@ -582,7 +584,7 @@ export const make = Effect.gen(function* () {
         LEFT JOIN projection_thread_messages m ON m.message_id = (
           SELECT n.message_id
           FROM projection_thread_messages n
-          WHERE n.thread_id = t.thread_id AND n.role <> 'system'
+          WHERE n.thread_id = t.thread_id AND n.role NOT IN ('system', 'reasoning')
           ORDER BY n.created_at DESC, n.message_id DESC
           LIMIT 1
         )

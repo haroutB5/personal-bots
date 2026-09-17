@@ -56,6 +56,7 @@ import {
   OpenCodeRuntimeError,
   openCodeQuestionId,
   openCodeRuntimeErrorDetail,
+  loadOpenCodeCommands,
   parseOpenCodeModelSlug,
   runOpenCodeSdk,
   toOpenCodeFileParts,
@@ -220,6 +221,7 @@ interface OpenCodePromptAdmission {
   readonly generation: number;
   readonly turnId: TurnId;
   readonly messageId: string;
+  requiresMessageReceipt: boolean;
   readonly priorAwaitingBusy: boolean;
   readonly priorIdle: { readonly turnId: TurnId; readonly raw: unknown } | undefined;
   idleDuringAdmission: { readonly turnId: TurnId; readonly raw: unknown } | undefined;
@@ -230,6 +232,7 @@ interface OpenCodePromptAdmission {
   accepted: boolean;
   cancelled: boolean;
   readonly acceptance: Deferred.Deferred<void>;
+  readonly messageReceipt: Deferred.Deferred<void>;
   readonly submissionSettled: Deferred.Deferred<void>;
   promptFiber?: Fiber.Fiber<void, ProviderAdapterRequestError>;
   recoveryFiber?: Fiber.Fiber<void, never>;
@@ -376,6 +379,7 @@ interface OpenCodeSessionContext {
   pendingRequestRecovery: OpenCodePendingRequestRecovery | undefined;
   promptGeneration: number;
   promptAdmission: OpenCodePromptAdmission | undefined;
+  readonly commandFibers: Set<Fiber.Fiber<void, ProviderAdapterRequestError>>;
   readonly promptSemaphore: Semaphore.Semaphore;
   readonly firstConnection: Deferred.Deferred<void, ProviderAdapterRequestError>;
   /**
@@ -1369,8 +1373,14 @@ export function makeOpenCodeAdapter(
         return;
       }
       const recover = Effect.gen(function* () {
-        yield* Deferred.await(promptAdmission.acceptance);
-        for (let retryCount = 0; retryCount < 5; retryCount += 1) {
+        if (!promptAdmission.requiresMessageReceipt) {
+          yield* Deferred.await(promptAdmission.acceptance);
+        }
+        for (
+          let retryCount = 0;
+          retryCount < 5 || (promptAdmission.requiresMessageReceipt && !promptAdmission.accepted);
+          retryCount += 1
+        ) {
           if (
             context.promptAdmission !== promptAdmission ||
             context.activeTurnId !== promptAdmission.turnId ||
@@ -1405,10 +1415,22 @@ export function makeOpenCodeAdapter(
             const message = Option.isSome(response) ? response.value.data : undefined;
             if (message?.info.id === promptAdmission.messageId && message.info.role === "user") {
               promptAdmission.messageObserved = true;
+              yield* Deferred.succeed(promptAdmission.messageReceipt, undefined);
               context.messageRoleById.set(promptAdmission.messageId, "user");
               context.textPartsByMessageId.delete(promptAdmission.messageId);
             }
           }
+
+          // Native command responses wait for generation. Recover their receipt
+          // first, then let sendTurn acknowledge admission before reconciling idle.
+          if (promptAdmission.requiresMessageReceipt && !promptAdmission.accepted) {
+            if (!promptAdmission.messageObserved) {
+              yield* Effect.sleep(`${Math.min(250 * 2 ** retryCount, 2_000)} millis`);
+              continue;
+            }
+            retryCount = 0;
+          }
+          yield* Deferred.await(promptAdmission.acceptance);
 
           const statusResponse = yield* runOpenCodeSdk("session.status", (signal) =>
             context.client.session.status(undefined, { signal }),
@@ -2331,6 +2353,7 @@ export function makeOpenCodeAdapter(
             promptAdmission?.messageId === event.properties.info.id
           ) {
             promptAdmission.messageObserved = true;
+            yield* Deferred.succeed(promptAdmission.messageReceipt, undefined);
             if (promptAdmission.accepted) {
               const idle = promptAdmission.idleDuringAdmission;
               context.awaitingBusyAfterInterruption = false;
@@ -3092,6 +3115,7 @@ export function makeOpenCodeAdapter(
           pendingRequestRecovery: undefined,
           promptGeneration: 0,
           promptAdmission: undefined,
+          commandFibers: new Set(),
           promptSemaphore: Semaphore.makeUnsafe(1),
           firstConnection: Deferred.makeUnsafe<void, ProviderAdapterRequestError>(),
           stopped: yield* Ref.make(false),
@@ -3179,6 +3203,19 @@ export function makeOpenCodeAdapter(
       }
 
       const text = input.input?.trim();
+      // Decision provider-native-slash-commands: bot sessions never take the
+      // native command path. `session.command` accepts no per-prompt system
+      // addendum, so a "/..." turn would run without the bot's persona, and the
+      // provider's catalog is not limited to PERSONAL_BOT_OPENCODE_AGENTS.
+      const commandMatch = context.personalBot
+        ? undefined
+        : text?.match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
+      const nativeCommand = commandMatch
+        ? (yield* loadOpenCodeCommands(context.client).pipe(
+            Effect.timeout("10 seconds"),
+            Effect.orElseSucceed(() => []),
+          )).find((command) => command.name === commandMatch[1])
+        : undefined;
       // OpenCode ingests images, text, and PDFs natively; formats its model
       // paths reject ride only as the prompt's file path line.
       const fileParts = toOpenCodeFileParts({
@@ -3243,6 +3280,7 @@ export function makeOpenCodeAdapter(
             generation: promptGeneration,
             turnId,
             messageId,
+            requiresMessageReceipt: nativeCommand !== undefined,
             priorAwaitingBusy,
             priorIdle: priorIdleCandidate,
             idleDuringAdmission: undefined,
@@ -3253,6 +3291,7 @@ export function makeOpenCodeAdapter(
             accepted: false,
             cancelled: false,
             acceptance: Deferred.makeUnsafe<void>(),
+            messageReceipt: Deferred.makeUnsafe<void>(),
             submissionSettled: Deferred.makeUnsafe<void>(),
             recoveryRaw: undefined,
           };
@@ -3304,30 +3343,57 @@ export function makeOpenCodeAdapter(
           }
 
           let promptTimedOut = false;
-          const promptEffect = runOpenCodeSdk("session.promptAsync", (signal) =>
-            context.client.session.promptAsync(
-              {
-                sessionID: context.openCodeSessionId,
-                messageID: messageId,
-                model: parsedModel,
-                ...(context.activeAgent ? { agent: context.activeAgent } : {}),
-                ...(context.activeVariant ? { variant: context.activeVariant } : {}),
-                // OpenCode appends this after its own agent/provider prompts.
-                // Its instructions slot is per prompt, so a bot's persona and
-                // app rules ride on every turn (falling back to the start's).
-                system: withBotInstructions(
-                  buildRuntimeInstructions({
-                    harness: "OpenCode",
-                    model: `${parsedModel.providerID}/${parsedModel.modelID}`,
-                  }),
-                  input.systemInstructions ?? context.systemInstructions,
+          const submissionMethod = nativeCommand ? "session.command" : "session.promptAsync";
+          // Native commands expand provider-owned templates. Their API does not
+          // accept the per-turn system addendum supported by ordinary prompts.
+          const submission = nativeCommand
+            ? Effect.raceFirst(
+                runOpenCodeSdk("session.command", (signal) =>
+                  context.client.session.command(
+                    {
+                      sessionID: context.openCodeSessionId,
+                      messageID: messageId,
+                      command: nativeCommand.name,
+                      arguments: commandMatch?.[2] ?? "",
+                      model: `${parsedModel.providerID}/${parsedModel.modelID}`,
+                      ...(context.activeAgent ? { agent: context.activeAgent } : {}),
+                      ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+                      parts: fileParts,
+                    },
+                    { signal },
+                  ),
+                ).pipe(Effect.asVoid),
+                // A command response waits for generation. Only bound admission;
+                // the user-message receipt proves OpenCode accepted the command.
+                Deferred.await(promptAdmission.messageReceipt).pipe(
+                  Effect.timeout("10 seconds"),
+                  Effect.andThen(Effect.never),
                 ),
-                parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
-              },
-              { signal },
-            ),
-          ).pipe(
-            Effect.timeout("10 seconds"),
+              )
+            : runOpenCodeSdk("session.promptAsync", (signal) =>
+                context.client.session.promptAsync(
+                  {
+                    sessionID: context.openCodeSessionId,
+                    messageID: messageId,
+                    model: parsedModel,
+                    ...(context.activeAgent ? { agent: context.activeAgent } : {}),
+                    ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+                    // OpenCode appends this after its own agent/provider prompts.
+                    // Its instructions slot is per prompt, so a bot's persona and
+                    // app rules ride on every turn (falling back to the start's).
+                    system: withBotInstructions(
+                      buildRuntimeInstructions({
+                        harness: "OpenCode",
+                        model: `${parsedModel.providerID}/${parsedModel.modelID}`,
+                      }),
+                      input.systemInstructions ?? context.systemInstructions,
+                    ),
+                    parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
+                  },
+                  { signal },
+                ),
+              ).pipe(Effect.timeout("10 seconds"), Effect.asVoid);
+          const promptEffect = submission.pipe(
             Effect.catchTags({
               OpenCodeRuntimeError: (cause) => Effect.fail(toRequestError(cause)),
               TimeoutError: (cause) => {
@@ -3335,15 +3401,47 @@ export function makeOpenCodeAdapter(
                 return Effect.fail(
                   new ProviderAdapterRequestError({
                     provider: PROVIDER,
-                    method: "session.promptAsync",
+                    method: submissionMethod,
                     detail: "OpenCode prompt submission did not complete within 10 seconds.",
                     cause,
                   }),
                 );
               },
             }),
-            Effect.tapError((requestError) =>
-              context.promptAdmission !== promptAdmission || context.activeTurnId !== turnId
+            Effect.tapError(() => {
+              promptAdmission.requiresMessageReceipt = false;
+              return nativeCommand && promptAdmission.recoveryFiber
+                ? Fiber.interrupt(promptAdmission.recoveryFiber)
+                : Effect.void;
+            }),
+            Effect.tapError((requestError) => {
+              if (
+                nativeCommand &&
+                (promptAdmission.cancelled || context.cancellation?.turnId === turnId)
+              ) {
+                return Effect.void;
+              }
+              if (
+                nativeCommand &&
+                promptAdmission.accepted &&
+                context.activeTurnId === turnId &&
+                (steeringTurnId !== undefined ||
+                  context.promptGeneration !== promptAdmission.generation)
+              ) {
+                return Effect.gen(function* () {
+                  yield* emit({
+                    ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
+                    type: "runtime.warning",
+                    payload: {
+                      message: `OpenCode /${nativeCommand.name} failed after it was accepted.`,
+                      detail: requestError.detail,
+                    },
+                  });
+                });
+              }
+              return (nativeCommand
+                ? context.promptGeneration !== promptAdmission.generation
+                : context.promptAdmission !== promptAdmission) || context.activeTurnId !== turnId
                 ? Effect.void
                 : Effect.gen(function* () {
                     if (!promptTimedOut) {
@@ -3432,8 +3530,8 @@ export function makeOpenCodeAdapter(
                         tokenUsage,
                       },
                     });
-                  }),
-            ),
+                  });
+            }),
             Effect.onExit((exit) =>
               Effect.gen(function* () {
                 yield* Deferred.succeed(promptAdmission.submissionSettled, undefined).pipe(
@@ -3450,8 +3548,20 @@ export function makeOpenCodeAdapter(
           );
           const promptFiber = yield* promptEffect.pipe(Effect.forkIn(context.sessionScope));
           promptAdmission.promptFiber = promptFiber;
-          const promptExit = yield* Effect.exit(Fiber.join(promptFiber));
-          delete promptAdmission.promptFiber;
+          if (nativeCommand) {
+            context.commandFibers.add(promptFiber);
+            promptFiber.addObserver(() => context.commandFibers.delete(promptFiber));
+            yield* schedulePromptAdmissionRecovery(context, undefined);
+          }
+          const promptExit = yield* Effect.exit(
+            nativeCommand
+              ? Effect.raceFirst(
+                  Fiber.join(promptFiber),
+                  Deferred.await(promptAdmission.messageReceipt),
+                )
+              : Fiber.join(promptFiber),
+          );
+          if (!nativeCommand) delete promptAdmission.promptFiber;
 
           const intentionallyCancelled =
             promptAdmission.cancelled ||
@@ -3624,6 +3734,8 @@ export function makeOpenCodeAdapter(
           }
           yield* Deferred.await(promptAdmission.submissionSettled);
         }
+
+        yield* Effect.forEach([...context.commandFibers], Fiber.interrupt, { discard: true });
 
         const parentAbortOutcome = yield* Effect.raceFirst(
           runOpenCodeSdk("session.abort", (signal) =>

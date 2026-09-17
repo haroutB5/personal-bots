@@ -390,7 +390,14 @@ export function buildConversationItems(
   };
 
   for (const entry of entries) {
-    if (entry.kind === "message" && entry.message.role === "system") continue;
+    // `reasoning` carries the provider's thinking trace. It is plumbing in the
+    // same sense as a tool step: a bot chat shows what the bot said, not how it
+    // got there, and rendering it would otherwise read as the bot speaking.
+    if (
+      entry.kind === "message" &&
+      (entry.message.role === "system" || entry.message.role === "reasoning")
+    )
+      continue;
     // Checkpoints are developer plumbing (undo snapshots of a git workspace);
     // a bot chat never shows their steps, failed or not. With "Show tool steps"
     // off (the default) every work entry is dropped the same way, so no work

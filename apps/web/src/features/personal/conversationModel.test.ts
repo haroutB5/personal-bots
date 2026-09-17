@@ -360,7 +360,11 @@ describe("formatDayDivider", () => {
   });
 });
 
-const message = (id: string, role: "user" | "assistant" | "system", createdAt: string) =>
+const message = (
+  id: string,
+  role: "user" | "assistant" | "system" | "reasoning",
+  createdAt: string,
+) =>
   ({
     id,
     kind: "message",
@@ -423,6 +427,21 @@ describe("buildConversationItems", () => {
     const workItems = items.filter((item) => item.kind === "work");
     expect(workItems).toHaveLength(1);
     expect(workItems[0]).toMatchObject({ entries: [expect.objectContaining({ id: "w1" })] });
+  });
+
+  it("keeps a provider's thinking trace out of the chat", () => {
+    const items = buildConversationItems(
+      [
+        message("u1", "user", "2026-09-13T20:38:00.000Z"),
+        message("r1", "reasoning", "2026-09-13T20:38:01.000Z"),
+        message("a1", "assistant", "2026-09-13T20:38:04.000Z"),
+      ],
+      { showToolSteps: true },
+    );
+    expect(items.map((item) => item.kind)).toEqual(["divider", "message", "message"]);
+    expect(items.some((item) => item.kind === "message" && item.message.role === "reasoning")).toBe(
+      false,
+    );
   });
 
   it("folds consecutive work into one group and skips system messages", () => {
