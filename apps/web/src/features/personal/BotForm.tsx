@@ -28,9 +28,12 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { BotAvatarPicker } from "./BotAvatarPicker";
 import {
   botEffortDescriptor,
+  botInstructionSupportWarning,
   defaultModelFor,
   EFFORT_OPTION_IDS,
+  isBotProviderSelectable,
   modelOptionLabel,
+  noBotProviderMessage,
   searchModels,
   usesModelSearch,
 } from "./botFormModel";
@@ -49,10 +52,6 @@ const FIELD_CLASS =
 const LABEL_CLASS = "mb-1.5 block text-sm font-medium text-[var(--personal-text)]";
 const NAME_MAX = 60;
 const TITLE_MAX = 60;
-
-function isSelectable(provider: ServerProvider): boolean {
-  return resolveBotProvider(provider.instanceId, [provider]).available;
-}
 
 /**
  * Type-to-search model field for providers with long catalogues (OpenCode
@@ -219,7 +218,7 @@ function BotForm({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
-  const selectableProviders = useMemo(() => providers.filter(isSelectable), [providers]);
+  const selectableProviders = useMemo(() => providers.filter(isBotProviderSelectable), [providers]);
   const [rawDraft, setDraft] = useState<BotDraft>(() => {
     if (bot !== null) return draftFromBot(bot);
     const first =
@@ -267,6 +266,12 @@ function BotForm({
   const selectedProvider = providers.find((provider) => provider.instanceId === draft.instanceId);
   const providerStatus =
     draft.instanceId === "" ? null : resolveBotProvider(draft.instanceId, providers);
+  // Only reachable for a bot already saved on such a provider: the picker
+  // above never offers one. Silence here is the actual bug being fixed.
+  const instructionWarning = botInstructionSupportWarning(
+    selectedProvider,
+    providerStatus?.label ?? "This provider",
+  );
   const models = selectedProvider?.models ?? [];
   const canSave = draft.instanceId !== "" && draft.model !== "" && !busy;
 
@@ -430,8 +435,7 @@ function BotForm({
         </label>
         {providerOptions.length === 0 ? (
           <p className="text-[15px] text-[var(--personal-text-secondary)]">
-            No provider is ready on your computer yet. Set up Claude Code or Codex there, then come
-            back to create a bot.
+            {noBotProviderMessage(providers)}
           </p>
         ) : (
           <select
@@ -454,6 +458,11 @@ function BotForm({
           <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
             {providerStatus.label} can't run right now, so this bot can't reply. Pick another
             provider or fix it on your computer.
+          </p>
+        ) : null}
+        {instructionWarning !== null ? (
+          <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
+            {instructionWarning}
           </p>
         ) : null}
       </div>

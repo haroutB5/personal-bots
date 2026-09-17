@@ -8,8 +8,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   botEffortDescriptor,
+  botInstructionSupportWarning,
   defaultModelFor,
+  isBotProviderSelectable,
   modelOptionLabel,
+  noBotProviderMessage,
   searchModels,
   usesModelSearch,
 } from "./botFormModel";
@@ -148,5 +151,53 @@ describe("modelOptionLabel", () => {
       "Muse Spark 1.3 · OpenCode Zen",
     );
     expect(modelOptionLabel({ name: "Claude Opus 5" })).toBe("Claude Opus 5");
+  });
+});
+
+const readyProvider = (driver: string, instanceId = driver) =>
+  ({
+    instanceId,
+    driver: ProviderDriverKind.make(driver),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    availability: "available",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-09-17T00:00:00.000Z",
+    models: [],
+  }) as unknown as ServerProvider;
+
+describe("bot provider instruction support", () => {
+  // The v1.19.0 defect: a bot could be created on any ready provider, but
+  // only the Claude, Codex and OpenCode adapters pass its persona to the
+  // model. The other three answered as the raw model, silently.
+  it("offers only providers whose adapter carries bot instructions", () => {
+    expect(readyProvider("claudeAgent")).toSatisfy(isBotProviderSelectable);
+    expect(readyProvider("codex")).toSatisfy(isBotProviderSelectable);
+    expect(readyProvider("opencode")).toSatisfy(isBotProviderSelectable);
+    for (const driver of ["cursor", "grok", "antigravity", "someFutureProvider"]) {
+      expect(isBotProviderSelectable(readyProvider(driver))).toBe(false);
+    }
+  });
+
+  it("still excludes a provider that carries instructions but cannot run", () => {
+    const disabled = { ...readyProvider("codex"), enabled: false } as ServerProvider;
+    expect(isBotProviderSelectable(disabled)).toBe(false);
+  });
+
+  it("warns in the editor for a bot already saved on a mute provider", () => {
+    const warning = botInstructionSupportWarning(readyProvider("grok"), "Grok");
+    expect(warning).toContain("Grok does not pass bot instructions");
+    expect(warning).toContain("Instructions");
+    expect(botInstructionSupportWarning(readyProvider("claudeAgent"), "Claude Code")).toBeNull();
+    expect(botInstructionSupportWarning(undefined, "Claude Code")).toBeNull();
+  });
+
+  it("does not claim 'no provider is ready' when a ready one is merely mute", () => {
+    expect(noBotProviderMessage([readyProvider("grok")])).toContain(
+      "don't pass bot instructions to the model",
+    );
+    expect(noBotProviderMessage([])).toContain("No provider is ready");
   });
 });
