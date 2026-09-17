@@ -480,6 +480,15 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const existing = yield* readRoutine(input.routineId);
           if (Option.isSome(existing)) return existing.value;
+          const trigger = input.trigger ?? "schedule";
+          const eventLabel = input.eventLabel?.trim() ?? "";
+          // Both halves submitted: one of them would have to be thrown away, and
+          // the caller would never learn which. Refuse instead of choosing.
+          if (input.schedule !== undefined && eventLabel.length > 0) {
+            return yield* fail(
+              "A routine runs on a schedule or on an event, not both. Remove whichever one you did not mean.",
+            );
+          }
           yield* requireLiveBot(input.botId);
           const timeZone = yield* requireTimeZone(
             input.timeZone ?? PERSONAL_ROUTINE_DEFAULT_TIME_ZONE,
@@ -487,9 +496,7 @@ export const make = Effect.gen(function* () {
           const now = yield* DateTime.now;
           const nowMs = DateTime.toEpochMillis(now);
           const nowIso = DateTime.formatIso(now);
-          const trigger = input.trigger ?? "schedule";
           if (trigger === "event") {
-            const eventLabel = input.eventLabel?.trim() ?? "";
             if (eventLabel.length === 0) {
               return yield* fail("Give the event a name, for example 'PR merged'.");
             }

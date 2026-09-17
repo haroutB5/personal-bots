@@ -11,6 +11,7 @@ import {
   delegationConnectorPath,
   deriveDelegationLinks,
   hitTestTeamDropZone,
+  laneDelegationPath,
   orthogonalPath,
   RECENT_DELEGATION_WINDOW_MS,
   teamConnectorLanes,
@@ -19,6 +20,7 @@ import {
   teamDropOutcome,
   type TeamDiagramPoint,
   type TeamDropBot,
+  type TeamGroupsLayout,
 } from "./teamDiagramModel";
 
 /** The phone geometry TeamScreen actually renders with. */
@@ -156,9 +158,27 @@ function pointsOf(path: string): TeamDiagramPoint[] {
   return points;
 }
 
-/** Every point the connector passes through, corners included, at 2-unit steps. */
+/**
+ * Every point the connector passes through, corners included, at 2-unit steps.
+ * A single-curve path (the bowed delegation edge) is sampled along the curve
+ * itself: its control point sits far above the ink, so walking the control
+ * polygon would miss everything the bow actually passes over.
+ */
 function samplesOf(path: string): TeamDiagramPoint[] {
-  const corners = pointsOf(path);
+  const points = pointsOf(path);
+  if (points.length === 3 && path.split("Q").length === 2) {
+    const [start, control, end] = points as [TeamDiagramPoint, TeamDiagramPoint, TeamDiagramPoint];
+    const steps = 200;
+    return Array.from({ length: steps + 1 }, (_unused, step) => {
+      const t = step / steps;
+      const inverse = 1 - t;
+      return {
+        x: inverse * inverse * start.x + 2 * inverse * t * control.x + t * t * end.x,
+        y: inverse * inverse * start.y + 2 * inverse * t * control.y + t * t * end.y,
+      };
+    });
+  }
+  const corners = points;
   const samples: TeamDiagramPoint[] = [];
   for (let index = 0; index + 1 < corners.length; index += 1) {
     const from = corners[index]!;
@@ -172,6 +192,28 @@ function samplesOf(path: string): TeamDiagramPoint[] {
     }
   }
   return samples;
+}
+
+/** Bots a line passes over — their avatar or the name column printed under it. */
+function botsCrossedBy(
+  path: string,
+  layout: TeamGroupsLayout,
+  sizeOf: (botId: string) => number,
+): string[] {
+  const samples = samplesOf(path);
+  expect(samples.length).toBeGreaterThan(1);
+  return [...layout.bots]
+    .filter(([botId, node]) => {
+      const size = sizeOf(botId);
+      return samples.some(
+        (sample) =>
+          (Math.abs(sample.x - node.x) <= CONNECTOR_OPTIONS.labelWidth / 2 &&
+            sample.y >= node.y + size / 2 &&
+            sample.y <= node.y + size / 2 + LABEL_SPACE) ||
+          Math.hypot(sample.x - node.x, sample.y - node.y) < size / 2 + 2,
+      );
+    })
+    .map(([botId]) => botId);
 }
 
 describe("orthogonalPath", () => {
@@ -198,23 +240,7 @@ describe("buildTeamConnectors", () => {
   const sizeOf = (botId: string) =>
     botId === "cto" || botId === "assistant" ? LAYOUT.leadSize : LAYOUT.nodeSize;
 
-  /** Bots a line passes over — its avatar or the name column printed under it. */
-  function botsCrossedBy(path: string): string[] {
-    const samples = samplesOf(path);
-    expect(samples.length).toBeGreaterThan(1);
-    return [...layout.bots]
-      .filter(([botId, node]) => {
-        const size = sizeOf(botId);
-        return samples.some(
-          (sample) =>
-            (Math.abs(sample.x - node.x) <= CONNECTOR_OPTIONS.labelWidth / 2 &&
-              sample.y >= node.y + size / 2 &&
-              sample.y <= node.y + size / 2 + LABEL_SPACE) ||
-            Math.hypot(sample.x - node.x, sample.y - node.y) < size / 2 + 2,
-        );
-      })
-      .map(([botId]) => botId);
-  }
+  const crossedBy = (path: string) => botsCrossedBy(path, layout, sizeOf);
 
   it("never draws a line across a bot it does not connect to", () => {
     // The screenshot bug: the owner's straight line to the assistant's lead ran
@@ -222,12 +248,10 @@ describe("buildTeamConnectors", () => {
     // reported into the other team, and the two teams read as one chain.
     const straightOwnerLine = orthogonalPath([layout.owner, layout.bots.get("assistant")!], 0);
     // Negative control: the line this replaced really is caught by the check.
-    expect(botsCrossedBy(straightOwnerLine)).toContain("cto");
+    expect(crossedBy(straightOwnerLine)).toContain("cto");
 
     for (const connector of connectors) {
-      expect(`${connector.key}: ${botsCrossedBy(connector.d).join(",")}`).toBe(
-        `${connector.key}: `,
-      );
+      expect(`${connector.key}: ${crossedBy(connector.d).join(",")}`).toBe(`${connector.key}: `);
     }
   });
 
@@ -304,6 +328,72 @@ describe("crossTeamDelegationPath", () => {
     for (const sample of samples) {
       if (sample.y > from.y + 40 && sample.y < to.y - 80) {
         expect(sample.x).toBeGreaterThan(LAYOUT.width - 20);
+      }
+    }
+  });
+});
+
+describe("laneDelegationPath", () => {
+  const groups = buildTeamGroups(CROWDED);
+  const layout = buildTeamGroupsLayout(groups, LAYOUT);
+  const lanes = teamConnectorLanes(layout, CONNECTOR_OPTIONS);
+  const sizeOf = (botId: string) =>
+    botId === "cto" || botId === "assistant" ? LAYOUT.leadSize : LAYOUT.nodeSize;
+  const pathBetween = (fromId: string, toId: string) =>
+    laneDelegationPath(layout.bots.get(fromId)!, layout.bots.get(toId)!, {
+      lane: lanes.delegation,
+      fromSize: sizeOf(fromId),
+      toSize: sizeOf(toId),
+    });
+  /** Everyone but the two the line connects: those two it may touch. */
+  const othersCrossedBy = (path: string, fromId: string, toId: string) =>
+    botsCrossedBy(path, layout, sizeOf).filter((botId) => botId !== fromId && botId !== toId);
+
+  it("keeps a lead's delegation off the member rows it passes", () => {
+    // The screenshot bug: the CTO's grey dashed line to a bot further down the
+    // band bowed only 35 units aside, which is inside the opaque name column of
+    // whoever sits between them, so it read as noise across the member row.
+    const bowed = delegationConnectorPath(
+      layout.bots.get("cto")!,
+      layout.bots.get("security")!,
+      LAYOUT.nodeSize,
+    );
+    // Negative control: the curve this replaced really is caught by the check.
+    expect(othersCrossedBy(bowed, "cto", "security")).toContain("backend");
+
+    for (const [fromId, toId] of [
+      ["cto", "devops"],
+      ["cto", "security"],
+      ["cto", "frontend"],
+      ["security", "cto"],
+      ["frontend", "security"],
+    ] as const) {
+      const key = `${fromId}->${toId}`;
+      expect(`${key}: ${othersCrossedBy(pathBetween(fromId, toId), fromId, toId).join(",")}`).toBe(
+        `${key}: `,
+      );
+    }
+  });
+
+  it("runs its lane inside the cross-team lane and clear of every name column", () => {
+    const rightmostColumn = [...layout.bots.values()].reduce(
+      (max, node) => Math.max(max, node.x + CONNECTOR_OPTIONS.labelWidth / 2),
+      0,
+    );
+    expect(lanes.delegation).toBeGreaterThan(rightmostColumn);
+    expect(lanes.delegation).toBeLessThan(lanes.cross);
+
+    // Leaves and arrives from straight above each node, never sideways through
+    // the team-mates sharing a row.
+    const from = layout.bots.get("cto")!;
+    const to = layout.bots.get("devops")!;
+    const samples = samplesOf(pathBetween("cto", "devops"));
+    expect(samples.at(0)).toEqual({ x: from.x, y: from.y - LAYOUT.leadSize / 2 - 6 });
+    expect(samples.at(-1)).toEqual({ x: to.x, y: to.y - LAYOUT.nodeSize / 2 - 8 });
+    // Everything between the two rows sits out in that lane.
+    for (const sample of samples) {
+      if (sample.y > from.y + 40 && sample.y < to.y - 80) {
+        expect(sample.x).toBeGreaterThan(lanes.delegation - 12);
       }
     }
   });
@@ -609,6 +699,28 @@ describe("delegationConnectorPath", () => {
       // The arc clears the label columns: its apex sits above the top edge of
       // the node boxes, in the open band under the owner, either way round.
       expect(apexOf(path).y).toBeLessThan(a.y - 32);
+    }
+  });
+
+  it("clears whoever stands between the two ends of one row", () => {
+    // Same row is the one shape the bow keeps: it arcs over the top of the row
+    // rather than down through it, so the same "crosses a bot?" check that
+    // guards the lanes holds for the bot standing in between.
+    const layout = buildTeamGroupsLayout(buildTeamGroups(CROWDED), LAYOUT);
+    const sizeOf = (botId: string) =>
+      botId === "cto" || botId === "assistant" ? LAYOUT.leadSize : LAYOUT.nodeSize;
+    for (const [fromId, toId] of [
+      ["frontend", "backend"],
+      ["frontend", "devops"],
+      ["devops", "frontend"],
+    ] as const) {
+      const path = delegationConnectorPath(
+        layout.bots.get(fromId)!,
+        layout.bots.get(toId)!,
+        LAYOUT.nodeSize,
+      );
+      const key = `${fromId}->${toId}`;
+      expect(`${key}: ${botsCrossedBy(path, layout, sizeOf).join(",")}`).toBe(`${key}: `);
     }
   });
 
