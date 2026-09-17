@@ -30,9 +30,14 @@ export interface ProviderUpdateRow {
 }
 
 /**
- * One Settings row per provider instance a bot uses, in bot order. Every
- * label comes from the provider snapshot: version, advisory, update state and
- * the post-update test verdict for the installed version.
+ * One Settings row per provider, bots' providers first (in bot order), then
+ * every other provider set up on this computer. Every label comes from the
+ * provider snapshot: version, advisory, update state and the post-update test
+ * verdict for the installed version.
+ *
+ * Listing the unused ones matters: a provider is installed on the machine, not
+ * on a bot, so deleting the last Codex bot used to remove the only place to
+ * update the Codex CLI - while the usage strip went on reporting Codex usage.
  */
 export function buildProviderUpdateRows(
   providers: ReadonlyArray<ServerProvider>,
@@ -60,6 +65,13 @@ export function buildProviderUpdateRows(
             canCheck: false,
           }
         : providerUpdateRow(snapshot, label),
+    );
+  }
+  for (const snapshot of providers) {
+    if (seen.has(snapshot.instanceId)) continue;
+    seen.add(snapshot.instanceId);
+    rows.push(
+      providerUpdateRow(snapshot, resolveBotProvider(snapshot.instanceId, providers).label),
     );
   }
   return rows;

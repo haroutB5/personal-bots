@@ -194,4 +194,24 @@ describe("buildProviderUpdateRows", () => {
       canCheck: false,
     });
   });
+
+  it("still lists a provider on this computer that no bot uses", () => {
+    // Deleting the last Codex bot used to take away the only place to update
+    // the Codex CLI, while the usage strip went on reporting Codex usage.
+    const rows = buildProviderUpdateRows(
+      [
+        claude(),
+        {
+          ...claude(),
+          instanceId: "codex",
+          driver: "codex",
+          displayName: "Codex",
+        } as unknown as ServerProvider,
+      ],
+      [bot("b1", "claudeAgent", 0)],
+    );
+    expect(rows.map((row) => row.instanceId)).toEqual(["claudeAgent", "codex"]);
+    // A real row, not a placeholder: it is installed, so it can be checked.
+    expect(rows[1]).toMatchObject({ canCheck: true });
+  });
 });
