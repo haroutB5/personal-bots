@@ -25,7 +25,23 @@ Policy:
 
 -Mode Auto     deploy + push on green (the scheduled default).
 -Mode DryRun   stop after build + rehearsal; notify "ready to ship".
+-Mode Probe    nightly early warning. Pure script, no LLM, nothing that ships.
 -PreflightOnly steps 0-1 only: read-only checks and what a run would do.
+
+Probe answers one question every morning: "would this Saturday's sync hurt?"
+It fetches, dry-merges into a throwaway detached worktree under
+%USERPROFILE%\.personal-bots\upstream-sync\probe-scratch, and reports how many
+upstream commits are pending, whether the merge is clean and, when it is not,
+which files conflict. A clean merge that touches our build also gets the two
+fast test gates (apps\server src\personal, apps\web src\features\personal);
+nothing else - no typecheck sweep, no install in the sync worktree, no build,
+no migration rehearsal, no deploy, no push, no held-upstream.json, no agent.
+It never touches state.json, the sync branch, the sync worktree or the main
+checkout, and it creates no branch, tag, stash or other ref. Its own memory
+lives in probe-state.json and its log in probe.log, both beside state.json.
+It is quiet on purpose: a clean probe logs one line and sends nothing. A
+notification means a conflict, a real (non-whitelisted) gate failure, or a
+backlog big enough that the Saturday run would refuse it.
 
 Runs from the sync worktree (default C:\Claude\AI\personal-bots-sync), never
 from the main checkout. Runtime state, logs and the notify token live in
@@ -34,14 +50,21 @@ Windows PowerShell 5.1 compatible.
 
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\upstream-sync.ps1 -PreflightOnly
+
+.EXAMPLE
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\upstream-sync.ps1 -Mode Probe
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Auto', 'DryRun')][string]$Mode = 'Auto',
+    [ValidateSet('Auto', 'DryRun', 'Probe')][string]$Mode = 'Auto',
     [switch]$Force,
     [switch]$PreflightOnly,
     [string]$MainRepo = 'C:\Claude\AI\personal-bots',
-    [string]$Node
+    [string]$Node,
+    # -Mode Probe only: notify when this many upstream commits are pending, and
+    # repeat an unchanged finding at most once every this many days.
+    [int]$ProbeBacklogWarn = 250,
+    [int]$ProbeRemindDays = 7
 )
 
 . (Join-Path $PSScriptRoot 'common.ps1')
@@ -52,6 +75,13 @@ $SyncDir = Join-Path $PSScriptRoot 'sync'
 $SyncHome = Join-Path $PbHome 'upstream-sync'
 $StateFile = Join-Path $SyncHome 'state.json'
 $LockFile = Join-Path $SyncHome 'lock'
+# Probe keeps every piece of its own state apart from the Saturday run's, so a
+# probe can never move what Auto reads: its own lock, log, state file and
+# scratch worktree. state.json and held-upstream.json are Auto's alone.
+$ProbeLockFile = Join-Path $SyncHome 'probe-lock'
+$ProbeStateFile = Join-Path $SyncHome 'probe-state.json'
+$ProbeLogFile = Join-Path $SyncHome 'probe.log'
+$ProbeScratch = Join-Path $SyncHome 'probe-scratch'
 $HookTokenFile = Join-Path $SyncHome 'hook-token'
 $UrgotAlerts = 'C:\Claude\AI\urgot\data\alerts\personal-bots-sync.md'
 $SchemaFile = Join-Path $SyncDir 'verdict.schema.json'
@@ -74,6 +104,7 @@ $powershellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powe
 $env:PATH = "$(Join-Path $SyncRepo 'node_modules\.bin');$(Split-Path -Parent $nodeExe);$env:PATH"
 
 $script:LogToFile = $false
+$script:ProbeLog = $null
 $script:StopResult = $null
 $script:StopMessage = $null
 $script:Triage = $null
@@ -84,6 +115,7 @@ function Write-SyncLog([string]$Text) {
     $line = '{0} {1}' -f (Get-Date -Format 'HH:mm:ss'), $Text
     Write-Host $line
     if ($script:LogToFile) { Add-Content -LiteralPath (Join-Path $RunDir 'sync.log') -Value $line -Encoding UTF8 }
+    if ($script:ProbeLog) { Add-Content -LiteralPath $script:ProbeLog -Value $line -Encoding UTF8 }
 }
 
 function Stop-Sync([string]$Result, [string]$Message) {
@@ -328,12 +360,20 @@ function Get-GateList([string]$Base, [string]$New) {
 # Runs every gate. A vitest FAIL that matches known-test-failures.txt is
 # ignored; other failing files get one isolated re-run (timing flakes on this
 # laptop), and only failures that repeat count. Returns the red descriptions.
-function Invoke-Gates([object[]]$Gates, [string]$Label) {
+function Invoke-Gates {
+    param(
+        [object[]]$Gates,
+        [string]$Label,
+        # Probe passes its throwaway scratch worktree and its own log directory;
+        # every other caller gates the sync worktree, as before.
+        [string]$Root = $SyncRepo,
+        [string]$LogDir = $RunDir
+    )
     $known = Get-KnownFailures
     $red = New-Object System.Collections.Generic.List[string]
     foreach ($gate in $Gates) {
-        $dir = Join-Path $SyncRepo $gate.Dir
-        $log = Join-Path $RunDir ('gate-{0}-{1}.log' -f $Label, $gate.Name)
+        $dir = Join-Path $Root $gate.Dir
+        $log = Join-Path $LogDir ('gate-{0}-{1}.log' -f $Label, $gate.Name)
         Write-SyncLog "gate $($gate.Name) ..."
         $res = Invoke-Proc -FilePath $gate.File -ArgList $gate.Args -WorkingDirectory $dir -TimeoutSeconds 2400 -LogPath $log
         if ($gate.Kind -eq 'exit') {
@@ -353,7 +393,7 @@ function Invoke-Gates([object[]]$Gates, [string]$Label) {
         }
         $files = @($unknown | ForEach-Object { ($_ -split '\s+>\s+')[0] } | Sort-Object -Unique)
         Write-SyncLog "gate $($gate.Name): re-running $($files.Count) failing file(s) once"
-        $rerunLog = Join-Path $RunDir ('gate-{0}-{1}-rerun.log' -f $Label, $gate.Name)
+        $rerunLog = Join-Path $LogDir ('gate-{0}-{1}-rerun.log' -f $Label, $gate.Name)
         $rerunArgs = @('test', 'run')
         if ($gate.Args -contains '--project') { $rerunArgs += @('--project', 'unit') }
         $rerun = Invoke-Proc -FilePath $gate.File -ArgList ($rerunArgs + $files) -WorkingDirectory $dir -TimeoutSeconds 1800 -LogPath $rerunLog
@@ -783,6 +823,182 @@ function Invoke-Sync {
     $script:StopResult = 'down'
 }
 
+# ---------------------------------------------------------------- probe
+#
+# Nightly early warning. Pure script: no agent, no build, no deploy, no push,
+# and not one write to anything the Saturday run reads. Everything it needs to
+# remember lives in probe-state.json.
+#
+# Cleanup contract for the scratch merge (the only artefact Probe creates):
+#  - the dry merge itself is `git merge-tree --write-tree`, which touches no
+#    ref, no index and no worktree; it only writes loose objects.
+#  - to run gates on a clean result the tree is wrapped by `git commit-tree`.
+#    That commit is never pointed at by a branch, tag, note, stash or HEAD of
+#    anything that survives the run, so it stays unreachable and git gc reaps
+#    it. No ref is created, therefore no ref has to be deleted.
+#  - the scratch worktree is detached at that unreachable commit, lives outside
+#    every checkout (%USERPROFILE%\.personal-bots\upstream-sync\probe-scratch)
+#    and is removed in a finally block.
+#  - a kill -9 is covered too: Remove-ProbeScratch also runs at the START of
+#    every probe, so a scratch left by an interrupted run is gone before the
+#    next one begins. Cleanup is therefore idempotent, not best-effort.
+
+$AutoResolvedConflicts = @('apps/web/src/routeTree.gen.ts', 'apps/server/src/persistence/Migrations.ts')
+
+function Read-ProbeState {
+    if (-not (Test-Path -LiteralPath $ProbeStateFile -PathType Leaf)) { return $null }
+    try { return (Get-Content -LiteralPath $ProbeStateFile -Raw | ConvertFrom-Json) } catch { return $null }
+}
+
+function Save-ProbeState([hashtable]$Changes) {
+    $state = [ordered]@{
+        lastRunAt        = $null
+        lastResult       = $null
+        lastUpstream     = $null
+        lastPending      = 0
+        lastConflicts    = @()
+        lastNotifiedKey  = $null
+        lastNotifiedAt   = $null
+        lastNotifiedText = $null
+    }
+    $old = Read-ProbeState
+    if ($old) { foreach ($prop in $old.PSObject.Properties) { $state[$prop.Name] = $prop.Value } }
+    foreach ($key in $Changes.Keys) { $state[$key] = $Changes[$key] }
+    $state.lastRunAt = (Get-Date).ToUniversalTime().ToString('o')
+    Set-Content -LiteralPath $ProbeStateFile -Value ($state | ConvertTo-Json -Depth 5) -Encoding UTF8
+}
+
+# One push notification per distinct finding. The same finding repeats silently
+# until it changes, with a single reminder once a week so a conflict that sits
+# there for a month is not forgotten. Being ignorable is the failure mode here.
+function Send-ProbeNotify([string]$Key, [string]$Message) {
+    $state = Read-ProbeState
+    if ($state -and $state.lastNotifiedKey -eq $Key -and $state.lastNotifiedAt) {
+        $age = (Get-Date).ToUniversalTime() - ([datetime]$state.lastNotifiedAt).ToUniversalTime()
+        if ($age.TotalDays -lt $ProbeRemindDays) {
+            Write-SyncLog ("notify suppressed (same finding as {0:0.0} day(s) ago): {1}" -f $age.TotalDays, $Message)
+            return $false
+        }
+    }
+    Send-Notify $Message
+    Save-ProbeState @{ lastNotifiedKey = $Key; lastNotifiedAt = (Get-Date).ToUniversalTime().ToString('o'); lastNotifiedText = $Message }
+    return $true
+}
+
+function Remove-ProbeScratch {
+    # Deliberately NOT `git worktree remove`: measured on this laptop it fails
+    # with "Filename too long" on pnpm's deep node_modules paths, and it
+    # deregisters the worktree before it fails, so the directory is orphaned
+    # and git no longer knows about it. rmdir /s /q handles those paths, and
+    # unlinks reparse points instead of following them, so pnpm's symlink farm
+    # is removed and never dereferenced. prune then clears the registration.
+    if (Test-Path -LiteralPath $ProbeScratch) {
+        Write-SyncLog "removing scratch worktree $ProbeScratch"
+        [void](Invoke-Proc -FilePath $env:ComSpec -ArgList @('/c', 'rmdir', '/s', '/q', $ProbeScratch) `
+                -WorkingDirectory $SyncHome -TimeoutSeconds 1800)
+    }
+    [void](Invoke-Git -GitArgs @('worktree', 'prune') -AllowFail)
+    if (Test-Path -LiteralPath $ProbeScratch) { throw "Could not remove the probe scratch worktree $ProbeScratch." }
+}
+
+function Get-ProbeGateList([string]$Root) {
+    $vp = Join-Path $Root 'node_modules\.bin\vp.cmd'
+    # The fast pair only. Never an unfiltered `vp test run` in apps\server: it
+    # wedges for 15+ minutes, which is exactly what a 07:00 probe must not do.
+    return @(
+        @{ Name = 'test-server'; Dir = 'apps\server'; File = $vp; Args = @('test', 'run', 'src/personal'); Kind = 'vitest' },
+        @{ Name = 'test-web'; Dir = 'apps\web'; File = $vp; Args = @('test', 'run', '--project', 'unit', 'src/features/personal'); Kind = 'vitest' }
+    )
+}
+
+function Invoke-ProbeGates([string]$Tree, [string]$LogDir) {
+    $commit = Get-GitText -GitArgs @('commit-tree', $Tree, '-p', $OriginMain, '-p', $UpstreamMain,
+        '-m', 'probe: dry merge of upstream/main (unreferenced, never pushed)')
+    Write-SyncLog "scratch worktree at $ProbeScratch (unreferenced commit $($commit.Substring(0,9)))"
+    [void](Invoke-Git -GitArgs @('worktree', 'add', '--detach', '--quiet', $ProbeScratch, $commit))
+    # The scratch has no node_modules yet, so bootstrap with the sync worktree's
+    # vp. Plain `vp i` (not --frozen-lockfile) to mirror what Auto does: a
+    # merged lockfile is allowed to need regenerating, and only in the scratch.
+    $install = Invoke-Proc -FilePath (Join-Path $SyncRepo 'node_modules\.bin\vp.cmd') -ArgList @('i') `
+        -WorkingDirectory $ProbeScratch -TimeoutSeconds 1800 -LogPath (Join-Path $LogDir 'probe-install.log')
+    Write-SyncLog "scratch install exited $($install.Code)"
+    if ($install.Code -ne 0) { return , @("install: vp i failed on the merged tree (exit $($install.Code); log $LogDir\probe-install.log)") }
+    return , (Invoke-Gates -Gates (Get-ProbeGateList -Root $ProbeScratch) -Label 'probe' -Root $ProbeScratch -LogDir $LogDir)
+}
+
+function Invoke-Probe {
+    if ((Resolve-Path -LiteralPath $SyncRepo).Path -eq (Resolve-Path -LiteralPath $MainRepo).Path) {
+        throw 'upstream-sync.ps1 must run from the sync worktree, not the main checkout.'
+    }
+    Remove-ProbeScratch
+    [void](Invoke-Git -GitArgs @('fetch', 'origin'))
+    [void](Invoke-Git -GitArgs @('fetch', 'upstream'))
+    $base = Get-GitText -GitArgs @('merge-base', $OriginMain, $UpstreamMain)
+    $new = Get-GitText -GitArgs @('rev-parse', $UpstreamMain)
+    $newShort = $new.Substring(0, 9)
+    if ($new -eq $base) {
+        Write-SyncLog 'probe: upstream has nothing new'
+        Save-ProbeState @{ lastResult = 'no-new'; lastUpstream = $new; lastPending = 0; lastConflicts = @() }
+        return 'no-new'
+    }
+    $pending = [int](Get-GitText -GitArgs @('rev-list', '--count', "$base..$new"))
+    $relevant = [int](Get-GitText -GitArgs (@('rev-list', '--count', "$base..$new", '--') + $RelevantPaths))
+
+    # merge-tree is the whole dry run: no ref, no index, no worktree, no branch.
+    # Exit 0 = clean and the only line is the merged tree; exit 1 = the tree
+    # plus the conflicted paths.
+    $mergeTree = Invoke-Git -GitArgs @('merge-tree', '--write-tree', '--name-only', '--no-messages', $OriginMain, $new) -AllowFail
+    $lines = @($mergeTree.Out -split "`r?`n" | Where-Object { $_ })
+    if ($lines.Count -eq 0) { throw "git merge-tree produced no output (exit $($mergeTree.Code)): $($mergeTree.Err.Trim())" }
+    $tree = $lines[0]
+    $conflicts = @($lines | Select-Object -Skip 1)
+    $handled = @($conflicts | Where-Object { $AutoResolvedConflicts -contains $_ })
+    $real = @($conflicts | Where-Object { $AutoResolvedConflicts -notcontains $_ })
+    Write-SyncLog ("probe: upstream {0}, {1} commit(s) pending, {2} touching our build, {3} conflicted path(s) ({4} auto-resolved)" -f `
+            $newShort, $pending, $relevant, $conflicts.Count, $handled.Count)
+    if ($handled.Count -gt 0) { Write-SyncLog "probe: auto-resolved conflicts (not a finding): $($handled -join ', ')" }
+
+    $result = 'clean'
+    $notified = $false
+    if ($real.Count -gt 0) {
+        $result = 'conflict'
+        $sorted = @($real | Sort-Object)
+        $limit = ''
+        if ($conflicts.Count -gt $MaxConflicts) { $limit = " That is over the sync's limit of $MaxConflicts conflicted paths, so Saturday's run will refuse it outright." }
+        $notified = Send-ProbeNotify -Key ("conflict:" + ($sorted -join '|')) -Message (
+            "Bots upstream probe: the weekly sync will hit $($sorted.Count) merge conflict(s) (upstream $newShort, $pending commit(s) pending). Files: " +
+            ($sorted -join ', ') + ".$limit Nothing was merged, built or deployed.")
+    } elseif ($relevant -eq 0) {
+        $result = 'clean-nothing-relevant'
+        Write-SyncLog 'probe: merge is clean and no pending commit touches our build; gates skipped'
+    } else {
+        $logDir = Join-Path $SyncHome 'probe-gate-logs'
+        New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+        Write-SyncLog "probe: merge is clean; running the two fast gates in the scratch worktree"
+        $red = @(Invoke-ProbeGates -Tree $tree -LogDir $logDir)
+        if ($red.Count -gt 0) {
+            $result = 'gates-red'
+            $sorted = @($red | Sort-Object)
+            $notified = Send-ProbeNotify -Key ("gates:" + ($sorted -join '|')) -Message (
+                "Bots upstream probe: the merge with upstream $newShort is clean but $($sorted.Count) fast gate(s) fail on the merged tree: " +
+                ($sorted -join ' | ') + ". Nothing was merged, built or deployed.")
+        } else {
+            Write-SyncLog 'probe: fast gates green on the merged tree'
+        }
+    }
+
+    if (-not $notified -and $pending -ge $ProbeBacklogWarn) {
+        # Bucketed so a growing backlog warns roughly once per 50 commits
+        # instead of every single morning.
+        $bucket = [int]([math]::Floor($pending / 50))
+        $notified = Send-ProbeNotify -Key ("backlog:$bucket") -Message (
+            "Bots upstream probe: $pending upstream commit(s) are waiting (upstream $newShort). The sync refuses more than $MaxCommits, so this one is heading for a manual merge.")
+    }
+    Save-ProbeState @{ lastResult = $result; lastUpstream = $new; lastPending = $pending; lastConflicts = @($real | Sort-Object) }
+    Write-SyncLog "probe result: $result$(if (-not $notified) { ' (nothing notified)' })"
+    return $result
+}
+
 # ---------------------------------------------------------------- main
 
 New-Item -ItemType Directory -Force -Path $SyncHome | Out-Null
@@ -794,10 +1010,43 @@ if (Test-Path -LiteralPath $LockFile) {
         exit 0
     }
 }
-if (-not $PreflightOnly) {
+$isProbe = $Mode -eq 'Probe'
+if ($isProbe) {
+    # Probe honours the sync lock above (a running sync wins, always) but takes
+    # its own, so a slow probe can never make the Saturday run exit 0 and skip
+    # a week. Two probes still never overlap.
+    if (Test-Path -LiteralPath $ProbeLockFile) {
+        $plock = $null
+        try { $plock = Get-Content -LiteralPath $ProbeLockFile -Raw | ConvertFrom-Json } catch { $plock = $null }
+        if ($plock -and (Get-Process -Id ([int]$plock.pid) -ErrorAction SilentlyContinue)) {
+            Write-Host "Another upstream probe is running (pid $($plock.pid), since $($plock.startedAt))."
+            exit 0
+        }
+    }
+    $script:ProbeLog = $ProbeLogFile
+    Set-Content -LiteralPath $ProbeLockFile -Value (@{ pid = $PID; startedAt = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json) -Encoding ASCII
+} elseif (-not $PreflightOnly) {
     New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
     $script:LogToFile = $true
     Set-Content -LiteralPath $LockFile -Value (@{ pid = $PID; startedAt = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json) -Encoding ASCII
+}
+
+if ($isProbe) {
+    $exitCode = 0
+    Write-SyncLog "upstream probe $Stamp, sync worktree $SyncRepo"
+    try {
+        [void](Invoke-Probe)
+    } catch {
+        $detail = $_.Exception.Message
+        Write-SyncLog "probe ERROR: $detail"
+        [void](Send-ProbeNotify -Key ("error:" + $detail) -Message "Bots upstream probe failed before it could report anything: $detail (log $ProbeLogFile). Nothing was merged, built or deployed.")
+        Save-ProbeState @{ lastResult = 'error' }
+        $exitCode = 1
+    } finally {
+        try { Remove-ProbeScratch } catch { Write-SyncLog "probe cleanup WARNING: $($_.Exception.Message)" }
+        if (Test-Path -LiteralPath $ProbeLockFile) { Remove-Item -LiteralPath $ProbeLockFile -Force }
+    }
+    exit $exitCode
 }
 
 $exitCode = 0
