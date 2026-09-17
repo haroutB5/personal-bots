@@ -20,7 +20,7 @@
  *
  * @module personal/botInstructionCoverage
  */
-import * as NodeFs from "node:fs";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 /**
@@ -51,14 +51,14 @@ export interface DriverInstructionCoverage {
   readonly callSite: string | null;
 }
 
-const readFile = (file: string): string => NodeFs.readFileSync(file, "utf8");
+const readFile = (file: string): string => NodeFS.readFileSync(file, "utf8");
 
 const localImportsOf = (file: string): ReadonlyArray<string> => {
   const directory = NodePath.dirname(file);
   const resolved: Array<string> = [];
   for (const match of readFile(file).matchAll(RELATIVE_IMPORT_PATTERN)) {
     const target = NodePath.resolve(directory, match[1]!);
-    if (NodeFs.existsSync(target)) resolved.push(target);
+    if (NodeFS.existsSync(target)) resolved.push(target);
   }
   return resolved;
 };
@@ -98,7 +98,7 @@ export function scanDriverInstructionCoverage(
   options?: { readonly maxDepth?: number },
 ): ReadonlyArray<DriverInstructionCoverage> {
   const driversDirectory = NodePath.join(providerDirectory, "Drivers");
-  const driverFiles = NodeFs.readdirSync(driversDirectory)
+  const driverFiles = NodeFS.readdirSync(driversDirectory)
     .filter((name) => name.endsWith("Driver.ts") && !name.includes(".test."))
     .sort();
   const coverage: Array<DriverInstructionCoverage> = [];

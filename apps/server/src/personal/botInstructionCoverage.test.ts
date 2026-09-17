@@ -1,5 +1,5 @@
 import * as NodePath from "node:path";
-import * as NodeUrl from "node:url";
+import * as NodeURL from "node:url";
 
 import { assert, describe, it } from "@effect/vitest";
 import { BOT_INSTRUCTION_DRIVER_KINDS } from "@t3tools/contracts";
@@ -8,7 +8,7 @@ import { BUILT_IN_DRIVERS } from "../provider/builtInDrivers.ts";
 import { scanDriverInstructionCoverage } from "./botInstructionCoverage.ts";
 
 const providerDirectory = NodePath.resolve(
-  NodePath.dirname(NodeUrl.fileURLToPath(import.meta.url)),
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
   "../provider",
 );
 
