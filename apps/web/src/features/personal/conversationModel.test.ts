@@ -13,6 +13,7 @@ import type { TimelineEntry } from "~/session-logic";
 import {
   autoRetryNotice,
   buildConversationItems,
+  contextBadgeLabel,
   conversationStateLabel,
   deriveConversationState,
   formatDayDivider,
@@ -604,5 +605,26 @@ describe("placeSecretRequestCards", () => {
       "a2",
       "secret:secret-2",
     ]);
+  });
+});
+
+describe("contextBadgeLabel", () => {
+  it("says nothing until the chat is heavy", () => {
+    expect(contextBadgeLabel(0)).toBeNull();
+    expect(contextBadgeLabel(120_000)).toBeNull();
+    // Just under the line: still quiet.
+    expect(contextBadgeLabel(499_999)).toBeNull();
+  });
+
+  it("shows the size once the chat passes the threshold", () => {
+    expect(contextBadgeLabel(500_000)).toBe("500k");
+    expect(contextBadgeLabel(612_000)).toBe("612k");
+    expect(contextBadgeLabel(1_200_000)).toBe("1.2m");
+  });
+
+  it("shows nothing when no context size has been reported", () => {
+    expect(contextBadgeLabel(null)).toBeNull();
+    expect(contextBadgeLabel(undefined)).toBeNull();
+    expect(contextBadgeLabel(Number.NaN)).toBeNull();
   });
 });

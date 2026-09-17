@@ -8,6 +8,8 @@ import type {
 } from "@t3tools/contracts";
 import { classifyTurnFailure } from "@t3tools/shared/turnFailure";
 
+import { formatContextWindowTokens } from "~/lib/contextWindow";
+
 import type { ChatMessage, ProposedPlan } from "~/types";
 import type { TimelineEntry, WorkLogEntry } from "~/session-logic";
 
@@ -90,6 +92,22 @@ export function deriveConversationState(input: {
   if (input.waitingForAgent === true) return "delegating";
   if (status === "error" || input.latestTurn?.state === "error") return "error";
   return "idle";
+}
+
+/** Chats below this carry their context quietly; above it, the header says so. */
+export const CONTEXT_BADGE_MIN_TOKENS = 500_000;
+
+/**
+ * The context size to show beside the bot's name, or null to show nothing.
+ *
+ * A long chat costs more per turn and eventually compacts, losing detail. The
+ * number is only worth the space once it is large, so the badge stays hidden
+ * until the chat is genuinely heavy.
+ */
+export function contextBadgeLabel(usedTokens: number | null | undefined): string | null {
+  if (usedTokens === null || usedTokens === undefined) return null;
+  if (!Number.isFinite(usedTokens) || usedTokens < CONTEXT_BADGE_MIN_TOKENS) return null;
+  return formatContextWindowTokens(usedTokens);
 }
 
 /**

@@ -30,6 +30,7 @@ import { ChevronLeft, Ellipsis } from "lucide-react";
 
 import { buildRunningThreadTurnInterruptInput } from "~/components/ChatView.logic";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
+import { deriveLatestContextWindowSnapshot } from "~/lib/contextWindow";
 import { cn } from "~/lib/utils";
 import {
   derivePhase,
@@ -58,6 +59,7 @@ import {
   botLastSpokeAtMs,
   autoRetryNotice,
   buildConversationItems,
+  contextBadgeLabel,
   CONVERSATION_STATE_LABEL,
   type ConversationState,
   conversationStateLabel,
@@ -345,6 +347,11 @@ export function ConversationScreen({
     for (const request of userInputs) requests.set(request.requestId, request);
     setSeenUserInputs({ threadId, requests });
   }
+  // The chat's own context size, shown in the header once it is large.
+  const contextBadge = useMemo(
+    () => contextBadgeLabel(deriveLatestContextWindowSnapshot(activities)?.usedTokens),
+    [activities],
+  );
   const questionCards = useMemo(() => {
     // Every question ever asked on this thread, so reopening a chat still shows
     // what was asked and answered instead of a reply to an invisible question.
@@ -664,9 +671,21 @@ export function ConversationScreen({
               motion={motionForConversationState(conversationState)}
             />
             <div className="min-w-0 flex-1">
-              <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
-                {bot.name}
-              </h1>
+              <span className="flex min-w-0 items-baseline gap-1.5">
+                <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
+                  {bot.name}
+                </h1>
+                {contextBadge !== null ? (
+                  // Only on a heavy chat: it costs more per turn and compaction
+                  // is coming, so the size is worth the space by then.
+                  <span
+                    aria-label={`Chat context ${contextBadge} tokens`}
+                    className="shrink-0 text-[12px] leading-6 font-medium tabular-nums text-[var(--personal-text-tertiary)]"
+                  >
+                    {contextBadge}
+                  </span>
+                ) : null}
+              </span>
               {provider !== null || conversationState !== "idle" ? (
                 <ConversationSubtitle
                   state={conversationState}
