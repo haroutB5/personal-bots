@@ -10,6 +10,8 @@ AgentSessionScanner.test.ts > AgentSessionScanner > scan > matches a persisted p
 AgentSessionScanner.test.ts > AgentSessionScanner > scan > excludes sandboxes reached through a symlink into the worktrees dir
 # Expects a JSON-escaped Windows path with single backslashes.
 userInputAttachments.test.ts > question answer paths > keeps selected values intact and appends an actual readable server path
+# Asserts a POSIX-separated path; Windows joins with backslashes (upstream, 2026-09-17 sync).
+OpenCodeProvider.test.ts > reads Go limits with the instance's XDG credentials and preserves reset times
 # Environment-dependent (known before the fork's first sync).
 connectCliAuth.test.ts
 McpHttpServer.test.ts > saves the snapshot PNG
