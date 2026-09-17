@@ -12,6 +12,7 @@ import {
   botTeam,
   CommandId,
   DEFAULT_PERSONAL_BOT_TEAM,
+  driverCarriesBotInstructions,
   isProviderAvailable,
   PersonalBotId,
   type PersonalBotTeam,
@@ -210,7 +211,15 @@ export const make = Effect.gen(function* () {
         return [] as ReadonlyArray<PersonalBot>;
       }
       const available = (yield* providers.getProviders).filter(
-        (snapshot) => isProviderAvailable(snapshot) && snapshot.enabled && snapshot.installed,
+        (snapshot) =>
+          isProviderAvailable(snapshot) &&
+          snapshot.enabled &&
+          snapshot.installed &&
+          // Seeding onto a provider whose adapter drops `systemInstructions`
+          // would hand the owner bots that answer as the bare model, with no
+          // name and none of the app rules. Better no seed than a mute one:
+          // the flag stays unset below, so a later boot seeds properly.
+          driverCarriesBotInstructions(snapshot.driver),
       );
       if (available.length === 0) {
         // No provider to seed from yet. The flag stays unset so the next

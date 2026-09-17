@@ -9,6 +9,39 @@ import {
 } from "./baseSchemas.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ModelSelection, OrchestrationMessageRole } from "./orchestration.ts";
+import { ProviderDriverKind } from "./providerInstance.ts";
+
+/**
+ * Driver kinds whose adapter actually carries a personal bot's persona to
+ * the model, i.e. the adapters that pass `systemInstructions` through
+ * `withBotInstructions`. On every other driver the bot's name, its
+ * instructions and the app rules from `personalBotInstructions` are dropped
+ * before the prompt leaves the server, and the user gets the bare model
+ * answering with no sign that anything is missing.
+ *
+ * This is an allowlist on purpose. `ProviderDriverKind` is an open slug (a
+ * fork or a future upstream provider can introduce one this build has never
+ * heard of), so anything not listed here is treated as not carrying
+ * instructions and is kept out of the bot form and out of seeding.
+ *
+ * Do not hand-edit this to add a driver. Wire the adapter to
+ * `withBotInstructions` first; `botInstructionCoverage.test.ts` in the
+ * server reads the adapter sources and fails if this list and the code
+ * disagree in either direction.
+ */
+export const BOT_INSTRUCTION_DRIVER_KINDS: ReadonlyArray<ProviderDriverKind> = [
+  ProviderDriverKind.make("claudeAgent"),
+  ProviderDriverKind.make("codex"),
+  ProviderDriverKind.make("opencode"),
+];
+
+/**
+ * Whether a bot running on this driver kind will actually be given its
+ * persona. Unknown slugs answer `false` — fail closed.
+ */
+export function driverCarriesBotInstructions(driver: string): boolean {
+  return (BOT_INSTRUCTION_DRIVER_KINDS as ReadonlyArray<string>).includes(driver);
+}
 
 export const PersonalBotId = TrimmedNonEmptyString.pipe(Schema.brand("PersonalBotId"));
 export type PersonalBotId = typeof PersonalBotId.Type;

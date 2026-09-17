@@ -22,7 +22,7 @@ import * as PersonalBotService from "./PersonalBotService.ts";
 
 const makeProviderSnapshot = (input: {
   readonly instanceId: string;
-  readonly driver: "claudeAgent" | "codex";
+  readonly driver: "claudeAgent" | "codex" | "grok";
   readonly defaultModel: string;
 }): ServerProvider =>
   ({
@@ -54,6 +54,10 @@ const claudeSnapshot = () =>
 
 const codexSnapshot = () =>
   makeProviderSnapshot({ instanceId: "codex", driver: "codex", defaultModel: "gpt-6-astra" });
+
+/** A ready provider whose adapter drops `systemInstructions` (ACP; no persona). */
+const grokSnapshot = () =>
+  makeProviderSnapshot({ instanceId: "grok", driver: "grok", defaultModel: "grok-4" });
 
 interface PersonalBotsTestContext {
   readonly snapshots: Array<ServerProvider>;
@@ -267,6 +271,29 @@ it.effect(
         expect(bot.modelSelection.model).toBe("gpt-6-astra");
       }
       expect(yield* service.seedDefaultsIfNeeded).toEqual([]);
+    }).pipe(Effect.provide(makeTestLayer(context)));
+  },
+);
+
+it.effect(
+  "seeding skips a provider that cannot carry bot instructions and waits for one that can",
+  () => {
+    // Grok is ready and would be `available[0]`, but its ACP adapter never
+    // passes `systemInstructions`, so a bot seeded onto it would answer as
+    // the bare model with no name and no app rules.
+    const context = makeContext([grokSnapshot()]);
+    return Effect.gen(function* () {
+      const service = yield* PersonalBotService.PersonalBotService;
+      expect(yield* service.seedDefaultsIfNeeded).toEqual([]);
+      expect((yield* service.list()).bots.length).toBe(0);
+
+      // The seeded flag stayed unset, so a real provider still seeds later.
+      context.snapshots.push(claudeSnapshot());
+      const seeded = yield* service.seedDefaultsIfNeeded;
+      expect(seeded.length).toBe(4);
+      for (const bot of seeded) {
+        expect(bot.modelSelection.instanceId).toBe("claude");
+      }
     }).pipe(Effect.provide(makeTestLayer(context)));
   },
 );
