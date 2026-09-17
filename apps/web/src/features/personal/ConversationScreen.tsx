@@ -52,6 +52,7 @@ import { useComputerFeed } from "./computer/computerState";
 import { ConversationRoutinesPanel } from "./ConversationRoutinesPanel";
 import {
   botLastSpokeAtMs,
+  autoRetryNotice,
   buildConversationItems,
   CONVERSATION_STATE_LABEL,
   type ConversationState,
@@ -487,8 +488,12 @@ export function ConversationScreen({
 
   const botName = headerName.status === "ready" ? headerName.name : null;
   const failedOnLimit = conversationState === "rate_limited" && thread?.session?.status === "error";
+  // The server retries a transient reply failure on its own. Say so while it
+  // waits, and say it gave up once the attempts are spent; either way the
+  // provider's own line stays behind "Details".
+  const retryNotice = autoRetryNotice(thread?.session?.providerRetry);
   const sessionError =
-    conversationState === "error" || failedOnLimit
+    conversationState === "error" || failedOnLimit || retryNotice !== null
       ? (thread?.session?.lastError ?? "The last turn failed.")
       : null;
   // Never a raw exception in the chat: a plain sentence, the provider's line behind "Details".
@@ -643,7 +648,7 @@ export function ConversationScreen({
             }
             onAnswerQuestion={(requestId, answers) => void onAnswerQuestion(requestId, answers)}
             onDismissQuestion={(requestId) => void onDismissQuestion(requestId)}
-            errorText={actionError ?? sessionErrorInfo?.message ?? null}
+            errorText={actionError ?? retryNotice ?? sessionErrorInfo?.message ?? null}
             errorDetail={actionError === null ? (sessionErrorInfo?.detail ?? null) : null}
             loadEarlier={loadEarlier}
             now={now}

@@ -561,6 +561,13 @@ export const OrchestrationSessionProviderRetry = Schema.Struct({
   ...ProviderRetryInfo.fields,
   provider: TrimmedNonEmptyString,
   observedAt: IsoDateTime,
+  /**
+   * Set only when the server itself is re-running a failed turn: `pending`
+   * while an attempt waits or is in flight, `exhausted` once the attempts are
+   * spent. Absent for a provider's own wait and on older events. It rides
+   * inside this struct's existing JSON column, so it needs no migration.
+   */
+  auto: Schema.optional(Schema.Literals(["pending", "exhausted"])),
 });
 export type OrchestrationSessionProviderRetry = typeof OrchestrationSessionProviderRetry.Type;
 

@@ -106,6 +106,7 @@ import {
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
+import * as PersonalTurnRetry from "./personal/PersonalTurnRetryService.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -517,6 +518,9 @@ const PersonalReactorsLive = Layer.effectDiscard(
     yield* (yield* PersonalMemoryService.PersonalMemoryService).start();
     yield* (yield* PersonalPushService.PersonalPushService).start();
     yield* (yield* PersonalProviderUpdates.PersonalProviderUpdates).start();
+    // Re-runs a bot reply that died on a transient provider fault. Subscribes
+    // here so it never misses the turn-start it has to track.
+    yield* (yield* PersonalTurnRetry.PersonalTurnRetry).start();
   }),
 );
 
@@ -526,6 +530,7 @@ const PersonalReactorsLive = Layer.effectDiscard(
 const PersonalLayerLive = PersonalReactorsLive.pipe(
   // Consumes the push service below and the provider/orchestration runtime.
   Layer.provideMerge(PersonalProviderUpdates.layer),
+  Layer.provideMerge(PersonalTurnRetry.layer),
   Layer.provideMerge(
     PersonalPushService.layer.pipe(
       Layer.provide(PersonalPushService.transportLive),

@@ -2,9 +2,11 @@ import type { PendingApproval, PendingUserInput } from "@t3tools/client-runtime/
 import type {
   OrchestrationLatestTurn,
   OrchestrationSession,
+  OrchestrationSessionProviderRetry,
   PersonalBrowserStatus,
   PersonalTask,
 } from "@t3tools/contracts";
+import { classifyTurnFailure } from "@t3tools/shared/turnFailure";
 
 import type { ChatMessage, ProposedPlan } from "~/types";
 import type { TimelineEntry, WorkLogEntry } from "~/session-logic";
@@ -52,6 +54,10 @@ export function providerWaitState(
   if (retry.kind === "rate_limited" && (running || session.status === "error")) {
     return "rate_limited";
   }
+  // The server's own retry of a failed turn outlives that turn by design: it
+  // is waiting on a clock, with the session sitting in `error` until it fires.
+  if (retry.auto === "pending") return "retrying";
+  if (retry.auto === "exhausted") return null;
   return retry.kind === "retrying" && running ? "retrying" : null;
 }
 
@@ -155,28 +161,69 @@ export function friendlyTurnError(
         ? `${withoutStack.slice(0, DETAIL_MAX)}…`
         : withoutStack;
 
-  const text = raw.toLowerCase();
+  // The same reading the server retries on, so the chat can never call a
+  // failure transient that the server calls a refusal, or the other way round.
+  const kind = classifyTurnFailure(raw);
   let message = fallback;
-  if (/session limit|usage limit|rate[_ ]limit|\b429\b|hit your .*limit/.test(text)) {
-    const reset = /resets?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s?(?:am|pm)?)/i.exec(raw)?.[1];
-    message =
-      reset === undefined
-        ? "Usage limit reached. Try again later."
-        : `Usage limit reached. It resets at ${reset}.`;
-  } else if (/thread is closed|sessionclosed|session (?:was )?(?:closed|stopped)/.test(text)) {
-    message = "This chat's session ended. Send a message to start it again.";
-  } else if (
-    /not (?:logged|signed) in|unauthori[sz]ed|\b401\b|authentication (?:failed|required)|please run \/login/.test(
-      text,
-    )
-  ) {
-    message = "The provider isn't signed in on your computer.";
-  } else if (/timed? ?out|etimedout/.test(text)) {
-    message = "The reply took too long and was stopped. Try again.";
-  } else if (/enotfound|econnrefused|econnreset|fetch failed|network error/.test(text)) {
-    message = "Couldn't reach the provider. Check your computer's internet connection.";
+  switch (kind) {
+    case "usage_limit": {
+      const reset = /resets?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s?(?:am|pm)?)/i.exec(raw)?.[1];
+      message =
+        reset === undefined
+          ? "Usage limit reached. Try again later."
+          : `Usage limit reached. It resets at ${reset}.`;
+      break;
+    }
+    case "session_closed":
+      message = "This chat's session ended. Send a message to start it again.";
+      break;
+    case "signin":
+      message = "The provider isn't signed in on your computer.";
+      break;
+    case "invalid_request":
+      message = "The provider couldn't run that request.";
+      break;
+    case "upstream":
+      message = "The provider's service didn't answer. Try again in a moment.";
+      break;
+    case "timeout":
+      message = "The reply took too long and was stopped. Try again.";
+      break;
+    case "network":
+      message = "Couldn't reach the provider. Check your computer's internet connection.";
+      break;
+    // A turn the owner stopped is not an error worth renaming, and an
+    // unrecognised one must not be guessed at: both keep the caller's sentence.
+    case "interrupted":
+    case "unknown":
+      break;
   }
   return { message, detail: detail === message ? null : detail };
+}
+
+/**
+ * What the chat says about a failed reply the server is retrying by itself.
+ * Null when no automatic retry is in play, so the caller keeps its own text.
+ *
+ * Honesty is the whole point of this function: while a retry is pending it
+ * says so and counts it, and once the attempts are spent it says they are
+ * spent rather than leaving a hopeful "trying again" on screen forever. The
+ * provider's own line is untouched either way, and stays under "Details".
+ */
+export function autoRetryNotice(
+  retry: OrchestrationSessionProviderRetry | null | undefined,
+): string | null {
+  if (retry === null || retry === undefined || retry.auto === undefined) return null;
+  const max = retry.maxAttempts ?? 0;
+  if (retry.auto === "pending") {
+    const attempt = retry.attempt ?? 1;
+    return max > 1
+      ? `That reply failed. Trying again (${attempt} of ${max}).`
+      : "That reply failed. Trying again.";
+  }
+  return max === 1
+    ? "That reply failed, and trying again once didn't help. Send your message again."
+    : `That reply failed, and ${max} automatic retries didn't help. Send your message again.`;
 }
 
 export type ConversationHeaderName =

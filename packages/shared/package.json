@@ -303,6 +303,10 @@
       "types": "./src/usageLimits.ts",
       "import": "./src/usageLimits.ts"
     },
+    "./turnFailure": {
+      "types": "./src/turnFailure.ts",
+      "import": "./src/turnFailure.ts"
+    },
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",
       "import": "./src/desktopAppControl.ts"
