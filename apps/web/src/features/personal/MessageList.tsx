@@ -23,6 +23,8 @@ import { type ConversationItem, formatDayDivider } from "./conversationModel";
 import type { ServerTurn } from "./delegationModel";
 import { QuestionCard } from "./QuestionCard";
 import type { QuestionCardItem, UserInputAnswers } from "./questionCards";
+import { SecretRequestCard } from "./SecretRequestCard";
+import type { SecretRequestCardItem } from "./secretRequestCards";
 import { ToolDetails } from "./ToolDetails";
 
 /** A message the user sent that the server has not echoed back yet. */
@@ -233,10 +235,13 @@ export function MessageList({
   workspaceRoot,
   approvals,
   questionCards,
+  secretRequestCards,
   respondingIds,
   onRespondToApproval,
   onAnswerQuestion,
   onDismissQuestion,
+  onProvideSecret,
+  onDeclineSecret,
   errorText,
   errorDetail = null,
   loadEarlier,
@@ -258,10 +263,15 @@ export function MessageList({
   approvals: ReadonlyArray<PendingApproval>;
   /** Questions the bot asked: waiting, answered here, or closed elsewhere. */
   questionCards: ReadonlyArray<QuestionCardItem>;
+  /** Secrets the bot asked for: waiting, or settled from this device. */
+  secretRequestCards: ReadonlyArray<SecretRequestCardItem>;
   respondingIds: ReadonlySet<string>;
   onRespondToApproval: (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => void;
   onAnswerQuestion: (requestId: string, answers: UserInputAnswers) => void;
   onDismissQuestion: (requestId: string) => void;
+  /** The value goes straight to the fulfil RPC; nothing here stores it. */
+  onProvideSecret: (requestId: string, value: string) => void;
+  onDeclineSecret: (requestId: string) => void;
   errorText: string | null;
   /** The provider's own line, shown behind a "Details" toggle under `errorText`. */
   errorDetail?: string | null;
@@ -441,6 +451,17 @@ export function MessageList({
             responding={respondingIds.has(card.requestId)}
             onAnswer={onAnswerQuestion}
             onDismiss={onDismissQuestion}
+          />
+        ))}
+
+        {secretRequestCards.map((card) => (
+          <SecretRequestCard
+            key={card.requestId}
+            card={card}
+            botName={botName}
+            responding={respondingIds.has(card.requestId)}
+            onProvide={onProvideSecret}
+            onDecline={onDeclineSecret}
           />
         ))}
 

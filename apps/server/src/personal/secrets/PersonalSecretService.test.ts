@@ -387,9 +387,21 @@ describe("personal secret requests", () => {
           purpose: "Publish the package.",
         });
 
+        // The phone's "Decline" is this call, and the whole point of it is that
+        // the task stops waiting: until it does, the Tasks screen keeps a
+        // "Waiting · Needs you" row with nothing behind it.
+        expect((yield* reload(task.taskId)).status).toBe("waiting_for_user");
+        const tasks = yield* PersonalTaskService.PersonalTaskService;
+        expect(
+          (yield* tasks.list({ statuses: ["waiting_for_user"] })).tasks.map(
+            (entry) => entry.taskId,
+          ),
+        ).toEqual([task.taskId]);
+
         const cancelled = yield* secrets.cancel({ requestId: requested.request.requestId });
 
         expect(cancelled.status).toBe("cancelled");
+        expect((yield* tasks.list({ statuses: ["waiting_for_user"] })).tasks).toEqual([]);
         const failed = yield* reload(task.taskId);
         expect(failed).toMatchObject({
           status: "failed",

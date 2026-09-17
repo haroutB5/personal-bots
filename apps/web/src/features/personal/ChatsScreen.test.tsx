@@ -104,6 +104,9 @@ vi.mock("./computer/computerState", () => ({
     loading: false,
   }),
 }));
+vi.mock("./useSecretRequests", () => ({
+  usePendingSecretRequests: () => ({ data: null, error: null, refresh: () => {} }),
+}));
 vi.mock("./useRefreshBotsForTaskThreads", () => ({ useRefreshBotsForTaskThreads: () => {} }));
 vi.mock("./useDeleteBot", () => ({ useDeleteBot: () => async () => state.deleteOutcome }));
 vi.mock("./usePinBot", () => ({ useTogglePinBot: () => state.togglePin }));

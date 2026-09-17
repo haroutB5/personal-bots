@@ -16,12 +16,15 @@ import {
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
 import {
+  PersonalSecretRequestId,
   type ApprovalRequestId,
+  type PersonalSecretRequest,
   type PersonalTask,
   type ProviderApprovalDecision,
   ThreadId,
 } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
+import * as Redacted from "effect/Redacted";
 import { ChevronLeft, Ellipsis } from "lucide-react";
 
 import { buildRunningThreadTurnInterruptInput } from "~/components/ChatView.logic";
@@ -76,6 +79,12 @@ import {
   deriveUserInputResolutions,
   type UserInputAnswers,
 } from "./questionCards";
+import { deriveSecretRequestCards, type SecretRequestOutcome } from "./secretRequestCards";
+import {
+  personalSecretCancel,
+  personalSecretFulfill,
+  usePendingSecretRequests,
+} from "./useSecretRequests";
 import { setPersonalPreference, usePersonalPreference } from "./personalPreferences";
 import { diagnosticsEnabled, DiagnosticsOverlay } from "./DiagnosticsOverlay";
 import { useKeyboardInset } from "./useKeyboardInset";
@@ -141,6 +150,7 @@ function ConversationSubtitle({
 }
 
 const EMPTY_MESSAGES: ReadonlyArray<ChatMessage> = [];
+const EMPTY_SECRET_REQUESTS: ReadonlyArray<PersonalSecretRequest> = [];
 const EMPTY_ACTIVITIES: ReadonlyArray<never> = [];
 const EMPTY_PLANS: ReadonlyArray<never> = [];
 
@@ -214,6 +224,14 @@ export function ConversationScreen({
     reportFailure: false,
   });
   const archiveThread = useAtomCommand(personalBotArchiveThread);
+  // Neither failures nor defects are reported to the console for this one: the
+  // card shows the server's own message instead, and a defect cause is the one
+  // place a client-side encode error could carry the encoded payload with it.
+  const fulfillSecret = useAtomCommand(personalSecretFulfill, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  const cancelSecret = useAtomCommand(personalSecretCancel, { reportFailure: false });
   const { start: startNewChat, starting } = useStartBotChat(environmentId, bot?.botId ?? null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const keyboardInset = useKeyboardInset(shellRef);
@@ -332,6 +350,27 @@ export function ConversationScreen({
       ),
     [activities, seenUserInputs, threadId, userInputs],
   );
+  // Secrets the bot asked for. `listPending` drops a row the moment it is
+  // answered, so the same seen/outcome memory as the question cards keeps the
+  // card in place with its ending instead of leaving a hole in the transcript.
+  const pendingSecretsQuery = usePendingSecretRequests(environmentId);
+  const pendingSecrets = pendingSecretsQuery.data?.requests ?? EMPTY_SECRET_REQUESTS;
+  const [seenSecrets, setSeenSecrets] = useState<ReadonlyMap<string, PersonalSecretRequest>>(
+    () => new Map(),
+  );
+  const [secretOutcomes, setSecretOutcomes] = useState<ReadonlyMap<string, SecretRequestOutcome>>(
+    () => new Map(),
+  );
+  if (pendingSecrets.some((request) => !seenSecrets.has(request.requestId))) {
+    const next = new Map(seenSecrets);
+    for (const request of pendingSecrets) next.set(request.requestId, request);
+    setSeenSecrets(next);
+  }
+  const secretRequestCards = useMemo(
+    () => deriveSecretRequestCards(pendingSecrets, threadId, seenSecrets, secretOutcomes),
+    [pendingSecrets, secretOutcomes, seenSecrets, threadId],
+  );
+
   const conversationState = deriveConversationState({
     session: thread?.session ?? null,
     latestTurn: thread?.latestTurn ?? null,
@@ -439,6 +478,62 @@ export function ConversationScreen({
       );
     } else {
       setActionError(null);
+    }
+    setRespondingIds((current) => {
+      const next = new Set(current);
+      next.delete(requestId);
+      return next;
+    });
+  };
+
+  // Providing a secret. The value is passed straight through to the RPC as a
+  // Redacted payload and is never held here, logged, or put in any store: the
+  // only copy on this device was the card's own input, already cleared.
+  const onProvideSecret = async (requestId: string, value: string) => {
+    if (environmentId === null) return;
+    setRespondingIds((current) => new Set(current).add(requestId));
+    const result = await fulfillSecret({
+      environmentId,
+      input: {
+        requestId: PersonalSecretRequestId.make(requestId),
+        value: Redacted.make(value),
+      },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      // The server never echoes the value, and neither does this: only its own
+      // message ("Secret value must be at most 4096 bytes.") reaches the alert.
+      setActionError(
+        error instanceof Error ? error.message : "Couldn't save this secret. Try again.",
+      );
+    } else {
+      setActionError(null);
+      setSecretOutcomes((current) => new Map(current).set(requestId, "provided"));
+    }
+    setRespondingIds((current) => {
+      const next = new Set(current);
+      next.delete(requestId);
+      return next;
+    });
+  };
+
+  // Declining. The server cancels the request and fails the task that asked,
+  // so the chat stops waiting and the Tasks "Waiting" tab loses the row.
+  const onDeclineSecret = async (requestId: string) => {
+    if (environmentId === null) return;
+    setRespondingIds((current) => new Set(current).add(requestId));
+    const result = await cancelSecret({
+      environmentId,
+      input: { requestId: PersonalSecretRequestId.make(requestId) },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      setActionError(
+        error instanceof Error ? error.message : "Couldn't decline this request. Try again.",
+      );
+    } else {
+      setActionError(null);
+      setSecretOutcomes((current) => new Map(current).set(requestId, "declined"));
     }
     setRespondingIds((current) => {
       const next = new Set(current);
@@ -651,12 +746,15 @@ export function ConversationScreen({
             workspaceRoot={thread.worktreePath ?? project?.workspaceRoot}
             approvals={approvals}
             questionCards={questionCards}
+            secretRequestCards={secretRequestCards}
             respondingIds={respondingIds}
             onRespondToApproval={(requestId, decision) =>
               void onRespondToApproval(requestId, decision)
             }
             onAnswerQuestion={(requestId, answers) => void onAnswerQuestion(requestId, answers)}
             onDismissQuestion={(requestId) => void onDismissQuestion(requestId)}
+            onProvideSecret={(requestId, value) => void onProvideSecret(requestId, value)}
+            onDeclineSecret={(requestId) => void onDeclineSecret(requestId)}
             errorText={actionError ?? retryNotice ?? sessionErrorInfo?.message ?? null}
             errorDetail={actionError === null ? (sessionErrorInfo?.detail ?? null) : null}
             loadEarlier={loadEarlier}

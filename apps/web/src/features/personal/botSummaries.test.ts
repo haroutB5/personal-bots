@@ -204,6 +204,21 @@ describe("buildBotSummaries", () => {
     expect(summary?.nextRoutine).toBe(routine);
   });
 
+  it("links a pending secret request to its bot through the chat it was asked in", () => {
+    const build = (threadIds: ReadonlySet<string>) =>
+      buildBotSummaries({
+        bots: [bots[0]!],
+        links: [link("assistant", "t-old")],
+        shells: [shell("t-old", "2026-09-13T08:00:00.000Z")],
+        providers: [provider("codex")],
+        secretRequestThreadIds: threadIds,
+      })[0];
+
+    expect(build(new Set(["t-old"]))?.needsSecret).toBe(true);
+    // A request in another bot's chat is not this bot's business.
+    expect(build(new Set(["t-elsewhere"]))?.needsSecret).toBe(false);
+  });
+
   it("searches bot names and thread titles", () => {
     expect(filterBotSummaries(summaries, "plan").map((summary) => summary.bot.name)).toEqual([
       "Planner",
@@ -262,6 +277,10 @@ describe("botStatusLine", () => {
         now,
       ),
     ).toBe("Needs your help");
+    // Above approvals and questions: only answering or declining frees the task.
+    expect(botStatusLine(summary({ needsSecret: true, hasPendingApprovals: true }), now)).toBe(
+      "Needs a secret",
+    );
     expect(botStatusLine(summary({ hasPendingApprovals: true }), now)).toBe("Needs approval");
     expect(botStatusLine(summary({ hasPendingUserInput: true }), now)).toBe("Needs your reply");
     expect(botStatusLine(summary({ live: true }), now)).toBe("Working");

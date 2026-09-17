@@ -1,15 +1,21 @@
 import {
   MessageId,
+  PersonalBotId,
+  PersonalSecretRequestId,
+  ThreadId,
   type ApprovalRequestId,
   type EnvironmentId,
+  type PersonalSecretRequest,
   type ScopedThreadRef,
   type UserInputQuestion,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { act, create, type ReactTestRenderer, type ReactTestInstance } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 import { MessageList } from "./MessageList";
 import type { QuestionCardItem, UserInputAnswers } from "./questionCards";
+import type { SecretRequestCardItem } from "./secretRequestCards";
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: React.PropsWithChildren) => children,
@@ -55,10 +61,13 @@ const BASE_PROPS = {
   workspaceRoot: undefined,
   approvals: [],
   questionCards: [],
+  secretRequestCards: [],
   respondingIds: new Set<string>(),
   onRespondToApproval: () => {},
   onAnswerQuestion: () => {},
   onDismissQuestion: () => {},
+  onProvideSecret: () => {},
+  onDeclineSecret: () => {},
   errorText: null,
   loadEarlier: null,
   now: new Date("2026-09-14T10:01:00.000Z"),
@@ -95,6 +104,26 @@ function pendingCard(
     },
   };
 }
+
+const PENDING_SECRET: SecretRequestCardItem = {
+  kind: "pending",
+  requestId: "secret-1",
+  createdAtMs: Date.parse("2026-09-14T10:00:00.000Z"),
+  request: {
+    requestId: PersonalSecretRequestId.make("secret-1"),
+    taskId: null,
+    rootTaskId: null,
+    threadId: ThreadId.make("thread-1"),
+    botId: PersonalBotId.make("bot-1"),
+    name: "GITHUB_TOKEN",
+    label: "GitHub token",
+    purpose: "Push the release tag.",
+    status: "pending",
+    shared: false,
+    createdAt: DateTime.makeUnsafe("2026-09-14T10:00:00.000Z"),
+    fulfilledAt: null,
+  } satisfies PersonalSecretRequest,
+};
 
 function optionButton(label: string): ReactTestInstance {
   return renderer!.root.find(
@@ -309,6 +338,108 @@ it("says so when a question is closed elsewhere", async () => {
     ),
   ).toHaveLength(1);
   expect(renderer!.root.findAllByType("button")).toEqual([]);
+});
+
+it("shows a secret the bot asked for, and sends the typed value once", async () => {
+  stubEnvironment();
+  const provided: Array<[string, string]> = [];
+  await act(async () => {
+    renderer = create(
+      <MessageList
+        {...BASE_PROPS}
+        secretRequestCards={[PENDING_SECRET]}
+        onProvideSecret={(requestId, value) => provided.push([requestId, value])}
+      />,
+    );
+  });
+
+  // The ask is readable without opening anything: what, and what for.
+  expect(renderer!.root.findAll((node) => node.children.includes("GitHub token"))).not.toEqual([]);
+  expect(
+    renderer!.root.findAll((node) => node.children.includes("Push the release tag.")),
+  ).toHaveLength(1);
+
+  const input = renderer!.root.findByType("input");
+  // Never a plain text field, and never offered to the phone's autofill.
+  expect(input.props.type).toBe("password");
+  expect(input.props.autoComplete).toBe("off");
+
+  // Empty is not sendable: an empty value is an error the server would reject.
+  expect(optionButton("Save secret").props.disabled).toBe(true);
+  await act(async () => input.props.onChange({ target: { value: "ghp_live_value" } }));
+  await act(async () => optionButton("Save secret").props.onClick());
+  expect(provided).toEqual([["secret-1", "ghp_live_value"]]);
+
+  // The field is cleared before the send, so the value is nowhere in the tree.
+  expect(renderer!.root.findByType("input").props.value).toBe("");
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain("ghp_live_value");
+});
+
+it("declines a secret request without providing a value", async () => {
+  stubEnvironment();
+  const declined: string[] = [];
+  await act(async () => {
+    renderer = create(
+      <MessageList
+        {...BASE_PROPS}
+        secretRequestCards={[PENDING_SECRET]}
+        onDeclineSecret={(requestId) => declined.push(requestId)}
+      />,
+    );
+  });
+
+  // Not "Not now": declining cancels the request and fails the waiting task.
+  expect(
+    renderer!.root.findAll((node) =>
+      node.children.includes("Declining stops this task. You can retry it from Tasks later."),
+    ),
+  ).toHaveLength(1);
+  await act(async () => optionButton("Decline").props.onClick());
+  expect(declined).toEqual(["secret-1"]);
+});
+
+it("keeps a settled secret request on screen with its ending", async () => {
+  stubEnvironment();
+  await act(async () => {
+    renderer = create(
+      <MessageList
+        {...BASE_PROPS}
+        secretRequestCards={[
+          {
+            kind: "declined",
+            requestId: "secret-1",
+            createdAtMs: Date.parse("2026-09-14T10:00:00.000Z"),
+            name: "GITHUB_TOKEN",
+            label: "GitHub token",
+          },
+        ]}
+      />,
+    );
+  });
+
+  expect(
+    renderer!.root.findAll((node) => node.children.includes(", so this task stopped.")),
+  ).not.toEqual([]);
+  expect(renderer!.root.findAll((node) => node.children.includes("GitHub token"))).not.toEqual([]);
+  // Nothing left to tap, and no field that could take a value.
+  expect(renderer!.root.findAllByType("button")).toEqual([]);
+  expect(renderer!.root.findAllByType("input")).toEqual([]);
+});
+
+it("locks the secret card while the value is in flight", async () => {
+  stubEnvironment();
+  await act(async () => {
+    renderer = create(
+      <MessageList
+        {...BASE_PROPS}
+        secretRequestCards={[PENDING_SECRET]}
+        respondingIds={new Set(["secret-1"])}
+      />,
+    );
+  });
+
+  expect(renderer!.root.findByType("input").props.disabled).toBe(true);
+  expect(optionButton("Decline").props.disabled).toBe(true);
 });
 
 it("locks the card while the answer is in flight", async () => {
