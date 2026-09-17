@@ -20,7 +20,13 @@
  *
  * @module personal/botInstructionCoverage
  */
+// A source-tree analyser used by a test, never by the running server: it reads
+// adapter files off disk to prove which drivers really call
+// `withBotInstructions`. Effect's FileSystem would buy nothing here and would
+// turn a plain synchronous walk into an Effect program.
+// @effect-diagnostics-next-line nodeBuiltinImport:off - static analysis of this repo's own sources, outside the runtime.
 import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - see above.
 import * as NodePath from "node:path";
 
 /**
