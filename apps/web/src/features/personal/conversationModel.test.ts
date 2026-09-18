@@ -197,6 +197,7 @@ describe("deriveConversationState", () => {
         reason: "CAPTCHA on example.com",
         requestedAt: "2026-09-15T10:00:00.000Z",
       },
+      lastAgent: null,
       viewers: 0,
     };
     expect(

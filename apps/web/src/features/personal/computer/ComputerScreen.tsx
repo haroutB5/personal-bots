@@ -56,10 +56,10 @@ import { isThreadLive } from "../botSummaries";
 import { commandFailureMessage } from "../commandFeedback";
 import {
   activeAgentLine,
-  backToChatTarget,
   type BackToChatTarget,
   canCloseBrowser,
   closeBrowserConfirmMessage,
+  computerBackTarget,
   describeComputerState,
   fitFrame,
   formatActivityTime,
@@ -165,7 +165,7 @@ export function ComputerScreen({ onBackToChat }: ComputerScreenProps) {
     reachable: environmentId !== null && error === null,
     loading,
   });
-  const goBackToChat = () => onBackToChat(backToChatTarget(feed.status));
+  const goBackToChat = () => onBackToChat(computerBackTarget(feed.status));
 
   return (
     <div

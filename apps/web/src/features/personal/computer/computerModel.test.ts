@@ -13,6 +13,8 @@ import {
   backToChatTarget,
   canCloseBrowser,
   closeBrowserConfirmMessage,
+  computerBackTarget,
+  computerChatLink,
   computerIsActiveForChat,
   computerPanelDetail,
   describeComputerState,
@@ -137,6 +139,79 @@ describe("computer feed", () => {
         }),
       ),
     ).toEqual({ botId: "bot-1", threadId: "thread-a" });
+  });
+
+  it("keeps a Back to chat target after the agent lease has lapsed", () => {
+    const lastAgent = {
+      threadId: ThreadId.make("thread-a"),
+      botId: PersonalBotId.make("bot-1"),
+    };
+    // The 90s lease is gone and Chrome is still open on the bot's page: the
+    // live controller says nothing, so Back would have dropped to the chats
+    // list at exactly the moment the user reaches for it.
+    const lapsed = status({ lastAgent });
+    expect(backToChatTarget(lapsed)).toBeNull();
+    expect(computerBackTarget(lapsed)).toEqual(lastAgent);
+
+    // A human takeover does not lose it either.
+    expect(
+      computerBackTarget(
+        status({ lastAgent, controller: { _tag: "Human", self: true, connected: true } }),
+      ),
+    ).toEqual(lastAgent);
+
+    // Nothing to go back to, and an older server that sends no lastAgent
+    // still gets the live controller.
+    expect(computerBackTarget(status())).toBeNull();
+    expect(
+      computerBackTarget(
+        status({
+          controller: {
+            _tag: "Agent",
+            threadId: ThreadId.make("thread-b"),
+            botId: PersonalBotId.make("bot-2"),
+            botName: "Developer",
+          },
+        }),
+      ),
+    ).toEqual({ botId: "bot-2", threadId: "thread-b" });
+  });
+
+  it("says what the computer has to do with this chat, in one line", () => {
+    const chat = { botId: "bot-1", threadId: "thread-a" };
+    const leased = status({
+      controller: {
+        _tag: "Agent",
+        threadId: ThreadId.make("thread-a"),
+        botId: PersonalBotId.make("bot-1"),
+        botName: "Developer",
+      },
+    });
+    expect(computerChatLink(null, chat)).toEqual({ text: "Computer", tone: "idle" });
+    expect(computerChatLink(leased, chat, true)).toEqual({
+      text: "Using the computer",
+      tone: "live",
+    });
+    expect(computerChatLink(leased, chat).text).toBe("Left the computer open");
+    // Another chat's bot is that chat's business.
+    expect(computerChatLink(leased, { botId: "bot-2", threadId: "thread-b" }).text).toBe(
+      "Computer",
+    );
+
+    const help = status({
+      helpRequest: {
+        threadId: ThreadId.make("thread-a"),
+        botId: PersonalBotId.make("bot-1"),
+        botName: "Developer",
+        reason: "CAPTCHA on example.com",
+        requestedAt: "2026-09-15T10:00:00.000Z",
+      },
+    });
+    expect(computerChatLink(help, chat)).toEqual({
+      text: "Needs your help on the computer",
+      tone: "pending",
+    });
+    expect(computerChatLink(help, { botId: "bot-2", threadId: "thread-b" }).text).toBe("Computer");
   });
 
   it("only activates a chat panel for the exact leased bot and thread", () => {

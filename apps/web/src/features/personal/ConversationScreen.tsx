@@ -52,7 +52,7 @@ import {
   resolveBotProvider,
 } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
-import { ConversationComputerPanel } from "./ConversationComputerPanel";
+import { ConversationComputerLink } from "./ConversationComputerLink";
 import { useComputerFeed } from "./computer/computerState";
 import { ConversationRoutinesPanel } from "./ConversationRoutinesPanel";
 import {
@@ -244,8 +244,6 @@ export function ConversationScreen({
   const [pending, setPending] = useState<ReadonlyArray<PendingOutgoingMessage>>([]);
   const [respondingIds, setRespondingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [actionError, setActionError] = useState<string | null>(null);
-  const [computerPanelVisible, setComputerPanelVisible] = useState(false);
-  const [computerPanelExpanded, setComputerPanelExpanded] = useState(false);
   const laptopOffline = useLaptopOffline();
   const connectionPhase = usePersonalConnectionPhase();
   // Reading this chat right now means its own notifications stay off the
@@ -748,14 +746,6 @@ export function ConversationScreen({
                 New chat
               </MenuItem>
             ) : null}
-            <MenuItem
-              onClick={() => {
-                setComputerPanelVisible(true);
-                setComputerPanelExpanded(true);
-              }}
-            >
-              Computer
-            </MenuItem>
             <MenuItem onClick={() => void navigate({ to: "/bots/$botId", params: { botId } })}>
               All chats
             </MenuItem>
@@ -800,27 +790,13 @@ export function ConversationScreen({
             describeTurn={describeTurn}
             renderDelegation={renderDelegation}
           />
-          <ConversationComputerPanel
-            environmentId={environmentId}
+          <ConversationComputerLink
+            status={computerFeed.status}
             botId={botId}
             threadId={threadId}
-            manuallyVisible={computerPanelVisible}
-            expanded={computerPanelExpanded || conversationState === "needs_help"}
-            onExpandedChange={(expanded) => {
-              if (expanded) setComputerPanelVisible(true);
-              setComputerPanelExpanded(expanded);
-            }}
-            onBrowserClosed={() => {
-              setComputerPanelVisible(false);
-              setComputerPanelExpanded(false);
-            }}
-            conversationState={
-              conversationState === "working" || conversationState === "needs_help"
-                ? conversationState
-                : "other"
-            }
+            agentTurnRunning={conversationState === "working"}
           />
-          {showRoutinesStrip && !computerPanelExpanded && conversationState !== "needs_help" ? (
+          {showRoutinesStrip && conversationState !== "needs_help" ? (
             <ConversationRoutinesPanel
               environmentId={environmentId}
               botId={botId}

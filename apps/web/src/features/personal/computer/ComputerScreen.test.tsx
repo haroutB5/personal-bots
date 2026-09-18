@@ -9,7 +9,7 @@ import {
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { ComputerBrowserPane } from "./ComputerScreen";
+import { ComputerBrowserPane, ComputerScreen } from "./ComputerScreen";
 
 const state = vi.hoisted(() => ({
   takeControl: vi.fn(async () => ({ _tag: "Success", value: undefined })),
@@ -30,13 +30,29 @@ vi.mock("~/state/use-atom-command", () => ({
     return state.close;
   },
 }));
+const feedState = vi.hoisted(() => ({
+  status: null as PersonalBrowserStatus | null,
+}));
+
 vi.mock("./computerState", () => ({
   computerEnvironment: commands,
   fileDownloadUrl: () => "",
   refreshComputerAccess: () => undefined,
   useComputerAccess: () => null,
-  useComputerFeed: () => ({ feed: { status: null, events: [] }, error: null, loading: false }),
+  useComputerFeed: () => ({
+    feed: { status: feedState.status, events: [] },
+    error: null,
+    loading: false,
+  }),
   viewportStreamUrl: () => "",
+}));
+vi.mock("~/confirmDialog", () => ({ requestConfirmDialog: vi.fn(async () => true) }));
+vi.mock("~/state/entities", () => ({ useThreadShells: () => [] }));
+vi.mock("~/state/query", () => ({
+  useEnvironmentQuery: () => ({ data: null, error: null, refresh: vi.fn() }),
+}));
+vi.mock("../usePersonalBots", () => ({
+  usePersonalEnvironmentId: () => EnvironmentId.make("env-1"),
 }));
 vi.mock("./viewportClient", () => ({ connectViewport: vi.fn() }));
 vi.mock("~/components/ui/menu", () => ({
@@ -78,6 +94,7 @@ afterEach(async () => {
   renderer = undefined;
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+  feedState.status = null;
 });
 
 describe("ComputerBrowserPane compact preview", () => {
@@ -246,5 +263,53 @@ describe("takeover keyboard", () => {
       input.props.onInput({ currentTarget: field });
     });
     expect(field.value).toBe("\u200b");
+  });
+});
+
+describe("ComputerScreen back to chat", () => {
+  const stubDocument = () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("document", {
+      visibilityState: "visible",
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+  };
+
+  const tapBack = async (onBackToChat: (target: unknown) => void) => {
+    await act(async () => {
+      renderer = create(<ComputerScreen onBackToChat={onBackToChat} />);
+    });
+    const back = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.props["aria-label"] === "Back to chat");
+    expect(back).toBeDefined();
+    await act(async () => back!.props.onClick());
+  };
+
+  /**
+   * The bot's 90s agent lease lapses long before the browser's ten idle
+   * minutes are up, so by the time the user looks away from the page and taps
+   * Back the controller is usually `None`. It must still land in the chat that
+   * opened the browser rather than on the chats list.
+   */
+  it("returns to the last agent's chat after its lease has lapsed", async () => {
+    stubDocument();
+    feedState.status = {
+      ...STATUS,
+      controller: { _tag: "None" },
+      lastAgent: { threadId: ThreadId.make("thread-a"), botId: PersonalBotId.make("bot-1") },
+    };
+    const onBackToChat = vi.fn();
+    await tapBack(onBackToChat);
+    expect(onBackToChat).toHaveBeenCalledWith({ threadId: "thread-a", botId: "bot-1" });
+  });
+
+  it("falls back to the chats list when no bot has used the browser", async () => {
+    stubDocument();
+    feedState.status = { ...STATUS, controller: { _tag: "None" } };
+    const onBackToChat = vi.fn();
+    await tapBack(onBackToChat);
+    expect(onBackToChat).toHaveBeenCalledWith(null);
   });
 });

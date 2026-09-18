@@ -94,6 +94,17 @@ export function backToChatTarget(status: PersonalBrowserStatus | null): BackToCh
   return botId === null ? null : { botId, threadId };
 }
 
+/**
+ * Where the Computer tab's "Back to chat" goes. The agent lease lapses 90
+ * seconds after the bot's last op while the browser stays open for ten idle
+ * minutes — exactly the stretch in which the user is looking at the bot's page
+ * and wants its chat — so the server's durable `lastAgent` leads, and the live
+ * controller is only the fallback (an older server sends no `lastAgent`).
+ */
+export function computerBackTarget(status: PersonalBrowserStatus | null): BackToChatTarget | null {
+  return status?.lastAgent ?? backToChatTarget(status);
+}
+
 /** Whether the live agent browser lease belongs to this exact conversation. */
 export function computerIsActiveForChat(
   status: PersonalBrowserStatus | null,
@@ -110,6 +121,35 @@ export function computerNeedsHelpForChat(
 ): boolean {
   const help = status?.helpRequest;
   return help?.botId === chat.botId && help.threadId === chat.threadId;
+}
+
+export interface ComputerChatLink {
+  readonly text: string;
+  readonly tone: ComputerDotTone;
+}
+
+/**
+ * The one quiet line a conversation shows for the shared browser. The browser
+ * itself lives on the Computer tab; this only says whether it has anything to
+ * do with *this* chat, and stays a link to the tab either way.
+ *
+ * Another chat's help request is deliberately not surfaced here: it is that
+ * chat's business, and the Computer tab shows it in full.
+ */
+export function computerChatLink(
+  status: PersonalBrowserStatus | null,
+  chat: BackToChatTarget,
+  agentTurnRunning: boolean = false,
+): ComputerChatLink {
+  if (computerNeedsHelpForChat(status, chat)) {
+    return { text: "Needs your help on the computer", tone: "pending" };
+  }
+  if (computerIsActiveForChat(status, chat)) {
+    return agentTurnRunning
+      ? { text: "Using the computer", tone: "live" }
+      : { text: "Left the computer open", tone: "idle" };
+  }
+  return { text: "Computer", tone: "idle" };
 }
 
 /** Compact label for the chat panel bar. */
