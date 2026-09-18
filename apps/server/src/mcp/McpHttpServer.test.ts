@@ -332,7 +332,10 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
       const structured = snapshot.structuredContent as { readonly screenshotPath?: string };
       const screenshotPath = structured.screenshotPath;
       expect(typeof screenshotPath).toBe("string");
-      expect(path.dirname(screenshotPath!)).toBe(config.browserArtifactsDir);
+      // Forward slashes only: an agent pastes this straight into markdown, where
+      // a backslash before punctuation is an escape and would corrupt the path.
+      expect(screenshotPath).not.toContain("\\");
+      expect(path.dirname(screenshotPath!)).toBe(config.browserArtifactsDir.replaceAll("\\", "/"));
       expect(path.basename(screenshotPath!)).toMatch(
         /^browser-screenshot-example-test-[0-9a-z]+-[0-9a-f]{8}\.png$/,
       );

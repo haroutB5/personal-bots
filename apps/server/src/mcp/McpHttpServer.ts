@@ -298,6 +298,16 @@ const screenshotSiteSlug = (rawUrl: string): string => {
   }
 };
 
+/**
+ * A path an agent can paste straight into markdown. `path.join` yields
+ * backslashes on Windows, and CommonMark reads a backslash before punctuation
+ * as an escape: `![x](C:\Users\Ht\.personal-bots\shot.png)` parses as
+ * `C:\Users\Ht.personal-bots\shot.png`, a file that does not exist, so the
+ * image renders as "Image unavailable". Windows accepts forward slashes
+ * everywhere we use this path, and they need no escaping.
+ */
+const markdownSafePath = (value: string): string => value.replaceAll("\\", "/");
+
 /** Writes the snapshot PNG under the browser artifacts directory and returns its path. */
 const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
   pageUrl: string,
@@ -314,7 +324,7 @@ const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
     Effect.andThen(fileSystem.writeFile(screenshotPath, data)),
     Effect.mapError((cause) => new PreviewScreenshotSaveError({ screenshotPath, cause })),
   );
-  return screenshotPath;
+  return markdownSafePath(screenshotPath);
 });
 
 const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
