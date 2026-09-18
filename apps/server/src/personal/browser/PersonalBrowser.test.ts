@@ -6,6 +6,7 @@ import {
   PersonalBrowserViewerMessage,
   PersonalLoginId,
   PersonalTaskId,
+  ProviderInstanceId,
   ThreadId,
   type PersonalTask,
   type PreviewAutomationRequest,
@@ -1007,6 +1008,56 @@ describe("PersonalBrowser", () => {
    * is using the browser, which is why the live lease pushes the close out
    * past the tenth minute rather than landing on it.
    */
+  /**
+   * The agent lease lapses after 90 seconds, but Chrome stays open for ten
+   * idle minutes: for most of that window `controller` is `None` while the
+   * bot's page is still on screen. The Computer tab's "Back to chat" reads
+   * `lastAgent`, so it keeps working through exactly that window.
+   */
+  it.effect("keeps the last agent's chat in the status after the lease lapses", () => {
+    const fake = makeFakeDriver();
+    const botId = PersonalBotId.make("bot-assistant");
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const now = DateTime.makeUnsafe(0);
+      yield* bots.createBot({
+        botId,
+        name: "Assistant",
+        title: "",
+        description: "",
+        instructions: "",
+        avatarShape: "blob",
+        avatarColor: "#1A73E8",
+        modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "m" },
+        team: "assistant",
+        lead: true,
+        pinned: true,
+        sortOrder: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+      yield* bots.insertThreadLink({ botId, threadId, createdAt: now });
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+
+      const live = yield* browser.status("session-1");
+      expect(live.controller).toMatchObject({ _tag: "Agent", threadId });
+      expect(live.lastAgent).toEqual({ threadId, botId });
+
+      yield* TestClock.adjust("2 minutes");
+      const lapsed = yield* browser.status("session-1");
+      expect(lapsed.state).toBe("connected");
+      expect(lapsed.controller).toEqual({ _tag: "None" });
+      expect(lapsed.lastAgent).toEqual({ threadId, botId });
+
+      // Taking control does not lose the chat either; closing the browser does.
+      yield* browser.takeControl("session-1");
+      expect((yield* browser.status("session-1")).lastAgent).toEqual({ threadId, botId });
+      yield* browser.closeBrowser({ sessionId: "session-1", byThreadId: null });
+      expect((yield* browser.status("session-1")).lastAgent).toBeNull();
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
   it.effect("closes itself after ten idle minutes and reopens on demand", () => {
     const fake = makeFakeDriver();
     return Effect.gen(function* () {

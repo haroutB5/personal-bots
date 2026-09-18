@@ -65,6 +65,15 @@ export interface LeaseView {
   readonly takeoverPending: boolean;
   /** Last http(s) page the agent had open; used to reopen it after a restart. */
   readonly lastUrl: string | null;
+  /**
+   * Thread of the last agent to hold the lease, kept after that lease lapses
+   * and across a human takeover. Dropped only when the session it belongs to
+   * ends: the browser closes, the chat is deleted, or a boot restore fails.
+   * `ownerId` cannot answer this — it is the session id under human control
+   * and is cleared on release — yet the Computer tab's "Back to chat" is most
+   * often used long after the 90s agent TTL has lapsed.
+   */
+  readonly lastAgentThreadId: string | null;
 }
 
 interface InFlight {
@@ -77,6 +86,8 @@ interface LeaseState {
   readonly inFlight: InFlight | null;
   readonly takeoverPending: boolean;
   readonly freshSnapshotRequired: boolean;
+  /** In-memory only; a restart re-seeds it from the restored row. */
+  readonly lastAgentThreadId: string | null;
 }
 
 export class BrowserLease extends Context.Service<
@@ -228,6 +239,10 @@ export const make = Effect.gen(function* () {
     inFlight: null,
     takeoverPending: false,
     freshSnapshotRequired: false,
+    // Only a restored agent row names a chat worth going back to; a released
+    // or cleared-human row does not.
+    lastAgentThreadId:
+      initialRow.ownerType === "agent" && initialRow.ownerId !== null ? initialRow.ownerId : null,
   });
   // One agent op at a time: the page is shared, and takeover waits on it.
   const opLock = yield* Semaphore.make(1);
@@ -242,6 +257,7 @@ export const make = Effect.gen(function* () {
     inFlightThreadId: current.inFlight?.threadId ?? null,
     takeoverPending: current.takeoverPending,
     lastUrl: current.row.lastUrl,
+    lastAgentThreadId: current.lastAgentThreadId,
   });
 
   if (bootDecision._tag !== "Noop" || lapsed) {
@@ -315,7 +331,7 @@ export const make = Effect.gen(function* () {
             };
             return [
               { _tag: "acquired", row, changed: !sameOwner },
-              { ...current, row, freshSnapshotRequired },
+              { ...current, row, freshSnapshotRequired, lastAgentThreadId: input.threadId },
             ];
           },
         );
@@ -439,7 +455,9 @@ export const make = Effect.gen(function* () {
         ...releasedRow(latest.row.generation + 1, latest.row.lastUrl),
         heartbeatAt: iso(now),
       };
-      return [next, { ...latest, row: next }] as const;
+      // Boot restore failed: there is no session behind that chat to go back
+      // to, so the durable target goes with the lease.
+      return [next, { ...latest, row: next, lastAgentThreadId: null }] as const;
     });
     if (row !== null) {
       yield* persist(row);
@@ -451,16 +469,25 @@ export const make = Effect.gen(function* () {
   const releaseAll: BrowserLease["Service"]["releaseAll"] = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const row = yield* Ref.modify(state, (latest) => {
-      // Already released with nothing saved: idempotent, and no generation bump
-      // for a close that changed nothing.
-      if (latest.row.ownerId === null && latest.row.lastUrl === null) {
+      // Already released with nothing saved and no chat to go back to:
+      // idempotent, and no generation bump for a close that changed nothing.
+      if (
+        latest.row.ownerId === null &&
+        latest.row.lastUrl === null &&
+        latest.lastAgentThreadId === null
+      ) {
         return [null, latest] as const;
       }
       const next: BrowserLeaseRow = {
         ...releasedRow(latest.row.generation + 1),
         heartbeatAt: iso(now),
       };
-      return [next, { ...latest, row: next, freshSnapshotRequired: false }] as const;
+      // The session is over, so the Computer tab has no chat to return to
+      // either: the next bot to use the browser sets a fresh one.
+      return [
+        next,
+        { ...latest, row: next, freshSnapshotRequired: false, lastAgentThreadId: null },
+      ] as const;
     });
     if (row !== null) {
       yield* persist(row);
@@ -472,22 +499,40 @@ export const make = Effect.gen(function* () {
   const releaseThread: BrowserLease["Service"]["releaseThread"] = (threadId) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
-      const row = yield* Ref.modify(state, (latest) => {
-        if (latest.row.ownerType !== "agent" || latest.row.ownerId !== threadId) {
-          return [null, latest] as const;
-        }
-        // No `lastUrl` carried over: the deleted chat's page must not be
-        // reopened by the next boot restore.
-        const next: BrowserLeaseRow = {
-          ...releasedRow(latest.row.generation + 1),
-          heartbeatAt: iso(now),
-        };
-        return [next, { ...latest, row: next }] as const;
-      });
-      if (row !== null) {
-        yield* persist(row);
-        yield* publish;
-      }
+      const outcome = yield* Ref.modify(
+        state,
+        (
+          latest,
+        ): readonly [
+          { readonly row: BrowserLeaseRow | null; readonly changed: boolean },
+          LeaseState,
+        ] => {
+          // The chat is gone either way: a lease it still holds is released,
+          // and a "back to chat" target pointing at it is dropped even when
+          // the lease has since moved on.
+          const forgetsTarget = latest.lastAgentThreadId === threadId;
+          if (latest.row.ownerType !== "agent" || latest.row.ownerId !== threadId) {
+            return forgetsTarget
+              ? [
+                  { row: null, changed: true },
+                  { ...latest, lastAgentThreadId: null },
+                ]
+              : [{ row: null, changed: false }, latest];
+          }
+          // No `lastUrl` carried over: the deleted chat's page must not be
+          // reopened by the next boot restore.
+          const next: BrowserLeaseRow = {
+            ...releasedRow(latest.row.generation + 1),
+            heartbeatAt: iso(now),
+          };
+          return [
+            { row: next, changed: true },
+            { ...latest, row: next, lastAgentThreadId: null },
+          ];
+        },
+      );
+      if (outcome.row !== null) yield* persist(outcome.row);
+      if (outcome.changed) yield* publish;
       return yield* view;
     });
 

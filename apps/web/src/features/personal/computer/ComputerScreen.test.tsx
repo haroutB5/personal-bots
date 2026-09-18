@@ -67,6 +67,7 @@ const STATUS: PersonalBrowserStatus = {
   generation: 1,
   page: { title: "T3 Code", url: "https://t3.codes" },
   helpRequest: null,
+  lastAgent: null,
   viewers: 0,
 };
 

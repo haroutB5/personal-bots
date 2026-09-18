@@ -704,6 +704,17 @@ export const make = (options: PersonalBrowserOptions) =>
             botName: bot?.name ?? null,
           };
         }
+        // Survives the 90s agent TTL and a human takeover, so the Computer
+        // tab's Back can still name the chat that opened the browser. A help
+        // request outranks it: that chat is the one waiting on the user.
+        const backThreadId: string | null = activeHelp?.request.threadId ?? view.lastAgentThreadId;
+        let lastAgent: PersonalBrowserStatus["lastAgent"] = null;
+        if (backThreadId !== null) {
+          const bot = yield* botForThread(backThreadId);
+          if (bot !== null) {
+            lastAgent = { threadId: ThreadId.make(backThreadId), botId: bot.botId };
+          }
+        }
         const page = runtime.phase === "connected" ? viewportPage() : null;
         const viewportTab =
           page === null ? undefined : [...runtime.tabs.values()].find((tab) => tab.page === page);
@@ -725,6 +736,7 @@ export const make = (options: PersonalBrowserOptions) =>
           generation: view.generation,
           page: pageInfo,
           helpRequest: activeHelp?.request ?? null,
+          lastAgent,
           viewers: viewers.size,
         } satisfies PersonalBrowserStatus;
       });

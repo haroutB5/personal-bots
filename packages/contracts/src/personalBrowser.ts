@@ -50,6 +50,13 @@ export const PersonalBrowserHelpRequest = Schema.Struct({
 });
 export type PersonalBrowserHelpRequest = typeof PersonalBrowserHelpRequest.Type;
 
+/** A bot and the chat it drove the browser from. */
+export const PersonalBrowserAgentRef = Schema.Struct({
+  threadId: ThreadId,
+  botId: PersonalBotId,
+});
+export type PersonalBrowserAgentRef = typeof PersonalBrowserAgentRef.Type;
+
 export const PersonalBrowserStatus = Schema.Struct({
   state: PersonalBrowserState,
   /** Human-readable reason for crashed/locked states, e.g. "Locked by pid 4312". */
@@ -62,6 +69,14 @@ export const PersonalBrowserStatus = Schema.Struct({
   page: Schema.NullOr(PersonalBrowserPage),
   /** A bot blocked on the shared page until the user takes over and returns it. */
   helpRequest: Schema.NullOr(PersonalBrowserHelpRequest),
+  /**
+   * The last bot to drive this browser, kept after its agent lease lapses and
+   * across a human takeover, until the browser closes (or the chat is
+   * deleted). `controller` drops back to `None` 90s after the bot's last op
+   * while Chrome stays open for ten idle minutes, so this — not `controller` —
+   * is what "Back to chat" on the Computer tab steers by.
+   */
+  lastAgent: Schema.NullOr(PersonalBrowserAgentRef),
   viewers: Schema.Int,
 });
 export type PersonalBrowserStatus = typeof PersonalBrowserStatus.Type;

@@ -291,6 +291,49 @@ describe("BrowserLease", () => {
     }).pipe(Effect.provide(leaseLayer)),
   );
 
+  it.effect("remembers the last agent chat past its lease, until the session ends", () =>
+    Effect.gen(function* () {
+      const lease = yield* BrowserLease.BrowserLease;
+      expect((yield* lease.view).lastAgentThreadId).toBeNull();
+
+      yield* lease.runAgentOp({ threadId: "thread-a", operation: "navigate" }, Effect.void);
+      expect(yield* lease.view).toMatchObject({
+        agentActive: true,
+        lastAgentThreadId: "thread-a",
+      });
+
+      // The lease lapses long before Chrome's ten idle minutes are up. The
+      // controller goes quiet; the chat to go back to must not.
+      yield* TestClock.adjust(BrowserLease.AGENT_LEASE_TTL_MS + 1_000);
+      expect(yield* lease.view).toMatchObject({
+        agentActive: false,
+        lastAgentThreadId: "thread-a",
+      });
+
+      // Taking control overwrites `ownerId` with the auth session id, so the
+      // remembered chat is the only thing left pointing at the bot.
+      yield* lease.takeControl("session-1");
+      expect(yield* lease.view).toMatchObject({
+        ownerId: "session-1",
+        lastAgentThreadId: "thread-a",
+      });
+      yield* lease.returnToAgent;
+      expect((yield* lease.view).lastAgentThreadId).toBe("thread-a");
+
+      // Another chat's deletion leaves it alone; its own deletion clears it.
+      yield* lease.releaseThread("thread-b");
+      expect((yield* lease.view).lastAgentThreadId).toBe("thread-a");
+      yield* lease.releaseThread("thread-a");
+      expect((yield* lease.view).lastAgentThreadId).toBeNull();
+
+      // Closing the browser ends the session and the target with it.
+      yield* lease.runAgentOp({ threadId: "thread-c", operation: "navigate" }, Effect.void);
+      expect((yield* lease.view).lastAgentThreadId).toBe("thread-c");
+      yield* lease.releaseAll;
+      expect((yield* lease.view).lastAgentThreadId).toBeNull();
+    }).pipe(Effect.provide(leaseLayer)),
+  );
+
   it.effect("boot releases a lapsed agent lease instead of keeping its page", () =>
     Effect.gen(function* () {
       const saved: PersonalBrowserLeaseRepository.BrowserLeaseRow[] = [];

@@ -78,6 +78,7 @@ const browserStatus = (harness: Harness): PersonalBrowserStatus => ({
   generation: 1,
   page: null,
   helpRequest: null,
+  lastAgent: null,
   viewers: 0,
 });
 

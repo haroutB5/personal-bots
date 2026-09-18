@@ -33,6 +33,7 @@ const status = (overrides: Partial<PersonalBrowserStatus> = {}): PersonalBrowser
   generation: 1,
   page: null,
   helpRequest: null,
+  lastAgent: null,
   viewers: 0,
   ...overrides,
 });
