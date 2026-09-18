@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { activeTabFor, isPersonalPath } from "./personalMode";
 
 describe("isPersonalPath", () => {
-  it("claims the three tabs, Computer deep link, and focused personal routes", () => {
+  it("claims the four tabs and everything under /bots and /tasks", () => {
     for (const path of [
       "/bots",
       "/bots/",
@@ -31,7 +31,7 @@ describe("activeTabFor", () => {
     expect(activeTabFor("/bots")).toBe("chats");
     expect(activeTabFor("/bots/settings")).toBe("chats");
     expect(activeTabFor("/bots/team")).toBe("chats");
-    expect(activeTabFor("/computer")).toBeNull();
+    expect(activeTabFor("/computer")).toBe("computer");
     expect(activeTabFor("/bots/new")).toBeNull();
     expect(activeTabFor("/bots/b1/edit")).toBeNull();
   });
