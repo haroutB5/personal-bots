@@ -212,6 +212,18 @@ describe("computer feed", () => {
       tone: "pending",
     });
     expect(computerChatLink(help, { botId: "bot-2", threadId: "thread-b" }).text).toBe("Computer");
+
+    // The lease lapses 90s after the bot's last op, the browser stays open for
+    // ten idle minutes: the line must still tie the open browser to this chat.
+    const lapsed = status({
+      lastAgent: { threadId: ThreadId.make("thread-a"), botId: PersonalBotId.make("bot-1") },
+    });
+    expect(computerChatLink(lapsed, chat).text).toBe("Left the computer open");
+    expect(computerChatLink(lapsed, { botId: "bot-2", threadId: "thread-b" }).text).toBe(
+      "Computer",
+    );
+    // Browser offline: nothing is left open, whoever used it last.
+    expect(computerChatLink(status({ ...lapsed, state: "offline" }), chat).text).toBe("Computer");
   });
 
   it("only activates a chat panel for the exact leased bot and thread", () => {

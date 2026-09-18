@@ -149,6 +149,17 @@ export function computerChatLink(
       ? { text: "Using the computer", tone: "live" }
       : { text: "Left the computer open", tone: "idle" };
   }
+  // The lease lapses 90s after the bot's last op while Chrome stays open for
+  // ten idle minutes, so `lastAgent` - not the lease - is what still ties the
+  // open browser to this chat for the rest of that window.
+  const lastAgent = status?.lastAgent;
+  if (
+    hasLiveViewport(status) &&
+    lastAgent?.botId === chat.botId &&
+    lastAgent.threadId === chat.threadId
+  ) {
+    return { text: "Left the computer open", tone: "idle" };
+  }
   return { text: "Computer", tone: "idle" };
 }
 
