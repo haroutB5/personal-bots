@@ -94,19 +94,18 @@ export function deriveConversationState(input: {
   return "idle";
 }
 
-/** Chats below this carry their context quietly; above it, the header says so. */
-export const CONTEXT_BADGE_MIN_TOKENS = 500_000;
-
 /**
- * The context size to show beside the bot's name, or null to show nothing.
+ * The context size to show beside the bot's name, or null before the chat has
+ * reported one.
  *
- * A long chat costs more per turn and eventually compacts, losing detail. The
- * number is only worth the space once it is large, so the badge stays hidden
- * until the chat is genuinely heavy.
+ * Shown at every size, not only a heavy chat: the number rides along with the
+ * turn's own activities, so displaying it costs nothing, and a chat's weight is
+ * worth watching before it is a problem (it drives cost per turn, and the point
+ * at which compaction starts summarising detail away).
  */
 export function contextBadgeLabel(usedTokens: number | null | undefined): string | null {
   if (usedTokens === null || usedTokens === undefined) return null;
-  if (!Number.isFinite(usedTokens) || usedTokens < CONTEXT_BADGE_MIN_TOKENS) return null;
+  if (!Number.isFinite(usedTokens) || usedTokens <= 0) return null;
   return formatContextWindowTokens(usedTokens);
 }
 
