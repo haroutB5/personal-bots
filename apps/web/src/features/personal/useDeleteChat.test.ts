@@ -58,6 +58,7 @@ function seedSnapshot(): void {
         previewAtMs: 0,
         threadId: `thread-${key}`,
         threadTitle: `Thread ${key}`,
+        pinned: false,
       })),
     }),
   );

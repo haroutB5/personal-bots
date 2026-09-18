@@ -40,11 +40,17 @@ export const ChatsSnapshotRow = Schema.Struct({
   previewAtMs: Schema.NullOr(Schema.Finite),
   threadId: Schema.NullOr(Schema.String),
   threadTitle: Schema.NullOr(Schema.String),
+  /**
+   * Whether the bot sits in the Pinned box. Structural metadata, not content:
+   * without it the cold paint had no pinned box at all and the section only
+   * appeared once `personalBots.list` landed.
+   */
+  pinned: Schema.Boolean,
 });
 export type ChatsSnapshotRow = typeof ChatsSnapshotRow.Type;
 
 export const ChatsSnapshot = Schema.Struct({
-  version: Schema.Literal(2),
+  version: Schema.Literal(3),
   environmentId: Schema.String,
   savedAtMs: Schema.Finite,
   rows: Schema.Array(ChatsSnapshotRow),
@@ -56,7 +62,15 @@ const ChatsSnapshotEnvelope = Schema.Struct({
   snapshot: ChatsSnapshot,
 });
 
-const STORAGE_KEY = "t3code:chats-snapshot:v2";
+const STORAGE_KEY = "t3code:chats-snapshot:v3";
+/**
+ * Keys written by earlier shapes of this snapshot. A v2 entry has no `pinned`
+ * flag, so painting it would reproduce the bug v3 fixes (pinned box missing on
+ * the very first paint) and then reshuffle the rows when the live list landed.
+ * Reading drops them instead of migrating: one cold start falls back to the
+ * skeleton, and nothing stale is left sitting in `localStorage`.
+ */
+const LEGACY_STORAGE_KEYS = ["t3code:chats-snapshot:v2"] as const;
 /** Phone-first lists are short; beyond this the snapshot stops paying for itself. */
 export const MAX_SNAPSHOT_ROWS = 30;
 export const MAX_SNAPSHOT_PREVIEW_CHARS = 140;
@@ -82,6 +96,8 @@ export interface ChatsSnapshotRowInput {
   readonly previewAtMs: number | null;
   readonly threadId: string | null;
   readonly threadTitle: string | null;
+  /** Mirrors `isBotPinned(bot)` at the time the list was fetched. */
+  readonly pinned: boolean;
 }
 
 function firstLine(value: string, maxChars: number): string {
@@ -94,9 +110,10 @@ function snapshotBytes(environmentId: string, snapshot: ChatsSnapshot): number {
 }
 
 /**
- * Pure builder: sanitizes inputs (single-line, capped), keeps the most
- * recent rows first, and drops trailing rows until the byte budget holds.
- * Rows arrive ordered by latest activity, so the tail is the cheapest to lose.
+ * Pure builder: sanitizes inputs (single-line, capped), keeps the incoming
+ * order, and drops trailing rows until the byte budget holds. Rows arrive in
+ * render order — the pinned box first, then the list ordered by latest
+ * activity — so the tail is both the cheapest and the safest to lose.
  */
 export function buildChatsSnapshot(input: {
   readonly environmentId: string;
@@ -114,10 +131,11 @@ export function buildChatsSnapshot(input: {
     threadId: row.threadId,
     threadTitle:
       row.threadTitle === null ? null : firstLine(row.threadTitle, MAX_SNAPSHOT_TITLE_CHARS),
+    pinned: row.pinned,
   }));
   const rows = [...sanitized];
   const probe: ChatsSnapshot = {
-    version: 2 as const,
+    version: 3 as const,
     environmentId: input.environmentId,
     savedAtMs: input.savedAtMs,
     rows,
@@ -128,6 +146,22 @@ export function buildChatsSnapshot(input: {
   return probe;
 }
 
+/**
+ * Splits stored rows the way {@link partitionPinnedSummaries} splits the live
+ * list. The builder already received them in render order, so preserving that
+ * order here is what keeps the cold paint from reshuffling when the live list
+ * replaces it.
+ */
+export function partitionPinnedSnapshotRows(rows: ReadonlyArray<ChatsSnapshotRow>): {
+  readonly pinned: ReadonlyArray<ChatsSnapshotRow>;
+  readonly rest: ReadonlyArray<ChatsSnapshotRow>;
+} {
+  return {
+    pinned: rows.filter((row) => row.pinned),
+    rest: rows.filter((row) => !row.pinned),
+  };
+}
+
 function removeQuietly(): void {
   try {
     removeLocalStorageItem(STORAGE_KEY);
@@ -136,13 +170,25 @@ function removeQuietly(): void {
   }
 }
 
+function removeLegacyQuietly(): void {
+  for (const key of LEGACY_STORAGE_KEYS) {
+    try {
+      removeLocalStorageItem(key);
+    } catch {
+      // Best effort: a leftover entry must never break the render path.
+    }
+  }
+}
+
 /**
- * Reads the snapshot for an environment. Returns null when there is none,
+ * Reads the snapshot for an environment, dropping any entry written by an
+ * older shape on the way through. Returns null when there is none,
  * when it belongs to another environment (clearing the stale entry), or when
  * storage fails or holds corrupt data. Never throws.
  */
 export function readChatsSnapshot(environmentId: string | null): ChatsSnapshot | null {
   if (environmentId === null) return null;
+  removeLegacyQuietly();
   let envelope: typeof ChatsSnapshotEnvelope.Type | null;
   try {
     envelope = getLocalStorageItem(STORAGE_KEY, ChatsSnapshotEnvelope);

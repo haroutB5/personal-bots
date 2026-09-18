@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   buildChatsSnapshot,
   dropChatFromSnapshot,
+  partitionPinnedSnapshotRows,
   MAX_SNAPSHOT_PREVIEW_CHARS,
   MAX_SNAPSHOT_ROWS,
   readChatsSnapshot,
@@ -53,6 +54,7 @@ function row(botId: string, overrides: Partial<ChatsSnapshotRowInput> = {}): Cha
     previewAtMs: 1_757_800_000_000,
     threadId: `thread-${botId}`,
     threadTitle: `Thread ${botId}`,
+    pinned: false,
     ...overrides,
   };
 }
@@ -71,7 +73,7 @@ describe("buildChatsSnapshot", () => {
     });
 
     expect(snapshot).toEqual({
-      version: 2,
+      version: 3,
       environmentId: "env-1",
       savedAtMs: 1_757_800_000_000,
       rows: [
@@ -92,6 +94,7 @@ describe("buildChatsSnapshot", () => {
         "avatarShape",
         "botId",
         "name",
+        "pinned",
         "preview",
         "previewAtMs",
         "subtitle",
@@ -191,7 +194,7 @@ describe("chats snapshot storage", () => {
     );
 
     expect(readChatsSnapshot("env-2")).toBeNull();
-    expect(storage.getItem("t3code:chats-snapshot:v2")).toBeNull();
+    expect(storage.getItem("t3code:chats-snapshot:v3")).toBeNull();
   });
 
   it("returns null without an environment and never writes", () => {
@@ -203,21 +206,21 @@ describe("chats snapshot storage", () => {
 
   it("drops corrupt entries instead of throwing", () => {
     const storage = stubWindow();
-    storage.setItem("t3code:chats-snapshot:v2", "not-json{{{");
+    storage.setItem("t3code:chats-snapshot:v3", "not-json{{{");
 
     expect(readChatsSnapshot("env-1")).toBeNull();
-    expect(storage.getItem("t3code:chats-snapshot:v2")).toBeNull();
+    expect(storage.getItem("t3code:chats-snapshot:v3")).toBeNull();
   });
 
   it("rejects wrong-shape payloads instead of rendering them", () => {
     const storage = stubWindow();
     storage.setItem(
-      "t3code:chats-snapshot:v2",
+      "t3code:chats-snapshot:v3",
       JSON.stringify({ environmentId: "env-1", snapshot: { version: 1, rows: [] } }),
     );
 
     expect(readChatsSnapshot("env-1")).toBeNull();
-    expect(storage.getItem("t3code:chats-snapshot:v2")).toBeNull();
+    expect(storage.getItem("t3code:chats-snapshot:v3")).toBeNull();
   });
 
   it("survives quota failures on write without throwing", () => {
@@ -261,7 +264,7 @@ describe("chats snapshot storage", () => {
 
     expect(dropChatFromSnapshot("env-1", (entry) => entry.botId === "a")).toBeNull();
     expect(readChatsSnapshot("env-1")).toBeNull();
-    expect(storage.getItem("t3code:chats-snapshot:v2")).toBeNull();
+    expect(storage.getItem("t3code:chats-snapshot:v3")).toBeNull();
   });
 
   it("leaves the snapshot alone when nothing matches, and no-ops without an environment", () => {
@@ -287,5 +290,70 @@ describe("chats snapshot storage", () => {
     });
 
     expect(readChatsSnapshot("env-1")).toBeNull();
+  });
+});
+
+describe("pinned rows", () => {
+  it("round-trips the pin through storage", () => {
+    stubWindow();
+    const snapshot = buildChatsSnapshot({
+      environmentId: "env-1",
+      savedAtMs: 0,
+      rows: [row("cto", { pinned: true }), row("scout")],
+    });
+
+    writeChatsSnapshot("env-1", snapshot);
+    const read = readChatsSnapshot("env-1");
+
+    expect(read?.rows.map((entry) => [entry.botId, entry.pinned])).toEqual([
+      ["cto", true],
+      ["scout", false],
+    ]);
+  });
+
+  it("splits stored rows into the box and the list, keeping the stored order", () => {
+    const snapshot = buildChatsSnapshot({
+      environmentId: "env-1",
+      savedAtMs: 0,
+      // Written in render order by the screen: the box first, then the list.
+      rows: [row("cto", { pinned: true }), row("assistant", { pinned: true }), row("scout")],
+    });
+
+    const { pinned, rest } = partitionPinnedSnapshotRows(snapshot.rows);
+
+    expect(pinned.map((entry) => entry.botId)).toEqual(["cto", "assistant"]);
+    expect(rest.map((entry) => entry.botId)).toEqual(["scout"]);
+  });
+
+  it("ignores a v2 entry and clears it, rather than painting an unpinned list", () => {
+    const storage = stubWindow();
+    // A real v2 payload: same shape, no `pinned` field on the rows.
+    storage.setItem(
+      "t3code:chats-snapshot:v2",
+      JSON.stringify({
+        environmentId: "env-1",
+        snapshot: {
+          version: 2,
+          environmentId: "env-1",
+          savedAtMs: 0,
+          rows: [
+            {
+              botId: "cto",
+              name: "CTO",
+              avatarShape: "blob",
+              avatarColor: "#1A73E8",
+              subtitle: "Dev lead",
+              preview: "",
+              previewAtMs: null,
+              threadId: null,
+              threadTitle: null,
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(readChatsSnapshot("env-1")).toBeNull();
+    expect(storage.getItem("t3code:chats-snapshot:v2")).toBeNull();
   });
 });
