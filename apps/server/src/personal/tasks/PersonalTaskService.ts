@@ -62,6 +62,13 @@ export const PERSONAL_TASKS_DEFAULT_MAX_CHILDREN = 4;
 /** Backoff before each rate-limited re-run; one more rate limit fails the task. */
 export const PERSONAL_TASKS_RATE_LIMIT_BACKOFF_MINUTES = [1, 5, 15] as const;
 const LEASE_MINUTES = 2;
+/**
+ * How long after an attempt settles its thread still counts as task-driven.
+ * Only has to outlast the gap between two reactors of the same domain event,
+ * so seconds are plenty; it is deliberately short so an ordinary chat turn
+ * right after a task finishes still notifies.
+ */
+export const PERSONAL_TASK_TURN_OWNERSHIP_MS = 30_000;
 const SWEEP_INTERVAL = "30 seconds";
 
 const RATE_LIMIT_PATTERN =
@@ -157,6 +164,15 @@ export class PersonalTaskService extends Context.Service<
       readonly botId: PersonalBotId;
       readonly turnId: TurnId;
     }) => Effect.Effect<PersonalTask, PersonalTasksError>;
+    /**
+     * Whether a task attempt drives `threadId`'s current turn, or drove the
+     * turn that just ended. True for the whole of a task-driven turn and for
+     * `PERSONAL_TASK_TURN_OWNERSHIP_MS` after it settles, so a reactor of the
+     * same "turn ended" event gets the same answer whichever of the two runs
+     * first. A turn this returns true for already earns its own notification
+     * from the task stream (or is a delegation the user is not waiting on).
+     */
+    readonly ownsThreadTurn: (threadId: ThreadId) => Effect.Effect<boolean>;
     /** Root of the task tree `threadId` works in: its active task, else its latest task. */
     readonly rootTaskIdForThread: (
       threadId: ThreadId,
@@ -292,6 +308,18 @@ export const make = Effect.gen(function* () {
   const activeThreadIds = new Set<string>();
   // Threads whose waiting task queues once their provider session is gone.
   const resumingThreadIds = new Set<string>();
+  /**
+   * When a thread's attempt last stopped owning it, in epoch ms. Read together
+   * with `activeThreadIds` by `ownsThreadTurn`, so that question is answered
+   * the same way before and after the attempt settles. Another reactor of the
+   * same domain event can then decide without racing this one.
+   */
+  const settledThreadAtMs = new Map<string, number>();
+
+  const releaseThread = (threadId: string, nowMs: number) => {
+    activeThreadIds.delete(threadId);
+    settledThreadAtMs.set(threadId, nowMs);
+  };
 
   const fail = (message: string, cause?: unknown) =>
     new PersonalTasksError({ message, ...(cause === undefined ? {} : { cause }) });
@@ -513,7 +541,7 @@ export const make = Effect.gen(function* () {
         }
       }),
     );
-    activeThreadIds.delete(attempt.providerThreadId);
+    releaseThread(attempt.providerThreadId, DateTime.toEpochMillis(yield* DateTime.now));
     yield* publish(changed);
   });
 
@@ -1277,9 +1305,10 @@ export const make = Effect.gen(function* () {
               }
             }),
           );
-          const createdAt = DateTime.formatIso(yield* DateTime.now);
+          const interruptedAt = yield* DateTime.now;
+          const createdAt = DateTime.formatIso(interruptedAt);
           for (const attempt of interrupted) {
-            activeThreadIds.delete(attempt.providerThreadId);
+            releaseThread(attempt.providerThreadId, DateTime.toEpochMillis(interruptedAt));
             // Interrupt by the attempt's own thread (and turn when known),
             // never by process name.
             yield* engine
@@ -1484,6 +1513,19 @@ export const make = Effect.gen(function* () {
       )
       .pipe(toPublic("resolveCallerTask"));
 
+  const ownsThreadTurn: PersonalTaskService["Service"]["ownsThreadTurn"] = (threadId) =>
+    Effect.gen(function* () {
+      if (activeThreadIds.has(threadId)) return true;
+      const settledAt = settledThreadAtMs.get(threadId);
+      if (settledAt === undefined) return false;
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      if (nowMs - settledAt >= PERSONAL_TASK_TURN_OWNERSHIP_MS) {
+        settledThreadAtMs.delete(threadId);
+        return false;
+      }
+      return true;
+    });
+
   const rootTaskIdForThread: PersonalTaskService["Service"]["rootTaskIdForThread"] = (threadId) =>
     Effect.gen(function* () {
       const active = yield* activeAttemptForThread(threadId);
@@ -1641,6 +1683,7 @@ export const make = Effect.gen(function* () {
     sweep: worker.enqueue({ type: "sweep" }),
     drain: worker.drain,
     resolveCallerTask,
+    ownsThreadTurn,
     rootTaskIdForThread,
     waitForUser,
     waitForBrowser,
