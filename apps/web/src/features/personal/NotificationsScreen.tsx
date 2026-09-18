@@ -33,6 +33,7 @@ const EVENTS: ReadonlyArray<{
   { key: "taskNeedsInput", label: "A bot needs your input or approval" },
   { key: "taskFailed", label: "A task fails" },
   { key: "routineResult", label: "A routine finishes" },
+  { key: "chatReply", label: "A bot replies in a chat you are not reading" },
 ];
 
 /** A short, non-identifying name for this device in the device list. */
