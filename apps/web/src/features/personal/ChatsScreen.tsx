@@ -23,9 +23,11 @@ import { useTogglePinBot } from "./usePinBot";
 import { useComputerFeed } from "./computer/computerState";
 import {
   buildChatsSnapshot,
+  partitionPinnedSnapshotRows,
   readChatsSnapshot,
   writeChatsSnapshot,
   type ChatsSnapshot,
+  type ChatsSnapshotRow,
   type ChatsSnapshotRowInput,
 } from "./chatsSnapshot";
 import {
@@ -56,6 +58,16 @@ export function useMinuteClock(): number {
   }, []);
   return now;
 }
+
+// Shared by the live list and the cold-start snapshot paint: the two render
+// the same sections, so they must not drift apart visually.
+const PINNED_SECTION_CLASS =
+  "mt-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3.5 pb-1";
+const PINNED_HEADING_CLASS =
+  "pt-2.5 text-xs font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase";
+const PINNED_LIST_CLASS = "divide-y divide-[var(--personal-border)]";
+const UNPINNED_LIST_CLASS =
+  "mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)]";
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]";
@@ -94,56 +106,74 @@ function ChatsSkeletonRows(): JSX.Element {
  * seamlessly the moment it arrives.
  */
 function SnapshotBotRows({ snapshot, now }: { snapshot: ChatsSnapshot; now: number }): JSX.Element {
+  // Rows were stored in render order, so the two sections come straight off
+  // the `pinned` flag and the live list lands on the same layout.
+  const { pinned, rest } = partitionPinnedSnapshotRows(snapshot.rows);
   return (
-    <ul
-      aria-label="Your bots"
-      className="mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)]"
-    >
-      {snapshot.rows.map((row) => {
-        const content = (
-          <>
-            <BotAvatar shape={row.avatarShape} color={row.avatarColor} size={56} label={row.name} />
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span className="flex min-w-0 items-center">
-                <span className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
-                  {row.name}
-                </span>
-                {row.previewAtMs !== null ? (
-                  <time
-                    dateTime={new Date(row.previewAtMs).toISOString()}
-                    className="ml-auto shrink-0 pl-3 text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]"
-                  >
-                    {formatRelativeTime(row.previewAtMs, now)}
-                  </time>
-                ) : null}
-              </span>
-              <span className="truncate text-sm leading-5 text-[var(--personal-text-secondary)]">
-                {row.subtitle}
-              </span>
-              <span className="truncate text-sm leading-5 text-[#3a3a3a]">{row.preview}</span>
-            </span>
-          </>
-        );
-        return (
-          <li key={row.botId}>
-            {row.threadId !== null ? (
-              <Link
-                to="/bots/$botId/$threadId"
-                params={{
-                  botId: row.botId as PersonalBotId,
-                  threadId: row.threadId as ThreadId,
-                }}
-                className={ROW_CLASS}
-              >
-                {content}
-              </Link>
-            ) : (
-              <div className={ROW_CLASS}>{content}</div>
-            )}
-          </li>
-        );
-      })}
-    </ul>
+    <>
+      {pinned.length > 0 ? (
+        <section aria-label="Pinned" className={PINNED_SECTION_CLASS}>
+          <h2 className={PINNED_HEADING_CLASS}>Pinned</h2>
+          <ul className={PINNED_LIST_CLASS}>
+            {pinned.map((row) => (
+              <SnapshotBotRow key={row.botId} row={row} now={now} />
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {rest.length > 0 ? (
+        <ul aria-label="Your bots" className={UNPINNED_LIST_CLASS}>
+          {rest.map((row) => (
+            <SnapshotBotRow key={row.botId} row={row} now={now} />
+          ))}
+        </ul>
+      ) : null}
+    </>
+  );
+}
+
+function SnapshotBotRow({ row, now }: { row: ChatsSnapshotRow; now: number }): JSX.Element {
+  const content = (
+    <>
+      <BotAvatar shape={row.avatarShape} color={row.avatarColor} size={56} label={row.name} />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="flex min-w-0 items-center">
+          <span className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
+            {row.name}
+          </span>
+          {row.previewAtMs !== null ? (
+            <time
+              dateTime={new Date(row.previewAtMs).toISOString()}
+              className="ml-auto shrink-0 pl-3 text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]"
+            >
+              {formatRelativeTime(row.previewAtMs, now)}
+            </time>
+          ) : null}
+        </span>
+        <span className="truncate text-sm leading-5 text-[var(--personal-text-secondary)]">
+          {row.subtitle}
+        </span>
+        <span className="truncate text-sm leading-5 text-[#3a3a3a]">{row.preview}</span>
+      </span>
+    </>
+  );
+  return (
+    <li>
+      {row.threadId !== null ? (
+        <Link
+          to="/bots/$botId/$threadId"
+          params={{
+            botId: row.botId as PersonalBotId,
+            threadId: row.threadId as ThreadId,
+          }}
+          className={ROW_CLASS}
+        >
+          {content}
+        </Link>
+      ) : (
+        <div className={ROW_CLASS}>{content}</div>
+      )}
+    </li>
   );
 }
 
@@ -352,7 +382,11 @@ export function ChatsScreen(): JSX.Element {
   // that leave the rows alone cost nothing.
   const snapshotRows = useMemo<ChatsSnapshotRowInput[] | null>(() => {
     if (environmentId === null || list.data === null) return null;
-    return summaries.map((summary) => ({
+    // Stored in render order — the pinned box first, then the list under it —
+    // so a cold paint can rebuild both sections without knowing team or lead
+    // rank, and the rows do not reshuffle when the live list replaces them.
+    const split = partitionPinnedSummaries(summaries);
+    return [...split.pinned, ...split.rest].map((summary) => ({
       botId: summary.bot.botId,
       name: summary.bot.name,
       avatarShape: summary.bot.avatarShape,
@@ -362,6 +396,7 @@ export function ChatsScreen(): JSX.Element {
       previewAtMs: summary.lastActivityMs,
       threadId: summary.newestThread === null ? null : (summary.newestThread.id as string),
       threadTitle: summary.newestThread === null ? null : summary.newestThread.title,
+      pinned: isBotPinned(summary.bot),
     }));
   }, [environmentId, list.data, summaries, describeTurn]);
   const snapshotKey = snapshotRows === null ? null : JSON.stringify(snapshotRows);
@@ -486,22 +521,13 @@ export function ChatsScreen(): JSX.Element {
           {visible.length > 0 ? (
             <>
               {pinned.length > 0 ? (
-                <section
-                  aria-label="Pinned"
-                  className="mt-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3.5 pb-1"
-                >
-                  <h2 className="pt-2.5 text-xs font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase">
-                    Pinned
-                  </h2>
-                  <ul className="divide-y divide-[var(--personal-border)]">
-                    {pinned.map(renderRow)}
-                  </ul>
+                <section aria-label="Pinned" className={PINNED_SECTION_CLASS}>
+                  <h2 className={PINNED_HEADING_CLASS}>Pinned</h2>
+                  <ul className={PINNED_LIST_CLASS}>{pinned.map(renderRow)}</ul>
                 </section>
               ) : null}
               {rest.length > 0 ? (
-                <ul className="mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)]">
-                  {rest.map(renderRow)}
-                </ul>
+                <ul className={UNPINNED_LIST_CLASS}>{rest.map(renderRow)}</ul>
               ) : null}
             </>
           ) : (

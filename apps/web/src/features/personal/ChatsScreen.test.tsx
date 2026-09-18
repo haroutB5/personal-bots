@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { BotAvatar } from "./BotAvatar";
 import { ChatsScreen } from "./ChatsScreen";
 import { buildChatsSnapshot, writeChatsSnapshot } from "./chatsSnapshot";
 import { SwipeToDelete } from "./SwipeToDelete";
@@ -125,26 +126,25 @@ async function flushRaf() {
   });
 }
 
-function seedSnapshot() {
+function snapshotRow(botId: string, name: string, pinned = false) {
+  return {
+    botId,
+    name,
+    avatarShape: "blob" as const,
+    avatarColor: "#1A73E8" as const,
+    subtitle: "General assistant",
+    previewLabel: "cached preview line",
+    previewAtMs: 1_757_800_000_000,
+    threadId: `thread-${botId}`,
+    threadTitle: "Cached thread",
+    pinned,
+  };
+}
+
+function seedSnapshot(rows = [snapshotRow("bot-cached", "Cached Ada")]) {
   writeChatsSnapshot(
     "env-1",
-    buildChatsSnapshot({
-      environmentId: "env-1",
-      savedAtMs: 1_757_800_000_000,
-      rows: [
-        {
-          botId: "bot-cached",
-          name: "Cached Ada",
-          avatarShape: "blob",
-          avatarColor: "#1A73E8",
-          subtitle: "General assistant",
-          previewLabel: "cached preview line",
-          previewAtMs: 1_757_800_000_000,
-          threadId: "thread-cached",
-          threadTitle: "Cached thread",
-        },
-      ],
-    }),
+    buildChatsSnapshot({ environmentId: "env-1", savedAtMs: 1_757_800_000_000, rows }),
   );
 }
 
@@ -243,6 +243,43 @@ describe("ChatsScreen cold start", () => {
     expect(update).toBeDefined();
     act(() => update!.props.onClick());
     expect(state.reload).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The reported bug: "the pinned bots aren't showing when I first open the
+   * app, they appear after a couple of sends". The snapshot carried no pin, so
+   * the box only existed once `personalBots.list` landed.
+   */
+  it("paints the Pinned box from the snapshot alone, before the live list", async () => {
+    stubWindow();
+    seedSnapshot([
+      snapshotRow("bot-cto", "Cached CTO", true),
+      snapshotRow("bot-scout", "Cached Scout"),
+    ]);
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+
+    // No live list yet — this is the cold paint.
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Loading your bots");
+    const namesIn = (scope: ReactTestInstance) =>
+      scope.findAllByType(BotAvatar).map((avatar) => avatar.props.label as string);
+    const box = renderer!.root.findByProps({ "aria-label": "Pinned" });
+    expect(namesIn(box)).toEqual(["Cached CTO"]);
+    // And the unpinned bot is listed once, under the box, not duplicated in it.
+    expect(namesIn(renderer!.root.findByProps({ "aria-label": "Your bots" }))).toEqual([
+      "Cached Scout",
+    ]);
+  });
+
+  it("leaves the box out when the snapshot has nothing pinned", async () => {
+    stubWindow();
+    seedSnapshot();
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+
+    expect(renderer!.root.findAllByProps({ "aria-label": "Pinned" })).toEqual([]);
   });
 
   it("replaces the snapshot seamlessly when live data arrives", async () => {
