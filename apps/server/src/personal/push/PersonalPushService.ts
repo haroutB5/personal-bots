@@ -22,11 +22,13 @@ import {
   type PersonalPushDevice,
   type PersonalPushSettings,
   type PersonalPushSubscribeInput,
+  type OrchestrationEvent,
   type PersonalTask,
   type ThreadId,
 } from "@t3tools/contracts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
@@ -103,13 +105,15 @@ export type PersonalPushEventKind =
   | "task_completed"
   | "task_needs_input"
   | "task_failed"
-  | "routine_result";
+  | "routine_result"
+  | "chat_reply";
 
 const PREFERENCE_FOR: Record<PersonalPushEventKind, keyof PersonalPushPreferences> = {
   task_completed: "taskCompleted",
   task_needs_input: "taskNeedsInput",
   task_failed: "taskFailed",
   routine_result: "routineResult",
+  chat_reply: "chatReply",
 };
 
 /**
@@ -155,6 +159,25 @@ export function pushPayloadForTask(
   return { title, body, url, tag: `task-${task.taskId}` };
 }
 
+/**
+ * A bot finished its turn in a chat. The reply itself never travels: the
+ * notification says who spoke and links to the chat. One tag per thread, so a
+ * second reply in the same chat replaces the first on the lock screen instead
+ * of stacking.
+ */
+export function chatReplyPushPayload(input: {
+  readonly botId: string;
+  readonly botName: string;
+  readonly threadId: string;
+}): PersonalPushPayload {
+  return {
+    title: `${input.botName} replied`,
+    body: "Open the chat to read it.",
+    url: `/bots/${encodeURIComponent(input.botId)}/${encodeURIComponent(input.threadId)}`,
+    tag: `chat-${input.threadId}`,
+  };
+}
+
 /** "Claude Code 2.1.264 is failing for your bots", linking to the Settings provider row. */
 export function providerBrokenPushPayload(input: {
   readonly instanceId: string;
@@ -179,8 +202,20 @@ const SubscriptionRow = Schema.Struct({
   lastError: Schema.NullOr(Schema.String),
 });
 const decodeSubscriptionRow = Schema.decodeUnknownEffect(SubscriptionRow);
-const decodePreferences = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(PersonalPushPreferences),
+/**
+ * Preferences are read leniently and merged over the defaults: a blob stored
+ * before a new event kind existed must keep the toggles it does carry rather
+ * than resetting every one of them to the default.
+ */
+const StoredPreferences = Schema.Struct({
+  taskCompleted: Schema.optional(Schema.Boolean),
+  taskNeedsInput: Schema.optional(Schema.Boolean),
+  taskFailed: Schema.optional(Schema.Boolean),
+  routineResult: Schema.optional(Schema.Boolean),
+  chatReply: Schema.optional(Schema.Boolean),
+});
+const decodeStoredPreferences = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(StoredPreferences),
 );
 const encodePreferences = Schema.encodeSync(Schema.fromJsonString(PersonalPushPreferences));
 const encodePayload = Schema.encodeSync(Schema.fromJsonString(PersonalPushPayload));
@@ -221,6 +256,17 @@ export class PersonalPushService extends Context.Service<
     /** Queues the notification a task transition earns (deduped per transition). */
     readonly notifyTask: (task: PersonalTask) => Effect.Effect<void>;
     /**
+     * A bot ended its turn in a chat. Notifies only when nothing more
+     * specific covers it: see the guards in the implementation.
+     */
+    readonly notifyChatReply: (input: {
+      readonly threadId: ThreadId;
+      /** The session stamp the turn ended on; also the per-turn dedupe key. */
+      readonly turnEndedAt: string;
+    }) => Effect.Effect<void>;
+    /** Feeds one orchestration event in (the start() stream uses this). */
+    readonly ingestDomainEvent: (event: OrchestrationEvent) => Effect.Effect<void>;
+    /**
      * One connection says which chat it has open and visible (null = none).
      * Notifications for that chat are held back while it is being read.
      */
@@ -251,6 +297,7 @@ export const make = Effect.gen(function* () {
   const transport = yield* PersonalPushTransport;
   const botRepository = yield* PersonalBotRepository.PersonalBotRepository;
   const tasks = yield* Effect.serviceOption(PersonalTaskService.PersonalTaskService);
+  const engine = yield* Effect.serviceOption(OrchestrationEngine.OrchestrationEngineService);
 
   const fail = (message: string, cause?: unknown) =>
     new PersonalPushError({ message, ...(cause === undefined ? {} : { cause }) });
@@ -293,7 +340,15 @@ export const make = Effect.gen(function* () {
       Option.match({
         onNone: () => Effect.succeed(PERSONAL_PUSH_DEFAULT_PREFERENCES),
         onSome: (raw) =>
-          decodePreferences(raw).pipe(
+          decodeStoredPreferences(raw).pipe(
+            Effect.map((stored): PersonalPushPreferences => {
+              const merged = { ...PERSONAL_PUSH_DEFAULT_PREFERENCES };
+              for (const key of Object.keys(merged) as Array<keyof PersonalPushPreferences>) {
+                const value = stored[key];
+                if (value !== undefined) merged[key] = value;
+              }
+              return merged;
+            }),
             Effect.orElseSucceed(() => PERSONAL_PUSH_DEFAULT_PREFERENCES),
           ),
       }),
@@ -601,6 +656,91 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * A bot ended its turn in a chat. The turn is the signal: a question asked
+   * in prose is not reliably detectable, so any reply that lands while the
+   * user is elsewhere notifies.
+   *
+   * One buzz per turn, decided by four guards in this order:
+   *  1. the chat is open and visible on some connection - the user is already
+   *     reading it, so nothing is queued;
+   *  2. the thread is not a personal bot's - project and dev threads never
+   *     notify here;
+   *  3. a task attempt drives (or just drove) this turn - the task stream
+   *     already earns the more specific notification for it: "needs you" when
+   *     the turn parked on a secret request or browser help, "finished" or
+   *     "hit a problem" when it ended. A delegation to another bot is this
+   *     case too: the delegating bot's MCP call opens a caller task, so the
+   *     hand-off is silent here and the user hears about it once, when the
+   *     work it started is done;
+   *  4. the preference is off.
+   * The outbox key is thread plus the session stamp the turn ended on, so a
+   * replayed event cannot buzz twice for one turn.
+   */
+  const notifyChatReply: PersonalPushService["Service"]["notifyChatReply"] = (input) =>
+    Effect.gen(function* () {
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      if (presence.isViewing(input.threadId, nowMs)) return;
+      const link = yield* botRepository.getThreadLink({ threadId: input.threadId });
+      if (Option.isNone(link)) return;
+      if (Option.isSome(tasks) && (yield* tasks.value.ownsThreadTurn(input.threadId))) {
+        yield* Effect.logDebug("personal notification held back: a task owns this turn", {
+          threadId: input.threadId,
+        });
+        return;
+      }
+      const preferences = yield* readPreferences;
+      if (!preferences[PREFERENCE_FOR.chat_reply]) return;
+      const bot = yield* botRepository.getBotById({ botId: link.value.botId });
+      const botName = Option.isSome(bot) ? bot.value.name : "Your bot";
+      const eventId = `chat-reply:${input.threadId}:${input.turnEndedAt}`;
+      const queued = yield* enqueue(
+        eventId,
+        chatReplyPushPayload({
+          botId: link.value.botId,
+          botName,
+          threadId: input.threadId,
+        }),
+      );
+      if (queued > 0) yield* kick;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal notifications could not queue a chat reply", {
+              threadId: input.threadId,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
+
+  /**
+   * A turn ending is the transition running -> ready, not the "ready" state
+   * itself: a session that starts or is re-attached publishes "ready" too, and
+   * that is nobody replying. Only the edge is a reply.
+   *
+   * "interrupted" and "stopped" are the user's own doing and "error" belongs
+   * to the task stream's "hit a problem", so they clear the thread without
+   * notifying. Threads are remembered only between their own start and end, so
+   * this set is bounded by the turns actually in flight; after a restart the
+   * turn already running is not remembered, and its end is silent rather than
+   * risk a notification for a turn that was never observed.
+   */
+  const runningThreadIds = new Set<string>();
+
+  const ingestDomainEvent: PersonalPushService["Service"]["ingestDomainEvent"] = (event) => {
+    if (event.type !== "thread.session-set") return Effect.void;
+    const { threadId, session } = event.payload;
+    if (session.status === "running") {
+      runningThreadIds.add(threadId);
+      return Effect.void;
+    }
+    const wasRunning = runningThreadIds.delete(threadId);
+    return wasRunning && session.status === "ready"
+      ? notifyChatReply({ threadId, turnEndedAt: session.updatedAt })
+      : Effect.void;
+  };
+
   // A broken provider stops every bot on it, so it rides the "hit a problem"
   // preference. One event per instance and version: a re-check that fails
   // again for the same version dedupes in the outbox.
@@ -627,6 +767,10 @@ export const make = Effect.gen(function* () {
       if (Option.isSome(tasks)) {
         yield* forkParked(Stream.runForEach(tasks.value.changes, notifyTask));
       }
+      if (Option.isSome(engine)) {
+        const events = yield* engine.value.subscribeDomainEvents;
+        yield* forkParked(Stream.runForEach(events, ingestDomainEvent));
+      }
       yield* forkParked(
         Effect.gen(function* () {
           yield* kick;
@@ -643,6 +787,8 @@ export const make = Effect.gen(function* () {
     test,
     setPreferences,
     notifyTask,
+    notifyChatReply,
+    ingestDomainEvent,
     reportViewing,
     dropConnection,
     notifyProviderBroken,

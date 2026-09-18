@@ -6,6 +6,7 @@ import {
   PersonalTaskId,
   ProviderInstanceId,
   ThreadId,
+  type OrchestrationEvent,
   type PersonalTask,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -19,6 +20,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalPushService from "./PersonalPushService.ts";
 import { base64UrlEncode, type WebPushRequest } from "./webPushCrypto.ts";
 
@@ -43,8 +45,20 @@ const memorySecrets = () => {
   });
 };
 
-const makeLayer = (harness: Harness) =>
-  PersonalPushService.layer.pipe(
+/**
+ * Only `ownsThreadTurn` is ever reached from the push service, so the rest of
+ * the task service is left unbuilt rather than stood up for one predicate.
+ */
+const stubTasks = (ownedThreadIds: ReadonlySet<string>) =>
+  Layer.succeed(PersonalTaskService.PersonalTaskService, {
+    ownsThreadTurn: (threadId: string) => Effect.succeed(ownedThreadIds.has(threadId)),
+  } as unknown as PersonalTaskService.PersonalTaskService["Service"]);
+
+const makeLayer = (
+  harness: Harness,
+  tasks?: Layer.Layer<PersonalTaskService.PersonalTaskService>,
+) => {
+  const base = PersonalPushService.layer.pipe(
     Layer.provideMerge(
       Layer.succeed(PersonalPushService.PersonalPushTransport, {
         send: (request: WebPushRequest) =>
@@ -54,10 +68,13 @@ const makeLayer = (harness: Harness) =>
           }),
       }),
     ),
+    tasks === undefined ? (layer) => layer : Layer.provideMerge(tasks),
     Layer.provideMerge(memorySecrets()),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
   );
+  return base;
+};
 
 /** A real browser-shaped subscription (fresh P-256 key and auth secret). */
 const subscription = (endpoint: string) => {
@@ -202,6 +219,7 @@ it.effect("a disabled event type queues nothing", () => {
       taskNeedsInput: true,
       taskFailed: true,
       routineResult: true,
+      chatReply: true,
     });
     yield* push.notifyTask(yield* makeTask({}));
     yield* push.drain;
@@ -340,6 +358,179 @@ it.effect("a second device reading the same chat keeps holding it back", () => {
     );
     yield* push.drain;
     expect((yield* outbox).length).toBe(1);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+const CHAT = ThreadId.make("thread-chat");
+
+const linkThread = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    yield* bots.insertThreadLink({ botId: BOT, threadId, createdAt: yield* DateTime.now });
+  });
+
+/** The two halves of one turn on `threadId`, as the engine publishes them. */
+const sessionSet = (threadId: ThreadId, status: string, at: string): OrchestrationEvent =>
+  ({
+    type: "thread.session-set",
+    payload: {
+      threadId,
+      session: {
+        threadId,
+        status,
+        providerName: "claude",
+        runtimeMode: "full-access",
+        activeTurnId: status === "running" ? "turn-1" : null,
+        lastError: null,
+        updatedAt: at,
+      },
+    },
+  }) as unknown as OrchestrationEvent;
+
+const runTurn = (threadId: ThreadId, at: string) =>
+  Effect.gen(function* () {
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.ingestDomainEvent(sessionSet(threadId, "running", at));
+    yield* push.ingestDomainEvent(sessionSet(threadId, "ready", at));
+    yield* push.drain;
+  });
+
+it.effect("a bot ending its turn in a chat notifies once while the user is away", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+
+    yield* runTurn(CHAT, "2026-09-18T09:00:00.000Z");
+
+    const rows = yield* outbox;
+    expect(rows.length).toBe(1);
+    expect(JSON.parse(rows[0]!.payload)).toEqual({
+      title: "Assistant replied",
+      body: "Open the chat to read it.",
+      url: `/bots/${BOT}/${CHAT}`,
+      tag: `chat-${CHAT}`,
+    });
+
+    // The same turn replayed is one buzz, not two.
+    yield* runTurn(CHAT, "2026-09-18T09:00:00.000Z");
+    expect((yield* outbox).length).toBe(1);
+
+    // A thread with no bot behind it (a project or dev thread) never notifies.
+    yield* runTurn(ThreadId.make("thread-project"), "2026-09-18T09:01:00.000Z");
+    expect((yield* outbox).length).toBe(1);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a turn that only reaches ready without running is not a reply", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+
+    // A session starting or re-attaching publishes "ready" with nobody having
+    // spoken; only the running -> ready edge is a reply.
+    yield* push.ingestDomainEvent(sessionSet(CHAT, "ready", "2026-09-18T09:00:00.000Z"));
+    yield* push.drain;
+    expect(yield* outbox).toEqual([]);
+
+    // A turn the user stopped, and one that errored, are not replies either.
+    yield* push.ingestDomainEvent(sessionSet(CHAT, "running", "2026-09-18T09:01:00.000Z"));
+    yield* push.ingestDomainEvent(sessionSet(CHAT, "interrupted", "2026-09-18T09:01:01.000Z"));
+    yield* push.ingestDomainEvent(sessionSet(CHAT, "running", "2026-09-18T09:02:00.000Z"));
+    yield* push.ingestDomainEvent(sessionSet(CHAT, "error", "2026-09-18T09:02:01.000Z"));
+    yield* push.drain;
+    expect(yield* outbox).toEqual([]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("the chat the user is reading gets no reply notification", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* push.reportViewing({ connectionId: "phone", threadId: CHAT });
+
+    yield* runTurn(CHAT, "2026-09-18T09:00:00.000Z");
+    expect(yield* outbox).toEqual([]);
+
+    // They put the phone down; the next turn notifies.
+    yield* push.reportViewing({ connectionId: "phone", threadId: null });
+    yield* runTurn(CHAT, "2026-09-18T09:05:00.000Z");
+    expect((yield* outbox).length).toBe(1);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a turn a task drove notifies once, from the task, not twice", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  const owned = new Set<string>([CHAT]);
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+
+    // The turn parked a task on a secret request: that is the specific
+    // notification, and the turn ending behind it adds nothing.
+    yield* push.notifyTask(
+      yield* makeTask({ status: "waiting_for_user", threadId: CHAT, title: "Needs a password" }),
+    );
+    yield* runTurn(CHAT, "2026-09-18T09:00:00.000Z");
+
+    const rows = yield* outbox;
+    expect(rows.length).toBe(1);
+    expect(JSON.parse(rows[0]!.payload).title).toBe("Assistant needs you");
+  }).pipe(Effect.provide(makeLayer(harness, stubTasks(owned))));
+});
+
+it.effect("the chat-reply preference turned off queues nothing", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* push.setPreferences({
+      taskCompleted: true,
+      taskNeedsInput: true,
+      taskFailed: true,
+      routineResult: true,
+      chatReply: false,
+    });
+
+    yield* runTurn(CHAT, "2026-09-18T09:00:00.000Z");
+    expect(yield* outbox).toEqual([]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("preferences stored before a new event kind keep the toggles they carry", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    // Exactly what v1.21 wrote: four keys, no chatReply.
+    yield* bots.setMeta({
+      key: "pushPreferences",
+      value: JSON.stringify({
+        taskCompleted: false,
+        taskNeedsInput: true,
+        taskFailed: true,
+        routineResult: true,
+      }),
+    });
+    const push = yield* PersonalPushService.PersonalPushService;
+    const preferences = (yield* push.getSettings()).preferences;
+    expect(preferences.taskCompleted).toBe(false);
+    expect(preferences.chatReply).toBe(true);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 

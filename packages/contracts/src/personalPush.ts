@@ -7,12 +7,18 @@ export const PersonalPushSubscriptionId = TrimmedNonEmptyString.pipe(
 );
 export type PersonalPushSubscriptionId = typeof PersonalPushSubscriptionId.Type;
 
-/** Which task transitions notify. All default to on. */
+/** Which events notify. All default to on. */
 export const PersonalPushPreferences = Schema.Struct({
   taskCompleted: Schema.Boolean,
   taskNeedsInput: Schema.Boolean,
   taskFailed: Schema.Boolean,
   routineResult: Schema.Boolean,
+  /**
+   * A bot finished its turn in a chat with no task behind it. A question
+   * asked in prose cannot be detected reliably, so the end of the turn is
+   * the signal: any reply that lands while the chat is not being read.
+   */
+  chatReply: Schema.Boolean,
 });
 export type PersonalPushPreferences = typeof PersonalPushPreferences.Type;
 
@@ -21,6 +27,7 @@ export const PERSONAL_PUSH_DEFAULT_PREFERENCES: PersonalPushPreferences = {
   taskNeedsInput: true,
   taskFailed: true,
   routineResult: true,
+  chatReply: true,
 };
 
 export const PersonalPushDevice = Schema.Struct({
