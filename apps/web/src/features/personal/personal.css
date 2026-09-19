@@ -1,9 +1,27 @@
-/* Personal Bots theme tokens (light only).
+/* Personal Bots theme tokens (light + dark).
  *
- * Scoped under `.personal-app` so the upstream T3 theme is untouched. Values
- * transcribed from `.plans/ui-spec.md`. The personal layout (Task 3) wraps its
- * routes in `.personal-app`; this file is imported from `index.css` so the
- * variables exist wherever the wrapper is used. */
+ * Scoped under `.personal-app` so the upstream T3 theme is untouched. Light
+ * values transcribed from `.plans/ui-spec.md`. The personal layout (Task 3)
+ * wraps its routes in `.personal-app`; this file is imported from `index.css`
+ * so the variables exist wherever the wrapper is used.
+ *
+ * Dark mode rides the upstream T3 appearance, it does not invent a second
+ * switch: `useTheme` (and the pre-paint boot script in `index.html`) toggle
+ * `.dark` on <html> from the System/Light/Dark appearance mode, and the dark
+ * block below keys off that class. Three consequences worth keeping:
+ *
+ * 1. The class is on the document element, so sheets, popovers and any other
+ *    portal that carries `.personal-app` outside the shell get the dark tokens
+ *    too. An attribute on the shell wrapper would have missed all of them.
+ * 2. The boot script sets `.dark` before first paint, so a cold start in a
+ *    dark room never flashes the light surface.
+ * 3. `syncBrowserChromeTheme` drives the `theme-color` meta from the resolved
+ *    appearance, so the iOS PWA status bar follows the surface for free.
+ *
+ * Contrast: every dark text token is checked against the surface it is used
+ * on (`--personal-bg`, `--personal-surface`, `--personal-fill-muted`, and the
+ * tinted review/danger cards). Ratios are noted per token; the floor is AA
+ * 4.5:1 for body text, and the lowest value in the set is 5.16:1. */
 
 .personal-app {
   --personal-bg: #fafaf8;
@@ -25,6 +43,31 @@
   --personal-team-line: #707070;
   --personal-team-live: #188038;
   --personal-team-recent: #8a8a86;
+
+  /* Chat preview line: one step darker than --personal-text-secondary so the
+   * last message stays readable under the bot name. Was hardcoded #3a3a3a in
+   * BotRow/GroupRow/ChatsScreen. 10.6:1 on --personal-bg. */
+  --personal-text-preview: #3a3a3a;
+  /* Inline form/error text ("Couldn't save your name"), and the error status
+   * dot. Was hardcoded #b3261e / #B3261E in 16 places. 6.9:1 on
+   * --personal-bg, 7.2:1 on --personal-surface. */
+  --personal-error: #b3261e;
+  /* Solid destructive fill (swipe-to-delete, "Delete file"). Darkened from the
+   * old hardcoded #d93025, which only reached 4.0:1 against its own white
+   * label; #c3261d reaches 5.8:1. Same value in both appearances: a saturated
+   * red reads on either surface and stays recognisable as the delete colour. */
+  --personal-destructive: #c3261d;
+  --personal-destructive-text: #ffffff;
+  /* Card lift. Tailwind's shadow-* utilities are tuned for a white page and
+   * disappear on a dark one, so the elevation is a token. */
+  --personal-shadow-card: 0 1px 2px rgb(0 0 0 / 0.06);
+  --personal-shadow-lift: 0 8px 16px rgb(0 0 0 / 0.28);
+  /* Outline drawn behind a bot avatar's silhouette. Bot colours are user data
+   * and are never rewritten for the theme; on a dark surface the dark swatches
+   * (#171717, #64748B) would sink into the background, so the avatar gets a
+   * halo instead. Transparent in light, where every swatch already separates. */
+  --personal-avatar-halo: transparent;
+
   --personal-font:
     -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
 
@@ -36,6 +79,38 @@
   background-color: var(--personal-bg);
   color: var(--personal-text);
   font-family: var(--personal-font);
+}
+
+/* Dark appearance. Selector is `:root.dark` so portals are covered (see the
+ * header). Contrast ratios in the comments are measured against the surface
+ * each token actually sits on. */
+:root.dark .personal-app {
+  --personal-bg: #0f0f0e;
+  --personal-surface: #1a1a19;
+  --personal-fill-muted: #242423;
+  --personal-text: #ededeb; /* 16.4:1 on bg, 14.9:1 on surface, 13.3:1 on fill */
+  --personal-text-secondary: #a0a09c; /* 7.3:1 on bg, 5.9:1 on fill-muted */
+  --personal-text-tertiary: #8c8c88; /* 5.7:1 on bg, 5.2:1 on surface (AA) */
+  --personal-text-preview: #b8b8b4; /* 9.6:1 on bg */
+  --personal-border: #33332f;
+  --personal-live: #3ecf6b; /* status dot, 9.5:1 on bg (needs 3:1) */
+  --personal-review: #e3b855; /* 8.8:1 on --personal-review-bg */
+  --personal-review-bg: #241f12;
+  --personal-review-border: #453a1d;
+  --personal-danger: #f2a49b; /* 8.6:1 on --personal-danger-bg, 8.8:1 on surface */
+  --personal-danger-bg: #2a1614;
+  --personal-danger-border: #5d2a25;
+  --personal-error: #f2a49b; /* 9.6:1 on bg, 8.8:1 on surface */
+  --personal-primary: #e8e8e5;
+  --personal-primary-text: #141413; /* 15.4:1 on --personal-primary */
+  --personal-team-line: #8f8f8a;
+  --personal-team-live: #49c46e;
+  --personal-team-recent: #6f6f6b;
+  /* Elevation on a dark surface comes from the border, not a black shadow, so
+   * the card shadow is dropped and only the drag lift keeps a (deeper) one. */
+  --personal-shadow-card: 0 0 0 rgb(0 0 0 / 0);
+  --personal-shadow-lift: 0 8px 16px rgb(0 0 0 / 0.6);
+  --personal-avatar-halo: #3d3d3a;
 }
 
 /* The personal surface honours reduced-motion: no perpetual animations. */

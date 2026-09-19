@@ -35,6 +35,11 @@ import {
   setPersonalPreference,
   usePersonalPreference,
 } from "./personalPreferences";
+import {
+  PERSONAL_THEME_MODE_LABELS,
+  PERSONAL_THEME_MODES,
+  usePersonalTheme,
+} from "./personalTheme";
 import { useAppVersion } from "./appVersion";
 import { PersonalProviderRows } from "./PersonalProviderRows";
 import { buildProviderUpdateRows } from "./providerUpdateRows";
@@ -143,6 +148,49 @@ function PreferenceRow({
   );
 }
 
+/**
+ * System / Light / Dark. A segmented radiogroup rather than the On/Off
+ * `PreferenceRow` next door, because three states do not collapse to a toggle
+ * and the current one has to be readable without tapping.
+ *
+ * Native radios are skipped for the same reason the rest of this screen skips
+ * them (the visual is a filled pill, not a dot), so the roles are declared:
+ * `role="radiogroup"` on the strip, `role="radio"` + `aria-checked` on each
+ * segment. Roving tabindex keeps it to one tab stop, matching how VoiceOver
+ * and a keyboard both expect a radio group to behave.
+ */
+function AppearanceControl(): JSX.Element {
+  const { mode, setMode } = usePersonalTheme();
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Appearance"
+      className="flex gap-1 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)] p-1"
+    >
+      {PERSONAL_THEME_MODES.map((candidate) => {
+        const selected = candidate === mode;
+        return (
+          <button
+            key={candidate}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => setMode(candidate)}
+            className={`min-h-11 flex-1 rounded-[calc(var(--personal-radius-button)-2px)] text-[15px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)] ${
+              selected
+                ? "bg-[var(--personal-primary)] font-semibold text-[var(--personal-primary-text)]"
+                : "text-[var(--personal-text-secondary)]"
+            }`}
+          >
+            {PERSONAL_THEME_MODE_LABELS[candidate]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** /bots/settings: greeting name, bot management and the Developer view exit. */
 export function PersonalSettingsScreen(): JSX.Element {
   const navigate = useNavigate();
@@ -239,6 +287,18 @@ export function PersonalSettingsScreen(): JSX.Element {
           </p>
         </section>
       ) : null}
+
+      <section aria-labelledby="settings-appearance">
+        <h2 id="settings-appearance" className={SECTION_TITLE}>
+          Appearance
+        </h2>
+        <div className={`${CARD} p-3`}>
+          <AppearanceControl />
+        </div>
+        <p className="mt-2 px-1 text-[13px] text-[var(--personal-text-secondary)]">
+          System follows your phone&apos;s Light/Dark setting.
+        </p>
+      </section>
 
       <section aria-labelledby="settings-chat">
         <h2 id="settings-chat" className={SECTION_TITLE}>
