@@ -10,6 +10,7 @@ import {
   MessageId,
   PERSONAL_GROUP_MAX_MEMBERS,
   PersonalGroupId,
+  PersonalGroupVoteId,
   ThreadId,
   type PersonalBot,
   type PersonalBotId,
@@ -29,9 +30,11 @@ import { buildConversationItems } from "./conversationModel";
 import { commandFailureMessage } from "./commandFeedback";
 import { GroupAvatarCluster } from "./GroupAvatarCluster";
 import { GroupRoundCard } from "./GroupRoundCard";
+import { GroupVoteCard } from "./GroupVoteCard";
 import {
   activeGroupMembers,
   groupRoundCard,
+  groupVoteCard,
   groupStatusLine,
   groupSubtitle,
   isGroupRoundLive,
@@ -103,7 +106,7 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
   const environmentId = usePersonalEnvironmentId();
   const groupsQuery = usePersonalGroupsList(environmentId);
   const { feed } = usePersonalGroupsFeed(environmentId);
-  const { groups, rounds } = useMemo(
+  const { groups, rounds, votes } = useMemo(
     () => mergePersonalGroups(groupsQuery.data ?? null, feed ?? null),
     [groupsQuery.data, feed],
   );
@@ -214,6 +217,9 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
   const live = isGroupRoundLive(round);
   const stateLabel = groupStatusLine(round, nameOf);
   const card = groupRoundCard(round, nameOf);
+  // `groupRoundCard` returns null for `paused_vote` and this returns null for
+  // everything else, so exactly one card can ever be in the slot below.
+  const vote = groupVoteCard({ round, votes, members, nameOf });
 
   const visiblePending = useMemo(() => {
     if (pending.length === 0) return pending;
@@ -255,6 +261,32 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
     });
     return commandFailureMessage(result, "Couldn't continue the group. Try again.");
   }, [continueRound, environmentId, groupId]);
+
+  const voteId = vote?.voteId ?? null;
+  /**
+   * The owner's answer to a tally. The same RPC as Continue, because it is the
+   * same act: a parked round only ever moves because the owner said so. Until
+   * this runs, nothing the bots agreed on has reached any of them.
+   */
+  const onDecide = useCallback(
+    async (decision: "approve" | "reject"): Promise<string | null> => {
+      if (environmentId === null || voteId === null) return null;
+      const result = await continueRound({
+        environmentId,
+        input: {
+          groupId: PersonalGroupId.make(groupId),
+          vote: { voteId: PersonalGroupVoteId.make(voteId), decision },
+        },
+      });
+      return commandFailureMessage(
+        result,
+        decision === "approve"
+          ? "Couldn't approve that. Try again."
+          : "Couldn't reject that. Try again.",
+      );
+    },
+    [continueRound, environmentId, groupId, voteId],
+  );
 
   const onArchive = async () => {
     if (environmentId === null) return;
@@ -475,6 +507,14 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
             renderDelegation={() => null}
             groupSpeaker={groupSpeaker}
           />
+          {vote !== null ? (
+            /* The same slot as the round card, and never at the same time as
+               one: a parked round is either waiting on a budget or waiting on
+               this decision. */
+            <div className="shrink-0 px-4 pb-2">
+              <GroupVoteCard card={vote} speakerOf={groupSpeaker} onDecide={onDecide} />
+            </div>
+          ) : null}
           {card !== null ? (
             /* Directly under the transcript and above the composer: the round
                ended at the end of the conversation, so that is where its card

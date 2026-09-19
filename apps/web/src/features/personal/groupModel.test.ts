@@ -2,6 +2,7 @@ import {
   PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
   PersonalGroup,
   PersonalGroupRound,
+  PersonalGroupVote,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
@@ -16,6 +17,7 @@ import {
   groupStatusLine,
   groupSubtitle,
   groupSystemLabel,
+  groupVoteCard,
   isGroupRoundLive,
   readGroupMarker,
   roundForGroup,
@@ -23,6 +25,7 @@ import {
 
 const decodeGroup = Schema.decodeUnknownSync(PersonalGroup);
 const decodeRound = Schema.decodeUnknownSync(PersonalGroupRound);
+const decodeVote = Schema.decodeUnknownSync(PersonalGroupVote);
 
 const NAMES: Record<string, string> = {
   "bot-ada": "Ada",
@@ -272,5 +275,129 @@ describe("groupSystemLabel", () => {
 
   it("falls back to the event's vocabulary when the row has no text", () => {
     expect(groupSystemLabel("round-stopped", "")).toBe("You stopped the group");
+  });
+});
+
+function ballot(botId: string, option: string, reason: string) {
+  return { voteId: "vote-1", botId, option, reason, createdAt: "2026-09-19T09:05:00.000Z" };
+}
+
+function vote(overrides: Record<string, unknown> = {}) {
+  return decodeVote({
+    voteId: "vote-1",
+    groupId: "group-1",
+    roundId: "round-1",
+    calledByBotId: "bot-ada",
+    question: "Ship on Friday?",
+    questionNormalised: "friday ship",
+    options: ["ship", "wait"],
+    status: "decided",
+    winningOption: "ship",
+    ballots: [ballot("bot-ada", "ship", "the build is green")],
+    createdAt: "2026-09-19T09:04:00.000Z",
+    decidedAt: "2026-09-19T09:06:00.000Z",
+    ...overrides,
+  });
+}
+
+const parked = round({ status: "paused_vote" });
+const MEMBERS = activeGroupMembers(group());
+
+describe("groupVoteCard", () => {
+  it("shows every member's choice with its reason, in member order", () => {
+    const card = groupVoteCard({
+      round: parked,
+      votes: [
+        vote({
+          ballots: [
+            ballot("bot-grace", "wait", "the migration is untested"),
+            ballot("bot-ada", "ship", "the build is green"),
+          ],
+        }),
+      ],
+      members: MEMBERS,
+      nameOf,
+    });
+
+    expect(card?.question).toBe("Ship on Friday?");
+    // Ada is sortOrder 0 even though her ballot arrived second: the card reads
+    // like the roster, not like the order the bots happened to answer in.
+    expect(card?.ballots).toEqual([
+      { botId: "bot-ada", name: "Ada", option: "ship", reason: "the build is green" },
+      { botId: "bot-grace", name: "Grace", option: "wait", reason: "the migration is untested" },
+    ]);
+    expect(card?.abstained).toEqual([]);
+  });
+
+  it("names the members that did not vote rather than folding them into a count", () => {
+    const card = groupVoteCard({ round: parked, votes: [vote()], members: MEMBERS, nameOf });
+
+    expect(card?.ballots.map((entry) => entry.name)).toEqual(["Ada"]);
+    expect(card?.abstained).toEqual(["Grace"]);
+    expect(card?.outcome).toBe('The bots chose "ship".');
+    expect(card?.canApprove).toBe(true);
+  });
+
+  it("offers no Approve on a tie, because there is nothing to approve", () => {
+    const card = groupVoteCard({
+      round: parked,
+      votes: [
+        vote({
+          winningOption: null,
+          ballots: [
+            ballot("bot-ada", "ship", "the build is green"),
+            ballot("bot-grace", "wait", "the migration is untested"),
+          ],
+        }),
+      ],
+      members: MEMBERS,
+      nameOf,
+    });
+
+    expect(card?.winningOption).toBe(null);
+    expect(card?.canApprove).toBe(false);
+    expect(card?.outcome).toBe("The bots are tied, so they chose nothing.");
+  });
+
+  it("asks nothing when the round is not parked on a vote", () => {
+    // Every status but `paused_vote`: the card exists to ask a question, and
+    // there is no question unless the round is actually waiting on one.
+    for (const status of ["running", "paused_budget", "completed", "stopped", "interrupted"]) {
+      expect(
+        groupVoteCard({ round: round({ status }), votes: [vote()], members: MEMBERS, nameOf }),
+      ).toBeNull();
+    }
+    expect(groupVoteCard({ round: null, votes: [vote()], members: MEMBERS, nameOf })).toBeNull();
+  });
+
+  it("shows only a tally this round is still waiting on", () => {
+    // Already answered, so it is no longer a question...
+    for (const status of ["approved", "rejected", "expired", "open"]) {
+      expect(
+        groupVoteCard({ round: parked, votes: [vote({ status })], members: MEMBERS, nameOf }),
+      ).toBeNull();
+    }
+    // ...and a decided vote from another round is not this round's question.
+    expect(
+      groupVoteCard({
+        round: parked,
+        votes: [vote({ roundId: "round-0" })],
+        members: MEMBERS,
+        nameOf,
+      }),
+    ).toBeNull();
+  });
+
+  it("falls back to a generic name for a member whose bot has been deleted", () => {
+    const card = groupVoteCard({
+      round: parked,
+      votes: [vote({ ballots: [ballot("bot-ghost", "ship", "gone")] })],
+      members: activeGroupMembers(group({ members: [member("bot-ghost", 0)] })),
+      nameOf,
+    });
+
+    expect(card?.ballots).toEqual([
+      { botId: "bot-ghost", name: "A bot", option: "ship", reason: "gone" },
+    ]);
   });
 });

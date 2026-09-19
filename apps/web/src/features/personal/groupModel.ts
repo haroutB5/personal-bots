@@ -5,6 +5,7 @@ import {
   type PersonalGroup,
   type PersonalGroupRound,
   type PersonalGroupSystemEvent,
+  type PersonalGroupVote,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -237,4 +238,82 @@ export function groupRoundCard(
     case "completed":
       return null;
   }
+}
+
+export interface GroupVoteBallotRow {
+  readonly botId: string;
+  readonly name: string;
+  readonly option: string;
+  /** One line, as the bot gave it. Empty when it voted without saying why. */
+  readonly reason: string;
+}
+
+export interface GroupVoteCardModel {
+  readonly voteId: string;
+  readonly question: string;
+  /** The single sentence above the ballots: what the group chose, or a tie. */
+  readonly outcome: string;
+  readonly winningOption: string | null;
+  /** One row per member that voted, in the group's own member order. */
+  readonly ballots: ReadonlyArray<GroupVoteBallotRow>;
+  /** Members that never voted, by name. Said out loud, not folded into a count. */
+  readonly abstained: ReadonlyArray<string>;
+  /**
+   * False on a tie: there is no winning option, so there is nothing to
+   * approve, and the server refuses it. Reject is always offered.
+   */
+  readonly canApprove: boolean;
+}
+
+/**
+ * The tally the owner is being asked to answer, or null.
+ *
+ * Only ever rendered for a round parked on `paused_vote`, which is exactly the
+ * status {@link groupRoundCard} returns null for, so the two cards can never
+ * both be on screen.
+ *
+ * It shows every member's choice WITH its reason, because a plurality is not
+ * an argument: the owner is deciding whether work happens, and the reasons are
+ * most of what that decision rests on. Nothing here can act — the card's two
+ * buttons are the only way a vote ever becomes an instruction.
+ */
+export function groupVoteCard(input: {
+  readonly round: PersonalGroupRound | null;
+  readonly votes: ReadonlyArray<PersonalGroupVote>;
+  readonly members: PersonalGroup["members"];
+  readonly nameOf: (botId: string) => string | null;
+}): GroupVoteCardModel | null {
+  const round = input.round;
+  if (round === null || round.status !== "paused_vote") return null;
+  // This round's tally, never a neighbouring round's: a vote the owner already
+  // answered, or one left over from an earlier message, is not a question.
+  const vote = input.votes.find(
+    (candidate) => candidate.roundId === round.roundId && candidate.status === "decided",
+  );
+  if (vote === undefined) return null;
+
+  const ballots: Array<GroupVoteBallotRow> = [];
+  const abstained: Array<string> = [];
+  for (const member of input.members) {
+    const name = input.nameOf(member.botId) ?? "A bot";
+    const ballot = vote.ballots.find((entry) => entry.botId === member.botId);
+    if (ballot === undefined) {
+      abstained.push(name);
+      continue;
+    }
+    ballots.push({ botId: member.botId, name, option: ballot.option, reason: ballot.reason });
+  }
+
+  return {
+    voteId: vote.voteId,
+    question: vote.question,
+    outcome:
+      vote.winningOption === null
+        ? "The bots are tied, so they chose nothing."
+        : `The bots chose "${vote.winningOption}".`,
+    winningOption: vote.winningOption,
+    ballots,
+    abstained,
+    canApprove: vote.winningOption !== null,
+  };
 }

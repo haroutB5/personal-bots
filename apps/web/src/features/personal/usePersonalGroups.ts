@@ -1,4 +1,10 @@
-import type { EnvironmentId, PersonalGroup, PersonalGroupRound } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PersonalGroup,
+  PersonalGroupRound,
+  PersonalGroupStreamEvent,
+  PersonalGroupVote,
+} from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
 import {
   createEnvironmentRpcCommand,
@@ -23,9 +29,47 @@ export const personalGroupsList = createEnvironmentRpcQueryAtomFamily(connection
 export interface PersonalGroupsFeedState {
   readonly groups: ReadonlyMap<string, PersonalGroup>;
   readonly rounds: ReadonlyMap<string, PersonalGroupRound>;
+  /**
+   * Keyed by vote id, not by group: a round can settle more than one question,
+   * and the tally card has to name the one it is asking about.
+   */
+  readonly votes: ReadonlyMap<string, PersonalGroupVote>;
 }
 
-const EMPTY_FEED: PersonalGroupsFeedState = { groups: new Map(), rounds: new Map() };
+export const EMPTY_PERSONAL_GROUPS_FEED: PersonalGroupsFeedState = {
+  groups: new Map(),
+  rounds: new Map(),
+  votes: new Map(),
+};
+
+/**
+ * One chunk of feed events folded into the state. Extracted from the atom so
+ * it can be tested as what it is - a pure reducer - rather than only through a
+ * live subscription.
+ */
+export function foldPersonalGroupsFeed(
+  state: PersonalGroupsFeedState,
+  events: Iterable<PersonalGroupStreamEvent>,
+): PersonalGroupsFeedState {
+  const groups = new Map(state.groups);
+  const rounds = new Map(state.rounds);
+  const votes = new Map(state.votes);
+  for (const event of events) {
+    if (event.type === "group") {
+      groups.set(event.group.groupId, event.group);
+    } else if (event.type === "vote") {
+      // Every state a vote passes through arrives here, approved and rejected
+      // included, so the card disappears the moment the owner has answered
+      // rather than on the next list refresh.
+      votes.set(event.vote.voteId, event.vote);
+    } else {
+      // One live round per group: a newer round for the same group replaces
+      // the old one rather than accumulating history here.
+      rounds.set(event.round.groupId, event.round);
+    }
+  }
+  return { groups, rounds, votes };
+}
 
 /**
  * State only, as `personalGroups.subscribe` is defined: the transcript arrives
@@ -44,20 +88,7 @@ export const personalGroupsFeed = createEnvironmentRpcSubscriptionAtomFamily(
     transform: (stream) =>
       stream.pipe(
         Stream.groupedWithin(256, "50 millis"),
-        Stream.scan(EMPTY_FEED, (state, events) => {
-          const groups = new Map(state.groups);
-          const rounds = new Map(state.rounds);
-          for (const event of events) {
-            if (event.type === "group") {
-              groups.set(event.group.groupId, event.group);
-            } else {
-              // One live round per group: a newer round for the same group
-              // replaces the old one rather than accumulating history here.
-              rounds.set(event.round.groupId, event.round);
-            }
-          }
-          return { groups, rounds };
-        }),
+        Stream.scan(EMPTY_PERSONAL_GROUPS_FEED, foldPersonalGroupsFeed),
       ),
   },
 );
@@ -144,6 +175,7 @@ export function usePersonalGroupsFeed(environmentId: EnvironmentId | null) {
 
 const NO_GROUPS: ReadonlyArray<PersonalGroup> = [];
 const NO_ROUNDS: ReadonlyArray<PersonalGroupRound> = [];
+const NO_VOTES: ReadonlyArray<PersonalGroupVote> = [];
 
 /**
  * Groups and rounds from whichever source has them: the feed once it is armed
@@ -155,11 +187,13 @@ export function mergePersonalGroups(
   list: {
     readonly groups: ReadonlyArray<PersonalGroup>;
     readonly rounds: ReadonlyArray<PersonalGroupRound>;
+    readonly votes?: ReadonlyArray<PersonalGroupVote> | undefined;
   } | null,
   feed: PersonalGroupsFeedState | null,
 ): {
   readonly groups: ReadonlyArray<PersonalGroup>;
   readonly rounds: ReadonlyArray<PersonalGroupRound>;
+  readonly votes: ReadonlyArray<PersonalGroupVote>;
 } {
   const groups = new Map<string, PersonalGroup>();
   for (const group of list?.groups ?? NO_GROUPS) groups.set(group.groupId, group);
@@ -167,10 +201,14 @@ export function mergePersonalGroups(
   const rounds = new Map<string, PersonalGroupRound>();
   for (const round of list?.rounds ?? NO_ROUNDS) rounds.set(round.groupId, round);
   for (const [groupId, round] of feed?.rounds ?? new Map()) rounds.set(groupId, round);
+  const votes = new Map<string, PersonalGroupVote>();
+  for (const vote of list?.votes ?? NO_VOTES) votes.set(vote.voteId, vote);
+  for (const [voteId, vote] of feed?.votes ?? new Map()) votes.set(voteId, vote);
   // Frozen so callers - and the React compiler - can treat the result as a
   // value: nothing downstream has any business sorting or splicing it in place.
   return {
     groups: Object.freeze([...groups.values()].filter((group) => group.archivedAt === null)),
     rounds: Object.freeze([...rounds.values()]),
+    votes: Object.freeze([...votes.values()]),
   };
 }
