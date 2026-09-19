@@ -756,6 +756,16 @@ export const make = Effect.gen(function* () {
     }
 
     const reserved = yield* repository.getMessageByMessageId(messageId);
+    // The speaker's cursor moves past its OWN reply: it already has the text
+    // in its own thread, so relaying it back as catch-up would be the same
+    // words twice and charge the session for them.
+    if (Option.isSome(reserved)) {
+      const own = yield* repository.listMembers(group.groupId);
+      const speaker = own.find((member) => member.botId === botId);
+      if (speaker !== undefined && speaker.deliveredSeq < reserved.value.seq) {
+        yield* repository.writeMember({ ...speaker, deliveredSeq: reserved.value.seq });
+      }
+    }
     if (finalText.length > round.relayedChars) {
       yield* relayDelta({
         group,
