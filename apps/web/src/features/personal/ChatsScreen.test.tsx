@@ -1,4 +1,4 @@
-import { PersonalBot } from "@t3tools/contracts";
+import { PersonalBot, PersonalGroup } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -25,6 +25,9 @@ const state = vi.hoisted(() => ({
   nextTimeoutId: 1,
   reload: vi.fn(),
   togglePin: vi.fn(),
+  navigate: vi.fn(),
+  groupsData: null as { groups: unknown[]; rounds: unknown[] } | null,
+  groupFeedCalls: [] as Array<string | null>,
   versionInfo: { label: "v9.9.9-test", updateAvailable: false } as {
     label: string | null;
     updateAvailable: boolean;
@@ -85,6 +88,31 @@ vi.mock("~/state/server", () => ({
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => undefined }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
+  useNavigate: () => state.navigate,
+}));
+// Base UI's menu needs a DOM; the list only cares that the two items exist.
+vi.mock("~/components/ui/menu", () => ({
+  Menu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  MenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  MenuPopup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  MenuItem: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
+    <button type="button" onClick={onClick}>
+      {children}
+    </button>
+  ),
+}));
+vi.mock("./usePersonalGroups", () => ({
+  usePersonalGroupsList: () => ({ data: state.groupsData, error: null, refresh: vi.fn() }),
+  usePersonalGroupsFeed: (environmentId: string | null) => {
+    state.groupFeedCalls.push(environmentId);
+    return { feed: null, error: null };
+  },
+  mergePersonalGroups: (list: { groups: unknown[]; rounds: unknown[] } | null) => ({
+    groups: (list?.groups ?? []).filter(
+      (group) => (group as { archivedAt: unknown }).archivedAt === null,
+    ),
+    rounds: list?.rounds ?? [],
+  }),
 }));
 vi.mock("./usePersonalBots", () => ({
   usePersonalEnvironmentId: () => state.environmentId,
@@ -183,6 +211,9 @@ afterEach(async () => {
   state.rafQueue.length = 0;
   state.timeouts.clear();
   state.reload.mockClear();
+  state.navigate.mockClear();
+  state.groupsData = null;
+  state.groupFeedCalls.length = 0;
   state.versionInfo = { label: "v9.9.9-test", updateAvailable: false };
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -399,6 +430,136 @@ describe("ChatsScreen pinned box", () => {
       await scout.props.secondaryAction.run();
     });
     expect(state.togglePin).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * A group is a chat, not a new object: it belongs in the same list, sorted
+ * against the bots by latest activity, and its members' own relay threads must
+ * not show up as chats of those bots.
+ */
+describe("ChatsScreen groups", () => {
+  const decodeGroup = Schema.decodeUnknownSync(PersonalGroup);
+
+  function group(overrides: Record<string, unknown> = {}) {
+    return decodeGroup({
+      groupId: "group-1",
+      name: "Launch crew",
+      description: "",
+      threadId: "group-thread-1",
+      maxBotTurns: 6,
+      members: [
+        {
+          groupId: "group-1",
+          botId: "bot-ada",
+          threadId: "member-thread-ada",
+          role: "member",
+          sortOrder: 0,
+          deliveredSeq: 0,
+          joinedAt: "2026-09-19T09:00:00.000Z",
+          leftAt: null,
+        },
+      ],
+      createdAt: "2026-09-19T09:00:00.000Z",
+      updatedAt: "2026-09-19T09:00:00.000Z",
+      archivedAt: null,
+      ...overrides,
+    });
+  }
+
+  async function render() {
+    stubWindow();
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+  }
+
+  it("renders a group row in the same list as the bots", async () => {
+    state.listData = { bots: [bot("bot-ada", "Ada")], threads: [], personalProjectId: null };
+    state.groupsData = { groups: [group()], rounds: [] };
+    await render();
+
+    // In the one list, not a section of its own.
+    const list = renderer!.root.findByProps({ "aria-label": "Your chats" });
+    const rows = list.findAllByProps({ "aria-label": "Launch crew, group chat" });
+    expect(rows).toHaveLength(1);
+    const json = JSON.stringify(renderer!.toJSON());
+    expect(json).toContain("Launch crew");
+    // The subtitle names the members, so the row says who is in it without a tap.
+    expect(json).toContain("Ada");
+    // The cluster is the group's face: the member's own avatar, not a group icon.
+    expect(rows[0]!.findAllByType(BotAvatar).map((avatar) => avatar.props.label)).toEqual(["Ada"]);
+  });
+
+  it("hides a group's member threads from that bot's own chats", async () => {
+    state.listData = {
+      bots: [bot("bot-ada", "Ada")],
+      threads: [
+        {
+          botId: "bot-ada",
+          threadId: "member-thread-ada",
+          createdAt: "2026-09-19T09:00:00.000Z",
+          archivedAt: null,
+        },
+      ],
+      personalProjectId: null,
+    };
+    state.shells = [
+      {
+        id: "member-thread-ada",
+        environmentId: "env-1",
+        title: "Relay of Launch crew",
+        updatedAt: "2026-09-19T09:05:00.000Z",
+        archivedAt: null,
+        latestTurn: null,
+        session: null,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      },
+    ];
+    state.groupsData = { groups: [group()], rounds: [] };
+    await render();
+
+    // Without the filter the bot row would preview the group's relay thread.
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Relay of Launch crew");
+  });
+
+  it("holds the groups feed back until after the first paint, like the tasks feed", async () => {
+    state.groupsData = { groups: [group()], rounds: [] };
+    state.listData = { bots: [bot("bot-ada", "Ada")], threads: [], personalProjectId: null };
+    await render();
+
+    expect(state.groupFeedCalls).toEqual([null]);
+    await flushRaf();
+    await flushRaf();
+    expect(state.groupFeedCalls.at(-1)).toBe("env-1");
+  });
+
+  it("keeps an archived group out of the list", async () => {
+    state.listData = { bots: [bot("bot-ada", "Ada")], threads: [], personalProjectId: null };
+    state.groupsData = {
+      groups: [group({ archivedAt: "2026-09-19T10:00:00.000Z" })],
+      rounds: [],
+    };
+    await render();
+
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Launch crew");
+  });
+
+  it("offers both New bot and New group behind the one header button", async () => {
+    state.listData = { bots: [bot("bot-ada", "Ada")], threads: [], personalProjectId: null };
+    await render();
+
+    const items = renderer!.root
+      .findAllByType("button")
+      .filter((button) => typeof button.props.children === "string");
+    const labels = items.map((button) => button.props.children as string);
+    expect(labels).toContain("New bot");
+    expect(labels).toContain("New group");
+
+    const newGroup = items.find((button) => button.props.children === "New group")!;
+    await act(async () => newGroup.props.onClick());
+    expect(state.navigate).toHaveBeenCalledWith({ to: "/bots/groups/new" });
   });
 });
 

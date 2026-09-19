@@ -2,10 +2,17 @@ import type { JSX } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
-import { isBotPinned, type PersonalBotId, type ThreadId } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
+import {
+  isBotPinned,
+  type PersonalBot,
+  type PersonalBotId,
+  type PersonalGroup,
+  type ThreadId,
+} from "@t3tools/contracts";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronRight, Network, Plus, Search, Settings } from "lucide-react";
 
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { useThreadShells } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 
@@ -36,6 +43,19 @@ import {
   serverTurnLabel,
   waitingLabelsByThread,
 } from "./delegationModel";
+import {
+  activeGroupMembers,
+  filterGroups,
+  groupLastActivityMs,
+  groupMemberThreadIds,
+  roundForGroup,
+} from "./groupModel";
+import { GroupRow } from "./GroupRow";
+import {
+  mergePersonalGroups,
+  usePersonalGroupsFeed,
+  usePersonalGroupsList,
+} from "./usePersonalGroups";
 import { useAppVersion } from "./appVersion";
 import { SwipeToDelete } from "./SwipeToDelete";
 import { useDeleteBot } from "./useDeleteBot";
@@ -179,6 +199,7 @@ function SnapshotBotRow({ row, now }: { row: ChatsSnapshotRow; now: number }): J
 
 /** ui-spec Screen 1: header, greeting, search, bot rows, review row. */
 export function ChatsScreen(): JSX.Element {
+  const navigate = useNavigate();
   const environmentId = usePersonalEnvironmentId();
   const list = usePersonalBotsList(environmentId);
   const allShells = useThreadShells();
@@ -245,6 +266,19 @@ export function ChatsScreen(): JSX.Element {
     };
   }, [tasksArmed, firstPaintReady]);
   const { tasks: taskFeed } = usePersonalTasks(tasksArmed ? environmentId : null);
+  // Groups ride the same gate as the tasks feed: the list query is cheap and
+  // lands with the bots, the subscription replays every group and round and so
+  // must not contend with the first paint.
+  const groupsQuery = usePersonalGroupsList(environmentId);
+  const { feed: groupsFeed } = usePersonalGroupsFeed(tasksArmed ? environmentId : null);
+  const { groups, rounds } = useMemo(
+    () => mergePersonalGroups(groupsQuery.data ?? null, groupsFeed ?? null),
+    [groupsQuery.data, groupsFeed],
+  );
+  // A member thread is the bot's private relay of a group, not a chat the owner
+  // started: it must not show up as one of that bot's chats (§8.8 — hidden
+  // client-side in v1).
+  const memberThreadIds = useMemo(() => groupMemberThreadIds(groups), [groups]);
   const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
   useRefreshBotsForTaskThreads({
     bots: list.data?.bots ?? null,
@@ -275,7 +309,7 @@ export function ChatsScreen(): JSX.Element {
         ? []
         : buildBotSummaries({
             bots: list.data.bots,
-            links: list.data.threads,
+            links: list.data.threads.filter((link) => !memberThreadIds.has(link.threadId)),
             shells,
             providers,
             waitingByThread,
@@ -286,6 +320,7 @@ export function ChatsScreen(): JSX.Element {
     [
       computerFeed.status?.helpRequest?.threadId,
       list.data,
+      memberThreadIds,
       providers,
       routinesQuery.data,
       secretRequestThreadIds,
@@ -315,6 +350,19 @@ export function ChatsScreen(): JSX.Element {
     list.refresh();
   }, [list, previewKey, previewKeyReady]);
   const visible = useMemo(() => filterBotSummaries(summaries, query), [query, summaries]);
+  const visibleGroups = useMemo(() => filterGroups(groups, query, nameOf), [groups, nameOf, query]);
+  const botsById = useMemo(
+    () => new Map((list.data?.bots ?? []).map((entry) => [entry.botId as string, entry] as const)),
+    [list.data],
+  );
+  const memberBotsOf = useCallback(
+    (group: PersonalGroup): ReadonlyArray<PersonalBot> =>
+      activeGroupMembers(group).flatMap((member) => {
+        const bot = botsById.get(member.botId);
+        return bot === undefined ? [] : [bot];
+      }),
+    [botsById],
+  );
   // Avatar poses for the visible rows. The cap is the point: only the first
   // working bot animates, so the list never runs more than one continuous
   // animation however many bots are busy.
@@ -327,6 +375,37 @@ export function ChatsScreen(): JSX.Element {
     [rowMotions, visible],
   );
   const { pinned, rest } = useMemo(() => partitionPinnedSummaries(visible), [visible]);
+  /**
+   * Groups and unpinned bots are one list ordered by latest activity — a group
+   * is a chat, so it sorts against the chats rather than sitting in a section
+   * of its own. Pinning is a bot concept (`isBotPinned`), so the Pinned box is
+   * untouched and the cold-start snapshot, which stores bot rows in render
+   * order, still paints exactly what the live list will.
+   */
+  const restRows = useMemo(
+    () =>
+      [
+        ...rest.map(
+          (summary) =>
+            ({ kind: "bot", key: summary.bot.botId, at: summary.lastActivityMs, summary }) as const,
+        ),
+        ...visibleGroups.map(
+          (group) =>
+            ({
+              kind: "group",
+              key: group.groupId,
+              at: groupLastActivityMs(group),
+              group,
+            }) as const,
+        ),
+      ].toSorted((left, right) => {
+        if (left.at === right.at) return 0;
+        if (left.at === null) return 1;
+        if (right.at === null) return -1;
+        return right.at - left.at;
+      }),
+    [rest, visibleGroups],
+  );
   const togglePin = useTogglePinBot(environmentId);
   const renderRow = (summary: BotSummary) => {
     const willPin = !isBotPinned(summary.bot);
@@ -437,13 +516,27 @@ export function ChatsScreen(): JSX.Element {
               strokeWidth={1.75}
             />
           </Link>
-          <Link
-            to="/bots/new"
-            aria-label="New bot"
-            className={`${ICON_BUTTON} bg-[var(--personal-primary)] text-[var(--personal-primary-text)]`}
-          >
-            <Plus aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
-          </Link>
+          {/* One "+" for both kinds of chat: a group is a chat, not a second
+              object with a surface of its own [Grok: subtraction]. */}
+          <Menu>
+            <MenuTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="New"
+                  className={`${ICON_BUTTON} bg-[var(--personal-primary)] text-[var(--personal-primary-text)]`}
+                />
+              }
+            >
+              <Plus aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
+            </MenuTrigger>
+            <MenuPopup align="end" className="min-w-44">
+              <MenuItem onClick={() => void navigate({ to: "/bots/new" })}>New bot</MenuItem>
+              <MenuItem onClick={() => void navigate({ to: "/bots/groups/new" })}>
+                New group
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
         </div>
       </header>
 
@@ -485,7 +578,7 @@ export function ChatsScreen(): JSX.Element {
         </p>
       ) : null}
 
-      {loaded && summaries.length === 0 ? (
+      {loaded && summaries.length === 0 && groups.length === 0 ? (
         <div className="mt-10 flex flex-col items-center gap-3 text-center">
           <p className="text-lg font-semibold text-[var(--personal-text)]">No bots yet</p>
           <p className="max-w-[280px] text-[15px] leading-snug text-[var(--personal-text-secondary)]">
@@ -500,7 +593,7 @@ export function ChatsScreen(): JSX.Element {
         </div>
       ) : null}
 
-      {loaded && summaries.length > 0 ? (
+      {loaded && (summaries.length > 0 || groups.length > 0) ? (
         <>
           <div className="relative mt-2.5">
             <Search
@@ -518,7 +611,7 @@ export function ChatsScreen(): JSX.Element {
             />
           </div>
 
-          {visible.length > 0 ? (
+          {visible.length > 0 || visibleGroups.length > 0 ? (
             <>
               {pinned.length > 0 ? (
                 <section aria-label="Pinned" className={PINNED_SECTION_CLASS}>
@@ -526,8 +619,23 @@ export function ChatsScreen(): JSX.Element {
                   <ul className={PINNED_LIST_CLASS}>{pinned.map(renderRow)}</ul>
                 </section>
               ) : null}
-              {rest.length > 0 ? (
-                <ul className={UNPINNED_LIST_CLASS}>{rest.map(renderRow)}</ul>
+              {restRows.length > 0 ? (
+                <ul aria-label="Your chats" className={UNPINNED_LIST_CLASS}>
+                  {restRows.map((row) =>
+                    row.kind === "bot" ? (
+                      renderRow(row.summary)
+                    ) : (
+                      <li key={row.key}>
+                        <GroupRow
+                          group={row.group}
+                          round={roundForGroup(rounds, row.group.groupId)}
+                          bots={memberBotsOf(row.group)}
+                          now={now}
+                        />
+                      </li>
+                    ),
+                  )}
+                </ul>
               ) : null}
             </>
           ) : (
