@@ -79,7 +79,12 @@ import {
   type PullRequestRef,
   type ServerProvider,
   WS_METHODS,
+  WsPersonalRpcGroup,
+  WsPullRequestRpcGroup,
   WsRpcGroup,
+  WsServerRpcGroup,
+  WsSessionRpcGroup,
+  WsWorkspaceRpcGroup,
   WORKTREE_SETUP_ACTIVITY_KIND,
   worktreeSetupActivityId,
   type WorktreeSetupSnapshot,
@@ -87,6 +92,7 @@ import {
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
+import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
@@ -548,6 +554,17 @@ interface ViewingConnection {
   reported: boolean;
 }
 
+/**
+ * The handler object narrowed to just the methods of one sub-group, so that
+ * group's `toLayer` only ever reasons about its own methods. Narrowing by
+ * assignment rather than by cast keeps the check honest: a missing or
+ * wrongly-typed handler is still a type error at the assignment.
+ */
+type WsRpcSlice<Group extends RpcGroup.Any, Handlers> = Pick<
+  Handlers,
+  Extract<RpcGroup.Rpcs<Group>["_tag"], keyof Handlers>
+>;
+
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
@@ -555,7 +572,13 @@ const makeWsRpcLayer = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   viewing: ViewingConnection,
 ) =>
-  WsRpcGroup.toLayer(
+  // `Layer.unwrap` rather than `WsRpcGroup.toLayer` so the generator below runs
+  // exactly once - every handler still closes over the same services and the
+  // same per-connection state - while the handlers it returns are turned into
+  // one layer per sub-group. See the note above `WsServerRpcGroup` in
+  // `packages/contracts/src/rpc.ts` for why a single `toLayer` over all ~200
+  // methods does not compile.
+  Layer.unwrap(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
@@ -1897,7 +1920,7 @@ const makeWsRpcLayer = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
-      return WsRpcGroup.of({
+      const handlers = WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -4126,6 +4149,25 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "server" },
           ),
       });
+
+      // One `toLayer` per sub-group. Each slice is an ordinary assignment of
+      // the single handler object above, so every method is still checked
+      // against its own Rpc, and a method that belongs to no sub-group - or to
+      // two - fails to compile here.
+      const serverHandlers: WsRpcSlice<typeof WsServerRpcGroup, typeof handlers> = handlers;
+      const pullRequestHandlers: WsRpcSlice<typeof WsPullRequestRpcGroup, typeof handlers> =
+        handlers;
+      const personalHandlers: WsRpcSlice<typeof WsPersonalRpcGroup, typeof handlers> = handlers;
+      const workspaceHandlers: WsRpcSlice<typeof WsWorkspaceRpcGroup, typeof handlers> = handlers;
+      const sessionHandlers: WsRpcSlice<typeof WsSessionRpcGroup, typeof handlers> = handlers;
+
+      return Layer.mergeAll(
+        WsServerRpcGroup.toLayer(serverHandlers),
+        WsPullRequestRpcGroup.toLayer(pullRequestHandlers),
+        WsPersonalRpcGroup.toLayer(personalHandlers),
+        WsWorkspaceRpcGroup.toLayer(workspaceHandlers),
+        WsSessionRpcGroup.toLayer(sessionHandlers),
+      );
     }),
   );
 

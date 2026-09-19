@@ -1965,7 +1965,25 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
-export const WsRpcGroup = RpcGroup.make(
+/**
+ * The WebSocket surface, split into five groups that are merged back into one
+ * `WsRpcGroup` below. The split is a compile-time requirement, not taxonomy:
+ * `RpcGroup.toLayer` costs O(methods squared) type instantiations, because it
+ * resolves each handler's service requirements against the *whole* Rpc union.
+ * One group of ~240 methods exhausts TypeScript's per-operation instantiation
+ * budget, at which point the compiler abandons the computation and silently
+ * substitutes `any` for the requirements channel - which surfaces, with no
+ * mention of RPCs at all, as TS2345 in `apps/server/src/bin.ts`.
+ *
+ * Each group is handled by its own `toLayer` call in `apps/server/src/ws.ts`,
+ * so each gets its own budget and the practical limit is ~200 methods *per
+ * group*. Adding a group is the way to add headroom; see
+ * `HANDOFF-rpc-ceiling.md` for the measurements behind those numbers.
+ */
+/**
+ * Server lifecycle, configuration, providers, diagnostics, usage and the cloud relay.
+ */
+export const WsServerRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -2002,6 +2020,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetBackgroundPolicyRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
+);
+
+/**
+ * Pull requests - their reviews, comments and labels - and repository source control.
+ */
+export const WsPullRequestRpcGroup = RpcGroup.make(
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsSummaryRpc,
@@ -2030,6 +2054,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
+);
+
+/**
+ * The personal side of the app: bots and their threads, files, tasks, groups,
+ * secrets, logins, the browser, routines, memory and push.
+ */
+export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalBotsListRpc,
   WsPersonalBotsCreateRpc,
   WsPersonalBotsUpdateRpc,
@@ -2094,6 +2125,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsPersonalPushTestRpc,
   WsPersonalPushSetPreferencesRpc,
   WsPersonalPushReportViewingRpc,
+);
+
+/**
+ * The project workspace: clones, file reads and writes, agent session import,
+ * attachments, version control and diff review.
+ */
+export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsProjectCloneStartRpc,
   WsProjectCloneCancelRpc,
   WsProjectCloneRetryRpc,
@@ -2127,6 +2165,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsInitRpc,
   WsReviewGetDiffPreviewRpc,
   WsReviewGetDiffFileContentsRpc,
+);
+
+/**
+ * Live sessions: terminals, previews, devices, the server-wide subscriptions, and
+ * orchestration itself.
+ */
+export const WsSessionRpcGroup = RpcGroup.make(
   WsTerminalOpenRpc,
   WsTerminalAttachRpc,
   WsTerminalWriteRpc,
@@ -2170,4 +2215,15 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+);
+
+/**
+ * Every WebSocket method in one group: this is what the server serves, what the
+ * client calls, and what `RPC_REQUIRED_SCOPES` is checked against.
+ */
+export const WsRpcGroup = WsServerRpcGroup.merge(
+  WsPullRequestRpcGroup,
+  WsPersonalRpcGroup,
+  WsWorkspaceRpcGroup,
+  WsSessionRpcGroup,
 );
