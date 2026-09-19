@@ -21,6 +21,7 @@ import {
   PersonalBotId,
   PersonalGroupId,
   PersonalGroupRoundId,
+  PersonalGroupVoteId,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -1211,4 +1212,418 @@ it("the group marker survives persistence decoding and never reaches the provide
   // provider drops it: a bot never learns that a marker exists.
   const text = "Assistant: All good so far.";
   expect(projectComposerContextForProvider({ text, records: decoded.records })).toBe(text);
+});
+
+// ---------------------------------------------------------------------------
+// Voting (addendum section V). The rails live in the service; the pure halves
+// (`groupVotePolicy.ts`, `nextStep`) have their own tests.
+// ---------------------------------------------------------------------------
+
+/** The member holding the slot puts a question to the group. */
+const callVote = (question: string, options: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    const round = yield* currentRound;
+    if (round.activeThreadId === null) {
+      throw new Error("nobody is speaking, so nobody can call a vote");
+    }
+    return yield* service.callVote({ threadId: round.activeThreadId, question, options });
+  });
+
+/** The member holding the slot answers the open vote. */
+const castVote = (voteId: PersonalGroupVoteId, option: string, reason: string) =>
+  Effect.gen(function* () {
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    const round = yield* currentRound;
+    if (round.activeThreadId === null) {
+      throw new Error("nobody is speaking, so nobody can vote");
+    }
+    return yield* service.castVote({ threadId: round.activeThreadId, voteId, option, reason });
+  });
+
+const voteOf = (voteId: PersonalGroupVoteId) =>
+  Effect.gen(function* () {
+    const repository = yield* PersonalGroupRepository.PersonalGroupRepository;
+    const vote = yield* repository.getVote(voteId);
+    if (Option.isNone(vote)) {
+      throw new Error(`no vote ${voteId}`);
+    }
+    return vote.value;
+  });
+
+/** Every system row in the transcript, as `{ event, text }`. */
+const systemRows = (harness: Harness) =>
+  groupTranscript(harness).flatMap((message) => {
+    const marker = markerOf(message);
+    return marker?.speaker.kind === "system"
+      ? [{ event: marker.speaker.event, text: message.text }]
+      : [];
+  });
+
+const answerVote = (vote: PersonalGroupVoteId, decision: "approve" | "reject") =>
+  Effect.gen(function* () {
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    const round = yield* service.continueRound({
+      groupId: GROUP,
+      vote: { voteId: vote, decision },
+    });
+    yield* service.drain;
+    return round;
+  });
+
+// ---------------------------------------------------------------------------
+// 20. a vote turn spends budget exactly like an ordinary reply
+// ---------------------------------------------------------------------------
+
+it.effect("a turn that only voted still spends its budget, and gets nothing back", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    // One member, so calling the vote queues nobody and the turn under test is
+    // the only one that runs. Any refund would show up as 6.
+    yield* makeGroup(["assistant"], 6);
+    yield* send("@Assistant what do we do?");
+    expect((yield* currentRound).budgetRemaining).toBe(5);
+
+    const vote = yield* callVote("Ship on Friday?", ["ship", "wait"]);
+    yield* castVote(vote.vote.voteId, "ship", "it is ready");
+    // The vote is not the reply: this turn produced no prose at all, which is
+    // the one shape where a refund could plausibly have been added. It is not
+    // - a refund belongs only to a turn the provider never ran (a throttle, an
+    // abandon), and this member did get its say.
+    yield* speak(harness, "");
+
+    const after = yield* currentRound;
+    expect(after.budgetRemaining).toBe(5);
+    expect(after.spoken).toEqual([botId("assistant")]);
+    expect(after.status).toBe("paused_vote");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("every member queued by a vote spends a turn of the budget to answer it", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev", "planner"], 6);
+    yield* send("@Assistant what do we do?");
+
+    const vote = (yield* callVote("Ship on Friday?", ["ship", "wait"])).vote;
+    // Calling a vote queues exactly the OTHER members, in sort order. The
+    // caller is not among them: it votes in the turn it already holds, and
+    // asking the question buys it nothing (section V.2).
+    expect((yield* currentRound).queue).toEqual([botId("dev"), botId("planner")]);
+
+    yield* castVote(vote.voteId, "ship", "green build");
+    yield* speak(harness, "Called a vote.");
+    yield* castVote(vote.voteId, "ship", "agreed");
+    yield* speak(harness, "Voted.");
+    yield* castVote(vote.voteId, "wait", "not yet");
+    yield* speak(harness, "Voted.");
+
+    const after = yield* currentRound;
+    // Three members, three turns, three of six bot turns spent. Answering a
+    // vote is an ordinary reply as far as the budget is concerned.
+    expect(after.spoken).toEqual([botId("assistant"), botId("dev"), botId("planner")]);
+    expect(after.budgetRemaining).toBe(3);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+// ---------------------------------------------------------------------------
+// 23 + 24 + 27. plurality, then a round that parks instead of completing
+// ---------------------------------------------------------------------------
+
+it.effect("a plurality wins, nothing runs on it, and the round parks for the user", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev", "planner"], 6);
+    yield* send("@Assistant settle this");
+
+    const vote = (yield* callVote("Ship on Friday?", ["ship", "wait"])).vote;
+    // Everyone may ballot, the caller included.
+    expect([...vote.options]).toEqual(["ship", "wait"]);
+    yield* castVote(vote.voteId, "ship", "the build is green");
+    yield* speak(harness, "I have called a vote.");
+
+    // Calling a vote bought the caller no extra turn: the two OTHER members
+    // were queued, and they are the ones speaking now.
+    yield* castVote(vote.voteId, "wait", "the migration is not tested");
+    yield* speak(harness, "Voted.");
+    const startsBefore = turnStarts(harness).length;
+    const last = yield* castVote(vote.voteId, "ship", "I agree with Assistant");
+    // The last ballot resolves it: 2 for ship, 1 for wait.
+    expect(last.status).toBe("decided");
+    expect(last.winningOption).toBe("ship");
+    yield* speak(harness, "Voted.");
+
+    // Test 24: resolution executed nothing. No turn was started by the vote
+    // resolving, and nobody is speaking.
+    expect(turnStarts(harness).length).toBe(startsBefore);
+    const parked = yield* currentRound;
+    // Test 27: the queue ran dry, which would normally complete the round.
+    expect(parked.queue).toEqual([]);
+    expect(parked.status).toBe("paused_vote");
+    expect(parked.activeBotId).toBe(null);
+
+    const resolved = systemRows(harness).filter((row) => row.event === "vote-resolved");
+    expect(resolved.length).toBe(1);
+    expect(resolved[0]!.text).toContain("ship");
+    expect(resolved[0]!.text).toContain("Nothing happens until you approve it");
+
+    // Still parked after a sweep: no timer resolves it, only the user does.
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    yield* service.sweep;
+    yield* service.drain;
+    expect((yield* currentRound).status).toBe("paused_vote");
+    expect(turnStarts(harness).length).toBe(startsBefore);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+// ---------------------------------------------------------------------------
+// 23b. an exact tie resolves with no winner, and cannot be approved
+// ---------------------------------------------------------------------------
+
+it.effect("an exact tie resolves tied, with no winner to approve", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("@Assistant settle this");
+
+    const vote = (yield* callVote("Ship on Friday?", ["ship", "wait"])).vote;
+    yield* castVote(vote.voteId, "ship", "the build is green");
+    yield* speak(harness, "Called a vote.");
+    const decided = yield* castVote(vote.voteId, "wait", "not tested");
+    yield* speak(harness, "Voted.");
+
+    expect(decided.status).toBe("decided");
+    expect(decided.winningOption).toBe(null);
+    expect((yield* currentRound).status).toBe("paused_vote");
+    const resolved = systemRows(harness).find((row) => row.event === "vote-resolved");
+    expect(resolved?.text).toContain("is tied");
+
+    // There is no winner, so there is nothing to approve. No tie-break is
+    // invented: a coin toss must not decide what the bots do next.
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    const refused = yield* Effect.flip(
+      service.continueRound({
+        groupId: GROUP,
+        vote: { voteId: vote.voteId, decision: "approve" },
+      }),
+    );
+    expect(refused.message).toContain("tied");
+    expect((yield* currentRound).status).toBe("paused_vote");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+// ---------------------------------------------------------------------------
+// 22. the wall clock resolves an open vote with abstentions
+// ---------------------------------------------------------------------------
+
+it.effect("the wall clock resolves an open vote, counting the silent as abstentions", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev", "planner"], 6);
+    yield* send("@Assistant settle this");
+
+    const vote = (yield* callVote("Ship on Friday?", ["ship", "wait"])).vote;
+    yield* castVote(vote.voteId, "ship", "the build is green");
+    yield* speak(harness, "Called a vote.");
+    // Dev is now speaking and never votes. Time runs out on it.
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    yield* TestClock.adjust("11 minutes");
+    yield* service.sweep;
+    yield* service.drain;
+
+    const settled = yield* voteOf(vote.voteId);
+    expect(settled.status).toBe("decided");
+    // One ballot, two abstentions: a plurality of one still wins, and the
+    // silence is counted and said out loud rather than read as agreement.
+    expect(settled.winningOption).toBe("ship");
+    expect(settled.ballots.length).toBe(1);
+    const resolved = systemRows(harness).find((row) => row.event === "vote-resolved");
+    expect(resolved?.text).toContain("2 did not vote");
+
+    // The round parked rather than being interrupted: the wall clock ends the
+    // talking, it does not throw away a tally the user has not seen.
+    const parked = yield* currentRound;
+    expect(parked.status).toBe("paused_vote");
+    expect(parked.activeBotId).toBe(null);
+    // And the member that was mid-sentence was stopped.
+    expect(interrupts(harness).length).toBeGreaterThan(0);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+// ---------------------------------------------------------------------------
+// 25. Approve relays the winning option into the right member's thread
+// ---------------------------------------------------------------------------
+
+it.effect("approve relays the winning option into the named member's next instruction", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("@Assistant settle this");
+
+    // The option names Dev, so Dev is who the decision becomes work for -
+    // not Assistant, which called the vote.
+    const vote = (yield* callVote("Who writes the migration?", ["@Dev writes it", "nobody"])).vote;
+    yield* castVote(vote.voteId, "@Dev writes it", "it is their area");
+    yield* speak(harness, "Called a vote.");
+    yield* castVote(vote.voteId, "@Dev writes it", "fine by me");
+    yield* speak(harness, "Voted.");
+    expect((yield* currentRound).status).toBe("paused_vote");
+
+    const startsBefore = turnStarts(harness).length;
+    const resumed = yield* answerVote(vote.voteId, "approve");
+    expect(resumed.status).toBe("running");
+    expect((yield* voteOf(vote.voteId)).status).toBe("approved");
+
+    const approved = systemRows(harness).find((row) => row.event === "vote-approved");
+    expect(approved?.text).toContain("@Dev writes it");
+    expect(approved?.text).toContain("Dev, that is the group's decision");
+
+    // The decision reaches the bot the only way anything reaches it: as the
+    // next line of its own brief. This is the whole of test 25.
+    const started = turnStarts(harness).slice(startsBefore);
+    expect(started.length).toBe(1);
+    const live = yield* currentRound;
+    expect(live.activeBotId).toBe(botId("dev"));
+    expect(started[0]!.threadId).toBe(live.activeThreadId);
+    expect(started[0]!.message.text).toContain("@Dev writes it");
+    expect(started[0]!.message.text).toContain("that is the group's decision");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("approve falls back to the bot that called the vote when no option names one", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("@Dev settle this");
+
+    const vote = (yield* callVote("Ship on Friday?", ["ship", "wait"])).vote;
+    yield* castVote(vote.voteId, "ship", "green build");
+    yield* speak(harness, "Called a vote.");
+    yield* castVote(vote.voteId, "ship", "agreed");
+    yield* speak(harness, "Voted.");
+
+    yield* answerVote(vote.voteId, "approve");
+    // Dev asked the question, so Dev carries the answer.
+    expect((yield* currentRound).activeBotId).toBe(botId("dev"));
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+// ---------------------------------------------------------------------------
+// 26. Reject records the refusal and lets the discussion go on
+// ---------------------------------------------------------------------------
+
+it.effect("reject writes a system row and unparks the round", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("@Assistant settle this");
+
+    const vote = (yield* callVote("Ship on Friday?", ["ship", "wait"])).vote;
+    yield* castVote(vote.voteId, "ship", "green build");
+    yield* speak(harness, "Called a vote.");
+    yield* castVote(vote.voteId, "ship", "agreed");
+    yield* speak(harness, "Voted.");
+    expect((yield* currentRound).status).toBe("paused_vote");
+
+    const startsBefore = turnStarts(harness).length;
+    yield* answerVote(vote.voteId, "reject");
+
+    expect((yield* voteOf(vote.voteId)).status).toBe("rejected");
+    const rejected = systemRows(harness).find((row) => row.event === "vote-rejected");
+    expect(rejected?.text).toContain("You rejected the vote");
+    expect(rejected?.text).toContain("Ship on Friday?");
+
+    // Nothing was started on a rejected decision. The round is no longer
+    // parked either: its queue was empty, so the discussion simply ended.
+    expect(turnStarts(harness).length).toBe(startsBefore);
+    expect((yield* currentRound).status).toBe("completed");
+
+    // And the group carries on talking: a reject is a refusal of one
+    // decision, not the end of the conversation.
+    yield* send("@Dev then what?", "msg-after-reject");
+    const next = yield* currentRound;
+    expect(next.status).toBe("running");
+    expect(next.activeBotId).toBe(botId("dev"));
+    expect(turnStarts(harness).length).toBe(startsBefore + 1);
+
+    // The re-ask rail is scoped to a round, as the addendum says: the new
+    // round may put the same question again, and it lands as a new vote.
+    const again = yield* callVote("Ship on Friday?", ["ship", "wait"]);
+    expect(again.vote.voteId).not.toBe(vote.voteId);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+// ---------------------------------------------------------------------------
+// A round that really ends takes its unanswered ballots with it
+// ---------------------------------------------------------------------------
+
+it.effect("stop expires an open vote instead of leaving it to be answered later", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("@Assistant settle this");
+
+    const vote = (yield* callVote("Ship on Friday?", ["ship", "wait"])).vote;
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    yield* service.stop({ groupId: GROUP });
+    yield* service.drain;
+
+    expect((yield* voteOf(vote.voteId)).status).toBe("expired");
+    expect((yield* currentRound).status).toBe("stopped");
+    // And an expired vote is not a tally the user can act on.
+    const refused = yield* Effect.flip(
+      service.continueRound({
+        groupId: GROUP,
+        vote: { voteId: vote.voteId, decision: "approve" },
+      }),
+    );
+    expect(refused.message).toContain("expired");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+// ---------------------------------------------------------------------------
+// The parked round is visible to a client that just connected
+// ---------------------------------------------------------------------------
+
+it.effect("list and subscribe replay the tally a parked round is waiting on", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("@Assistant settle this");
+
+    const vote = (yield* callVote("Ship on Friday?", ["ship", "wait"])).vote;
+    yield* castVote(vote.voteId, "ship", "green build");
+    yield* speak(harness, "Called a vote.");
+    yield* castVote(vote.voteId, "ship", "agreed");
+    yield* speak(harness, "Voted.");
+
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    const listed = yield* service.list();
+    expect(listed.rounds.map((round) => round.status)).toEqual(["paused_vote"]);
+    expect(listed.votes.length).toBe(1);
+    expect(listed.votes[0]).toMatchObject({
+      voteId: vote.voteId,
+      status: "decided",
+      winningOption: "ship",
+    });
+    // The ballots ride along: the card shows each member's choice AND reason,
+    // which is the whole point of recording a vote as data.
+    expect(listed.votes[0]!.ballots.map((ballot) => [ballot.botId, ballot.reason])).toEqual([
+      [botId("assistant"), "green build"],
+      [botId("dev"), "agreed"],
+    ]);
+
+    const replayed = yield* Stream.runCollect(Stream.take(service.subscribe, 3));
+    expect([...replayed].map((event) => event.type)).toEqual(["group", "round", "vote"]);
+  }).pipe(Effect.provide(makeLayer(harness)));
 });

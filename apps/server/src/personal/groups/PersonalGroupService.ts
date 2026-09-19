@@ -1747,9 +1747,14 @@ export const make = Effect.gen(function* () {
 
           // The other members are queued so each one gets a turn in which to
           // ballot - through `admitMentions`, so the per-member cap and the
-          // membership check are the same ones a mention goes through. The
-          // caller is NOT queued: it may vote, in the turn it already has, and
-          // calling a vote buys it nothing (section V.2).
+          // membership check are the same ones a mention goes through.
+          //
+          // The caller gets no extra turn for having called the vote (section
+          // V.2): it may vote in the turn it already holds. `admitMentions` is
+          // what enforces that, by dropping a speaker that names itself; the
+          // filter below only says so at the call site. Mutation-checked, and
+          // recorded: removing the filter changes nothing, because the policy
+          // still refuses. Both stay, but the policy is the one that bites.
           const others = members.map((member) => member.botId).filter((entry) => entry !== botId);
           const admitted = admitMentions({
             speaker: botId,
