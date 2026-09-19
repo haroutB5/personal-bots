@@ -15,10 +15,14 @@ import {
   PersonalGroupMemberRole,
   PersonalGroupRoundId,
   PersonalGroupRoundStatus,
+  PersonalGroupVoteId,
+  PersonalGroupVoteStatus,
   ThreadId,
   TurnId,
   type PersonalGroupMember,
   type PersonalGroupRound,
+  type PersonalGroupVote,
+  type PersonalGroupVoteBallot,
 } from "@t3tools/contracts";
 
 import { PersistenceDecodeError, PersistenceSqlError } from "../../persistence/Errors.ts";
@@ -111,6 +115,29 @@ const RoundDbRow = Schema.Struct({
   updatedAt: Schema.DateTimeUtcFromString,
 });
 
+/** A vote row without its ballots; `getVote` joins them on. */
+const VoteDbRow = Schema.Struct({
+  voteId: PersonalGroupVoteId,
+  groupId: PersonalGroupId,
+  roundId: PersonalGroupRoundId,
+  calledByBotId: PersonalBotId,
+  question: Schema.String,
+  questionNormalised: Schema.String,
+  options: Schema.fromJsonString(Schema.Array(Schema.String)),
+  status: PersonalGroupVoteStatus,
+  winningOption: Schema.NullOr(Schema.String),
+  createdAt: Schema.DateTimeUtcFromString,
+  decidedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+});
+
+const BallotDbRow = Schema.Struct({
+  voteId: PersonalGroupVoteId,
+  botId: PersonalBotId,
+  option: Schema.String,
+  reason: Schema.String,
+  createdAt: Schema.DateTimeUtcFromString,
+});
+
 const MessageDbRow = Schema.Struct({
   seq: Schema.Number,
   groupId: PersonalGroupId,
@@ -122,6 +149,8 @@ const MessageDbRow = Schema.Struct({
 });
 
 const isSqlError = Schema.is(SqlError.SqlError);
+const decodeVoteRow = Schema.decodeUnknownEffect(VoteDbRow);
+const decodeBallotRow = Schema.decodeUnknownEffect(BallotDbRow);
 const decodeGroupRow = Schema.decodeUnknownEffect(GroupDbRow);
 const decodeMemberRow = Schema.decodeUnknownEffect(MemberDbRow);
 const decodeRoundRow = Schema.decodeUnknownEffect(RoundDbRow);
@@ -173,6 +202,31 @@ const ROUND_COLUMNS = `
   created_at AS "createdAt",
   updated_at AS "updatedAt"
 `;
+
+const VOTE_COLUMNS = `
+  vote_id AS "voteId",
+  group_id AS "groupId",
+  round_id AS "roundId",
+  called_by_bot_id AS "calledByBotId",
+  question AS "question",
+  question_normalised AS "questionNormalised",
+  options_json AS "options",
+  status AS "status",
+  winning_option AS "winningOption",
+  created_at AS "createdAt",
+  decided_at AS "decidedAt"
+`;
+
+const BALLOT_COLUMNS = `
+  vote_id AS "voteId",
+  bot_id AS "botId",
+  option AS "option",
+  reason AS "reason",
+  created_at AS "createdAt"
+`;
+
+/** Votes that can still change: one open, or one decided and awaiting the owner. */
+export const PERSONAL_GROUP_PENDING_VOTE_STATUSES = ["open", "decided"] as const;
 
 const MESSAGE_COLUMNS = `
   seq AS "seq",
@@ -293,6 +347,41 @@ export class PersonalGroupRepository extends Context.Service<
       readonly now: DateTime.Utc;
       readonly leaseExpiresAt: DateTime.Utc;
     }) => Effect.Effect<void, PersonalGroupRepositoryError>;
+
+    /** Inserts unless the vote id exists. Returns whether it inserted. */
+    readonly insertVote: (
+      vote: Omit<PersonalGroupVote, "ballots">,
+    ) => Effect.Effect<boolean, PersonalGroupRepositoryError>;
+    /** The vote with its ballots, oldest ballot first. */
+    readonly getVote: (
+      voteId: PersonalGroupVoteId,
+    ) => Effect.Effect<Option.Option<PersonalGroupVote>, PersonalGroupRepositoryError>;
+    /** Every vote of a round, oldest first, each with its ballots. */
+    readonly listVotesForRound: (
+      roundId: PersonalGroupRoundId,
+    ) => Effect.Effect<ReadonlyArray<PersonalGroupVote>, PersonalGroupRepositoryError>;
+    /**
+     * Votes of a round that are still open or awaiting the owner. The round
+     * loop asks this to decide whether it may close (§V.3).
+     */
+    readonly listPendingVotes: (
+      roundId: PersonalGroupRoundId,
+    ) => Effect.Effect<ReadonlyArray<PersonalGroupVote>, PersonalGroupRepositoryError>;
+    /** Pending votes across every live round; the list/replay set. */
+    readonly listPendingVotesForRounds: (
+      roundIds: ReadonlyArray<PersonalGroupRoundId>,
+    ) => Effect.Effect<ReadonlyArray<PersonalGroupVote>, PersonalGroupRepositoryError>;
+    readonly writeVote: (
+      vote: Omit<PersonalGroupVote, "ballots">,
+    ) => Effect.Effect<void, PersonalGroupRepositoryError>;
+    /**
+     * One ballot per bot per vote, enforced by the primary key rather than by
+     * a read-then-write: two ballots racing cannot both land. Returns whether
+     * this one was the ballot that counted.
+     */
+    readonly insertBallot: (
+      ballot: PersonalGroupVoteBallot,
+    ) => Effect.Effect<boolean, PersonalGroupRepositoryError>;
   }
 >()("t3/personal/groups/PersonalGroupRepository") {}
 
@@ -659,6 +748,126 @@ export const make = Effect.gen(function* () {
       `,
     ).pipe(Effect.asVoid);
 
+  const decodeVotes = decodeAll(decodeVoteRow);
+  const decodeBallots = decodeAll(decodeBallotRow);
+
+  const listBallots = (voteId: PersonalGroupVoteId) =>
+    query(
+      "listBallots",
+      sql`
+        SELECT ${sql.literal(BALLOT_COLUMNS)} FROM personal_group_vote_ballots
+        WHERE vote_id = ${voteId}
+        ORDER BY created_at ASC, rowid ASC
+      `,
+    ).pipe(Effect.flatMap((rows) => decodeBallots("listBallots", rows)));
+
+  const withBallots = (rows: ReadonlyArray<Omit<PersonalGroupVote, "ballots">>) =>
+    Effect.forEach(rows, (vote) =>
+      listBallots(vote.voteId).pipe(Effect.map((ballots) => ({ ...vote, ballots }))),
+    );
+
+  const insertVote: PersonalGroupRepository["Service"]["insertVote"] = (vote) =>
+    query(
+      "insertVote",
+      sql`
+        INSERT INTO personal_group_votes (
+          vote_id, group_id, round_id, called_by_bot_id, question, question_normalised,
+          options_json, status, winning_option, created_at, decided_at
+        )
+        VALUES (
+          ${vote.voteId}, ${vote.groupId}, ${vote.roundId}, ${vote.calledByBotId},
+          ${vote.question}, ${vote.questionNormalised}, ${JSON.stringify(vote.options)},
+          ${vote.status}, ${vote.winningOption}, ${iso(vote.createdAt)},
+          ${isoOrNull(vote.decidedAt)}
+        )
+        ON CONFLICT(vote_id) DO NOTHING
+        RETURNING vote_id AS "voteId"
+      `,
+    ).pipe(Effect.map((rows) => rows.length > 0));
+
+  const getVote: PersonalGroupRepository["Service"]["getVote"] = (voteId) =>
+    query(
+      "getVote",
+      sql`
+        SELECT ${sql.literal(VOTE_COLUMNS)} FROM personal_group_votes
+        WHERE vote_id = ${voteId}
+      `,
+    ).pipe(
+      Effect.flatMap((rows) => decodeVotes("getVote", rows.slice(0, 1))),
+      Effect.flatMap(withBallots),
+      Effect.map(firstOf),
+    );
+
+  const listVotesForRound: PersonalGroupRepository["Service"]["listVotesForRound"] = (roundId) =>
+    query(
+      "listVotesForRound",
+      sql`
+        SELECT ${sql.literal(VOTE_COLUMNS)} FROM personal_group_votes
+        WHERE round_id = ${roundId}
+        ORDER BY created_at ASC, rowid ASC
+      `,
+    ).pipe(
+      Effect.flatMap((rows) => decodeVotes("listVotesForRound", rows)),
+      Effect.flatMap(withBallots),
+    );
+
+  const listPendingVotes: PersonalGroupRepository["Service"]["listPendingVotes"] = (roundId) =>
+    query(
+      "listPendingVotes",
+      sql`
+        SELECT ${sql.literal(VOTE_COLUMNS)} FROM personal_group_votes
+        WHERE round_id = ${roundId}
+          AND ${sql.in("status", PERSONAL_GROUP_PENDING_VOTE_STATUSES)}
+        ORDER BY created_at ASC, rowid ASC
+      `,
+    ).pipe(
+      Effect.flatMap((rows) => decodeVotes("listPendingVotes", rows)),
+      Effect.flatMap(withBallots),
+    );
+
+  const listPendingVotesForRounds: PersonalGroupRepository["Service"]["listPendingVotesForRounds"] =
+    (roundIds) =>
+      roundIds.length === 0
+        ? Effect.succeed([])
+        : query(
+            "listPendingVotesForRounds",
+            sql`
+              SELECT ${sql.literal(VOTE_COLUMNS)} FROM personal_group_votes
+              WHERE ${sql.in("round_id", roundIds)}
+                AND ${sql.in("status", PERSONAL_GROUP_PENDING_VOTE_STATUSES)}
+              ORDER BY created_at ASC, rowid ASC
+            `,
+          ).pipe(
+            Effect.flatMap((rows) => decodeVotes("listPendingVotesForRounds", rows)),
+            Effect.flatMap(withBallots),
+          );
+
+  const writeVote: PersonalGroupRepository["Service"]["writeVote"] = (vote) =>
+    query(
+      "writeVote",
+      sql`
+        UPDATE personal_group_votes
+        SET status = ${vote.status},
+            winning_option = ${vote.winningOption},
+            decided_at = ${isoOrNull(vote.decidedAt)}
+        WHERE vote_id = ${vote.voteId}
+      `,
+    ).pipe(Effect.asVoid);
+
+  const insertBallot: PersonalGroupRepository["Service"]["insertBallot"] = (ballot) =>
+    query(
+      "insertBallot",
+      sql`
+        INSERT INTO personal_group_vote_ballots (vote_id, bot_id, option, reason, created_at)
+        VALUES (
+          ${ballot.voteId}, ${ballot.botId}, ${ballot.option}, ${ballot.reason},
+          ${iso(ballot.createdAt)}
+        )
+        ON CONFLICT(vote_id, bot_id) DO NOTHING
+        RETURNING bot_id AS "botId"
+      `,
+    ).pipe(Effect.map((rows) => rows.length > 0));
+
   return {
     transaction,
     insertGroup,
@@ -685,6 +894,13 @@ export const make = Effect.gen(function* () {
     listLiveRounds,
     getRoundByActiveThread,
     heartbeat,
+    insertVote,
+    getVote,
+    listVotesForRound,
+    listPendingVotes,
+    listPendingVotesForRounds,
+    writeVote,
+    insertBallot,
   } satisfies PersonalGroupRepository["Service"];
 });
 

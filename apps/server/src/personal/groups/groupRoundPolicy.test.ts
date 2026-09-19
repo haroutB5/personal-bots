@@ -66,7 +66,15 @@ describe("isPingPong", () => {
 });
 
 describe("nextStep", () => {
-  const base = { queue: [A], spoken: [], budgetRemaining: 3, nowMs: 0, deadlineMs: 1_000 };
+  const base = {
+    queue: [A],
+    spoken: [],
+    budgetRemaining: 3,
+    nowMs: 0,
+    deadlineMs: 1_000,
+    openVote: false,
+    decidedVoteAwaitingUser: false,
+  };
 
   it("speaks the head of the queue", () => {
     expect(nextStep(base)).toEqual({ kind: "speak", botId: A });
@@ -89,5 +97,36 @@ describe("nextStep", () => {
     // never outlive its ten minutes, whatever else is true of it.
     expect(nextStep({ ...base, nowMs: 1_000 })).toEqual({ kind: "expired" });
     expect(nextStep({ ...base, queue: [], nowMs: 2_000 })).toEqual({ kind: "expired" });
+  });
+
+  // Test 27 of the voting addendum, at the level that decides it.
+  it("parks on a tally the owner has not answered, whatever else is true", () => {
+    const parked = { kind: "paused_vote" };
+    expect(nextStep({ ...base, decidedVoteAwaitingUser: true })).toEqual(parked);
+    // Not the empty queue, not a spent budget, and not even the wall clock may
+    // close a round over a decision the owner has not seen (section V.3).
+    expect(nextStep({ ...base, queue: [], decidedVoteAwaitingUser: true })).toEqual(parked);
+    expect(nextStep({ ...base, budgetRemaining: 0, decidedVoteAwaitingUser: true })).toEqual(
+      parked,
+    );
+    expect(nextStep({ ...base, nowMs: 9_999, decidedVoteAwaitingUser: true })).toEqual(parked);
+  });
+
+  it("resolves an open vote at a dead end instead of closing the round", () => {
+    const resolve = { kind: "resolve_vote" };
+    // The queue ran dry before everyone balloted...
+    expect(nextStep({ ...base, queue: [], openVote: true })).toEqual(resolve);
+    // ...or the wall clock ran out. Either way the missing ballots abstain.
+    expect(nextStep({ ...base, nowMs: 1_000, openVote: true })).toEqual(resolve);
+  });
+
+  it("still speaks and still pauses for budget while a vote is open", () => {
+    // An open vote does not freeze the round: the queued members are exactly
+    // the ones whose turns the ballots are waiting on.
+    expect(nextStep({ ...base, openVote: true })).toEqual({ kind: "speak", botId: A });
+    // Continue is how the remaining voters get the turns they still need.
+    expect(nextStep({ ...base, budgetRemaining: 0, openVote: true })).toEqual({
+      kind: "paused_budget",
+    });
   });
 });

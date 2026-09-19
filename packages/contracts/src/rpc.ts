@@ -296,6 +296,7 @@ import {
 import {
   PersonalGroup,
   PersonalGroupCreateInput,
+  PersonalGroupContinueRoundInput,
   PersonalGroupIdInput,
   PersonalGroupListResult,
   PersonalGroupMemberInput,
@@ -1229,8 +1230,14 @@ const WsPersonalGroupsSendMessageRpc = Rpc.make(WS_METHODS.personalGroupsSendMes
   error: PersonalGroupsRpcError,
 });
 
+// The owner answering a parked round. Bare, it is Continue: a fresh budget
+// for a round that spent its bot turns. With `vote`, it is the approval gate
+// of §V.3 - approve relays the winning option into a member's thread as its
+// next instruction, reject records the refusal and lets the discussion run on.
+// One method because it is one act: the round is parked and only the owner can
+// unpark it, which is exactly why nothing a vote decides ever runs on its own.
 const WsPersonalGroupsContinueRoundRpc = Rpc.make(WS_METHODS.personalGroupsContinueRound, {
-  payload: PersonalGroupIdInput,
+  payload: PersonalGroupContinueRoundInput,
   success: PersonalGroupRound,
   error: PersonalGroupsRpcError,
 });

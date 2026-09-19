@@ -234,6 +234,28 @@ export const PersonalGroupVote = Schema.Struct({
 });
 export type PersonalGroupVote = typeof PersonalGroupVote.Type;
 
+/**
+ * Ballot papers a bot may put up. Two is the smallest question worth a vote;
+ * the ceiling keeps the tally card readable and the plurality meaningful.
+ */
+export const PERSONAL_GROUP_VOTE_MIN_OPTIONS = 2;
+export const PERSONAL_GROUP_VOTE_MAX_OPTIONS = 6;
+
+/**
+ * The owner's answer to a resolved vote. `approve` relays the winning option
+ * into a member's thread as its next instruction; `reject` records the refusal
+ * and lets the discussion carry on. There is no third answer and no default:
+ * a vote that is never answered simply never acts, which is the point.
+ */
+export const PersonalGroupVoteDecision = Schema.Literals(["approve", "reject"]);
+export type PersonalGroupVoteDecision = typeof PersonalGroupVoteDecision.Type;
+
+export const PersonalGroupVoteDecisionInput = Schema.Struct({
+  voteId: PersonalGroupVoteId,
+  decision: PersonalGroupVoteDecision,
+});
+export type PersonalGroupVoteDecisionInput = typeof PersonalGroupVoteDecisionInput.Type;
+
 /** Client-minted ids make create idempotent, as `personalBots.create` is. */
 export const PersonalGroupCreateInput = Schema.Struct({
   groupId: PersonalGroupId,
@@ -260,6 +282,23 @@ export const PersonalGroupIdInput = Schema.Struct({
 });
 export type PersonalGroupIdInput = typeof PersonalGroupIdInput.Type;
 
+/**
+ * The owner unparking a round. Bare, it is Continue (§2.4): a round that spent
+ * its bot turns gets a fresh `maxBotTurns`. With `vote`, it is the approval
+ * gate (§V.3): approve relays the winning option into a member's thread as its
+ * next instruction and the round runs on with whatever budget it had left;
+ * reject records the refusal and lets the discussion continue.
+ *
+ * One input, because it is one act - a parked round only ever moves because
+ * the owner said so, and that is precisely why a bot-only majority can never
+ * start work on its own.
+ */
+export const PersonalGroupContinueRoundInput = Schema.Struct({
+  groupId: PersonalGroupId,
+  vote: Schema.optional(PersonalGroupVoteDecisionInput),
+});
+export type PersonalGroupContinueRoundInput = typeof PersonalGroupContinueRoundInput.Type;
+
 export const PersonalGroupMemberInput = Schema.Struct({
   groupId: PersonalGroupId,
   botId: PersonalBotId,
@@ -279,6 +318,8 @@ export const PersonalGroupListResult = Schema.Struct({
   groups: Schema.Array(PersonalGroup),
   /** Rounds that are not terminal, so a fresh client can show them at once. */
   rounds: Schema.Array(PersonalGroupRound),
+  /** Votes of those rounds, so a parked tally card paints on first load. */
+  votes: Schema.Array(PersonalGroupVote),
 });
 export type PersonalGroupListResult = typeof PersonalGroupListResult.Type;
 
@@ -290,6 +331,12 @@ export type PersonalGroupListResult = typeof PersonalGroupListResult.Type;
 export const PersonalGroupStreamEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("group"), group: PersonalGroup }),
   Schema.Struct({ type: Schema.Literal("round"), round: PersonalGroupRound }),
+  /**
+   * A vote and its ballots. Structured on purpose: the tally card shows every
+   * member's choice with its reason, which cannot be recovered from a line of
+   * transcript text.
+   */
+  Schema.Struct({ type: Schema.Literal("vote"), vote: PersonalGroupVote }),
 ]);
 export type PersonalGroupStreamEvent = typeof PersonalGroupStreamEvent.Type;
 

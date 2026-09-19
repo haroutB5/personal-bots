@@ -76,6 +76,10 @@ export interface RoundLimits {
   readonly budgetRemaining: number;
   readonly nowMs: number;
   readonly deadlineMs: number;
+  /** A vote is taking ballots in this round (§V.2: at most one). */
+  readonly openVote: boolean;
+  /** A resolved vote is waiting for the owner's Approve / Reject (§V.3). */
+  readonly decidedVoteAwaitingUser: boolean;
 }
 
 export type RoundVerdict =
@@ -83,19 +87,35 @@ export type RoundVerdict =
   | { readonly kind: "completed" }
   | { readonly kind: "ping-pong" }
   | { readonly kind: "paused_budget" }
+  | { readonly kind: "paused_vote" }
+  | { readonly kind: "resolve_vote" }
   | { readonly kind: "expired" };
 
 /**
- * What the round should do next, given only its own state. Ordering matters:
- * an empty queue completes even if the budget is spent, and the wall clock
- * beats everything so a round can never outlive its ten minutes.
+ * What the round should do next, given only its own state. Ordering matters.
+ *
+ * `paused_vote` comes first and beats even the wall clock: once a tally is
+ * waiting for the owner, no other verdict may throw it away, because the
+ * owner's answer is the only thing that can act on a vote (§V.3).
+ *
+ * `resolve_vote` is what a dead end means while a vote is still open - the
+ * wall clock, or a queue that ran dry before everyone balloted. In both cases
+ * the missing ballots are abstentions and the vote resolves rather than the
+ * round closing over it (§V.2, §V.3).
+ *
+ * Otherwise: the wall clock beats everything, an empty queue completes even if
+ * the budget is spent, and a spent budget pauses for Continue - which is also
+ * how a vote gets the turns its remaining voters still need.
  */
 export const nextStep = (limits: RoundLimits): RoundVerdict => {
+  if (limits.decidedVoteAwaitingUser) {
+    return { kind: "paused_vote" };
+  }
   if (limits.nowMs >= limits.deadlineMs) {
-    return { kind: "expired" };
+    return limits.openVote ? { kind: "resolve_vote" } : { kind: "expired" };
   }
   if (limits.queue.length === 0) {
-    return { kind: "completed" };
+    return limits.openVote ? { kind: "resolve_vote" } : { kind: "completed" };
   }
   if (isPingPong(limits.spoken)) {
     return { kind: "ping-pong" };

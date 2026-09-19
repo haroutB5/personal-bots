@@ -25,9 +25,12 @@ import {
   PERSONAL_GROUP_MAX_TURNS_PER_MEMBER_PER_ROUND,
   PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
   PERSONAL_GROUP_ROUND_WALL_CLOCK_MS,
+  PERSONAL_GROUP_VOTE_MAX_OPTIONS,
+  PERSONAL_GROUP_VOTE_MIN_OPTIONS,
   PersonalGroupId,
   PersonalGroupRoundId,
   PersonalGroupsError,
+  PersonalGroupVoteId,
   ThreadId,
   type OrchestrationEvent,
   type OrchestrationMessageContext,
@@ -35,6 +38,7 @@ import {
   type PersonalBot,
   type PersonalBotId,
   type PersonalGroup,
+  type PersonalGroupContinueRoundInput,
   type PersonalGroupCreateInput,
   type PersonalGroupIdInput,
   type PersonalGroupListResult,
@@ -46,6 +50,8 @@ import {
   type PersonalGroupStreamEvent,
   type PersonalGroupSystemEvent,
   type PersonalGroupUpdateInput,
+  type PersonalGroupVote,
+  type PersonalGroupVoteBallot,
 } from "@t3tools/contracts";
 
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
@@ -59,6 +65,7 @@ import { classifyProviderError, providerWaitPause } from "../tasks/PersonalTaskS
 import { parseMentions } from "./groupMentions.ts";
 import { admitMentions, nextStep } from "./groupRoundPolicy.ts";
 import { buildCatchUpBrief, type GroupCatchUpMessage } from "./groupTurnText.ts";
+import { normaliseQuestion, tallyVote } from "./groupVotePolicy.ts";
 import * as PersonalGroupRepository from "./PersonalGroupRepository.ts";
 
 const LEASE_MINUTES = 2;
@@ -111,10 +118,33 @@ export class PersonalGroupService extends Context.Service<
     readonly sendMessage: (
       input: PersonalGroupSendMessageInput,
     ) => Effect.Effect<PersonalGroupRound, PersonalGroupsError>;
-    /** Gives a paused or interrupted round a fresh budget and resumes it. */
+    /**
+     * The owner unparking a round: a fresh budget, or the Approve / Reject of
+     * a resolved vote (§V.3). Nothing a vote decided runs before this call.
+     */
     readonly continueRound: (
-      input: PersonalGroupIdInput,
+      input: PersonalGroupContinueRoundInput,
     ) => Effect.Effect<PersonalGroupRound, PersonalGroupsError>;
+    /**
+     * Opens a vote inside the caller's own live group turn. Refuses outside a
+     * round, over an already-open vote, and on a question this round already
+     * decided however it is reworded (§V.2).
+     */
+    readonly callVote: (input: {
+      readonly threadId: ThreadId;
+      readonly question: string;
+      readonly options: ReadonlyArray<string>;
+    }) => Effect.Effect<
+      { readonly vote: PersonalGroupVote; readonly voterNames: ReadonlyArray<string> },
+      PersonalGroupsError
+    >;
+    /** One ballot, from the member whose turn is live. */
+    readonly castVote: (input: {
+      readonly threadId: ThreadId;
+      readonly voteId: PersonalGroupVoteId;
+      readonly option: string;
+      readonly reason: string;
+    }) => Effect.Effect<PersonalGroupVote, PersonalGroupsError>;
     /** Stops every member: clears the queue and interrupts the live turn. */
     readonly stop: (input: PersonalGroupIdInput) => Effect.Effect<void, PersonalGroupsError>;
     /** Replay of every group and live round, then live changes. State only. */
@@ -417,6 +447,111 @@ export const make = Effect.gen(function* () {
   });
 
   // ---------------------------------------------------------------------
+  // Voting (§V)
+  // ---------------------------------------------------------------------
+
+  const publishVote = (vote: PersonalGroupVote) => PubSub.publish(upserts, { type: "vote", vote });
+
+  /**
+   * What is stopping this round from closing. `open` is still taking ballots;
+   * `decided` is a tally waiting for the owner, and nothing - not an empty
+   * queue, not the wall clock - may throw that away, because approving it is
+   * the only thing that can turn a bot majority into work (§V.3).
+   */
+  const voteGate = Effect.fn("PersonalGroupService.voteGate")(function* (
+    roundId: PersonalGroupRoundId,
+  ) {
+    const pending = yield* repository.listPendingVotes(roundId);
+    return {
+      open: pending.find((vote) => vote.status === "open") ?? null,
+      decided: pending.find((vote) => vote.status === "decided") ?? null,
+    };
+  });
+
+  /** A round that truly ended takes its unanswered votes with it. */
+  const expirePendingVotes = Effect.fn("PersonalGroupService.expirePendingVotes")(function* (
+    round: RoundRecord,
+  ) {
+    const now = yield* DateTime.now;
+    for (const vote of yield* repository.listPendingVotes(round.roundId)) {
+      const expired: PersonalGroupVote = {
+        ...vote,
+        status: "expired",
+        decidedAt: vote.decidedAt ?? now,
+      };
+      yield* repository.writeVote(expired);
+      yield* publishVote(expired);
+    }
+  });
+
+  /**
+   * Counts the ballots and parks the result. Plurality wins; an exact tie, and
+   * a vote nobody answered, resolve with no winner. Members that never
+   * balloted are abstentions - counted and said out loud, rather than silently
+   * read as agreement.
+   *
+   * This starts nothing. The tally lands in the transcript and the round
+   * waits: these bots hold the shared browser, the saved logins and a shell,
+   * so the owner is the only thing that turns a decision into an act.
+   */
+  const resolveVote = Effect.fn("PersonalGroupService.resolveVote")(function* (
+    group: GroupRecord,
+    round: RoundRecord,
+    vote: PersonalGroupVote,
+  ) {
+    const members = yield* repository.listMembers(group.groupId);
+    const tally = tallyVote({
+      options: vote.options,
+      ballots: vote.ballots,
+      eligible: members.map((member) => member.botId),
+    });
+    const now = yield* DateTime.now;
+    const decided: PersonalGroupVote = {
+      ...vote,
+      status: "decided",
+      winningOption: tally.winningOption,
+      decidedAt: now,
+    };
+    yield* repository.writeVote(decided);
+    yield* publishVote(decided);
+    const counts = tally.counts.map((entry) => `${entry.option} ${String(entry.votes)}`).join(", ");
+    const abstained = tally.abstentions === 0 ? "" : `, ${String(tally.abstentions)} did not vote`;
+    yield* writeSystemRow(
+      group,
+      round.roundId,
+      "vote-resolved",
+      tally.winningOption === null
+        ? `The vote on "${vote.question}" is tied (${counts}${abstained}). Nothing happens until you answer it.`
+        : `The vote on "${vote.question}" chose "${tally.winningOption}" (${counts}${abstained}). Nothing happens until you approve it.`,
+    );
+    return decided;
+  });
+
+  /**
+   * The member an approved option becomes an instruction for. The option's own
+   * text wins when it names a member, because "@Dev ships it" says who; the
+   * bot that called the vote is the fallback, because it is the one that asked.
+   */
+  const approvalTarget = (
+    vote: PersonalGroupVote,
+    winningOption: string,
+    members: ReadonlyArray<PersonalGroupMember>,
+    all: ReadonlyArray<PersonalBot>,
+  ): PersonalBotId | null => {
+    const named = parseMentions(
+      winningOption,
+      members.map((member) => ({ botId: member.botId, name: botName(all, member.botId) })),
+    ).find((botId) => members.some((member) => member.botId === botId));
+    if (named !== undefined) {
+      return named;
+    }
+    if (members.some((member) => member.botId === vote.calledByBotId)) {
+      return vote.calledByBotId;
+    }
+    return members[0]?.botId ?? null;
+  };
+
+  // ---------------------------------------------------------------------
   // The round loop
   // ---------------------------------------------------------------------
 
@@ -619,13 +754,19 @@ export const make = Effect.gen(function* () {
     status: PersonalGroupRound["status"],
     note: { readonly event: PersonalGroupSystemEvent; readonly text: string } | null,
   ) {
+    if (status !== "paused_budget" && status !== "paused_vote") {
+      // completed, stopped, interrupted: nobody is coming back to answer an
+      // open ballot, and a tally the owner can no longer act on is not a tally.
+      yield* expirePendingVotes(round);
+    }
     if (note !== null) {
       yield* writeSystemRow(group, round.roundId, note.event, note.text);
     }
     return yield* writeRound(round, {
       status,
       ...clearActive,
-      ...(status === "paused_budget" ? {} : { queue: [] }),
+      // A parked round keeps its queue: Continue, and Approve, resume it.
+      ...(status === "paused_budget" || status === "paused_vote" ? {} : { queue: [] }),
     });
   });
 
@@ -653,12 +794,15 @@ export const make = Effect.gen(function* () {
         return;
       }
       const group = yield* requireGroup(round.groupId);
+      const gate = yield* voteGate(round.roundId);
       const verdict = nextStep({
         queue: round.queue,
         spoken: round.spoken,
         budgetRemaining: round.budgetRemaining,
         nowMs,
         deadlineMs: DateTime.toEpochMillis(round.deadlineAt),
+        openVote: gate.open !== null,
+        decidedVoteAwaitingUser: gate.decided !== null,
       });
       switch (verdict.kind) {
         case "expired":
@@ -679,6 +823,19 @@ export const make = Effect.gen(function* () {
           });
           continue;
         }
+        case "paused_vote":
+          // The tally is written; the round stops here until the owner
+          // answers it. No system row: resolveVote already said it, and
+          // saying it twice would read as two separate events.
+          yield* endRound(group, round, "paused_vote", null);
+          continue;
+        case "resolve_vote":
+          // A dead end with ballots still out: the wall clock, or a queue that
+          // ran dry before everyone voted. The missing ballots are
+          // abstentions and the vote resolves rather than the round closing
+          // over it (§V.2).
+          yield* resolveVote(group, round, gate.open!);
+          continue;
         case "paused_budget":
           yield* endRound(group, round, "paused_budget", {
             event: "round-paused-budget",
@@ -1076,6 +1233,14 @@ export const make = Effect.gen(function* () {
           yield* interruptActiveTurn(round, "wall-clock");
           yield* abandonActive(group.value, round);
         }
+        const gate = yield* voteGate(round.roundId);
+        if (gate.open !== null || gate.decided !== null) {
+          // Time is up for the talking, not for the vote: the ballots that
+          // never arrived are abstentions, and `pump` (through `nextStep`)
+          // resolves the vote and parks the round for the owner (§V.2, §V.3).
+          yield* writeRound(round, clearActive);
+          continue;
+        }
         yield* endRound(group.value, round, "interrupted", {
           event: "round-interrupted",
           text: "The group ran out of time before everyone replied.",
@@ -1177,9 +1342,13 @@ export const make = Effect.gen(function* () {
         toPublicGroup(group, { withNewestMessage: true }),
       );
       const rounds = yield* repository.listLiveRounds();
+      const votes = yield* repository.listPendingVotesForRounds(
+        rounds.map((round) => round.roundId),
+      );
       return {
         groups: published,
         rounds: rounds.map(toRound),
+        votes,
       } satisfies PersonalGroupListResult;
     }).pipe(toPublic("list"));
 
@@ -1480,6 +1649,277 @@ export const make = Effect.gen(function* () {
       )
       .pipe(toPublic("sendMessage"));
 
+  /**
+   * The live group turn the calling member is in the middle of, or a refusal.
+   * `getRoundByActiveThread` already filters to live rounds, so this single
+   * query IS the "outside a group round" check of section V.1 - there is
+   * nowhere else a vote could come from.
+   */
+  const requireSpeakingMember = Effect.fn("PersonalGroupService.requireSpeakingMember")(function* (
+    threadId: ThreadId,
+    what: string,
+  ) {
+    const found = yield* repository.getRoundByActiveThread(threadId);
+    const nobody = fail(
+      `You are not speaking in a group chat right now, so there is nothing to ${what}.`,
+    );
+    if (Option.isNone(found)) {
+      return yield* nobody;
+    }
+    const round = found.value;
+    const botId = round.activeBotId;
+    if (botId === null) {
+      return yield* nobody;
+    }
+    const group = yield* requireGroup(round.groupId);
+    const members = yield* repository.listMembers(group.groupId);
+    if (!members.some((member) => member.botId === botId)) {
+      return yield* fail(`You are not a member of '${group.name}'.`);
+    }
+    return { round, group, members, botId };
+  });
+
+  const callVote: PersonalGroupService["Service"]["callVote"] = (input) =>
+    lock
+      .withPermit(
+        Effect.gen(function* () {
+          const { round, group, members, botId } = yield* requireSpeakingMember(
+            input.threadId,
+            "vote on",
+          );
+          const question = input.question.trim();
+          if (question.length === 0) {
+            return yield* fail("A vote needs a question.");
+          }
+          const options = [
+            ...new Set(input.options.map((option) => option.trim()).filter((o) => o.length > 0)),
+          ];
+          if (options.length < PERSONAL_GROUP_VOTE_MIN_OPTIONS) {
+            return yield* fail(
+              `A vote needs at least ${String(PERSONAL_GROUP_VOTE_MIN_OPTIONS)} different options.`,
+            );
+          }
+          if (options.length > PERSONAL_GROUP_VOTE_MAX_OPTIONS) {
+            return yield* fail(
+              `A vote can offer at most ${String(PERSONAL_GROUP_VOTE_MAX_OPTIONS)} options.`,
+            );
+          }
+
+          const existing = yield* repository.listVotesForRound(round.roundId);
+          const open = existing.find((vote) => vote.status === "open");
+          if (open !== undefined) {
+            // One open vote per round: two ballots running at once would make
+            // "everyone has voted" mean nothing and let a second question
+            // reopen a first one sideways.
+            return yield* fail(
+              `A vote is already open in this group: ${open.voteId} "${open.question}". Cast your ballot on that one with cast_vote instead.`,
+            );
+          }
+          const questionNormalised = normaliseQuestion(question);
+          const settled = existing.find((vote) => vote.questionNormalised === questionNormalised);
+          if (settled !== undefined) {
+            // Matched on the normalised question, so rewording it does not buy
+            // a second vote: a losing side cannot simply ask again.
+            return yield* fail(
+              `This round already voted on that: "${settled.question}" (${settled.winningOption ?? "tied"}). Ask a different question, or let the user answer the tally.`,
+            );
+          }
+
+          const now = yield* DateTime.now;
+          const all = yield* liveBots();
+          const vote: PersonalGroupVote = {
+            voteId: PersonalGroupVoteId.make(
+              `vote-${NodeCrypto.randomUUID().replaceAll("-", "").slice(0, 12)}`,
+            ),
+            groupId: group.groupId,
+            roundId: round.roundId,
+            calledByBotId: botId,
+            question,
+            questionNormalised,
+            options,
+            status: "open",
+            winningOption: null,
+            ballots: [],
+            createdAt: now,
+            decidedAt: null,
+          };
+          yield* repository.insertVote(vote);
+
+          // The other members are queued so each one gets a turn in which to
+          // ballot - through `admitMentions`, so the per-member cap and the
+          // membership check are the same ones a mention goes through. The
+          // caller is NOT queued: it may vote, in the turn it already has, and
+          // calling a vote buys it nothing (section V.2).
+          const others = members.map((member) => member.botId).filter((entry) => entry !== botId);
+          const admitted = admitMentions({
+            speaker: botId,
+            mentioned: others,
+            queue: round.queue,
+            spoken: round.spoken,
+            members: members.map((member) => member.botId),
+            maxTurnsPerMember: PERSONAL_GROUP_MAX_TURNS_PER_MEMBER_PER_ROUND,
+          });
+          yield* writeRound(round, { queue: [...round.queue, ...admitted] });
+
+          const voterNames = members.map((member) => botName(all, member.botId));
+          yield* writeSystemRow(
+            group,
+            round.roundId,
+            "vote-opened",
+            `${botName(all, botId)} called a vote (${vote.voteId}): "${question}" - ${options
+              .map((option) => `"${option}"`)
+              .join(
+                " or ",
+              )}. Everyone answers with cast_vote; nothing happens until you approve the result.`,
+          );
+          yield* publishVote(vote);
+          return { vote, voterNames };
+        }),
+      )
+      .pipe(toPublic("callVote"));
+
+  const castVote: PersonalGroupService["Service"]["castVote"] = (input) =>
+    lock
+      .withPermit(
+        Effect.gen(function* () {
+          const { round, group, members, botId } = yield* requireSpeakingMember(
+            input.threadId,
+            "vote in",
+          );
+          const found = yield* repository.getVote(input.voteId);
+          if (Option.isNone(found)) {
+            return yield* fail(`There is no vote '${input.voteId}'.`);
+          }
+          const vote = found.value;
+          if (vote.roundId !== round.roundId) {
+            return yield* fail(`Vote '${input.voteId}' belongs to a different round.`);
+          }
+          if (vote.status !== "open") {
+            return yield* fail(
+              `Vote '${input.voteId}' is ${vote.status} and is not taking ballots any more.`,
+            );
+          }
+          const wanted = input.option.trim().toLowerCase();
+          const option = vote.options.find((entry) => entry.trim().toLowerCase() === wanted);
+          if (option === undefined) {
+            return yield* fail(
+              `'${input.option}' is not on this ballot. Choose one of: ${vote.options.join(", ")}.`,
+            );
+          }
+          const now = yield* DateTime.now;
+          const ballot: PersonalGroupVoteBallot = {
+            voteId: vote.voteId,
+            botId,
+            option,
+            reason: input.reason.trim(),
+            createdAt: now,
+          };
+          // One ballot per bot per vote, decided by the primary key: two
+          // ballots racing cannot both land, and a second one changes nothing.
+          const counted = yield* repository.insertBallot(ballot);
+          if (!counted) {
+            return yield* fail(
+              `You have already voted in '${vote.voteId}'. A ballot is cast once and cannot be changed.`,
+            );
+          }
+          const updated = yield* repository.getVote(vote.voteId);
+          if (Option.isNone(updated)) {
+            return yield* fail(`There is no vote '${input.voteId}'.`);
+          }
+          yield* publishVote(updated.value);
+          const balloted = new Set(updated.value.ballots.map((entry) => entry.botId));
+          if (members.every((member) => balloted.has(member.botId))) {
+            return yield* resolveVote(group, round, updated.value);
+          }
+          return updated.value;
+        }),
+      )
+      .pipe(toPublic("castVote"));
+
+  /**
+   * The owner's Approve / Reject of a resolved tally. Approve writes the
+   * decision into the transcript - which is how it reaches the member, as the
+   * next line of its catch-up brief - and puts that member at the front of the
+   * queue; the ordinary pump starts the turn, so the reservation, the cursor
+   * and the marker seq stay in one place.
+   *
+   * Approve grants no budget. "The round continues if budget remains" is
+   * literal: a spent round parks on paused_budget with the instruction already
+   * written, and Continue runs it.
+   */
+  const answerVote = Effect.fn("PersonalGroupService.answerVote")(function* (
+    group: GroupRecord,
+    round: RoundRecord,
+    answer: { readonly voteId: PersonalGroupVoteId; readonly decision: "approve" | "reject" },
+  ) {
+    const found = yield* repository.getVote(answer.voteId);
+    if (Option.isNone(found)) {
+      return yield* fail(`There is no vote '${answer.voteId}'.`);
+    }
+    const vote = found.value;
+    if (vote.groupId !== group.groupId) {
+      return yield* fail(`Vote '${answer.voteId}' belongs to a different group.`);
+    }
+    if (vote.status !== "decided") {
+      return yield* fail(
+        `Vote '${answer.voteId}' is ${vote.status}; only a resolved vote can be approved or rejected.`,
+      );
+    }
+    const members = yield* repository.listMembers(group.groupId);
+    const all = yield* liveBots();
+    const now = yield* DateTime.now;
+    const fresh = {
+      deadlineAt: DateTime.add(now, { milliseconds: PERSONAL_GROUP_ROUND_WALL_CLOCK_MS }),
+      availableAt: null,
+      errorMessage: null,
+      ...clearActive,
+    } as const;
+
+    if (answer.decision === "reject") {
+      const rejected: PersonalGroupVote = { ...vote, status: "rejected" };
+      yield* repository.writeVote(rejected);
+      yield* publishVote(rejected);
+      yield* writeSystemRow(
+        group,
+        round.roundId,
+        "vote-rejected",
+        `You rejected the vote on "${vote.question}". Carry on without it.`,
+      );
+      const resumed = yield* writeRound(round, { status: "running", ...fresh });
+      yield* worker.enqueue({ type: "pump" });
+      return toRound(resumed);
+    }
+
+    const winning = vote.winningOption;
+    if (winning === null) {
+      return yield* fail(
+        `Vote '${answer.voteId}' is tied, so there is no winning option to approve. Reject it and let the group decide again.`,
+      );
+    }
+    const target = approvalTarget(vote, winning, members, all);
+    if (target === null) {
+      return yield* fail("This group has no members left to carry out that decision.");
+    }
+    const approved: PersonalGroupVote = { ...vote, status: "approved" };
+    yield* repository.writeVote(approved);
+    yield* publishVote(approved);
+    yield* writeSystemRow(
+      group,
+      round.roundId,
+      "vote-approved",
+      `You approved "${winning}". ${botName(all, target)}, that is the group's decision - do that next.`,
+    );
+    // The owner's instruction beats the per-member cap: the cap exists to stop
+    // bots talking each other in circles, not to overrule the user.
+    const resumed = yield* writeRound(round, {
+      status: "running",
+      queue: [target, ...round.queue.filter((entry) => entry !== target)],
+      ...fresh,
+    });
+    yield* worker.enqueue({ type: "pump" });
+    return toRound(resumed);
+  });
+
   const continueRound: PersonalGroupService["Service"]["continueRound"] = (input) =>
     lock
       .withPermit(
@@ -1490,6 +1930,14 @@ export const make = Effect.gen(function* () {
             return yield* fail("This group has nothing to continue.");
           }
           const round = latest.value;
+          if (input.vote !== undefined) {
+            return yield* answerVote(group, round, input.vote);
+          }
+          if (round.status === "paused_vote") {
+            return yield* fail(
+              "This round is waiting for you to approve or reject a vote; answer that first.",
+            );
+          }
           if (round.status === "running") {
             return toRound(round);
           }
@@ -1540,6 +1988,7 @@ export const make = Effect.gen(function* () {
           // is interrupted by its own thread and turn id, never by name.
           yield* interruptActiveTurn(round, "stop");
           yield* abandonActive(group, round);
+          yield* expirePendingVotes(round);
           yield* writeSystemRow(group, round.roundId, "round-stopped", "You stopped the group.");
           yield* writeRound(round, { status: "stopped", queue: [], ...clearActive });
         }),
@@ -1601,6 +2050,7 @@ export const make = Effect.gen(function* () {
       const replay: Array<PersonalGroupStreamEvent> = [
         ...current.groups.map((group) => ({ type: "group" as const, group })),
         ...current.rounds.map((round) => ({ type: "round" as const, round })),
+        ...current.votes.map((vote) => ({ type: "vote" as const, vote })),
       ];
       return Stream.concat(Stream.fromIterable(replay), Stream.fromSubscription(subscription));
     }),
@@ -1639,6 +2089,8 @@ export const make = Effect.gen(function* () {
     ingestDomainEvent,
     sweep: worker.enqueue({ type: "sweep" }),
     drain: worker.drain,
+    callVote,
+    castVote,
     groupNameForMemberThread,
     purgeBot,
   } satisfies PersonalGroupService["Service"];
