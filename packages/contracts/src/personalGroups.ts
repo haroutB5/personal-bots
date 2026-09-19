@@ -68,6 +68,10 @@ export const PersonalGroupSystemEvent = Schema.Literals([
   "round-paused-budget",
   "round-stopped",
   "round-interrupted",
+  /** Two members were answering only each other, so the round ended (§2.5). */
+  "round-ended-loop",
+  /** A turn was started on the group thread from outside the group service. */
+  "stray-turn-stopped",
   "vote-opened",
   "vote-resolved",
   "vote-approved",
