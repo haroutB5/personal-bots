@@ -279,9 +279,9 @@ describe("ChatsScreen cold start", () => {
   /**
    * The reported bug: "the pinned bots aren't showing when I first open the
    * app, they appear after a couple of sends". The snapshot carried no pin, so
-   * the box only existed once `personalBots.list` landed.
+   * the strip only existed once `personalBots.list` landed.
    */
-  it("paints the Pinned box from the snapshot alone, before the live list", async () => {
+  it("paints the favourites strip from the snapshot alone, before the live list", async () => {
     stubWindow();
     seedSnapshot([
       snapshotRow("bot-cto", "Cached CTO", true),
@@ -297,13 +297,13 @@ describe("ChatsScreen cold start", () => {
       scope.findAllByType(BotAvatar).map((avatar) => avatar.props.label as string);
     const box = renderer!.root.findByProps({ "aria-label": "Pinned" });
     expect(namesIn(box)).toEqual(["Cached CTO"]);
-    // And the unpinned bot is listed once, under the box, not duplicated in it.
+    // And the unpinned bot is listed once, under the strip, not duplicated in it.
     expect(namesIn(renderer!.root.findByProps({ "aria-label": "Your bots" }))).toEqual([
       "Cached Scout",
     ]);
   });
 
-  it("leaves the box out when the snapshot has nothing pinned", async () => {
+  it("leaves the strip out when the snapshot has nothing pinned", async () => {
     stubWindow();
     seedSnapshot();
     await act(async () => {
@@ -375,11 +375,12 @@ describe("ChatsScreen delete failures", () => {
 });
 
 /**
- * The two heads sit in a Pinned box at the top so they are one tap away; the
- * rest of the roster keeps the list it always had. A pinned bot belongs to the
- * box only — listing it twice would make the short list longer, not shorter.
+ * The pinned chats are a strip of faces above the list, not a bordered card
+ * wrapping full rows. A pinned bot belongs to the strip only — listing it twice
+ * would make the short list longer, not shorter — and because it is no longer
+ * in the list, Unpin has to be reachable from the strip itself.
  */
-describe("ChatsScreen pinned box", () => {
+describe("ChatsScreen favourites strip", () => {
   async function renderBots(bots: ReturnType<typeof bot>[]) {
     stubWindow();
     state.listData = { bots, threads: [], personalProjectId: null };
@@ -390,42 +391,74 @@ describe("ChatsScreen pinned box", () => {
 
   const rowLabels = (scope: ReactTestInstance) =>
     scope.findAllByType(SwipeToDelete).map((row) => row.props.label as string);
+  const faceNames = (scope: ReactTestInstance) =>
+    scope.findAllByType(BotAvatar).map((avatar) => avatar.props.label as string);
+  const strip = () => renderer!.root.findByProps({ "aria-label": "Pinned" });
 
-  it("does not render the box at all when nothing is pinned", async () => {
+  it("renders no strip and no empty gap when nothing is pinned", async () => {
     await renderBots([bot("bot-scout", "Scout")]);
 
     expect(renderer!.root.findAllByProps({ "aria-label": "Pinned" })).toEqual([]);
     expect(rowLabels(renderer!.root)).toEqual(["Delete Scout"]);
   });
 
-  it("puts the leads in the box, CTO first, and lists every bot exactly once", async () => {
+  it("puts the leads in the strip, CTO first, and lists every bot exactly once", async () => {
     await renderBots([
       bot("bot-assistant", "Assistant", { lead: true, pinned: true }),
       bot("bot-scout", "Scout"),
       bot("bot-cto", "CTO", { team: "dev", lead: true, pinned: true }),
     ]);
 
-    const box = renderer!.root.findByProps({ "aria-label": "Pinned" });
-    expect(rowLabels(box)).toEqual(["Delete CTO", "Delete Assistant"]);
-    // Once in the whole screen each: the box does not duplicate the list.
-    expect(rowLabels(renderer!.root).toSorted()).toEqual([
-      "Delete Assistant",
-      "Delete CTO",
-      "Delete Scout",
-    ]);
+    expect(faceNames(strip())).toEqual(["CTO", "Assistant"]);
+    // A pinned bot is out of the list below: the strip is the whole of it.
+    expect(rowLabels(renderer!.root)).toEqual(["Delete Scout"]);
   });
 
-  it("offers Pin on an unpinned row and Unpin on a pinned one", async () => {
-    await renderBots([
-      bot("bot-cto", "CTO", { team: "dev", lead: true, pinned: true }),
-      bot("bot-scout", "Scout"),
-    ]);
+  /**
+   * The strip drops the preview line, so the badge is the only place "this bot
+   * needs you" can live. It is read off `botStatus` — the same call the row's
+   * status line makes — and spoken in the tile's accessible name, so the state
+   * survives for someone who cannot see the amber.
+   */
+  it("carries the needs-you state on the face and in the accessible name", async () => {
+    await renderBots([bot("bot-cto", "CTO", { team: "dev", lead: true, pinned: true })]);
+
+    // No provider is configured in this harness, so the bot's real status is
+    // the review-toned "Unavailable · tap to fix".
+    expect(strip().findAllByProps({ "data-pinned-badge": "attention" }).length).toBeGreaterThan(0);
+    const tile = strip().findByProps({ to: "/bots/$botId/edit" });
+    expect(tile.props["aria-label"]).toBe("CTO, Unavailable · tap to fix, edit bot");
+  });
+
+  /** Same destination the pinned row opened: a bot that cannot run opens its editor. */
+  it("opens the same destination the pinned row opened", async () => {
+    await renderBots([bot("bot-cto", "CTO", { team: "dev", lead: true, pinned: true })]);
+
+    const tile = strip().findByProps({ to: "/bots/$botId/edit" });
+    expect(tile.props.params).toEqual({ botId: "bot-cto" });
+  });
+
+  it("unpins from the strip's own menu", async () => {
+    await renderBots([bot("bot-cto", "CTO", { team: "dev", lead: true, pinned: true })]);
+
+    const unpin = strip()
+      .findAllByType("button")
+      .find((button) => JSON.stringify(button.props.children ?? "").includes("Unpin"));
+    expect(unpin).toBeDefined();
+    await act(async () => {
+      unpin!.props.onClick();
+    });
+    expect(state.togglePin).toHaveBeenCalledTimes(1);
+    // And the menu is reachable without a gesture: a named button in the tab
+    // order, because a long press is not an affordance VoiceOver can find.
+    expect(JSON.stringify(renderer!.toJSON())).toContain('"Options for ","CTO"');
+  });
+
+  it("still offers Pin on an unpinned row", async () => {
+    await renderBots([bot("bot-scout", "Scout")]);
 
     const scout = renderer!.root.findByProps({ label: "Delete Scout" });
-    const cto = renderer!.root.findByProps({ label: "Delete CTO" });
     expect(scout.props.secondaryAction.text).toBe("Pin");
-    expect(cto.props.secondaryAction.text).toBe("Unpin");
-
     await act(async () => {
       await scout.props.secondaryAction.run();
     });

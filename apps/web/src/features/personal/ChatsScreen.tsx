@@ -51,6 +51,7 @@ import {
   roundForGroup,
 } from "./groupModel";
 import { GroupRow } from "./GroupRow";
+import { PinnedBotTile, PinnedSnapshotTile, PinnedStrip } from "./PinnedStrip";
 import {
   mergePersonalGroups,
   usePersonalGroupsFeed,
@@ -79,13 +80,6 @@ export function useMinuteClock(): number {
   return now;
 }
 
-// Shared by the live list and the cold-start snapshot paint: the two render
-// the same sections, so they must not drift apart visually.
-const PINNED_SECTION_CLASS =
-  "mt-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3.5 pb-1";
-const PINNED_HEADING_CLASS =
-  "pt-2.5 text-xs font-semibold tracking-wide text-[var(--personal-section-label)] uppercase";
-const PINNED_LIST_CLASS = "divide-y divide-[var(--personal-border)]";
 const UNPINNED_LIST_CLASS =
   "mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)]";
 
@@ -131,15 +125,15 @@ function SnapshotBotRows({ snapshot, now }: { snapshot: ChatsSnapshot; now: numb
   const { pinned, rest } = partitionPinnedSnapshotRows(snapshot.rows);
   return (
     <>
+      {/* The strip paints from the snapshot too. Without this a cold start
+          showed no favourites and popped them in when the list landed — the
+          bug the `pinned` flag was added to the snapshot to kill. */}
       {pinned.length > 0 ? (
-        <section aria-label="Pinned" className={PINNED_SECTION_CLASS}>
-          <h2 className={PINNED_HEADING_CLASS}>Pinned</h2>
-          <ul className={PINNED_LIST_CLASS}>
-            {pinned.map((row) => (
-              <SnapshotBotRow key={row.botId} row={row} now={now} />
-            ))}
-          </ul>
-        </section>
+        <PinnedStrip>
+          {pinned.map((row) => (
+            <PinnedSnapshotTile key={row.botId} row={row} />
+          ))}
+        </PinnedStrip>
       ) : null}
       {rest.length > 0 ? (
         <ul aria-label="Your bots" className={UNPINNED_LIST_CLASS}>
@@ -616,10 +610,18 @@ export function ChatsScreen(): JSX.Element {
           {visible.length > 0 || visibleGroups.length > 0 ? (
             <>
               {pinned.length > 0 ? (
-                <section aria-label="Pinned" className={PINNED_SECTION_CLASS}>
-                  <h2 className={PINNED_HEADING_CLASS}>Pinned</h2>
-                  <ul className={PINNED_LIST_CLASS}>{pinned.map(renderRow)}</ul>
-                </section>
+                <PinnedStrip>
+                  {pinned.map((summary) => (
+                    <PinnedBotTile
+                      key={summary.bot.botId}
+                      environmentId={environmentId!}
+                      summary={summary}
+                      now={now}
+                      motion={motionByBotId.get(summary.bot.botId)}
+                      onUnpin={() => void togglePin(summary.bot)}
+                    />
+                  ))}
+                </PinnedStrip>
               ) : null}
               {restRows.length > 0 ? (
                 <ul aria-label="Your chats" className={UNPINNED_LIST_CLASS}>
