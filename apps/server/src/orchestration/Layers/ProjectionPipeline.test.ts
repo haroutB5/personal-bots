@@ -6,6 +6,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
+  PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
   ProjectId,
   ThreadId,
   type ThreadPullRequestSnapshot,
@@ -65,6 +66,7 @@ const BaseTestLayer = makeProjectionPipelinePrefixedTestLayer("t3-projection-pip
 const encodeThreadLinkedPullRequest = Schema.encodeSync(
   Schema.fromJsonString(ThreadLinkedPullRequest),
 );
+const decodeUnknownFromJsonString = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-cursor-batch-")))(
   "OrchestrationProjectionPipeline cursor batches",
@@ -4809,3 +4811,118 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 });
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-delta-context-")))(
+  "OrchestrationProjectionPipeline streamed message context",
+  (it) => {
+    // Group chats mark the speaker on the FIRST delta of a relayed reply and
+    // never again: the later deltas and the completing upsert carry no context.
+    // If the projection dropped it there, every finished group message would
+    // lose its attribution.
+    it.effect("keeps a first-delta context across later deltas and the completing upsert", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-01-01T00:00:00.000Z";
+        const threadId = ThreadId.make("thread-group");
+        const messageId = MessageId.make("message-group-reply");
+        const context = {
+          version: 1,
+          records: [
+            {
+              version: 1,
+              contextId: PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
+              label: "Group message",
+              kind: PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
+              payload: {
+                groupId: "group-1",
+                seq: 4,
+                roundId: "round-1",
+                speaker: { kind: "bot", botId: "bot-a", name: "Backend" },
+              },
+            },
+          ],
+        };
+
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.make("evt-g1"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-g1"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-g1"),
+          metadata: {},
+          payload: {
+            threadId,
+            projectId: ProjectId.make("project-group"),
+            title: "Group",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        const appendMessage = (
+          suffix: string,
+          occurredAt: string,
+          payload: Record<string, unknown>,
+        ) =>
+          eventStore.append({
+            type: "thread.message-sent",
+            eventId: EventId.make(`evt-${suffix}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt,
+            commandId: CommandId.make(`cmd-${suffix}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-${suffix}`),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId,
+              role: "assistant",
+              turnId: null,
+              createdAt: occurredAt,
+              updatedAt: occurredAt,
+              ...payload,
+            },
+          });
+
+        // First delta: text plus the speaker marker.
+        yield* appendMessage("g2", now, { text: "Ship", streaming: true, context });
+        // Later delta, no context.
+        yield* appendMessage("g3", "2026-01-01T00:00:01.000Z", {
+          text: " it.",
+          streaming: true,
+        });
+        // Completion: empty text, no context, the upsert that finishes the row.
+        yield* appendMessage("g4", "2026-01-01T00:00:02.000Z", { text: "", streaming: false });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly text: string;
+          readonly isStreaming: number;
+          readonly contextJson: string | null;
+        }>`
+          SELECT text, is_streaming AS "isStreaming", context_json AS "contextJson"
+          FROM projection_thread_messages
+          WHERE message_id = ${messageId}
+        `;
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0]?.text, "Ship it.");
+        assert.equal(rows[0]?.isStreaming, 0);
+        assert.deepEqual(decodeUnknownFromJsonString(rows[0]?.contextJson ?? "null"), context);
+      }),
+    );
+  },
+);

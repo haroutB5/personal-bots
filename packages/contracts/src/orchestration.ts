@@ -1501,6 +1501,14 @@ const ThreadMessageAssistantDeltaCommand = Schema.Struct({
   messageId: MessageId,
   delta: Schema.String,
   turnId: Schema.optional(TurnId),
+  /**
+   * Structured context for the message being streamed. Only the FIRST delta
+   * of a message needs to carry it: the projection preserves a message's
+   * context across later deltas and the completing upsert, so a marker set
+   * here survives to the finished message. Used by the group service to say
+   * which member is speaking in a relayed reply.
+   */
+  context: Schema.optional(OrchestrationMessageContext),
   createdAt: IsoDateTime,
 });
 

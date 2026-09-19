@@ -4,6 +4,8 @@ import {
   CommandId,
   EventId,
   MessageId,
+  type OrchestrationMessageContext,
+  PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -74,6 +76,29 @@ const appendCommand = {
   createdAt,
 };
 
+/**
+ * A group speaker marker, shaped as the group service will write it: one
+ * context record of the marker kind, never referenced from the message text,
+ * so `projectComposerContextForProvider` drops it and no provider sees it.
+ */
+const groupContext = {
+  version: 1,
+  records: [
+    {
+      version: 1,
+      contextId: PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
+      label: "Group message",
+      kind: PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
+      payload: {
+        groupId: "group-1",
+        seq: 3,
+        roundId: "round-1",
+        speaker: { kind: "user" },
+      },
+    },
+  ],
+} as unknown as OrchestrationMessageContext;
+
 const turnStartCommand = {
   type: "thread.turn.start" as const,
   commandId: CommandId.make("command-turn-start"),
@@ -132,6 +157,67 @@ it.layer(NodeServices.layer)("thread.message.user.append", (it) => {
         "thread.message-sent",
         "thread.turn-start-requested",
       ]);
+    }),
+  );
+
+  // What group chats need from this primitive: the group's shared thread runs
+  // no provider of its own, and relaying a user message into a member thread
+  // must never disturb the turn that member is already running. One event, no
+  // session command, and the speaker marker rides through untouched.
+  it.effect("appends without touching a live session, carrying the speaker marker", () =>
+    Effect.gen(function* () {
+      const withThread = yield* readModelWithThread;
+      const runningSession = {
+        threadId,
+        status: "running" as const,
+        providerName: "codex",
+        runtimeMode: "full-access" as const,
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: createdAt,
+      };
+      const readModel = yield* projectEvent(withThread, {
+        sequence: 3,
+        eventId: EventId.make("event-session-set"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.session-set",
+        occurredAt: createdAt,
+        commandId: CommandId.make("command-session-set"),
+        causationEventId: null,
+        correlationId: CommandId.make("command-session-set"),
+        metadata: {},
+        payload: { threadId, session: runningSession },
+      });
+      expect(readModel.threads[0]?.session?.status).toBe("running");
+
+      const planned = yield* decideOrchestrationCommand({
+        command: {
+          ...appendCommand,
+          commandId: CommandId.make("command-append-group"),
+          message: {
+            messageId: MessageId.make("message-group-brief"),
+            text: "Alice said: ship it",
+            attachments: [],
+            context: groupContext,
+          },
+        },
+        readModel,
+      });
+      const events = Array.isArray(planned) ? planned : [planned];
+
+      // Exactly one message, no turn and no session event.
+      expect(events.map((event) => event.type)).toEqual(["thread.message-sent"]);
+      expect(events[0]?.payload).toMatchObject({
+        role: "user",
+        turnId: null,
+        streaming: false,
+        context: groupContext,
+      });
+
+      // The session the member was already running is untouched.
+      const after = yield* projectEvent(readModel, { ...events[0]!, sequence: 4 });
+      expect(after.threads[0]?.session).toEqual(runningSession);
     }),
   );
 });

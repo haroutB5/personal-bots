@@ -1936,6 +1936,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      // Only the assistant delta carries context - the group service marks the
+      // speaker on the first delta of a relayed reply - so read it off the
+      // narrowed command rather than off the shared union.
+      const deltaContext =
+        command.type === "thread.message.assistant.delta" ? command.context : undefined;
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1949,6 +1954,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           messageId: command.messageId,
           role: command.type === "thread.message.reasoning.delta" ? "reasoning" : "assistant",
           text: command.delta,
+          ...(deltaContext !== undefined ? { context: deltaContext } : {}),
           turnId: command.turnId ?? null,
           streaming: true,
           createdAt: command.createdAt,

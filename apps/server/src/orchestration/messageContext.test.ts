@@ -162,4 +162,52 @@ it.layer(NodeServices.layer)("message context plumbing", (it) => {
       expect(afterUpdate.threads[0]?.messages[0]?.context).toEqual(context);
     }),
   );
+
+  // Groups mark the speaker on the first delta of a relayed reply, so the
+  // streaming path has to carry context too - not just turn start.
+  it.effect("carries context from an assistant delta into the streaming message-sent", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make("cmd-delta"),
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("message-delta"),
+          delta: "Ship it.",
+          context,
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(),
+      });
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((event) => event.type)).toEqual(["thread.message-sent"]);
+      expect(events[0]?.payload).toMatchObject({
+        role: "assistant",
+        streaming: true,
+        context,
+      });
+    }),
+  );
+
+  // The reasoning delta shares the decider case but has no context field; it
+  // must not grow one by accident.
+  it.effect("leaves a reasoning delta without context", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.message.reasoning.delta",
+          commandId: CommandId.make("cmd-reasoning-delta"),
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("message-reasoning"),
+          delta: "thinking",
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(),
+      });
+      const event = Array.isArray(result) ? result[0]! : result;
+      expect(
+        event.type === "thread.message-sent" ? event.payload.context : "unset",
+      ).toBeUndefined();
+    }),
+  );
 });
