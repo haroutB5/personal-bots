@@ -28,7 +28,7 @@
   --personal-surface: #ffffff;
   --personal-fill-muted: #f3f3f1;
   --personal-text: #171717;
-  --personal-text-secondary: #707070;
+  --personal-text-secondary: #6e6e6e; /* 4.9:1 on --personal-bg, 4.6:1 on --personal-fill-muted (AA) */
   --personal-text-tertiary: #6b6b68; /* 4.6:1 on --personal-bg at 12px (AA) */
   --personal-border: #e6e6e3;
   --personal-live: #34a853;
