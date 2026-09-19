@@ -118,8 +118,13 @@ export function pinnedGroupBadge(
  * for assistive tech (`aria-label="Pinned"`), which is the part that was never
  * decoration.
  *
- * The negative margin lets the tiles scroll out to the true screen edge while
- * the first one still lines up with the list below it.
+ * The negative margin lets the tiles scroll out to the true screen edge.
+ *
+ * `safe center` centres the faces while they fit and falls back to flex-start
+ * the moment they overflow, so a long pin list can still be scrolled to its
+ * first tile. Plain `center` would push that tile past the scroll origin and
+ * make it unreachable; a browser without `safe` ignores the declaration and
+ * gets the left-aligned behaviour, which is the same fallback.
  */
 export function PinnedStrip({ children }: { readonly children: ReactNode }): JSX.Element {
   return (
@@ -127,6 +132,7 @@ export function PinnedStrip({ children }: { readonly children: ReactNode }): JSX
       <ul
         className={cn(
           "-mx-5 flex snap-x snap-proximity gap-3 overflow-x-auto overscroll-x-contain px-5 pb-1",
+          "[justify-content:safe_center]",
           "scroll-px-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         )}
       >
