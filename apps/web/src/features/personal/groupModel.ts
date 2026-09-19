@@ -1,7 +1,11 @@
 import {
+  isBotPinned,
+  isTeamLead,
+  PERSONAL_BOT_TEAM_LABELS,
   PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
   PersonalGroupMessageMarker,
   type OrchestrationMessageContext,
+  type PersonalBot,
   type PersonalGroup,
   type PersonalGroupRound,
   type PersonalGroupSystemEvent,
@@ -316,4 +320,81 @@ export function groupVoteCard(input: {
     abstained,
     canApprove: vote.winningOption !== null,
   };
+}
+
+/** One member row in the Delete group sheet. */
+export interface GroupDeleteCandidate {
+  readonly botId: string;
+  readonly name: string;
+  /**
+   * Ticked by default. True only when this group is the only thing holding the
+   * bot: deleting it takes nothing the owner has not already decided to scrap.
+   */
+  readonly checked: boolean;
+  /** Why it starts unticked, shown on the row. Null when it starts ticked. */
+  readonly reason: string | null;
+}
+
+/**
+ * The Delete group sheet's rows, with the default ticks already decided.
+ *
+ * A member is ticked only when losing it costs nothing outside this group.
+ * Three things un-tick it, and each one is named on the row so the owner can
+ * see why the app is protecting it rather than guessing:
+ *
+ * 1. **It leads a team.** Assistant leads the assistant team, CTO the dev team.
+ *    Scrapping a group must never quietly take the lead of a team with it.
+ * 2. **It is pinned in Chats**, i.e. the owner has already said it matters.
+ * 3. **It is in another group too.** Deleting it would rewrite a conversation
+ *    the owner is not looking at.
+ *
+ * An unticked default is never a refusal: every row can still be ticked by
+ * hand. The rule only decides what a tap-through destroys, and a tap-through
+ * destroys nothing that is load-bearing elsewhere.
+ */
+export function groupDeleteCandidates(input: {
+  readonly group: PersonalGroup;
+  readonly groups: ReadonlyArray<PersonalGroup>;
+  readonly bots: ReadonlyArray<PersonalBot>;
+}): ReadonlyArray<GroupDeleteCandidate> {
+  const byId = new Map(input.bots.map((bot) => [bot.botId as string, bot] as const));
+  const others = input.groups.filter((group) => group.groupId !== input.group.groupId);
+
+  return activeGroupMembers(input.group).map((member) => {
+    const bot = byId.get(member.botId);
+    if (bot === undefined) {
+      // A member whose bot row the client has not loaded: never tick something
+      // that cannot be named, because the confirmation would be a lie.
+      return { botId: member.botId, name: member.botId, checked: false, reason: "Still loading" };
+    }
+    const alsoIn = others.filter((group) =>
+      activeGroupMembers(group).some((entry) => entry.botId === member.botId),
+    );
+    const reason =
+      isTeamLead(bot) && bot.team !== undefined
+        ? `Leads the ${PERSONAL_BOT_TEAM_LABELS[bot.team]}`
+        : isTeamLead(bot)
+          ? "Leads a team"
+          : isBotPinned(bot)
+            ? "Pinned in Chats"
+            : alsoIn.length === 1
+              ? `Also in ${alsoIn[0]!.name}`
+              : alsoIn.length > 1
+                ? `Also in ${String(alsoIn.length)} other groups`
+                : null;
+    return { botId: member.botId, name: bot.name, checked: reason === null, reason };
+  });
+}
+
+/**
+ * The one line above the destructive button. It names the count, and says
+ * plainly that the chats go too, because they do and nothing brings them back.
+ */
+export function groupDeleteSummary(ticked: number): string {
+  if (ticked === 0) {
+    return "Deletes the group and its conversation. Every bot keeps its own chats.";
+  }
+  return ticked === 1
+    ? "Deletes the group and 1 bot with its chats."
+    : `Deletes the group and ${String(ticked)} bots with their chats.`;
 }

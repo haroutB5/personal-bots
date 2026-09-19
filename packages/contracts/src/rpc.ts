@@ -297,6 +297,7 @@ import {
   PersonalGroup,
   PersonalGroupCreateInput,
   PersonalGroupContinueRoundInput,
+  PersonalGroupDeleteInput,
   PersonalGroupIdInput,
   PersonalGroupListResult,
   PersonalGroupMemberInput,
@@ -1204,8 +1205,12 @@ const WsPersonalGroupsUpdateRpc = Rpc.make(WS_METHODS.personalGroupsUpdate, {
   error: PersonalGroupsRpcError,
 });
 
+// Deleting a group, plus the member bots the owner ticked. One method, not a
+// second RPC: it is one user act with one confirmation and one destructive
+// door, so the two halves can never be issued apart - no "bots purged but the
+// group survived", and no second auth scope guarding the same destruction.
 const WsPersonalGroupsDeleteRpc = Rpc.make(WS_METHODS.personalGroupsDelete, {
-  payload: PersonalGroupIdInput,
+  payload: PersonalGroupDeleteInput,
   success: Schema.Struct({}),
   error: PersonalGroupsRpcError,
 });

@@ -1168,6 +1168,48 @@ it.effect("purging a bot leaves the group readable, and empties are archived", (
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+// The group-delete path (`deletePersonalGroup`) purges ticked bots through
+// `purgePersonalBot`, which calls this. A bot that sat in a SECOND group must
+// leave it with a line in its transcript, and a second group the departure
+// empties is archived - not deleted, and not left claiming a member it lost.
+it.effect(
+  "purging a bot leaves every other group it was in readable, and archives an emptied one",
+  () => {
+    const harness = makeHarness();
+    const OTHER = PersonalGroupId.make("group-2");
+    const OTHER_THREAD = ThreadId.make("thread-group-2");
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalGroupService.PersonalGroupService;
+      yield* makeGroup(["assistant", "dev"], 6);
+      yield* service.create({
+        groupId: OTHER,
+        threadId: OTHER_THREAD,
+        name: "Side project",
+        botIds: [botId("dev")],
+      });
+
+      yield* service.purgeBot({ botId: botId("dev") });
+
+      const groups = (yield* service.list()).groups;
+      const first = groups.find((group) => group.groupId === GROUP)!;
+      const other = groups.find((group) => group.groupId === OTHER)!;
+      // The group being deleted keeps its other member and stays live.
+      expect(first.members.map((member) => member.botId)).toEqual([botId("assistant")]);
+      expect(first.archivedAt).toBeNull();
+      // The other group loses its only member: archived, never deleted.
+      expect(other.members).toEqual([]);
+      expect(other.archivedAt).not.toBeNull();
+      const otherTranscript = harness.messages.get(OTHER_THREAD) ?? [];
+      expect(
+        otherTranscript.some((message) =>
+          message.text.includes("Dev was deleted, so it left this group."),
+        ),
+      ).toBe(true);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
 // ---------------------------------------------------------------------------
 // 16. a member thread is not an ordinary chat
 // ---------------------------------------------------------------------------

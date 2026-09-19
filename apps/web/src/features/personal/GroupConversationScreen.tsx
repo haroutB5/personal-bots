@@ -29,10 +29,12 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { buildConversationItems } from "./conversationModel";
 import { commandFailureMessage } from "./commandFeedback";
 import { GroupAvatarCluster } from "./GroupAvatarCluster";
+import { GroupDeleteSheet } from "./GroupDeleteSheet";
 import { GroupRoundCard } from "./GroupRoundCard";
 import { GroupVoteCard } from "./GroupVoteCard";
 import {
   activeGroupMembers,
+  groupDeleteCandidates,
   groupRoundCard,
   groupVoteCard,
   groupStatusLine,
@@ -130,6 +132,9 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
   const [pending, setPending] = useState<ReadonlyArray<PendingOutgoingMessage>>([]);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showMembers, setShowMembers] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const laptopOffline = useLaptopOffline();
   const connectionPhase = usePersonalConnectionPhase();
   useReportViewingThread(
@@ -188,6 +193,15 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
         avatarColor: bot.avatarColor,
       })),
     [memberBots],
+  );
+
+  // Which members the Delete group sheet ticks by default, and why not.
+  const deleteCandidates = useMemo(
+    () =>
+      group === null
+        ? NO_MEMBERS
+        : groupDeleteCandidates({ group, groups, bots: botsList.data?.bots ?? [] }),
+    [group, groups, botsList.data],
   );
 
   const messages = (thread?.messages as ReadonlyArray<ChatMessage> | undefined) ?? EMPTY_MESSAGES;
@@ -302,23 +316,31 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
     await navigate({ to: "/bots", replace: true });
   };
 
-  const onDelete = async () => {
+  /**
+   * Only the bots the owner ticked are named, and the server refuses any id
+   * that is not a current member - so a sheet built from a stale list can never
+   * destroy a bot that is no longer on screen.
+   */
+  const onDelete = async (purgeBotIds: ReadonlyArray<string>) => {
     if (environmentId === null) return;
-    const confirmed =
-      typeof window === "undefined" ||
-      window.confirm(
-        `Delete ${group?.name ?? "this group"}? The conversation goes with it. Each bot keeps its own chats.`,
-      );
-    if (!confirmed) return;
+    setDeleting(true);
+    setDeleteError(null);
     const result = await deleteGroup({
       environmentId,
-      input: { groupId: PersonalGroupId.make(groupId) },
+      input: {
+        groupId: PersonalGroupId.make(groupId),
+        purgeBotIds: purgeBotIds.map((botId) => botId as PersonalBotId),
+      },
     });
     const failure = commandFailureMessage(result, "Couldn't delete this group. Try again.");
+    setDeleting(false);
     if (failure !== null) {
-      setActionError(failure);
+      // The sheet stays open: the group survives a failed purge (see
+      // `deletePersonalGroup`), so this is a state the owner can act on.
+      setDeleteError(failure);
       return;
     }
+    setDeleteOpen(false);
     await navigate({ to: "/bots", replace: true });
   };
 
@@ -423,7 +445,13 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
             ) : null}
             <MenuSeparator />
             <MenuItem onClick={() => void onArchive()}>Archive group</MenuItem>
-            <MenuItem variant="destructive" onClick={() => void onDelete()}>
+            <MenuItem
+              variant="destructive"
+              onClick={() => {
+                setDeleteError(null);
+                setDeleteOpen(true);
+              }}
+            >
               Delete group
             </MenuItem>
           </MenuPopup>
@@ -573,6 +601,18 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
           )}
         </div>
       )}
+
+      {deleteOpen ? (
+        <GroupDeleteSheet
+          groupName={group?.name ?? "this group"}
+          candidates={deleteCandidates}
+          botsById={botsById}
+          busy={deleting}
+          error={deleteError}
+          onClose={() => setDeleteOpen(false)}
+          onConfirm={(botIds) => void onDelete(botIds)}
+        />
+      ) : null}
     </div>
   );
 }

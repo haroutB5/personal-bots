@@ -1,5 +1,6 @@
 import {
   PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
+  PersonalBot,
   PersonalGroup,
   PersonalGroupRound,
   PersonalGroupVote,
@@ -10,6 +11,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   activeGroupMembers,
   filterGroups,
+  groupDeleteCandidates,
+  groupDeleteSummary,
   groupLastActivityMs,
   groupMemberThreadIds,
   groupPreviewLine,
@@ -23,6 +26,7 @@ import {
   roundForGroup,
 } from "./groupModel";
 
+const decodeBot = Schema.decodeUnknownSync(PersonalBot);
 const decodeGroup = Schema.decodeUnknownSync(PersonalGroup);
 const decodeRound = Schema.decodeUnknownSync(PersonalGroupRound);
 const decodeVote = Schema.decodeUnknownSync(PersonalGroupVote);
@@ -399,5 +403,123 @@ describe("groupVoteCard", () => {
     expect(card?.ballots).toEqual([
       { botId: "bot-ghost", name: "A bot", option: "ship", reason: "gone" },
     ]);
+  });
+});
+
+describe("groupDeleteCandidates", () => {
+  const bot = (botId: string, name: string, extra: Record<string, unknown> = {}) =>
+    decodeBot({
+      botId,
+      name,
+      title: "",
+      description: "",
+      instructions: "",
+      avatarShape: "blob",
+      avatarColor: "#1A73E8",
+      modelSelection: { instanceId: "codex", model: "gpt-test" },
+      enabled: true,
+      sortOrder: 0,
+      team: "assistant",
+      lead: false,
+      pinned: false,
+      createdAt: "2026-09-19T09:00:00.000Z",
+      updatedAt: "2026-09-19T09:00:00.000Z",
+      ...extra,
+    });
+
+  const plain = [bot("bot-ada", "Ada"), bot("bot-grace", "Grace")];
+
+  it("ticks a bot this group alone holds", () => {
+    const rows = groupDeleteCandidates({ group: group(), groups: [group()], bots: plain });
+    // Member order, i.e. sortOrder: Ada then Grace.
+    expect(rows.map((row) => row.name)).toEqual(["Ada", "Grace"]);
+    expect(rows.every((row) => row.checked)).toBe(true);
+    expect(rows.every((row) => row.reason === null)).toBe(true);
+  });
+
+  it("unticks a team lead and says so", () => {
+    const rows = groupDeleteCandidates({
+      group: group(),
+      groups: [group()],
+      bots: [bot("bot-ada", "Ada", { lead: true, team: "assistant" }), bot("bot-grace", "Grace")],
+    });
+    expect(rows[0]).toMatchObject({
+      name: "Ada",
+      checked: false,
+      reason: "Leads the Assistant's team",
+    });
+    // Only the lead is protected; the other member is still ticked.
+    expect(rows[1]).toMatchObject({ name: "Grace", checked: true, reason: null });
+  });
+
+  it("unticks a pinned bot", () => {
+    const rows = groupDeleteCandidates({
+      group: group(),
+      groups: [group()],
+      bots: [bot("bot-ada", "Ada", { pinned: true }), bot("bot-grace", "Grace")],
+    });
+    expect(rows[0]).toMatchObject({ checked: false, reason: "Pinned in Chats" });
+  });
+
+  it("unticks a bot that is in another group, and names it", () => {
+    const other = group({
+      groupId: "group-2",
+      name: "Side project",
+      threadId: "group-thread-2",
+      members: [member("bot-grace", 0, { groupId: "group-2" })],
+    });
+    const rows = groupDeleteCandidates({ group: group(), groups: [group(), other], bots: plain });
+    expect(rows[0]).toMatchObject({ name: "Ada", checked: true, reason: null });
+    expect(rows[1]).toMatchObject({
+      name: "Grace",
+      checked: false,
+      reason: "Also in Side project",
+    });
+  });
+
+  it("counts the other groups when there is more than one", () => {
+    const other = (id: string) =>
+      group({
+        groupId: id,
+        name: `Group ${id}`,
+        threadId: `group-thread-${id}`,
+        members: [member("bot-grace", 0, { groupId: id })],
+      });
+    const rows = groupDeleteCandidates({
+      group: group(),
+      groups: [group(), other("group-2"), other("group-3")],
+      bots: plain,
+    });
+    expect(rows[1]).toMatchObject({ checked: false, reason: "Also in 2 other groups" });
+  });
+
+  it("ignores a member that already left the other group", () => {
+    const other = group({
+      groupId: "group-2",
+      name: "Side project",
+      threadId: "group-thread-2",
+      members: [member("bot-grace", 0, { groupId: "group-2", leftAt: "2026-09-19T09:05:00.000Z" })],
+    });
+    const rows = groupDeleteCandidates({ group: group(), groups: [group(), other], bots: plain });
+    expect(rows[1]).toMatchObject({ name: "Grace", checked: true, reason: null });
+  });
+
+  it("never ticks a member whose bot has not loaded", () => {
+    const rows = groupDeleteCandidates({ group: group(), groups: [group()], bots: [] });
+    expect(rows.every((row) => !row.checked)).toBe(true);
+    expect(rows[0]?.reason).toBe("Still loading");
+  });
+});
+
+describe("groupDeleteSummary", () => {
+  it("says the chats go with the bots", () => {
+    expect(groupDeleteSummary(3)).toBe("Deletes the group and 3 bots with their chats.");
+    expect(groupDeleteSummary(1)).toBe("Deletes the group and 1 bot with its chats.");
+  });
+
+  it("says the bots are kept when nothing is ticked", () => {
+    expect(groupDeleteSummary(0)).toBe(
+      "Deletes the group and its conversation. Every bot keeps its own chats.",
+    );
   });
 });

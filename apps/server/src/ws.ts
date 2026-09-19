@@ -185,6 +185,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import { deletePersonalChat } from "./personal/deletePersonalChat.ts";
+import { deletePersonalGroup } from "./personal/deletePersonalGroup.ts";
 import { purgePersonalBot } from "./personal/purgePersonalBot.ts";
 import { signPersonalFiles } from "./personal/PersonalFiles.ts";
 import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts";
@@ -3169,10 +3170,24 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalGroupsUpdate, personalGroups.update(input), {
             "rpc.aggregate": "server",
           }),
+        // Deleting a group can take the member bots the owner ticked with it.
+        // The composition lives in `deletePersonalGroup` (validate, stop the
+        // round, purge, then delete) so it is testable without a socket.
         [WS_METHODS.personalGroupsDelete]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalGroupsDelete,
-            personalGroups.remove(input).pipe(Effect.as({})),
+            deletePersonalGroup(
+              {
+                bots: personalBots,
+                tasks: personalTasks,
+                groups: personalGroups,
+                routines: personalRoutines,
+                memory: personalMemory,
+                secrets: personalSecrets,
+                engine: orchestrationEngine,
+              },
+              input,
+            ).pipe(Effect.as({})),
             {
               "rpc.aggregate": "server",
             },

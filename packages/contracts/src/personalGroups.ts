@@ -283,6 +283,25 @@ export const PersonalGroupIdInput = Schema.Struct({
 export type PersonalGroupIdInput = typeof PersonalGroupIdInput.Type;
 
 /**
+ * Deleting a group, and optionally the member bots the owner ticked in the
+ * confirm sheet. `purgeBotIds` is the full list of bots to destroy outright -
+ * each one loses its chats, files, routines, bot-scoped memories and its
+ * membership of every OTHER group too, through the one `purgePersonalBot`
+ * path. Omitted or empty means "delete the group only", which is what this
+ * method has always done and still does.
+ *
+ * Optional on the wire so a client built before this field still deletes a
+ * group. Every id must name a CURRENT member of that group or the whole call
+ * is refused before anything is touched, so a stale sheet can never destroy a
+ * bot the owner did not see listed.
+ */
+export const PersonalGroupDeleteInput = Schema.Struct({
+  groupId: PersonalGroupId,
+  purgeBotIds: Schema.optional(Schema.Array(PersonalBotId)),
+});
+export type PersonalGroupDeleteInput = typeof PersonalGroupDeleteInput.Type;
+
+/**
  * The owner unparking a round. Bare, it is Continue (§2.4): a round that spent
  * its bot turns gets a fresh `maxBotTurns`. With `vote`, it is the approval
  * gate (§V.3): approve relays the winning option into a member's thread as its
