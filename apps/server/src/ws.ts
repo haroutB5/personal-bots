@@ -70,6 +70,7 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  PersonalGroupsError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -1894,6 +1895,62 @@ const makeWsRpcLayer = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+      /**
+       * Phase 0 of group chats registers the ten `personalGroups.*` methods so
+       * the wire contract, the auth scopes and the generated client types are
+       * fixed, while the service that answers them is Phase 1. Refusing is the
+       * honest answer meanwhile - and it still runs the scope check, so the
+       * authorization behaviour is the one Phase 1 inherits.
+       */
+      const personalGroupsUnavailable = () =>
+        new PersonalGroupsError({ message: "Group chats are not available in this build yet." });
+      const personalGroupsNotImplementedHandlers = {
+        [WS_METHODS.personalGroupsList]: (_input: unknown) =>
+          observeRpcEffect(WS_METHODS.personalGroupsList, Effect.fail(personalGroupsUnavailable())),
+        [WS_METHODS.personalGroupsCreate]: (_input: unknown) =>
+          observeRpcEffect(
+            WS_METHODS.personalGroupsCreate,
+            Effect.fail(personalGroupsUnavailable()),
+          ),
+        [WS_METHODS.personalGroupsUpdate]: (_input: unknown) =>
+          observeRpcEffect(
+            WS_METHODS.personalGroupsUpdate,
+            Effect.fail(personalGroupsUnavailable()),
+          ),
+        [WS_METHODS.personalGroupsDelete]: (_input: unknown) =>
+          observeRpcEffect(
+            WS_METHODS.personalGroupsDelete,
+            Effect.fail(personalGroupsUnavailable()),
+          ),
+        [WS_METHODS.personalGroupsAddMember]: (_input: unknown) =>
+          observeRpcEffect(
+            WS_METHODS.personalGroupsAddMember,
+            Effect.fail(personalGroupsUnavailable()),
+          ),
+        [WS_METHODS.personalGroupsRemoveMember]: (_input: unknown) =>
+          observeRpcEffect(
+            WS_METHODS.personalGroupsRemoveMember,
+            Effect.fail(personalGroupsUnavailable()),
+          ),
+        [WS_METHODS.personalGroupsSendMessage]: (_input: unknown) =>
+          observeRpcEffect(
+            WS_METHODS.personalGroupsSendMessage,
+            Effect.fail(personalGroupsUnavailable()),
+          ),
+        [WS_METHODS.personalGroupsContinueRound]: (_input: unknown) =>
+          observeRpcEffect(
+            WS_METHODS.personalGroupsContinueRound,
+            Effect.fail(personalGroupsUnavailable()),
+          ),
+        [WS_METHODS.personalGroupsStop]: (_input: unknown) =>
+          observeRpcEffect(WS_METHODS.personalGroupsStop, Effect.fail(personalGroupsUnavailable())),
+        [WS_METHODS.personalGroupsSubscribe]: (_input: unknown) =>
+          observeRpcStream(
+            WS_METHODS.personalGroupsSubscribe,
+            Stream.fail(personalGroupsUnavailable()),
+          ),
+      };
+
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
@@ -3126,6 +3183,12 @@ const makeWsRpcLayer = (
           observeRpcStream(WS_METHODS.personalTasksSubscribe, personalTasks.subscribe, {
             "rpc.aggregate": "server",
           }),
+        // Group chats, Phase 0: the methods are registered so the contract,
+        // the auth scopes and the client types are settled, but no group
+        // service exists yet. Every one of them refuses with the same message
+        // until Phase 1 replaces these bodies; a build that shipped early is
+        // then a clear refusal on screen rather than a silent nothing.
+        ...personalGroupsNotImplementedHandlers,
         [WS_METHODS.personalSecretsListPending]: (_input) =>
           observeRpcEffect(WS_METHODS.personalSecretsListPending, personalSecrets.listPending(), {
             "rpc.aggregate": "server",

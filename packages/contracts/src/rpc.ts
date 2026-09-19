@@ -294,6 +294,18 @@ import {
   PersonalTaskStreamEvent,
 } from "./personalTasks.ts";
 import {
+  PersonalGroup,
+  PersonalGroupCreateInput,
+  PersonalGroupIdInput,
+  PersonalGroupListResult,
+  PersonalGroupMemberInput,
+  PersonalGroupRound,
+  PersonalGroupSendMessageInput,
+  PersonalGroupsError,
+  PersonalGroupStreamEvent,
+  PersonalGroupUpdateInput,
+} from "./personalGroups.ts";
+import {
   PersonalSecretFulfillInput,
   PersonalSecretNameInput,
   PersonalSecretRequest,
@@ -523,6 +535,20 @@ export const WS_METHODS = {
   personalTasksCancel: "personalTasks.cancel",
   personalTasksRetry: "personalTasks.retry",
   personalTasksSubscribe: "personalTasks.subscribe",
+
+  // Personal group chats. `subscribe` streams group and round STATE only; the
+  // transcript arrives on the group thread's ordinary thread-detail
+  // subscription, so a phone holds one subscription for the conversation.
+  personalGroupsList: "personalGroups.list",
+  personalGroupsCreate: "personalGroups.create",
+  personalGroupsUpdate: "personalGroups.update",
+  personalGroupsDelete: "personalGroups.delete",
+  personalGroupsAddMember: "personalGroups.addMember",
+  personalGroupsRemoveMember: "personalGroups.removeMember",
+  personalGroupsSendMessage: "personalGroups.sendMessage",
+  personalGroupsContinueRound: "personalGroups.continueRound",
+  personalGroupsStop: "personalGroups.stop",
+  personalGroupsSubscribe: "personalGroups.subscribe",
 
   // Personal secrets methods (values are write-only: no method returns one)
   personalSecretsListPending: "personalSecrets.listPending",
@@ -1152,6 +1178,73 @@ const WsPersonalTasksSubscribeRpc = Rpc.make(WS_METHODS.personalTasksSubscribe, 
   payload: Schema.Struct({}),
   success: PersonalTaskStreamEvent,
   error: PersonalTasksRpcError,
+  stream: true,
+});
+
+const PersonalGroupsRpcError = Schema.Union([PersonalGroupsError, EnvironmentAuthorizationError]);
+
+const WsPersonalGroupsListRpc = Rpc.make(WS_METHODS.personalGroupsList, {
+  payload: Schema.Struct({}),
+  success: PersonalGroupListResult,
+  error: PersonalGroupsRpcError,
+});
+
+// The client mints both ids, so a create replayed over a flaky connection
+// returns the first group instead of making a second one.
+const WsPersonalGroupsCreateRpc = Rpc.make(WS_METHODS.personalGroupsCreate, {
+  payload: PersonalGroupCreateInput,
+  success: PersonalGroup,
+  error: PersonalGroupsRpcError,
+});
+
+const WsPersonalGroupsUpdateRpc = Rpc.make(WS_METHODS.personalGroupsUpdate, {
+  payload: PersonalGroupUpdateInput,
+  success: PersonalGroup,
+  error: PersonalGroupsRpcError,
+});
+
+const WsPersonalGroupsDeleteRpc = Rpc.make(WS_METHODS.personalGroupsDelete, {
+  payload: PersonalGroupIdInput,
+  success: Schema.Struct({}),
+  error: PersonalGroupsRpcError,
+});
+
+const WsPersonalGroupsAddMemberRpc = Rpc.make(WS_METHODS.personalGroupsAddMember, {
+  payload: PersonalGroupMemberInput,
+  success: PersonalGroup,
+  error: PersonalGroupsRpcError,
+});
+
+const WsPersonalGroupsRemoveMemberRpc = Rpc.make(WS_METHODS.personalGroupsRemoveMember, {
+  payload: PersonalGroupMemberInput,
+  success: PersonalGroup,
+  error: PersonalGroupsRpcError,
+});
+
+// Opens a round. The message itself lands on the group thread, so the reply
+// here is the round, not the message.
+const WsPersonalGroupsSendMessageRpc = Rpc.make(WS_METHODS.personalGroupsSendMessage, {
+  payload: PersonalGroupSendMessageInput,
+  success: PersonalGroupRound,
+  error: PersonalGroupsRpcError,
+});
+
+const WsPersonalGroupsContinueRoundRpc = Rpc.make(WS_METHODS.personalGroupsContinueRound, {
+  payload: PersonalGroupIdInput,
+  success: PersonalGroupRound,
+  error: PersonalGroupsRpcError,
+});
+
+const WsPersonalGroupsStopRpc = Rpc.make(WS_METHODS.personalGroupsStop, {
+  payload: PersonalGroupIdInput,
+  success: Schema.Struct({}),
+  error: PersonalGroupsRpcError,
+});
+
+const WsPersonalGroupsSubscribeRpc = Rpc.make(WS_METHODS.personalGroupsSubscribe, {
+  payload: Schema.Struct({}),
+  success: PersonalGroupStreamEvent,
+  error: PersonalGroupsRpcError,
   stream: true,
 });
 
@@ -1948,6 +2041,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsPersonalTasksCancelRpc,
   WsPersonalTasksRetryRpc,
   WsPersonalTasksSubscribeRpc,
+  WsPersonalGroupsListRpc,
+  WsPersonalGroupsCreateRpc,
+  WsPersonalGroupsUpdateRpc,
+  WsPersonalGroupsDeleteRpc,
+  WsPersonalGroupsAddMemberRpc,
+  WsPersonalGroupsRemoveMemberRpc,
+  WsPersonalGroupsSendMessageRpc,
+  WsPersonalGroupsContinueRoundRpc,
+  WsPersonalGroupsStopRpc,
+  WsPersonalGroupsSubscribeRpc,
   WsPersonalSecretsListPendingRpc,
   WsPersonalSecretsFulfillRpc,
   WsPersonalSecretsCancelRpc,

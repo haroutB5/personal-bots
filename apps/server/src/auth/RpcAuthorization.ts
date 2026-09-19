@@ -115,6 +115,18 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalTasksCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalTasksCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalTasksRetry]: AuthOrchestrationOperateScope,
+  // Reading the roster and watching round state is a read; everything that can
+  // make a bot speak, or stop one, operates.
+  [WS_METHODS.personalGroupsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalGroupsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalGroupsCreate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalGroupsUpdate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalGroupsDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalGroupsAddMember]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalGroupsRemoveMember]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalGroupsSendMessage]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalGroupsContinueRound]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalGroupsStop]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalSecretsListPending]: AuthOrchestrationReadScope,
   [WS_METHODS.personalSecretsList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalSecretsFulfill]: AuthOrchestrationOperateScope,
