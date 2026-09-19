@@ -119,14 +119,16 @@ export function roundForGroup(
   return rounds.find((round) => round.groupId === groupId) ?? null;
 }
 
-const GROUP_ROUND_RUNNING: ReadonlyArray<PersonalGroupRound["status"]> = [
+const GROUP_ROUND_RUNNING: ReadonlySet<PersonalGroupRound["status"]> = new Set([
   "running",
+  // Parked on a provider's clock, not finished: the sweep will wake it, so the
+  // group is still the round's, and Stop is still the meaningful action.
   "waiting_provider",
-];
+]);
 
 /** A round that still owns the group: the composer offers Stop, not Send. */
 export function isGroupRoundLive(round: PersonalGroupRound | null): boolean {
-  return round !== null && GROUP_ROUND_RUNNING.includes(round.status);
+  return round !== null && GROUP_ROUND_RUNNING.has(round.status);
 }
 
 /**
@@ -165,6 +167,8 @@ const SYSTEM_EVENT_TEXT: Record<PersonalGroupSystemEvent, string> = {
   "round-paused-budget": "The group used its replies for this message",
   "round-stopped": "You stopped the group",
   "round-interrupted": "The group was interrupted",
+  "round-ended-loop": "The bots were going back and forth, so the round ended",
+  "stray-turn-stopped": "A turn started outside the group was stopped",
   "vote-opened": "A vote was opened",
   "vote-resolved": "The vote resolved",
   "vote-approved": "You approved the vote",

@@ -1,4 +1,5 @@
 import {
+  PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
   PersonalBotId,
   ThreadId,
   type OrchestrationLatestTurn,
@@ -622,5 +623,99 @@ describe("contextBadgeLabel", () => {
     expect(contextBadgeLabel(undefined)).toBeNull();
     expect(contextBadgeLabel(0)).toBeNull();
     expect(contextBadgeLabel(Number.NaN)).toBeNull();
+  });
+});
+
+/**
+ * A group transcript is the same build, told to read the speaker markers.
+ * Everything a bot chat renders is unchanged, because `groups` is off there.
+ */
+describe("buildConversationItems in a group", () => {
+  const spoken = (
+    id: string,
+    createdAt: string,
+    speaker: Record<string, unknown>,
+    role = "assistant",
+  ) =>
+    ({
+      id,
+      kind: "message",
+      createdAt,
+      message: {
+        id,
+        role,
+        text: id,
+        createdAt,
+        streaming: false,
+        context: {
+          records: [
+            {
+              kind: PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
+              payload: { groupId: "g-1", seq: 1, roundId: "r-1", speaker },
+            },
+          ],
+        },
+      },
+    }) as unknown as TimelineEntry;
+
+  const ada = { kind: "bot", botId: "bot-ada", name: "Ada" };
+  const grace = { kind: "bot", botId: "bot-grace", name: "Grace" };
+
+  it("gives each marked message its speaker and collapses a run of the same one", () => {
+    const items = buildConversationItems(
+      [
+        message("u1", "user", "2026-09-19T10:00:00.000Z"),
+        spoken("a1", "2026-09-19T10:00:05.000Z", ada),
+        spoken("a2", "2026-09-19T10:00:06.000Z", ada),
+        spoken("g1", "2026-09-19T10:00:07.000Z", grace),
+      ],
+      { groups: true },
+    );
+    expect(items.map((item) => item.kind)).toEqual([
+      "divider",
+      "message",
+      "group-message",
+      "group-message",
+      "group-message",
+    ]);
+    const speakers = items.flatMap((item) =>
+      item.kind === "group-message" ? [[item.speaker.name, item.showSpeaker] as const] : [],
+    );
+    expect(speakers).toEqual([
+      ["Ada", true],
+      ["Ada", false],
+      ["Grace", true],
+    ]);
+  });
+
+  it("re-introduces a speaker after the owner interrupts, and after a gap", () => {
+    const items = buildConversationItems(
+      [
+        spoken("a1", "2026-09-19T10:00:00.000Z", ada),
+        message("u1", "user", "2026-09-19T10:00:10.000Z"),
+        spoken("a2", "2026-09-19T10:00:20.000Z", ada),
+        // Over an hour later: a new divider, so the run starts again.
+        spoken("a3", "2026-09-19T12:00:00.000Z", ada),
+      ],
+      { groups: true },
+    );
+    expect(
+      items.flatMap((item) => (item.kind === "group-message" ? [item.showSpeaker] : [])),
+    ).toEqual([true, true, true]);
+  });
+
+  it("renders a system row for the service's own messages", () => {
+    const items = buildConversationItems(
+      [spoken("s1", "2026-09-19T10:00:00.000Z", { kind: "system", event: "member-added" }, "user")],
+      { groups: true },
+    );
+    const system = items.find((item) => item.kind === "group-system");
+    expect(system).toBeDefined();
+    expect(system!.kind === "group-system" ? system!.event : null).toBe("member-added");
+  });
+
+  it("leaves a bot chat exactly as it was: no marker is read without `groups`", () => {
+    const items = buildConversationItems([spoken("a1", "2026-09-19T10:00:00.000Z", ada)]);
+    expect(items.map((item) => item.kind)).toEqual(["divider", "message"]);
   });
 });

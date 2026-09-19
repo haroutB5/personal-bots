@@ -41,6 +41,8 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import type { PendingOutgoingMessage } from "./MessageList";
 import { attachmentChipUploadPresentation } from "./attachmentChipUploadPresentation";
+import { activeMentionDraft, applyMention, matchMentionCandidates } from "./mentionDraft";
+import { MentionPopover, type MentionRow } from "./MentionPopover";
 
 const LINE_HEIGHT_PX = 22;
 const MAX_LINES = 5;
@@ -111,6 +113,8 @@ export function PersonalComposer({
   canInterrupt,
   onInterrupt,
   onPendingChange,
+  send: sendOverride,
+  mentionCandidates,
 }: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
@@ -133,6 +137,23 @@ export function PersonalComposer({
   onPendingChange: (
     update: (pending: ReadonlyArray<PendingOutgoingMessage>) => PendingOutgoingMessage[],
   ) => void;
+  /**
+   * Where a message goes instead of `thread.turn.start`. A group passes
+   * `personalGroups.sendMessage`; everything else leaves it out and keeps the
+   * turn start it has always used. The result is read the same way (`_tag`), so
+   * the retry loop, the duplicate-id refusal and the pending row are shared.
+   *
+   * A composer with `send` takes no attachments: a group relays the transcript
+   * into every member's own session, so one image would be uploaded once and
+   * paid for six times (§5, v1 is text only).
+   */
+  send?: (input: {
+    readonly messageId: string;
+    readonly text: string;
+    readonly createdAt: string;
+  }) => Promise<{ readonly _tag: string }>;
+  /** Members offered by `@mention` autocomplete. Absent outside a group. */
+  mentionCandidates?: ReadonlyArray<MentionRow>;
 }): JSX.Element {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -176,7 +197,8 @@ export function PersonalComposer({
   const failedAttachmentNames = attachmentChips.flatMap(({ attachment, upload }) =>
     upload.status === "failed" ? [attachment.name] : [],
   );
-  const supportsUploads = serverConfig?.environment.capabilities.attachmentUploads === true;
+  const supportsUploads =
+    sendOverride === undefined && serverConfig?.environment.capabilities.attachmentUploads === true;
   const fileLimit = fileAttachmentStagingLimit({
     attachmentUploadsCapabilityKnown: serverConfig !== null,
     supportsAttachmentUploads: supportsUploads,
@@ -199,10 +221,59 @@ export function PersonalComposer({
   const queued =
     queuedAtMs !== null && working && (botLastSpokeAtMs === null || botLastSpokeAtMs < queuedAtMs);
 
-  // Grows with the draft (including drafts restored from storage) up to ~5 lines.
+  // Grows with the draft (including drafts restored from storage) up to ~5 lines,
+  // and puts the caret back where an insertion left it. Both belong to the same
+  // "the draft text changed" moment, and both must happen before paint: an
+  // inserted mention that lost the caret would drop it to the end of the line.
   useLayoutEffect(() => {
     resizeTextarea(textareaRef.current, prompt);
+    const at = pendingCaret.current;
+    if (at === null) return;
+    pendingCaret.current = null;
+    const textarea = textareaRef.current;
+    if (textarea === null) return;
+    textarea.focus();
+    textarea.setSelectionRange(at, at);
   }, [prompt]);
+
+  // ---------------------------------------------------------------------
+  // @mention autocomplete. All the text arithmetic lives in `mentionDraft`;
+  // what is left here is the caret, the highlighted row and Escape.
+  // ---------------------------------------------------------------------
+  const [caret, setCaret] = useState(prompt.length);
+  /** The token the owner dismissed with Escape, so it stays shut while typed. */
+  const [dismissedAt, setDismissedAt] = useState<number | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  /** Caret to restore after an insertion rewrote the draft. */
+  const pendingCaret = useRef<number | null>(null);
+  const rawMentionDraft =
+    mentionCandidates === undefined ? null : activeMentionDraft(prompt, caret);
+  // A token stays shut once it has been completed or dismissed, and reopens
+  // only when the caret leaves it: without this, inserting "@Grace " left the
+  // popover offering Grace again under the name it had just written.
+  if (rawMentionDraft === null && dismissedAt !== null) setDismissedAt(null);
+  const mentionDraft = rawMentionDraft?.start === dismissedAt ? null : rawMentionDraft;
+  const mentionMatches =
+    mentionDraft === null || mentionCandidates === undefined
+      ? []
+      : matchMentionCandidates(mentionCandidates, mentionDraft.query);
+  const mentionOpen = mentionMatches.length > 0;
+  // Adjusted during render, not in an effect: the highlight must never point at
+  // a row that a keystroke has already filtered away.
+  const activeMentionIndex = Math.min(mentionIndex, Math.max(0, mentionMatches.length - 1));
+  if (mentionIndex !== activeMentionIndex) setMentionIndex(activeMentionIndex);
+
+  const insertMention = (name: string) => {
+    if (mentionDraft === null) return;
+    const next = applyMention(prompt, mentionDraft, name);
+    setPrompt(threadRef, next.text);
+    setCaret(next.caret);
+    setDismissedAt(mentionDraft.start);
+    /* oxlint-disable-next-line react/immutability -- A one-shot message to the
+       layout effect above, written only from an event handler (tapping a row,
+       Enter) and cleared there before the next paint. It is not render state. */
+    pendingCaret.current = next.caret;
+  };
 
   const onPickFiles = async (event: ChangeEvent<HTMLInputElement>) => {
     const picked = Array.from(event.target.files ?? []);
@@ -354,6 +425,15 @@ export function PersonalComposer({
       // is the case worth retrying most, so it is folded in here.
       const attempt = async (): Promise<{ readonly _tag: string }> => {
         try {
+          if (sendOverride !== undefined) {
+            // A group opens a round instead of starting a turn; the message id
+            // is still the client's, so a resend opens no second round.
+            return await sendOverride({
+              messageId,
+              text: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+              createdAt,
+            });
+          }
           return await startTurn({
             environmentId,
             input: {
@@ -429,6 +509,30 @@ export function PersonalComposer({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionOpen) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const step = event.key === "ArrowDown" ? 1 : mentionMatches.length - 1;
+        setMentionIndex((current) => (current + step) % mentionMatches.length);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDismissedAt(mentionDraft?.start ?? null);
+        return;
+      }
+      // Enter picks the highlighted member rather than sending a half-typed
+      // name — on a touch keyboard Enter is a newline, so tapping the row is
+      // the phone's path and this is the desktop one.
+      if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
+        const picked = mentionMatches[activeMentionIndex];
+        if (picked !== undefined && !event.nativeEvent.isComposing) {
+          event.preventDefault();
+          insertMention(picked.name);
+          return;
+        }
+      }
+    }
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     // Touch keyboards keep Enter as a newline; the send button sends.
     if (isCoarsePointer()) return;
@@ -527,6 +631,13 @@ export function PersonalComposer({
           ))}
         </ul>
       ) : null}
+      {mentionOpen ? (
+        <MentionPopover
+          candidates={mentionMatches}
+          activeIndex={activeMentionIndex}
+          onPick={(candidate) => insertMention(candidate.name)}
+        />
+      ) : null}
       <div className="flex items-end gap-2">
         {supportsUploads ? (
           <>
@@ -557,8 +668,14 @@ export function PersonalComposer({
             ref={textareaRef}
             rows={1}
             value={prompt}
-            onChange={(event) => setPrompt(threadRef, event.target.value)}
+            onChange={(event) => {
+              setPrompt(threadRef, event.target.value);
+              setCaret(event.target.selectionStart ?? event.target.value.length);
+            }}
             onKeyDown={onKeyDown}
+            // The caret can move without the text changing (tap, arrow keys),
+            // and a mention token is defined by where the caret is.
+            onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? prompt.length)}
             placeholder={botName === null ? "Message..." : `Message ${botName}...`}
             enterKeyHint={isCoarsePointer() ? "enter" : "send"}
             className="block w-full resize-none bg-transparent py-[11px] text-base leading-[22px] text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)]"

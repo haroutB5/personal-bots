@@ -4,6 +4,7 @@ import type {
   OrchestrationSession,
   OrchestrationSessionProviderRetry,
   PersonalBrowserStatus,
+  PersonalGroupSystemEvent,
   PersonalTask,
 } from "@t3tools/contracts";
 import { classifyTurnFailure } from "@t3tools/shared/turnFailure";
@@ -14,6 +15,7 @@ import type { ChatMessage, ProposedPlan } from "~/types";
 import type { TimelineEntry, WorkLogEntry } from "~/session-logic";
 
 import { readServerTurn, type ServerTurn, taskCreatedMs } from "./delegationModel";
+import { readGroupMarker } from "./groupModel";
 import { PERSONAL_TIME_ZONE } from "./greeting";
 import type { QuestionCardItem } from "./questionCards";
 import type { SecretRequestCardItem } from "./secretRequestCards";
@@ -357,6 +359,26 @@ export type ConversationItem =
       readonly id: string;
       readonly entries: ReadonlyArray<WorkLogEntry>;
     }
+  /**
+   * A member speaking in a group transcript. The speaker rides on the message's
+   * own marker, so it is right offline and survives paging; `showSpeaker` is
+   * false on a run of consecutive messages from the same member, which is what
+   * makes a bot that answers in three paragraphs read as one voice.
+   */
+  | {
+      readonly kind: "group-message";
+      readonly id: string;
+      readonly message: ChatMessage;
+      readonly speaker: { readonly botId: string; readonly name: string };
+      readonly showSpeaker: boolean;
+    }
+  /** A row the group service wrote on its own behalf (a member joined, ...). */
+  | {
+      readonly kind: "group-system";
+      readonly id: string;
+      readonly message: ChatMessage;
+      readonly event: PersonalGroupSystemEvent;
+    }
   /** A task delegated from this thread, shown as a live card. */
   | { readonly kind: "delegation"; readonly id: string; readonly task: PersonalTask }
   /** A question the bot asked, at the point in the chat where it asked it. */
@@ -376,10 +398,20 @@ export function buildConversationItems(
     readonly timeZone?: string;
     /** Settings > Chat > "Show tool steps". Off by default: no work rows at all. */
     readonly showToolSteps?: boolean;
+    /**
+     * Read the group speaker marker off each message. Off everywhere but a
+     * group transcript, so a bot chat's rows are byte-for-byte what they were —
+     * including a member's own thread, where the relayed brief stays the plain
+     * message it is rather than pretending to be the group.
+     */
+    readonly groups?: boolean;
   } = {},
 ): ConversationItem[] {
   const timeZone = options.timeZone ?? PERSONAL_TIME_ZONE;
   const showToolSteps = options.showToolSteps ?? false;
+  const groups = options.groups ?? false;
+  /** The member whose run of messages is still open, for header collapsing. */
+  let lastSpeakerBotId: string | null = null;
   const items: ConversationItem[] = [];
   /** The last row actually rendered: day dividers are about visible gaps. */
   let lastAt: Date | null = null;
@@ -406,6 +438,9 @@ export function buildConversationItems(
       (since !== null && at.getTime() - since.getTime() >= DIVIDER_GAP_MS)
     ) {
       openWork = null;
+      // A day or an hour of silence ends a run: the next message re-introduces
+      // its speaker rather than inheriting a header from before the gap.
+      lastSpeakerBotId = null;
       items.push({ kind: "divider", id: `divider:${createdAt}`, at });
     }
     lastAt = at;
@@ -443,6 +478,29 @@ export function buildConversationItems(
     }
     openWork = null;
     if (entry.kind === "message") {
+      const marker = groups ? readGroupMarker(entry.message) : null;
+      if (marker !== null && marker.speaker.kind === "bot") {
+        const speaker = { botId: marker.speaker.botId as string, name: marker.speaker.name };
+        items.push({
+          kind: "group-message",
+          id: entry.id,
+          message: entry.message,
+          speaker,
+          showSpeaker: lastSpeakerBotId !== speaker.botId,
+        });
+        lastSpeakerBotId = speaker.botId;
+        continue;
+      }
+      lastSpeakerBotId = null;
+      if (marker !== null && marker.speaker.kind === "system") {
+        items.push({
+          kind: "group-system",
+          id: entry.id,
+          message: entry.message,
+          event: marker.speaker.event,
+        });
+        continue;
+      }
       const turn = readServerTurn(entry.message);
       items.push(
         turn === null
@@ -450,6 +508,7 @@ export function buildConversationItems(
           : { kind: "system-turn", id: entry.id, message: entry.message, turn },
       );
     } else {
+      lastSpeakerBotId = null;
       items.push({ kind: "plan", id: entry.id, plan: entry.proposedPlan });
     }
   }
@@ -471,6 +530,7 @@ export function botLastSpokeAtMs(items: ReadonlyArray<ConversationItem>): number
     if (item === undefined) continue;
     const spoke =
       (item.kind === "message" && item.message.role !== "user") ||
+      item.kind === "group-message" ||
       item.kind === "work" ||
       item.kind === "plan";
     if (spoke) return itemTimeMs(item);
@@ -483,6 +543,7 @@ export function isTurnBoundary(item: ConversationItem): boolean {
   return (
     item.kind === "divider" ||
     item.kind === "system-turn" ||
+    item.kind === "group-system" ||
     (item.kind === "message" && item.message.role === "user")
   );
 }
@@ -493,6 +554,8 @@ function itemTimeMs(item: ConversationItem): number {
       return item.at.getTime();
     case "message":
     case "system-turn":
+    case "group-message":
+    case "group-system":
       return Date.parse(item.message.createdAt);
     case "plan":
       return Date.parse(item.plan.createdAt);

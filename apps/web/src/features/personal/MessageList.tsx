@@ -10,6 +10,7 @@ import type {
   ProviderApprovalOption,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 import { ChevronRight, FileText } from "lucide-react";
 
 import { useAssetUrls } from "~/assets/assetUrls";
@@ -19,8 +20,10 @@ import { cn } from "~/lib/utils";
 import { selectMessageImageResources } from "~/session-logic";
 import type { ChatMessage } from "~/types";
 
+import { BotAvatar, type BotAvatarShape } from "./BotAvatar";
 import { type ConversationItem, formatDayDivider } from "./conversationModel";
 import type { ServerTurn } from "./delegationModel";
+import { groupSystemLabel } from "./groupModel";
 import { QuestionCard } from "./QuestionCard";
 import type { UserInputAnswers } from "./questionCards";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -139,6 +142,84 @@ const AssistantMessage = memo(function AssistantMessage({
   );
 });
 
+/** How a group transcript draws one of its members. */
+export interface GroupSpeakerPresentation {
+  readonly name: string;
+  readonly avatarShape: BotAvatarShape;
+  readonly avatarColor: string;
+  /**
+   * The member's own chat, when it has one. Tapping the name opens it — that
+   * is where a member's tool activity, approvals and files live; the group
+   * transcript is only what was said.
+   */
+  readonly threadId: string | null;
+}
+
+/**
+ * One member speaking in a group. The avatar and bold name are the header; a
+ * run of consecutive messages from the same member collapses to the text alone
+ * (decided in `buildConversationItems`), so a long reply reads as one voice
+ * rather than as the same bot introducing itself over and over.
+ */
+const GroupMessage = memo(function GroupMessage({
+  message,
+  threadRef,
+  workspaceRoot,
+  speaker,
+  botId,
+  showSpeaker,
+}: {
+  message: ChatMessage;
+  threadRef: ScopedThreadRef;
+  workspaceRoot: string | undefined;
+  speaker: GroupSpeakerPresentation | null;
+  botId: string;
+  showSpeaker: boolean;
+}) {
+  const name = speaker?.name ?? "A bot";
+  return (
+    <div className="flex flex-col gap-1">
+      {showSpeaker ? (
+        <div className="flex min-w-0 items-center gap-2">
+          {speaker === null ? (
+            <span
+              aria-hidden="true"
+              className="size-7 shrink-0 rounded-full bg-[var(--personal-fill-muted)]"
+            />
+          ) : (
+            <BotAvatar
+              shape={speaker.avatarShape}
+              color={speaker.avatarColor}
+              size={28}
+              label={speaker.name}
+            />
+          )}
+          {speaker !== null && speaker.threadId !== null ? (
+            <Link
+              to="/bots/$botId/$threadId"
+              params={{ botId, threadId: speaker.threadId }}
+              aria-label={`Open ${name}'s own chat`}
+              className="min-w-0 truncate text-[13px] leading-5 font-semibold text-[var(--personal-text)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            >
+              {name}
+            </Link>
+          ) : (
+            <span className="min-w-0 truncate text-[13px] leading-5 font-semibold text-[var(--personal-text)]">
+              {name}
+            </span>
+          )}
+        </div>
+      ) : null}
+      <AssistantMessage
+        message={message}
+        threadRef={threadRef}
+        workspaceRoot={workspaceRoot}
+        botName={name}
+      />
+    </div>
+  );
+});
+
 /**
  * A turn the task service wrote in the user's role (delegated brief, results
  * coming back, routine run, retry): a compact centred row, not the user's
@@ -247,6 +328,7 @@ export function MessageList({
   now,
   describeTurn,
   renderDelegation,
+  groupSpeaker,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
@@ -255,6 +337,12 @@ export function MessageList({
   describeTurn: (turn: ServerTurn) => string;
   /** The live card for a task delegated from this thread. */
   renderDelegation: (task: PersonalTask) => ReactNode;
+  /**
+   * How to draw a group member. Only a group transcript passes it; without it
+   * no `group-message` item can exist, because only a group conversation asks
+   * `buildConversationItems` to read the markers.
+   */
+  groupSpeaker?: (botId: string) => GroupSpeakerPresentation | null;
   pending: ReadonlyArray<PendingOutgoingMessage>;
   working: boolean;
   botName: string;
@@ -370,6 +458,27 @@ export function MessageList({
                   label={describeTurn(item.turn)}
                   text={item.message.text}
                 />
+              );
+            case "group-message":
+              return (
+                <GroupMessage
+                  key={item.id}
+                  message={item.message}
+                  threadRef={threadRef}
+                  workspaceRoot={workspaceRoot}
+                  speaker={groupSpeaker?.(item.speaker.botId) ?? null}
+                  botId={item.speaker.botId}
+                  showSpeaker={item.showSpeaker}
+                />
+              );
+            case "group-system":
+              return (
+                <p
+                  key={item.id}
+                  className="mx-auto max-w-[90%] text-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
+                >
+                  {groupSystemLabel(item.event, item.message.text)}
+                </p>
               );
             case "delegation":
               return <div key={item.id}>{renderDelegation(item.task)}</div>;

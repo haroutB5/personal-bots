@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
     files: [{ type: "file", id: "file-1", name: "notes.txt" }],
   },
   start: vi.fn(),
+  groupSend: vi.fn(),
   metadata: vi.fn(),
   waitUploads: vi.fn(),
   release: vi.fn(),
@@ -87,6 +88,7 @@ beforeEach(async () => {
     files: [{ type: "file", id: "file-1", name: "notes.txt" }],
   };
   state.start.mockReset().mockResolvedValue({ _tag: "Success" });
+  state.groupSend.mockReset().mockResolvedValue({ _tag: "Success" });
   state.metadata.mockReset().mockResolvedValue({ _tag: "Success" });
   state.waitUploads.mockReset().mockResolvedValue(undefined);
   state.release.mockClear();
@@ -232,6 +234,87 @@ describe("personal composer sends", () => {
         threadId: props.threadId,
       },
     });
+  });
+});
+
+/**
+ * A group composer is the same composer: the draft store, the retry loop, the
+ * pending row and Stop are all shared. Only where a message goes changes, and
+ * what `@` offers.
+ */
+describe("personal composer in a group", () => {
+  const members = [
+    { botId: "bot-ada", name: "Ada" },
+    { botId: "bot-grace", name: "Grace" },
+  ];
+
+  async function renderGroup(overrides: Record<string, unknown> = {}) {
+    await act(async () =>
+      renderer.update(
+        <PersonalComposer
+          {...props}
+          send={state.groupSend}
+          mentionCandidates={members}
+          {...overrides}
+        />,
+      ),
+    );
+  }
+
+  it("sends through the group RPC instead of starting a turn on the group thread", async () => {
+    state.draft.prompt = "@Ada what do you think?";
+    await renderGroup();
+    await act(async () => renderer.root.findByProps({ "aria-label": "Send" }).props.onClick());
+
+    expect(state.start).not.toHaveBeenCalled();
+    expect(state.groupSend).toHaveBeenCalledOnce();
+    expect(state.groupSend.mock.calls[0]?.[0]).toMatchObject({
+      text: "@Ada what do you think?",
+    });
+    expect(state.draft.prompt).toBe("");
+  });
+
+  it("takes no attachments: a group would pay for one image once per member", async () => {
+    await renderGroup();
+    expect(renderer.root.findAllByProps({ "aria-label": "Add photos or files" })).toHaveLength(0);
+  });
+
+  it("offers the members when an @ is typed, and inserts the one that is picked", async () => {
+    state.draft.prompt = "";
+    await renderGroup();
+    const textarea = renderer.root.findByType("textarea");
+    await act(async () =>
+      textarea.props.onChange({ target: { value: "ask @gr", selectionStart: 7 } }),
+    );
+
+    const popover = renderer.root.findByProps({ "aria-label": "Mention a bot" });
+    const rows = popover.findAllByType("button");
+    // Only Grace matches "gr": the list narrows as the name is typed.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.props["aria-current"]).toBe("true");
+    await act(async () => rows[0]!.props.onClick());
+    // "@Grace " — the trailing space closes the token and is what would be
+    // typed next anyway.
+    expect(state.draft.prompt).toBe("ask @Grace ");
+    expect(renderer.root.findAllByProps({ "aria-label": "Mention a bot" })).toHaveLength(0);
+  });
+
+  it("stays shut for an @ that is not opening a name", async () => {
+    state.draft.prompt = "";
+    await renderGroup();
+    const textarea = renderer.root.findByType("textarea");
+    await act(async () =>
+      textarea.props.onChange({ target: { value: "mail ada@example.com", selectionStart: 20 } }),
+    );
+    expect(renderer.root.findAllByProps({ "aria-label": "Mention a bot" })).toHaveLength(0);
+  });
+
+  it("never offers mentions in an ordinary bot chat", async () => {
+    state.draft.prompt = "";
+    await act(async () => renderer.update(<PersonalComposer {...props} />));
+    const textarea = renderer.root.findByType("textarea");
+    await act(async () => textarea.props.onChange({ target: { value: "@", selectionStart: 1 } }));
+    expect(renderer.root.findAllByProps({ "aria-label": "Mention a bot" })).toHaveLength(0);
   });
 });
 
