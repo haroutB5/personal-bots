@@ -18,6 +18,7 @@ import {
   ComposerContextId,
   MessageId,
   PERSONAL_GROUP_CATCHUP_MAX_CHARS,
+  PERSONAL_GROUP_CONCURRENCY,
   PERSONAL_GROUP_DEFAULT_MAX_BOT_TURNS,
   PERSONAL_GROUP_MAX_BOT_TURNS_CEILING,
   PERSONAL_GROUP_MAX_MEMBERS,
@@ -635,7 +636,8 @@ export const make = Effect.gen(function* () {
   > = Effect.gen(function* () {
     while (true) {
       const live = yield* repository.listLiveRounds();
-      if (live.some((round) => round.activeBotId !== null)) {
+      const speaking = live.filter((round) => round.activeBotId !== null).length;
+      if (speaking >= PERSONAL_GROUP_CONCURRENCY) {
         // PERSONAL_GROUP_CONCURRENCY = 1, and this slot is disjoint from the
         // task system's two, so the worst case stays three provider turns.
         return;
