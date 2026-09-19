@@ -285,7 +285,7 @@ function ApprovalCard({
             aria-description={option.warning}
             onClick={() => onRespond(approval.requestId, option.decision)}
             className={cn(
-              "h-11 min-w-0 flex-1 rounded-[var(--personal-radius-button)] px-3 text-[15px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 disabled:opacity-40",
+              "h-11 min-w-0 flex-1 rounded-[var(--personal-radius-button)] px-3 text-[15px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40",
               option.decision === "accept"
                 ? "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
                 : "border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)]",
@@ -577,7 +577,7 @@ export function MessageList({
         {errorText !== null ? (
           <div
             role="alert"
-            className="max-w-[90%] rounded-[var(--personal-radius-card)] border border-[#f1c9c5] bg-[#fdf3f2] px-3.5 py-2.5 text-sm break-words text-[#8c1d18]"
+            className="max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] px-3.5 py-2.5 text-sm break-words text-[var(--personal-danger)]"
           >
             <p>{errorText}</p>
             {errorDetail ? (

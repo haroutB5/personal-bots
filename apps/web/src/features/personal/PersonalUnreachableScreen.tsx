@@ -25,7 +25,7 @@ export function PersonalUnreachableScreen({ onRetry }: { onRetry: () => void }):
       <button
         type="button"
         onClick={onRetry}
-        className="mt-6 h-11 w-full max-w-[360px] rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2"
+        className="mt-6 h-11 w-full max-w-[360px] rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]"
       >
         Try again
       </button>

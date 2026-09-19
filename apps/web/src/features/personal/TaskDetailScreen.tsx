@@ -28,7 +28,7 @@ import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots
 export const DETAIL_CARD =
   "rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-4";
 export const PRIMARY_BUTTON =
-  "flex h-11 flex-1 items-center justify-center rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 disabled:opacity-40";
+  "flex h-11 flex-1 items-center justify-center rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40";
 export const SECONDARY_BUTTON =
   "flex h-11 flex-1 items-center justify-center rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-4 text-[15px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40";
 
@@ -178,7 +178,7 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
       </section>
 
       {task.errorMessage !== null && task.status !== "completed" ? (
-        <section className="rounded-[var(--personal-radius-card)] border border-[#F3C4C0] bg-[#FDF3F2] p-4">
+        <section className="rounded-[var(--personal-radius-card)] border border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] p-4">
           <h3 className="text-[14px] font-semibold text-[var(--personal-text)]">What went wrong</h3>
           <p className="mt-1 text-[14px] break-words whitespace-pre-wrap text-[var(--personal-text)]">
             {task.errorMessage}
@@ -249,7 +249,7 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
         ) : null}
       </div>
       {actionError !== null ? (
-        <p role="alert" className="text-[14px] text-[#B3261E]">
+        <p role="alert" className="text-[14px] text-[var(--personal-error)]">
           {actionError}
         </p>
       ) : null}

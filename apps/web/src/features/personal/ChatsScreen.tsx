@@ -173,7 +173,9 @@ function SnapshotBotRow({ row, now }: { row: ChatsSnapshotRow; now: number }): J
         <span className="truncate text-sm leading-5 text-[var(--personal-text-secondary)]">
           {row.subtitle}
         </span>
-        <span className="truncate text-sm leading-5 text-[#3a3a3a]">{row.preview}</span>
+        <span className="truncate text-sm leading-5 text-[var(--personal-text-preview)]">
+          {row.preview}
+        </span>
       </span>
     </>
   );
@@ -572,7 +574,7 @@ export function ChatsScreen(): JSX.Element {
       {deleteError !== null ? (
         <p
           role="alert"
-          className="mt-4 rounded-[var(--personal-radius-card)] border border-[#f1c9c5] bg-[#fdf3f2] px-3.5 py-2.5 text-sm break-words text-[#8c1d18]"
+          className="mt-4 rounded-[var(--personal-radius-card)] border border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] px-3.5 py-2.5 text-sm break-words text-[var(--personal-danger)]"
         >
           {deleteError}
         </p>

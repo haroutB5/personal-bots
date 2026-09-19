@@ -24,7 +24,7 @@ const TONE_DOT: Record<DelegationTone, string> = {
   live: "bg-[var(--personal-live)]",
   review: "bg-[var(--personal-review)]",
   done: "bg-[var(--personal-live)]",
-  error: "bg-[#b3261e]",
+  error: "bg-[var(--personal-error)]",
 };
 
 const STEP_STATE_TEXT: Record<DelegationStep["state"], string> = {
@@ -48,7 +48,7 @@ function StepIcon({ state }: { state: DelegationStep["state"] }) {
       aria-hidden="true"
       className={cn(
         "flex size-[18px] shrink-0 items-center justify-center rounded-full",
-        state === "done" ? "bg-[var(--personal-live)]" : "bg-[#b3261e]",
+        state === "done" ? "bg-[var(--personal-live)]" : "bg-[var(--personal-error)]",
       )}
     >
       <Icon className="size-3 text-white" strokeWidth={3} />
@@ -220,7 +220,7 @@ export const DelegationCard = memo(function DelegationCard({
       ) : null}
 
       {actionError !== null ? (
-        <p role="alert" className="mt-2 text-[13px] text-[#8c1d18]">
+        <p role="alert" className="mt-2 text-[13px] text-[var(--personal-danger)]">
           {actionError}
         </p>
       ) : null}

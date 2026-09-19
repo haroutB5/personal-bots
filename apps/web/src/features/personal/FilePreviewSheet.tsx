@@ -150,7 +150,7 @@ export function FilePreviewSheet({
         showCloseButton={false}
         forceBackdrop
         backdropClassName="bg-background/70 backdrop-blur-md"
-        className="personal-app max-h-[90dvh] rounded-t-[var(--personal-radius-card)] border-[var(--personal-border)] pb-[env(safe-area-inset-bottom)]"
+        className="personal-app max-h-[90dvh] rounded-t-[var(--personal-radius-card)] border-[var(--personal-border)] bg-[var(--personal-surface)] pb-[env(safe-area-inset-bottom)]"
       >
         {file !== null ? (
           <>
@@ -202,7 +202,7 @@ export function FilePreviewSheet({
                 type="button"
                 disabled={deleting}
                 onClick={() => void deleteFile()}
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[#d93025] px-4 text-[15px] font-semibold text-white outline-none focus-visible:ring-2 focus-visible:ring-[#d93025] focus-visible:ring-offset-2 disabled:opacity-50"
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[var(--personal-destructive)] px-4 text-[15px] font-semibold text-[var(--personal-destructive-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-destructive)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-50"
               >
                 <Trash2 aria-hidden="true" className="size-[18px]" strokeWidth={1.75} />
                 {deleting ? "Deleting..." : "Delete file"}

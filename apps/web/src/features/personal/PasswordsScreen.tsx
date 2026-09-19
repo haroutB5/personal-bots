@@ -125,7 +125,11 @@ function PasswordForm({
           className={FIELD_CLASS}
         />
         {errors.label === undefined ? null : (
-          <p id="password-label-error" role="alert" className="mt-1.5 text-sm text-[#b3261e]">
+          <p
+            id="password-label-error"
+            role="alert"
+            className="mt-1.5 text-sm text-[var(--personal-error)]"
+          >
             {errors.label}
           </p>
         )}
@@ -160,7 +164,11 @@ function PasswordForm({
           Any bot can fill this login, and only while the browser is on this exact origin.
         </p>
         {errors.origin === undefined ? null : (
-          <p id="password-origin-error" role="alert" className="mt-1.5 text-sm text-[#b3261e]">
+          <p
+            id="password-origin-error"
+            role="alert"
+            className="mt-1.5 text-sm text-[var(--personal-error)]"
+          >
             {errors.origin}
           </p>
         )}
@@ -207,14 +215,18 @@ function PasswordForm({
           Write-only. Re-enter it whenever you edit this login.
         </p>
         {errors.password === undefined ? null : (
-          <p id="password-value-error" role="alert" className="mt-1.5 text-sm text-[#b3261e]">
+          <p
+            id="password-value-error"
+            role="alert"
+            className="mt-1.5 text-sm text-[var(--personal-error)]"
+          >
             {errors.password}
           </p>
         )}
       </div>
 
       {submitError === null ? null : (
-        <p role="alert" className="text-sm text-[#b3261e]">
+        <p role="alert" className="text-sm text-[var(--personal-error)]">
           {submitError}
         </p>
       )}
@@ -311,7 +323,7 @@ export function PasswordsScreen(): JSX.Element {
       </p>
 
       {error === null ? null : (
-        <p role="alert" className="mt-3 text-sm text-[#b3261e]">
+        <p role="alert" className="mt-3 text-sm text-[var(--personal-error)]">
           {error}
         </p>
       )}

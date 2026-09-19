@@ -149,7 +149,7 @@ export function PersonalProviderRows({
               </p>
             ) : null}
             {error !== null ? (
-              <p role="alert" className="pl-8 text-sm text-[#b3261e]">
+              <p role="alert" className="pl-8 text-sm text-[var(--personal-error)]">
                 {error}
               </p>
             ) : null}

@@ -549,7 +549,7 @@ function TeamDiagram({
                   ? `translateX(-50%) translate(${String(drag.delta.x)}px, ${String(drag.delta.y)}px) scale(1.06)`
                   : "translateX(-50%)",
                 transition: drag === null ? "transform 180ms ease" : "none",
-                filter: lifted ? "drop-shadow(0 8px 16px rgb(0 0 0 / 0.28))" : undefined,
+                filter: lifted ? "drop-shadow(var(--personal-shadow-lift))" : undefined,
                 opacity: drag !== null && !lifted ? 0.65 : 1,
               }}
             >

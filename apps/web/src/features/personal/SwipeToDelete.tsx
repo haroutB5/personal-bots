@@ -117,7 +117,7 @@ export function SwipeToDelete({
           type="button"
           onClick={() => void run(revealed.action)}
           aria-label={revealed.label}
-          className={`absolute inset-y-0 flex w-[88px] items-center justify-center text-[15px] font-semibold text-white outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white ${destructive ? "bg-[#d93025]" : "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"}`}
+          className={`absolute inset-y-0 flex w-[88px] items-center justify-center text-[15px] font-semibold text-[var(--personal-destructive-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-destructive-text)] ${destructive ? "bg-[var(--personal-destructive)]" : "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"}`}
           style={offset < 0 ? { right: 0 } : { left: 0 }}
         >
           {revealed.text}

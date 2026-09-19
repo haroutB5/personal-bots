@@ -28,7 +28,7 @@ import { useMinuteNow } from "./useMinuteNow";
 const DOT_CLASS = {
   live: "bg-[var(--personal-live)]",
   review: "bg-[var(--personal-review)]",
-  error: "bg-[#D93025]",
+  error: "bg-[var(--personal-error)]",
 } as const;
 
 export function StatusDot({
@@ -180,7 +180,7 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
         <Link
           to="/tasks/routines/new"
           aria-label="New routine"
-          className="flex size-11 items-center justify-center rounded-full bg-[var(--personal-primary)] text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2"
+          className="flex size-11 items-center justify-center rounded-full bg-[var(--personal-primary)] text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]"
         >
           <Plus aria-hidden="true" className="size-[22px]" strokeWidth={2} />
         </Link>
@@ -201,7 +201,7 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
               aria-current={active ? "page" : undefined}
               className={`flex min-w-0 items-center justify-center gap-1 rounded-lg text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] ${
                 active
-                  ? "bg-[var(--personal-surface)] font-semibold text-[var(--personal-text)] shadow-sm"
+                  ? "bg-[var(--personal-surface)] font-semibold text-[var(--personal-text)] shadow-[var(--personal-shadow-card)]"
                   : "text-[var(--personal-text-secondary)]"
               }`}
             >
@@ -266,7 +266,7 @@ function EmptyList({
       {withNewRoutine ? (
         <Link
           to="/tasks/routines/new"
-          className="flex h-11 items-center rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-5 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2"
+          className="flex h-11 items-center rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-5 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]"
         >
           New routine
         </Link>

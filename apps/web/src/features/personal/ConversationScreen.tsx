@@ -118,7 +118,7 @@ const STATE_DOT: Record<ConversationState, string> = {
   delegating: "bg-[var(--personal-text-tertiary)]",
   rate_limited: "bg-[var(--personal-review)]",
   retrying: "bg-[var(--personal-review)]",
-  error: "bg-[#b3261e]",
+  error: "bg-[var(--personal-error)]",
 };
 
 /**

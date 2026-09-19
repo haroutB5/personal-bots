@@ -111,7 +111,11 @@ function DisplayNameForm({
         </button>
       </form>
       {error !== null ? (
-        <p id="personal-display-name-error" role="alert" className="mt-1.5 text-sm text-[#b3261e]">
+        <p
+          id="personal-display-name-error"
+          role="alert"
+          className="mt-1.5 text-sm text-[var(--personal-error)]"
+        >
           {error}
         </p>
       ) : null}

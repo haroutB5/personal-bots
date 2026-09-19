@@ -168,7 +168,7 @@ export function NewGroupScreen(): JSX.Element {
           </fieldset>
 
           {error !== null ? (
-            <p role="alert" className="text-sm text-[#b3261e]">
+            <p role="alert" className="text-sm text-[var(--personal-error)]">
               {error}
             </p>
           ) : null}
@@ -177,7 +177,7 @@ export function NewGroupScreen(): JSX.Element {
             type="submit"
             disabled={!canSave}
             aria-busy={busy}
-            className="h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 disabled:opacity-40"
+            className="h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
           >
             Create group
           </button>

@@ -193,7 +193,7 @@ export function FilesScreen(): JSX.Element {
       {deleteError !== null ? (
         <p
           role="alert"
-          className="mt-4 rounded-[var(--personal-radius-card)] border border-[#f1c9c5] bg-[#fdf3f2] px-3.5 py-2.5 text-sm break-words text-[#8c1d18]"
+          className="mt-4 rounded-[var(--personal-radius-card)] border border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] px-3.5 py-2.5 text-sm break-words text-[var(--personal-danger)]"
         >
           {deleteError}
         </p>

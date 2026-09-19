@@ -121,7 +121,9 @@ export const BotRow = memo(function BotRow({
         >
           {status.label}
         </span>
-        <span className="truncate text-sm leading-5 text-[#3a3a3a]">{preview}</span>
+        <span className="truncate text-sm leading-5 text-[var(--personal-text-preview)]">
+          {preview}
+        </span>
       </span>
     </>
   );

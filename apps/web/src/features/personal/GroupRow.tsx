@@ -83,7 +83,9 @@ export const GroupRow = memo(function GroupRow({
           {groupSubtitle(group, nameOf)}
           {status.label === "Ready" ? "" : ` · ${status.label}`}
         </span>
-        <span className="truncate text-sm leading-5 text-[#3a3a3a]">{groupPreviewLine(group)}</span>
+        <span className="truncate text-sm leading-5 text-[var(--personal-text-preview)]">
+          {groupPreviewLine(group)}
+        </span>
       </span>
     </Link>
   );

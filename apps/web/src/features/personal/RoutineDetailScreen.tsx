@@ -303,7 +303,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: PersonalRoutineI
         </button>
       </div>
       {actionError !== null ? (
-        <p role="alert" className="text-[14px] text-[#B3261E]">
+        <p role="alert" className="text-[14px] text-[var(--personal-error)]">
           {actionError}
         </p>
       ) : null}

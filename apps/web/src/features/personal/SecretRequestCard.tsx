@@ -167,7 +167,7 @@ function PendingSecretRequestCard({
           }}
           className={cn(
             BUTTON_CLASS,
-            "ms-auto min-w-24 bg-[var(--personal-primary)] text-[var(--personal-primary-text)] focus-visible:ring-offset-2",
+            "ms-auto min-w-24 bg-[var(--personal-primary)] text-[var(--personal-primary-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]",
           )}
         >
           Save secret

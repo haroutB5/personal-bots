@@ -69,7 +69,7 @@ export const ToolDetails = memo(function ToolDetails({
                 aria-hidden="true"
                 className={
                   entry.tone === "error"
-                    ? "mt-0.5 size-4 shrink-0 text-[#b3261e]"
+                    ? "mt-0.5 size-4 shrink-0 text-[var(--personal-error)]"
                     : "mt-0.5 size-4 shrink-0 text-[var(--personal-text-tertiary)]"
                 }
                 strokeWidth={1.75}

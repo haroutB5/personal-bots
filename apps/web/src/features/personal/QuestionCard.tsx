@@ -177,7 +177,7 @@ function PendingQuestionCard({
               aria-pressed={question.multiSelect ? isSelected : undefined}
               onClick={() => chooseOption(optionValue)}
               className={cn(
-                "flex min-h-11 w-full items-start gap-2 rounded-[var(--personal-radius-button)] border px-3.5 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 disabled:opacity-40",
+                "flex min-h-11 w-full items-start gap-2 rounded-[var(--personal-radius-button)] border px-3.5 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40",
                 isSelected
                   ? "border-[var(--personal-primary)] bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
                   : "border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)]",
@@ -258,7 +258,7 @@ function PendingQuestionCard({
             type="button"
             disabled={responding || !progress.canAdvance}
             onClick={() => commit(drafts, progress.questionIndex)}
-            className="ms-auto h-11 min-w-24 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-medium text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 disabled:opacity-40"
+            className="ms-auto h-11 min-w-24 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-medium text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
           >
             {progress.isLastQuestion ? "Send answer" : "Next"}
           </button>

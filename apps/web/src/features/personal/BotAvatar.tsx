@@ -39,6 +39,9 @@ export interface BotAvatarProps {
  * dot is rendered next to the name by the row, never on the avatar.
  * Deterministic: same props always produce the same SVG.
  *
+ * On a dark surface the silhouette gets a hairline halo (see below) so the
+ * near-black swatches stay visible. The stored colour is never changed.
+ *
  * With `motion`, the pose carries the bot's state as decoration on top of those
  * dots. Everything is transform-only, so the avatar's box never moves, and only
  * `working` repeats (see `personal.css` and `avatarMotion.ts`).
@@ -77,6 +80,21 @@ export function BotAvatar({
       onAnimationEnd={settling ? () => setSettling(false) : undefined}
       className={cn("bot-avatar shrink-0", className)}
     >
+      {/*
+        Contrast halo. Bot colours are user data and are never rewritten for
+        the theme, so the dark swatches (#171717, #64748B) would otherwise sink
+        into the dark surface. Same path, stroked only — the fill covers the
+        inner half, so all that shows is a hairline outside the silhouette, and
+        the artwork's geometry is untouched. `--personal-avatar-halo` is
+        `transparent` in light mode, where every swatch already separates.
+      */}
+      <path
+        d={silhouette.d}
+        fill="none"
+        stroke="var(--personal-avatar-halo)"
+        strokeWidth={(silhouette.roundCorners ? 7 : 0) + 6}
+        strokeLinejoin="round"
+      />
       <path
         d={silhouette.d}
         fill={color}

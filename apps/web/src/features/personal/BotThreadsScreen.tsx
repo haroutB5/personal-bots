@@ -128,7 +128,7 @@ function ArchivedRow({
           await deleteChat(row.link.threadId);
           setBusy(false);
         }}
-        className="h-11 shrink-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3 text-sm font-medium text-[#B3261E] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+        className="h-11 shrink-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3 text-sm font-medium text-[var(--personal-error)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
       >
         Delete
       </button>
@@ -250,7 +250,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
             onClick={() => void start()}
             disabled={starting}
             aria-busy={starting}
-            className="mt-3 flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 disabled:opacity-40"
+            className="mt-3 flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
           >
             <Plus aria-hidden="true" className="size-5" strokeWidth={1.75} />
             New chat
@@ -260,13 +260,13 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
             onClick={() => void onWrapup()}
             disabled={wrapupDisabled}
             aria-busy={wrapupSending}
-            className="mt-3 flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[15px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 disabled:opacity-40"
+            className="mt-3 flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[15px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
           >
             <NotebookPen aria-hidden="true" className="size-5" strokeWidth={1.75} />
             Wrapup
           </button>
           {wrapupError !== null ? (
-            <p role="alert" className="mt-2 text-center text-sm text-[#B3261E]">
+            <p role="alert" className="mt-2 text-center text-sm text-[var(--personal-error)]">
               {wrapupError}
             </p>
           ) : null}

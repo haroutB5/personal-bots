@@ -379,7 +379,11 @@ function BotForm({
           className={`${FIELD_CLASS} h-11`}
         />
         {nameError !== null ? (
-          <p id="bot-name-error" role="alert" className="mt-1.5 text-sm text-[#b3261e]">
+          <p
+            id="bot-name-error"
+            role="alert"
+            className="mt-1.5 text-sm text-[var(--personal-error)]"
+          >
             {nameError}
           </p>
         ) : null}
@@ -591,7 +595,7 @@ function BotForm({
       </fieldset>
 
       {submitError !== null ? (
-        <p role="alert" className="text-sm text-[#b3261e]">
+        <p role="alert" className="text-sm text-[var(--personal-error)]">
           {submitError}
         </p>
       ) : null}
@@ -600,7 +604,7 @@ function BotForm({
         type="submit"
         disabled={!canSave}
         aria-busy={busy}
-        className="h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 disabled:opacity-40"
+        className="h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
       >
         {bot === null ? "Create bot" : "Save changes"}
       </button>
@@ -610,7 +614,7 @@ function BotForm({
           type="button"
           onClick={() => void onDelete()}
           disabled={busy}
-          className="h-11 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[15px] font-medium text-[#b3261e] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+          className="h-11 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[15px] font-medium text-[var(--personal-error)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
         >
           Delete bot
         </button>

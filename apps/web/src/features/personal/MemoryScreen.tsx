@@ -114,7 +114,7 @@ export function MemoryScreen(): JSX.Element {
       </label>
 
       {error !== null ? (
-        <p role="alert" className="mt-3 text-[14px] text-[#B3261E]">
+        <p role="alert" className="mt-3 text-[14px] text-[var(--personal-error)]">
           {error}
         </p>
       ) : null}

@@ -216,7 +216,7 @@ export function NotificationsScreen(): JSX.Element {
               and which task, never message text.
             </p>
             {permission === "denied" ? (
-              <p className="mt-2 text-[14px] text-[#B3261E]">
+              <p className="mt-2 text-[14px] text-[var(--personal-error)]">
                 Notifications are blocked for Bots. Allow them in your phone's Settings, then come
                 back here.
               </p>

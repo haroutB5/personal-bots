@@ -420,7 +420,7 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
         )}
 
         {error !== null ? (
-          <p role="alert" className="text-[14px] text-[#B3261E]">
+          <p role="alert" className="text-[14px] text-[var(--personal-error)]">
             {error}
           </p>
         ) : null}

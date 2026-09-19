@@ -119,7 +119,7 @@ const SPECIAL_KEYS = new Set([
 const DOT_COLORS: Record<ComputerDotTone, string> = {
   live: "var(--personal-live)",
   pending: "var(--personal-review)",
-  problem: "#E5323B",
+  problem: "var(--personal-error)",
   idle: "var(--personal-text-tertiary)",
 };
 
@@ -207,7 +207,7 @@ export function ComputerScreen({ onBackToChat }: ComputerScreenProps) {
             onClick={() => setSegment(value)}
             className={
               segment === value
-                ? "rounded-[8px] bg-[var(--personal-surface)] text-[14px] font-semibold shadow-sm"
+                ? "rounded-[8px] bg-[var(--personal-surface)] text-[14px] font-semibold shadow-[var(--personal-shadow-card)]"
                 : "rounded-[8px] text-[14px] text-[var(--personal-text-secondary)]"
             }
           >
@@ -384,7 +384,7 @@ export function ComputerBrowserPane(props: {
               type="button"
               disabled={controlDisabled}
               onClick={openAndToggleControl}
-              className="absolute right-3 bottom-3 z-20 flex h-9 items-center gap-1.5 rounded-full bg-[var(--personal-primary)] px-3 text-[13px] font-semibold text-[var(--personal-primary-text)] shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50"
+              className="absolute right-3 bottom-3 z-20 flex h-9 items-center gap-1.5 rounded-full bg-[var(--personal-primary)] px-3 text-[13px] font-semibold text-[var(--personal-primary-text)] shadow-[var(--personal-shadow-card)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50"
             >
               {inControl ? (
                 <Bot className="size-4" strokeWidth={ICON_STROKE} />
@@ -521,7 +521,10 @@ function BrowserToolbar(props: {
         >
           <MoreHorizontal className="size-5" strokeWidth={ICON_STROKE} />
         </MenuTrigger>
-        <MenuPopup align="end" className="personal-app w-48">
+        <MenuPopup
+          align="end"
+          className="personal-app w-48 border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)]"
+        >
           <MenuItem disabled={!props.canReload} onClick={props.onReload}>
             <RotateCw />
             Reload
@@ -940,7 +943,7 @@ function LiveViewport(props: {
         </>
       ) : null}
       {notice !== null || gaveUp ? (
-        <div className="absolute inset-x-2 top-2 flex items-center justify-between gap-2 rounded-[10px] bg-[var(--personal-surface)] px-3 py-2 text-[13px] shadow-sm">
+        <div className="absolute inset-x-2 top-2 flex items-center justify-between gap-2 rounded-[10px] bg-[var(--personal-surface)] px-3 py-2 text-[13px] shadow-[var(--personal-shadow-card)]">
           <span>{gaveUp ? "Live view disconnected." : notice}</span>
           {gaveUp ? (
             <button

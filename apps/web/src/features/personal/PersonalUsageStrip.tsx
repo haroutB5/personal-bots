@@ -238,7 +238,7 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
           showCloseButton={false}
           forceBackdrop
           backdropClassName="bg-background/70 backdrop-blur-md"
-          className="personal-app max-h-[90dvh] rounded-t-[var(--personal-radius-card)] border-[var(--personal-border)] pb-[env(safe-area-inset-bottom)]"
+          className="personal-app max-h-[90dvh] rounded-t-[var(--personal-radius-card)] border-[var(--personal-border)] bg-[var(--personal-surface)] pb-[env(safe-area-inset-bottom)]"
         >
           {open ? <UsageSheetBody cards={cards} now={now} /> : null}
         </SheetPopup>
