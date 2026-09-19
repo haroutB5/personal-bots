@@ -197,7 +197,7 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
 
       {parent !== undefined ? (
         <section>
-          <h3 className="mb-1 text-[13px] font-semibold text-[var(--personal-text-secondary)] uppercase">
+          <h3 className="mb-1 text-[13px] font-semibold text-[var(--personal-section-label)] uppercase">
             Delegated by
           </h3>
           <RelatedTask task={parent} bot={botById.get(parent.botId)} />
@@ -206,7 +206,7 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
 
       {children.length > 0 ? (
         <section>
-          <h3 className="mb-1 text-[13px] font-semibold text-[var(--personal-text-secondary)] uppercase">
+          <h3 className="mb-1 text-[13px] font-semibold text-[var(--personal-section-label)] uppercase">
             Delegated work
           </h3>
           <div className="divide-y divide-[var(--personal-border)]">

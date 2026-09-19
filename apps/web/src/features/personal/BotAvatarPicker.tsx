@@ -11,6 +11,7 @@ import {
   BOT_AVATAR_SHAPE_LABELS,
   BOT_AVATAR_SHAPE_ORDER,
   BOT_AVATAR_SWATCHES,
+  botAvatarNeedsHalo,
 } from "./botAvatarShapes";
 
 export interface BotAvatarSelection {
@@ -66,7 +67,7 @@ export function BotAvatarPicker({
                   "flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-[var(--personal-radius-button)] border bg-[var(--personal-surface)] p-1.5 outline-none transition-shadow",
                   selected
                     ? "border-transparent ring-2 ring-[var(--personal-text)] ring-offset-2 ring-offset-[var(--personal-bg)]"
-                    : "border-[var(--personal-border)] hover:border-[var(--personal-text-secondary)]",
+                    : "border-[var(--personal-border-strong)] hover:border-[var(--personal-text-secondary)]",
                   "focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]",
                 )}
               >
@@ -96,9 +97,19 @@ export function BotAvatarPicker({
                     "ring-2 ring-[var(--personal-text)] ring-offset-2 ring-offset-[var(--personal-bg)]",
                 )}
               >
+                {/*
+                  Same rule as the avatar (`botAvatarNeedsHalo`): a swatch that
+                  fails 3:1 against the dark card is not a pickable circle, it
+                  is a hole. The ring is `--personal-avatar-halo`, which is
+                  `transparent` in light, so the light grid is unchanged.
+                */}
                 <span
                   aria-hidden="true"
-                  className="flex size-7 items-center justify-center rounded-full"
+                  className={cn(
+                    "flex size-7 items-center justify-center rounded-full",
+                    botAvatarNeedsHalo(swatch) &&
+                      "shadow-[0_0_0_1.5px_var(--personal-avatar-halo)]",
+                  )}
                   style={{ backgroundColor: swatch }}
                 >
                   {selected && <Check className="size-4 text-white" strokeWidth={3} />}

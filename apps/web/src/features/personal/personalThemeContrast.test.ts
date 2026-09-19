@@ -91,6 +91,8 @@ const PAIRS: ReadonlyArray<readonly [string, string, number, string]> = [
   ["--personal-review", "--personal-bg", 4.5, "amber status label on the page"],
   ["--personal-review", "--personal-surface", 4.5, "amber status label on a card"],
   ["--personal-text", "--personal-review-bg", 4.5, "body text on a review card"],
+  ["--personal-section-label", "--personal-bg", 4.5, "uppercase section label on the page"],
+  ["--personal-section-label", "--personal-surface", 4.5, "uppercase section label in a card"],
   ["--personal-primary-text", "--personal-primary", 4.5, "primary button label"],
   ["--personal-destructive-text", "--personal-destructive", 4.5, "destructive button label"],
   // Non-text indicators: the status dots and the team diagram's lines.
@@ -98,6 +100,31 @@ const PAIRS: ReadonlyArray<readonly [string, string, number, string]> = [
   ["--personal-live", "--personal-surface", 3, "live status dot on a card"],
   ["--personal-team-live", "--personal-bg", 3, "team diagram live node"],
   ["--personal-team-line", "--personal-bg", 3, "team diagram connector"],
+  // The filled part of a usage bar against its own track. This, not the track
+  // against the page, is the ratio that carries "how much is used".
+  ["--personal-text-tertiary", "--personal-track", 3, "usage bar fill on its track"],
+];
+
+/**
+ * Pairs asserted in the dark appearance only.
+ *
+ * Not an exception list: these tokens are deliberately set to their existing
+ * light-palette neighbours in light (`--personal-border-strong` is literally
+ * `--personal-border`'s value, `--personal-avatar-halo` is `transparent`), so
+ * there is nothing new to measure there. Asserting them against the light page
+ * would be asserting the *pre-existing* light hairline, which is a light-palette
+ * decision this change does not own and must not silently alter.
+ *
+ * `--personal-track` gets a visibility floor rather than an AA bar: it is the
+ * unfilled remainder of a bar, not a boundary you have to see to operate the
+ * control, so the bar it has to clear is "reads as a groove", not 3:1.
+ */
+const DARK_ONLY_PAIRS: ReadonlyArray<readonly [string, string, number, string]> = [
+  ["--personal-border-strong", "--personal-bg", 3, "control boundary on the page"],
+  ["--personal-border-strong", "--personal-surface", 3, "control boundary on a card"],
+  ["--personal-avatar-halo", "--personal-bg", 3, "avatar contrast halo on the page"],
+  ["--personal-avatar-halo", "--personal-surface", 3, "avatar contrast halo on a card"],
+  ["--personal-track", "--personal-bg", 1.75, "usage bar track on the page"],
 ];
 
 /**
@@ -152,6 +179,26 @@ describe.each([
       // Once a pair clears its real bar, the exception has to go.
       expect(ratio, `${key} now passes - delete it from LIGHT_EXCEPTIONS`).toBeLessThan(pair![2]);
     }
+  });
+});
+
+describe("personal.css contrast (dark only)", () => {
+  it.each(DARK_ONLY_PAIRS)("%s on %s is at least %s:1 (%s)", (foreground, background, minimum) => {
+    const ratio = Number(contrast(dark[foreground]!, dark[background]!).toFixed(2));
+    expect(
+      ratio,
+      `${foreground} (${dark[foreground]}) on ${background} (${dark[background]})`,
+    ).toBeGreaterThanOrEqual(minimum);
+  });
+
+  it("keeps the light values of the dark-only tokens untouched", () => {
+    // The whole point of the dark-only list: these tokens exist so DARK can be
+    // raised. If a value here ever changes, the light surface changed with it.
+    expect(light["--personal-border-strong"]).toBe(light["--personal-border"]);
+    expect(light["--personal-avatar-halo"]).toBe("transparent");
+    expect(light["--personal-track"]).toBe(light["--personal-fill-muted"]);
+    // Section labels were --personal-text-secondary before the token existed.
+    expect(light["--personal-section-label"]).toBe(light["--personal-text-secondary"]);
   });
 });
 

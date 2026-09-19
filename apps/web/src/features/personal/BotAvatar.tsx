@@ -14,6 +14,7 @@ import {
   BOT_AVATAR_EYES,
   BOT_AVATAR_SILHOUETTES,
   BOT_AVATAR_VIEWBOX,
+  botAvatarNeedsHalo,
 } from "./botAvatarShapes";
 
 export type { BotAvatarShape } from "@t3tools/contracts";
@@ -68,6 +69,7 @@ export function BotAvatar({
   const silhouette = BOT_AVATAR_SILHOUETTES[shape];
   const eyes = BOT_AVATAR_EYES[shape];
   const eyeRx = BOT_AVATAR_EYE_WIDTH / 2;
+  const halo = botAvatarNeedsHalo(color);
 
   return (
     <svg
@@ -82,19 +84,26 @@ export function BotAvatar({
     >
       {/*
         Contrast halo. Bot colours are user data and are never rewritten for
-        the theme, so the dark swatches (#171717, #64748B) would otherwise sink
-        into the dark surface. Same path, stroked only — the fill covers the
-        inner half, so all that shows is a hairline outside the silhouette, and
-        the artwork's geometry is untouched. `--personal-avatar-halo` is
+        the theme, so a near-black bot would otherwise be a black shape on a
+        black card. Same path, stroked only — the fill covers the inner half,
+        so all that shows is a hairline outside the silhouette, and the
+        artwork's geometry is untouched. `--personal-avatar-halo` is
         `transparent` in light mode, where every swatch already separates.
+
+        Only the colours that fail 3:1 against the dark card get it
+        (`botAvatarNeedsHalo`): the halo is strong enough to read against
+        #171717, and at that strength an unconditional one would make every
+        saturated avatar in the chats list look deliberately bordered.
       */}
-      <path
-        d={silhouette.d}
-        fill="none"
-        stroke="var(--personal-avatar-halo)"
-        strokeWidth={(silhouette.roundCorners ? 7 : 0) + 6}
-        strokeLinejoin="round"
-      />
+      {halo ? (
+        <path
+          d={silhouette.d}
+          fill="none"
+          stroke="var(--personal-avatar-halo)"
+          strokeWidth={(silhouette.roundCorners ? 7 : 0) + 6}
+          strokeLinejoin="round"
+        />
+      ) : null}
       <path
         d={silhouette.d}
         fill={color}

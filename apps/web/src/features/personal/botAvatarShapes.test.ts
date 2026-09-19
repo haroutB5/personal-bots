@@ -8,6 +8,7 @@ import {
   BOT_AVATAR_SHAPE_ORDER,
   BOT_AVATAR_SILHOUETTES,
   BOT_AVATAR_SWATCHES,
+  botAvatarNeedsHalo,
 } from "./botAvatarShapes";
 
 const decodeShape = Schema.decodeUnknownSync(BotAvatarShape);
@@ -55,5 +56,32 @@ describe("botAvatarShapes", () => {
     for (const seed of SEED_COLORS) {
       expect(lower.has(seed.toLowerCase())).toBe(true);
     }
+  });
+});
+
+describe("botAvatarNeedsHalo", () => {
+  // The halo only exists to rescue colours that vanish on the dark card, and it
+  // is strong enough that giving it to a colour which does not need one makes
+  // that avatar look deliberately bordered. So the split matters both ways.
+  it("haloes exactly the swatches that fail 3:1 on the dark card", () => {
+    const haloed = BOT_AVATAR_SWATCHES.filter(botAvatarNeedsHalo);
+    expect(haloed).toEqual(["#8A5A3B", "#171717"]);
+  });
+
+  it("leaves the slate and the saturated swatches alone", () => {
+    expect(botAvatarNeedsHalo("#64748B")).toBe(false);
+    expect(botAvatarNeedsHalo("#1A73E8")).toBe(false);
+    expect(botAvatarNeedsHalo("#EAB308")).toBe(false);
+  });
+
+  it("is case- and shorthand-insensitive", () => {
+    expect(botAvatarNeedsHalo("#171717")).toBe(botAvatarNeedsHalo("#171717".toLowerCase()));
+    expect(botAvatarNeedsHalo("#000")).toBe(true);
+    expect(botAvatarNeedsHalo("  #FFFFFF  ")).toBe(false);
+  });
+
+  it("haloes anything it cannot parse, rather than risking an invisible bot", () => {
+    expect(botAvatarNeedsHalo("")).toBe(true);
+    expect(botAvatarNeedsHalo("rebeccapurple")).toBe(true);
   });
 });

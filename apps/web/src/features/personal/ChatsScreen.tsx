@@ -84,7 +84,7 @@ export function useMinuteClock(): number {
 const PINNED_SECTION_CLASS =
   "mt-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3.5 pb-1";
 const PINNED_HEADING_CLASS =
-  "pt-2.5 text-xs font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase";
+  "pt-2.5 text-xs font-semibold tracking-wide text-[var(--personal-section-label)] uppercase";
 const PINNED_LIST_CLASS = "divide-y divide-[var(--personal-border)]";
 const UNPINNED_LIST_CLASS =
   "mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)]";

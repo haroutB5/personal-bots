@@ -508,7 +508,7 @@ function TeamDiagram({
             className="absolute inset-x-0 z-0 flex items-center gap-2"
             style={{ top: band.labelY }}
           >
-            <span className="text-xs font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase">
+            <span className="text-xs font-semibold tracking-wide text-[var(--personal-section-label)] uppercase">
               {band.label}
             </span>
             <span className="h-px flex-1 bg-[var(--personal-border)]" />

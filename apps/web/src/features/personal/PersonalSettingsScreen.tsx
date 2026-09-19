@@ -45,7 +45,7 @@ import { PersonalProviderRows } from "./PersonalProviderRows";
 import { buildProviderUpdateRows } from "./providerUpdateRows";
 
 const SECTION_TITLE =
-  "mb-2 px-1 text-[13px] font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase";
+  "mb-2 px-1 text-[13px] font-semibold tracking-wide text-[var(--personal-section-label)] uppercase";
 const CARD =
   "overflow-hidden rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)]";
 const SETTINGS_ROW =

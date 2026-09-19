@@ -28,7 +28,7 @@ import {
 import { usePersonalEnvironmentId } from "./usePersonalBots";
 
 const FIELD_CLASS =
-  "h-11 w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
+  "h-11 w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
 const LABEL_CLASS = "mb-1.5 block text-sm font-medium text-[var(--personal-text)]";
 
 function PasswordForm({

@@ -309,7 +309,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: PersonalRoutineI
       ) : null}
 
       <section>
-        <h3 className="mb-1 text-[13px] font-semibold text-[var(--personal-text-secondary)] uppercase">
+        <h3 className="mb-1 text-[13px] font-semibold text-[var(--personal-section-label)] uppercase">
           Recent runs
         </h3>
         {occurrences.length === 0 ? (

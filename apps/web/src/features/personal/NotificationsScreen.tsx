@@ -265,7 +265,7 @@ export function NotificationsScreen(): JSX.Element {
       <section aria-labelledby="notify-events">
         <h2
           id="notify-events"
-          className="mb-2 px-1 text-[13px] font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase"
+          className="mb-2 px-1 text-[13px] font-semibold tracking-wide text-[var(--personal-section-label)] uppercase"
         >
           Notify me when
         </h2>
@@ -294,7 +294,7 @@ export function NotificationsScreen(): JSX.Element {
         <section aria-labelledby="notify-devices">
           <h2
             id="notify-devices"
-            className="mb-2 px-1 text-[13px] font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase"
+            className="mb-2 px-1 text-[13px] font-semibold tracking-wide text-[var(--personal-section-label)] uppercase"
           >
             Devices
           </h2>

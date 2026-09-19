@@ -23,7 +23,7 @@ function StripCellBar({ percent }: { readonly percent: number | null }): JSX.Ele
   return (
     <span
       aria-hidden="true"
-      className="block h-[3px] overflow-hidden rounded-full bg-[var(--personal-fill-muted)]"
+      className="block h-[3px] overflow-hidden rounded-full bg-[var(--personal-track)]"
     >
       {percent !== null && percent > 0 ? (
         <span
@@ -51,7 +51,7 @@ function WindowRow({ card, row }: { readonly card: UsageCard; readonly row: Usag
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={row.usedPercent}
-        className="h-2.5 overflow-hidden rounded-full bg-[var(--personal-fill-muted)]"
+        className="h-2.5 overflow-hidden rounded-full bg-[var(--personal-track)]"
       >
         {row.usedPercent > 0 ? (
           <div

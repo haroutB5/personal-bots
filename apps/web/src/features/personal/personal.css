@@ -31,6 +31,12 @@
   --personal-text-secondary: #6e6e6e; /* 4.9:1 on --personal-bg, 4.6:1 on --personal-fill-muted (AA) */
   --personal-text-tertiary: #6b6b68; /* 4.6:1 on --personal-bg at 12px (AA) */
   --personal-border: #e6e6e3;
+  /* Boundary of an *interactive* control (form field, checkbox, shape tile) as
+   * opposed to a decorative separator. Identical to --personal-border in light,
+   * where a bright page makes the hairline read on its own; on the dark surface
+   * the decorative hairline drops to 1.4:1 and a control outlined with it is
+   * effectively invisible, so dark carries a stronger value. */
+  --personal-border-strong: #e6e6e3;
   --personal-live: #34a853;
   --personal-review: #d4a017;
   --personal-review-bg: #fbf8ee;
@@ -48,6 +54,16 @@
    * last message stays readable under the bot name. Was hardcoded #3a3a3a in
    * BotRow/GroupRow/ChatsScreen. 10.6:1 on --personal-bg. */
   --personal-text-preview: #3a3a3a;
+  /* Small uppercase section furniture ("PINNED", "ACCOUNT", "SCHEDULE"). Was
+   * --personal-text-secondary everywhere; broken out because 12-13px uppercase
+   * needs more ink than a sentence of the same colour, and on the dark surface
+   * it was the first thing to disappear. Same value as the old secondary in
+   * light, so the light surface is byte-identical. 4.9:1 on --personal-bg. */
+  --personal-section-label: #6e6e6e;
+  /* Unfilled part of a usage bar. Was --personal-fill-muted, which is a *fill*
+   * behind text and therefore only 1.2:1 against the dark page — the track
+   * vanished and the bar read as a floating stub with no scale behind it. */
+  --personal-track: #f3f3f1;
   /* Inline form/error text ("Couldn't save your name"), and the error status
    * dot. Was hardcoded #b3261e / #B3261E in 16 places. 6.9:1 on
    * --personal-bg, 7.2:1 on --personal-surface. */
@@ -65,7 +81,12 @@
   /* Outline drawn behind a bot avatar's silhouette. Bot colours are user data
    * and are never rewritten for the theme; on a dark surface the dark swatches
    * (#171717, #64748B) would sink into the background, so the avatar gets a
-   * halo instead. Transparent in light, where every swatch already separates. */
+   * halo instead. Transparent in light, where every swatch already separates.
+   *
+   * The halo is drawn only for swatches that actually fail 3:1 against the dark
+   * card (`botAvatarNeedsHalo`), not for every avatar: at a strength that reads
+   * as a hairline on near-black, an unconditional halo outlines the saturated
+   * swatches too and every row looks bordered. */
   --personal-avatar-halo: transparent;
 
   --personal-font:
@@ -92,7 +113,16 @@
   --personal-text-secondary: #a0a09c; /* 7.3:1 on bg, 5.9:1 on fill-muted */
   --personal-text-tertiary: #8c8c88; /* 5.7:1 on bg, 5.2:1 on surface (AA) */
   --personal-text-preview: #b8b8b4; /* 9.6:1 on bg */
+  --personal-section-label: #c4c4c0; /* 11.0:1 on bg, 10.0:1 on surface (was 7.3/6.6) */
   --personal-border: #33332f;
+  /* 3.8:1 on bg, 3.5:1 on surface — the 3:1 non-text bar for a control
+   * boundary. --personal-border stays the quiet 1.5:1 hairline it is, because
+   * it also draws every row divider and a list of 3:1 rules is a ladder. */
+  --personal-border-strong: #6f6f6b;
+  /* 1.8:1 on bg (was 1.2:1): a visible groove, still quiet. The bar's own fill
+   * (--personal-text-tertiary) keeps 3.1:1 against it, which is the ratio that
+   * actually carries "how much is used". */
+  --personal-track: #3f3f3c;
   --personal-live: #3ecf6b; /* status dot, 9.5:1 on bg (needs 3:1) */
   --personal-review: #e3b855; /* 8.8:1 on --personal-review-bg */
   --personal-review-bg: #241f12;
@@ -101,8 +131,13 @@
   --personal-danger-bg: #2a1614;
   --personal-danger-border: #5d2a25;
   --personal-error: #f2a49b; /* 9.6:1 on bg, 8.8:1 on surface */
-  --personal-primary: #e8e8e5;
-  --personal-primary-text: #141413; /* 15.4:1 on --personal-primary */
+  /* Toned down from #e8e8e5. The light inversion of the light theme's black
+   * button is correct, but at 0.81 relative luminance a full-width "Create bot"
+   * slab and the 44px "+" were the brightest things on the page by a factor of
+   * ~15 and glared when read in the dark. 0.39 is ~half the emitted light and
+   * still reads as the one filled action; the label keeps 7.8:1. */
+  --personal-primary: #a9a9a4;
+  --personal-primary-text: #141413; /* 7.8:1 on --personal-primary */
   --personal-team-line: #8f8f8a;
   --personal-team-live: #49c46e;
   --personal-team-recent: #6f6f6b;
@@ -110,7 +145,27 @@
    * the card shadow is dropped and only the drag lift keeps a (deeper) one. */
   --personal-shadow-card: 0 0 0 rgb(0 0 0 / 0);
   --personal-shadow-lift: 0 8px 16px rgb(0 0 0 / 0.6);
-  --personal-avatar-halo: #3d3d3a;
+  /* 3.8:1 on bg, 3.5:1 on surface. Was #3d3d3a (1.8/1.6), which cleared nothing
+   * and left the near-black bot a black shape on a black card. */
+  --personal-avatar-halo: #6f6f6b;
+}
+
+/* Native checkboxes (bot form's "Team lead"/"Pin to top", the group and
+ * notification lists). Under `color-scheme: dark` the UA paints the unchecked
+ * box near-black with its own faint hairline, which on this surface is a
+ * control you cannot see is there. Dark only: the light rendering is the
+ * platform default and is not this change's to touch.
+ *
+ * Deliberately NOT `appearance: none` + custom artwork — that would replace the
+ * tick, the tap feedback and the VoiceOver rotor affordance with hand-drawn
+ * ones on a control that cannot be checked on a real iPhone from here. */
+:root.dark .personal-app input[type="checkbox"] {
+  accent-color: var(--personal-primary);
+}
+
+:root.dark .personal-app input[type="checkbox"]:not(:checked) {
+  border-radius: 4px;
+  box-shadow: 0 0 0 1.5px var(--personal-border-strong);
 }
 
 /* The personal surface honours reduced-motion: no perpetual animations. */

@@ -150,3 +150,61 @@ export const BOT_AVATAR_SWATCHES: readonly string[] = [
   "#171717",
   "#65A30D",
 ];
+
+/**
+ * The darkest surface an avatar is painted on in the dark appearance:
+ * `--personal-surface` (#1a1a19), the card behind the pinned box, the avatar
+ * picker and every sheet. Duplicated from `personal.css` because the decision
+ * below is made in JS; `botAvatarShapes.test.ts` pins the pair so the two
+ * cannot drift apart silently.
+ */
+const DARK_CARD_SURFACE = "#1a1a19";
+
+function srgbToLinear(channel: number): number {
+  return channel <= 0.04045 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+}
+
+/** WCAG 2.x relative luminance of a `#rgb`/`#rrggbb` colour. */
+function relativeLuminance(hex: string): number {
+  const value = hex.trim().replace("#", "");
+  const full =
+    value.length === 3
+      ? value
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : value;
+  const [r, g, b] = [0, 2, 4].map((i) =>
+    srgbToLinear(Number.parseInt(full.slice(i, i + 2), 16) / 255),
+  );
+  return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+}
+
+function contrastRatio(a: string, b: string): number {
+  const x = relativeLuminance(a);
+  const y = relativeLuminance(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+
+/**
+ * Whether a bot's stored colour needs the contrast halo (`--personal-avatar-halo`)
+ * to be a visible shape on the dark surface.
+ *
+ * Bot colours are user data and are never rewritten for the theme, so the fix
+ * for a near-black bot on a near-black card is an outline. But the outline is
+ * only drawn for the colours that need it: it has to be strong enough (3.5:1)
+ * to read against #171717's silhouette, and at that strength every saturated
+ * avatar in the chats list would look deliberately bordered.
+ *
+ * The bar is WCAG 2.x 1.4.11 — 3:1 for a meaningful non-text graphic — measured
+ * against the *lightest* surface the avatar sits on, which is the worst case.
+ * Of the twelve swatches only `#171717` (1.03:1) and `#8A5A3B` (2.99:1) fail;
+ * the slate `#64748B` clears it at 3.66:1. Returns false in the light
+ * appearance's terms too — the caller does not branch on appearance, because
+ * `--personal-avatar-halo` is `transparent` in light, so the extra path paints
+ * nothing there.
+ */
+export function botAvatarNeedsHalo(color: string): boolean {
+  if (!/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color.trim())) return true;
+  return contrastRatio(color, DARK_CARD_SURFACE) < 3;
+}
