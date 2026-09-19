@@ -19,6 +19,7 @@ import { ProjectionThreadMessageRepository } from "../../../persistence/Services
 import { isPersonalTaskMessageId } from "../../../personal/personalThreadTitles.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import * as PersonalBrowser from "../../../personal/browser/PersonalBrowser.ts";
+import * as PersonalGroupService from "../../../personal/groups/PersonalGroupService.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
@@ -40,6 +41,12 @@ const MCP_SESSION_ID = "mcp";
 
 export const DELEGATE_NOTE =
   "You will receive the result in a follow-up message; end your turn now.";
+export const CALL_VOTE_NOTE =
+  "The vote is open. Cast your own ballot now with cast_vote, then end your turn: the others answer in their own turns. Nothing happens until the user approves the result.";
+export const CAST_VOTE_OPEN_NOTE =
+  "Your ballot is recorded. Waiting on the other members; you cannot vote again.";
+export const CAST_VOTE_DECIDED_NOTE =
+  "Your ballot was the last one, so the vote is resolved and the user has been shown the tally. Do not act on the result: wait to be told it was approved.";
 export const REQUEST_SECRET_NOTE =
   "Requested. The user will enter it in a secure form; you'll be resumed. Never ask for it in chat.";
 
@@ -140,6 +147,7 @@ const make = Effect.gen(function* () {
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const threadMessages = yield* ProjectionThreadMessageRepository;
   const browser = yield* PersonalBrowser.PersonalBrowser;
+  const groups = yield* PersonalGroupService.PersonalGroupService;
 
   const listBots = botRepository
     .listBots()
@@ -382,6 +390,45 @@ const make = Effect.gen(function* () {
     // they are reading. That check is the browser service's, taken inside the
     // same lease lock as the teardown; the read below only turns the common
     // case into a better sentence than the lease's own.
+    call_vote: (input) =>
+      Effect.gen(function* () {
+        // callerBot(), not callerTask(): a group turn is not a task turn, and
+        // resolving a task here would refuse the call for the wrong reason.
+        const caller = yield* callerBot();
+        const opened = yield* groups
+          .callVote({
+            threadId: caller.threadId,
+            question: input.question,
+            options: input.options,
+          })
+          .pipe(Effect.mapError(readable));
+        return {
+          voteId: opened.vote.voteId,
+          options: opened.vote.options,
+          voters: opened.voterNames,
+          note: CALL_VOTE_NOTE,
+        };
+      }),
+    cast_vote: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* callerBot();
+        const vote = yield* groups
+          .castVote({
+            threadId: caller.threadId,
+            voteId: input.voteId,
+            option: input.option,
+            reason: input.reason,
+          })
+          .pipe(Effect.mapError(readable));
+        return {
+          voteId: vote.voteId,
+          option:
+            vote.ballots.find((ballot) => ballot.botId === caller.botId)?.option ?? input.option,
+          status: vote.status,
+          ballotsCast: vote.ballots.length,
+          note: vote.status === "open" ? CAST_VOTE_OPEN_NOTE : CAST_VOTE_DECIDED_NOTE,
+        };
+      }),
     close_browser: () =>
       Effect.gen(function* () {
         const caller = yield* callerBot();

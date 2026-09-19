@@ -1,7 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
+  MessageId,
   PersonalBotId,
+  PersonalGroupId,
+  PersonalGroupVoteId,
   ProviderInstanceId,
   ThreadId,
   type PersonalBrowserStatus,
@@ -27,6 +30,8 @@ import {
 } from "../../../persistence/Services/ProjectionThreadMessages.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import * as PersonalBrowser from "../../../personal/browser/PersonalBrowser.ts";
+import * as PersonalGroupRepository from "../../../personal/groups/PersonalGroupRepository.ts";
+import * as PersonalGroupService from "../../../personal/groups/PersonalGroupService.ts";
 import * as PersonalBotService from "../../../personal/PersonalBotService.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
@@ -134,6 +139,11 @@ const makeLayer = (harness: Harness) =>
     ),
     Layer.provideMerge(PersonalTaskService.layer),
     Layer.provideMerge(PersonalTaskRepository.layer),
+    // The real group service, not a mock: call_vote and cast_vote are thin
+    // wrappers, so a mock would test the wrapper and nothing that matters.
+    // `layerLive` brings its own repository and message reader over the same
+    // in-memory SQLite, so it reads back what it wrote.
+    Layer.provideMerge(PersonalGroupService.layerLive),
     Layer.provideMerge(PersonalBotService.layer),
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(ServerSecretStore.layer),
@@ -610,6 +620,256 @@ describe("bots toolkit handlers", () => {
 
         expect(error.message).toContain("The user is using the browser");
         expect(harness.browser.closes).toEqual([]);
+      }),
+    ),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Group voting (addendum section V). The real PersonalGroupService runs here,
+// so "refuses outside a group round" is proved against the same query that
+// decides it in production rather than against a stub.
+// ---------------------------------------------------------------------------
+
+const GROUP = PersonalGroupId.make("group-vote");
+const GROUP_THREAD = ThreadId.make("thread-group-vote");
+
+/**
+ * Opens a group round and returns the thread of the member now speaking - the
+ * only place from which a vote can be called. That thread is a real bot thread
+ * (the group service created it), so `callerBot()` resolves it the same way it
+ * resolves any other chat.
+ */
+const speakingInGroup = (members: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const groups = yield* PersonalGroupService.PersonalGroupService;
+    const repository = yield* PersonalGroupRepository.PersonalGroupRepository;
+    yield* groups.create({
+      groupId: GROUP,
+      threadId: GROUP_THREAD,
+      name: "Launch crew",
+      botIds: members.map(botId),
+    });
+    yield* groups.sendMessage({
+      groupId: GROUP,
+      messageId: MessageId.make("group-msg-1"),
+      text: "what do we do about the release?",
+    });
+    yield* groups.drain;
+    const round = yield* repository.latestRoundForGroup(GROUP);
+    const speaking = Option.isSome(round) ? round.value.activeThreadId : null;
+    if (speaking === null) {
+      throw new Error("no member is speaking in the group round");
+    }
+    return speaking;
+  });
+
+describe("bots toolkit voting", () => {
+  it.effect("call_vote and cast_vote are refused outside a group round", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        // CALLER_THREAD is an ordinary one-to-one bot chat: a real thread, a
+        // real bot, no round. Test 17.
+        const called = yield* call("call_vote", {
+          question: "Ship on Friday?",
+          options: ["ship", "wait"],
+        }).pipe(Effect.flip);
+        expect(called.message).toContain("not speaking in a group chat");
+
+        const cast = yield* call("cast_vote", {
+          voteId: PersonalGroupVoteId.make("vote-nope"),
+          option: "ship",
+          reason: "because",
+        }).pipe(Effect.flip);
+        expect(cast.message).toContain("not speaking in a group chat");
+      }),
+    ),
+  );
+
+  it.effect("call_vote opens one vote, names the voters, and announces it", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const threadId = yield* speakingInGroup(["assistant", "developer", "researcher"]);
+
+        const opened = yield* call(
+          "call_vote",
+          { question: "Ship on Friday?", options: ["ship", "wait"] },
+          { threadId },
+        );
+
+        expect(opened.voteId).toMatch(/^vote-[0-9a-f]{12}$/);
+        expect(opened.options).toEqual(["ship", "wait"]);
+        // Everyone may ballot, the caller included - it just gets no extra
+        // turn for having asked.
+        expect([...opened.voters].sort()).toEqual(["Assistant", "Developer", "Researcher"]);
+        // The vote id reaches the other members through the transcript, which
+        // is the only channel they read.
+        const announced = harness.dispatched.filter(
+          (command) =>
+            command.type === "thread.message.assistant.delta" &&
+            command.threadId === GROUP_THREAD &&
+            command.delta.includes(opened.voteId),
+        );
+        expect(announced.length).toBe(1);
+      }),
+    ),
+  );
+
+  it.effect("a second call_vote while one is open is refused, naming the open vote", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const threadId = yield* speakingInGroup(["assistant", "developer"]);
+        const opened = yield* call(
+          "call_vote",
+          { question: "Ship on Friday?", options: ["ship", "wait"] },
+          { threadId },
+        );
+
+        // Test 18. A different question, so only the open-vote rail can refuse it.
+        const second = yield* call(
+          "call_vote",
+          { question: "Which database?", options: ["postgres", "sqlite"] },
+          { threadId },
+        ).pipe(Effect.flip);
+
+        expect(second.message).toContain("already open");
+        expect(second.message).toContain(opened.voteId);
+        expect(second.message).toContain("Ship on Friday?");
+      }),
+    ),
+  );
+
+  it.effect("one ballot per bot: the second is refused and changes nothing", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const threadId = yield* speakingInGroup(["assistant", "developer"]);
+        const opened = yield* call(
+          "call_vote",
+          { question: "Ship on Friday?", options: ["ship", "wait"] },
+          { threadId },
+        );
+
+        const first = yield* call(
+          "cast_vote",
+          {
+            voteId: PersonalGroupVoteId.make(opened.voteId),
+            option: "ship",
+            reason: "it is ready",
+          },
+          { threadId },
+        );
+        expect(first).toMatchObject({ option: "ship", status: "open", ballotsCast: 1 });
+
+        // Test 19: a second ballot from the same bot is refused outright...
+        const again = yield* call(
+          "cast_vote",
+          {
+            voteId: PersonalGroupVoteId.make(opened.voteId),
+            option: "wait",
+            reason: "changed my mind",
+          },
+          { threadId },
+        ).pipe(Effect.flip);
+        expect(again.message).toContain("already voted");
+
+        // ...and the first ballot still stands, unchanged.
+        const repository = yield* PersonalGroupRepository.PersonalGroupRepository;
+        const vote = yield* repository.getVote(PersonalGroupVoteId.make(opened.voteId));
+        expect(Option.isSome(vote) ? vote.value.ballots : []).toMatchObject([
+          { botId: botId("assistant"), option: "ship", reason: "it is ready" },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("a ballot for an option that is not on the paper is refused", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const threadId = yield* speakingInGroup(["assistant", "developer"]);
+        const opened = yield* call(
+          "call_vote",
+          { question: "Ship on Friday?", options: ["ship", "wait"] },
+          { threadId },
+        );
+
+        const error = yield* call(
+          "cast_vote",
+          {
+            voteId: PersonalGroupVoteId.make(opened.voteId),
+            option: "ship it on Monday",
+            reason: "compromise",
+          },
+          { threadId },
+        ).pipe(Effect.flip);
+
+        expect(error.message).toContain("not on this ballot");
+        expect(error.message).toContain("ship, wait");
+      }),
+    ),
+  );
+
+  it.effect("a question the round already decided cannot be re-asked, reworded", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        // One member, so its own ballot is the last one and the vote resolves
+        // inside this turn - the shortest path to a DECIDED question.
+        const threadId = yield* speakingInGroup(["assistant"]);
+        const opened = yield* call(
+          "call_vote",
+          { question: "Should we ship on Friday?", options: ["ship", "wait"] },
+          { threadId },
+        );
+        const cast = yield* call(
+          "cast_vote",
+          {
+            voteId: PersonalGroupVoteId.make(opened.voteId),
+            option: "ship",
+            reason: "it is ready",
+          },
+          { threadId },
+        );
+        expect(cast.status).toBe("decided");
+
+        // Test 21: same question, different words, different order.
+        const reAsked = yield* call(
+          "call_vote",
+          { question: "Friday - do we ship?", options: ["ship", "wait"] },
+          { threadId },
+        ).pipe(Effect.flip);
+        expect(reAsked.message).toContain("already voted on that");
+        expect(reAsked.message).toContain("Should we ship on Friday?");
+
+        // A genuinely different question is still allowed.
+        const other = yield* call(
+          "call_vote",
+          { question: "Which database do we use?", options: ["postgres", "sqlite"] },
+          { threadId },
+        );
+        expect(other.voteId).not.toBe(opened.voteId);
+      }),
+    ),
+  );
+
+  it.effect("a vote needs at least two distinct options", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const threadId = yield* speakingInGroup(["assistant", "developer"]);
+
+        const error = yield* call(
+          "call_vote",
+          // The same answer twice is one answer, so this is not a vote.
+          { question: "Ship on Friday?", options: ["ship", " ship "] },
+          { threadId },
+        ).pipe(Effect.flip);
+
+        expect(error.message).toContain("at least 2 different options");
       }),
     ),
   );

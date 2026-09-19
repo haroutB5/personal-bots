@@ -1,5 +1,9 @@
 import {
   McpCapabilityUnavailableError,
+  PERSONAL_GROUP_VOTE_MAX_OPTIONS,
+  PERSONAL_GROUP_VOTE_MIN_OPTIONS,
+  PersonalGroupVoteId,
+  PersonalGroupVoteStatus,
   PersonalSecretName,
   PersonalTaskId,
   PersonalTaskStatus,
@@ -174,6 +178,51 @@ export const RequestBrowserHelpResult = Schema.Struct({
 });
 export type RequestBrowserHelpResult = typeof RequestBrowserHelpResult.Type;
 
+export const CallVoteInput = Schema.Struct({
+  question: TrimmedNonEmptyString.annotate({
+    description:
+      "The single decision the group is settling, as one question. Asking the same thing again in this conversation, however you reword it, is refused.",
+  }),
+  options: Schema.Array(
+    TrimmedNonEmptyString.annotate({ description: "One answer members can choose." }),
+  ).annotate({
+    description: `The answers on the ballot: between ${PERSONAL_GROUP_VOTE_MIN_OPTIONS} and ${PERSONAL_GROUP_VOTE_MAX_OPTIONS} of them, each distinct. Name a bot in an option ("@Dev writes it") to say who would carry it out.`,
+  }),
+});
+export type CallVoteInput = typeof CallVoteInput.Type;
+
+export const CallVoteResult = Schema.Struct({
+  voteId: Schema.String,
+  options: Schema.Array(Schema.String),
+  voters: Schema.Array(Schema.String).annotate({
+    description: "Members who may ballot, you included.",
+  }),
+  note: Schema.String,
+});
+export type CallVoteResult = typeof CallVoteResult.Type;
+
+export const CastVoteInput = Schema.Struct({
+  voteId: PersonalGroupVoteId.annotate({
+    description: "The open vote's id, as call_vote returned it or as the group chat announced it.",
+  }),
+  option: TrimmedNonEmptyString.annotate({
+    description: "Exactly one of that vote's options.",
+  }),
+  reason: TrimmedNonEmptyString.annotate({
+    description: "One line saying why. The user sees it beside your choice on the tally.",
+  }),
+});
+export type CastVoteInput = typeof CastVoteInput.Type;
+
+export const CastVoteResult = Schema.Struct({
+  voteId: Schema.String,
+  option: Schema.String,
+  status: PersonalGroupVoteStatus,
+  ballotsCast: Schema.Int,
+  note: Schema.String,
+});
+export type CastVoteResult = typeof CastVoteResult.Type;
+
 const ListBotsTool = Tool.make("list_bots", {
   description:
     "List the personal bots you can delegate work to, with what each one is for. The roster changes at any time (the user creates, renames and deletes bots), so call this fresh before every delegate_task and never rely on a roster from earlier in the conversation.",
@@ -284,6 +333,36 @@ const RequestBrowserHelpTool = Tool.make("request_browser_help", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const CallVoteTool = Tool.make("call_vote", {
+  description:
+    "Put a decision to the group you are talking in, so every member answers it on the record. Only works while you are speaking in a group chat. One vote at a time, and a question the group already settled in this conversation cannot be reopened. Cast your own ballot with cast_vote in this same turn; calling a vote does not buy you an extra turn. The result never acts on its own: the user sees every member's choice and reason and decides whether it happens.",
+  parameters: CallVoteInput,
+  success: CallVoteResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Call a group vote")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
+
+const CastVoteTool = Tool.make("cast_vote", {
+  description:
+    "Answer the open vote in the group you are talking in. One ballot per bot: it is cast once and cannot be changed or withdrawn, so decide before you call this. Give the reason in one line, because the user reads it beside your choice. Only works while you are speaking in a group chat.",
+  parameters: CastVoteInput,
+  success: CastVoteResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Cast a vote")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  // A second call with the same ballot is refused, not absorbed: "you already
+  // voted" is the answer, because pretending otherwise would hide the rail.
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
+
 export const BotsToolkit = Toolkit.make(
   ListBotsTool,
   DelegateTaskTool,
@@ -293,4 +372,6 @@ export const BotsToolkit = Toolkit.make(
   UseLoginTool,
   RequestBrowserHelpTool,
   CloseBrowserTool,
+  CallVoteTool,
+  CastVoteTool,
 );
