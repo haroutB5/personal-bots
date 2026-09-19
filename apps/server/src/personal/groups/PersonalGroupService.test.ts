@@ -380,7 +380,7 @@ const messageSentEvent = (
       createdAt: input.at,
       updatedAt: input.at,
     },
-  }) as OrchestrationEvent;
+  }) as unknown as OrchestrationEvent;
 
 const beginTurn = (harness: Harness, threadId: ThreadId) =>
   Effect.gen(function* () {
@@ -825,8 +825,10 @@ it.effect("deltas relay live into the group thread, marked with the speaker", ()
       botId("assistant"),
     );
 
-    // The feedback-loop guard: the relay's own output on the group thread must
-    // never be read back as input, or the round would restart itself.
+    // The feedback-loop guard, second line of defence: the relay's own output
+    // on the group thread must never be read back as input. (The first line is
+    // the active-member-thread filter, which a group thread also fails; the
+    // guard is what makes that safe to reorder or relax.)
     const before = harness.dispatched.length;
     yield* service.ingestDomainEvent(
       messageSentEvent(harness, {
@@ -839,6 +841,57 @@ it.effect("deltas relay live into the group thread, marked with the speaker", ()
         at: DateTime.formatIso(yield* DateTime.now),
       }),
     );
+    yield* service.drain;
+    expect(harness.dispatched.length).toBe(before);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+// ---------------------------------------------------------------------------
+// 11b. a turn started directly on the group thread
+// ---------------------------------------------------------------------------
+
+it.effect("a stray turn on the group thread is interrupted and reported", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    yield* makeGroup(["assistant", "dev"], 6);
+
+    // The developer view can start a turn on any thread. A provider running on
+    // the shared thread would have no persona and would speak for nobody.
+    yield* service.ingestDomainEvent({
+      ...eventBase(harness, GROUP_THREAD, DateTime.formatIso(yield* DateTime.now)),
+      type: "thread.turn-start-requested",
+      payload: {
+        threadId: GROUP_THREAD,
+        messageId: MessageId.make("stray-1"),
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt: DateTime.formatIso(yield* DateTime.now),
+      },
+    } as OrchestrationEvent);
+    yield* service.drain;
+
+    expect(interrupts(harness).map((command) => command.threadId)).toEqual([GROUP_THREAD]);
+    const notice = groupTranscript(harness).at(-1);
+    expect(markerOf(notice)).toMatchObject({
+      speaker: { kind: "system", event: "stray-turn-stopped" },
+    });
+    expect(notice?.text).toContain("nobody runs on the shared thread");
+
+    // A turn-start on an unrelated thread is none of this service's business.
+    const before = harness.dispatched.length;
+    yield* service.ingestDomainEvent({
+      ...eventBase(harness, "thread-unrelated", DateTime.formatIso(yield* DateTime.now)),
+      type: "thread.turn-start-requested",
+      payload: {
+        threadId: ThreadId.make("thread-unrelated"),
+        messageId: MessageId.make("stray-2"),
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt: DateTime.formatIso(yield* DateTime.now),
+      },
+    } as OrchestrationEvent);
     yield* service.drain;
     expect(harness.dispatched.length).toBe(before);
   }).pipe(Effect.provide(makeLayer(harness)));
