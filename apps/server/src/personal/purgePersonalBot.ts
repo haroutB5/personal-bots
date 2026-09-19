@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import { CommandId, PERSONAL_TASK_TERMINAL_STATUSES, type PersonalBotId } from "@t3tools/contracts";
 
 import type * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
+import type * as PersonalGroupService from "./groups/PersonalGroupService.ts";
 import type * as PersonalMemoryService from "./memory/PersonalMemoryService.ts";
 import type * as PersonalBotService from "./PersonalBotService.ts";
 import type * as PersonalRoutineService from "./routines/PersonalRoutineService.ts";
@@ -17,6 +18,7 @@ export interface PersonalBotPurgeServices {
   readonly memory: PersonalMemoryService.PersonalMemoryService["Service"];
   readonly secrets: PersonalSecretService.PersonalSecretService["Service"];
   readonly engine: OrchestrationEngine.OrchestrationEngineService["Service"];
+  readonly groups: PersonalGroupService.PersonalGroupService["Service"];
 }
 
 /**
@@ -29,7 +31,7 @@ export const purgePersonalBot = Effect.fn("purgePersonalBot")(function* (
   services: PersonalBotPurgeServices,
   botId: PersonalBotId,
 ) {
-  const { bots, tasks, routines, memory, secrets, engine } = services;
+  const { bots, tasks, routines, memory, secrets, engine, groups } = services;
   const step =
     (name: string) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<void, never, R> =>
@@ -69,6 +71,12 @@ export const purgePersonalBot = Effect.fn("purgePersonalBot")(function* (
     if (routine.botId !== botId) continue;
     yield* routines.remove({ routineId: routine.routineId }).pipe(step("remove routine"));
   }
+
+  // Groups come BEFORE the threads are deleted: the purge writes a line into
+  // each affected group's transcript naming the bot, and reads the bot row and
+  // its member thread to do it. A group the deletion empties is archived, not
+  // deleted - the conversation still happened.
+  yield* groups.purgeBot({ botId }).pipe(step("leave groups"));
 
   const { threads } = yield* bots.list();
   for (const link of threads) {

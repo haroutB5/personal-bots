@@ -109,6 +109,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
+import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
@@ -784,6 +785,7 @@ const buildAppUnderTest = (options?: {
           }),
           // Server-lifetime dispatcher service the WS route shares across clients.
           Layer.mock(PersonalTaskService.PersonalTaskService)({}),
+          Layer.mock(PersonalGroupService.PersonalGroupService)({}),
           Layer.mock(PersonalSecretService.PersonalSecretService)({}),
           Layer.mock(PersonalLoginService.PersonalLoginService)({}),
           Layer.mock(PersonalRoutineService.PersonalRoutineService)({}),

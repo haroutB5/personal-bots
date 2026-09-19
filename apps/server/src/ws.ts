@@ -181,6 +181,7 @@ import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import { deletePersonalChat } from "./personal/deletePersonalChat.ts";
 import { purgePersonalBot } from "./personal/purgePersonalBot.ts";
 import { signPersonalFiles } from "./personal/PersonalFiles.ts";
+import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
@@ -713,6 +714,7 @@ const makeWsRpcLayer = (
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const personalBots = yield* PersonalBotService.PersonalBotService;
       const personalTasks = yield* PersonalTaskService.PersonalTaskService;
+      const personalGroups = yield* PersonalGroupService.PersonalGroupService;
       const personalSecrets = yield* PersonalSecretService.PersonalSecretService;
       const personalLogins = yield* PersonalLoginService.PersonalLoginService;
       // personal browser
@@ -1895,62 +1897,6 @@ const makeWsRpcLayer = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
-      /**
-       * Phase 0 of group chats registers the ten `personalGroups.*` methods so
-       * the wire contract, the auth scopes and the generated client types are
-       * fixed, while the service that answers them is Phase 1. Refusing is the
-       * honest answer meanwhile - and it still runs the scope check, so the
-       * authorization behaviour is the one Phase 1 inherits.
-       */
-      const personalGroupsUnavailable = () =>
-        new PersonalGroupsError({ message: "Group chats are not available in this build yet." });
-      const personalGroupsNotImplementedHandlers = {
-        [WS_METHODS.personalGroupsList]: (_input: unknown) =>
-          observeRpcEffect(WS_METHODS.personalGroupsList, Effect.fail(personalGroupsUnavailable())),
-        [WS_METHODS.personalGroupsCreate]: (_input: unknown) =>
-          observeRpcEffect(
-            WS_METHODS.personalGroupsCreate,
-            Effect.fail(personalGroupsUnavailable()),
-          ),
-        [WS_METHODS.personalGroupsUpdate]: (_input: unknown) =>
-          observeRpcEffect(
-            WS_METHODS.personalGroupsUpdate,
-            Effect.fail(personalGroupsUnavailable()),
-          ),
-        [WS_METHODS.personalGroupsDelete]: (_input: unknown) =>
-          observeRpcEffect(
-            WS_METHODS.personalGroupsDelete,
-            Effect.fail(personalGroupsUnavailable()),
-          ),
-        [WS_METHODS.personalGroupsAddMember]: (_input: unknown) =>
-          observeRpcEffect(
-            WS_METHODS.personalGroupsAddMember,
-            Effect.fail(personalGroupsUnavailable()),
-          ),
-        [WS_METHODS.personalGroupsRemoveMember]: (_input: unknown) =>
-          observeRpcEffect(
-            WS_METHODS.personalGroupsRemoveMember,
-            Effect.fail(personalGroupsUnavailable()),
-          ),
-        [WS_METHODS.personalGroupsSendMessage]: (_input: unknown) =>
-          observeRpcEffect(
-            WS_METHODS.personalGroupsSendMessage,
-            Effect.fail(personalGroupsUnavailable()),
-          ),
-        [WS_METHODS.personalGroupsContinueRound]: (_input: unknown) =>
-          observeRpcEffect(
-            WS_METHODS.personalGroupsContinueRound,
-            Effect.fail(personalGroupsUnavailable()),
-          ),
-        [WS_METHODS.personalGroupsStop]: (_input: unknown) =>
-          observeRpcEffect(WS_METHODS.personalGroupsStop, Effect.fail(personalGroupsUnavailable())),
-        [WS_METHODS.personalGroupsSubscribe]: (_input: unknown) =>
-          observeRpcStream(
-            WS_METHODS.personalGroupsSubscribe,
-            Stream.fail(personalGroupsUnavailable()),
-          ),
-      };
-
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
@@ -3094,6 +3040,7 @@ const makeWsRpcLayer = (
               {
                 bots: personalBots,
                 tasks: personalTasks,
+                groups: personalGroups,
                 routines: personalRoutines,
                 memory: personalMemory,
                 secrets: personalSecrets,
@@ -3120,9 +3067,10 @@ const makeWsRpcLayer = (
         [WS_METHODS.personalBotsDeleteThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalBotsDeleteThread,
-            deletePersonalChat({ bots: personalBots, tasks: personalTasks }, input.threadId).pipe(
-              Effect.as({}),
-            ),
+            deletePersonalChat(
+              { bots: personalBots, tasks: personalTasks, groups: personalGroups },
+              input.threadId,
+            ).pipe(Effect.as({})),
             {
               "rpc.aggregate": "server",
             },
@@ -3183,12 +3131,69 @@ const makeWsRpcLayer = (
           observeRpcStream(WS_METHODS.personalTasksSubscribe, personalTasks.subscribe, {
             "rpc.aggregate": "server",
           }),
-        // Group chats, Phase 0: the methods are registered so the contract,
-        // the auth scopes and the client types are settled, but no group
-        // service exists yet. Every one of them refuses with the same message
-        // until Phase 1 replaces these bodies; a build that shipped early is
-        // then a clear refusal on screen rather than a silent nothing.
-        ...personalGroupsNotImplementedHandlers,
+        // Group chats. `subscribe` carries STATE ONLY: the transcript arrives
+        // on the group thread's ordinary thread-detail subscription, so the
+        // phone holds one subscription for a group conversation, not two.
+        [WS_METHODS.personalGroupsList]: (_input) =>
+          observeRpcEffect(WS_METHODS.personalGroupsList, personalGroups.list(), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalGroupsCreate]: (input) =>
+          observeRpcEffect(WS_METHODS.personalGroupsCreate, personalGroups.create(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalGroupsUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.personalGroupsUpdate, personalGroups.update(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalGroupsDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalGroupsDelete,
+            personalGroups.remove(input).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.personalGroupsAddMember]: (input) =>
+          observeRpcEffect(WS_METHODS.personalGroupsAddMember, personalGroups.addMember(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalGroupsRemoveMember]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalGroupsRemoveMember,
+            personalGroups.removeMember(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.personalGroupsSendMessage]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalGroupsSendMessage,
+            personalGroups.sendMessage(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.personalGroupsContinueRound]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalGroupsContinueRound,
+            personalGroups.continueRound(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.personalGroupsStop]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalGroupsStop,
+            personalGroups.stop(input).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.personalGroupsSubscribe]: (_input) =>
+          observeRpcStream(WS_METHODS.personalGroupsSubscribe, personalGroups.subscribe, {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.personalSecretsListPending]: (_input) =>
           observeRpcEffect(WS_METHODS.personalSecretsListPending, personalSecrets.listPending(), {
             "rpc.aggregate": "server",

@@ -140,6 +140,20 @@ export class PersonalBotService extends Context.Service<
       readonly botId: PersonalBotId;
       readonly threadId: ThreadId;
     }) => Effect.Effect<PersonalBotThread, PersonalBotsError>;
+    /**
+     * Creates a thread in the Personal project with NO bot-thread link row.
+     *
+     * This is how a group's shared transcript thread is made. The missing link
+     * row is the whole point: persona injection, per-bot memory and the MCP
+     * "who am I" lookup all key off `personal_bot_threads`, so a thread without
+     * one belongs to no bot and no provider ever runs on it.
+     */
+    readonly createSharedThread: (input: {
+      readonly threadId: ThreadId;
+      readonly title: string;
+      /** Required by `thread.create`; unused, since no turn ever starts here. */
+      readonly modelSelection: PersonalBot["modelSelection"];
+    }) => Effect.Effect<ThreadId, PersonalBotsError>;
     readonly archiveThread: (input: {
       readonly threadId: ThreadId;
       readonly archived: boolean;
@@ -499,6 +513,35 @@ export const make = Effect.gen(function* () {
       return link.value;
     });
 
+  const createSharedThread: PersonalBotService["Service"]["createSharedThread"] = (input) =>
+    Effect.gen(function* () {
+      const existing = yield* snapshots
+        .getThreadShellById(input.threadId)
+        .pipe(Effect.mapError(repositoryError("thread lookup")));
+      if (Option.isSome(existing)) {
+        return input.threadId;
+      }
+      const projectId = yield* ensurePersonalProject();
+      yield* engine
+        .dispatch({
+          type: "thread.create",
+          // Deterministic per thread, as `createThread` is: a retried create
+          // dedupes on the command receipt rather than making a second thread.
+          commandId: CommandId.make(`personal-bots:thread.create:${input.threadId}`),
+          threadId: input.threadId,
+          projectId,
+          title: input.title,
+          modelSelection: input.modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        })
+        .pipe(Effect.mapError(toPersonalBotsError("Personal bots thread creation failed.")));
+      return input.threadId;
+    });
+
   const archiveThread: PersonalBotService["Service"]["archiveThread"] = (input) =>
     Effect.gen(function* () {
       const linked = yield* repository
@@ -647,6 +690,7 @@ export const make = Effect.gen(function* () {
     update,
     remove,
     createThread,
+    createSharedThread,
     archiveThread,
     deleteThread,
     getProfile,

@@ -83,6 +83,7 @@ import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRun
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
+import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
@@ -512,6 +513,17 @@ const PersonalTasksDispatcherLive = Layer.effectDiscard(
   }),
 );
 
+// The group round loop. Same shape as the task dispatcher and the same
+// reason for the shape: the domain-event subscription is taken now so no
+// relay is missed, while its consumer and the 30s sweep park on
+// ServerActivation so no member turn starts before the provider reactors.
+const PersonalGroupsDispatcherLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const personalGroups = yield* PersonalGroupService.PersonalGroupService;
+    yield* personalGroups.start();
+  }),
+);
+
 // Routine catch-up (startup + every 30s), task-summary memory and the push
 // sender. All park on ServerActivation like the task dispatcher.
 const PersonalReactorsLive = Layer.effectDiscard(
@@ -543,6 +555,10 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   Layer.provideMerge(PersonalRoutineService.layer),
   Layer.provideMerge(PersonalTasksDispatcherLive),
   Layer.provideMerge(PersonalTaskService.layerLive),
+  // Groups consume the bot service and repository below them, exactly as the
+  // task service does, so they sit above both and below the seed.
+  Layer.provideMerge(PersonalGroupsDispatcherLive),
+  Layer.provideMerge(PersonalGroupService.layerLive),
   Layer.provideMerge(PersonalBotsSeedLive),
   Layer.provideMerge(PersonalBotService.layer),
   Layer.provideMerge(PersonalBotRepository.layer),
@@ -593,8 +609,10 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // consume the bot service and repository. Secrets consume tasks, so they
   // come before them.
   Layer.provideMerge(PersonalTasksDispatcherLive),
+  Layer.provideMerge(PersonalGroupsDispatcherLive),
   Layer.provideMerge(PersonalSecretService.layerLive),
   Layer.provideMerge(PersonalTaskService.layerLive),
+  Layer.provideMerge(PersonalGroupService.layerLive),
   Layer.provideMerge(PersonalBotsSeedLive),
   Layer.provideMerge(PersonalBotService.layer),
   Layer.provideMerge(PersonalBotRepository.layer),

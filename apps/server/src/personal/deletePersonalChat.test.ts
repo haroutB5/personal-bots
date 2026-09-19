@@ -1,5 +1,6 @@
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import { ThreadId } from "@t3tools/contracts";
 
@@ -7,6 +8,7 @@ import { deletePersonalChat, type PersonalChatDeleteServices } from "./deletePer
 
 const deleted = ThreadId.make("thread-deleted");
 const other = ThreadId.make("thread-other");
+const member = ThreadId.make("thread-group-member");
 
 /** Fakes that record, in order, every call the delete makes. */
 function makeServices() {
@@ -32,6 +34,10 @@ function makeServices() {
           ],
         }),
       cancel: ({ taskId }: { taskId: string }) => record(`cancel:${taskId}`),
+    },
+    groups: {
+      groupNameForMemberThread: (threadId: string) =>
+        Effect.succeed(threadId === member ? Option.some("Launch crew") : Option.none()),
     },
   } as unknown as PersonalChatDeleteServices;
   return { calls, services };
@@ -64,6 +70,20 @@ describe("deletePersonalChat", () => {
       yield* deletePersonalChat(failing, deleted);
 
       assert.deepEqual(calls, [`thread:${deleted}`]);
+    }),
+  );
+
+  // Test 15 of the Phase 1 plan: the member thread IS the bot's memory of the
+  // group, and the group's catch-up cursor points into it.
+  it.effect("refuses a chat that is a group member's thread, and cancels nothing", () =>
+    Effect.gen(function* () {
+      const { calls, services } = makeServices();
+
+      const error = yield* Effect.flip(deletePersonalChat(services, member));
+
+      expect(error.message).toContain("Launch crew");
+      expect(error.message).toContain("Remove the bot from the group");
+      assert.deepEqual(calls, []);
     }),
   );
 

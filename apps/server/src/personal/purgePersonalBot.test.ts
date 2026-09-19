@@ -73,6 +73,9 @@ function makeServices() {
         }),
       remove: ({ name }: { name: string }) => record(`secret:${name}`),
     },
+    groups: {
+      purgeBot: ({ botId }: { botId: string }) => record(`groups:${botId}`),
+    },
     engine: {
       dispatch: (command: { type: string; threadId: string }) =>
         command.threadId === "thread-gone"
@@ -94,11 +97,32 @@ describe("purgePersonalBot", () => {
         "cancel:task-running",
         "request:request-gone",
         "routine:routine-gone",
+        // Groups come BEFORE the thread delete: the membership cleanup writes
+        // a system row naming the bot and still needs its member thread.
+        `groups:${bot}`,
         "thread.delete:thread-gone",
         "memory:memory-gone",
         "secret:ONLY_GONE",
         `bot:${bot}`,
       ]);
+    }),
+  );
+
+  // Test 14 of the Phase 1 plan: a group survives losing a member, and the
+  // purge is not stopped by a group cleanup that fails.
+  it.effect("still deletes the bot when the group cleanup fails", () =>
+    Effect.gen(function* () {
+      const { calls, services } = makeServices();
+      const failing = {
+        ...services,
+        groups: { purgeBot: () => Effect.fail({ _tag: "GroupsDown" as const }) },
+      } as unknown as PersonalBotPurgeServices;
+
+      yield* purgePersonalBot(failing, bot);
+
+      assert.notInclude(calls, `groups:${bot}`);
+      assert.include(calls, "thread.delete:thread-gone");
+      assert.include(calls, `bot:${bot}`);
     }),
   );
 

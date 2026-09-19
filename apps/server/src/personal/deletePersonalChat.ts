@@ -1,14 +1,21 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
-import { PERSONAL_TASK_TERMINAL_STATUSES, type ThreadId } from "@t3tools/contracts";
+import {
+  PERSONAL_TASK_TERMINAL_STATUSES,
+  PersonalBotsError,
+  type ThreadId,
+} from "@t3tools/contracts";
 
+import type * as PersonalGroupService from "./groups/PersonalGroupService.ts";
 import type * as PersonalBotService from "./PersonalBotService.ts";
 import type * as PersonalTaskService from "./tasks/PersonalTaskService.ts";
 
 export interface PersonalChatDeleteServices {
   readonly bots: PersonalBotService.PersonalBotService["Service"];
   readonly tasks: PersonalTaskService.PersonalTaskService["Service"];
+  readonly groups: PersonalGroupService.PersonalGroupService["Service"];
 }
 
 /**
@@ -31,7 +38,18 @@ export const deletePersonalChat = Effect.fn("deletePersonalChat")(function* (
   services: PersonalChatDeleteServices,
   threadId: ThreadId,
 ) {
-  const { bots, tasks } = services;
+  const { bots, tasks, groups } = services;
+  // A member thread is the bot's whole memory of a group conversation, and the
+  // group's catch-up cursor points into it. Deleting it behind the group's back
+  // would leave a member that has "read" messages it can no longer see, so the
+  // only way out of a group is to remove the bot from it.
+  const memberOf = yield* groups.groupNameForMemberThread(threadId);
+  if (Option.isSome(memberOf)) {
+    return yield* new PersonalBotsError({
+      message: `This chat belongs to the group '${memberOf.value}'. Remove the bot from the group instead.`,
+    });
+  }
+
   const { tasks: all } = yield* tasks
     .list({})
     .pipe(Effect.orElseSucceed(() => ({ tasks: [] as const })));
