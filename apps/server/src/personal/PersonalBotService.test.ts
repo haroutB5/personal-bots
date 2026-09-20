@@ -386,3 +386,70 @@ it.effect("profile display name defaults to empty, trims on set, and rejects lon
     expect(tooLong.message).toContain("at most 80 characters");
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
+
+it.effect(
+  "custom teams persist empty, accept bots and leads, and can be removed when empty",
+  () => {
+    const context = makeContext();
+    return Effect.gen(function* () {
+      const service = yield* PersonalBotService.PersonalBotService;
+      yield* service.setProfile({ displayName: "Harout" });
+      yield* service.setProfile({ teamChange: { operation: "create", name: " Research " } });
+      yield* service.setProfile({ teamChange: { operation: "create", name: "research" } });
+      expect(yield* service.getProfile()).toEqual({
+        displayName: "Harout",
+        customTeams: ["Research"],
+      });
+      yield* service.setProfile({ displayName: "Ht" });
+      expect((yield* service.getProfile()).customTeams).toEqual(["Research"]);
+      const first = yield* service.create({
+        ...botInput("research-1"),
+        team: "Research",
+        lead: true,
+      });
+      const second = yield* service.create({
+        ...botInput("research-2"),
+        team: "Research",
+        lead: true,
+      });
+      expect(
+        (yield* service.list()).bots.filter((bot) => bot.lead).map((bot) => bot.botId),
+      ).toEqual([second.botId]);
+      const failure = yield* Effect.flip(
+        service.setProfile({ teamChange: { operation: "delete", name: "Research" } }),
+      );
+      expect(failure.message).toContain("Move the team's bots");
+      yield* service.update({ botId: first.botId, team: "assistant", lead: false });
+      yield* service.update({ botId: second.botId, team: "assistant", lead: false });
+      expect((yield* service.getProfile()).customTeams).toEqual(["Research"]);
+      yield* service.setProfile({ teamChange: { operation: "delete", name: "Research" } });
+      expect(yield* service.getProfile()).toEqual({ displayName: "Ht" });
+    }).pipe(Effect.provide(makeTestLayer(context)));
+  },
+);
+
+it.effect(
+  "team creation validates names and concurrent additions do not overwrite each other",
+  () => {
+    const context = makeContext();
+    return Effect.gen(function* () {
+      const service = yield* PersonalBotService.PersonalBotService;
+      for (const name of ["", " ", "x".repeat(61), "dev", "Dev team", "ASSISTANT'S TEAM"]) {
+        const failure = yield* Effect.flip(
+          service.setProfile({ teamChange: { operation: "create", name } }),
+        );
+        expect(failure.message.length).toBeGreaterThan(0);
+      }
+      yield* Effect.all(
+        ["Research", "Finance"].map((name) =>
+          service.setProfile({ teamChange: { operation: "create", name } }),
+        ),
+        { concurrency: "unbounded" },
+      );
+      expect((yield* service.getProfile()).customTeams?.toSorted()).toEqual([
+        "Finance",
+        "Research",
+      ]);
+    }).pipe(Effect.provide(makeTestLayer(context)));
+  },
+);

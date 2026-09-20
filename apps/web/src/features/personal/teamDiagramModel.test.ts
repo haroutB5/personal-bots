@@ -75,6 +75,28 @@ function task(overrides: Record<string, unknown>) {
 }
 
 describe("buildTeamGroups", () => {
+  it("keeps custom teams visible and usable as drop targets before and after assigning bots", () => {
+    const groups = buildTeamGroups(ROSTER, ["Research"]);
+    expect(groups.at(-1)).toEqual({
+      team: "Research",
+      label: "Research",
+      leadBotId: null,
+      memberBotIds: [],
+    });
+    const layout = buildTeamGroupsLayout(groups, LAYOUT);
+    const zone = buildTeamDropZones(layout, LAYOUT).find((zone) => zone.id === "band:Research")!;
+    expect(zone.rect.height).toBeGreaterThanOrEqual(44);
+    expect(
+      teamDropOutcome(
+        { botId: "planner", name: "Planner", team: "assistant" },
+        zone.target,
+        ROSTER.map((bot) => ({ ...bot, name: bot.botId })),
+      ),
+    ).toMatchObject({ kind: "update", update: { team: "Research", lead: false } });
+    expect(
+      buildTeamGroups([{ botId: "researcher", team: "Research", lead: true }], ["Research"]).at(-1),
+    ).toMatchObject({ label: "Research", leadBotId: "researcher" });
+  });
   it("splits the roster into two teams, each behind its lead", () => {
     expect(buildTeamGroups(ROSTER)).toEqual([
       {

@@ -84,6 +84,7 @@ import MigrationUpstream0052 from "./Migrations/052_ProjectionThreadTitleState.t
 import Migration0068 from "./Migrations/068_PersonalLoginSensitive.ts";
 import Migration0069 from "./Migrations/069_PersonalBotTeams.ts";
 import Migration0070 from "./Migrations/070_PersonalGroups.ts";
+import Migration0071 from "./Migrations/071_PersonalGroupVerdict.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -167,6 +168,7 @@ const migrationEntries = [
   [68, "PersonalLoginSensitive", Migration0068],
   [69, "PersonalBotTeams", Migration0069],
   [70, "PersonalGroups", Migration0070],
+  [71, "PersonalGroupVerdict", Migration0071],
   // Ids are contiguous. The migrator runs only ids above the latest applied
   // one, so every new migration (ours or upstream's) takes the next free id;
   // never deploy a gap. Upstream migrations keep their file name and are

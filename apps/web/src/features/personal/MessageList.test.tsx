@@ -45,6 +45,20 @@ vi.mock("~/session-logic", () => ({
   ],
 }));
 vi.mock("./ToolDetails", () => ({ ToolDetails: () => null }));
+vi.mock("./AttachmentPreview", () => ({
+  AttachmentPreview: ({
+    attachment,
+    onClose,
+  }: {
+    attachment: { name: string };
+    onClose: () => void;
+  }) => (
+    <div role="dialog">
+      {attachment.name}
+      <button onClick={onClose}>Close preview</button>
+    </div>
+  ),
+}));
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -145,7 +159,7 @@ function optionButton(label: string): ReactTestInstance {
   );
 }
 
-it("renders a missing image attachment as an inert placeholder", async () => {
+it("can reopen a saved image even while its thumbnail URL is unavailable", async () => {
   stubEnvironment();
   await act(async () => {
     renderer = create(
@@ -180,15 +194,10 @@ it("renders a missing image attachment as an inert placeholder", async () => {
   });
 
   expect(renderer!.root.findAllByType("img")).toEqual([]);
-  expect(
-    renderer!.root.findAll(
-      (node) =>
-        node.type === "span" &&
-        typeof node.props.className === "string" &&
-        node.props.className.includes("size-24") &&
-        node.props.className.includes("personal-fill-muted"),
-    ),
-  ).toHaveLength(1);
+  await act(async () => renderer!.root.findByProps({ "aria-label": "Open image" }).props.onClick());
+  expect(renderer!.root.findByProps({ role: "dialog" }).children).toContain("deleted.png");
+  await act(async () => optionButton("Close preview").props.onClick());
+  expect(renderer!.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
 });
 
 it("answers a single-select question with one tap, in this view", async () => {
@@ -356,13 +365,13 @@ it("says so when a question is closed elsewhere", async () => {
 
 it("shows a secret the bot asked for, and sends the typed value once", async () => {
   stubEnvironment();
-  const provided: Array<[string, string]> = [];
+  const provided: Array<[string, string, boolean]> = [];
   await act(async () => {
     renderer = create(
       <MessageList
         {...BASE_PROPS}
         items={[secretItem(PENDING_SECRET)]}
-        onProvideSecret={(requestId, value) => provided.push([requestId, value])}
+        onProvideSecret={(requestId, value, shared) => provided.push([requestId, value, shared])}
       />,
     );
   });
@@ -373,7 +382,7 @@ it("shows a secret the bot asked for, and sends the typed value once", async () 
     renderer!.root.findAll((node) => node.children.includes("Push the release tag.")),
   ).toHaveLength(1);
 
-  const input = renderer!.root.findByType("input");
+  const input = renderer!.root.findByProps({ type: "password" });
   // Never a plain text field, and never offered to the phone's autofill.
   expect(input.props.type).toBe("password");
   expect(input.props.autoComplete).toBe("off");
@@ -381,11 +390,14 @@ it("shows a secret the bot asked for, and sends the typed value once", async () 
   // Empty is not sendable: an empty value is an error the server would reject.
   expect(optionButton("Save secret").props.disabled).toBe(true);
   await act(async () => input.props.onChange({ target: { value: "ghp_live_value" } }));
+  await act(async () =>
+    renderer!.root.findByProps({ type: "checkbox" }).props.onChange({ target: { checked: true } }),
+  );
   await act(async () => optionButton("Save secret").props.onClick());
-  expect(provided).toEqual([["secret-1", "ghp_live_value"]]);
+  expect(provided).toEqual([["secret-1", "ghp_live_value", true]]);
 
   // The field is cleared before the send, so the value is nowhere in the tree.
-  expect(renderer!.root.findByType("input").props.value).toBe("");
+  expect(renderer!.root.findByProps({ type: "password" }).props.value).toBe("");
   expect(JSON.stringify(renderer!.toJSON())).not.toContain("ghp_live_value");
 });
 
@@ -452,7 +464,8 @@ it("locks the secret card while the value is in flight", async () => {
     );
   });
 
-  expect(renderer!.root.findByType("input").props.disabled).toBe(true);
+  expect(renderer!.root.findByProps({ type: "password" }).props.disabled).toBe(true);
+  expect(renderer!.root.findByProps({ type: "checkbox" }).props.disabled).toBe(true);
   expect(optionButton("Decline").props.disabled).toBe(true);
 });
 

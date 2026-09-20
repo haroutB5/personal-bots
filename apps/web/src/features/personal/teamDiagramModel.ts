@@ -1,8 +1,8 @@
 import {
   botTeam,
   isTeamLead,
-  PERSONAL_BOT_TEAM_LABELS,
-  PERSONAL_BOT_TEAM_ORDER,
+  personalBotTeamLabel,
+  personalBotTeams,
   PERSONAL_TASK_TERMINAL_STATUSES,
   type PersonalBotTeam,
   type PersonalTask,
@@ -71,8 +71,8 @@ export const RECENT_DELEGATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 const LABEL_SPACE = 48;
 
 /**
- * Groups the bots into their two teams, dev first, each with its lead pulled
- * out in front of the rest. A team nobody is on is not drawn at all.
+ * Groups bots under their leads. Registered custom teams remain available
+ * as drop targets when empty.
  */
 export function buildTeamGroups(
   bots: ReadonlyArray<{
@@ -80,15 +80,16 @@ export function buildTeamGroups(
     readonly team?: PersonalBotTeam;
     readonly lead?: boolean;
   }>,
+  customTeams: ReadonlyArray<PersonalBotTeam> = [],
 ): TeamGroup[] {
-  return PERSONAL_BOT_TEAM_ORDER.flatMap((team) => {
+  return personalBotTeams([...customTeams, ...bots.map(botTeam)]).flatMap((team) => {
     const members = bots.filter((bot) => botTeam(bot) === team);
-    if (members.length === 0) return [];
+    if (members.length === 0 && !customTeams.includes(team)) return [];
     const lead = members.find(isTeamLead) ?? null;
     return [
       {
         team,
-        label: PERSONAL_BOT_TEAM_LABELS[team],
+        label: personalBotTeamLabel(team),
         leadBotId: lead?.botId ?? null,
         memberBotIds: members.filter((bot) => bot.botId !== lead?.botId).map((bot) => bot.botId),
       },
@@ -584,7 +585,7 @@ export function buildTeamDropZones(
 
   for (const band of layout.bands) {
     const lead = band.leadBotId === null ? undefined : layout.bots.get(band.leadBotId);
-    const teamLabel = PERSONAL_BOT_TEAM_LABELS[band.team];
+    const teamLabel = personalBotTeamLabel(band.team);
     if (lead !== undefined) {
       const left = lead.x + leadRadius + LEAD_ZONE_GAP;
       const width = Math.min(LEAD_ZONE_WIDTH, Math.max(0, options.width - LEAD_ZONE_GAP - left));
@@ -672,7 +673,7 @@ export function teamDropOutcome(
 ): TeamDropOutcome {
   const from = botTeam(bot);
   const to = target.team;
-  const toLabel = PERSONAL_BOT_TEAM_LABELS[to];
+  const toLabel = personalBotTeamLabel(to);
   const leaving = from !== to;
 
   if (leaving && isTeamLead(bot)) {
@@ -680,7 +681,7 @@ export function teamDropOutcome(
     if (staying.length > 0) {
       return {
         kind: "blocked",
-        message: `${bot.name} leads the ${PERSONAL_BOT_TEAM_LABELS[from]}. Make someone else the lead there first, then move ${bot.name}.`,
+        message: `${bot.name} leads the ${personalBotTeamLabel(from)}. Make someone else the lead there first, then move ${bot.name}.`,
       };
     }
   }

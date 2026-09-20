@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Semaphore from "effect/Semaphore";
 
 import {
   PERSONAL_SECRET_MAX_VALUE_BYTES,
@@ -18,6 +19,7 @@ import {
   type PersonalSecretsListPendingResult,
   type PersonalSecretsListResult,
   type PersonalSecretSummary,
+  type PersonalSecretSharingInput,
   type PersonalTask,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -91,6 +93,9 @@ export class PersonalSecretService extends Context.Service<
       readonly requestId: PersonalSecretRequestId;
     }) => Effect.Effect<PersonalSecretRequest, PersonalSecretsError>;
     readonly list: () => Effect.Effect<PersonalSecretsListResult, PersonalSecretsError>;
+    readonly setSharing: (
+      input: PersonalSecretSharingInput,
+    ) => Effect.Effect<PersonalSecretsListResult, PersonalSecretsError>;
     readonly remove: (input: {
       readonly name: string;
     }) => Effect.Effect<{ readonly deleted: boolean }, PersonalSecretsError>;
@@ -102,6 +107,7 @@ export const make = Effect.gen(function* () {
   const repository = yield* PersonalSecretRepository.PersonalSecretRepository;
   const store = yield* ServerSecretStore.ServerSecretStore;
   const tasks = yield* PersonalTaskService.PersonalTaskService;
+  const mutationLock = yield* Semaphore.make(1);
 
   // Causes are kept for server-side diagnostics; none of them can hold a
   // value (store errors carry the key and a platform error, SQL never sees it).
@@ -329,6 +335,7 @@ export const make = Effect.gen(function* () {
       keys.add(
         personalSecretStoreKey({ name: entry.name, botId: entry.botId, shared: entry.shared }),
       );
+      keys.add(personalSecretStoreKey({ name: entry.name, botId: entry.botId, shared: false }));
     }
     let stored = false;
     for (const key of keys) {
@@ -345,13 +352,61 @@ export const make = Effect.gen(function* () {
     return { deleted: stored || rows > 0 };
   });
 
+  const setSharing = Effect.fn("PersonalSecretService.setSharing")(function* (
+    input: PersonalSecretSharingInput,
+  ) {
+    const rows = (yield* db("lookup", repository.listByStatus("fulfilled"))).filter(
+      (row) => row.name === input.name,
+    );
+    if (rows.length === 0) return yield* fail("Saved secret not found.");
+    if (rows.every((row) => row.shared === input.shared)) return yield* list();
+    const values = yield* Effect.forEach(rows, (row) => getStored(row));
+    if (values.some(Option.isNone))
+      return yield* fail("A saved key could not be read. Save it again before changing access.");
+    const bytes = Option.getOrThrow(values[0]!);
+    if (
+      input.shared &&
+      values.some((value) => {
+        const candidate = Option.getOrThrow(value);
+        return (
+          candidate.length !== bytes.length ||
+          candidate.some((byte, index) => byte !== bytes[index])
+        );
+      })
+    )
+      return yield* fail(
+        "Bots have different values for this key. Remove it and save the intended shared key before enabling access for all bots.",
+      );
+    // Copy first, then change access metadata. Secret bytes never enter SQL or responses.
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index]!;
+      yield* store
+        .set(
+          personalSecretStoreKey({ name: row.name, botId: row.botId, shared: input.shared }),
+          Option.getOrThrow(values[index]!),
+        )
+        .pipe(Effect.mapError((cause) => fail("Could not update the secret store.", cause)));
+    }
+    yield* db("sharing", repository.setSharing(input.name, input.shared));
+    if (!input.shared)
+      yield* store
+        .remove(personalSecretStoreKey(input.name))
+        .pipe(
+          Effect.mapError((cause) =>
+            fail("Access changed, but the old shared copy could not be removed.", cause),
+          ),
+        );
+    return yield* list();
+  });
+
   return {
     request,
     listPending,
-    fulfill,
+    fulfill: (input) => mutationLock.withPermit(fulfill(input)),
     cancel,
     list,
-    remove,
+    remove: (input) => mutationLock.withPermit(remove(input)),
+    setSharing: (input) => mutationLock.withPermit(setSharing(input)),
   } satisfies PersonalSecretService["Service"];
 });
 

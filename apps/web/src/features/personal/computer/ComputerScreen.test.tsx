@@ -9,7 +9,7 @@ import {
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { ComputerBrowserPane, ComputerScreen } from "./ComputerScreen";
+import { addressBarValue, ComputerBrowserPane, ComputerScreen } from "./ComputerScreen";
 
 const state = vi.hoisted(() => ({
   takeControl: vi.fn(async () => ({ _tag: "Success", value: undefined })),
@@ -47,6 +47,7 @@ vi.mock("./computerState", () => ({
   viewportStreamUrl: () => "",
 }));
 vi.mock("~/confirmDialog", () => ({ requestConfirmDialog: vi.fn(async () => true) }));
+vi.mock("../overlayInert", () => ({ inertOutside: vi.fn(() => vi.fn()) }));
 vi.mock("~/state/entities", () => ({ useThreadShells: () => [] }));
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: () => ({ data: null, error: null, refresh: vi.fn() }),
@@ -139,6 +140,22 @@ const IN_CONTROL: PersonalBrowserStatus = {
   ...STATUS,
   controller: { _tag: "Human", self: true, connected: true },
 };
+
+describe("address bar after a failed navigation", () => {
+  const errored = (url: string): PersonalBrowserStatus["page"] => ({
+    url,
+    title: "example.com",
+  });
+
+  it("offers nothing back when Chrome is on its own error page", () => {
+    // Submitting the seeded value used to send `chrome-error://chromewebdata/`,
+    // which the server rejects as an unsupported protocol.
+    expect(addressBarValue(errored("chrome-error://chromewebdata/"))).toBe("");
+    expect(addressBarValue(errored("about:blank"))).toBe("");
+    expect(addressBarValue(null)).toBe("");
+    expect(addressBarValue(errored("https://example.com/"))).toBe("https://example.com/");
+  });
+});
 
 /** Stand-in for the offscreen field; react-test-renderer has no real DOM. */
 function makeField() {
@@ -311,5 +328,52 @@ describe("ComputerScreen back to chat", () => {
     const onBackToChat = vi.fn();
     await tapBack(onBackToChat);
     expect(onBackToChat).toHaveBeenCalledWith(null);
+  });
+});
+
+describe("ComputerScreen full screen", () => {
+  it("expands the browser over the app and exits without navigating away", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const listeners = new Map<
+      string,
+      (event: { key?: string; preventDefault: () => void }) => void
+    >();
+    vi.stubGlobal("document", {
+      visibilityState: "visible",
+      body: { style: { overflow: "" } },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(
+        (name: string, listener: typeof listeners extends Map<string, infer V> ? V : never) =>
+          listeners.set(name, listener),
+      ),
+      removeEventListener: vi.fn((name: string) => listeners.delete(name)),
+    });
+    feedState.status = STATUS;
+    const onBackToChat = vi.fn();
+    await act(async () => {
+      renderer = create(<ComputerScreen onBackToChat={onBackToChat} />, {
+        createNodeMock: () => ({ focus: vi.fn(), parentElement: null }),
+      });
+    });
+    const expand = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.props["aria-label"] === "Open browser full screen");
+    expect(expand).toBeDefined();
+    await act(async () => expand!.props.onClick());
+    expect(renderer!.root.findByProps({ "aria-label": "Computer full screen" }).props.role).toBe(
+      "dialog",
+    );
+    expect(document.body.style.overflow).toBe("hidden");
+
+    const exit = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.props["aria-label"] === "Exit full screen");
+    expect(exit).toBeDefined();
+    await act(async () => exit!.props.onClick());
+    expect(onBackToChat).not.toHaveBeenCalled();
+    expect(document.body.style.overflow).toBe("");
   });
 });

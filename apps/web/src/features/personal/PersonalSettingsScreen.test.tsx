@@ -35,6 +35,10 @@ vi.mock("./usePersonalBots", () => ({
   usePersonalProfile: () => ({ data: { displayName: "Harout" } }),
 }));
 vi.mock("./appVersion", () => ({ useAppVersion: () => state.versionInfo }));
+vi.mock("./useSecretRequests", () => ({
+  personalSecretSetSharing: {},
+  useSavedSecrets: () => ({ data: { secrets: [] }, error: null }),
+}));
 
 let renderer: ReactTestRenderer | undefined;
 

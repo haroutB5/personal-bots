@@ -456,6 +456,23 @@ describe("bots toolkit handlers", () => {
     ),
   );
 
+  it.effect("custom teams preserve delegation boundaries and display their name", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const bots = yield* PersonalBotService.PersonalBotService;
+        yield* bots.update({ botId: botId("developer"), team: "Research" });
+        const listed = yield* call("list_bots", {});
+        expect(listed.bots.map((bot) => bot.name)).not.toContain("Developer");
+        const error = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Investigate.",
+        }).pipe(Effect.flip);
+        expect(error.message).toContain("Research");
+      }),
+    ),
+  );
+
   it.effect("delegate_task crosses teams when the owner's latest message names the bot", () =>
     withHarness((harness) =>
       Effect.gen(function* () {

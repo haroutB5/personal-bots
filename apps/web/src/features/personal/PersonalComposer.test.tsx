@@ -6,6 +6,21 @@ import type { AttachmentUploadState } from "~/lib/attachmentUploadState";
 import type { Thread } from "~/types";
 import { PersonalComposer } from "./PersonalComposer";
 
+vi.mock("./AttachmentPreview", () => ({
+  AttachmentPreview: ({
+    attachment,
+    onClose,
+  }: {
+    attachment: { name: string };
+    onClose: () => void;
+  }) => (
+    <div role="dialog">
+      {attachment.name}
+      <button onClick={onClose}>Close preview</button>
+    </div>
+  ),
+}));
+
 const state = vi.hoisted(() => ({
   draft: {
     prompt: "Send this",
@@ -105,6 +120,23 @@ afterEach(async () => {
 });
 
 describe("personal composer sends", () => {
+  it("opens and closes a draft attachment without sending or removing the draft", async () => {
+    await act(async () =>
+      renderer.root.findByProps({ "aria-label": "Open notes.txt" }).props.onClick(),
+    );
+    expect(renderer.root.findByProps({ role: "dialog" }).children).toContain("notes.txt");
+    await act(async () =>
+      renderer.root
+        .findAllByType("button")
+        .find((button) => button.children.includes("Close preview"))!
+        .props.onClick(),
+    );
+    expect(renderer.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
+    expect(state.draft.prompt).toBe("Send this");
+    expect(state.draft.files).toHaveLength(1);
+    expect(state.start).not.toHaveBeenCalled();
+    expect(state.release).not.toHaveBeenCalled();
+  });
   it("retains text and attachments when the server keeps rejecting a message", async () => {
     vi.useFakeTimers();
     state.start.mockResolvedValue({ _tag: "Failure" });

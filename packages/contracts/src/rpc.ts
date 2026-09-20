@@ -310,6 +310,7 @@ import {
 import {
   PersonalSecretFulfillInput,
   PersonalSecretNameInput,
+  PersonalSecretSharingInput,
   PersonalSecretRequest,
   PersonalSecretRequestIdInput,
   PersonalSecretsError,
@@ -558,6 +559,7 @@ export const WS_METHODS = {
   personalSecretsCancel: "personalSecrets.cancel",
   personalSecretsList: "personalSecrets.list",
   personalSecretsDelete: "personalSecrets.delete",
+  personalSecretsSetSharing: "personalSecrets.setSharing",
 
   // Personal saved logins (passwords are write-only and never appear in results)
   personalLoginsList: "personalLogins.list",
@@ -1290,6 +1292,12 @@ const WsPersonalSecretsListRpc = Rpc.make(WS_METHODS.personalSecretsList, {
 const WsPersonalSecretsDeleteRpc = Rpc.make(WS_METHODS.personalSecretsDelete, {
   payload: PersonalSecretNameInput,
   success: Schema.Struct({ deleted: Schema.Boolean }),
+  error: PersonalSecretsRpcError,
+});
+
+const WsPersonalSecretsSetSharingRpc = Rpc.make(WS_METHODS.personalSecretsSetSharing, {
+  payload: PersonalSecretSharingInput,
+  success: PersonalSecretsListResult,
   error: PersonalSecretsRpcError,
 });
 
@@ -2099,6 +2107,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalSecretsCancelRpc,
   WsPersonalSecretsListRpc,
   WsPersonalSecretsDeleteRpc,
+  WsPersonalSecretsSetSharingRpc,
   WsPersonalLoginsListRpc,
   WsPersonalLoginsCreateRpc,
   WsPersonalLoginsUpdateRpc,

@@ -7,6 +7,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Semaphore from "effect/Semaphore";
+import * as Schema from "effect/Schema";
 
 import {
   botTeam,
@@ -15,9 +17,11 @@ import {
   driverCarriesBotInstructions,
   isProviderAvailable,
   PersonalBotId,
-  type PersonalBotTeam,
+  PersonalBotTeam,
   PersonalBotsError,
   PersonalBotThread,
+  PERSONAL_BOT_TEAM_ORDER,
+  personalBotTeamLabel,
   ProjectId,
   ProviderDriverKind,
   ThreadId,
@@ -27,6 +31,7 @@ import {
   type PersonalBotUpdateInput,
   type PersonalFile,
   type PersonalProfile,
+  type PersonalProfileSetInput,
   type ServerProvider,
 } from "@t3tools/contracts";
 
@@ -45,6 +50,10 @@ import { PERSONAL_THREAD_TITLE } from "./personalThreadTitles.ts";
 const PERSONAL_META_SEEDED = "seeded";
 const PERSONAL_META_PROJECT_ID = "personalProjectId";
 const PERSONAL_META_DISPLAY_NAME = "displayName";
+const decodeCustomTeams = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Array(PersonalBotTeam)),
+);
+const encodeCustomTeams = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(PersonalBotTeam)));
 const PERSONAL_PROFILE_DISPLAY_NAME_MAX_LENGTH = 80;
 const PERSONAL_WORKSPACE_DIRNAME = "personal-workspace";
 const PERSONAL_PROJECT_TITLE = "Personal";
@@ -169,9 +178,9 @@ export class PersonalBotService extends Context.Service<
       readonly threadId: ThreadId;
     }) => Effect.Effect<void, PersonalBotsError>;
     readonly getProfile: () => Effect.Effect<PersonalProfile, PersonalBotsError>;
-    readonly setProfile: (input: {
-      readonly displayName: string;
-    }) => Effect.Effect<PersonalProfile, PersonalBotsError>;
+    readonly setProfile: (
+      input: PersonalProfileSetInput,
+    ) => Effect.Effect<PersonalProfile, PersonalBotsError>;
     readonly seedDefaultsIfNeeded: Effect.Effect<ReadonlyArray<PersonalBot>, PersonalBotsError>;
     /** Attachments from live bots' threads that still exist on disk, newest first. */
     readonly listFiles: () => Effect.Effect<ReadonlyArray<PersonalFileRecord>, PersonalBotsError>;
@@ -192,6 +201,7 @@ export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const randomUuid = () => Effect.sync(() => NodeCrypto.randomUUID());
+  const profileLock = yield* Semaphore.make(1);
 
   const repositoryError = (operation: string) => (cause: unknown) =>
     new PersonalBotsError({ message: `Personal bots ${operation} failed.`, cause });
@@ -587,24 +597,63 @@ export const make = Effect.gen(function* () {
   // The Chats greeting name. Unset (no row yet) reads back as "" so the
   // client can omit the name instead of inventing one.
   const getProfile: PersonalBotService["Service"]["getProfile"] = () =>
-    repository.getMeta({ key: PERSONAL_META_DISPLAY_NAME }).pipe(
-      Effect.mapError(repositoryError("profile lookup")),
-      Effect.map((stored) => ({ displayName: Option.getOrElse(stored, () => "") })),
-    );
+    Effect.gen(function* () {
+      const stored = yield* repository.getMeta({ key: PERSONAL_META_DISPLAY_NAME });
+      const teams = yield* repository.getMeta({ key: "customTeams" });
+      const customTeams = Option.isSome(teams) ? yield* decodeCustomTeams(teams.value) : [];
+      return {
+        displayName: Option.getOrElse(stored, () => ""),
+        ...(customTeams.length > 0 ? { customTeams } : {}),
+      };
+    }).pipe(Effect.mapError(repositoryError("profile lookup")));
 
   const setProfile: PersonalBotService["Service"]["setProfile"] = (input) =>
     Effect.gen(function* () {
-      const displayName = input.displayName.trim();
+      const profile = yield* getProfile();
+      const displayName = input.displayName?.trim() ?? profile.displayName;
       if (displayName.length > PERSONAL_PROFILE_DISPLAY_NAME_MAX_LENGTH) {
         return yield* notFound(
           `Personal profile display name must be at most ${PERSONAL_PROFILE_DISPLAY_NAME_MAX_LENGTH} characters.`,
         );
       }
+      if (input.teamChange !== undefined) {
+        const name = input.teamChange.name.trim();
+        if (name.length === 0 || name.length > 60) {
+          return yield* notFound("Team names must be between 1 and 60 characters.");
+        }
+        const customTeams = [...(profile.customTeams ?? [])];
+        const key = name.toLowerCase();
+        if (
+          PERSONAL_BOT_TEAM_ORDER.some(
+            (team) => team === key || personalBotTeamLabel(team).toLowerCase() === key,
+          )
+        ) {
+          return yield* notFound("The built-in teams already exist and cannot be removed.");
+        }
+        const existing = customTeams.find((team) => team.toLowerCase() === key);
+        if (input.teamChange.operation === "create") {
+          if (existing === undefined) customTeams.push(name);
+        } else {
+          const bots = yield* repository
+            .listBots()
+            .pipe(Effect.mapError(repositoryError("team lookup")));
+          if (bots.some((bot) => botTeam(bot) === (existing ?? name))) {
+            return yield* notFound("Move the team's bots to another team before removing it.");
+          }
+          if (existing !== undefined) customTeams.splice(customTeams.indexOf(existing), 1);
+        }
+        const value = yield* encodeCustomTeams(customTeams).pipe(
+          Effect.mapError(repositoryError("team encoding")),
+        );
+        yield* repository
+          .setMeta({ key: "customTeams", value })
+          .pipe(Effect.mapError(repositoryError("team update")));
+      }
       yield* repository
         .setMeta({ key: PERSONAL_META_DISPLAY_NAME, value: displayName })
         .pipe(Effect.mapError(repositoryError("profile update")));
-      return { displayName };
-    });
+      return yield* getProfile();
+    }).pipe(profileLock.withPermits(1));
 
   const listFiles: PersonalBotService["Service"]["listFiles"] = () =>
     Effect.gen(function* () {

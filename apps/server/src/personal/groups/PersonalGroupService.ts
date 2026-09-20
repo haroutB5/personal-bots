@@ -618,6 +618,7 @@ export const make = Effect.gen(function* () {
     group: GroupRecord,
     round: RoundRecord,
     botId: PersonalBotId,
+    finalVerdict = false,
   ) {
     const rest = round.queue.slice(1);
     const members = yield* repository.listMembers(group.groupId);
@@ -626,7 +627,7 @@ export const make = Effect.gen(function* () {
     const bot = all.find((entry) => entry.botId === botId);
     if (member === undefined || bot === undefined) {
       // The member left, or its bot was deleted, between queueing and now.
-      yield* writeRound(round, { queue: rest });
+      yield* writeRound(round, { queue: rest, ...(finalVerdict ? { verdictBotId: null } : {}) });
       return false;
     }
     const now = yield* DateTime.now;
@@ -641,10 +642,11 @@ export const make = Effect.gen(function* () {
     // be shown its own pending reply, whose seq is by construction the highest.
     const pending = yield* repository.listMessagesAfter({
       groupId: group.groupId,
-      afterSeq: member.deliveredSeq,
+      afterSeq: finalVerdict ? 0 : member.deliveredSeq,
     });
     const catchUp: Array<GroupCatchUpMessage> = [];
     for (const entry of pending) {
+      if (finalVerdict && entry.roundId !== round.roundId) continue;
       const text = yield* readMessageText(entry.messageId);
       if (text.length === 0) continue;
       catchUp.push({
@@ -663,7 +665,9 @@ export const make = Effect.gen(function* () {
     yield* repository.writeMember({ ...member, threadId, deliveredSeq: latestSeq });
 
     const turn = round.spoken.length + 1;
-    const replyId = replyMessageId(round.roundId, turn);
+    const replyId = finalVerdict
+      ? MessageId.make(`${replyMessageId(round.roundId, turn)}-verdict`)
+      : replyMessageId(round.roundId, turn);
     const reserved = yield* repository.insertMessage({
       groupId: group.groupId,
       messageId: replyId,
@@ -674,16 +678,40 @@ export const make = Effect.gen(function* () {
     });
 
     const brief = buildCatchUpBrief({
+      ...(finalVerdict
+        ? { phase: "verdict" as const }
+        : round.verdictBotId
+          ? { phase: "discussion" as const }
+          : {}),
+      ...(finalVerdict ? { userRequest: yield* readMessageText(round.triggerMessageId) } : {}),
       groupName: group.name,
       speakerName: bot.name,
       otherNames: members
         .filter((entry) => entry.botId !== botId)
         .map((entry) => botName(all, entry.botId)),
-      messages: catchUp,
+      messages: finalVerdict
+        ? catchUp.map((entry) => {
+            // Preserve a share of every contribution instead of truncating
+            // whole early speakers out of the final synthesis.
+            const limit = Math.max(
+              100,
+              Math.floor(PERSONAL_GROUP_CATCHUP_MAX_CHARS / Math.max(1, catchUp.length)) -
+                entry.speaker.length -
+                80,
+            );
+            return entry.text.length <= limit
+              ? entry
+              : {
+                  ...entry,
+                  text: `${entry.text.slice(0, limit)}\n[Contribution truncated; verify missing details before concluding.]`,
+                };
+          })
+        : catchUp,
       maxChars: PERSONAL_GROUP_CATCHUP_MAX_CHARS,
     });
 
     const started = yield* writeRound(round, {
+      ...(finalVerdict ? { verdictBotId: null } : {}),
       queue: rest,
       spoken: [...round.spoken, botId],
       budgetRemaining: Math.max(0, round.budgetRemaining - 1),
@@ -812,6 +840,22 @@ export const make = Effect.gen(function* () {
           });
           continue;
         case "completed":
+          if (round.verdictBotId) {
+            const members = yield* repository.listMembers(group.groupId);
+            const selected =
+              members.find((member) => member.botId === round.verdictBotId) ?? members[0];
+            if (selected && round.spoken.length > 0) {
+              // The synthesis is one reserved turn after the bounded discussion.
+              const started = yield* startMemberTurn(
+                group,
+                { ...round, queue: [selected.botId] },
+                selected.botId,
+                true,
+              );
+              if (started) return;
+              continue;
+            }
+          }
           yield* endRound(group, round, "completed", null);
           continue;
         case "ping-pong": {
@@ -939,10 +983,24 @@ export const make = Effect.gen(function* () {
                 seq: reserved.value.seq,
                 roundId: round.roundId,
                 speaker: { kind: "bot", botId, name },
+                ...(messageId.endsWith("-verdict")
+                  ? { phase: "verdict" as const }
+                  : round.verdictBotId
+                    ? { phase: "discussion" as const }
+                    : {}),
               },
       });
     }
     yield* relayComplete({ group, messageId });
+
+    if (messageId.endsWith("-verdict")) {
+      yield* writeRound(round, { ...clearActive, queue: [] });
+      return;
+    }
+    if (round.verdictBotId) {
+      yield* writeRound(round, clearActive);
+      return;
+    }
 
     const members = yield* repository.listMembers(group.groupId);
     const mentioned = parseMentions(
@@ -973,6 +1031,15 @@ export const make = Effect.gen(function* () {
   ) {
     const botId = round.activeBotId;
     if (botId === null) {
+      return;
+    }
+    if (round.activeMessageId?.endsWith("-verdict")) {
+      yield* interruptActiveTurn(round, "verdict-throttled");
+      yield* abandonActive(group, round);
+      yield* endRound(group, round, "interrupted", {
+        event: "round-interrupted",
+        text: "The final verdict could not finish because its bot was rate limited. The contributions are still available; send a follow-up to try again.",
+      });
       return;
     }
     const key = `${round.roundId}:${botId}`;
@@ -1151,6 +1218,11 @@ export const make = Effect.gen(function* () {
                 botId: round.activeBotId,
                 name: botName(all, round.activeBotId),
               },
+              ...(round.activeMessageId.endsWith("-verdict")
+                ? { phase: "verdict" as const }
+                : round.verdictBotId
+                  ? { phase: "discussion" as const }
+                  : {}),
             },
     });
     yield* writeRound(round, { relayedChars: round.relayedChars + delta.length });
@@ -1619,11 +1691,21 @@ export const make = Effect.gen(function* () {
             members.some((member) => member.botId === botId),
           );
           const coordinator = members.find((member) => member.role === "coordinator");
-          const queue = addressed.length > 0 ? addressed : [(coordinator ?? members[0]!).botId];
+          const firstSpeaker = (coordinator ?? members[0]!).botId;
+          const discussionOrder = [
+            firstSpeaker,
+            ...members
+              .filter((member) => member.botId !== firstSpeaker)
+              .map((member) => member.botId),
+          ];
+          // One contribution per member, then one reserved synthesis turn.
+          // Explicit mentions retain their targeted conversation behavior.
+          const queue = addressed.length > 0 ? addressed : discussionOrder;
           const round: RoundRecord = {
             roundId,
             groupId: group.groupId,
             triggerMessageId: input.messageId,
+            verdictBotId: addressed.length === 0 && members.length > 1 ? firstSpeaker : null,
             status: "running",
             budgetRemaining: group.maxBotTurns,
             queue,

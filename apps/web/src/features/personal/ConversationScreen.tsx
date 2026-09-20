@@ -515,7 +515,7 @@ export function ConversationScreen({
   // Providing a secret. The value is passed straight through to the RPC as a
   // Redacted payload and is never held here, logged, or put in any store: the
   // only copy on this device was the card's own input, already cleared.
-  const onProvideSecret = async (requestId: string, value: string) => {
+  const onProvideSecret = async (requestId: string, value: string, shared: boolean) => {
     if (environmentId === null) return;
     setRespondingIds((current) => new Set(current).add(requestId));
     const result = await fulfillSecret({
@@ -523,6 +523,7 @@ export function ConversationScreen({
       input: {
         requestId: PersonalSecretRequestId.make(requestId),
         value: Redacted.make(value),
+        shared,
       },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -781,7 +782,9 @@ export function ConversationScreen({
             }
             onAnswerQuestion={(requestId, answers) => void onAnswerQuestion(requestId, answers)}
             onDismissQuestion={(requestId) => void onDismissQuestion(requestId)}
-            onProvideSecret={(requestId, value) => void onProvideSecret(requestId, value)}
+            onProvideSecret={(requestId, value, shared) =>
+              void onProvideSecret(requestId, value, shared)
+            }
             onDeclineSecret={(requestId) => void onDeclineSecret(requestId)}
             errorText={actionError ?? retryNotice ?? sessionErrorInfo?.message ?? null}
             errorDetail={actionError === null ? (sessionErrorInfo?.detail ?? null) : null}

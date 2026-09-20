@@ -539,26 +539,109 @@ it.effect("a seventh member is refused, at create and at addMember", () => {
 // 3. default-speaker routing
 // ---------------------------------------------------------------------------
 
-it.effect("a message with no mentions goes to the first member alone", () => {
+it.effect("a broadcast gathers contributions then delivers exactly one final verdict", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
     yield* seedBots;
     yield* makeGroup(["assistant", "dev", "planner"]);
-    const round = yield* send("what do we do about the release?");
+    const round = yield* send("what do we do about the release?", "msg-release");
+    expect(groupTranscript(harness).find((message) => message.role === "user")?.text).toBe(
+      "what do we do about the release?",
+    );
 
-    expect(round.queue).toEqual([botId("assistant")]);
+    const order = [botId("assistant"), botId("dev"), botId("planner")];
+    expect(round.queue).toEqual(order);
     const live = yield* currentRound;
     expect(live.activeBotId).toBe(botId("assistant"));
     expect(turnStarts(harness).length).toBe(1);
-    // Only the addressee's chat exists; the silent members cost nothing.
-    const bots = yield* PersonalBotService.PersonalBotService;
-    expect((yield* bots.list()).threads.map((link) => link.botId)).toEqual([botId("assistant")]);
+    yield* speak(harness, "I suggest shipping Friday.");
+    expect((yield* currentRound).activeBotId).toBe(botId("dev"));
+    expect(turnStarts(harness).at(-1)!.message.text).toContain(
+      "Assistant: I suggest shipping Friday.",
+    );
+    yield* speak(harness, "We need another day for testing.");
+    yield* speak(harness, "Monday gives us time to test.");
+    expect((yield* currentRound).activeBotId).toBe(botId("assistant"));
+    const followUp = turnStarts(harness).at(-1)!.message.text;
+    expect(followUp).toContain("Dev: We need another day for testing.");
+    expect(followUp).toContain("Planner: Monday gives us time to test.");
+    expect(followUp).toContain("ONE final verdict");
+    expect(followUp).toContain("what do we do about the release?");
+    yield* speak(harness, "Agreed, Monday is safer.");
+    expect((yield* currentRound).status).toBe("completed");
+    expect((yield* currentRound).spoken).toEqual([...order, order[0]]);
+    expect(turnStarts(harness)).toHaveLength(4);
+    const phases = groupTranscript(harness)
+      .flatMap((message) => message.context?.records ?? [])
+      .filter((record) => record.kind === "personal-group")
+      .map((record) =>
+        "payload" in record ? (record.payload as { phase?: string }).phase : undefined,
+      );
+    expect(phases.filter((phase) => phase === "discussion")).toHaveLength(3);
+    expect(phases.filter((phase) => phase === "verdict")).toHaveLength(1);
+    yield* send("What should we do next?", "msg-next");
+    expect((yield* currentRound).activeBotId).toBe(botId("assistant"));
+    expect((yield* currentRound).queue).toEqual(order.slice(1));
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
 // ---------------------------------------------------------------------------
 // 4. serial multi-mention
 // ---------------------------------------------------------------------------
+
+it.effect("automatic discussion stays bounded even when members mention each other", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"]);
+    yield* send("Discuss the release");
+    yield* speak(harness, "Friday? @Dev");
+    yield* speak(harness, "Monday. @Assistant");
+    yield* speak(harness, "Agreed. @Dev");
+    expect((yield* currentRound).status).toBe("completed");
+    expect(turnStarts(harness)).toHaveLength(3);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("automatic discussion preserves pending members across a budget pause", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    yield* makeGroup(["assistant", "dev", "planner"], 2);
+    yield* send("Discuss the release");
+    yield* speak(harness, "Friday.");
+    yield* speak(harness, "Monday.");
+    expect((yield* currentRound).status).toBe("paused_budget");
+    expect((yield* currentRound).queue).toEqual([botId("planner")]);
+    yield* service.continueRound({ groupId: GROUP });
+    yield* service.drain;
+    expect((yield* currentRound).activeBotId).toBe(botId("planner"));
+    expect(turnStarts(harness).at(-1)!.message.text).toContain("Dev: Monday.");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a failed final verdict does not restart the discussion", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"]);
+    yield* send("Compare the options", "msg-options");
+    yield* speak(harness, "Option A is faster.");
+    yield* speak(harness, "Option B costs less.");
+    const final = yield* currentRound;
+    expect(final.activeMessageId).toContain("-verdict");
+    const turnId = yield* beginTurn(harness, final.activeThreadId!);
+    yield* endTurn(harness, final.activeThreadId!, turnId, "", {
+      status: "error",
+      lastError: "Rate limited",
+      providerRetry: providerWait(yield* DateTime.now, 60_000),
+    });
+    expect((yield* currentRound).status).toBe("interrupted");
+    expect(turnStarts(harness)).toHaveLength(3);
+    expect(groupTranscript(harness).at(-1)?.text).toContain("final verdict could not finish");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
 
 it.effect("two mentions speak one at a time, in mention order", () => {
   const harness = makeHarness();
@@ -594,7 +677,7 @@ it.effect("a reply mentioning another member queues it and spends one bot turn",
   return Effect.gen(function* () {
     yield* seedBots;
     yield* makeGroup(["assistant", "dev"], 6);
-    yield* send("plan the release");
+    yield* send("@Assistant plan the release");
     expect((yield* currentRound).budgetRemaining).toBe(5);
 
     yield* speak(harness, "I think @Dev should own the build.");

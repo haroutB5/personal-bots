@@ -36,6 +36,7 @@ import { ProjectionThreadMessageRepositoryLive } from "../persistence/Layers/Pro
 import { BotsToolkitHandlersLive } from "./toolkits/bots/handlers.ts";
 import { BotsToolkit } from "./toolkits/bots/tools.ts";
 import { PersonalToolkitHandlersLive } from "./toolkits/personal/handlers.ts";
+import * as PersonalSessionAccess from "../personal/secrets/PersonalSessionAccess.ts";
 import { PersonalToolkit } from "./toolkits/personal/tools.ts";
 import {
   DeviceScreenshotToolkitHandlersLive,
@@ -640,6 +641,7 @@ export const BotsToolkitRegistrationLive = McpServer.toolkit(BotsToolkit).pipe(
 
 export const PersonalToolkitRegistrationLive = McpServer.toolkit(PersonalToolkit).pipe(
   Layer.provide(PersonalToolkitHandlersLive),
+  Layer.provide(PersonalSessionAccess.layerLive),
 );
 
 const DeviceStandardToolkitRegistrationLive = McpServer.toolkit(DeviceStandardToolkit).pipe(

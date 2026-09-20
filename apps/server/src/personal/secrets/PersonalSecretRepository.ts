@@ -80,6 +80,10 @@ export class PersonalSecretRepository extends Context.Service<
     readonly deleteFulfilledByName: (
       name: string,
     ) => Effect.Effect<number, PersonalSecretRepositoryError>;
+    readonly setSharing: (
+      name: string,
+      shared: boolean,
+    ) => Effect.Effect<void, PersonalSecretRepositoryError>;
   }
 >()("t3/personal/secrets/PersonalSecretRepository") {}
 
@@ -192,6 +196,14 @@ export const make = Effect.gen(function* () {
     ).pipe(Effect.map((rows) => rows.length));
 
   return {
+    setSharing: (name, shared) =>
+      query(
+        "setSharing",
+        sql`
+      UPDATE personal_secret_requests SET shared = ${shared ? 1 : 0}
+      WHERE name = ${name} AND status = 'fulfilled'
+    `,
+      ).pipe(Effect.asVoid),
     insertRequest,
     getRequest,
     listByStatus,

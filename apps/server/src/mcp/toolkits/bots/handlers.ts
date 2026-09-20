@@ -3,7 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   botTeam,
   DEFAULT_PERSONAL_BOT_TEAM,
-  PERSONAL_BOT_TEAM_LABELS,
+  personalBotTeamLabel,
   personalSecretEnvVar,
   type PersonalBot,
   type PersonalDelegationBrief,
@@ -279,7 +279,7 @@ const make = Effect.gen(function* () {
           if (!asked) {
             const available = teamMates(yield* listBots);
             return yield* toolError(
-              `${target.name} is on the ${PERSONAL_BOT_TEAM_LABELS[botTeam(target)]}, not yours, so you cannot hand work over. Tell the user what you need from ${target.name} and ask them to request it; once their own latest message names ${target.name}, this works. On your team you can ask: ${available.join(", ") || "nobody"}.`,
+              `${target.name} is on the ${personalBotTeamLabel(botTeam(target))}, not yours, so you cannot hand work over. Tell the user what you need from ${target.name} and ask them to request it; once their own latest message names ${target.name}, this works. On your team you can ask: ${available.join(", ") || "nobody"}.`,
             );
           }
         }

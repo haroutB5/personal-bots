@@ -37,6 +37,7 @@ import {
 import { usePersonalTasks } from "./usePersonalAutomation";
 import {
   personalBotUpdate,
+  personalProfileSet,
   usePersonalBotsList,
   usePersonalEnvironmentId,
   usePersonalProfile,
@@ -86,12 +87,14 @@ function TeamDiagram({
   tasks,
   liveBotIds,
   environmentId,
+  customTeams,
 }: {
   readonly bots: ReadonlyArray<PersonalBot>;
   readonly ownerName: string;
   readonly tasks: Parameters<typeof deriveDelegationLinks>[0];
   readonly liveBotIds: ReadonlySet<string>;
   readonly environmentId: EnvironmentId | null;
+  readonly customTeams: ReadonlyArray<PersonalBotTeam>;
 }): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
@@ -141,7 +144,7 @@ function TeamDiagram({
     });
   }, [bots, pending]);
 
-  const groups = useMemo(() => buildTeamGroups(shown), [shown]);
+  const groups = useMemo(() => buildTeamGroups(shown, customTeams), [shown, customTeams]);
   const layout = useMemo(
     () => buildTeamGroupsLayout(groups, { ...LAYOUT_OPTIONS, width }),
     [groups, width],
@@ -508,7 +511,7 @@ function TeamDiagram({
             className="absolute inset-x-0 z-0 flex items-center gap-2"
             style={{ top: band.labelY }}
           >
-            <span className="text-xs font-semibold tracking-wide text-[var(--personal-section-label)] uppercase">
+            <span className="min-w-0 truncate text-xs font-semibold tracking-wide text-[var(--personal-section-label)] uppercase">
               {band.label}
             </span>
             <span className="h-px flex-1 bg-[var(--personal-border)]" />
@@ -614,7 +617,122 @@ function TeamDiagram({
   );
 }
 
-/** /bots/team: the two teams behind their leads, and current or recent handoffs. */
+function TeamManager({
+  environmentId,
+  teams,
+  bots,
+}: {
+  readonly environmentId: EnvironmentId | null;
+  readonly teams: ReadonlyArray<string>;
+  readonly bots: ReadonlyArray<PersonalBot>;
+}): JSX.Element {
+  const saveProfile = useAtomCommand(personalProfileSet);
+  const offline = useLaptopOffline();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const disabled = busy || offline || environmentId === null;
+  const changeTeam = async (operation: "create" | "delete", teamName: string) => {
+    if (disabled || environmentId === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await saveProfile({
+        environmentId,
+        input: { teamChange: { operation, name: teamName.trim() } },
+      });
+      if (result._tag === "Success") {
+        setName("");
+        setOpen(false);
+      } else {
+        setError(commandFailureMessage(result, "Couldn't save the team. Try again."));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section aria-label="Manage teams" className="my-4 space-y-3">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen(!open)}
+        className="min-h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] disabled:opacity-50"
+      >
+        {open ? "Cancel" : "New team"}
+      </button>
+      {open ? (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void changeTeam("create", name);
+          }}
+          className="space-y-2"
+        >
+          <label
+            htmlFor="new-team-name"
+            className="block text-sm font-medium text-[var(--personal-text)]"
+          >
+            Team name
+          </label>
+          <input
+            id="new-team-name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            maxLength={60}
+            required
+            disabled={busy}
+            placeholder="e.g. Research"
+            className="h-11 w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 text-base text-[var(--personal-text)]"
+          />
+          <button
+            type="submit"
+            disabled={disabled || name.trim().length === 0}
+            className="min-h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] disabled:opacity-50"
+          >
+            {busy ? "Saving…" : "Create team"}
+          </button>
+        </form>
+      ) : null}
+      {teams.length > 0 ? (
+        <ul className="divide-y divide-[var(--personal-border)]">
+          {teams.map((team) => {
+            const count = bots.filter((bot) => botTeam(bot) === team).length;
+            return (
+              <li
+                key={team}
+                className="flex min-h-11 items-center justify-between gap-3 text-sm text-[var(--personal-text)]"
+              >
+                <span className="min-w-0 break-words">
+                  {team} · {count} {count === 1 ? "bot" : "bots"}
+                </span>
+                {count === 0 ? (
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    aria-label={`Remove ${team}`}
+                    onClick={() => void changeTeam("delete", team)}
+                    className="min-h-11 shrink-0 px-2 text-[var(--personal-text-secondary)]"
+                  >
+                    Remove
+                  </button>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {error !== null ? (
+        <p role="alert" className="text-sm text-[var(--personal-text)]">
+          {error}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/** /bots/team: teams behind their leads, and current or recent handoffs. */
 export function TeamScreen(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const list = usePersonalBotsList(environmentId);
@@ -649,6 +767,19 @@ export function TeamScreen(): JSX.Element {
   return (
     <div className="flex min-h-full flex-col px-5 pb-8">
       <PersonalPageHeader title="Team" />
+      <TeamManager
+        environmentId={profile.data === null ? null : environmentId}
+        teams={profile.data?.customTeams ?? []}
+        bots={bots}
+      />
+      {profile.error !== null ? (
+        <p role="alert" className="text-sm text-[var(--personal-text)]">
+          Couldn't load your teams.{" "}
+          <button type="button" onClick={profile.refresh} className="min-h-11 px-2 underline">
+            Try again
+          </button>
+        </p>
+      ) : null}
 
       {environmentId === null ? (
         <p className="mt-4 text-[15px] text-[var(--personal-text-secondary)]">
@@ -692,10 +823,11 @@ export function TeamScreen(): JSX.Element {
         </div>
       ) : null}
 
-      {bots.length > 0 ? (
+      {bots.length > 0 || (profile.data?.customTeams?.length ?? 0) > 0 ? (
         <>
           <p className="mt-2 text-[15px] leading-5 text-[var(--personal-text-secondary)]">
-            Two teams, each with its lead. Bots hand work to their own team.
+            Each team can have a lead. Move bots by long-pressing and dragging them onto a team, or
+            choose a team in the bot's settings.
           </p>
           <TeamDiagram
             bots={bots}
@@ -703,6 +835,7 @@ export function TeamScreen(): JSX.Element {
             tasks={tasks}
             liveBotIds={liveBotIds}
             environmentId={environmentId}
+            customTeams={profile.data?.customTeams ?? []}
           />
           <div
             aria-label="Diagram key"

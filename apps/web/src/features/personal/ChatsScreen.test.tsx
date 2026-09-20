@@ -142,7 +142,10 @@ vi.mock("./usePinBot", () => ({ useTogglePinBot: () => state.togglePin }));
 vi.mock("./startBotChat", () => ({
   useStartBotChat: () => ({ start: vi.fn(), starting: false }),
 }));
-vi.mock("./appVersion", () => ({ useAppVersion: () => state.versionInfo }));
+vi.mock("./appVersion", () => ({
+  useAppVersion: () => state.versionInfo,
+  reloadLatestApp: async () => state.reload(),
+}));
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -272,8 +275,9 @@ describe("ChatsScreen cold start", () => {
       .findAllByType("button")
       .find((button) => JSON.stringify(button.props.children).includes("Update to"));
     expect(update).toBeDefined();
-    act(() => update!.props.onClick());
+    await act(async () => update!.props.onClick());
     expect(state.reload).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Updating");
   });
 
   /**
@@ -467,9 +471,8 @@ describe("ChatsScreen favourites strip", () => {
 });
 
 /**
- * A group is a chat, not a new object: it belongs in the same list, sorted
- * against the bots by latest activity, and its members' own relay threads must
- * not show up as chats of those bots.
+ * Groups live together immediately after pinned bots, before ordinary bot
+ * chats; their members' relay threads must not show up as bot chats.
  */
 describe("ChatsScreen groups", () => {
   const decodeGroup = Schema.decodeUnknownSync(PersonalGroup);
@@ -522,6 +525,41 @@ describe("ChatsScreen groups", () => {
     expect(json).toContain("Ada");
     // The cluster is the group's face: the member's own avatar, not a group icon.
     expect(rows[0]!.findAllByType(BotAvatar).map((avatar) => avatar.props.label)).toEqual(["Ada"]);
+  });
+
+  it("keeps every group before ordinary bot chats", async () => {
+    state.listData = {
+      bots: [bot("bot-ada", "Ada"), bot("bot-latest", "Latest bot")],
+      threads: [],
+      personalProjectId: null,
+    };
+    state.groupsData = {
+      groups: [
+        group({ groupId: "group-old", threadId: "group-thread-old", name: "Older group" }),
+        group({
+          groupId: "group-new",
+          threadId: "group-thread-new",
+          name: "Newer group",
+          updatedAt: "2026-09-19T11:00:00.000Z",
+        }),
+      ],
+      rounds: [],
+    };
+    await render();
+
+    const rows = renderer!.root.findByProps({ "aria-label": "Your chats" }).findAllByType("li");
+    const indexOf = (props: Record<string, unknown>) =>
+      rows.findIndex((row) => row.findAllByProps(props).length > 0);
+    const older = indexOf({ "aria-label": "Older group, group chat" });
+    const newer = indexOf({ "aria-label": "Newer group, group chat" });
+    const ada = indexOf({ label: "Delete Ada" });
+    const latest = indexOf({ label: "Delete Latest bot" });
+    expect(older).toBeGreaterThanOrEqual(0);
+    expect(newer).toBeGreaterThanOrEqual(0);
+    expect(older).toBeLessThan(ada);
+    expect(newer).toBeLessThan(ada);
+    expect(older).toBeLessThan(latest);
+    expect(newer).toBeLessThan(latest);
   });
 
   it("hides a group's member threads from that bot's own chats", async () => {

@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { parseVersionLabel, parseVersionStamp, runningClientEntry } from "./appVersion";
+import {
+  parseVersionLabel,
+  parseVersionStamp,
+  reloadLatestApp,
+  runningClientEntry,
+} from "./appVersion";
 
 const VERSION_FILE = [
   "version=1.0.0",
@@ -49,5 +54,40 @@ describe("parseVersionLabel", () => {
     expect(parseVersionLabel("")).toBeNull();
     expect(parseVersionLabel("<!doctype html><html></html>")).toBeNull();
     expect(parseVersionLabel("sha=7ae8f86d9b18")).toBeNull();
+  });
+});
+
+describe("reloadLatestApp", () => {
+  it("clears every saved app shell before reloading once", async () => {
+    const removed: string[] = [];
+    const reload = vi.fn();
+
+    await reloadLatestApp(
+      {
+        keys: async () => ["bots-shell-old", "bots-pending-nav", "bots-shell-current"],
+        delete: async (cacheName) => {
+          removed.push(cacheName);
+          return true;
+        },
+      },
+      reload,
+    );
+
+    expect(removed).toEqual(["bots-shell-old", "bots-shell-current"]);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("still reloads once when cache storage is unavailable", async () => {
+    const reload = vi.fn();
+    await reloadLatestApp(
+      {
+        keys: async () => {
+          throw new Error("storage unavailable");
+        },
+        delete: async () => false,
+      },
+      reload,
+    );
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 });

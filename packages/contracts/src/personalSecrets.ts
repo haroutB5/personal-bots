@@ -88,6 +88,12 @@ export const PersonalSecretNameInput = Schema.Struct({
 });
 export type PersonalSecretNameInput = typeof PersonalSecretNameInput.Type;
 
+export const PersonalSecretSharingInput = Schema.Struct({
+  name: PersonalSecretName,
+  shared: Schema.Boolean,
+});
+export type PersonalSecretSharingInput = typeof PersonalSecretSharingInput.Type;
+
 export class PersonalSecretsError extends Schema.TaggedError<PersonalSecretsError>()(
   "PersonalSecretsError",
   {

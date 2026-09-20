@@ -324,10 +324,11 @@ export function partitionPinnedSummaries(summaries: ReadonlyArray<BotSummary>): 
   readonly pinned: ReadonlyArray<BotSummary>;
   readonly rest: ReadonlyArray<BotSummary>;
 } {
-  const rank = (summary: BotSummary) =>
-    isTeamLead(summary.bot)
-      ? PERSONAL_BOT_TEAM_ORDER.indexOf(botTeam(summary.bot))
-      : PERSONAL_BOT_TEAM_ORDER.length;
+  const rank = (summary: BotSummary) => {
+    if (!isTeamLead(summary.bot)) return PERSONAL_BOT_TEAM_ORDER.length + 1;
+    const index = PERSONAL_BOT_TEAM_ORDER.indexOf(botTeam(summary.bot));
+    return index < 0 ? PERSONAL_BOT_TEAM_ORDER.length : index;
+  };
   return {
     // toSorted is stable, so equal ranks keep the incoming order.
     pinned: summaries

@@ -101,6 +101,7 @@ export const PersonalGroupMessageMarker = Schema.Struct({
   /** The round that produced it; null for messages written outside a round. */
   roundId: Schema.NullOr(PersonalGroupRoundId),
   speaker: PersonalGroupSpeaker,
+  phase: Schema.optional(Schema.Literals(["discussion", "verdict"])),
   /**
    * True on the catch-up brief a member is handed inside its OWN thread, so the
    * client can render it as a relayed group brief rather than as something the

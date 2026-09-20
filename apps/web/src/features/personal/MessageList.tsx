@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from "react";
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import type { PendingApproval } from "@t3tools/client-runtime/pending-requests";
 import type {
@@ -18,12 +18,13 @@ import ChatMarkdown from "~/components/ChatMarkdown";
 import { shouldPreserveAssistantLineBreaks } from "~/components/chat/MessagesTimeline.logic";
 import { cn } from "~/lib/utils";
 import { selectMessageImageResources } from "~/session-logic";
-import type { ChatMessage } from "~/types";
+import { isFileAttachment, type ChatMessage } from "~/types";
+import { AttachmentPreview, type AttachmentPreviewData } from "./AttachmentPreview";
 
 import { BotAvatar, type BotAvatarShape } from "./BotAvatar";
 import { type ConversationItem, formatDayDivider } from "./conversationModel";
 import type { ServerTurn } from "./delegationModel";
-import { groupSystemLabel } from "./groupModel";
+import { groupSystemLabel, readGroupMarker } from "./groupModel";
 import { QuestionCard } from "./QuestionCard";
 import type { UserInputAnswers } from "./questionCards";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -71,6 +72,7 @@ const UserMessage = memo(function UserMessage({
     [message.attachments],
   );
   const urls = useAssetUrls(environmentId, resources);
+  const [preview, setPreview] = useState<AttachmentPreviewData | null>(null);
   const imageIds = new Set(resources.map((resource) => resource.attachmentId));
   const files = (message.attachments ?? []).filter(
     (attachment) => !("id" in attachment) || !imageIds.has(String(attachment.id)),
@@ -83,15 +85,45 @@ const UserMessage = memo(function UserMessage({
           {resources.map((resource, index) => {
             const url = urls[index];
             return url ? (
-              <img
+              <button
+                type="button"
                 key={resource.attachmentId}
-                src={url}
-                alt=""
-                className="size-24 rounded-xl border border-[var(--personal-border)] object-cover"
-              />
+                aria-label={`Open ${message.attachments?.find((item) => item.id === resource.attachmentId)?.name ?? "image"}`}
+                onClick={() =>
+                  setPreview({
+                    type: "image",
+                    name:
+                      message.attachments?.find((item) => item.id === resource.attachmentId)
+                        ?.name ?? "Image",
+                    mimeType: "image/*",
+                    sizeBytes: 0,
+                    attachmentId: resource.attachmentId,
+                  })
+                }
+                className="rounded-xl outline-none focus-visible:ring-2"
+              >
+                <img
+                  src={url}
+                  alt=""
+                  className="size-24 rounded-xl border border-[var(--personal-border)] object-cover"
+                />
+              </button>
             ) : (
-              <span
+              <button
+                type="button"
                 key={resource.attachmentId}
+                aria-label="Open image"
+                onClick={() =>
+                  setPreview({
+                    type: "image",
+                    name:
+                      message.attachments?.find((item) => item.id === resource.attachmentId)
+                        ?.name ?? "Image",
+                    mimeType: "image/*",
+                    sizeBytes: 0,
+                    attachmentId: resource.attachmentId,
+                  })
+                }
                 className="size-24 rounded-xl border border-[var(--personal-border)] bg-[var(--personal-fill-muted)]"
               />
             );
@@ -99,14 +131,27 @@ const UserMessage = memo(function UserMessage({
         </div>
       ) : null}
       {files.map((file) => (
-        <span
+        <button
+          type="button"
           key={"id" in file ? String(file.id) : attachmentName(file)}
+          disabled={!isFileAttachment(file)}
+          onClick={() => {
+            if (isFileAttachment(file)) setPreview({ ...file, attachmentId: file.id });
+          }}
+          aria-label={`Open ${attachmentName(file)}`}
           className="flex max-w-[78%] items-center gap-1.5 rounded-xl border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 py-2 text-sm text-[var(--personal-text)]"
         >
           <FileText aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} />
           <span className="truncate">{attachmentName(file)}</span>
-        </span>
+        </button>
       ))}
+      {preview && (
+        <AttachmentPreview
+          attachment={preview}
+          environmentId={environmentId}
+          onClose={() => setPreview(null)}
+        />
+      )}
       {message.text.trim().length > 0 ? (
         <p className="max-w-[78%] rounded-[var(--personal-radius-bubble)] bg-[var(--personal-fill-muted)] px-3.5 py-2.5 text-[15px] leading-[1.4] break-words whitespace-pre-wrap text-[var(--personal-text)]">
           {message.text}
@@ -358,7 +403,7 @@ export function MessageList({
   onAnswerQuestion: (requestId: string, answers: UserInputAnswers) => void;
   onDismissQuestion: (requestId: string) => void;
   /** The value goes straight to the fulfil RPC; nothing here stores it. */
-  onProvideSecret: (requestId: string, value: string) => void;
+  onProvideSecret: (requestId: string, value: string, shared: boolean) => void;
   onDeclineSecret: (requestId: string) => void;
   errorText: string | null;
   /** The provider's own line, shown behind a "Details" toggle under `errorText`. */
@@ -460,16 +505,44 @@ export function MessageList({
                 />
               );
             case "group-message":
+              if (readGroupMarker(item.message)?.phase === "discussion") {
+                return (
+                  <details
+                    key={item.id}
+                    className="rounded-xl border border-[var(--personal-border)] px-3 py-2"
+                  >
+                    <summary className="cursor-pointer text-sm text-[var(--personal-text-secondary)]">
+                      {item.speaker.name} ·{" "}
+                      {item.message.streaming ? "Researching…" : "View contribution"}
+                    </summary>
+                    <GroupMessage
+                      message={item.message}
+                      threadRef={threadRef}
+                      workspaceRoot={workspaceRoot}
+                      speaker={groupSpeaker?.(item.speaker.botId) ?? null}
+                      botId={item.speaker.botId}
+                      showSpeaker={false}
+                    />
+                  </details>
+                );
+              }
               return (
-                <GroupMessage
-                  key={item.id}
-                  message={item.message}
-                  threadRef={threadRef}
-                  workspaceRoot={workspaceRoot}
-                  speaker={groupSpeaker?.(item.speaker.botId) ?? null}
-                  botId={item.speaker.botId}
-                  showSpeaker={item.showSpeaker}
-                />
+                <div key={item.id}>
+                  {readGroupMarker(item.message)?.phase === "verdict" && (
+                    <p className="mb-2 text-base font-semibold text-[var(--personal-text)]">
+                      Final verdict
+                    </p>
+                  )}
+                  <GroupMessage
+                    key={item.id}
+                    message={item.message}
+                    threadRef={threadRef}
+                    workspaceRoot={workspaceRoot}
+                    speaker={groupSpeaker?.(item.speaker.botId) ?? null}
+                    botId={item.speaker.botId}
+                    showSpeaker={item.showSpeaker}
+                  />
+                </div>
               );
             case "group-system":
               return (

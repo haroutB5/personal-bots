@@ -27,6 +27,7 @@ import {
   Hand,
   Keyboard,
   Lock,
+  Maximize2,
   MoreHorizontal,
   MousePointer2,
   MousePointerClick,
@@ -54,6 +55,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { isThreadLive } from "../botSummaries";
 import { commandFailureMessage } from "../commandFeedback";
+import { inertOutside } from "../overlayInert";
 import {
   activeAgentLine,
   type BackToChatTarget,
@@ -160,6 +162,8 @@ export function ComputerScreen({ onBackToChat }: ComputerScreenProps) {
   const environmentId = usePersonalEnvironmentId();
   const { feed, error, loading } = useComputerFeed(environmentId);
   const [segment, setSegment] = useState<"browser" | "files">("browser");
+  const [fullScreen, setFullScreen] = useState(false);
+  const screenRef = useRef<HTMLDivElement | null>(null);
   const state = describeComputerState({
     status: feed.status,
     reachable: environmentId !== null && error === null,
@@ -167,12 +171,41 @@ export function ComputerScreen({ onBackToChat }: ComputerScreenProps) {
   });
   const goBackToChat = () => onBackToChat(computerBackTarget(feed.status));
 
+  useEffect(() => {
+    if (!fullScreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const restoreBackground = inertOutside(screenRef.current);
+    screenRef.current?.focus({ preventScroll: true });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setFullScreen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      restoreBackground();
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [fullScreen]);
+
   return (
     <div
-      className="personal-app flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-6"
+      ref={screenRef}
+      aria-label={fullScreen ? "Computer full screen" : undefined}
+      aria-modal={fullScreen || undefined}
+      role={fullScreen ? "dialog" : undefined}
+      tabIndex={fullScreen ? -1 : undefined}
+      className={cn(
+        "personal-app flex min-h-0 flex-1 flex-col outline-none",
+        fullScreen
+          ? "fixed inset-0 z-50 overflow-hidden bg-[var(--personal-bg)] pb-[env(safe-area-inset-bottom)]"
+          : "overflow-y-auto px-5 pb-6",
+      )}
       style={{ paddingTop: "env(safe-area-inset-top)" }}
     >
-      <header className="flex min-h-16 items-center gap-1">
+      <header className={cn("flex min-h-16 items-center gap-1", fullScreen && "hidden")}>
         <button
           type="button"
           aria-label="Back to chat"
@@ -196,7 +229,10 @@ export function ComputerScreen({ onBackToChat }: ComputerScreenProps) {
       <div
         role="tablist"
         aria-label="Computer view"
-        className="mt-3 grid h-9 grid-cols-2 rounded-[10px] bg-[var(--personal-fill-muted)] p-0.5"
+        className={cn(
+          "mt-3 grid h-9 grid-cols-2 rounded-[10px] bg-[var(--personal-fill-muted)] p-0.5",
+          fullScreen && "hidden",
+        )}
       >
         {(["browser", "files"] as const).map((value) => (
           <button
@@ -222,7 +258,9 @@ export function ComputerScreen({ onBackToChat }: ComputerScreenProps) {
           status={feed.status}
           events={feed.events}
           reachable={environmentId !== null && error === null}
-          onBackToChat={goBackToChat}
+          fullScreen={fullScreen}
+          onOpenFullScreen={() => setFullScreen(true)}
+          onBackToChat={fullScreen ? () => setFullScreen(false) : goBackToChat}
         />
       ) : (
         <FilesPane environmentId={environmentId} />
@@ -333,6 +371,7 @@ export function ComputerBrowserPane(props: {
       <BrowserToolbar
         page={page}
         showBack={fullScreen === true}
+        backLabel={fullScreen ? "Exit full screen" : "Back to chat"}
         {...(props.onBackToChat === undefined ? {} : { onBackToChat: props.onBackToChat })}
         editable={inControl && inputReady}
         onNavigate={(url) => {
@@ -347,6 +386,9 @@ export function ComputerBrowserPane(props: {
         onClose={() => {
           void close();
         }}
+        {...(props.onOpenFullScreen === undefined
+          ? {}
+          : { onOpenFullScreen: props.onOpenFullScreen })}
         {...(compact ? { className: "hidden" } : {})}
       />
 
@@ -446,8 +488,25 @@ export function ComputerBrowserPane(props: {
   );
 }
 
+/**
+ * What the address field offers back to the server. A failed navigation leaves
+ * Chrome on `chrome-error://chromewebdata/`; seeding the field with that meant
+ * pressing Go resubmitted an internal URL, which the server rejects as an
+ * unsupported protocol ("Invalid preview URL (unsupported-protocol:
+ * chrome-error:)") - reading as a bug in the app rather than a page that did
+ * not load. The intended URL is gone by then, so an empty field is the honest
+ * offer.
+ */
+export function addressBarValue(page: PersonalBrowserStatus["page"]): string {
+  const url = page?.url ?? "";
+  return /^https?:\/\//i.test(url) ? url : "";
+}
+
 function addressLabel(page: PersonalBrowserStatus["page"]): string {
   if (page === null) return "No page open";
+  // Chrome's own error page: the address is internal and the title is its
+  // error text, so say what happened instead of showing either.
+  if (page.url.startsWith("chrome-error://")) return "This page didn't load";
   const title = page.title.trim();
   if (title.length > 0) return title;
   try {
@@ -460,6 +519,7 @@ function addressLabel(page: PersonalBrowserStatus["page"]): string {
 function BrowserToolbar(props: {
   readonly page: PersonalBrowserStatus["page"];
   readonly showBack: boolean;
+  readonly backLabel: string;
   readonly onBackToChat?: () => void;
   /** In control: the address is a field the user can type a URL into. */
   readonly editable: boolean;
@@ -469,10 +529,12 @@ function BrowserToolbar(props: {
   readonly closeDisabled: boolean;
   readonly onReload: () => void;
   readonly onClose: () => void;
+  readonly onOpenFullScreen?: () => void;
   readonly className?: string;
 }) {
   const { page } = props;
   const secure = page?.url.startsWith("https://") ?? false;
+  const addressValue = addressBarValue(page);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const url = new FormData(event.currentTarget).get("url");
@@ -483,7 +545,7 @@ function BrowserToolbar(props: {
       {props.showBack && props.onBackToChat !== undefined ? (
         <button
           type="button"
-          aria-label="Back to chat"
+          aria-label={props.backLabel}
           onClick={props.onBackToChat}
           className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >
@@ -499,9 +561,9 @@ function BrowserToolbar(props: {
         {props.editable ? (
           <form className="min-w-0 flex-1" onSubmit={submit}>
             <input
-              key={page?.url ?? ""}
+              key={addressValue}
               name="url"
-              defaultValue={page?.url ?? ""}
+              defaultValue={addressValue}
               aria-label="Address"
               inputMode="url"
               autoCapitalize="off"
@@ -514,6 +576,16 @@ function BrowserToolbar(props: {
           <span className="min-w-0 flex-1 truncate text-[14px]">{addressLabel(page)}</span>
         )}
       </div>
+      {props.onOpenFullScreen !== undefined && !props.showBack ? (
+        <button
+          type="button"
+          aria-label="Open browser full screen"
+          onClick={props.onOpenFullScreen}
+          className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+        >
+          <Maximize2 className="size-5" strokeWidth={ICON_STROKE} />
+        </button>
+      ) : null}
       <Menu>
         <MenuTrigger
           aria-label="Browser options"

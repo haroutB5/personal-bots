@@ -64,10 +64,10 @@ export type BotAvatarColor = typeof BotAvatarColor.Type;
 export const PersonalBotTitle = Schema.String.check(Schema.isMaxLength(60));
 
 /**
- * The two bot teams. Every bot is on exactly one, and one bot per team is its
+ * Built-in team IDs or custom team names. Every bot is on exactly one, and one bot per team is its
  * lead. Delegation is scoped to the caller's own team (see the bots toolkit).
  */
-export const PersonalBotTeam = Schema.Literals(["dev", "assistant"]);
+export const PersonalBotTeam = TrimmedNonEmptyString.check(Schema.isMaxLength(60));
 export type PersonalBotTeam = typeof PersonalBotTeam.Type;
 
 /** Team names as the user reads them, on the Team screen and in refusals. */
@@ -76,8 +76,15 @@ export const PERSONAL_BOT_TEAM_LABELS: Readonly<Record<PersonalBotTeam, string>>
   assistant: "Assistant's team",
 };
 
-/** Presentation order wherever both teams are shown: the dev team, then the assistant's. */
+/** Built-in teams precede custom teams in presentation order. */
 export const PERSONAL_BOT_TEAM_ORDER: ReadonlyArray<PersonalBotTeam> = ["dev", "assistant"];
+
+export const personalBotTeamLabel = (team: PersonalBotTeam): string =>
+  Object.hasOwn(PERSONAL_BOT_TEAM_LABELS, team) ? PERSONAL_BOT_TEAM_LABELS[team]! : team;
+
+export const personalBotTeams = (
+  teams: ReadonlyArray<PersonalBotTeam>,
+): ReadonlyArray<PersonalBotTeam> => [...new Set([...PERSONAL_BOT_TEAM_ORDER, ...teams])];
 
 /** New bots join the assistant's team as an ordinary member. */
 export const DEFAULT_PERSONAL_BOT_TEAM: PersonalBotTeam = "assistant";
@@ -211,12 +218,19 @@ export type PersonalBotsListResult = typeof PersonalBotsListResult.Type;
  */
 export const PersonalProfile = Schema.Struct({
   displayName: Schema.String,
+  customTeams: Schema.optionalKey(Schema.Array(PersonalBotTeam)),
 });
 export type PersonalProfile = typeof PersonalProfile.Type;
 
 export const PersonalProfileSetInput = Schema.Struct({
   /** Trimmed server-side; empty clears the name. Max 80 chars after trim. */
-  displayName: Schema.String,
+  displayName: Schema.optional(Schema.String),
+  teamChange: Schema.optional(
+    Schema.Struct({
+      operation: Schema.Literals(["create", "delete"]),
+      name: PersonalBotTeam,
+    }),
+  ),
 });
 export type PersonalProfileSetInput = typeof PersonalProfileSetInput.Type;
 

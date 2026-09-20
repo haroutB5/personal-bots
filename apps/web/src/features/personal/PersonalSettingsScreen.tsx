@@ -43,6 +43,7 @@ import {
 import { useAppVersion } from "./appVersion";
 import { PersonalProviderRows } from "./PersonalProviderRows";
 import { buildProviderUpdateRows } from "./providerUpdateRows";
+import { SecretAccessSettings } from "./SecretAccessSettings";
 
 const SECTION_TITLE =
   "mb-2 px-1 text-[13px] font-semibold tracking-wide text-[var(--personal-section-label)] uppercase";
@@ -355,6 +356,8 @@ export function PersonalSettingsScreen(): JSX.Element {
           </li>
         </ul>
       </section>
+
+      <SecretAccessSettings environmentId={environmentId} />
 
       <section aria-labelledby="settings-automation">
         <h2 id="settings-automation" className={SECTION_TITLE}>

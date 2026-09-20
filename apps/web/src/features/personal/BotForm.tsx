@@ -10,8 +10,8 @@ import {
   isBotPinned,
   isTeamLead,
   type ModelSelection,
-  PERSONAL_BOT_TEAM_LABELS,
-  PERSONAL_BOT_TEAM_ORDER,
+  personalBotTeamLabel,
+  personalBotTeams,
   type PersonalBot,
   PersonalBotId,
   type PersonalBotTeam,
@@ -45,6 +45,7 @@ import {
   personalBotUpdate,
   usePersonalBotsList,
   usePersonalEnvironmentId,
+  usePersonalProfile,
 } from "./usePersonalBots";
 
 const FIELD_CLASS =
@@ -212,6 +213,13 @@ function BotForm({
   const createBot = useAtomCommand(personalBotCreate);
   const updateBot = useAtomCommand(personalBotUpdate);
   const deleteBot = useDeleteBot(environmentId);
+  const profile = usePersonalProfile(environmentId);
+  const botList = usePersonalBotsList(environmentId);
+  const teams = personalBotTeams([
+    ...(profile.data?.customTeams ?? []),
+    ...(botList.data?.bots.map(botTeam) ?? []),
+    ...(bot === null ? [] : [botTeam(bot)]),
+  ]);
   const [botId] = useState(() => bot?.botId ?? PersonalBotId.make(randomUUID()));
   const [busy, setBusy] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
@@ -542,16 +550,22 @@ function BotForm({
           onChange={(event) => update({ team: event.target.value as PersonalBotTeam })}
           className={`${FIELD_CLASS} h-11`}
         >
-          {PERSONAL_BOT_TEAM_ORDER.map((team) => (
+          {teams.map((team) => (
             <option key={team} value={team}>
-              {PERSONAL_BOT_TEAM_LABELS[team]}
+              {personalBotTeamLabel(team)}
             </option>
           ))}
         </select>
         <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
-          A bot hands work to its own team. Reaching the other team needs you to name the bot you
-          want in your message.
+          A bot hands work to its own team. Reaching another team needs you to name the bot you want
+          in your message.
         </p>
+        <Link
+          to="/bots/team"
+          className="mt-1 inline-flex min-h-11 items-center text-sm text-[var(--personal-primary)]"
+        >
+          Manage teams
+        </Link>
       </div>
 
       <label className="flex min-h-11 items-center gap-3 text-[15px] text-[var(--personal-text)]">

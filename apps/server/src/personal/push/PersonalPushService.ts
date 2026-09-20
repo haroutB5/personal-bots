@@ -236,6 +236,10 @@ interface OutboxDueRow {
   readonly auth: string;
 }
 
+interface GroupThreadForMemberRow {
+  readonly threadId: string;
+}
+
 export class PersonalPushService extends Context.Service<
   PersonalPushService,
   {
@@ -681,6 +685,27 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
       if (presence.isViewing(input.threadId, nowMs)) return;
+      // A group displays member replies from their private provider threads in
+      // its shared transcript. Treat that shared thread as the visible chat:
+      // otherwise every member would still buzz the phone while the user is
+      // already watching the reply arrive in the open group.
+      const groupThreads = yield* sql<GroupThreadForMemberRow>`
+        SELECT g.thread_id AS "threadId"
+        FROM personal_group_members m
+        JOIN personal_groups g ON g.group_id = m.group_id
+        WHERE m.thread_id = ${input.threadId}
+          AND m.left_at IS NULL
+          AND g.deleted_at IS NULL
+        LIMIT 1
+      `;
+      const visibleGroupThread = groupThreads[0]?.threadId;
+      if (visibleGroupThread !== undefined && presence.isViewing(visibleGroupThread, nowMs)) {
+        yield* Effect.logDebug("personal notification held back: the member's group is open", {
+          threadId: input.threadId,
+          groupThreadId: visibleGroupThread,
+        });
+        return;
+      }
       const link = yield* botRepository.getThreadLink({ threadId: input.threadId });
       if (Option.isNone(link)) return;
       if (Option.isSome(tasks) && (yield* tasks.value.ownsThreadTurn(input.threadId))) {

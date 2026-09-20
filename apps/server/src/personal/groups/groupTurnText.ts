@@ -11,6 +11,8 @@ export interface GroupCatchUpMessage {
 }
 
 export interface GroupCatchUpInput {
+  readonly phase?: "discussion" | "verdict";
+  readonly userRequest?: string;
   readonly groupName: string;
   /** The member about to speak, so the brief can name it. */
   readonly speakerName: string;
@@ -74,7 +76,12 @@ export const buildCatchUpBrief = (input: GroupCatchUpInput): string => {
   return [
     `[Group chat: ${input.groupName}]`,
     `You are ${input.speakerName} in this group. ${others}`,
-    "Reply once, as yourself, to the conversation below. To ask another member to reply next, mention them by name with an @ (for example @Name). Do not answer on anyone else's behalf.",
+    input.phase === "verdict"
+      ? "Deliver the group's ONE final verdict to the user. Synthesize the contributions below into a single useful answer. Resolve disagreements using evidence; explicitly retain unresolved disagreements and unknowns. Do not claim unanimous agreement without evidence. Verify important claims and product variants, stock and delivered totals when relevant. Include source links, not provider citation tokens. Do not list repetitive answers per bot, request more bot replies, or use @mentions. Lead with the result and keep the explanation concise."
+      : input.phase === "discussion"
+        ? "Contribute concise research notes for the group's final verdict. Address the user's request, check evidence, and add new findings or challenge specific errors in prior contributions. Do not repeat settled points or write another final answer to the user. If you have nothing new, say so briefly. Include source URLs and uncertainties. A designated member will synthesize everyone's notes into one final verdict."
+        : "Reply once, as yourself, to the conversation below. Consider the other members' replies and avoid repeating settled points. To request a follow-up from a particular member, mention them with @Name. Do not answer on anyone else's behalf.",
+    ...(input.userRequest ? [`User request:\n${input.userRequest}`] : []),
     "Conversation so far:",
     buildCatchUpTranscript({ messages: input.messages, maxChars: input.maxChars }),
   ].join("\n\n");

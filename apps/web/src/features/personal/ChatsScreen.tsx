@@ -46,7 +46,6 @@ import {
 import {
   activeGroupMembers,
   filterGroups,
-  groupLastActivityMs,
   groupMemberThreadIds,
   roundForGroup,
 } from "./groupModel";
@@ -57,7 +56,7 @@ import {
   usePersonalGroupsFeed,
   usePersonalGroupsList,
 } from "./usePersonalGroups";
-import { useAppVersion } from "./appVersion";
+import { reloadLatestApp, useAppVersion } from "./appVersion";
 import { SwipeToDelete } from "./SwipeToDelete";
 import { useDeleteBot } from "./useDeleteBot";
 import { threadIdsAwaitingSecret } from "./secretRequestCards";
@@ -371,35 +370,20 @@ export function ChatsScreen(): JSX.Element {
     [rowMotions, visible],
   );
   const { pinned, rest } = useMemo(() => partitionPinnedSummaries(visible), [visible]);
-  /**
-   * Groups and unpinned bots are one list ordered by latest activity — a group
-   * is a chat, so it sorts against the chats rather than sitting in a section
-   * of its own. Pinning is a bot concept (`isBotPinned`), so the Pinned box is
-   * untouched and the cold-start snapshot, which stores bot rows in render
-   * order, still paints exactly what the live list will.
-   */
+  // Groups stay together immediately after the pinned strip. Within that
+  // block and the bot block, the existing activity order is preserved.
   const restRows = useMemo(
-    () =>
-      [
-        ...rest.map(
-          (summary) =>
-            ({ kind: "bot", key: summary.bot.botId, at: summary.lastActivityMs, summary }) as const,
-        ),
-        ...visibleGroups.map(
-          (group) =>
-            ({
-              kind: "group",
-              key: group.groupId,
-              at: groupLastActivityMs(group),
-              group,
-            }) as const,
-        ),
-      ].toSorted((left, right) => {
-        if (left.at === right.at) return 0;
-        if (left.at === null) return 1;
-        if (right.at === null) return -1;
-        return right.at - left.at;
-      }),
+    () => [
+      ...visibleGroups.map(
+        (group) =>
+          ({
+            kind: "group",
+            key: group.groupId,
+            group,
+          }) as const,
+      ),
+      ...rest.map((summary) => ({ kind: "bot", key: summary.bot.botId, summary }) as const),
+    ],
     [rest, visibleGroups],
   );
   const togglePin = useTogglePinBot(environmentId);
@@ -440,6 +424,12 @@ export function ChatsScreen(): JSX.Element {
   const reviewCount = attention.length + (helpSummary !== null && !helpAlreadyCounted ? 1 : 0);
   const firstAttention = attention[0] ?? null;
   const { label: versionLabel, updateAvailable } = useAppVersion();
+  const [updatingApp, setUpdatingApp] = useState(false);
+  const updateApp = useCallback(() => {
+    if (updatingApp) return;
+    setUpdatingApp(true);
+    void reloadLatestApp();
+  }, [updatingApp]);
   const firstAttentionBot =
     firstAttention === null
       ? null
@@ -683,10 +673,11 @@ export function ChatsScreen(): JSX.Element {
         <div className="mt-auto pt-8">
           <button
             type="button"
-            onClick={() => window.location.reload()}
+            onClick={updateApp}
+            disabled={updatingApp}
             className="mx-auto flex min-h-11 items-center justify-center rounded-full px-4 text-[13px] font-semibold text-[var(--personal-primary)]"
           >
-            Update to {versionLabel} - tap to refresh
+            {updatingApp ? "Updating…" : `Update to ${versionLabel} - tap to refresh`}
           </button>
         </div>
       ) : null}

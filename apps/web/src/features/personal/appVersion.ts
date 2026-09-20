@@ -16,6 +16,8 @@ interface ParsedStamp {
   readonly clientEntry: string | null;
 }
 
+const SHELL_CACHE_PREFIX = "bots-shell-";
+
 /**
  * Parses the version.txt build.ps1 writes into dist/client (key=value lines).
  * `version` (human semver) wins for the label, else the short release sha.
@@ -73,6 +75,30 @@ export async function readAppVersion(
   } catch {
     return null;
   }
+}
+
+/**
+ * Removes the service worker's saved HTML shell before reloading. iOS can
+ * otherwise serve that shell for the first reload while refreshing it in the
+ * background, which makes an available update appear to need a second tap.
+ */
+export async function reloadLatestApp(
+  cacheStorage: Pick<CacheStorage, "delete" | "keys"> | undefined = typeof caches === "undefined"
+    ? undefined
+    : caches,
+  reload: () => void = () => window.location.reload(),
+): Promise<void> {
+  try {
+    const cacheNames = (await cacheStorage?.keys()) ?? [];
+    await Promise.all(
+      cacheNames
+        .filter((cacheName) => cacheName.startsWith(SHELL_CACHE_PREFIX))
+        .map((cacheName) => cacheStorage?.delete(cacheName)),
+    );
+  } catch {
+    // A missing or unavailable Cache Storage API must not block the update.
+  }
+  reload();
 }
 
 export function useAppVersion(): AppVersionInfo {

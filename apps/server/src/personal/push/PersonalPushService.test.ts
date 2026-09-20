@@ -469,6 +469,43 @@ it.effect("the chat the user is reading gets no reply notification", () => {
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+it.effect("an open group suppresses reply notifications from its member threads", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  const groupThread = ThreadId.make("thread-group");
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO personal_groups (
+        group_id, name, description, thread_id, max_bot_turns,
+        created_at, updated_at, archived_at, deleted_at
+      ) VALUES (
+        'group-1', 'Launch crew', '', ${groupThread}, 6,
+        '2026-09-18T09:00:00.000Z', '2026-09-18T09:00:00.000Z', NULL, NULL
+      )
+    `;
+    yield* sql`
+      INSERT INTO personal_group_members (
+        group_id, bot_id, thread_id, role, sort_order, delivered_seq, joined_at, left_at
+      ) VALUES (
+        'group-1', ${BOT}, ${CHAT}, 'member', 0, 0, '2026-09-18T09:00:00.000Z', NULL
+      )
+    `;
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* push.reportViewing({ connectionId: "phone", threadId: groupThread });
+
+    yield* runTurn(CHAT, "2026-09-18T09:00:00.000Z");
+    expect(yield* outbox).toEqual([]);
+
+    yield* push.reportViewing({ connectionId: "phone", threadId: null });
+    yield* runTurn(CHAT, "2026-09-18T09:05:00.000Z");
+    expect((yield* outbox).length).toBe(1);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 it.effect("a turn a task drove notifies once, from the task, not twice", () => {
   const harness: Harness = { sent: [], status: 201 };
   const owned = new Set<string>([CHAT]);

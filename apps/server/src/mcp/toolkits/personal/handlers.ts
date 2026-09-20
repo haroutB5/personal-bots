@@ -11,6 +11,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
+import { PersonalSessionAccess } from "../../../personal/secrets/PersonalSessionAccess.ts";
+import { createResearchClient } from "../../../personal/research/researchClient.ts";
 import * as PersonalMemoryService from "../../../personal/memory/PersonalMemoryService.ts";
 import * as PersonalRoutineService from "../../../personal/routines/PersonalRoutineService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -84,6 +86,8 @@ const make = Effect.gen(function* () {
   const routines = yield* PersonalRoutineService.PersonalRoutineService;
   const memory = yield* PersonalMemoryService.PersonalMemoryService;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
+  const sessions = yield* PersonalSessionAccess;
+  const research = createResearchClient();
 
   const refuse = (reason: string) => new PersonalToolError({ reason });
 
@@ -100,7 +104,49 @@ const make = Effect.gen(function* () {
 
   const liveBots = bots.listBots().pipe(Effect.mapError(() => refuse("Could not read the bots.")));
 
+  const researchAccess = Effect.fn("personal.researchAccess")(function* (name: string) {
+    const { scope, botId } = yield* requireBotThread;
+    const grant = yield* sessions.forThread(scope.threadId);
+    const key = grant.environment[`PB_SECRET_${name}`];
+    if (!key)
+      return yield* refuse(
+        `Save ${name} using request_secret to enable this tool. Use native web search or the browser meanwhile. Do not ask for keys in chat.`,
+      );
+    return { key, scope: botId };
+  });
+
   return PersonalToolkit.of({
+    search_web: (input) =>
+      Effect.gen(function* () {
+        const access = yield* researchAccess("TAVILY_API_KEY");
+        const results = yield* Effect.tryPromise({
+          try: () =>
+            research.search(access.scope, access.key, input.queries, {
+              country: input.country,
+              timeRange: input.timeRange,
+              domains: input.domains,
+            }),
+          catch: () => refuse("Web search failed."),
+        });
+        return { results };
+      }),
+    read_pages: (input) =>
+      Effect.gen(function* () {
+        const access = yield* researchAccess("TAVILY_API_KEY");
+        const results = yield* Effect.tryPromise({
+          try: () => research.read(access.scope, access.key, input.urls),
+          catch: () => refuse("Page reading failed."),
+        });
+        return { results };
+      }),
+    search_products: (input) =>
+      Effect.gen(function* () {
+        const access = yield* researchAccess("SERPAPI_API_KEY");
+        return yield* Effect.tryPromise({
+          try: () => research.products(access.scope, access.key, input.query, input.country),
+          catch: () => refuse("Product search failed."),
+        });
+      }),
     create_routine: (input) =>
       Effect.gen(function* () {
         const { scope, botId } = yield* requireBotThread;

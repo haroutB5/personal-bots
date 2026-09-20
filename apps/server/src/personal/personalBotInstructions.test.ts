@@ -20,7 +20,9 @@ describe("personalBotSystemInstructions", () => {
     assert.include(text, "call search_memory");
     assert.include(text, "Never write memory to files");
     assert.include(text, "ask for them with request_secret");
-    assert.include(text, "use your browser (preview) tools");
+    assert.include(text, "prefer search_web");
+    assert.include(text, "read_pages");
+    assert.include(text, "Use browser (preview) tools for interactions");
     // QA v1.10.0 BUG-6: the Computer tab is gone and resume is automatic.
     assert.include(text, "browser panel in this chat");
     assert.include(text, "You continue automatically when they return control");

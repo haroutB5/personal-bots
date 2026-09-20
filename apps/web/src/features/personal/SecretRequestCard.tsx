@@ -31,7 +31,7 @@ export function SecretRequestCard({
   card: SecretRequestCardItem;
   botName: string;
   responding: boolean;
-  onProvide: (requestId: string, value: string) => void;
+  onProvide: (requestId: string, value: string, shared: boolean) => void;
   onDecline: (requestId: string) => void;
 }): JSX.Element {
   if (card.kind === "pending") {
@@ -89,13 +89,14 @@ function PendingSecretRequestCard({
   card: Extract<SecretRequestCardItem, { kind: "pending" }>;
   botName: string;
   responding: boolean;
-  onProvide: (requestId: string, value: string) => void;
+  onProvide: (requestId: string, value: string, shared: boolean) => void;
   onDecline: (requestId: string) => void;
 }): JSX.Element {
   // Component state, nowhere else. The composer draft store is per-device and
   // unencrypted, so a secret must never reach it; this string lives only until
   // the card unmounts or the value is sent.
   const [value, setValue] = useState("");
+  const [shared, setShared] = useState(false);
   const fieldId = useId();
   const helpId = `${fieldId}-help`;
   const declineId = `${fieldId}-decline`;
@@ -142,6 +143,15 @@ function PendingSecretRequestCard({
         never sent to {botName} as text.
       </p>
 
+      <label className="mt-3 flex min-h-11 items-center gap-3 text-[15px] text-[var(--personal-text)]">
+        <input
+          type="checkbox"
+          checked={shared}
+          disabled={responding}
+          onChange={(event) => setShared(event.target.checked)}
+        />
+        Allow all bots to use this key
+      </label>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {/* Not "Not now": declining is not a deferral. The server cancels the
             request and fails the task, so the button says what it does. */}
@@ -163,7 +173,7 @@ function PendingSecretRequestCard({
             // Cleared before the send so the field never holds the value while
             // the request is in flight.
             setValue("");
-            onProvide(card.requestId, provided);
+            onProvide(card.requestId, provided, shared);
           }}
           className={cn(
             BUTTON_CLASS,

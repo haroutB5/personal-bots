@@ -1,7 +1,7 @@
 import {
   isBotPinned,
   isTeamLead,
-  PERSONAL_BOT_TEAM_LABELS,
+  personalBotTeamLabel,
   PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
   PersonalGroupMessageMarker,
   type OrchestrationMessageContext,
@@ -372,7 +372,7 @@ export function groupDeleteCandidates(input: {
     );
     const reason =
       isTeamLead(bot) && bot.team !== undefined
-        ? `Leads the ${PERSONAL_BOT_TEAM_LABELS[bot.team]}`
+        ? `Leads the ${personalBotTeamLabel(bot.team)}`
         : isTeamLead(bot)
           ? "Leads a team"
           : isBotPinned(bot)

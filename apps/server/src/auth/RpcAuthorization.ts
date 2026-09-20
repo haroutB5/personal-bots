@@ -132,6 +132,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalSecretsFulfill]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalSecretsCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalSecretsDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalSecretsSetSharing]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalLoginsList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalLoginsCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalLoginsUpdate]: AuthOrchestrationOperateScope,

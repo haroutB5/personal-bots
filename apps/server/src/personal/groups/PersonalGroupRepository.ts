@@ -47,6 +47,7 @@ export interface PersonalGroupRecord {
  * reason about it (Phase 0, decision 6).
  */
 export interface PersonalGroupRoundRecord extends PersonalGroupRound {
+  readonly verdictBotId?: PersonalBotId | null;
   readonly leaseOwner: string | null;
   readonly leaseExpiresAt: DateTime.Utc | null;
   readonly activeTurnId: TurnId | null;
@@ -94,6 +95,7 @@ const MemberDbRow = Schema.Struct({
 });
 
 const RoundDbRow = Schema.Struct({
+  verdictBotId: Schema.NullOr(PersonalBotId),
   roundId: PersonalGroupRoundId,
   groupId: PersonalGroupId,
   triggerMessageId: MessageId,
@@ -182,6 +184,7 @@ const MEMBER_COLUMNS = `
 `;
 
 const ROUND_COLUMNS = `
+  verdict_bot_id AS "verdictBotId",
   round_id AS "roundId",
   group_id AS "groupId",
   trigger_message_id AS "triggerMessageId",
@@ -642,7 +645,7 @@ export const make = Effect.gen(function* () {
           round_id, group_id, trigger_message_id, status, budget_remaining, queue_json,
           spoken_json, active_bot_id, active_thread_id, active_turn_id, active_message_id,
           relayed_chars, lease_owner, lease_expires_at, available_at, deadline_at,
-          error_message, created_at, updated_at
+          error_message, created_at, updated_at, verdict_bot_id
         )
         VALUES (
           ${round.roundId}, ${round.groupId}, ${round.triggerMessageId}, ${round.status},
@@ -651,7 +654,7 @@ export const make = Effect.gen(function* () {
           ${round.activeTurnId}, ${round.activeMessageId}, ${round.relayedChars},
           ${round.leaseOwner}, ${isoOrNull(round.leaseExpiresAt)},
           ${isoOrNull(round.availableAt)}, ${iso(round.deadlineAt)}, ${round.errorMessage},
-          ${iso(round.createdAt)}, ${iso(round.updatedAt)}
+          ${iso(round.createdAt)}, ${iso(round.updatedAt)}, ${round.verdictBotId ?? null}
         )
         ON CONFLICT(round_id) DO NOTHING
       `,
@@ -675,6 +678,7 @@ export const make = Effect.gen(function* () {
       sql`
         UPDATE personal_group_rounds
         SET status = ${round.status},
+            verdict_bot_id = ${round.verdictBotId ?? null},
             budget_remaining = ${round.budgetRemaining},
             queue_json = ${JSON.stringify(round.queue)},
             spoken_json = ${JSON.stringify(round.spoken)},

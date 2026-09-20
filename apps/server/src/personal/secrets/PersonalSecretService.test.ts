@@ -514,6 +514,23 @@ describe("personal secret requests", () => {
         yield* fulfil("b", "developer", "DEV_ONLY", "dev-value", false);
         yield* fulfil("c", "developer", "SHARED_KEY", "shared-value", true);
 
+        // Sharing an already-saved key needs no re-entry and reaches the other bot.
+        const sharedResult = yield* secrets.setSharing({ name: "GITHUB_TOKEN", shared: true });
+        expect(sharedResult.secrets.find((secret) => secret.name === "GITHUB_TOKEN")?.shared).toBe(
+          true,
+        );
+        expect(text(sharedResult)).not.toContain("gh-value");
+        expect((yield* access.forThread(developerThread)).environment.PB_SECRET_GITHUB_TOKEN).toBe(
+          "gh-value",
+        );
+        yield* secrets.setSharing({ name: "GITHUB_TOKEN", shared: false });
+        expect(
+          (yield* access.forThread(developerThread)).environment.PB_SECRET_GITHUB_TOKEN,
+        ).toBeUndefined();
+        expect((yield* access.forThread(assistantThread)).environment.PB_SECRET_GITHUB_TOKEN).toBe(
+          "gh-value",
+        );
+
         // Seeded bots have blank instructions: they still owe the app rules.
         expect(yield* access.forThread(assistantThread)).toEqual({
           botId: botId("assistant"),
@@ -585,6 +602,13 @@ describe("personal secret requests", () => {
         });
 
         // B's fulfil must not have overwritten A's stored value.
+        const sharing = yield* secrets
+          .setSharing({ name: "TOKEN", shared: true })
+          .pipe(Effect.result);
+        expect(sharing._tag).toBe("Failure");
+        expect(
+          (yield* secrets.list()).secrets.find((entry) => entry.name === "TOKEN")?.shared,
+        ).toBe(false);
         const storedA = yield* store.get(
           PersonalSecretService.personalSecretStoreKey({
             name: "TOKEN",

@@ -41,6 +41,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import type { PendingOutgoingMessage } from "./MessageList";
 import { attachmentChipUploadPresentation } from "./attachmentChipUploadPresentation";
+import { AttachmentPreview, type AttachmentPreviewData } from "./AttachmentPreview";
 import { activeMentionDraft, applyMention, matchMentionCandidates } from "./mentionDraft";
 import { MentionPopover, type MentionRow } from "./MentionPopover";
 
@@ -189,6 +190,7 @@ export function PersonalComposer({
     () => [...draft.images, ...draft.files],
     [draft.files, draft.images],
   );
+  const [preview, setPreview] = useState<AttachmentPreviewData | null>(null);
   const uploadsByAttachmentId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   const attachmentChips = attachments.map((attachment) => ({
     attachment,
@@ -580,18 +582,36 @@ export function PersonalComposer({
                   : "border-[var(--personal-border)] bg-[var(--personal-surface)]"
               }`}
             >
-              {attachment.type === "image" ? (
-                <img
-                  src={attachment.previewUrl}
-                  alt=""
-                  className="size-8 rounded-lg object-cover"
-                />
-              ) : (
-                <FileText aria-hidden="true" className="ml-1 size-5 shrink-0" strokeWidth={1.75} />
-              )}
-              <span className="min-w-0 truncate text-sm text-[var(--personal-text)]">
-                {attachment.name}
-              </span>
+              <button
+                type="button"
+                aria-label={`Open ${attachment.name}`}
+                className="flex min-w-0 items-center gap-2 self-stretch outline-none focus-visible:ring-2"
+                onClick={() =>
+                  setPreview({
+                    ...attachment,
+                    ...(attachment.type === "image"
+                      ? { imageUrl: attachment.previewUrl }
+                      : { attachmentId: attachment.uploadedAttachmentId }),
+                  })
+                }
+              >
+                {attachment.type === "image" ? (
+                  <img
+                    src={attachment.previewUrl}
+                    alt=""
+                    className="size-8 rounded-lg object-cover"
+                  />
+                ) : (
+                  <FileText
+                    aria-hidden="true"
+                    className="ml-1 size-5 shrink-0"
+                    strokeWidth={1.75}
+                  />
+                )}
+                <span className="min-w-0 truncate text-sm text-[var(--personal-text)]">
+                  {attachment.name}
+                </span>
+              </button>
               {upload.status === "uploading" ? (
                 <span
                   aria-label={`Uploading ${attachment.name}: ${upload.progressLabel}`}
@@ -631,6 +651,13 @@ export function PersonalComposer({
           ))}
         </ul>
       ) : null}
+      {preview && environmentId && (
+        <AttachmentPreview
+          attachment={preview}
+          environmentId={environmentId}
+          onClose={() => setPreview(null)}
+        />
+      )}
       {mentionOpen ? (
         <MentionPopover
           candidates={mentionMatches}

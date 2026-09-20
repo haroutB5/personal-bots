@@ -58,3 +58,26 @@ export function usePendingSecretRequests(environmentId: EnvironmentId | null) {
   );
   return useEnvironmentQuery(atom);
 }
+
+export const personalSavedSecrets = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "personal-secrets:list",
+  tag: WS_METHODS.personalSecretsList,
+  staleTimeMs: 5_000,
+});
+
+export const personalSecretSetSharing = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-secrets:sharing",
+  tag: WS_METHODS.personalSecretsSetSharing,
+  onSuccess: (target, registry) =>
+    Effect.sync(() =>
+      registry.refresh(personalSavedSecrets({ environmentId: target.environmentId, input: {} })),
+    ),
+});
+
+export function useSavedSecrets(environmentId: EnvironmentId | null) {
+  const atom = useMemo(
+    () => (environmentId === null ? null : personalSavedSecrets({ environmentId, input: {} })),
+    [environmentId],
+  );
+  return useEnvironmentQuery(atom);
+}
