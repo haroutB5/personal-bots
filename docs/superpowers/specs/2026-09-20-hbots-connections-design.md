@@ -45,14 +45,14 @@ the original are unchanged.
 
 ## Decisions taken
 
-| Decision            | Choice                                                                                                                       | Why                                                                                     |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Tool delivery       | A server-side gateway on the existing scoped `t3-code` MCP endpoint; vendor MCP/REST adapters behind it                      | The only place both Claude and Codex are equally constrained                            |
-| Access model        | Every bot gets every enabled connection                                                                                      | Matches the existing shared-passwords decision; per-bot grants were explicitly rejected |
-| Risk control        | Approval bound to a validated operation and its arguments, not to a tool name                                                | Tool names miss destructive arguments; a general SQL tool can drop a table              |
-| Credential capture  | Device flow where the provider offers it, guided token paste otherwise, plus import-from-machine for the owner's own install | No callback URL to host; works from the phone                                           |
-| Credential handling | Opaque references; values never enter `PB_SECRET_*`, launch args, or provider env                                            | Environment injection is readable by the bot it is meant to be hidden from              |
-| Database            | Neon Postgres + Upstash Redis                                                                                                | What the owner's existing apps use                                                      |
+| Decision            | Choice                                                                                                  | Why                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Tool delivery       | A server-side gateway on the existing scoped `t3-code` MCP endpoint; vendor MCP/REST adapters behind it | The only place both Claude and Codex are equally constrained                            |
+| Access model        | Every bot gets every enabled connection                                                                 | Matches the existing shared-passwords decision; per-bot grants were explicitly rejected |
+| Risk control        | Approval bound to a validated operation and its arguments, not to a tool name                           | Tool names miss destructive arguments; a general SQL tool can drop a table              |
+| Credential capture  | Guided token paste for every vendor, plus import-from-machine for the owner's own install               | No OAuth app to register and no callback URL to host; works from the phone              |
+| Credential handling | Opaque references; values never enter `PB_SECRET_*`, launch args, or provider env                       | Environment injection is readable by the bot it is meant to be hidden from              |
+| Database            | Neon Postgres + Upstash Redis                                                                           | What the owner's existing apps use                                                      |
 
 ## Security guarantee, stated honestly
 
@@ -102,19 +102,25 @@ Secret-to-environment transfers — a Neon connection string reaching a Vercel
 project — happen server-side, vendor to vendor, without the value passing
 through the transcript as intermediate text.
 
-Three capture paths:
+Two capture paths.
 
-**Device flow.** GitHub. Requires a registered OAuth app with device flow
-enabled; the client id is configuration, and its scopes must be proven against
-the operations we actually call before this ships. The UI shows the user code,
-the owner approves on any device, the server polls with the provider's interval
-and backoff, and handles expiry, denial and cancellation. No callback URL, so it
-works identically from the phone over T3 Connect.
-
-**Guided token paste.** Vercel, Neon, Upstash. A deep link to the exact page
-that mints the token, a paste field, and a server-side validation call that
-resolves the account and capabilities at entry. Token fields never persist into
+**Guided token paste.** Every vendor, GitHub included. A deep link to the exact
+page that mints the token, a paste field, and a server-side validation call that
+resolves the account and capabilities at entry, so a wrong or under-scoped token
+fails at the point of entry rather than mid-task. Token fields never persist into
 client state or telemetry.
+
+GitHub was originally specified as a device flow. Owner decision, 2026-09-20:
+drop it. A device flow needs a registered OAuth app whose client id we own and
+whose scopes we must keep aligned with the operations we call, and registering
+it is a step only the owner can perform. A personal access token needs none of
+that, and a beginner who has to create a GitHub account anyway is already on the
+site when they mint one. The cost is honest and worth naming: pasting a PAT is
+more steps than approving a code on your phone, the token is coarser-grained
+than an OAuth grant, and it expires on GitHub's schedule rather than refreshing,
+so `needs_reauth` has to be a first-class state the UI surfaces rather than an
+edge case. The connect screen therefore spells out which scopes to tick, and
+validation names any that are missing.
 
 **Import from this machine.** Owner-triggered only, over known locations and
 selected registered project roots: `gh` CLI auth, the Vercel CLI `auth.json`,
@@ -188,16 +194,16 @@ a deploy API.
 ## Milestones
 
 0. **Compatibility matrix and spec amendment.** Provider auth/capability matrix,
-   proven GitHub device-token scopes, Vercel REST adapter chosen over its OAuth
-   MCP for the no-callback requirement, narrow Neon management APIs, evaluation
+   proven GitHub PAT scopes, Vercel REST adapter chosen over its OAuth MCP for
+   the no-callback requirement, narrow Neon management APIs, evaluation
    of Upstash's official server, and verified runtime isolation behaviour.
    (This document is that amendment.)
 1. **Connection state and credential storage.** Contracts, catalog, repository,
    service, credential store, migration, owner-only RPCs.
 2. **Gateway and approval enforcement.** Toolkit, operation validation, risk
    classification, persisted decisions and receipts, egress guard.
-3. **GitHub + Vercel vertical slice.** Connections screen, device flow, token
-   paste, machine import, repo creation and deployment.
+3. **GitHub + Vercel vertical slice.** Connections screen, token paste, machine
+   import, repo creation and deployment.
 4. **Neon + Upstash provisioning.** Server-side credential transfer into Vercel
    environments.
 5. **Durable `create_app`.**
@@ -206,8 +212,8 @@ a deploy API.
 ## Testing
 
 - Unit: account selection and status transitions, credential rotation, owner
-  authorization, argument policies, unknown and drifted schemas, device-flow
-  polling and cancellation, import parsing against fixtures, safe-output
+  authorization, argument policies, unknown and drifted schemas, token
+  validation and scope reporting, import parsing against fixtures, safe-output
   filtering.
 - Integration: both runtimes, reused sessions, disabled connections, multiple
   bots and groups, multi-device and duplicate approval, lost vendor responses,

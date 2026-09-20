@@ -3,14 +3,15 @@ import { describe, expect, it } from "@effect/vitest";
 import { PERSONAL_CONNECTION_CATALOG } from "./catalog.ts";
 
 describe("personal connection catalog", () => {
-  it("defines only Milestone 1 authentication metadata for every vendor", () => {
+  it("defines only paste-based authentication metadata for every vendor", () => {
     expect(PERSONAL_CONNECTION_CATALOG).toEqual({
       github: {
         vendorId: "github",
         displayName: "GitHub",
-        authKind: "device-flow",
+        authKind: "token-paste",
         requiredCredentialFields: ["accessToken"],
-        tokenPageUrl: "https://github.com/login/device",
+        tokenPageUrl: "https://github.com/settings/tokens/new",
+        requiredScopes: ["repo", "workflow"],
       },
       vercel: {
         vendorId: "vercel",
@@ -18,6 +19,7 @@ describe("personal connection catalog", () => {
         authKind: "token-paste",
         requiredCredentialFields: ["accessToken"],
         tokenPageUrl: "https://vercel.com/account/settings/tokens",
+        requiredScopes: [],
       },
       neon: {
         vendorId: "neon",
@@ -25,6 +27,7 @@ describe("personal connection catalog", () => {
         authKind: "token-paste",
         requiredCredentialFields: ["apiKey"],
         tokenPageUrl: "https://console.neon.tech/app/settings/api-keys",
+        requiredScopes: [],
       },
       upstash: {
         vendorId: "upstash",
@@ -32,6 +35,7 @@ describe("personal connection catalog", () => {
         authKind: "token-paste",
         requiredCredentialFields: ["email", "apiKey"],
         tokenPageUrl: "https://console.upstash.com/account/api",
+        requiredScopes: [],
       },
     });
 
