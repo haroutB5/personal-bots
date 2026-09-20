@@ -24,6 +24,7 @@ import {
   buildTeamDropZones,
   buildTeamGroups,
   buildTeamGroupsLayout,
+  countTeamMembers,
   crossTeamDelegationPath,
   delegationConnectorPath,
   deriveDelegationLinks,
@@ -698,7 +699,7 @@ function TeamManager({
       {teams.length > 0 ? (
         <ul className="divide-y divide-[var(--personal-border)]">
           {teams.map((team) => {
-            const count = bots.filter((bot) => botTeam(bot) === team).length;
+            const count = countTeamMembers(bots, team);
             return (
               <li
                 key={team}

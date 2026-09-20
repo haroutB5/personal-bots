@@ -1,5 +1,6 @@
 import {
   botTeam,
+  isBotOnTeam,
   isTeamLead,
   personalBotTeamLabel,
   personalBotTeams,
@@ -69,6 +70,19 @@ export interface DelegationLink {
 export const RECENT_DELEGATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 
 const LABEL_SPACE = 48;
+
+/**
+ * How many bots are on a team, read the way the server reads it. Manage teams
+ * offers Remove only at zero, and the server refuses a removal while any bot
+ * is on the team, so both sides have to compare team names case-insensitively
+ * or the button appears for a team that still has members.
+ */
+export function countTeamMembers(
+  bots: ReadonlyArray<{ readonly team?: PersonalBotTeam }>,
+  team: PersonalBotTeam,
+): number {
+  return bots.filter((bot) => isBotOnTeam(bot, team)).length;
+}
 
 /**
  * Groups bots under their leads. Registered custom teams remain available

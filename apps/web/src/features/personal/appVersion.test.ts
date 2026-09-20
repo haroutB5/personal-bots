@@ -77,6 +77,46 @@ describe("reloadLatestApp", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the saved shell when offline and still reloads", async () => {
+    const removed: string[] = [];
+    const reload = vi.fn();
+
+    // Offline the shell in that cache is the only copy of the app: clearing it
+    // and reloading gives a blank page instead of the stale-but-working app.
+    await reloadLatestApp(
+      {
+        keys: async () => ["bots-shell-current"],
+        delete: async (cacheName) => {
+          removed.push(cacheName);
+          return true;
+        },
+      },
+      reload,
+      () => false,
+    );
+
+    expect(removed).toEqual([]);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the shell when online", async () => {
+    const removed: string[] = [];
+    const reload = vi.fn();
+    await reloadLatestApp(
+      {
+        keys: async () => ["bots-shell-current"],
+        delete: async (cacheName) => {
+          removed.push(cacheName);
+          return true;
+        },
+      },
+      reload,
+      () => true,
+    );
+    expect(removed).toEqual(["bots-shell-current"]);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   it("still reloads once when cache storage is unavailable", async () => {
     const reload = vi.fn();
     await reloadLatestApp(

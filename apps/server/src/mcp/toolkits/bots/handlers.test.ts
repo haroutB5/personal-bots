@@ -461,6 +461,9 @@ describe("bots toolkit handlers", () => {
       Effect.gen(function* () {
         const { call } = yield* setup(harness);
         const bots = yield* PersonalBotService.PersonalBotService;
+        // A custom team exists because the owner registered it; `update` now
+        // refuses a team that is not a built-in or a registered custom team.
+        yield* bots.setProfile({ teamChange: { operation: "create", name: "Research" } });
         yield* bots.update({ botId: botId("developer"), team: "Research" });
         const listed = yield* call("list_bots", {});
         expect(listed.bots.map((bot) => bot.name)).not.toContain("Developer");

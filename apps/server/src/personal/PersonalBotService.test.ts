@@ -8,6 +8,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -453,3 +454,81 @@ it.effect(
     }).pipe(Effect.provide(makeTestLayer(context)));
   },
 );
+
+it.effect(
+  "a bot stored under a different case of the team name still blocks the team's removal",
+  () => {
+    const context = makeContext();
+    return Effect.gen(function* () {
+      const service = yield* PersonalBotService.PersonalBotService;
+      const repository = yield* PersonalBotRepository.PersonalBotRepository;
+      yield* service.setProfile({ teamChange: { operation: "create", name: "Research" } });
+      const bot = yield* service.create({ ...botInput("research-case"), team: "Research" });
+
+      // A row written before the team existed, or by an older client: the
+      // stored string differs from the registered team only in case. The
+      // duplicate check is case-insensitive, so this bot IS on "Research".
+      yield* repository.updateBot({
+        botId: bot.botId,
+        team: "RESEARCH",
+        updatedAt: yield* DateTime.now,
+      });
+
+      const failure = yield* Effect.flip(
+        service.setProfile({ teamChange: { operation: "delete", name: "Research" } }),
+      );
+      expect(failure.message).toContain("Move the team's bots");
+      expect((yield* service.getProfile()).customTeams).toEqual(["Research"]);
+    }).pipe(Effect.provide(makeTestLayer(context)));
+  },
+);
+
+it.effect("create and update refuse a team that is not a built-in or registered team", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+    yield* service.setProfile({ teamChange: { operation: "create", name: "Research" } });
+
+    const typo = yield* Effect.flip(service.create({ ...botInput("typo"), team: "Reserch" }));
+    expect(typo.message).toContain("'Reserch' is not a team");
+    expect(typo.message).toContain("Research");
+    expect(typo.message).toContain("Dev team");
+    expect((yield* service.list()).bots.some((bot) => bot.botId === "typo")).toBe(false);
+
+    // No team named is still the assistant's team, and a registered team is
+    // accepted under the spelling it was registered with.
+    const defaulted = yield* service.create(botInput("defaulted"));
+    expect(defaulted.team).toBe("assistant");
+    const joined = yield* service.create({ ...botInput("joined"), team: "research" });
+    expect(joined.team).toBe("Research");
+
+    const moved = yield* Effect.flip(service.update({ botId: joined.botId, team: "Marketing" }));
+    expect(moved.message).toContain("'Marketing' is not a team");
+    expect((yield* service.list()).bots.find((bot) => bot.botId === "joined")?.team).toBe(
+      "Research",
+    );
+
+    const back = yield* service.update({ botId: joined.botId, team: "assistant" });
+    expect(back.team).toBe("assistant");
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});
+
+it.effect("an undecodable customTeams row still serves the profile", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+    const repository = yield* PersonalBotRepository.PersonalBotRepository;
+    yield* service.setProfile({ displayName: "Harout" });
+    yield* repository.setMeta({ key: "customTeams", value: "{not json" });
+
+    // The greeting name is a separate row and must survive a corrupt one.
+    expect(yield* service.getProfile()).toEqual({ displayName: "Harout" });
+
+    // And the user can register a team again, which rewrites the bad row.
+    yield* service.setProfile({ teamChange: { operation: "create", name: "Research" } });
+    expect(yield* service.getProfile()).toEqual({
+      displayName: "Harout",
+      customTeams: ["Research"],
+    });
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});

@@ -81,13 +81,25 @@ export async function readAppVersion(
  * Removes the service worker's saved HTML shell before reloading. iOS can
  * otherwise serve that shell for the first reload while refreshing it in the
  * background, which makes an available update appear to need a second tap.
+ *
+ * The shell is only cleared when the app has a reason to think it can fetch a
+ * new one; see the `isOnline` guard below.
  */
 export async function reloadLatestApp(
   cacheStorage: Pick<CacheStorage, "delete" | "keys"> | undefined = typeof caches === "undefined"
     ? undefined
     : caches,
   reload: () => void = () => window.location.reload(),
+  isOnline: () => boolean = () =>
+    typeof navigator === "undefined" ? true : navigator.onLine !== false,
 ): Promise<void> {
+  // Offline, the saved shell is the only copy of the app: dropping it and
+  // reloading gives a blank page instead of the stale-but-working app. The
+  // reload still happens, so a queued update lands as soon as the network does.
+  if (!isOnline()) {
+    reload();
+    return;
+  }
   try {
     const cacheNames = (await cacheStorage?.keys()) ?? [];
     await Promise.all(

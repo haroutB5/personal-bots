@@ -120,6 +120,22 @@ export type PersonalBot = typeof PersonalBot.Type;
 export const botTeam = (bot: { readonly team?: PersonalBotTeam }): PersonalBotTeam =>
   bot.team ?? DEFAULT_PERSONAL_BOT_TEAM;
 
+/**
+ * Whether two team names name the same team. Custom teams are registered
+ * case-insensitively (`setProfile` refuses a second "research" once
+ * "Research" exists), so membership has to be read the same way or a bot
+ * whose stored team differs only in case looks like it is on a team nobody
+ * registered. Stored strings keep whatever case they were written with.
+ */
+export const sameTeam = (left: PersonalBotTeam, right: PersonalBotTeam): boolean =>
+  left.toLowerCase() === right.toLowerCase();
+
+/** {@link sameTeam} applied to a bot's team, including the missing-team default. */
+export const isBotOnTeam = (
+  bot: { readonly team?: PersonalBotTeam },
+  team: PersonalBotTeam,
+): boolean => sameTeam(botTeam(bot), team);
+
 export const isTeamLead = (bot: { readonly lead?: boolean }): boolean => bot.lead === true;
 
 export const isBotPinned = (bot: { readonly pinned?: boolean }): boolean => bot.pinned === true;

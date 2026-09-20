@@ -15,6 +15,7 @@ import {
   CommandId,
   DEFAULT_PERSONAL_BOT_TEAM,
   driverCarriesBotInstructions,
+  isBotOnTeam,
   isProviderAvailable,
   PersonalBotId,
   PersonalBotTeam,
@@ -23,6 +24,7 @@ import {
   PERSONAL_BOT_TEAM_ORDER,
   personalBotTeamLabel,
   ProjectId,
+  sameTeam,
   ProviderDriverKind,
   ThreadId,
   type PersonalBot,
@@ -202,6 +204,9 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const randomUuid = () => Effect.sync(() => NodeCrypto.randomUUID());
   const profileLock = yield* Semaphore.make(1);
+  // A corrupt customTeams row is reported once per process, not once per
+  // profile read: the Chats screen polls this and would otherwise flood the log.
+  let customTeamsDecodeLogged = false;
 
   const repositoryError = (operation: string) => (cause: unknown) =>
     new PersonalBotsError({ message: `Personal bots ${operation} failed.`, cause });
@@ -384,6 +389,33 @@ export const make = Effect.gen(function* () {
       } satisfies PersonalBotsListResult;
     });
 
+  /**
+   * Resolves a team named on a bot to a team that exists: a built-in, or a
+   * custom team the user registered. Without this, `personalBots.create` and
+   * `.update` accept any 60-character string, and a typo mints a phantom team
+   * that the team diagram draws but Manage teams cannot remove.
+   *
+   * The registered spelling is returned, so a case variant is filed under the
+   * team it names instead of becoming a second band in the diagram. Existing
+   * rows are never rewritten; {@link isBotOnTeam} is what reads those.
+   */
+  const requireKnownTeam = (team: PersonalBotTeam) =>
+    Effect.gen(function* () {
+      const profile = yield* getProfile();
+      const known = [...PERSONAL_BOT_TEAM_ORDER, ...(profile.customTeams ?? [])];
+      const match = known.find(
+        (candidate) =>
+          sameTeam(candidate, team) ||
+          personalBotTeamLabel(candidate).toLowerCase() === team.trim().toLowerCase(),
+      );
+      if (match === undefined) {
+        return yield* notFound(
+          `'${team}' is not a team. Known teams: ${known.map(personalBotTeamLabel).join(", ")}.`,
+        );
+      }
+      return match;
+    });
+
   const create: PersonalBotService["Service"]["create"] = (input) =>
     Effect.gen(function* () {
       // The botId is the client-generated idempotency key: creating twice
@@ -399,8 +431,9 @@ export const make = Effect.gen(function* () {
         .listBots()
         .pipe(Effect.mapError(repositoryError("create")));
       const sortOrder = siblings.reduce((max, bot) => Math.max(max, bot.sortOrder), -1) + 1;
-      // A bot with no team named joins the assistant's team as a member.
-      const team = input.team ?? DEFAULT_PERSONAL_BOT_TEAM;
+      // A bot with no team named joins the assistant's team as a member; a
+      // team that was named has to be one that exists.
+      const team = yield* requireKnownTeam(input.team ?? DEFAULT_PERSONAL_BOT_TEAM);
       const lead = input.lead ?? false;
       yield* repository
         .createBot({
@@ -432,9 +465,13 @@ export const make = Effect.gen(function* () {
   const update: PersonalBotService["Service"]["update"] = (input) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
+      // Same rule as create, so the drag-and-drop path on the team diagram and
+      // any API caller land on a team that exists.
+      const team = input.team === undefined ? undefined : yield* requireKnownTeam(input.team);
       const updated = yield* repository
         .updateBot({
           ...input,
+          ...(team === undefined ? {} : { team }),
           ...(input.title === undefined ? {} : { title: input.title.trim() }),
           updatedAt: now,
         })
@@ -600,7 +637,26 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const stored = yield* repository.getMeta({ key: PERSONAL_META_DISPLAY_NAME });
       const teams = yield* repository.getMeta({ key: "customTeams" });
-      const customTeams = Option.isSome(teams) ? yield* decodeCustomTeams(teams.value) : [];
+      // An undecodable customTeams row reads as "no custom teams" rather than
+      // failing the whole profile: the greeting name is stored separately and
+      // must keep working. Manage teams then offers only the built-ins, and
+      // the next team change rewrites the row.
+      const customTeams: ReadonlyArray<PersonalBotTeam> = Option.isSome(teams)
+        ? yield* decodeCustomTeams(teams.value).pipe(
+            Effect.catchCause((cause) =>
+              Effect.gen(function* () {
+                if (!customTeamsDecodeLogged) {
+                  customTeamsDecodeLogged = true;
+                  yield* Effect.logWarning(
+                    "Stored personal custom teams could not be decoded; serving the profile without them.",
+                    cause,
+                  );
+                }
+                return [] as ReadonlyArray<PersonalBotTeam>;
+              }),
+            ),
+          )
+        : [];
       return {
         displayName: Option.getOrElse(stored, () => ""),
         ...(customTeams.length > 0 ? { customTeams } : {}),
@@ -637,7 +693,10 @@ export const make = Effect.gen(function* () {
           const bots = yield* repository
             .listBots()
             .pipe(Effect.mapError(repositoryError("team lookup")));
-          if (bots.some((bot) => botTeam(bot) === (existing ?? name))) {
+          // Case-insensitive, exactly like the duplicate check above: a bot
+          // stored as "RESEARCH" is on "Research", so removing the team would
+          // strand it. The Team screen counts members the same way.
+          if (bots.some((bot) => isBotOnTeam(bot, existing ?? name))) {
             return yield* notFound("Move the team's bots to another team before removing it.");
           }
           if (existing !== undefined) customTeams.splice(customTeams.indexOf(existing), 1);

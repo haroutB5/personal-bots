@@ -7,6 +7,7 @@ import {
   buildTeamDropZones,
   buildTeamGroups,
   buildTeamGroupsLayout,
+  countTeamMembers,
   crossTeamDelegationPath,
   delegationConnectorPath,
   deriveDelegationLinks,
@@ -760,5 +761,24 @@ describe("delegationConnectorPath", () => {
       // The arrow head still travels forwards, never backwards.
       expect(end.x).toBeGreaterThan(start.x);
     }
+  });
+});
+
+describe("countTeamMembers", () => {
+  it("counts a bot whose stored team differs only in case, so Remove matches the server", () => {
+    const bots = [
+      { botId: "a", team: "RESEARCH" },
+      { botId: "b", team: "Research" },
+      { botId: "c", team: "assistant" },
+      // No team stored at all is the assistant's team, same as botTeam().
+      { botId: "d" },
+    ];
+
+    // The server refuses to remove "Research" while either of a/b is on it, so
+    // the screen must not offer Remove by reporting 0 bots.
+    expect(countTeamMembers(bots, "Research")).toBe(2);
+    expect(countTeamMembers(bots, "research")).toBe(2);
+    expect(countTeamMembers(bots, "assistant")).toBe(2);
+    expect(countTeamMembers(bots, "Finance")).toBe(0);
   });
 });
