@@ -4,6 +4,7 @@ import {
   isTeamLead,
   personalBotTeamLabel,
   personalBotTeams,
+  sameTeam,
   PERSONAL_TASK_TERMINAL_STATUSES,
   type PersonalBotTeam,
   type PersonalTask,
@@ -85,6 +86,28 @@ export function countTeamMembers(
 }
 
 /**
+ * One entry per team, under the spelling that team is registered with.
+ *
+ * `personalBotTeams` lists the built-in IDs first, then whatever it is handed;
+ * hand it the registered custom teams before the bots' own stored strings and
+ * the first survivor of each case-insensitive group is, in order of
+ * preference, the built-in ID, the profile's spelling, or — for a team nobody
+ * registered — the first spelling a bot was stored with. Rows written before
+ * `requireKnownTeam` started writing the registered spelling back (v1.21.4)
+ * can still say "RESEARCH" where the profile says "Research"; they belong in
+ * the one band, drawn under "Research". Nothing here rewrites a stored string.
+ */
+function registeredTeamSpellings(
+  customTeams: ReadonlyArray<PersonalBotTeam>,
+  botTeams: ReadonlyArray<PersonalBotTeam>,
+): ReadonlyArray<PersonalBotTeam> {
+  const ordered = personalBotTeams([...customTeams, ...botTeams]);
+  return ordered.filter(
+    (team, index) => ordered.findIndex((earlier) => sameTeam(earlier, team)) === index,
+  );
+}
+
+/**
  * Groups bots under their leads. Registered custom teams remain available
  * as drop targets when empty.
  */
@@ -96,9 +119,9 @@ export function buildTeamGroups(
   }>,
   customTeams: ReadonlyArray<PersonalBotTeam> = [],
 ): TeamGroup[] {
-  return personalBotTeams([...customTeams, ...bots.map(botTeam)]).flatMap((team) => {
-    const members = bots.filter((bot) => botTeam(bot) === team);
-    if (members.length === 0 && !customTeams.includes(team)) return [];
+  return registeredTeamSpellings(customTeams, bots.map(botTeam)).flatMap((team) => {
+    const members = bots.filter((bot) => isBotOnTeam(bot, team));
+    if (members.length === 0 && !customTeams.some((custom) => sameTeam(custom, team))) return [];
     const lead = members.find(isTeamLead) ?? null;
     return [
       {
@@ -688,10 +711,13 @@ export function teamDropOutcome(
   const from = botTeam(bot);
   const to = target.team;
   const toLabel = personalBotTeamLabel(to);
-  const leaving = from !== to;
+  // Case-insensitively: a bot stored as "RESEARCH" dropped on the "Research"
+  // band has not left its team, so this reports "already on" rather than
+  // announcing a move and writing the row for the sake of its spelling.
+  const leaving = !sameTeam(from, to);
 
   if (leaving && isTeamLead(bot)) {
-    const staying = roster.filter((other) => other.botId !== bot.botId && botTeam(other) === from);
+    const staying = roster.filter((other) => other.botId !== bot.botId && isBotOnTeam(other, from));
     if (staying.length > 0) {
       return {
         kind: "blocked",

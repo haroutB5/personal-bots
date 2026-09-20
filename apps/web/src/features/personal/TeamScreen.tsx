@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   botTeam,
+  isBotOnTeam,
   isTeamLead,
+  sameTeam,
   type EnvironmentId,
   type PersonalBot,
   type PersonalBotTeam,
@@ -125,7 +127,7 @@ function TeamDiagram({
     const settled = bots.find((bot) => bot.botId === pending.botId);
     if (
       settled !== undefined &&
-      botTeam(settled) === pending.team &&
+      sameTeam(botTeam(settled), pending.team) &&
       isTeamLead(settled) === pending.lead
     ) {
       setPending(null);
@@ -140,7 +142,7 @@ function TeamDiagram({
     return bots.map((bot) => {
       if (bot.botId === pending.botId) return { ...bot, team: pending.team, lead: pending.lead };
       // One lead per team, optimistically too: never two badges for a blink.
-      if (pending.lead && botTeam(bot) === pending.team) return { ...bot, lead: false };
+      if (pending.lead && isBotOnTeam(bot, pending.team)) return { ...bot, lead: false };
       return bot;
     });
   }, [bots, pending]);
@@ -413,7 +415,14 @@ function TeamDiagram({
             const running = link.state === "running";
             // A handoff across teams only exists because the owner allowed it,
             // so it is drawn apart rather than hidden.
-            const crossTeam = teamById.get(link.from) !== teamById.get(link.to);
+            const fromTeam = teamById.get(link.from);
+            const toTeam = teamById.get(link.to);
+            // Case-insensitively, so two rows spelled differently but drawn in
+            // the one band do not get the across-teams colour and lane.
+            const crossTeam =
+              fromTeam === undefined || toTeam === undefined
+                ? fromTeam !== toTeam
+                : !sameTeam(fromTeam, toTeam);
             // Side by side in one row, the bow is the clearest line there is.
             // Between rows it would sag across the row below and through
             // whichever node shares that column, so it takes a lane instead.

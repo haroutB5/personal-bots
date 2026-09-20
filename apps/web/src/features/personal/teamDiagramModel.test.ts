@@ -115,6 +115,85 @@ describe("buildTeamGroups", () => {
     ]);
   });
 
+  // Rows written before requireKnownTeam (v1.21.4) started writing the
+  // registered spelling back can still differ from the profile only in case.
+  // Two bands with the same name is the bug; nothing here rewrites a row.
+  it("draws one band for case-variant stored teams, under the registered spelling", () => {
+    const roster = [
+      { botId: "researcher", team: "RESEARCH", lead: true },
+      { botId: "reader", team: "research" },
+      { botId: "writer", team: "Research" },
+    ];
+    const groups = buildTeamGroups(roster, ["Research"]);
+    expect(groups.filter((group) => group.label.toLowerCase() === "research")).toEqual([
+      {
+        team: "Research",
+        label: "Research",
+        leadBotId: "researcher",
+        memberBotIds: ["reader", "writer"],
+      },
+    ]);
+    // Manage teams counts the same three the band draws.
+    expect(countTeamMembers(roster, "Research")).toBe(3);
+    expect(buildTeamGroupsLayout(groups, LAYOUT).bands.map((band) => band.label)).toEqual([
+      "Research",
+    ]);
+  });
+
+  it("folds a case-variant built-in team under its built-in label", () => {
+    expect(buildTeamGroups([{ botId: "cto", team: "DEV", lead: true }])).toEqual([
+      { team: "dev", label: "Dev team", leadBotId: "cto", memberBotIds: [] },
+    ]);
+  });
+
+  // Nobody registered this one, so the first stored spelling is all there is.
+  it("falls back to the first stored spelling for an unregistered team", () => {
+    expect(
+      buildTeamGroups([
+        { botId: "a", team: "Skunkworks" },
+        { botId: "b", team: "SKUNKWORKS" },
+      ]),
+    ).toEqual([
+      { team: "Skunkworks", label: "Skunkworks", leadBotId: null, memberBotIds: ["a", "b"] },
+    ]);
+  });
+
+  it("keeps the merged band a working drop target", () => {
+    const roster: TeamDropBot[] = [
+      { botId: "researcher", name: "Researcher", team: "RESEARCH", lead: true },
+      { botId: "reader", name: "Reader", team: "research" },
+      { botId: "planner", name: "Planner", team: "assistant" },
+    ];
+    const groups = buildTeamGroups(roster, ["Research"]);
+    const layout = buildTeamGroupsLayout(groups, LAYOUT);
+    const zones = buildTeamDropZones(layout, LAYOUT);
+    // One band zone for the team, under the registered spelling.
+    const bandZones = zones.filter((zone) => zone.id.startsWith("band:"));
+    expect(bandZones.map((zone) => zone.id)).toEqual(["band:assistant", "band:Research"]);
+    expect(bandZones.map((zone) => zone.label)).toEqual(["Assistant's team", "Research"]);
+
+    const band = bandZones.at(-1)!;
+    expect(band.target).toEqual({ kind: "team", team: "Research" });
+    // An outsider still lands on it.
+    expect(teamDropOutcome(roster[2]!, band.target, roster)).toMatchObject({
+      kind: "update",
+      update: { team: "Research", lead: false },
+    });
+    // A member stored under another case is already there, so no write.
+    expect(teamDropOutcome(roster[1]!, band.target, roster)).toEqual({
+      kind: "none",
+      message: "Reader is already on the Research.",
+    });
+    // And the lead of the merged band still cannot walk out on its members.
+    expect(teamDropOutcome(roster[0]!, { kind: "team", team: "assistant" }, roster)).toMatchObject({
+      kind: "blocked",
+    });
+    // Hit-testing inside the band finds that one zone.
+    expect(hitTestTeamDropZone(zones, { x: 10, y: band.rect.y + band.rect.height / 2 })?.id).toBe(
+      "band:Research",
+    );
+  });
+
   // A bot from a server too old to have teams, and a team nobody is on.
   it("defaults an unassigned bot to the assistant's team and omits the empty one", () => {
     expect(buildTeamGroups([{ botId: "scout" }])).toEqual([

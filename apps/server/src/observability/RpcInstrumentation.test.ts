@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - reads ws.ts as source text, not as data.
+import * as NodeFS from "node:fs";
+
 import { assert, describe, it } from "@effect/vitest";
 import { WS_METHODS } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -310,4 +313,43 @@ describe("RpcInstrumentation", () => {
       assert.deepStrictEqual(spanNames, []);
     }),
   );
+});
+
+/**
+ * `rpc.aggregate` is what groups a method's spans with its siblings, so a
+ * registration that passes something else in that slot silently drops out of
+ * the aggregation: nothing fails, the method just stops being counted with the
+ * rest. `personalSecrets.setSharing` once passed `{ name: input.name }` there —
+ * a name where a value belongs — which is invisible at the call site and
+ * invisible at runtime. So assert it over the source of every registration
+ * rather than for one method.
+ */
+describe("ws.ts rpc registrations", () => {
+  const source = NodeFS.readFileSync(new URL("../ws.ts", import.meta.url), "utf8");
+  const CALL = /observeRpc(?:Effect|Stream|StreamEffect)\(/g;
+
+  const callSites = (): ReadonlyArray<{ readonly method: string; readonly body: string }> => {
+    const starts = [...source.matchAll(CALL)].map((match) => match.index);
+    return starts.map((start, index) => {
+      const body = source.slice(start, starts[index + 1] ?? source.length);
+      const method = /WS_METHODS\.(\w+)/.exec(body)?.[1] ?? "<unknown>";
+      return { method, body };
+    });
+  };
+
+  it("registers every method with an rpc.aggregate attribute", () => {
+    const sites = callSites();
+    assert.isAtLeast(sites.length, 200);
+    assert.deepStrictEqual(
+      sites.filter((site) => !site.body.includes('"rpc.aggregate"')).map((site) => site.method),
+      [],
+    );
+  });
+
+  it("gives personalSecrets.setSharing the server aggregate its siblings use", () => {
+    const site = callSites().find((entry) => entry.method === "personalSecretsSetSharing");
+    assert.isDefined(site);
+    assert.include(site!.body, '"rpc.aggregate": "server"');
+    assert.notInclude(site!.body, "{ name: input.name }");
+  });
 });
