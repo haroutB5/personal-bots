@@ -43,6 +43,27 @@ export function stripCellBarPercent(cell: UsageStripCell): number | null {
   return reported.length === 0 ? null : Math.max(...reported);
 }
 
+/** Percent at which a window is close enough to spent to be worth colouring. */
+export const STRIP_BINDING_THRESHOLD = 80;
+
+/**
+ * Which window is the one about to stop a bot, once either is near spent.
+ *
+ * The bar fills to the worse of the two, which answers "how much headroom is
+ * left" but not "which limit is it" - and those differ a lot: a spent 5-hour
+ * window clears in hours, a spent week may not clear for days. Naming the
+ * binding window in the text costs no vertical space. A tie goes to weekly,
+ * the one that takes longer to come back.
+ */
+export function stripBindingWindow(cell: UsageStripCell): "session" | "weekly" | null {
+  const session = cell.sessionPercent;
+  const weekly = cell.weeklyPercent;
+  const worst = stripCellBarPercent(cell);
+  if (worst === null || worst < STRIP_BINDING_THRESHOLD) return null;
+  if (weekly !== null && weekly === worst) return "weekly";
+  return session !== null && session === worst ? "session" : null;
+}
+
 /** "26%" for a figure the provider reported, an en dash for one it did not. */
 export function formatStripPercent(percent: number | null): string {
   return percent === null ? "–" : `${percent}%`;

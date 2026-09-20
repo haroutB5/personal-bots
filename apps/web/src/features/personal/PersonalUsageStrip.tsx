@@ -12,8 +12,10 @@ import { selectUsageCards, type UsageCard, type UsageWindowRow } from "./usagePr
 import {
   formatStripPercent,
   selectUsageStripCells,
+  stripBindingWindow,
   stripCellBarPercent,
   usageStripAriaLabel,
+  type UsageStripCell,
 } from "./usageStrip";
 
 const ICON_BUTTON =
@@ -22,6 +24,15 @@ const ICON_BUTTON =
 /** Bars turn amber once a window is nearly spent; muted ink the rest of the time. */
 function barColor(usedPercent: number): string {
   return usedPercent >= 80 ? "var(--personal-review)" : "var(--personal-text-tertiary)";
+}
+
+/**
+ * The bar fills to the worse window, so it says how little headroom is left but
+ * not which limit is doing it - and a spent 5-hour window clears in hours where
+ * a spent week may not clear for days. Ink the binding one to name it.
+ */
+function bindingInk(cell: UsageStripCell, window: "session" | "weekly"): string {
+  return stripBindingWindow(cell) === window ? "text-[var(--personal-review)]" : "";
 }
 
 function StripCellBar({ percent }: { readonly percent: number | null }): JSX.Element {
@@ -231,8 +242,13 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
               {cell.title}
             </span>
             <span className="whitespace-nowrap text-[11px] leading-4 text-[var(--personal-text-tertiary)] tabular-nums">
-              Session {formatStripPercent(cell.sessionPercent)} · Weekly{" "}
-              {formatStripPercent(cell.weeklyPercent)} used
+              <span className={bindingInk(cell, "session")}>
+                Session {formatStripPercent(cell.sessionPercent)}
+              </span>{" "}
+              ·{" "}
+              <span className={bindingInk(cell, "weekly")}>
+                Weekly {formatStripPercent(cell.weeklyPercent)} used
+              </span>
             </span>
             <StripCellBar percent={stripCellBarPercent(cell)} />
           </span>

@@ -4,6 +4,7 @@ import type { UsageCard, UsageCardDriver, UsageWindowRow } from "./usagePresenta
 import {
   formatStripPercent,
   selectUsageStripCells,
+  stripBindingWindow,
   stripCellBarPercent,
   usageStripAriaLabel,
 } from "./usageStrip";
@@ -133,5 +134,29 @@ describe("stripCellBarPercent", () => {
     expect(cell(43, null)).toBe(43);
     // Nothing reported at all: no bar, rather than a zero that reads as empty.
     expect(cell(null, null)).toBeNull();
+  });
+});
+
+describe("stripBindingWindow", () => {
+  const cell = (sessionPercent: number | null, weeklyPercent: number | null) =>
+    ({
+      driver: "claudeAgent" as UsageCardDriver,
+      title: "Claude",
+      sessionPercent,
+      weeklyPercent,
+    }) satisfies Parameters<typeof stripBindingWindow>[0];
+
+  it("names the window that is about to stop a bot", () => {
+    // The bar fills to the worse window either way; the text is the only place
+    // that can say a spent week (days to clear) from a spent session (hours).
+    expect(stripBindingWindow(cell(0, 100))).toBe("weekly");
+    expect(stripBindingWindow(cell(95, 12))).toBe("session");
+    // A tie goes to the one that takes longer to come back.
+    expect(stripBindingWindow(cell(90, 90))).toBe("weekly");
+  });
+
+  it("stays quiet while there is headroom, or nothing was reported", () => {
+    expect(stripBindingWindow(cell(40, 79))).toBeNull();
+    expect(stripBindingWindow(cell(null, null))).toBeNull();
   });
 });
