@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
+import { WRAPUP_CHAT_PROMPT } from "@t3tools/contracts";
+
 import {
   EXPLICIT_REMEMBER_REQUEST,
   formatNextRun,
@@ -64,6 +66,12 @@ describe("save_memory consent", () => {
     "save this for later",
   ])("accepts %s", (request) => {
     expect(EXPLICIT_REMEMBER_REQUEST.test(request)).toBe(true);
+  });
+
+  // Wrapup summarizes a chat and then stores it. The prompt and this guard are
+  // shipped separately, so only a test keeps them from drifting apart.
+  it("accepts the shipped wrapup prompt", () => {
+    expect(EXPLICIT_REMEMBER_REQUEST.test(WRAPUP_CHAT_PROMPT)).toBe(true);
   });
 
   it.each(["I take my coffee black", "What's the weather?", "I remembered it wrong"])(
