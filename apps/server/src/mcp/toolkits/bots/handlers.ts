@@ -332,6 +332,50 @@ const make = Effect.gen(function* () {
             .map((task) => summarize(task, names)),
         };
       }),
+    stop_task: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* callerTask();
+        const root = yield* callerRoot();
+        if (Option.isNone(root)) {
+          return yield* notInTree();
+        }
+        const tree = yield* treeOf(root.value);
+        const target = tree.find((entry) => entry.taskId === input.taskId);
+        // Scoped exactly like get_task: a bot may only stop work it owns, so a
+        // task id guessed from elsewhere reads as absent rather than as a lever.
+        if (target === undefined) {
+          return yield* notInTree();
+        }
+        if (target.taskId === caller.task.taskId) {
+          return yield* toolError("You cannot stop your own task; finish your turn instead.");
+        }
+        const stopped = yield* tasks
+          .cancel({ taskId: target.taskId })
+          .pipe(Effect.mapError(readable));
+        if (input.redirectObjective === undefined) {
+          return { taskId: stopped.taskId, status: stopped.status, redirectedTaskId: null };
+        }
+        // Redirecting in the same call is what keeps a stopped task from
+        // becoming a dropped one: the bot that lost its objective gets the new
+        // one before this tool returns.
+        const replacement = yield* tasks
+          .delegate({
+            parentTaskId: caller.task.taskId,
+            targetBotId: target.botId,
+            brief: briefOf({ targetBot: target.botId, objective: input.redirectObjective }),
+            idempotencyKey: delegationIdempotencyKey(
+              caller.turnId,
+              target.botId,
+              input.redirectObjective,
+            ),
+          })
+          .pipe(Effect.mapError(readable));
+        return {
+          taskId: stopped.taskId,
+          status: stopped.status,
+          redirectedTaskId: replacement.taskId,
+        };
+      }),
     request_secret: (input) =>
       Effect.gen(function* () {
         const caller = yield* callerTask();

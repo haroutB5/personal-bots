@@ -103,6 +103,27 @@ export const GetTaskResult = Schema.Struct({
 });
 export type GetTaskResult = typeof GetTaskResult.Type;
 
+export const StopTaskInput = Schema.Struct({
+  taskId: PersonalTaskId.annotate({ description: "A task id from delegate_task or list_tasks." }),
+  reason: Schema.String.annotate({
+    description:
+      "Why you are stopping it, in one line. The bot sees this as the reason its work ended.",
+  }),
+  redirectObjective: Schema.optional(
+    Schema.String.annotate({
+      description:
+        "New objective for the same bot. Given this, the stopped task is replaced by a fresh one in the same step, so the work never sits cancelled and forgotten.",
+    }),
+  ),
+});
+
+export const StopTaskResult = Schema.Struct({
+  taskId: PersonalTaskId,
+  status: PersonalTaskStatus,
+  redirectedTaskId: Schema.NullOr(PersonalTaskId),
+});
+export type StopTaskResult = typeof StopTaskResult.Type;
+
 export const ListTasksInput = Schema.Struct({
   status: Schema.optional(
     PersonalTaskStatus.annotate({ description: "Only tasks in this status." }),
@@ -278,6 +299,20 @@ const ListTasksTool = Tool.make("list_tasks", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const StopTaskTool = Tool.make("stop_task", {
+  description:
+    "Stop a task you delegated that is still running, and optionally hand the same bot a new objective in its place. Use this when the work has been overtaken by events instead of letting it finish. Only tasks in your own request's task tree can be stopped.",
+  parameters: StopTaskInput,
+  success: StopTaskResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Stop a delegated task")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
+
 const RequestSecretTool = Tool.make("request_secret", {
   description:
     "Ask the user for an API key or token through a secure form. Never use this for website passwords: those are the user's saved logins, filled by use_login. Never ask for secrets in chat and never print one. After calling this, end your turn: you are resumed in a fresh session where the value is the environment variable PB_SECRET_<NAME> for shell commands.",
@@ -368,6 +403,7 @@ export const BotsToolkit = Toolkit.make(
   DelegateTaskTool,
   GetTaskTool,
   ListTasksTool,
+  StopTaskTool,
   RequestSecretTool,
   UseLoginTool,
   RequestBrowserHelpTool,
