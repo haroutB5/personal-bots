@@ -72,3 +72,13 @@ export class PersonalMemoryError extends Schema.TaggedError<PersonalMemoryError>
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+/**
+ * The canned user turn behind "Wrapup". It lives here, beside the memory
+ * contracts, because the server's save_memory consent guard reads the user's
+ * own words: if this wording and that guard drift apart, wrapup silently
+ * summarizes a chat and then refuses to store it, which is what shipped once.
+ * A server test asserts the guard still accepts this exact string.
+ */
+export const WRAPUP_CHAT_PROMPT =
+  "Wrap up this chat: summarize the key points, decisions and any preferences I expressed, then remember that summary with save_memory so future chats can find it. Keep the summary concise.";
