@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Info,
   KeyRound,
+  Plug,
   Network,
   SquareTerminal,
 } from "lucide-react";
@@ -331,7 +332,29 @@ export function PersonalSettingsScreen(): JSX.Element {
         <h2 id="settings-plugins" className={SECTION_TITLE}>
           Plugins
         </h2>
-        <ul className={CARD}>
+        <ul className={`${CARD} divide-y divide-[var(--personal-border)]`}>
+          <li>
+            <Link to="/bots/settings/connections" className={SETTINGS_ROW}>
+              <Plug
+                aria-hidden="true"
+                className="size-5 shrink-0 text-[var(--personal-text)]"
+                strokeWidth={1.75}
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-[15px] font-semibold text-[var(--personal-text)]">
+                  Connections
+                </span>
+                <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
+                  GitHub, Vercel and other accounts bots can use
+                </span>
+              </span>
+              <ChevronRight
+                aria-hidden="true"
+                className="size-5 shrink-0 text-[var(--personal-text-secondary)]"
+                strokeWidth={1.75}
+              />
+            </Link>
+          </li>
           <li>
             <Link to="/bots/settings/passwords" className={SETTINGS_ROW}>
               <KeyRound
