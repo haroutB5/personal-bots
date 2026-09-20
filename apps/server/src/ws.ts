@@ -192,6 +192,7 @@ import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
+import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
 import * as PersonalConnectionService from "./personal/connections/service.ts";
 // personal browser
 import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
@@ -743,6 +744,8 @@ const makeWsRpcLayer = (
       const personalSecrets = yield* PersonalSecretService.PersonalSecretService;
       const personalLogins = yield* PersonalLoginService.PersonalLoginService;
       const personalConnections = yield* PersonalConnectionService.PersonalConnectionService;
+      const personalConnectionApprovals =
+        yield* PersonalConnectionApprovalService.PersonalConnectionApprovalService;
       // personal browser
       const personalBrowser = yield* PersonalBrowser.PersonalBrowser;
       const personalRoutines = yield* PersonalRoutineService.PersonalRoutineService;
@@ -3302,6 +3305,24 @@ const makeWsRpcLayer = (
             personalConnections.rotate(input),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.personalConnectionApprovalsList]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionApprovalsList,
+            personalConnectionApprovals.listPending(),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalConnectionApprovalsDecide]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionApprovalsDecide,
+            personalConnectionApprovals.decide(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalConnectionApprovalsCancel]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionApprovalsCancel,
+            personalConnectionApprovals.cancel(input),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalLoginsList]: (_input) =>
           observeRpcEffect(WS_METHODS.personalLoginsList, personalLogins.list(), {
             "rpc.aggregate": "server",
@@ -4269,6 +4290,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const personalSecrets = yield* PersonalSecretService.PersonalSecretService;
     const personalLogins = yield* PersonalLoginService.PersonalLoginService;
     const personalConnections = yield* PersonalConnectionService.PersonalConnectionService;
+    const personalConnectionApprovals =
+      yield* PersonalConnectionApprovalService.PersonalConnectionApprovalService;
     const personalRoutines = yield* PersonalRoutineService.PersonalRoutineService;
     const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
     const personalPush = yield* PersonalPushService.PersonalPushService;
@@ -4337,6 +4360,12 @@ export const websocketRpcRouteLayer = Layer.unwrap(
                 Layer.succeed(
                   PersonalConnectionService.PersonalConnectionService,
                   personalConnections,
+                ),
+              ),
+              Layer.provide(
+                Layer.succeed(
+                  PersonalConnectionApprovalService.PersonalConnectionApprovalService,
+                  personalConnectionApprovals,
                 ),
               ),
               Layer.provide(

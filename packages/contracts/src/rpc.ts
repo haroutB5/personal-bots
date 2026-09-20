@@ -319,6 +319,10 @@ import {
 } from "./personalSecrets.ts";
 import {
   PersonalConnection,
+  PersonalConnectionApproval,
+  PersonalConnectionApprovalDecideInput,
+  PersonalConnectionApprovalIdInput,
+  PersonalConnectionApprovalListResult,
   PersonalConnectionConnectInput,
   PersonalConnectionDisconnectResult,
   PersonalConnectionIdInput,
@@ -579,6 +583,11 @@ export const WS_METHODS = {
   personalConnectionsReconnect: "personalConnections.reconnect",
   personalConnectionsDisconnect: "personalConnections.disconnect",
   personalConnectionsRotate: "personalConnections.rotate",
+
+  // Owner decisions about what a bot asked a connection to do.
+  personalConnectionApprovalsList: "personalConnectionApprovals.list",
+  personalConnectionApprovalsDecide: "personalConnectionApprovals.decide",
+  personalConnectionApprovalsCancel: "personalConnectionApprovals.cancel",
 
   // Personal saved logins (passwords are write-only and never appear in results)
   personalLoginsList: "personalLogins.list",
@@ -1366,6 +1375,30 @@ const WsPersonalConnectionsRotateRpc = Rpc.make(WS_METHODS.personalConnectionsRo
   success: PersonalConnection,
   error: PersonalConnectionsRpcError,
 });
+
+const WsPersonalConnectionApprovalsListRpc = Rpc.make(WS_METHODS.personalConnectionApprovalsList, {
+  payload: Schema.Struct({}),
+  success: PersonalConnectionApprovalListResult,
+  error: PersonalConnectionsRpcError,
+});
+
+const WsPersonalConnectionApprovalsDecideRpc = Rpc.make(
+  WS_METHODS.personalConnectionApprovalsDecide,
+  {
+    payload: PersonalConnectionApprovalDecideInput,
+    success: PersonalConnectionApproval,
+    error: PersonalConnectionsRpcError,
+  },
+);
+
+const WsPersonalConnectionApprovalsCancelRpc = Rpc.make(
+  WS_METHODS.personalConnectionApprovalsCancel,
+  {
+    payload: PersonalConnectionApprovalIdInput,
+    success: PersonalConnectionApproval,
+    error: PersonalConnectionsRpcError,
+  },
+);
 
 const PersonalLoginsRpcError = Schema.Union([PersonalLoginsError, EnvironmentAuthorizationError]);
 
@@ -2181,6 +2214,9 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalConnectionsReconnectRpc,
   WsPersonalConnectionsDisconnectRpc,
   WsPersonalConnectionsRotateRpc,
+  WsPersonalConnectionApprovalsListRpc,
+  WsPersonalConnectionApprovalsDecideRpc,
+  WsPersonalConnectionApprovalsCancelRpc,
   WsPersonalLoginsListRpc,
   WsPersonalLoginsCreateRpc,
   WsPersonalLoginsUpdateRpc,
