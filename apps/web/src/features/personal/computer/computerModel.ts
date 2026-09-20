@@ -95,14 +95,50 @@ export function backToChatTarget(status: PersonalBrowserStatus | null): BackToCh
 }
 
 /**
- * Where the Computer tab's "Back to chat" goes. The agent lease lapses 90
+ * `/computer?fromBot=…&fromThread=…`: the chat the user tapped in from. It
+ * lives in the URL rather than router state or a module variable so it
+ * survives a reload and a PWA restore, and so the *absence* of an origin is
+ * explicit — the tab bar links to a bare `/computer`, which parses to `{}`
+ * and can never inherit a previous visit's chat.
+ */
+export interface ComputerSearch {
+  readonly fromBot?: string;
+  readonly fromThread?: string;
+}
+
+/** Both halves or neither: half an origin cannot address a conversation. */
+export function parseComputerSearch(raw: Record<string, unknown>): ComputerSearch {
+  const fromBot = typeof raw.fromBot === "string" ? raw.fromBot.trim() : "";
+  const fromThread = typeof raw.fromThread === "string" ? raw.fromThread.trim() : "";
+  return fromBot && fromThread ? { fromBot, fromThread } : {};
+}
+
+export function computerSearchOrigin(search: ComputerSearch): BackToChatTarget | null {
+  const { fromBot, fromThread } = search;
+  return fromBot !== undefined && fromThread !== undefined
+    ? { botId: fromBot, threadId: fromThread }
+    : null;
+}
+
+/**
+ * Where the Computer tab's "Back to chat" goes.
+ *
+ * `origin` — the chat whose link opened this screen — leads, because it is the
+ * one thing the user actually did: he was in that chat one tap ago. The
+ * browser may never have run (no `lastAgent`, no controller), which used to
+ * drop him on the chats list instead.
+ *
+ * Arriving from the tab bar there is no origin. Then the agent lease lapses 90
  * seconds after the bot's last op while the browser stays open for ten idle
  * minutes — exactly the stretch in which the user is looking at the bot's page
- * and wants its chat — so the server's durable `lastAgent` leads, and the live
- * controller is only the fallback (an older server sends no `lastAgent`).
+ * and wants its chat — so the server's durable `lastAgent` comes next, and the
+ * live controller is the last fallback (an older server sends no `lastAgent`).
  */
-export function computerBackTarget(status: PersonalBrowserStatus | null): BackToChatTarget | null {
-  return status?.lastAgent ?? backToChatTarget(status);
+export function computerBackTarget(
+  status: PersonalBrowserStatus | null,
+  origin: BackToChatTarget | null = null,
+): BackToChatTarget | null {
+  return origin ?? status?.lastAgent ?? backToChatTarget(status);
 }
 
 /** Whether the live agent browser lease belongs to this exact conversation. */

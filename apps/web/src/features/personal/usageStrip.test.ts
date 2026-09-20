@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { UsageCard, UsageCardDriver, UsageWindowRow } from "./usagePresentation";
-import { formatStripPercent, selectUsageStripCells, usageStripAriaLabel } from "./usageStrip";
+import {
+  formatStripPercent,
+  selectUsageStripCells,
+  stripCellBarPercent,
+  usageStripAriaLabel,
+} from "./usageStrip";
 
 function row(overrides: Partial<UsageWindowRow> = {}): UsageWindowRow {
   return {
@@ -97,5 +102,36 @@ describe("usageStripAriaLabel", () => {
     expect(label).toBe(
       "Usage: Claude, Session not reported, Weekly not reported; Codex, Session not reported, Weekly 4 percent used. Open details.",
     );
+  });
+});
+
+describe("stripCellBarPercent", () => {
+  /**
+   * The reported bug: "Session 0% . Weekly 100% used" over an empty bar. The
+   * bar tracked the 5-hour window alone, so a spent weekly allowance drew as
+   * untouched capacity.
+   */
+  it("fills to the spent weekly window while the session sits idle", () => {
+    expect(
+      stripCellBarPercent({
+        driver: "claudeAgent",
+        title: "Claude",
+        sessionPercent: 0,
+        weeklyPercent: 100,
+      }),
+    ).toBe(100);
+  });
+
+  it("shows whichever window binds first", () => {
+    const cell = (sessionPercent: number | null, weeklyPercent: number | null) =>
+      stripCellBarPercent({ driver: "codex", title: "Codex", sessionPercent, weeklyPercent });
+    expect(cell(88, 12)).toBe(88);
+    expect(cell(12, 88)).toBe(88);
+    expect(cell(0, 0)).toBe(0);
+    // One window reported, the other not: the reported one still draws.
+    expect(cell(null, 43)).toBe(43);
+    expect(cell(43, null)).toBe(43);
+    // Nothing reported at all: no bar, rather than a zero that reads as empty.
+    expect(cell(null, null)).toBeNull();
   });
 });

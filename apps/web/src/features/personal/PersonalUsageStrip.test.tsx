@@ -151,4 +151,34 @@ describe("PersonalUsageStrip", () => {
       ),
     ).toHaveLength(1);
   });
+
+  /**
+   * The reported bug: "Session 0% . Weekly 100% used" beside an empty bar,
+   * because the bar tracked the 5-hour window alone. It now fills to the
+   * binding window and takes the amber treatment it already uses past 80%.
+   */
+  it("fills the bar when the weekly allowance is spent and the session is idle", async () => {
+    state.providers = [
+      provider("claudeAgent", {
+        checkedAt: "2026-09-13T11:59:00Z",
+        windows: [
+          { id: "five_hour", kind: "session", label: "5-hour session", usedPercent: 0 },
+          { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 100 },
+        ],
+      }),
+    ];
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+
+    const filled = renderer!.root.findAll(
+      (node) => typeof node.props.style?.width === "string" && node.props.style.width !== "0%",
+    );
+    expect(filled.map((node) => node.props.style.width)).toEqual(["100%"]);
+    expect(filled[0]!.props.style.backgroundColor).toBe("var(--personal-review)");
+    // The label still reads both numbers the bar collapses into one.
+    expect(renderer!.root.findAllByType("button")[0]!.props["aria-label"]).toContain(
+      "Session 0 percent used, Weekly 100 percent used",
+    );
+  });
 });

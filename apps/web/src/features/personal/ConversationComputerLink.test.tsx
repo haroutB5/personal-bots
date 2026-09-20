@@ -48,6 +48,9 @@ describe("ConversationComputerLink", () => {
       <ConversationComputerLink status={null} botId="bot-1" threadId="thread-a" />,
     );
     expect(output).toContain('"to":"/computer"');
+    // Back from the Computer tab has to land here again even when the browser
+    // never ran, so the link carries the chat it came from.
+    expect(output).toContain('"search":{"fromBot":"bot-1","fromThread":"thread-a"}');
     expect(output).toContain("Computer");
     // Quiet: secondary text, not a button or a card.
     expect(output).toContain("text-[13px]");

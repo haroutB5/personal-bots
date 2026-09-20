@@ -293,9 +293,12 @@ describe("ComputerScreen back to chat", () => {
     });
   };
 
-  const tapBack = async (onBackToChat: (target: unknown) => void) => {
+  const tapBack = async (
+    onBackToChat: (target: unknown) => void,
+    origin: { botId: string; threadId: string } | null = null,
+  ) => {
     await act(async () => {
-      renderer = create(<ComputerScreen onBackToChat={onBackToChat} />);
+      renderer = create(<ComputerScreen onBackToChat={onBackToChat} origin={origin} />);
     });
     const back = renderer!.root
       .findAllByType("button")
@@ -328,6 +331,25 @@ describe("ComputerScreen back to chat", () => {
     const onBackToChat = vi.fn();
     await tapBack(onBackToChat);
     expect(onBackToChat).toHaveBeenCalledWith(null);
+  });
+
+  /**
+   * The reported bug. He taps the chat's Computer line, finds "Browser not
+   * running / No page open", and taps Back: no controller and no `lastAgent`,
+   * so the status alone would send him to the chats list. The chat's link
+   * carries its own origin for exactly this case.
+   */
+  it("returns to the originating chat when the browser never ran", async () => {
+    stubDocument();
+    feedState.status = {
+      ...STATUS,
+      state: "offline",
+      controller: { _tag: "None" },
+      lastAgent: null,
+    };
+    const onBackToChat = vi.fn();
+    await tapBack(onBackToChat, { botId: "bot-1", threadId: "thread-a" });
+    expect(onBackToChat).toHaveBeenCalledWith({ botId: "bot-1", threadId: "thread-a" });
   });
 });
 

@@ -27,6 +27,22 @@ export function selectUsageStripCells(cards: ReadonlyArray<UsageCard>): readonly
   }));
 }
 
+/**
+ * What the cell's one bar fills to: the window that is further spent, and so
+ * the one that will actually stop him working. A weekly allowance at 100% with
+ * an idle session window used to render as an empty bar beside the words
+ * "Weekly 100% used" — the bar claimed he had everything left.
+ *
+ * Null only when neither window was reported. A reported 0% still fills to 0,
+ * which is honest; null is the strip's "nothing to say".
+ */
+export function stripCellBarPercent(cell: UsageStripCell): number | null {
+  const reported = [cell.sessionPercent, cell.weeklyPercent].filter(
+    (percent): percent is number => percent !== null,
+  );
+  return reported.length === 0 ? null : Math.max(...reported);
+}
+
 /** "26%" for a figure the provider reported, an en dash for one it did not. */
 export function formatStripPercent(percent: number | null): string {
   return percent === null ? "–" : `${percent}%`;

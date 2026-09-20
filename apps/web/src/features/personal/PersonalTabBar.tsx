@@ -34,6 +34,9 @@ export function PersonalTabBar({ active }: { active: PersonalTab }): JSX.Element
             <li key={tab} className="flex">
               <Link
                 to={to}
+                // Explicitly empty: a tab-bar tap is an origin-less visit, so
+                // /computer must never inherit a previous visit's `fromBot`.
+                search={{}}
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
                   "flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 text-xs outline-none",

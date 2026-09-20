@@ -38,6 +38,9 @@ export function ConversationComputerLink({
     <div className="flex shrink-0 justify-center px-4">
       <Link
         to="/computer"
+        // Carries where he came from, so Back returns to this chat even when
+        // the browser never ran and the status carries no `lastAgent`.
+        search={{ fromBot: botId, fromThread: threadId }}
         className={cn(
           "inline-flex min-h-11 items-center rounded-[var(--personal-radius-button)] px-3 text-[13px] outline-none",
           "active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",

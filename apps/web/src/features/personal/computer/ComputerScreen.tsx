@@ -86,6 +86,11 @@ import { connectViewport, type ViewportClient } from "./viewportClient";
 export interface ComputerScreenProps {
   /** Null when no agent holds the browser: fall back to the chats list. */
   readonly onBackToChat: (target: BackToChatTarget | null) => void;
+  /**
+   * The chat whose link opened this screen, from the route's `fromBot` /
+   * `fromThread` search params. Null when the user came from the tab bar.
+   */
+  readonly origin?: BackToChatTarget | null;
 }
 
 const ICON_STROKE = 1.75;
@@ -158,7 +163,7 @@ function usePageVisible(): boolean {
   return visible;
 }
 
-export function ComputerScreen({ onBackToChat }: ComputerScreenProps) {
+export function ComputerScreen({ onBackToChat, origin = null }: ComputerScreenProps) {
   const environmentId = usePersonalEnvironmentId();
   const { feed, error, loading } = useComputerFeed(environmentId);
   const [segment, setSegment] = useState<"browser" | "files">("browser");
@@ -169,7 +174,7 @@ export function ComputerScreen({ onBackToChat }: ComputerScreenProps) {
     reachable: environmentId !== null && error === null,
     loading,
   });
-  const goBackToChat = () => onBackToChat(computerBackTarget(feed.status));
+  const goBackToChat = () => onBackToChat(computerBackTarget(feed.status, origin));
 
   useEffect(() => {
     if (!fullScreen) return;

@@ -9,7 +9,12 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTime } from "./relativeTime";
 import { usePersonalEnvironmentId } from "./usePersonalBots";
 import { selectUsageCards, type UsageCard, type UsageWindowRow } from "./usagePresentation";
-import { formatStripPercent, selectUsageStripCells, usageStripAriaLabel } from "./usageStrip";
+import {
+  formatStripPercent,
+  selectUsageStripCells,
+  stripCellBarPercent,
+  usageStripAriaLabel,
+} from "./usageStrip";
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -194,8 +199,9 @@ function UsageSheetBody({
 
 /**
  * Slim two-up usage strip for the Chats screen: Claude left, Codex right,
- * each showing the 5-hour session figure over a hairline bar plus the weekly
- * figure. Renders nothing until the config stream publishes a provider, so a
+ * each showing the 5-hour session and weekly figures over one hairline bar
+ * filled to whichever of the two is further spent (see `stripCellBarPercent`).
+ * Renders nothing until the config stream publishes a provider, so a
  * cold start never reserves space it cannot fill. Tapping opens the full
  * per-window detail sheet.
  *
@@ -228,7 +234,7 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
               Session {formatStripPercent(cell.sessionPercent)} · Weekly{" "}
               {formatStripPercent(cell.weeklyPercent)} used
             </span>
-            <StripCellBar percent={cell.sessionPercent} />
+            <StripCellBar percent={stripCellBarPercent(cell)} />
           </span>
         ))}
       </button>

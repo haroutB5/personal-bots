@@ -47,6 +47,9 @@ describe("PersonalTabBar", () => {
     expect(JSON.stringify(nodes.map((node) => node.props.className))).toContain("grid-cols-4");
     // The label is what the user reads on the bar; the icon is aria-hidden.
     expect(JSON.stringify(links[2])).toContain("Computer");
+    // A tab-bar tap is an origin-less visit: /computer must not inherit a
+    // `fromBot` from an earlier trip in through a chat's link.
+    expect(links.map((link) => link.props.search)).toEqual([{}, {}, {}, {}]);
   });
 
   it("marks only the Computer tab as the current page on /computer", () => {

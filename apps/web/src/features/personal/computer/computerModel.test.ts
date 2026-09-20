@@ -17,11 +17,13 @@ import {
   computerChatLink,
   computerIsActiveForChat,
   computerPanelDetail,
+  computerSearchOrigin,
   describeComputerState,
   EMPTY_COMPUTER_FEED,
   fitFrame,
   formatActivityTime,
   mapViewportPoint,
+  parseComputerSearch,
   PERSONAL_BROWSER_ROUTE_BASE,
   planViewportRequest,
   reduceComputerFeed,
@@ -471,5 +473,55 @@ describe("closing the browser", () => {
         status({ controller: { _tag: "Human", self: true, connected: true }, helpRequest }),
       ),
     ).toBeNull();
+  });
+});
+
+describe("computer route origin", () => {
+  it("takes both halves of a chat origin, or neither", () => {
+    expect(parseComputerSearch({ fromBot: "bot-1", fromThread: "thread-a" })).toEqual({
+      fromBot: "bot-1",
+      fromThread: "thread-a",
+    });
+    // Half an origin cannot address a conversation, so it is dropped whole.
+    expect(parseComputerSearch({ fromBot: "bot-1" })).toEqual({});
+    expect(parseComputerSearch({ fromThread: "thread-a" })).toEqual({});
+    expect(parseComputerSearch({ fromBot: " ", fromThread: "thread-a" })).toEqual({});
+    expect(parseComputerSearch({ fromBot: 7, fromThread: "thread-a" })).toEqual({});
+    // A tab-bar visit: no origin at all.
+    expect(parseComputerSearch({})).toEqual({});
+    expect(computerSearchOrigin({})).toBeNull();
+    expect(computerSearchOrigin({ fromBot: "bot-1", fromThread: "thread-a" })).toEqual({
+      botId: "bot-1",
+      threadId: "thread-a",
+    });
+  });
+
+  /**
+   * The reported bug: the Computer tab reached from a chat's link while the
+   * browser has never run. There is no controller and no `lastAgent`, so the
+   * status alone says "chats list" — but he was in that chat one tap ago.
+   */
+  it("returns to the originating chat when the browser never ran", () => {
+    const offline = status({ state: "offline", controller: { _tag: "None" }, lastAgent: null });
+    expect(computerBackTarget(offline)).toBeNull();
+    expect(computerBackTarget(offline, { botId: "bot-1", threadId: "thread-a" })).toEqual({
+      botId: "bot-1",
+      threadId: "thread-a",
+    });
+  });
+
+  it("prefers where he came from over whichever bot last drove the browser", () => {
+    const driven = status({
+      lastAgent: { threadId: ThreadId.make("thread-b"), botId: PersonalBotId.make("bot-2") },
+    });
+    expect(computerBackTarget(driven, { botId: "bot-1", threadId: "thread-a" })).toEqual({
+      botId: "bot-1",
+      threadId: "thread-a",
+    });
+    // No origin (the tab bar): lastAgent still leads, as before.
+    expect(computerBackTarget(driven, null)).toEqual({
+      threadId: "thread-b",
+      botId: "bot-2",
+    });
   });
 });
