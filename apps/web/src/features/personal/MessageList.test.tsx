@@ -34,7 +34,8 @@ const secretItem = (card: SecretRequestCardItem): ConversationItem => ({
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: React.PropsWithChildren) => children,
 }));
-vi.mock("~/assets/assetUrls", () => ({ useAssetUrls: () => [null] }));
+const mocks = vi.hoisted(() => ({ assetUrls: [null] as ReadonlyArray<string | null> }));
+vi.mock("~/assets/assetUrls", () => ({ useAssetUrls: () => mocks.assetUrls }));
 vi.mock("~/components/ChatMarkdown", () => ({ default: ({ text }: { text: string }) => text }));
 vi.mock("~/components/chat/MessagesTimeline.logic", () => ({
   shouldPreserveAssistantLineBreaks: () => false,
@@ -50,11 +51,12 @@ vi.mock("./AttachmentPreview", () => ({
     attachment,
     onClose,
   }: {
-    attachment: { name: string };
+    attachment: { name: string; imageUrl?: string };
     onClose: () => void;
   }) => (
     <div role="dialog">
       {attachment.name}
+      <span>{attachment.imageUrl ?? "no-image-url"}</span>
       <button onClick={onClose}>Close preview</button>
     </div>
   ),
@@ -198,6 +200,56 @@ it("can reopen a saved image even while its thumbnail URL is unavailable", async
   expect(renderer!.root.findByProps({ role: "dialog" }).children).toContain("deleted.png");
   await act(async () => optionButton("Close preview").props.onClick());
   expect(renderer!.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
+});
+
+it("hands the thumbnail's own URL to the expanded view", async () => {
+  stubEnvironment();
+  mocks.assetUrls = ["https://assets.test/thread-1-dead-attachment.png"];
+  await act(async () => {
+    renderer = create(
+      <MessageList
+        {...BASE_PROPS}
+        items={[
+          {
+            kind: "message",
+            id: "message-1",
+            message: {
+              id: MessageId.make("message-1"),
+              role: "user",
+              text: "See attached",
+              attachments: [
+                {
+                  type: "image",
+                  id: "thread-1-dead-attachment",
+                  name: "deleted.png",
+                  mimeType: "image/png",
+                  sizeBytes: 10,
+                },
+              ],
+              turnId: null,
+              streaming: false,
+              createdAt: "2026-09-14T10:00:00.000Z",
+              updatedAt: "2026-09-14T10:00:00.000Z",
+            },
+          },
+        ]}
+      />,
+    );
+  });
+
+  // Without the thumbnail URL the expanded view resolves nothing for a still
+  // image and every sent image opened as "Image unavailable".
+  await act(async () =>
+    renderer!.root.findByProps({ "aria-label": "Open deleted.png" }).props.onClick(),
+  );
+  const dialog = renderer!.root.findByProps({ role: "dialog" });
+  expect(dialog.findAll((node) => node.children.includes("no-image-url"))).toHaveLength(0);
+  expect(
+    dialog.findAll((node) =>
+      node.children.includes("https://assets.test/thread-1-dead-attachment.png"),
+    ).length,
+  ).toBeGreaterThan(0);
+  mocks.assetUrls = [null];
 });
 
 it("answers a single-select question with one tap, in this view", async () => {

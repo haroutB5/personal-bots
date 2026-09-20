@@ -98,6 +98,10 @@ const UserMessage = memo(function UserMessage({
                     mimeType: "image/*",
                     sizeBytes: 0,
                     attachmentId: resource.attachmentId,
+                    // The expanded view resolves nothing for a still image, so
+                    // without the thumbnail's own signed URL every sent image
+                    // opened as "Image unavailable".
+                    imageUrl: url,
                   })
                 }
                 className="rounded-xl outline-none focus-visible:ring-2"
