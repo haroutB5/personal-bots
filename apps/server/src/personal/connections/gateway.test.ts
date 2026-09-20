@@ -517,6 +517,10 @@ describe("gateway credential handling", () => {
         // redacted rather than as a plain string.
         const call = harness.calls[0]!;
         expect(text(call.arguments)).not.toContain(TOKEN);
+        // Whatever an adapter interpolates the whole call into -- a URL, a
+        // command line, a log line -- picks up a redacted marker unless it
+        // asks for the value on purpose.
+        expect(text(call)).not.toContain(TOKEN);
         expect(Redacted.value(call.credentials.accessToken!)).toBe(TOKEN);
       }).pipe(Effect.provide(harness.layer));
     }),
