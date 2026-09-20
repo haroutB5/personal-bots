@@ -12,8 +12,11 @@ const FALLBACK_ICON = "/apple-touch-icon.png";
 const BLOB_URL = "blob:https://bots.example/avatar-1";
 
 interface WorkerOptions {
-  /** How the geometry fetch behaves. */
-  readonly geometry?: "ok" | "404" | "offline" | "hang";
+  /**
+   * How the geometry fetch behaves. "shell" is what this server actually does
+   * for a file it does not have: 200 with the app shell's HTML, not a 404.
+   */
+  readonly geometry?: "ok" | "404" | "shell" | "offline" | "offline-once" | "hang";
   /** Leave OffscreenCanvas out of the worker's globals. */
   readonly noOffscreenCanvas?: boolean;
   /** Throw while drawing (an old engine without roundRect does this). */
@@ -25,11 +28,23 @@ interface WorkerOptions {
 function worker(options: WorkerOptions = {}) {
   const handlers = new Map<string, (event: unknown) => void>();
   const geometryBody = botAvatarGeometryJson();
+  let fetches = 0;
   const fetch = vi.fn(async (url: string) => {
     expect(url).toBe("/bot-avatar-shapes.json");
+    fetches += 1;
     if (options.geometry === "offline") throw new Error("Offline");
+    if (options.geometry === "offline-once" && fetches === 1) throw new Error("Offline");
     if (options.geometry === "hang") return await new Promise<never>(() => {});
     if (options.geometry === "404") return { ok: false, status: 404, json: async () => ({}) };
+    if (options.geometry === "shell") {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw new SyntaxError("Unexpected token '<'");
+        },
+      };
+    }
     return { ok: true, status: 200, json: async () => JSON.parse(geometryBody) };
   });
   const calls: string[] = [];
@@ -193,6 +208,7 @@ describe("service worker notification icon", () => {
 
   it.each([
     ["the geometry is not deployed yet", { geometry: "404" } as const],
+    ["the server answers the app shell instead", { geometry: "shell" } as const],
     ["the laptop is unreachable", { geometry: "offline" } as const],
     ["OffscreenCanvas is unavailable", { noOffscreenCanvas: true } as const],
     ["the engine cannot draw a rounded rect", { drawThrows: true } as const],
@@ -215,6 +231,21 @@ describe("service worker notification icon", () => {
       expect.objectContaining({ icon: FALLBACK_ICON, data: { url: "/bots/bot-1/thread-1" } }),
     );
     expect(app.revokeObjectURL).toHaveBeenCalledWith(BLOB_URL);
+  });
+
+  it("a failed geometry fetch does not cost every later notification its icon", async () => {
+    const app = worker({ geometry: "offline-once" });
+    await push(app, BOT_PAYLOAD);
+    expect(app.showNotification).toHaveBeenLastCalledWith(
+      "Planner replied",
+      expect.objectContaining({ icon: FALLBACK_ICON }),
+    );
+    await push(app, { ...BOT_PAYLOAD, tag: "chat-thread-2" });
+    expect(app.showNotification).toHaveBeenLastCalledWith(
+      "Planner replied",
+      expect.objectContaining({ icon: BLOB_URL }),
+    );
+    expect(app.fetch).toHaveBeenCalledTimes(2);
   });
 
   it("does not wait forever on a stalled geometry fetch", async () => {
