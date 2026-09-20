@@ -328,6 +328,8 @@ import {
   PersonalConnectionIdInput,
   PersonalConnectionListResult,
   PersonalConnectionRotateInput,
+  PersonalConnectionImportAdoptInput,
+  PersonalConnectionImportResult,
   PersonalConnectionsError,
   PersonalConnectionValidateInput,
   PersonalConnectionValidationResult,
@@ -584,6 +586,8 @@ export const WS_METHODS = {
   personalConnectionsReconnect: "personalConnections.reconnect",
   personalConnectionsDisconnect: "personalConnections.disconnect",
   personalConnectionsRotate: "personalConnections.rotate",
+  personalConnectionsImportProbe: "personalConnections.importProbe",
+  personalConnectionsImportAdopt: "personalConnections.importAdopt",
 
   // Owner decisions about what a bot asked a connection to do.
   personalConnectionApprovalsList: "personalConnectionApprovals.list",
@@ -1373,6 +1377,19 @@ const WsPersonalConnectionsDisconnectRpc = Rpc.make(WS_METHODS.personalConnectio
 
 const WsPersonalConnectionsRotateRpc = Rpc.make(WS_METHODS.personalConnectionsRotate, {
   payload: PersonalConnectionRotateInput,
+  success: PersonalConnection,
+  error: PersonalConnectionsRpcError,
+});
+
+/** Owner-triggered only, and never from a bot: reading the machine is not a tool. */
+const WsPersonalConnectionsImportProbeRpc = Rpc.make(WS_METHODS.personalConnectionsImportProbe, {
+  payload: Schema.Struct({}),
+  success: PersonalConnectionImportResult,
+  error: PersonalConnectionsRpcError,
+});
+
+const WsPersonalConnectionsImportAdoptRpc = Rpc.make(WS_METHODS.personalConnectionsImportAdopt, {
+  payload: PersonalConnectionImportAdoptInput,
   success: PersonalConnection,
   error: PersonalConnectionsRpcError,
 });
@@ -2215,6 +2232,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalConnectionsReconnectRpc,
   WsPersonalConnectionsDisconnectRpc,
   WsPersonalConnectionsRotateRpc,
+  WsPersonalConnectionsImportProbeRpc,
+  WsPersonalConnectionsImportAdoptRpc,
   WsPersonalConnectionApprovalsListRpc,
   WsPersonalConnectionApprovalsDecideRpc,
   WsPersonalConnectionApprovalsCancelRpc,

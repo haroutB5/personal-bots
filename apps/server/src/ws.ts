@@ -3305,6 +3305,18 @@ const makeWsRpcLayer = (
             personalConnections.rotate(input),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.personalConnectionsImportProbe]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionsImportProbe,
+            personalConnections.importProbe(),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalConnectionsImportAdopt]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionsImportAdopt,
+            personalConnections.importAdopt(input),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalConnectionApprovalsList]: (_input) =>
           observeRpcEffect(
             WS_METHODS.personalConnectionApprovalsList,

@@ -140,6 +140,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalConnectionsReconnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalConnectionsDisconnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalConnectionsRotate]: AuthOrchestrationOperateScope,
+  // Reading this machine's own CLI credentials is an owner action, not a read:
+  // it touches the filesystem and the reply names the owner's accounts.
+  [WS_METHODS.personalConnectionsImportProbe]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalConnectionsImportAdopt]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalConnectionApprovalsList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalConnectionApprovalsDecide]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalConnectionApprovalsCancel]: AuthOrchestrationOperateScope,

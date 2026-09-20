@@ -9,6 +9,7 @@ import * as Redacted from "effect/Redacted";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import * as Adapters from "./adapters.ts";
+import * as MachineImport from "./machineImport.ts";
 import * as CredentialStore from "./credentialStore.ts";
 import * as Repository from "./repository.ts";
 import * as Service from "./service.ts";
@@ -33,6 +34,16 @@ const ACCOUNT = {
   teamId: null,
   teamName: null,
 };
+
+/** Importing is not what these cover; the probe finds nothing. */
+const noMachineImport = Layer.succeed(
+  MachineImport.PersonalConnectionMachineImport,
+  MachineImport.PersonalConnectionMachineImport.of({
+    probe: () => Effect.succeed({ candidates: [], sources: [] }),
+    readCredential: () =>
+      Effect.fail(new PersonalConnectionsError({ message: "no machine credentials in this test" })),
+  }),
+);
 
 const makeHarness = (options?: { readonly failCreate?: boolean }): Harness => {
   const vendor = {
@@ -125,6 +136,7 @@ const makeHarness = (options?: { readonly failCreate?: boolean }): Harness => {
     vendor,
     layer: Service.layer.pipe(
       Layer.provide(Adapters.layerOf([github])),
+      Layer.provide(noMachineImport),
       Layer.provide(Layer.succeed(Repository.PersonalConnectionRepository, repository)),
       Layer.provide(
         Layer.succeed(CredentialStore.PersonalConnectionCredentialStore, credentialStore),

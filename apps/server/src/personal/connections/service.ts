@@ -7,6 +7,8 @@ import {
   type PersonalConnection,
   type PersonalConnectionConnectInput,
   type PersonalConnectionIdInput,
+  type PersonalConnectionImportAdoptInput,
+  type PersonalConnectionImportResult,
   type PersonalConnectionListResult,
   type PersonalConnectionRotateInput,
   type PersonalConnectionValidateInput,
@@ -25,6 +27,7 @@ import * as Adapters from "./adapters.ts";
 import * as VendorAdapters from "./vendors/layer.ts";
 import { connectionDefinition } from "./catalog.ts";
 import * as CredentialStore from "./credentialStore.ts";
+import * as MachineImport from "./machineImport.ts";
 import { scrubCredentialValues } from "./operations.ts";
 import * as Repository from "./repository.ts";
 
@@ -53,6 +56,19 @@ export class PersonalConnectionService extends Context.Service<
      * token that expired on the provider's schedule shows up in Settings
      * instead of as a run of identical failures.
      */
+    /** Owner-triggered scan of this machine's own CLI logins. Never bot-reachable. */
+    readonly importProbe: () => Effect.Effect<
+      PersonalConnectionImportResult,
+      PersonalConnectionsError
+    >;
+    /**
+     * Adopts one candidate by re-reading its source here. Finding a value is
+     * not proof it can provision anything, so this goes through the same
+     * validating connect path a pasted token does.
+     */
+    readonly importAdopt: (
+      input: PersonalConnectionImportAdoptInput,
+    ) => Effect.Effect<PersonalConnection, PersonalConnectionsError>;
     readonly markNeedsReauth: (
       connectionId: ConnectionId,
     ) => Effect.Effect<void, PersonalConnectionsError>;
@@ -95,6 +111,7 @@ export const make = Effect.gen(function* () {
   const repository = yield* Repository.PersonalConnectionRepository;
   const credentials = yield* CredentialStore.PersonalConnectionCredentialStore;
   const adapters = yield* Adapters.ConnectionVendorAdapters;
+  const machineImport = yield* MachineImport.PersonalConnectionMachineImport;
   const mutationLock = yield* Semaphore.make(1);
 
   // A future vendor adapter may fail with credential material nested in its
@@ -392,6 +409,22 @@ export const make = Effect.gen(function* () {
     return Repository.presentConnection(next);
   });
 
+  const importAdoptUnlocked = Effect.fn("PersonalConnectionService.importAdopt")(function* (
+    input: PersonalConnectionImportAdoptInput,
+  ) {
+    const found = yield* machineImport.probe();
+    const candidate = found.candidates.find((entry) => entry.candidateId === input.candidateId);
+    if (candidate === undefined) {
+      return yield* fail(
+        "That saved login is no longer on this machine. Scan again and pick from what it finds.",
+      );
+    }
+    // Read here and passed straight on: the value is never part of a reply and
+    // never crosses the wire in either direction.
+    const credentials = yield* machineImport.readCredential(input.candidateId);
+    return yield* connectUnlocked({ vendorId: candidate.vendorId, credentials });
+  });
+
   const markNeedsReauthUnlocked = Effect.fn("PersonalConnectionService.markNeedsReauth")(function* (
     connectionId: ConnectionId,
   ) {
@@ -429,6 +462,8 @@ export const make = Effect.gen(function* () {
     reconnect: (input) => mutationLock.withPermit(reconnectUnlocked(input)),
     disconnect: (input) => mutationLock.withPermit(disconnectUnlocked(input)),
     rotate: (input) => mutationLock.withPermit(rotateUnlocked(input)),
+    importProbe: () => machineImport.probe(),
+    importAdopt: (input) => mutationLock.withPermit(importAdoptUnlocked(input)),
     markNeedsReauth: (connectionId) =>
       mutationLock.withPermit(markNeedsReauthUnlocked(connectionId)),
     resolveForOperation,
@@ -440,4 +475,5 @@ export const layerLive = layer.pipe(
   Layer.provideMerge(Repository.layer),
   Layer.provideMerge(CredentialStore.layer),
   Layer.provideMerge(VendorAdapters.layer),
+  Layer.provideMerge(MachineImport.layer),
 );

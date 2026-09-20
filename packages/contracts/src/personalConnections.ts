@@ -176,3 +176,52 @@ export const PersonalConnectionApprovalIdInput = Schema.Struct({
   approvalId: PersonalConnectionApprovalId,
 });
 export type PersonalConnectionApprovalIdInput = typeof PersonalConnectionApprovalIdInput.Type;
+
+/**
+ * Importing from this machine.
+ *
+ * A probe reports what exists and who it belongs to. It never carries any
+ * part of a credential value, not even a prefix: adoption re-reads the source
+ * server-side, so nothing about the secret has to cross the wire for the owner
+ * to choose it.
+ */
+export const PersonalConnectionImportCandidate = Schema.Struct({
+  candidateId: TrimmedNonEmptyString,
+  vendorId: PersonalConnectionVendorId,
+  sourceLabel: TrimmedNonEmptyString,
+  /** The account the file names, for the owner to recognise. Never a value. */
+  identifier: Schema.NullOr(Schema.String),
+});
+export type PersonalConnectionImportCandidate = typeof PersonalConnectionImportCandidate.Type;
+
+/**
+ * `absent` is "you do not use this tool here", `unreadable` is "it is there
+ * and we could not make sense of it". Collapsing them would send the owner
+ * looking in the wrong place.
+ */
+export const PersonalConnectionImportSourceState = Schema.Literals([
+  "found",
+  "absent",
+  "unreadable",
+]);
+export type PersonalConnectionImportSourceState = typeof PersonalConnectionImportSourceState.Type;
+
+export const PersonalConnectionImportSource = Schema.Struct({
+  sourceId: TrimmedNonEmptyString,
+  vendorId: PersonalConnectionVendorId,
+  label: TrimmedNonEmptyString,
+  state: PersonalConnectionImportSourceState,
+  detail: Schema.NullOr(Schema.String),
+});
+export type PersonalConnectionImportSource = typeof PersonalConnectionImportSource.Type;
+
+export const PersonalConnectionImportResult = Schema.Struct({
+  candidates: Schema.Array(PersonalConnectionImportCandidate),
+  sources: Schema.Array(PersonalConnectionImportSource),
+});
+export type PersonalConnectionImportResult = typeof PersonalConnectionImportResult.Type;
+
+export const PersonalConnectionImportAdoptInput = Schema.Struct({
+  candidateId: TrimmedNonEmptyString,
+});
+export type PersonalConnectionImportAdoptInput = typeof PersonalConnectionImportAdoptInput.Type;
