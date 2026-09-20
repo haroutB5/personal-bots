@@ -56,7 +56,9 @@ interface HarnessOptions {
 }
 
 interface Harness {
-  readonly layer: Layer.Layer<Gateway.PersonalConnectionGateway>;
+  readonly layer: Layer.Layer<
+    Gateway.PersonalConnectionGateway | ApprovalService.PersonalConnectionApprovalService
+  >;
   readonly approvals: Map<string, PersonalConnectionApproval>;
   readonly calls: Array<Adapters.ConnectionVendorCall>;
   readonly logs: Array<string>;
