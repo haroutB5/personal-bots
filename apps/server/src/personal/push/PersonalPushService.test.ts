@@ -188,6 +188,10 @@ it.effect("a completed task queues one minimal notification per device, deduped"
       body: "Book the dentist",
       url: "/tasks/task-1",
       tag: "task-task-1",
+      // The sending bot's avatar, which the service worker draws into the
+      // notification icon: a shape name and a hex colour, nothing else.
+      avatarShape: "blob",
+      avatarColor: "#1A73E8",
     });
     expect(rows[0]!.payload).not.toContain("private reply");
     const request = harness.sent[0]!;
@@ -413,6 +417,8 @@ it.effect("a bot ending its turn in a chat notifies once while the user is away"
       body: "Open the chat to read it.",
       url: `/bots/${BOT}/${CHAT}`,
       tag: `chat-${CHAT}`,
+      avatarShape: "blob",
+      avatarColor: "#1A73E8",
     });
 
     // The same turn replayed is one buzz, not two.
@@ -633,5 +639,95 @@ it.effect("subscribe accepts only browser push services with well-formed keys", 
     expect((yield* push.getSettings()).devices.length).toBe(1);
     // The VAPID key is stable across calls.
     expect(yield* push.publicKey()).toBe((yield* push.getSettings()).publicKey);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+/**
+ * The notification icon is the *sending* bot's avatar, so a second bot's reply
+ * must carry its own two fields and not the first one's. The payload gains
+ * nothing else: a shape name and a hex colour cannot leak what was said.
+ *
+ * Only Android and desktop browsers honour a push payload's icon; iOS ignores
+ * it and always draws the PWA manifest icon, so this changes nothing there.
+ */
+it.effect("each notification carries the sending bot's own avatar", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  const OTHER = PersonalBotId.make("bot-planner");
+  const otherThread = ThreadId.make("thread-planner");
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-19T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const now = yield* DateTime.now;
+    yield* bots.createBot({
+      botId: OTHER,
+      name: "Planner",
+      title: "",
+      description: "",
+      instructions: "",
+      avatarShape: "roundedHexagon",
+      avatarColor: "#F26A1B",
+      modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "m" },
+      team: "assistant",
+      lead: false,
+      pinned: false,
+      sortOrder: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    yield* bots.insertThreadLink({ botId: OTHER, threadId: otherThread, createdAt: now });
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+
+    yield* runTurn(CHAT, "2026-09-19T09:00:00.000Z");
+    yield* runTurn(otherThread, "2026-09-19T09:01:00.000Z");
+
+    const payloads = (yield* outbox).map((row) => JSON.parse(row.payload));
+    expect(
+      payloads.map((payload) => [payload.title, payload.avatarShape, payload.avatarColor]),
+    ).toEqual([
+      ["Assistant replied", "blob", "#1A73E8"],
+      ["Planner replied", "roundedHexagon", "#F26A1B"],
+    ]);
+    // Nothing else joined the payload with them.
+    expect(Object.keys(payloads[1]!).sort()).toEqual([
+      "avatarColor",
+      "avatarShape",
+      "body",
+      "tag",
+      "title",
+      "url",
+    ]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a notification with no bot behind it carries no avatar at all", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-19T09:00:00Z"));
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+
+    // The bot row is gone (deleted between the turn and the sweep), so the
+    // task notification names it generically and has no avatar to draw.
+    yield* push.notifyTask(yield* makeTask({}));
+    yield* push.notifyProviderBroken({
+      instanceId: "claude",
+      label: "Claude Code",
+      version: "2.1.264",
+    });
+    yield* push.drain;
+
+    for (const row of yield* outbox) {
+      const payload = JSON.parse(row.payload);
+      expect(payload.avatarShape).toBeUndefined();
+      expect(payload.avatarColor).toBeUndefined();
+      expect(row.payload).not.toContain("avatar");
+    }
+    expect((yield* outbox).map((row) => JSON.parse(row.payload).title)).toEqual([
+      "Your bot finished",
+      "Claude Code 2.1.264 is failing for your bots",
+    ]);
   }).pipe(Effect.provide(makeLayer(harness)));
 });

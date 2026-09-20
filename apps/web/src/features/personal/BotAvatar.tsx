@@ -12,6 +12,7 @@ import {
   BOT_AVATAR_EYE_TILT_DEG,
   BOT_AVATAR_EYE_WIDTH,
   BOT_AVATAR_EYES,
+  BOT_AVATAR_ROUND_CORNER_STROKE,
   BOT_AVATAR_SILHOUETTES,
   BOT_AVATAR_VIEWBOX,
   botAvatarNeedsHalo,
@@ -100,7 +101,7 @@ export function BotAvatar({
           d={silhouette.d}
           fill="none"
           stroke="var(--personal-avatar-halo)"
-          strokeWidth={(silhouette.roundCorners ? 7 : 0) + 6}
+          strokeWidth={(silhouette.roundCorners ? BOT_AVATAR_ROUND_CORNER_STROKE : 0) + 6}
           strokeLinejoin="round"
         />
       ) : null}
@@ -108,7 +109,7 @@ export function BotAvatar({
         d={silhouette.d}
         fill={color}
         stroke={silhouette.roundCorners ? color : "none"}
-        strokeWidth={silhouette.roundCorners ? 7 : 0}
+        strokeWidth={silhouette.roundCorners ? BOT_AVATAR_ROUND_CORNER_STROKE : 0}
         strokeLinejoin="round"
       />
       <g className="bot-avatar-eyes">

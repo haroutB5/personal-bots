@@ -135,6 +135,107 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
+/*
+ * Notification icon.
+ *
+ * A push payload names the sending bot's avatar with two fields, `avatarShape`
+ * and `avatarColor` (see PersonalPushPayload). The avatar is drawn here, into
+ * an OffscreenCanvas, and handed to the notification as an object URL: the
+ * artwork never needs a public URL or an auth surface, and cannot expire
+ * between the send and the display.
+ *
+ * The geometry is fetched, not copied: `/bot-avatar-shapes.json` is generated
+ * from the same module the app draws avatars with, so the silhouettes here and
+ * in the chats list are the same paths.
+ *
+ * iOS ignores `icon` entirely and always shows the PWA manifest icon, so none
+ * of this changes anything on an iPhone - it is for Android and desktop.
+ *
+ * Every step is best-effort: an old payload without the fields, an unsupported
+ * API, a failed fetch, a slow draw or an icon the platform refuses all end in
+ * the app icon and a notification that still appears.
+ */
+const NOTIFICATION_FALLBACK_ICON = "/apple-touch-icon.png";
+const AVATAR_GEOMETRY_URL = "/bot-avatar-shapes.json";
+/** Notification large-icon size; Android asks for up to 192 CSS px. */
+const AVATAR_ICON_PX = 192;
+/** A banner is worth more than its icon: give up drawing after this. */
+const AVATAR_RENDER_TIMEOUT_MS = 3000;
+const AVATAR_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+
+let avatarGeometryPromise = null;
+
+function avatarGeometry() {
+  if (avatarGeometryPromise === null) {
+    avatarGeometryPromise = (async () => {
+      const response = await fetch(AVATAR_GEOMETRY_URL);
+      if (!response.ok) throw new Error(`Avatar geometry answered ${response.status}.`);
+      return await response.json();
+    })().catch((error) => {
+      // A failed fetch must not poison every later notification.
+      avatarGeometryPromise = null;
+      throw error;
+    });
+  }
+  return avatarGeometryPromise;
+}
+
+/** Draws the bot's avatar and returns an object URL, or null if it cannot. */
+async function botAvatarIconUrl(shape, color) {
+  if (typeof shape !== "string" || typeof color !== "string") return null;
+  if (!AVATAR_COLOR_PATTERN.test(color)) return null;
+  if (typeof OffscreenCanvas !== "function" || typeof Path2D !== "function") return null;
+  const geometry = await avatarGeometry();
+  const silhouette = geometry.silhouettes[shape];
+  const eyes = geometry.eyes[shape];
+  if (!silhouette || !eyes) return null;
+  const canvas = new OffscreenCanvas(AVATAR_ICON_PX, AVATAR_ICON_PX);
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  const scale = AVATAR_ICON_PX / geometry.viewBoxSize;
+  context.scale(scale, scale);
+  const path = new Path2D(silhouette.d);
+  context.fillStyle = color;
+  // eslint-disable-next-line unicorn/no-array-fill-with-reference-type -- CanvasRenderingContext2D.fill(path), not Array#fill.
+  context.fill(path);
+  if (silhouette.roundCorners) {
+    // Same trick as the SVG: stroking the path in its own colour with round
+    // joins is what softens the triangle's and the hexagon's vertices.
+    context.strokeStyle = color;
+    context.lineWidth = geometry.roundCornerStroke;
+    context.lineJoin = "round";
+    context.stroke(path);
+  }
+  context.fillStyle = geometry.eye.color;
+  for (const eye of eyes) {
+    context.save();
+    context.translate(eye.cx, eye.cy);
+    context.rotate((geometry.eye.tiltDeg * Math.PI) / 180);
+    context.beginPath();
+    context.roundRect(
+      -geometry.eye.width / 2,
+      -geometry.eye.height / 2,
+      geometry.eye.width,
+      geometry.eye.height,
+      geometry.eye.width / 2,
+    );
+    context.fill();
+    context.restore();
+  }
+  const blob = await canvas.convertToBlob({ type: "image/png" });
+  return URL.createObjectURL(blob);
+}
+
+function withTimeout(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Avatar render timed out.")), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 self.addEventListener("push", (event) => {
   let data = {};
   try {
@@ -144,13 +245,41 @@ self.addEventListener("push", (event) => {
   }
   const title = typeof data.title === "string" && data.title.length > 0 ? data.title : "Bots";
   const url = typeof data.url === "string" && data.url.startsWith("/") ? data.url : "/bots";
+  const options = {
+    body: typeof data.body === "string" ? data.body : "",
+    tag: typeof data.tag === "string" ? data.tag : undefined,
+    data: { url },
+    icon: NOTIFICATION_FALLBACK_ICON,
+  };
   event.waitUntil(
-    self.registration.showNotification(title, {
-      body: typeof data.body === "string" ? data.body : "",
-      tag: typeof data.tag === "string" ? data.tag : undefined,
-      data: { url },
-      icon: "/apple-touch-icon.png",
-    }),
+    (async () => {
+      let iconUrl = null;
+      // A payload from before this field existed, or one with no bot behind
+      // it, goes straight to the app icon and never starts a render.
+      if (typeof data.avatarShape === "string" && typeof data.avatarColor === "string") {
+        try {
+          iconUrl = await withTimeout(
+            botAvatarIconUrl(data.avatarShape, data.avatarColor).catch(() => null),
+            AVATAR_RENDER_TIMEOUT_MS,
+          );
+        } catch {
+          iconUrl = null;
+        }
+      }
+      try {
+        await self.registration.showNotification(
+          title,
+          iconUrl === null ? options : { ...options, icon: iconUrl },
+        );
+      } catch (error) {
+        // The drawn icon is the only thing that changed here, so a notification
+        // the platform refused is retried with the app icon rather than lost.
+        if (iconUrl === null) throw error;
+        await self.registration.showNotification(title, options);
+      } finally {
+        if (iconUrl !== null) URL.revokeObjectURL(iconUrl);
+      }
+    })(),
   );
 });
 

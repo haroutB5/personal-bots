@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { BotAvatarColor, BotAvatarShape } from "./personalBots.ts";
 
 export const PersonalPushSubscriptionId = TrimmedNonEmptyString.pipe(
   Schema.brand("PersonalPushSubscriptionId"),
@@ -98,6 +99,18 @@ export const PersonalPushPayload = Schema.Struct({
   body: Schema.String,
   url: Schema.String,
   tag: Schema.optional(Schema.String),
+  /**
+   * The sending bot's avatar, which the service worker draws into the
+   * notification icon. A shape name and a hex colour only: the same two fields
+   * the chats list already renders, and nothing that can carry content.
+   *
+   * Optional because not every notification has a bot behind it (the provider
+   * alert and the settings test do not), and because a payload queued in the
+   * outbox before this field existed must still decode on the way out. The
+   * worker falls back to the app icon whenever they are absent.
+   */
+  avatarShape: Schema.optional(BotAvatarShape),
+  avatarColor: Schema.optional(BotAvatarColor),
 });
 export type PersonalPushPayload = typeof PersonalPushPayload.Type;
 

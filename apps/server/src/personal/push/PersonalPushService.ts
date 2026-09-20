@@ -19,6 +19,8 @@ import {
   PersonalPushPreferences,
   PersonalPushPayload,
   PersonalPushSubscriptionId,
+  type BotAvatarShape,
+  type PersonalBot,
   type PersonalPushDevice,
   type PersonalPushSettings,
   type PersonalPushSubscribeInput,
@@ -136,12 +138,41 @@ export function pushEventForTask(task: PersonalTask): PersonalPushEventKind | nu
   }
 }
 
+/**
+ * Who a notification is from: the bot's name, and its avatar when the bot is
+ * known. `avatar` is deliberately a required field that can be null rather than
+ * an optional one - a caller that could not resolve the bot has to say so, so a
+ * test fixture cannot quietly carry an avatar that production would omit.
+ */
+export interface PushBotIdentity {
+  readonly name: string;
+  readonly avatar: { readonly shape: BotAvatarShape; readonly color: string } | null;
+}
+
+/** The two payload fields the service worker draws the icon from, or nothing. */
+const avatarFields = (
+  bot: PushBotIdentity,
+): Pick<PersonalPushPayload, "avatarShape" | "avatarColor"> =>
+  bot.avatar === null ? {} : { avatarShape: bot.avatar.shape, avatarColor: bot.avatar.color };
+
+/** The bot as the notification names it when the row has gone. */
+const UNKNOWN_BOT: PushBotIdentity = { name: "Your bot", avatar: null };
+
+const botIdentity = (bot: Option.Option<PersonalBot>): PushBotIdentity =>
+  Option.isSome(bot)
+    ? {
+        name: bot.value.name,
+        avatar: { shape: bot.value.avatarShape, color: bot.value.avatarColor },
+      }
+    : UNKNOWN_BOT;
+
 /** Minimal payload: bot name, task title, deep link. Never message text. */
 export function pushPayloadForTask(
   kind: PersonalPushEventKind,
   task: PersonalTask,
-  botName: string,
+  bot: PushBotIdentity,
 ): PersonalPushPayload {
+  const botName = bot.name;
   const title =
     kind === "task_needs_input"
       ? task.status === "waiting_for_browser"
@@ -156,7 +187,7 @@ export function pushPayloadForTask(
     task.status === "waiting_for_browser" && task.threadId !== null
       ? `/bots/${encodeURIComponent(task.botId)}/${encodeURIComponent(task.threadId)}`
       : `/tasks/${task.taskId}`;
-  return { title, body, url, tag: `task-${task.taskId}` };
+  return { title, body, url, tag: `task-${task.taskId}`, ...avatarFields(bot) };
 }
 
 /**
@@ -167,14 +198,15 @@ export function pushPayloadForTask(
  */
 export function chatReplyPushPayload(input: {
   readonly botId: string;
-  readonly botName: string;
+  readonly bot: PushBotIdentity;
   readonly threadId: string;
 }): PersonalPushPayload {
   return {
-    title: `${input.botName} replied`,
+    title: `${input.bot.name} replied`,
     body: "Open the chat to read it.",
     url: `/bots/${encodeURIComponent(input.botId)}/${encodeURIComponent(input.threadId)}`,
     tag: `chat-${input.threadId}`,
+    ...avatarFields(input.bot),
   };
 }
 
@@ -644,10 +676,9 @@ export const make = Effect.gen(function* () {
       const preferences = yield* readPreferences;
       if (!preferences[PREFERENCE_FOR[kind]]) return;
       const bot = yield* botRepository.getBotById({ botId: task.botId });
-      const botName = Option.isSome(bot) ? bot.value.name : "Your bot";
       // One event per transition: a replayed or re-published upsert dedupes.
       const eventId = `task:${task.taskId}:${task.status}:${DateTime.formatIso(task.updatedAt)}`;
-      const queued = yield* enqueue(eventId, pushPayloadForTask(kind, task, botName));
+      const queued = yield* enqueue(eventId, pushPayloadForTask(kind, task, botIdentity(bot)));
       if (queued > 0) yield* kick;
     }).pipe(
       Effect.catchCause((cause) =>
@@ -717,13 +748,12 @@ export const make = Effect.gen(function* () {
       const preferences = yield* readPreferences;
       if (!preferences[PREFERENCE_FOR.chat_reply]) return;
       const bot = yield* botRepository.getBotById({ botId: link.value.botId });
-      const botName = Option.isSome(bot) ? bot.value.name : "Your bot";
       const eventId = `chat-reply:${input.threadId}:${input.turnEndedAt}`;
       const queued = yield* enqueue(
         eventId,
         chatReplyPushPayload({
           botId: link.value.botId,
-          botName,
+          bot: botIdentity(bot),
           threadId: input.threadId,
         }),
       );

@@ -1,0 +1,112 @@
+{
+  "viewBoxSize": 100,
+  "roundCornerStroke": 7,
+  "eye": {
+    "width": 9,
+    "height": 22,
+    "tiltDeg": 15,
+    "color": "#111111"
+  },
+  "silhouettes": {
+    "blob": {
+      "d": "M50 9C66 7 88 24 90 48C92 72 70 91 49 92C28 93 9 74 10 50C11 27 33 11 50 9Z",
+      "roundCorners": false
+    },
+    "roundedSquare": {
+      "d": "M38 10H62Q90 10 90 38V62Q90 90 62 90H38Q10 90 10 62V38Q10 10 38 10Z",
+      "roundCorners": false
+    },
+    "pill": {
+      "d": "M30 26H70Q94 26 94 50Q94 74 70 74H30Q6 74 6 50Q6 26 30 26Z",
+      "roundCorners": false
+    },
+    "triangle": {
+      "d": "M50 14Q52 14 53.2 16.2L84.6 79.4Q89.6 88 80.4 88H19.6Q10.4 88 15.4 79.4L46.8 16.2Q48 14 50 14Z",
+      "roundCorners": true
+    },
+    "roundedHexagon": {
+      "d": "M50 8L84.6 28V72L50 92L15.4 72V28Z",
+      "roundCorners": true
+    },
+    "scallopedCloud": {
+      "d": "M33.5 24.4Q50 1.8 66.5 24.4Q94.4 27.4 83 53Q94.4 78.6 66.5 81.6Q50 104.3 33.5 81.6Q5.6 78.6 17 53Q5.6 27.4 33.5 24.4Z",
+      "roundCorners": false
+    },
+    "droplet": {
+      "d": "M50 6C58 22 78 42 78 62A28 28 0 1 1 22 62C22 42 42 22 50 6Z",
+      "roundCorners": false
+    }
+  },
+  "eyes": {
+    "blob": [
+      {
+        "cx": 38,
+        "cy": 57
+      },
+      {
+        "cx": 54,
+        "cy": 57
+      }
+    ],
+    "roundedSquare": [
+      {
+        "cx": 38,
+        "cy": 57
+      },
+      {
+        "cx": 54,
+        "cy": 57
+      }
+    ],
+    "pill": [
+      {
+        "cx": 38,
+        "cy": 57
+      },
+      {
+        "cx": 54,
+        "cy": 57
+      }
+    ],
+    "triangle": [
+      {
+        "cx": 38,
+        "cy": 64
+      },
+      {
+        "cx": 54,
+        "cy": 64
+      }
+    ],
+    "roundedHexagon": [
+      {
+        "cx": 38,
+        "cy": 57
+      },
+      {
+        "cx": 54,
+        "cy": 57
+      }
+    ],
+    "scallopedCloud": [
+      {
+        "cx": 38,
+        "cy": 57
+      },
+      {
+        "cx": 54,
+        "cy": 57
+      }
+    ],
+    "droplet": [
+      {
+        "cx": 38,
+        "cy": 60
+      },
+      {
+        "cx": 54,
+        "cy": 60
+      }
+    ]
+  }
+}

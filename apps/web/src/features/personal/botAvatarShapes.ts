@@ -16,6 +16,13 @@ export const BOT_AVATAR_EYE_HEIGHT = 22;
 /** Clockwise tilt of the eyes (top leans right), in degrees. */
 export const BOT_AVATAR_EYE_TILT_DEG = 15;
 export const BOT_AVATAR_EYE_COLOR = "#111111";
+/**
+ * Stroke weight that rounds the sharp vertices of the `roundCorners` shapes,
+ * in viewBox units. Shared so the notification icon rounds them identically.
+ */
+export const BOT_AVATAR_ROUND_CORNER_STROKE = 7;
+/** Side of the square viewBox, in its own units. */
+export const BOT_AVATAR_VIEWBOX_SIZE = 100;
 
 export interface BotAvatarSilhouette {
   /** Single flat-fill silhouette path (`d` attribute). */
@@ -204,6 +211,49 @@ function contrastRatio(a: string, b: string): number {
  * `--personal-avatar-halo` is `transparent` in light, so the extra path paints
  * nothing there.
  */
+/**
+ * The whole avatar geometry as plain JSON-safe data.
+ *
+ * The service worker draws the sending bot's avatar into the push notification
+ * icon, and a service worker cannot import from `src/`: it is a standalone
+ * script served from `public/`. Rather than copy the silhouettes into it - a
+ * second set of paths that would drift the first time a shape is retouched -
+ * this object is serialised to `public/bot-avatar-shapes.json`, which the
+ * worker fetches. `botAvatarGeometryAsset.test.ts` fails if the checked-in
+ * file and this module disagree, so the drift cannot survive a test run;
+ * regenerate with `node apps/web/scripts/generate-bot-avatar-shapes.ts`.
+ */
+export interface BotAvatarGeometry {
+  readonly viewBoxSize: number;
+  readonly roundCornerStroke: number;
+  readonly eye: {
+    readonly width: number;
+    readonly height: number;
+    readonly tiltDeg: number;
+    readonly color: string;
+  };
+  readonly silhouettes: Record<BotAvatarShape, BotAvatarSilhouette>;
+  readonly eyes: Record<BotAvatarShape, readonly [BotAvatarEyeCenter, BotAvatarEyeCenter]>;
+}
+
+export const BOT_AVATAR_GEOMETRY: BotAvatarGeometry = {
+  viewBoxSize: BOT_AVATAR_VIEWBOX_SIZE,
+  roundCornerStroke: BOT_AVATAR_ROUND_CORNER_STROKE,
+  eye: {
+    width: BOT_AVATAR_EYE_WIDTH,
+    height: BOT_AVATAR_EYE_HEIGHT,
+    tiltDeg: BOT_AVATAR_EYE_TILT_DEG,
+    color: BOT_AVATAR_EYE_COLOR,
+  },
+  silhouettes: BOT_AVATAR_SILHOUETTES,
+  eyes: BOT_AVATAR_EYES,
+};
+
+/** Exactly the bytes `public/bot-avatar-shapes.json` must contain. */
+export function botAvatarGeometryJson(): string {
+  return `${JSON.stringify(BOT_AVATAR_GEOMETRY, null, 2)}\n`;
+}
+
 export function botAvatarNeedsHalo(color: string): boolean {
   if (!/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color.trim())) return true;
   return contrastRatio(color, DARK_CARD_SURFACE) < 3;
