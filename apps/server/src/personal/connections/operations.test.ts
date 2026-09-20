@@ -125,6 +125,7 @@ describe("connection operations", () => {
       const deploy = yield* prepare("vercel.create_deployment", {
         project: "hbots-demo",
         target: "production",
+        gitRef: "main",
       });
       expect(deploy.targetResources).toEqual([
         "vercel:project:hbots-demo",
@@ -212,4 +213,107 @@ describe("scrubCredentialValues", () => {
       "404 not found",
     );
   });
+});
+
+describe("vercel provisioning operations", () => {
+  it.effect("names preview and production as separate explicit targets", () =>
+    Effect.gen(function* () {
+      const preview = yield* prepare("vercel.create_deployment", {
+        project: "hbots-demo",
+        target: "preview",
+        gitRef: "main",
+      });
+      expect(preview.risk.summary).toContain("preview");
+      expect(preview.targetResources).toContain("vercel:target:preview");
+
+      const production = yield* prepare("vercel.create_deployment", {
+        project: "hbots-demo",
+        target: "production",
+        gitRef: "main",
+      });
+      expect(production.targetResources).toContain("vercel:target:production");
+
+      // No default and no inference: a missing target is a refused call, not a
+      // preview, because guessing the safe one still guesses.
+      const guessed = yield* Effect.flip(
+        prepare("vercel.create_deployment", { project: "hbots-demo", gitRef: "main" }),
+      );
+      expect(guessed._tag).toBe("ConnectionOperationArgumentError");
+    }),
+  );
+
+  it.effect("treats creating a project as an account write, linked repository included", () =>
+    Effect.gen(function* () {
+      const created = yield* prepare("vercel.create_project", {
+        name: "hbots-demo",
+        framework: "nextjs",
+        githubRepository: "haroutB5/hbots-demo",
+      });
+      expect(created.risk).toMatchObject({ approvalRequired: true, reason: "account_write" });
+      expect(created.targetResources).toEqual([
+        "vercel:project:hbots-demo",
+        "github:repository:haroutB5/hbots-demo",
+      ]);
+
+      const bare = yield* prepare("vercel.create_project", {
+        name: "hbots-demo",
+        framework: null,
+        githubRepository: null,
+      });
+      expect(bare.targetResources).toEqual(["vercel:project:hbots-demo"]);
+    }),
+  );
+
+  it.effect("puts environment variable names in the summary and never their values", () =>
+    Effect.gen(function* () {
+      const secret = "postgres://user:hunter2@db.example.com/app";
+      const production = yield* prepare("vercel.set_environment_variables", {
+        project: "hbots-demo",
+        target: "production",
+        variables: [{ key: "DATABASE_URL", value: secret }],
+      });
+      // Production configuration is what the live site runs with, so it reads
+      // as a deployment rather than a quiet account edit.
+      expect(production.risk.reason).toBe("deployment");
+      expect(production.risk.summary).toContain("DATABASE_URL");
+      expect(production.risk.summary).not.toContain("hunter2");
+      expect(production.targetResources).toContain("vercel:env:production:DATABASE_URL");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.stringify(production.targetResources)).not.toContain("hunter2");
+
+      const preview = yield* prepare("vercel.set_environment_variables", {
+        project: "hbots-demo",
+        target: "preview",
+        variables: [{ key: "DATABASE_URL", value: secret }],
+      });
+      expect(preview.risk.reason).toBe("account_write");
+
+      // A shell-shaped name is not an environment variable name.
+      const bad = yield* Effect.flip(
+        prepare("vercel.set_environment_variables", {
+          project: "hbots-demo",
+          target: "production",
+          variables: [{ key: "rm -rf /", value: "x" }],
+        }),
+      );
+      expect(bad._tag).toBe("ConnectionOperationArgumentError");
+    }),
+  );
+
+  it.effect("returns only the variable names it set, never the values", () =>
+    Effect.gen(function* () {
+      const operation = Option.getOrThrow(
+        Operations.findOperation("vercel.set_environment_variables"),
+      );
+      expect(operation.resultFields).not.toContain("value");
+      expect(
+        Operations.allowlistResult(operation, {
+          project: "hbots-demo",
+          target: "production",
+          keys: ["DATABASE_URL"],
+          value: "hunter2",
+        }),
+      ).toEqual({ project: "hbots-demo", target: "production", keys: ["DATABASE_URL"] });
+    }),
+  );
 });

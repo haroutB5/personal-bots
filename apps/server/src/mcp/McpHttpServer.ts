@@ -37,7 +37,7 @@ import { BotsToolkitHandlersLive } from "./toolkits/bots/handlers.ts";
 import { BotsToolkit } from "./toolkits/bots/tools.ts";
 import { ConnectionsToolkitHandlersLive } from "./toolkits/connections/handlers.ts";
 import { ConnectionsToolkit } from "./toolkits/connections/tools.ts";
-import * as ConnectionAdapters from "../personal/connections/adapters.ts";
+import * as ConnectionAdapters from "../personal/connections/vendors/layer.ts";
 import * as ConnectionGateway from "../personal/connections/gateway.ts";
 import { PersonalToolkitHandlersLive } from "./toolkits/personal/handlers.ts";
 import * as PersonalSessionAccess from "../personal/secrets/PersonalSessionAccess.ts";

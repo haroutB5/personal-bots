@@ -99,6 +99,7 @@ const makeHarness = (options?: HarnessOptions): Harness => {
               vendorId,
               credentialRef: connection.credentialRef,
               credentialVersion: connection.credentialVersion,
+              account: null,
             })
           : Option.none();
       }),
@@ -181,8 +182,12 @@ const makeHarness = (options?: HarnessOptions): Harness => {
     sensitiveExposure: () => Effect.succeed(options?.sensitiveOrigins ?? []),
   });
 
+  /** No gateway test is about connecting, so validation is never reached here. */
+  const unreachableValidate = () => Effect.die("validate is not part of a gateway call");
+
   const neon: Adapters.ConnectionVendorAdapter = {
     vendorId: "neon",
+    validate: unreachableValidate,
     vendorSchema: () => Effect.succeed("neon/v2-sql@2026-09-20"),
     execute: (call) =>
       Effect.sync(() => {
@@ -193,6 +198,7 @@ const makeHarness = (options?: HarnessOptions): Harness => {
 
   const fake: Adapters.ConnectionVendorAdapter = {
     vendorId: "github",
+    validate: unreachableValidate,
     vendorSchema: () => Effect.succeed(options?.vendorSchema ?? "github/repos@2026-09-20"),
     execute: (call) =>
       Effect.sync(() => {
@@ -218,7 +224,7 @@ const makeHarness = (options?: HarnessOptions): Harness => {
         connections,
         credentials,
         browser,
-        options?.adapters === "none" ? Adapters.layer : Adapters.layerOf([fake, neon]),
+        options?.adapters === "none" ? Adapters.layerEmpty : Adapters.layerOf([fake, neon]),
         ApprovalService.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
@@ -257,8 +263,7 @@ describe("PersonalConnectionGateway", () => {
   it.effect("runs a read without asking, and returns only reviewed fields", () =>
     Effect.gen(function* () {
       const harness = makeHarness({
-        execute: () =>
-          Effect.succeed({ repositories: ["me/app"], rateLimitToken: TOKEN }),
+        execute: () => Effect.succeed({ repositories: ["me/app"], rateLimitToken: TOKEN }),
       });
       yield* Effect.gen(function* () {
         const gateway = yield* Gateway.PersonalConnectionGateway;

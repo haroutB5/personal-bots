@@ -29,6 +29,8 @@ export interface ResolvedPersonalConnection {
   readonly vendorId: PersonalConnectionVendorId;
   readonly credentialRef: string;
   readonly credentialVersion: number;
+  /** Safe identity only: what the adapter needs to scope a request, never a value. */
+  readonly account: PersonalConnection["account"];
 }
 
 export class PersonalConnectionService extends Context.Service<
@@ -249,6 +251,7 @@ export const make = Effect.gen(function* () {
                 vendorId: connection.vendorId,
                 credentialRef: connection.credentialRef,
                 credentialVersion: connection.credentialVersion,
+                account: connection.account,
               })
             : Option.none(),
         ),

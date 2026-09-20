@@ -1,8 +1,4 @@
-import {
-  type PersonalBotId,
-  type PersonalTaskId,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { type PersonalBotId, type PersonalTaskId, type ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -256,6 +252,9 @@ export const make = Effect.gen(function* () {
         operationId: operation.operationId,
         arguments: prepared.arguments,
         credentials: stored.value,
+        // From the re-read connection, so a vendor that scopes by team uses
+        // the account the owner approved rather than resolving its own.
+        account: current.value.account,
       })
       .pipe(
         Effect.map((result) => ({ ok: true as const, result })),

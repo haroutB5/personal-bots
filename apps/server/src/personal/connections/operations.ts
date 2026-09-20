@@ -193,7 +193,9 @@ const GithubPushFiles = defineOperation({
     ),
   },
   resultFields: ["repository", "branch", "commitSha"],
-  reviewedVendorSchema: "github/contents@2026-09-20",
+  // The Git Data API, not Contents: every file has to land in one commit, and
+  // per-file Contents writes would be one commit each with no way back.
+  reviewedVendorSchema: "github/git-data@2026-09-20",
   // Whether a push ships is a property of the repository's own hooks, which
   // nothing here can see, so every repository write is treated as a
   // deployment. Guessing the other way would ship a site on a bot's word.
@@ -223,17 +225,88 @@ const VercelListProjects = defineOperation({
   targetResources: () => [],
 });
 
+/** An environment variable name, not a sentence and not a shell fragment. */
+const EnvVarName = Schema.String.check(Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]{0,255}$/));
+
+/**
+ * Preview and production are separate literals with no default anywhere in
+ * this file. A missing target is a refused call: inferring the safer one is
+ * still inferring, and the owner approves a target by reading its name.
+ */
+const DeploymentTarget = Schema.Literals(["preview", "production"]);
+
+const VercelCreateProject = defineOperation({
+  operationId: "vercel.create_project",
+  vendorId: "vercel",
+  description:
+    "Create a Vercel project on the connected account, optionally linked to a GitHub repository.",
+  fields: {
+    name: SlugText,
+    framework: Schema.NullOr(
+      Schema.Literals(["nextjs", "vite", "remix", "astro", "sveltekit", "nuxtjs"]),
+    ),
+    /** owner/name of an existing repository, or null for an unlinked project. */
+    githubRepository: Schema.NullOr(SlugText),
+  },
+  resultFields: ["project", "projectId", "framework"],
+  reviewedVendorSchema: "vercel/v10-projects@2026-09-20",
+  classify: (args) => ({
+    approvalRequired: true,
+    reason: "account_write",
+    summary:
+      args.githubRepository === null
+        ? `Create the Vercel project ${args.name}.`
+        : `Create the Vercel project ${args.name}, linked to the GitHub repository ${args.githubRepository}.`,
+  }),
+  targetResources: (args) =>
+    args.githubRepository === null
+      ? [`vercel:project:${args.name}`]
+      : [`vercel:project:${args.name}`, `github:repository:${args.githubRepository}`],
+});
+
+const VercelSetEnvironmentVariables = defineOperation({
+  operationId: "vercel.set_environment_variables",
+  vendorId: "vercel",
+  description:
+    "Set encrypted environment variables on one Vercel environment. Preview and production are separate targets and must be named.",
+  fields: {
+    project: SlugText,
+    target: DeploymentTarget,
+    variables: Schema.Array(Schema.Struct({ key: EnvVarName, value: FreeText })).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(50),
+    ),
+  },
+  // The values are the point of the call and are never echoed: what the owner
+  // approves and what the bot reads back are the names.
+  resultFields: ["project", "target", "keys"],
+  reviewedVendorSchema: "vercel/v10-project-env@2026-09-20",
+  classify: (args) => ({
+    approvalRequired: true,
+    // Production configuration is what the live site runs with, so it reads as
+    // a deployment; a preview environment is an account edit.
+    reason: args.target === "production" ? "deployment" : "account_write",
+    summary: `Set ${args.variables.map((variable) => variable.key).join(", ")} on the ${args.target} environment of the Vercel project ${args.project}. The values are not shown here.`,
+  }),
+  targetResources: (args) => [
+    `vercel:project:${args.project}`,
+    `vercel:target:${args.target}`,
+    ...args.variables.map((variable) => `vercel:env:${args.target}:${variable.key}`),
+  ],
+});
+
 const VercelCreateDeployment = defineOperation({
   operationId: "vercel.create_deployment",
   vendorId: "vercel",
-  description: "Deploy a Vercel project to preview or production.",
-  fields: { project: SlugText, target: Schema.Literals(["preview", "production"]) },
+  description:
+    "Deploy a Vercel project from a git ref to preview or production. The target must be named.",
+  fields: { project: SlugText, target: DeploymentTarget, gitRef: SlugText },
   resultFields: ["deploymentId", "url", "target"],
   reviewedVendorSchema: "vercel/v13-deployments@2026-09-20",
   classify: (args) => ({
     approvalRequired: true,
     reason: "deployment",
-    summary: `Deploy the Vercel project ${args.project} to ${args.target}.`,
+    summary: `Deploy ${args.gitRef} of the Vercel project ${args.project} to ${args.target}.`,
   }),
   targetResources: (args) => [`vercel:project:${args.project}`, `vercel:target:${args.target}`],
 });
@@ -312,6 +385,8 @@ export const CONNECTION_OPERATIONS: ReadonlyArray<ConnectionOperation> = [
   GithubCreateRepository,
   GithubPushFiles,
   VercelListProjects,
+  VercelCreateProject,
+  VercelSetEnvironmentVariables,
   VercelCreateDeployment,
   NeonListProjects,
   NeonRunSql,
@@ -382,10 +457,7 @@ const REDACTED = "[redacted]";
  * encoded in a query string, base64 in a Basic auth header, backslash-escaped
  * inside a nested JSON body. Anything left is not text we generated.
  */
-export const scrubCredentialValues = (
-  value: unknown,
-  secrets: ReadonlyArray<string>,
-): string => {
+export const scrubCredentialValues = (value: unknown, secrets: ReadonlyArray<string>): string => {
   let text =
     typeof value === "string"
       ? value
@@ -414,6 +486,4 @@ export const scrubCredentialValues = (
 
 /** Errors stringify to `{}`, which would hide the very message being scrubbed. */
 const errorReplacer = (_key: string, value: unknown) =>
-  value instanceof Error
-    ? { name: value.name, message: value.message, cause: value.cause }
-    : value;
+  value instanceof Error ? { name: value.name, message: value.message, cause: value.cause } : value;
