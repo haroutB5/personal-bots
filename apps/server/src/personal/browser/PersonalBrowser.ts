@@ -158,6 +158,14 @@ export class PersonalBrowser extends Context.Service<
      * browser's controller, or have its page reopened by a later restart.
      */
     readonly releaseThread: (threadId: ThreadId) => Effect.Effect<void>;
+    /**
+     * The user-marked sensitive origins this thread, and the delegation tree
+     * it works in, has had open — sorted. Read by the egress channels the
+     * browser guard cannot see (the research tools), so they can refuse while
+     * the thread is carrying sensitive-site content. Empty means nothing
+     * sensitive has been opened, not that the thread is trusted.
+     */
+    readonly sensitiveExposure: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<string>>;
     readonly activity: (sessionId: string) => Stream.Stream<PersonalBrowserStreamItem>;
     readonly handleAutomationRequest: (
       request: PreviewAutomationRequest,
@@ -564,6 +572,14 @@ export const make = (options: PersonalBrowserOptions) =>
         const keys = yield* exposureKeys(threadId);
         recordExposure(keys, (entry) => entry.sources.add(origin));
       });
+
+    /**
+     * What the thread is currently carrying, for egress channels outside the
+     * browser. Read-only: it never records, approves or refuses anything, so a
+     * caller cannot use it to widen its own exposure.
+     */
+    const sensitiveExposure = (threadId: ThreadId): Effect.Effect<ReadonlyArray<string>> =>
+      exposureKeys(threadId).pipe(Effect.map((keys) => [...exposureOf(keys).sources].toSorted()));
 
     /**
      * Refuses an action that needs the user's approval. The bot is told to
@@ -2246,6 +2262,7 @@ export const make = (options: PersonalBrowserOptions) =>
       listFiles,
       resolveFile,
       releaseThread,
+      sensitiveExposure,
       activity,
       handleAutomationRequest,
       fillLogin,

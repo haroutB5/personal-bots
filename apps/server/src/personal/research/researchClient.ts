@@ -35,6 +35,57 @@ const object = (value: unknown): Record<string, unknown> =>
 const string = (value: unknown, limit = 2000): string =>
   typeof value === "string" ? value.slice(0, limit) : "";
 
+/**
+ * Query keys that carry a capability in the wild. Exact names, because the
+ * short ones (`e` on SharePoint/OneDrive, `k`, `sig`, `dl`, `st`) are whole
+ * parameters, never substrings: matching `auth` loosely would reject `author`
+ * and matching `sig` loosely would reject `design`.
+ */
+const SECRET_QUERY_KEY = new Set(
+  [
+    "auth",
+    "code",
+    "dl",
+    "e",
+    "hmac",
+    "k",
+    "key",
+    "nonce",
+    "pw",
+    "pwd",
+    "resourcekey",
+    "rlkey",
+    "se",
+    "share",
+    "sharekey",
+    "sig",
+    "sp",
+    "sr",
+    "st",
+    "sv",
+  ].map((key) => key.toLowerCase()),
+);
+
+/** The families that are still worth matching as substrings; none of them has a benign homograph. */
+const SECRET_QUERY_KEY_PART = /token|secret|password|signature|credential|api.?key/i;
+
+const carriesSecretQueryKey = (url: URL): boolean =>
+  Array.from(url.searchParams.keys()).some(
+    (key) => SECRET_QUERY_KEY.has(key.toLowerCase()) || SECRET_QUERY_KEY_PART.test(key),
+  );
+
+/**
+ * A value shaped like a capability token whatever it is called: long, opaque,
+ * mixed letters and digits, no spaces or punctuation a human would write. This
+ * is the rule that does not need the parameter's name, so a share-link format
+ * nobody has listed above is still refused.
+ */
+function looksLikeCapabilityToken(value: string): boolean {
+  if (value.length < 24) return false;
+  if (!/^[A-Za-z0-9._~+/=-]+$/.test(value)) return false;
+  return /[0-9]/.test(value) && /[A-Za-z]/.test(value);
+}
+
 /** Reject obvious private/token-bearing URLs; retrieval runs at the provider, never on our network. */
 export function publicResearchUrl(value: string): string | null {
   try {
@@ -48,9 +99,7 @@ export function publicResearchUrl(value: string): string | null {
       NodeNet.isIP(host) ||
       !host.includes(".") ||
       /\.(localhost|local|internal|test|invalid|home|lan)\.?$/.test(host) ||
-      Array.from(url.searchParams.keys()).some((key) =>
-        /token|secret|password|signature|credential|api.?key/i.test(key),
-      )
+      carriesSecretQueryKey(url)
     )
       return null;
     url.hash = "";
@@ -58,6 +107,32 @@ export function publicResearchUrl(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The stricter check for a URL we are about to hand to the search provider.
+ * `publicResearchUrl` also screens URLs coming back from the provider, where
+ * rejecting on a token-shaped value would silently drop ordinary results; on
+ * the way out the same suspicion is worth a refusal the bot can explain.
+ */
+export function outboundResearchUrl(value: string): string | null {
+  const safe = publicResearchUrl(value);
+  if (safe === null) return null;
+  const url = new URL(safe);
+  for (const parameter of url.searchParams.values())
+    if (looksLikeCapabilityToken(parameter)) return null;
+  return safe;
+}
+
+/**
+ * A free-text query is not a URL, but a link pasted into one still leaves the
+ * house. Only whitespace-separated http(s) words are examined, so ordinary
+ * prose and product codes cannot trip this.
+ */
+export function queryCarriesShareLink(query: string): boolean {
+  return query
+    .split(/\s+/)
+    .some((word) => /^https?:\/\//i.test(word) && outboundResearchUrl(word) === null);
 }
 
 function sources(value: unknown, evidence: ResearchSource["evidence"]): ResearchSource[] {
@@ -107,12 +182,56 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
+/** One in-flight request, shared by every caller that asked for the same thing. */
+interface PendingResearch {
+  readonly promise: Promise<ResearchResult>;
+  readonly controller: AbortController;
+  /** Callers still interested; the shared fetch is aborted only when the last one leaves. */
+  waiters: number;
+}
+
+/**
+ * Ties one caller's cancellation to a shared request. The caller is released
+ * the moment it cancels; the underlying fetch is aborted only once the last
+ * caller has gone, so one interrupted turn cannot cancel another bot's
+ * identical request. A caller with no signal can never leave, so it pins the
+ * request — which is what an uncancellable caller should do.
+ */
+function follow(
+  entry: PendingResearch,
+  signal: AbortSignal | undefined,
+  onCancel: () => ResearchResult,
+): Promise<ResearchResult> {
+  entry.waiters += 1;
+  if (signal === undefined) return entry.promise;
+  const leave = () => {
+    entry.waiters -= 1;
+    if (entry.waiters <= 0) entry.controller.abort();
+  };
+  if (signal.aborted) {
+    leave();
+    return Promise.resolve(onCancel());
+  }
+  return new Promise<ResearchResult>((resolve) => {
+    const abandon = () => {
+      leave();
+      resolve(onCancel());
+    };
+    signal.addEventListener("abort", abandon, { once: true });
+    const settle = (result: ResearchResult) => {
+      signal.removeEventListener("abort", abandon);
+      resolve(result);
+    };
+    entry.promise.then(settle, () => settle(onCancel()));
+  });
+}
+
 /** One server-lifetime client: four requests at once, identical in-flight work shared.
  * No completed-result cache: a previous price or stock check is never presented as fresh.
  */
 export function createResearchClient(fetchImpl: typeof fetch = fetch) {
   const timestamp = () => DateTime.formatIso(DateTime.nowUnsafe());
-  const pending = new Map<string, Promise<ResearchResult>>();
+  const pending = new Map<string, PendingResearch>();
   let active = 0;
   const queue: Array<() => void> = [];
 
@@ -134,20 +253,29 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
     kind: "search" | "extract" | "shopping",
     request: string,
     options: SearchOptions,
+    signal?: AbortSignal,
   ): Promise<ResearchResult> {
     const id = NodeCrypto.createHash("sha256")
       .update(JSON.stringify([scope, key, kind, request, options]))
       .digest("hex");
+    const stub = (error: string): ResearchResult => ({
+      request,
+      provider: kind === "shopping" ? "serpapi" : "tavily",
+      retrievedAt: timestamp(),
+      sources: [],
+      error,
+    });
+    const cancelled = () => stub("Research was cancelled.");
+    if (kind === "search" && queryCarriesShareLink(request))
+      return Promise.resolve(
+        stub(
+          "That query contains a link carrying an access token. Never send signed or share links to the search provider; search for the subject in words instead.",
+        ),
+      );
     const existing = pending.get(id);
-    if (existing) return existing;
-    if (pending.size >= 64)
-      return Promise.resolve({
-        request,
-        provider: kind === "shopping" ? "serpapi" : "tavily",
-        retrievedAt: timestamp(),
-        sources: [],
-        error: "Research is busy. Retry shortly.",
-      });
+    if (existing) return follow(existing, signal, cancelled);
+    if (pending.size >= 64) return Promise.resolve(stub("Research is busy. Retry shortly."));
+    const controller = new AbortController();
     const task = limited(async (): Promise<ResearchResult> => {
       const provider = kind === "shopping" ? "serpapi" : "tavily";
       const result: ResearchResult = {
@@ -158,7 +286,10 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
         error: null,
       };
       try {
-        if (kind === "extract" && !publicResearchUrl(request))
+        // Cancelled while queued: give the slot straight back instead of
+        // spending a provider call nobody is waiting for.
+        if (controller.signal.aborted) throw new Error("Cancelled before the request started.");
+        if (kind === "extract" && !outboundResearchUrl(request))
           throw new Error("Use a public HTTP(S) page URL without credentials or access tokens.");
         const endpoint =
           kind === "shopping"
@@ -198,7 +329,7 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
               : { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
           ...(body === undefined ? {} : { body }),
           redirect: "error",
-          signal: AbortSignal.timeout(20_000),
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
         });
         if (!response.ok) {
           result.error = `${provider} request failed (HTTP ${response.status}). ${[401, 403].includes(response.status) ? "Check the saved API key." : response.status === 429 ? "Rate limit reached; retry later." : "Try another source or the browser."}`;
@@ -226,16 +357,25 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
       }
       return result;
     }).finally(() => pending.delete(id));
-    pending.set(id, task);
-    return task;
+    const entry: PendingResearch = { promise: task, controller, waiters: 0 };
+    pending.set(id, entry);
+    return follow(entry, signal, cancelled);
   }
 
   return {
-    search: (scope: string, key: string, queries: readonly string[], options: SearchOptions) =>
-      Promise.all([...new Set(queries)].map((query) => run(scope, key, "search", query, options))),
-    read: (scope: string, key: string, urls: readonly string[]) =>
-      Promise.all([...new Set(urls)].map((url) => run(scope, key, "extract", url, {}))),
-    products: (scope: string, key: string, query: string, country: string) =>
-      run(scope, key, "shopping", query, { country }),
+    search: (
+      scope: string,
+      key: string,
+      queries: readonly string[],
+      options: SearchOptions,
+      signal?: AbortSignal,
+    ) =>
+      Promise.all(
+        [...new Set(queries)].map((query) => run(scope, key, "search", query, options, signal)),
+      ),
+    read: (scope: string, key: string, urls: readonly string[], signal?: AbortSignal) =>
+      Promise.all([...new Set(urls)].map((url) => run(scope, key, "extract", url, {}, signal))),
+    products: (scope: string, key: string, query: string, country: string, signal?: AbortSignal) =>
+      run(scope, key, "shopping", query, { country }, signal),
   };
 }

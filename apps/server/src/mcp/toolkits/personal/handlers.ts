@@ -4,6 +4,7 @@ import {
   describePersonalRoutineTrigger,
   PersonalRoutineId,
   type PersonalRoutineSchedule,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
+import { PersonalBrowser } from "../../../personal/browser/PersonalBrowser.ts";
 import { PersonalSessionAccess } from "../../../personal/secrets/PersonalSessionAccess.ts";
 import { createResearchClient } from "../../../personal/research/researchClient.ts";
 import * as PersonalMemoryService from "../../../personal/memory/PersonalMemoryService.ts";
@@ -87,6 +89,7 @@ const make = Effect.gen(function* () {
   const memory = yield* PersonalMemoryService.PersonalMemoryService;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const sessions = yield* PersonalSessionAccess;
+  const browser = yield* PersonalBrowser;
   const research = createResearchClient();
 
   const refuse = (reason: string) => new PersonalToolError({ reason });
@@ -104,8 +107,35 @@ const make = Effect.gen(function* () {
 
   const liveBots = bots.listBots().pipe(Effect.mapError(() => refuse("Could not read the bots.")));
 
+  /**
+   * The sensitive-site egress guard, for the one channel it cannot see.
+   *
+   * The browser rail pauses an action that could carry what a bot read on a
+   * user-marked sensitive site to another origin, and lets the user approve
+   * that one destination. These tools are outside the browser and the shape
+   * does not transfer: their destination is always the search provider, so an
+   * approval would be a standing permit to send anything this thread read on
+   * the bank to Tavily, bought with a question about a browser the user has
+   * nothing to look at in. So this end refuses outright, for as long as the
+   * thread's exposure set is non-empty, and offers no approval to grant.
+   *
+   * The check is on thread state, never on the arguments, so rewording the
+   * query, splitting it up or renaming the tool changes nothing. The refusal
+   * names the origin the bot itself opened and never any page content.
+   */
+  const refuseWhileCarryingSensitiveData = Effect.fn("personal.researchEgressGuard")(function* (
+    threadId: ThreadId,
+  ) {
+    const carrying = yield* browser.sensitiveExposure(threadId);
+    if (carrying.length === 0) return;
+    return yield* refuse(
+      `Blocked: this chat has had ${carrying.join(", ")} open, a site the user marked sensitive, so the research tools are closed for the rest of it. They send text to an outside search provider and there is no approval that reopens them; retrying with different words will not work. Say in one sentence what you wanted to look up and ask the user to search it, or open a public page in the browser yourself.`,
+    );
+  });
+
   const researchAccess = Effect.fn("personal.researchAccess")(function* (name: string) {
     const { scope, botId } = yield* requireBotThread;
+    yield* refuseWhileCarryingSensitiveData(scope.threadId);
     const grant = yield* sessions.forThread(scope.threadId);
     const key = grant.environment[`PB_SECRET_${name}`];
     if (!key)
@@ -120,12 +150,20 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const access = yield* researchAccess("TAVILY_API_KEY");
         const results = yield* Effect.tryPromise({
-          try: () =>
-            research.search(access.scope, access.key, input.queries, {
-              country: input.country,
-              timeRange: input.timeRange,
-              domains: input.domains,
-            }),
+          // The signal is the fiber's: interrupting the turn aborts the fetches
+          // and hands their concurrency slots straight back.
+          try: (signal) =>
+            research.search(
+              access.scope,
+              access.key,
+              input.queries,
+              {
+                country: input.country,
+                timeRange: input.timeRange,
+                domains: input.domains,
+              },
+              signal,
+            ),
           catch: () => refuse("Web search failed."),
         });
         return { results };
@@ -134,7 +172,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const access = yield* researchAccess("TAVILY_API_KEY");
         const results = yield* Effect.tryPromise({
-          try: () => research.read(access.scope, access.key, input.urls),
+          try: (signal) => research.read(access.scope, access.key, input.urls, signal),
           catch: () => refuse("Page reading failed."),
         });
         return { results };
@@ -143,7 +181,8 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const access = yield* researchAccess("SERPAPI_API_KEY");
         return yield* Effect.tryPromise({
-          try: () => research.products(access.scope, access.key, input.query, input.country),
+          try: (signal) =>
+            research.products(access.scope, access.key, input.query, input.country, signal),
           catch: () => refuse("Product search failed."),
         });
       }),

@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createResearchClient, publicResearchUrl } from "./researchClient.ts";
 
+/**
+ * Lets the limiter's hand-off chain run: abort -> release -> the queued fetch
+ * starts. Every link is a promise, so draining the microtask queue is enough.
+ */
+const flush = async () => {
+  for (let tick = 0; tick < 20; tick += 1) await Promise.resolve();
+};
+
 const reply = (results: unknown[]) =>
   new Response(JSON.stringify({ results }), { headers: { "Content-Type": "application/json" } });
 
@@ -146,5 +154,123 @@ describe("public research", () => {
     const [result] = await createResearchClient(fetcher).read("bot", "key", [url]);
     expect(fetcher).not.toHaveBeenCalled();
     expect(result?.error).not.toBeNull();
+  });
+
+  // Real share links, one per parameter the first denylist missed.
+  it.each([
+    "https://www.dropbox.com/scl/fi/abc/report.pdf?rlkey=9f2k1lqz0d&dl=0",
+    "https://contoso-my.sharepoint.com/:w:/g/personal/x/EY7?e=4Xa9Kd",
+    "https://files.example.com/report.pdf?sig=abc123def456",
+    "https://files.example.com/report.pdf?auth=abc123def456",
+    "https://files.example.com/report.pdf?share=abc123def456",
+    "https://files.example.com/report.pdf?k=abc123def456",
+    "https://drive.example.com/file?resourcekey=0-abc",
+    "https://files.example.com/report.pdf?st=2026-09-20&se=2026-09-21&sp=r",
+  ])("refuses share-link capability tokens: %s", async (url) => {
+    expect(publicResearchUrl(url)).toBeNull();
+    const fetcher = vi.fn<typeof fetch>();
+    const [result] = await createResearchClient(fetcher).read("bot", "key", [url]);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(result?.error).not.toBeNull();
+  });
+
+  it("refuses a token-shaped value under a parameter name nobody listed", async () => {
+    const url = "https://files.example.com/report.pdf?ref=Xk39aPz1Lq84vTm07NbRc2Ye5";
+    // The name check alone lets it through; the outbound value check is what stops it.
+    expect(publicResearchUrl(url)).not.toBeNull();
+    const fetcher = vi.fn<typeof fetch>();
+    const [result] = await createResearchClient(fetcher).read("bot", "key", [url]);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(result?.error).not.toBeNull();
+  });
+
+  it("refuses a search query with a share link pasted into it", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const [result] = await createResearchClient(fetcher).search(
+      "bot",
+      "key",
+      ["what is https://www.dropbox.com/scl/fi/abc/report.pdf?rlkey=9f2k1lqz0d about"],
+      {},
+    );
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(result?.error).toContain("access token");
+  });
+
+  it("keeps ordinary parameters, including the ones a loose denylist would eat", () => {
+    for (const url of [
+      "https://example.com/posts?author=jane&design=flat&keywords=cameras",
+      "https://example.com/watch?v=abc123&t=42&s=review",
+    ])
+      expect(publicResearchUrl(url)).toBe(url);
+  });
+
+  it("releases limiter slots as soon as the caller cancels", async () => {
+    const waiting: Array<(response: Response) => void> = [];
+    const fetcher = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise((resolve, reject) => {
+          waiting.push(resolve);
+          init?.signal?.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
+        }),
+    );
+    const client = createResearchClient(fetcher);
+    const cancel = new AbortController();
+    const abandoned = client.read(
+      "a",
+      "key",
+      [1, 2, 3, 4].map((id) => `https://example.com/${id}`),
+      cancel.signal,
+    );
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    // All four slots are busy, so this one is queued and has not started.
+    const queued = client.read("b", "key", ["https://example.com/5"]);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+
+    cancel.abort();
+    expect((await abandoned)[0]?.error).toContain("cancelled");
+    await flush();
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    waiting.at(-1)!(reply([{ url: "https://example.com/5", raw_content: "Evidence" }]));
+    const [result] = await queued;
+    expect(result?.sources[0]?.content).toBe("Evidence");
+
+    // The four slots came back: a fresh batch of four starts immediately.
+    const after = client.read(
+      "c",
+      "key",
+      [6, 7, 8, 9].map((id) => `https://example.com/${id}`),
+    );
+    await flush();
+    expect(fetcher).toHaveBeenCalledTimes(9);
+    for (const finish of waiting.splice(0)) finish(reply([]));
+    await after;
+  });
+
+  it("keeps a shared request alive while another caller still wants it", async () => {
+    const waiting: Array<(response: Response) => void> = [];
+    const fetcher = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise((resolve, reject) => {
+          waiting.push(resolve);
+          init?.signal?.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
+        }),
+    );
+    const client = createResearchClient(fetcher);
+    const cancel = new AbortController();
+    const first = client.search("bot", "key", ["camera"], {}, cancel.signal);
+    const second = client.search("bot", "key", ["camera"], {});
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    cancel.abort();
+    expect((await first)?.[0]?.error).toContain("cancelled");
+    await flush();
+    // The other caller is still waiting, so the fetch was never aborted.
+    waiting.shift()!(reply([{ url: "https://shop.example/camera", content: "Offer" }]));
+    const [kept] = await second;
+    expect(kept?.error).toBeNull();
+    expect(kept?.sources[0]?.url).toBe("https://shop.example/camera");
   });
 });
