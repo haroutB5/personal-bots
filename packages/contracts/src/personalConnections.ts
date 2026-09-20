@@ -1,6 +1,8 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PersonalBotId } from "./personalBots.ts";
+import { PersonalTaskId } from "./personalTasks.ts";
 
 export const PersonalConnectionVendorId = Schema.Literals(["github", "vercel", "neon", "upstash"]);
 export type PersonalConnectionVendorId = typeof PersonalConnectionVendorId.Type;
@@ -89,3 +91,85 @@ export class PersonalConnectionsError extends Schema.TaggedError<PersonalConnect
   "PersonalConnectionsError",
   { message: TrimmedNonEmptyString },
 ) {}
+
+/**
+ * Why an action needs the owner's decision. Mirrors the server's operation
+ * catalog; it lives here so a persisted approval keeps its meaning and the
+ * client can group cards without re-deriving the rule.
+ */
+export const PersonalConnectionRiskReason = Schema.Literals([
+  "read_only",
+  "account_write",
+  "publication",
+  "deployment",
+  "unbounded_statement",
+]);
+export type PersonalConnectionRiskReason = typeof PersonalConnectionRiskReason.Type;
+
+export const PersonalConnectionApprovalId = TrimmedNonEmptyString.pipe(
+  Schema.brand("PersonalConnectionApprovalId"),
+);
+export type PersonalConnectionApprovalId = typeof PersonalConnectionApprovalId.Type;
+
+export const PersonalConnectionApprovalStatus = Schema.Literals([
+  "pending",
+  "approved",
+  "denied",
+  "cancelled",
+  "expired",
+]);
+export type PersonalConnectionApprovalStatus = typeof PersonalConnectionApprovalStatus.Type;
+
+/** What happened to the approved action; the receipt the owner can be shown. */
+export const PersonalConnectionExecutionOutcome = Schema.Literals([
+  "succeeded",
+  "failed",
+  "not_dispatched",
+]);
+export type PersonalConnectionExecutionOutcome = typeof PersonalConnectionExecutionOutcome.Type;
+
+/**
+ * One decision about one normalized action. `summary` is written by the
+ * server from the validated arguments: the bot never authors what the owner
+ * reads. `actionDigest` is what the decision binds to, so an approval cannot
+ * be spent on a different call.
+ */
+export const PersonalConnectionApproval = Schema.Struct({
+  approvalId: PersonalConnectionApprovalId,
+  connectionId: ConnectionId,
+  vendorId: PersonalConnectionVendorId,
+  operationId: TrimmedNonEmptyString,
+  actionDigest: TrimmedNonEmptyString,
+  riskReason: PersonalConnectionRiskReason,
+  summary: TrimmedNonEmptyString,
+  targetResources: Schema.Array(Schema.String),
+  credentialVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  threadId: ThreadId,
+  botId: PersonalBotId,
+  taskId: Schema.NullOr(PersonalTaskId),
+  status: PersonalConnectionApprovalStatus,
+  createdAt: Schema.DateTimeUtcFromString,
+  expiresAt: Schema.DateTimeUtcFromString,
+  decidedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  executedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  executionOutcome: Schema.NullOr(PersonalConnectionExecutionOutcome),
+});
+export type PersonalConnectionApproval = typeof PersonalConnectionApproval.Type;
+
+export const PersonalConnectionApprovalListResult = Schema.Struct({
+  approvals: Schema.Array(PersonalConnectionApproval),
+});
+export type PersonalConnectionApprovalListResult =
+  typeof PersonalConnectionApprovalListResult.Type;
+
+export const PersonalConnectionApprovalDecideInput = Schema.Struct({
+  approvalId: PersonalConnectionApprovalId,
+  decision: Schema.Literals(["approved", "denied"]),
+});
+export type PersonalConnectionApprovalDecideInput =
+  typeof PersonalConnectionApprovalDecideInput.Type;
+
+export const PersonalConnectionApprovalIdInput = Schema.Struct({
+  approvalId: PersonalConnectionApprovalId,
+});
+export type PersonalConnectionApprovalIdInput = typeof PersonalConnectionApprovalIdInput.Type;
