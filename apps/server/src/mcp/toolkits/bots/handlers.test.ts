@@ -386,6 +386,80 @@ describe("bots toolkit handlers", () => {
     ),
   );
 
+  it.effect("stop_task cancels a delegated task the caller owns", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const child = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Fix the build.",
+        });
+        yield* (yield* PersonalTaskService.PersonalTaskService).drain;
+
+        const stopped = yield* call("stop_task", {
+          taskId: child.childTaskId as never,
+          reason: "The requirements changed.",
+        });
+
+        expect(stopped.status).toBe("cancelled");
+        const after = yield* call("get_task", { taskId: child.childTaskId as never });
+        expect(after.task.status).toBe("cancelled");
+      }),
+    ),
+  );
+
+  it.effect("stop_task refuses a task outside the caller's tree", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const tasks = yield* PersonalTaskService.PersonalTaskService;
+        const unrelated = yield* tasks.createTask({
+          idempotencyKey: "unrelated-stop",
+          botId: botId("researcher"),
+          title: "Someone else's request",
+          objective: "Research something else.",
+        });
+        yield* tasks.drain;
+
+        const outside = yield* call("stop_task", {
+          taskId: unrelated.taskId,
+          reason: "Not mine to stop.",
+        }).pipe(Effect.flip);
+
+        expect(outside.message).toBe("That task is not in your task tree.");
+      }),
+    ),
+  );
+
+  it.effect("stop_task redirects to a fresh task when given a new objective", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const child = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Draw the arrows.",
+        });
+        yield* (yield* PersonalTaskService.PersonalTaskService).drain;
+
+        const redirected = yield* call("stop_task", {
+          taskId: child.childTaskId as never,
+          reason: "Shape changed.",
+          redirectObjective: "Draw circles instead.",
+        });
+
+        expect(redirected.status).toBe("cancelled");
+        expect(redirected.redirectedTaskId).not.toBeNull();
+        expect(redirected.redirectedTaskId).not.toBe(child.childTaskId);
+
+        const replacement = yield* call("get_task", {
+          taskId: redirected.redirectedTaskId as never,
+        });
+        expect(replacement.task.botName).toBe("Developer");
+        expect(replacement.task.status).not.toBe("cancelled");
+      }),
+    ),
+  );
+
   it.effect("delegation refusals come back as readable tool errors", () =>
     withHarness((harness) =>
       Effect.gen(function* () {
