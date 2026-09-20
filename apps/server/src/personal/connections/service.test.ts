@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
+import * as Adapters from "./adapters.ts";
 import * as CredentialStore from "./credentialStore.ts";
 import * as Repository from "./repository.ts";
 import * as Service from "./service.ts";
@@ -19,9 +20,25 @@ interface Harness {
   readonly layer: Layer.Layer<Service.PersonalConnectionService>;
   readonly rows: Map<string, Repository.StoredPersonalConnection>;
   readonly secrets: Map<string, Readonly<Record<string, Redacted.Redacted<string>>>>;
+  /** Tokens the fake vendor accepts, and what it says they may do. */
+  readonly vendor: {
+    grantedScopes: ReadonlyArray<string> | null;
+    reject: "none" | "unauthorized" | "offline";
+  };
 }
 
+const ACCOUNT = {
+  accountId: "account-1",
+  accountName: "Octocat",
+  teamId: null,
+  teamName: null,
+};
+
 const makeHarness = (options?: { readonly failCreate?: boolean }): Harness => {
+  const vendor = {
+    grantedScopes: ["repo", "workflow"] as ReadonlyArray<string> | null,
+    reject: "none" as "none" | "unauthorized" | "offline",
+  };
   const rows = new Map<string, Repository.StoredPersonalConnection>();
   const secrets = new Map<string, Readonly<Record<string, Redacted.Redacted<string>>>>();
   let sequence = 0;
@@ -74,10 +91,40 @@ const makeHarness = (options?: { readonly failCreate?: boolean }): Harness => {
       }),
   });
 
+  const github: Adapters.ConnectionVendorAdapter = {
+    vendorId: "github",
+    vendorSchema: () => Effect.succeed("github/repos@2026-09-20"),
+    execute: () => Effect.succeed({}),
+    validate: (credentials) =>
+      vendor.reject === "unauthorized"
+        ? Effect.fail(
+            new Adapters.ConnectionVendorError({
+              operationId: "github.validate",
+              // The vendor quotes our own request back at us, token included.
+              detail: `HTTP 401 for token ${Redacted.value(credentials["accessToken"] ?? Redacted.make(""))}`,
+              unauthorized: true,
+            }),
+          )
+        : vendor.reject === "offline"
+          ? Effect.fail(
+              new Adapters.ConnectionVendorError({
+                operationId: "github.validate",
+                detail: "Could not reach the provider",
+              }),
+            )
+          : Effect.succeed({
+              account: ACCOUNT,
+              grantedScopes: vendor.grantedScopes,
+              verifiedCapabilities: ["github.create_repository", "github.create_repository"],
+            }),
+  };
+
   return {
     rows,
     secrets,
+    vendor,
     layer: Service.layer.pipe(
+      Layer.provide(Adapters.layerOf([github])),
       Layer.provide(Layer.succeed(Repository.PersonalConnectionRepository, repository)),
       Layer.provide(
         Layer.succeed(CredentialStore.PersonalConnectionCredentialStore, credentialStore),
@@ -95,22 +142,13 @@ describe("PersonalConnectionService", () => {
         vendorId: "github",
         credentials: { accessToken: Redacted.make(TOKEN) },
       });
-      expect(created.status).toBe("connecting");
+      // Connecting validates: a stored token nobody called is a token that
+      // fails in the middle of somebody's task instead of on this screen.
+      expect(created.status).toBe("connected");
       expect(created.credentialVersion).toBe(1);
 
-      const connected = yield* service.validate({
-        connectionId: created.connectionId,
-        outcome: {
-          status: "connected",
-          account: {
-            accountId: "account-1",
-            accountName: "Octocat",
-            teamId: null,
-            teamName: null,
-          },
-          verifiedCapabilities: ["repository:write"],
-        },
-      });
+      const connected = (yield* service.validate({ connectionId: created.connectionId }))
+        .connection;
       expect(connected.status).toBe("connected");
       expect(connected.lastValidatedAt).not.toBeNull();
       expect(
@@ -125,34 +163,20 @@ describe("PersonalConnectionService", () => {
       expect((yield* service.reconnect({ connectionId: created.connectionId })).status).toBe(
         "connecting",
       );
+      harness.vendor.reject = "unauthorized";
       expect(
-        (yield* service.validate({
-          connectionId: created.connectionId,
-          outcome: { status: "needs_reauth" },
-        })).status,
+        (yield* service.validate({ connectionId: created.connectionId })).connection.status,
       ).toBe("needs_reauth");
+      harness.vendor.reject = "none";
 
       yield* service.reconnect({ connectionId: created.connectionId });
       const rotated = yield* service.rotate({
         connectionId: created.connectionId,
         credentials: { accessToken: Redacted.make("replacement-token") },
       });
-      expect(rotated.status).toBe("connecting");
+      expect(rotated.status).toBe("connected");
       expect(rotated.credentialVersion).toBe(2);
 
-      yield* service.validate({
-        connectionId: created.connectionId,
-        outcome: {
-          status: "connected",
-          account: {
-            accountId: "account-1",
-            accountName: "Octocat",
-            teamId: null,
-            teamName: null,
-          },
-          verifiedCapabilities: ["repository:write"],
-        },
-      });
       expect(
         Option.getOrThrow(yield* service.resolveForOperation("github")).credentialVersion,
       ).toBe(2);

@@ -257,12 +257,13 @@ export const make = Effect.gen(function* () {
         account: current.value.account,
       })
       .pipe(
-        Effect.map((result) => ({ ok: true as const, result })),
+        Effect.map((result) => ({ ok: true as const, result, unauthorized: false })),
         // The detail is the vendor's own words about our own request, so it
         // is scrubbed before it reaches a model, a log or an error message.
         Effect.catch((error) =>
           Effect.succeed({
             ok: false as const,
+            unauthorized: error.unauthorized === true,
             detail: Operations.scrubCredentialValues(error.detail, secrets),
           }),
         ),
@@ -270,6 +271,7 @@ export const make = Effect.gen(function* () {
         Effect.catchCause((cause) =>
           Effect.succeed({
             ok: false as const,
+            unauthorized: false,
             detail: Operations.scrubCredentialValues(cause, secrets),
           }),
         ),
@@ -287,6 +289,15 @@ export const make = Effect.gen(function* () {
         vendorId: operation.vendorId,
         detail: outcome.detail,
       });
+      if (outcome.unauthorized) {
+        // Personal access tokens expire on the provider's schedule, so this is
+        // an ordinary path. Moving the connection now means the owner sees it
+        // in Settings instead of a run of identical failures in a chat.
+        yield* connections.markNeedsReauth(connection.connectionId).pipe(Effect.ignore);
+        return yield* refuse(
+          `${definition.displayName} would not accept the saved credential, so the connection now needs reconnecting. Tell the user to reconnect ${definition.displayName} in Settings; you cannot do it yourself.`,
+        );
+      }
       return yield* refuse(
         `${definition.displayName} refused ${operation.operationId}: ${outcome.detail}`,
       );

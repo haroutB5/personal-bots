@@ -62,6 +62,8 @@ interface Harness {
   readonly approvals: Map<string, PersonalConnectionApproval>;
   readonly calls: Array<Adapters.ConnectionVendorCall>;
   readonly logs: Array<string>;
+  /** Connections the gateway asked to be re-authorised after a vendor refusal. */
+  readonly reauthed: Array<string>;
   /** Mutated mid-test to stand for a disable or a rotation while a card is open. */
   readonly connection: {
     status: "connected" | "disabled";
@@ -74,6 +76,7 @@ const makeHarness = (options?: HarnessOptions): Harness => {
   const approvals = new Map<string, PersonalConnectionApproval>();
   const calls: Array<Adapters.ConnectionVendorCall> = [];
   const logs: Array<string> = [];
+  const reauthed: Array<string> = [];
   const connection = {
     status: options?.status ?? ("connected" as const),
     credentialVersion: options?.credentialVersion ?? 1,
@@ -82,6 +85,10 @@ const makeHarness = (options?: HarnessOptions): Harness => {
 
   let resolves = 0;
   const connections = Layer.mock(ConnectionService.PersonalConnectionService)({
+    markNeedsReauth: (connectionId: string) =>
+      Effect.sync(() => {
+        reauthed.push(connectionId);
+      }),
     resolveForOperation: (vendorId: PersonalConnectionVendorId) =>
       Effect.sync(() => {
         resolves += 1;
@@ -248,7 +255,7 @@ const makeHarness = (options?: HarnessOptions): Harness => {
     ),
   );
 
-  return { layer, approvals, calls, logs, connection };
+  return { layer, approvals, calls, logs, reauthed, connection };
 };
 
 const createRepository = {
@@ -553,6 +560,54 @@ describe("gateway credential handling", () => {
           approvalId,
         });
         expect(text(done)).not.toContain(TOKEN);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+});
+
+describe("gateway reauthorisation", () => {
+  it.effect("moves the connection to needs_reauth when a vendor refuses the credential", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        execute: () =>
+          Effect.fail(
+            new Adapters.ConnectionVendorError({
+              operationId: "github.list_repositories",
+              detail: "HTTP 401: Bad credentials",
+              unauthorized: true,
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const gateway = yield* Gateway.PersonalConnectionGateway;
+        const refusal = yield* Effect.flip(
+          gateway.call({ operation: "github.list_repositories", arguments: {}, caller }),
+        );
+        // A personal access token expires on GitHub's schedule, so this is a
+        // normal path: the bot is told to stop asking and the owner is told why.
+        expect(refusal.reason).toContain("reconnect");
+        expect(harness.reauthed).toEqual(["connection-1"]);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("leaves the connection alone when the vendor refused the request, not the token", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        execute: () =>
+          Effect.fail(
+            new Adapters.ConnectionVendorError({
+              operationId: "github.list_repositories",
+              detail: "HTTP 422: name already exists",
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const gateway = yield* Gateway.PersonalConnectionGateway;
+        yield* Effect.flip(
+          gateway.call({ operation: "github.list_repositories", arguments: {}, caller }),
+        );
+        expect(harness.reauthed).toEqual([]);
       }).pipe(Effect.provide(harness.layer));
     }),
   );

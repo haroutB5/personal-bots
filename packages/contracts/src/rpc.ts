@@ -330,6 +330,7 @@ import {
   PersonalConnectionRotateInput,
   PersonalConnectionsError,
   PersonalConnectionValidateInput,
+  PersonalConnectionValidationResult,
 } from "./personalConnections.ts";
 import {
   PersonalLogin,
@@ -1348,7 +1349,7 @@ const WsPersonalConnectionsConnectRpc = Rpc.make(WS_METHODS.personalConnectionsC
 
 const WsPersonalConnectionsValidateRpc = Rpc.make(WS_METHODS.personalConnectionsValidate, {
   payload: PersonalConnectionValidateInput,
-  success: PersonalConnection,
+  success: PersonalConnectionValidationResult,
   error: PersonalConnectionsRpcError,
 });
 

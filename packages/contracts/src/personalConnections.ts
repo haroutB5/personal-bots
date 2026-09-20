@@ -57,23 +57,27 @@ export const PersonalConnectionConnectInput = Schema.Struct({
 });
 export type PersonalConnectionConnectInput = typeof PersonalConnectionConnectInput.Type;
 
-export const PersonalConnectionValidateInput = Schema.Struct({
-  connectionId: ConnectionId,
-  outcome: Schema.Union([
-    Schema.Struct({
-      status: Schema.Literal("connected"),
-      account: Schema.Struct({
-        accountId: Schema.String,
-        accountName: Schema.String,
-        teamId: Schema.NullOr(Schema.String),
-        teamName: Schema.NullOr(Schema.String),
-      }),
-      verifiedCapabilities: Schema.Array(Schema.String),
-    }),
-    Schema.Struct({ status: Schema.Literals(["needs_reauth", "error"]) }),
-  ]),
-});
+/**
+ * Validation is a call the server makes to the vendor, so the client asks for
+ * one rather than reporting its outcome. An earlier draft let the caller
+ * supply the status and the account; that made the client the authority on
+ * whether a token works, which is exactly what has to be checked.
+ */
+export const PersonalConnectionValidateInput = Schema.Struct({ connectionId: ConnectionId });
 export type PersonalConnectionValidateInput = typeof PersonalConnectionValidateInput.Type;
+
+/**
+ * What one validation learned. `missingScopes` names the required scopes the
+ * vendor did not report for this token, so the connect screen can say which
+ * box to tick rather than "something is wrong".
+ */
+export const PersonalConnectionValidationResult = Schema.Struct({
+  connection: PersonalConnection,
+  missingScopes: Schema.Array(Schema.String),
+  /** Why it is not usable, in the owner's words; null when it validated. */
+  problem: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type PersonalConnectionValidationResult = typeof PersonalConnectionValidationResult.Type;
 
 export const PersonalConnectionIdInput = Schema.Struct({ connectionId: ConnectionId });
 export type PersonalConnectionIdInput = typeof PersonalConnectionIdInput.Type;
@@ -159,8 +163,7 @@ export type PersonalConnectionApproval = typeof PersonalConnectionApproval.Type;
 export const PersonalConnectionApprovalListResult = Schema.Struct({
   approvals: Schema.Array(PersonalConnectionApproval),
 });
-export type PersonalConnectionApprovalListResult =
-  typeof PersonalConnectionApprovalListResult.Type;
+export type PersonalConnectionApprovalListResult = typeof PersonalConnectionApprovalListResult.Type;
 
 export const PersonalConnectionApprovalDecideInput = Schema.Struct({
   approvalId: PersonalConnectionApprovalId,
