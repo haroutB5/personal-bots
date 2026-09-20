@@ -32,6 +32,7 @@ export * from "./personalBots.ts";
 export * from "./personalTasks.ts";
 export * from "./personalGroups.ts";
 export * from "./personalSecrets.ts";
+export * from "./personalConnections.ts";
 export * from "./personalLogins.ts";
 export * from "./personalBrowser.ts";
 export * from "./personalRoutines.ts";

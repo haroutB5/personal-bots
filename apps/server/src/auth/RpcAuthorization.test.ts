@@ -49,6 +49,22 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("keeps connection management owner-operated while allowing safe listing", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.personalConnectionsList)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    for (const method of [
+      WS_METHODS.personalConnectionsConnect,
+      WS_METHODS.personalConnectionsValidate,
+      WS_METHODS.personalConnectionsDisable,
+      WS_METHODS.personalConnectionsReconnect,
+      WS_METHODS.personalConnectionsDisconnect,
+      WS_METHODS.personalConnectionsRotate,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
   it("requires write access to import agent session history", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.agentSessionsScan)).toBe(
       AuthOrchestrationReadScope,

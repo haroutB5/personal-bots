@@ -113,6 +113,7 @@ import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
+import * as PersonalConnectionService from "./personal/connections/service.ts";
 import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
@@ -788,6 +789,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(PersonalGroupService.PersonalGroupService)({}),
           Layer.mock(PersonalSecretService.PersonalSecretService)({}),
           Layer.mock(PersonalLoginService.PersonalLoginService)({}),
+          Layer.mock(PersonalConnectionService.PersonalConnectionService)({}),
           Layer.mock(PersonalRoutineService.PersonalRoutineService)({}),
           Layer.mock(PersonalMemoryService.PersonalMemoryService)({}),
           Layer.mock(PersonalPushService.PersonalPushService)({}),
