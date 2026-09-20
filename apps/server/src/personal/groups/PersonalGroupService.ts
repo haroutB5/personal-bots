@@ -24,7 +24,9 @@ import {
   PERSONAL_GROUP_MAX_MEMBERS,
   PERSONAL_GROUP_MAX_TURNS_PER_MEMBER_PER_ROUND,
   PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
+  PERSONAL_GROUP_ROUND_WALL_CLOCK_MAX_MS,
   PERSONAL_GROUP_ROUND_WALL_CLOCK_MS,
+  PERSONAL_GROUP_ROUND_WALL_CLOCK_PER_TURN_MS,
   PERSONAL_GROUP_VOTE_MAX_OPTIONS,
   PERSONAL_GROUP_VOTE_MIN_OPTIONS,
   PersonalGroupId,
@@ -63,7 +65,7 @@ import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { classifyProviderError, providerWaitPause } from "../tasks/PersonalTaskService.ts";
 import { parseMentions } from "./groupMentions.ts";
-import { admitMentions, nextStep } from "./groupRoundPolicy.ts";
+import { admitMentions, nextStep, roundBudget, roundWallClockMs } from "./groupRoundPolicy.ts";
 import { buildCatchUpBrief, type GroupCatchUpMessage } from "./groupTurnText.ts";
 import { normaliseQuestion, tallyVote } from "./groupVotePolicy.ts";
 import * as PersonalGroupRepository from "./PersonalGroupRepository.ts";
@@ -76,6 +78,31 @@ const GROUP_THREAD_TITLE = "Group chat";
 const MAX_CONSECUTIVE_THROTTLES = 2;
 /** Fallback wake-up when a provider reports a limit with no reset time. */
 const UNREPORTED_THROTTLE_BACKOFF_MS = 60_000;
+
+/**
+ * The budget of a round, sized to the work it is about to do. The group's
+ * frozen `max_bot_turns` is the rail for a mention-driven round and the floor
+ * for a broadcast one; see `roundBudget`.
+ */
+const budgetFor = (input: {
+  readonly frozenMaxBotTurns: number;
+  readonly memberCount: number;
+  readonly broadcast: boolean;
+}): number =>
+  roundBudget({
+    ...input,
+    maxTurnsPerMember: PERSONAL_GROUP_MAX_TURNS_PER_MEMBER_PER_ROUND,
+    ceiling: PERSONAL_GROUP_MAX_BOT_TURNS_CEILING,
+  });
+
+/** The wall-clock window for a round with `queuedTurns` still to run. */
+const windowMsFor = (queuedTurns: number): number =>
+  roundWallClockMs({
+    queuedTurns,
+    baseMs: PERSONAL_GROUP_ROUND_WALL_CLOCK_MS,
+    perTurnMs: PERSONAL_GROUP_ROUND_WALL_CLOCK_PER_TURN_MS,
+    maxMs: PERSONAL_GROUP_ROUND_WALL_CLOCK_MAX_MS,
+  });
 
 /**
  * The message context that says who is speaking in a group message. Never
@@ -182,6 +209,26 @@ type RoundRecord = PersonalGroupRepository.PersonalGroupRoundRecord;
 type GroupRecord = PersonalGroupRepository.PersonalGroupRecord;
 
 const minutesFrom = (now: DateTime.Utc, minutes: number) => DateTime.add(now, { minutes });
+
+/**
+ * What the user is told when the wall clock ends a round. The window is sized
+ * to the queued work now, so the note says how much of that work happened and
+ * how much did not, rather than leaving him to guess. It counts turns taken,
+ * not replies delivered: the turn the clock interrupted was taken and may have
+ * produced nothing. An expired round keeps no queue, so it points at a
+ * follow-up rather than at Continue, which would only close it.
+ */
+const expiredNote = (round: RoundRecord): string => {
+  const turns = round.spoken.length;
+  const waiting = round.queue.length;
+  const stillToSpeak =
+    waiting === 0
+      ? ""
+      : `, with ${String(waiting)} ${waiting === 1 ? "member" : "members"} still to speak`;
+  return `The group ran out of time after ${String(turns)} ${
+    turns === 1 ? "turn" : "turns"
+  }${stillToSpeak}. Send a follow-up to carry on.`;
+};
 
 /** The group-side message that mirrors one member's reply. */
 const replyMessageId = (roundId: PersonalGroupRoundId, turn: number) =>
@@ -836,7 +883,7 @@ export const make = Effect.gen(function* () {
         case "expired":
           yield* endRound(group, round, "interrupted", {
             event: "round-interrupted",
-            text: "The group ran out of time before everyone replied.",
+            text: expiredNote(round),
           });
           continue;
         case "completed":
@@ -880,12 +927,22 @@ export const make = Effect.gen(function* () {
           // over it (§V.2).
           yield* resolveVote(group, round, gate.open!);
           continue;
-        case "paused_budget":
+        case "paused_budget": {
+          // The number the user is told is the budget this round was actually
+          // granted, which for a broadcast is the group-sized one, not the
+          // frozen `maxBotTurns`.
+          const members = yield* repository.listMembers(group.groupId);
+          const granted = budgetFor({
+            frozenMaxBotTurns: group.maxBotTurns,
+            memberCount: members.length,
+            broadcast: round.verdictBotId !== null,
+          });
           yield* endRound(group, round, "paused_budget", {
             event: "round-paused-budget",
-            text: `Paused after ${String(group.maxBotTurns)} replies. Continue to give the group another ${String(group.maxBotTurns)}.`,
+            text: `Paused after ${String(granted)} replies. Continue to give the group another ${String(granted)}.`,
           });
           continue;
+        }
         case "speak": {
           const started = yield* startMemberTurn(group, round, verdict.botId);
           if (started) {
@@ -1315,7 +1372,7 @@ export const make = Effect.gen(function* () {
         }
         yield* endRound(group.value, round, "interrupted", {
           event: "round-interrupted",
-          text: "The group ran out of time before everyone replied.",
+          text: expiredNote(round),
         });
         continue;
       }
@@ -1700,14 +1757,24 @@ export const make = Effect.gen(function* () {
           ];
           // One contribution per member, then one reserved synthesis turn.
           // Explicit mentions retain their targeted conversation behavior.
-          const queue = addressed.length > 0 ? addressed : discussionOrder;
+          const broadcast = addressed.length === 0;
+          const queue = broadcast ? discussionOrder : addressed;
+          const verdictBotId = broadcast && members.length > 1 ? firstSpeaker : null;
           const round: RoundRecord = {
             roundId,
             groupId: group.groupId,
             triggerMessageId: input.messageId,
-            verdictBotId: addressed.length === 0 && members.length > 1 ? firstSpeaker : null,
+            verdictBotId,
             status: "running",
-            budgetRemaining: group.maxBotTurns,
+            // A broadcast round is sized to the group: every member is queued
+            // and the per-member cap lets each take two turns, so a fixed six
+            // would pause a six-member discussion halfway through its own
+            // plan. A round aimed at named members keeps the frozen rail.
+            budgetRemaining: budgetFor({
+              frozenMaxBotTurns: group.maxBotTurns,
+              memberCount: members.length,
+              broadcast,
+            }),
             queue,
             spoken: [],
             activeBotId: null,
@@ -1718,7 +1785,11 @@ export const make = Effect.gen(function* () {
             leaseOwner: null,
             leaseExpiresAt: null,
             availableAt: null,
-            deadlineAt: DateTime.add(now, { milliseconds: PERSONAL_GROUP_ROUND_WALL_CLOCK_MS }),
+            // Turns are serial, so the window is the queue's length in turns,
+            // plus the reserved verdict, times one provider turn.
+            deadlineAt: DateTime.add(now, {
+              milliseconds: windowMsFor(queue.length + (verdictBotId === null ? 0 : 1)),
+            }),
             errorMessage: null,
             createdAt: now,
             updatedAt: now,
@@ -1956,7 +2027,11 @@ export const make = Effect.gen(function* () {
     const all = yield* liveBots();
     const now = yield* DateTime.now;
     const fresh = {
-      deadlineAt: DateTime.add(now, { milliseconds: PERSONAL_GROUP_ROUND_WALL_CLOCK_MS }),
+      // The answer restarts the clock over the work still queued; approve adds
+      // the target's turn to it, so one extra turn is counted here.
+      deadlineAt: DateTime.add(now, {
+        milliseconds: windowMsFor(round.queue.length + (round.verdictBotId === null ? 1 : 2)),
+      }),
       availableAt: null,
       errorMessage: null,
       ...clearActive,
@@ -2039,12 +2114,22 @@ export const make = Effect.gen(function* () {
             return toRound(yield* writeRound(round, { status: "completed", ...clearActive }));
           }
           const now = yield* DateTime.now;
+          const members = yield* repository.listMembers(group.groupId);
           const resumed = yield* writeRound(round, {
             status: "running",
             // A fresh budget, deliberately: Continue is the user saying the
-            // conversation is worth another `maxBotTurns` replies.
-            budgetRemaining: group.maxBotTurns,
-            deadlineAt: DateTime.add(now, { milliseconds: PERSONAL_GROUP_ROUND_WALL_CLOCK_MS }),
+            // conversation is worth another round's worth of replies. It is
+            // the same number the round opened with - the frozen rail for a
+            // round aimed at named members, the group-sized one for a
+            // broadcast, which is still carrying its reserved verdict turn.
+            budgetRemaining: budgetFor({
+              frozenMaxBotTurns: group.maxBotTurns,
+              memberCount: members.length,
+              broadcast: round.verdictBotId !== null,
+            }),
+            deadlineAt: DateTime.add(now, {
+              milliseconds: windowMsFor(round.queue.length + (round.verdictBotId === null ? 0 : 1)),
+            }),
             availableAt: null,
             errorMessage: null,
             ...clearActive,

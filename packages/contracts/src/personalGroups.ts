@@ -22,10 +22,27 @@ export type PersonalGroupVoteId = typeof PersonalGroupVoteId.Type;
  */
 export const PERSONAL_GROUP_MAX_MEMBERS = 6;
 
-/** Bot turns one user message may spend, frozen on the group row at creation. */
+/**
+ * Bot turns one user message may spend, frozen on the group row at creation.
+ *
+ * It is the budget of a round the user aimed at named members. A broadcast
+ * round, which queues every member, is instead sized to the group by
+ * `roundBudget` and treats this number as a floor, never a cut.
+ */
 export const PERSONAL_GROUP_DEFAULT_MAX_BOT_TURNS = 6;
 
-/** The largest `maxBotTurns` a group may be created with. */
+/**
+ * The hard cap on any round's budget: the largest `maxBotTurns` a group may be
+ * created with, and the clamp on a broadcast round's size-scaled budget.
+ *
+ * Twelve is exactly `PERSONAL_GROUP_MAX_MEMBERS *
+ * PERSONAL_GROUP_MAX_TURNS_PER_MEMBER_PER_ROUND`, which is the most turns the
+ * per-member cap can ever admit into one round, so it is sufficient rather
+ * than merely generous: the biggest legal group can take every turn its own
+ * cap allows - the opening pass and a follow-up each - without the budget
+ * pausing it. It is deliberately not raised past that; every extra turn is a
+ * real provider call.
+ */
 export const PERSONAL_GROUP_MAX_BOT_TURNS_CEILING = 12;
 
 /** How often one member may speak inside a single round. */
@@ -37,8 +54,27 @@ export const PERSONAL_GROUP_MAX_TURNS_PER_MEMBER_PER_ROUND = 2;
  */
 export const PERSONAL_GROUP_CATCHUP_MAX_CHARS = 12_000;
 
-/** A round that has not finished inside this window is swept. */
+/**
+ * The window a round gets whatever its size; `roundWallClockMs` grows it with
+ * the queued work. A round that has not finished inside its window is swept.
+ */
 export const PERSONAL_GROUP_ROUND_WALL_CLOCK_MS = 10 * 60 * 1000;
+
+/**
+ * Added to the window per queued turn. Members speak one at a time
+ * ({@link PERSONAL_GROUP_CONCURRENCY}), so a round's honest duration is its
+ * queue length times one provider turn; three minutes covers a research turn
+ * that reads a few pages.
+ */
+export const PERSONAL_GROUP_ROUND_WALL_CLOCK_PER_TURN_MS = 3 * 60 * 1000;
+
+/**
+ * The longest any round may run. The worst legal round is thirteen turns (the
+ * twelve-turn ceiling plus the reserved verdict), so forty-five minutes is
+ * above the honest worst case rather than a cliff it would hit routinely,
+ * while still guaranteeing the single speaking slot comes back.
+ */
+export const PERSONAL_GROUP_ROUND_WALL_CLOCK_MAX_MS = 45 * 60 * 1000;
 
 /**
  * Exactly one member speaks at a time, server-wide. This slot is its own, and

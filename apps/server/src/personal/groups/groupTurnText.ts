@@ -67,6 +67,12 @@ export const buildCatchUpTranscript = (input: {
  * The full user-role brief relayed into a member's own thread. It names the
  * group, the speaker and the other members, because a member's provider sees
  * only its own thread and has no other way to learn the mention vocabulary.
+ *
+ * Only the mention-driven phase invites @mentions, because it is the only
+ * phase whose replies are parsed for them: a discussion round queues every
+ * member up front and drops mentions, and the verdict is a single turn. A
+ * brief that asked for something the rails refuse would be teaching the bot to
+ * spend a turn on a request that can never land.
  */
 export const buildCatchUpBrief = (input: GroupCatchUpInput): string => {
   const others =
@@ -79,7 +85,7 @@ export const buildCatchUpBrief = (input: GroupCatchUpInput): string => {
     input.phase === "verdict"
       ? "Deliver the group's ONE final verdict to the user. Synthesize the contributions below into a single useful answer. Resolve disagreements using evidence; explicitly retain unresolved disagreements and unknowns. Do not claim unanimous agreement without evidence. Verify important claims and product variants, stock and delivered totals when relevant. Include source links, not provider citation tokens. Do not list repetitive answers per bot, request more bot replies, or use @mentions. Lead with the result and keep the explanation concise."
       : input.phase === "discussion"
-        ? "Contribute concise research notes for the group's final verdict. Address the user's request, check evidence, and add new findings or challenge specific errors in prior contributions. Do not repeat settled points or write another final answer to the user. If you have nothing new, say so briefly. Include source URLs and uncertainties. A designated member will synthesize everyone's notes into one final verdict."
+        ? "Contribute concise research notes for the group's final verdict. Address the user's request, check evidence, and add new findings or challenge specific errors in prior contributions. Do not repeat settled points or write another final answer to the user. If you have nothing new, say so briefly. Include source URLs and uncertainties. Every member is already scheduled to contribute, so do not use @mentions to ask for another member's turn: in this phase they buy nobody a turn. A designated member will synthesize everyone's notes into one final verdict."
         : "Reply once, as yourself, to the conversation below. Consider the other members' replies and avoid repeating settled points. To request a follow-up from a particular member, mention them with @Name. Do not answer on anyone else's behalf.",
     ...(input.userRequest ? [`User request:\n${input.userRequest}`] : []),
     "Conversation so far:",

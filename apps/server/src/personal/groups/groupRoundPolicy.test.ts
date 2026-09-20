@@ -1,8 +1,23 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { PersonalBotId } from "@t3tools/contracts";
+import {
+  PERSONAL_GROUP_DEFAULT_MAX_BOT_TURNS,
+  PERSONAL_GROUP_MAX_BOT_TURNS_CEILING,
+  PERSONAL_GROUP_MAX_MEMBERS,
+  PERSONAL_GROUP_MAX_TURNS_PER_MEMBER_PER_ROUND,
+  PERSONAL_GROUP_ROUND_WALL_CLOCK_MAX_MS,
+  PERSONAL_GROUP_ROUND_WALL_CLOCK_MS,
+  PERSONAL_GROUP_ROUND_WALL_CLOCK_PER_TURN_MS,
+  PersonalBotId,
+} from "@t3tools/contracts";
 
-import { admitMentions, isPingPong, nextStep } from "./groupRoundPolicy.ts";
+import {
+  admitMentions,
+  isPingPong,
+  nextStep,
+  roundBudget,
+  roundWallClockMs,
+} from "./groupRoundPolicy.ts";
 
 const bot = (key: string) => PersonalBotId.make(`bot-${key}`);
 const A = bot("a");
@@ -49,6 +64,84 @@ describe("admitMentions", () => {
 
   it("keeps mention order", () => {
     expect(admit({ speaker: A, mentioned: [C, B] })).toEqual([C, B]);
+  });
+});
+
+describe("roundBudget", () => {
+  const budget = (input: {
+    memberCount: number;
+    frozenMaxBotTurns?: number;
+    broadcast?: boolean;
+    ceiling?: number;
+  }) =>
+    roundBudget({
+      frozenMaxBotTurns: input.frozenMaxBotTurns ?? PERSONAL_GROUP_DEFAULT_MAX_BOT_TURNS,
+      memberCount: input.memberCount,
+      maxTurnsPerMember: PERSONAL_GROUP_MAX_TURNS_PER_MEMBER_PER_ROUND,
+      ceiling: input.ceiling ?? PERSONAL_GROUP_MAX_BOT_TURNS_CEILING,
+      broadcast: input.broadcast ?? true,
+    });
+
+  it("sizes a broadcast round to the group: two turns per member", () => {
+    // The rule the whole fix rests on. A six-member discussion is twelve
+    // turns' worth of work, and a six-turn budget would pause it halfway.
+    expect(budget({ memberCount: 6 })).toBe(12);
+    expect(budget({ memberCount: 5 })).toBe(10);
+    expect(budget({ memberCount: 4 })).toBe(8);
+    // Below the frozen default the frozen value wins: it is a floor.
+    expect(budget({ memberCount: 3 })).toBe(6);
+    expect(budget({ memberCount: 1 })).toBe(6);
+  });
+
+  it("never falls below the group's frozen max_bot_turns", () => {
+    // The owner deliberately gave this two-member group twelve turns; sizing
+    // to the group must not quietly cut it to four.
+    expect(budget({ memberCount: 2, frozenMaxBotTurns: 12 })).toBe(12);
+  });
+
+  it("clamps to the ceiling", () => {
+    expect(budget({ memberCount: 6, frozenMaxBotTurns: 12, ceiling: 8 })).toBe(8);
+    // The real ceiling is exactly what the biggest legal group can spend, so
+    // it is not a cliff a legal broadcast ever hits early.
+    expect(budget({ memberCount: PERSONAL_GROUP_MAX_MEMBERS })).toBe(
+      PERSONAL_GROUP_MAX_BOT_TURNS_CEILING,
+    );
+  });
+
+  it("leaves a round aimed at named members on the frozen rail", () => {
+    // §1.2 / §8.5: max_bot_turns is frozen per group, and a mention-driven
+    // round still spends exactly that, however many members the group has.
+    expect(budget({ memberCount: 6, broadcast: false })).toBe(6);
+    expect(budget({ memberCount: 2, broadcast: false, frozenMaxBotTurns: 3 })).toBe(3);
+  });
+});
+
+describe("roundWallClockMs", () => {
+  const window = (queuedTurns: number) =>
+    roundWallClockMs({
+      queuedTurns,
+      baseMs: PERSONAL_GROUP_ROUND_WALL_CLOCK_MS,
+      perTurnMs: PERSONAL_GROUP_ROUND_WALL_CLOCK_PER_TURN_MS,
+      maxMs: PERSONAL_GROUP_ROUND_WALL_CLOCK_MAX_MS,
+    });
+
+  it("gives a small round the base window", () => {
+    expect(window(0)).toBe(PERSONAL_GROUP_ROUND_WALL_CLOCK_MS);
+    expect(window(3)).toBe(PERSONAL_GROUP_ROUND_WALL_CLOCK_MS);
+  });
+
+  it("grows with the queued work, because turns are serial", () => {
+    // Seven turns (a six-member discussion plus its verdict) cannot finish in
+    // ten minutes, and used to be cut off for it.
+    expect(window(7)).toBe(21 * 60 * 1000);
+    expect(window(7)).toBeGreaterThan(PERSONAL_GROUP_ROUND_WALL_CLOCK_MS);
+  });
+
+  it("stops at the upper bound, above the worst legal round", () => {
+    // The worst legal round is the twelve-turn ceiling plus the verdict.
+    expect(window(13)).toBe(39 * 60 * 1000);
+    expect(window(13)).toBeLessThan(PERSONAL_GROUP_ROUND_WALL_CLOCK_MAX_MS);
+    expect(window(100)).toBe(PERSONAL_GROUP_ROUND_WALL_CLOCK_MAX_MS);
   });
 });
 

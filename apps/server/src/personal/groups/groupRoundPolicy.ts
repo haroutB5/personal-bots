@@ -23,6 +23,73 @@ export const isPingPong = (spoken: ReadonlyArray<PersonalBotId>): boolean => {
   return first !== second && first === third && second === fourth;
 };
 
+export interface RoundBudgetInput {
+  /**
+   * The group's own `max_bot_turns`, frozen on the row at creation (design
+   * §1.2, §8.5). It is never rewritten: it is the rail for a mention-driven
+   * round, and a floor a broadcast round may rise above but never fall below.
+   */
+  readonly frozenMaxBotTurns: number;
+  /** Members that could speak in this round, right now. */
+  readonly memberCount: number;
+  readonly maxTurnsPerMember: number;
+  /** `PERSONAL_GROUP_MAX_BOT_TURNS_CEILING`: the hard cap on any round. */
+  readonly ceiling: number;
+  /** True when the user named nobody, so every member is queued. */
+  readonly broadcast: boolean;
+}
+
+/**
+ * The bot turns one round may spend.
+ *
+ * A round the user aimed at particular members keeps the group's frozen
+ * `max_bot_turns` exactly as before: the owner chose that number for the
+ * conversations he steers, and nothing here rewrites it.
+ *
+ * A broadcast round is different work. Every member is queued, and the
+ * per-member cap already says each of them may take up to `maxTurnsPerMember`
+ * turns, so a budget that cannot pay for what the cap permits is a budget that
+ * pauses in the middle of its own plan. Scaling it to
+ * `memberCount * maxTurnsPerMember` makes a round's cost a function of the
+ * group's size, which is what the owner is really choosing when he adds a
+ * sixth bot.
+ *
+ * The frozen value is a floor here rather than a ceiling, so a group created
+ * with a deliberately large `max_bot_turns` is never quietly cut down. The
+ * ceiling caps both.
+ */
+export const roundBudget = (input: RoundBudgetInput): number =>
+  input.broadcast
+    ? Math.min(
+        input.ceiling,
+        Math.max(input.frozenMaxBotTurns, input.memberCount * input.maxTurnsPerMember),
+      )
+    : input.frozenMaxBotTurns;
+
+export interface RoundWallClockInput {
+  /** Turns already queued, plus the reserved verdict turn when there is one. */
+  readonly queuedTurns: number;
+  /** The window a small round gets whatever its size. */
+  readonly baseMs: number;
+  /** Added per queued turn: members speak one at a time (concurrency 1). */
+  readonly perTurnMs: number;
+  /** The window never grows past this, however long the queue is. */
+  readonly maxMs: number;
+}
+
+/**
+ * How long a round may take before the sweep calls it interrupted.
+ *
+ * Turns are serial, so a round's honest duration is roughly its queue length
+ * times one provider turn. A flat ten minutes was a budget for two or three
+ * turns: a twelve-turn discussion would have been cut off mid-round having
+ * done nothing wrong. This scales with the work actually queued, and still
+ * stops at `maxMs` so a wedged round cannot hold the single speaking slot
+ * forever.
+ */
+export const roundWallClockMs = (input: RoundWallClockInput): number =>
+  Math.min(input.maxMs, Math.max(input.baseMs, input.queuedTurns * input.perTurnMs));
+
 export interface AdmitMentionsInput {
   /** The member whose reply produced `mentioned`. */
   readonly speaker: PersonalBotId;

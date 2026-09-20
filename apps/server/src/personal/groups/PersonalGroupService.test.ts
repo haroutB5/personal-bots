@@ -603,21 +603,133 @@ it.effect("automatic discussion stays bounded even when members mention each oth
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
-it.effect("automatic discussion preserves pending members across a budget pause", () => {
+it.effect("a broadcast round is budgeted for the group, so it never pauses mid-discussion", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    // Three members and a deliberately small frozen budget of 2. A broadcast
+    // queues all three, and the per-member cap already allows each of them
+    // two turns, so the round is granted `max(frozen, members x 2)` = 6: the
+    // frozen number is a floor here, never a cut, and it no longer stops the
+    // discussion halfway through a plan the service itself made.
+    yield* makeGroup(["assistant", "dev", "planner"], 2);
+    const round = yield* send("Discuss the release");
+    expect(round.budgetRemaining).toBe(6);
+
+    yield* speak(harness, "Friday.");
+    yield* speak(harness, "Monday.");
+    yield* speak(harness, "Monday works.");
+    // Straight into the reserved verdict; no Continue tap was needed.
+    expect((yield* currentRound).activeMessageId).toContain("-verdict");
+    yield* speak(harness, "Monday it is.");
+
+    const done = yield* currentRound;
+    expect(done.status).toBe("completed");
+    expect(turnStarts(harness)).toHaveLength(4);
+    expect(done.budgetRemaining).toBe(2);
+    expect(systemRows(harness).some((row) => row.event === "round-paused-budget")).toBe(false);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a six-member broadcast pays for every contribution and the verdict", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    // The case that used to need a Continue tap halfway through: six members
+    // is the largest legal group, and its budget is the ceiling, 6 x 2.
+    yield* makeGroup(["assistant", "dev", "planner", "researcher", "writer", "tester"]);
+    const round = yield* send("What do we ship?", "msg-ship");
+    expect(round.budgetRemaining).toBe(12);
+
+    for (const note of ["A.", "B.", "C.", "D.", "E.", "F."]) {
+      yield* speak(harness, note);
+      expect((yield* currentRound).status).toBe("running");
+    }
+    expect((yield* currentRound).activeMessageId).toContain("-verdict");
+    yield* speak(harness, "Ship on Monday.");
+
+    const done = yield* currentRound;
+    expect(done.status).toBe("completed");
+    // Seven provider turns: six contributions and one synthesis.
+    expect(turnStarts(harness)).toHaveLength(7);
+    expect(done.spoken).toHaveLength(7);
+    expect(done.budgetRemaining).toBe(5);
+    expect(systemRows(harness).some((row) => row.event === "round-paused-budget")).toBe(false);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a round aimed at named members still spends the group's frozen budget", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    // §1.2 / §8.5: `max_bot_turns` is frozen per group. Sizing a broadcast to
+    // the group does not rewrite it - the same group, on the very next
+    // message, spends exactly the four turns the owner chose when he names a
+    // member himself.
+    yield* makeGroup(["assistant", "dev", "planner", "researcher"], 4);
+    const targeted = yield* send("@Dev your call", "msg-aimed");
+    expect(targeted.queue).toEqual([botId("dev")]);
+    expect(targeted.budgetRemaining).toBe(4);
+    yield* speak(harness, "Done.");
+    expect((yield* currentRound).status).toBe("completed");
+
+    const broadcast = yield* send("What next?", "msg-open");
+    expect(broadcast.budgetRemaining).toBe(8);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("the discussion brief does not invite a mention the round would drop", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev", "planner"]);
+    yield* send("Discuss the release");
+    const contribution = turnStarts(harness).at(-1)!.message.text;
+    // A discussion round queues every member up front and drops mentions, so
+    // the brief must not offer a follow-up it cannot deliver.
+    expect(contribution).not.toContain("To request a follow-up");
+    expect(contribution).toContain("do not use @mentions");
+    // The mention-driven brief still offers it, because there it is real.
+    yield* speak(harness, "Friday.");
+    yield* speak(harness, "Monday.");
+    yield* speak(harness, "Monday works.");
+    yield* speak(harness, "Monday it is.");
+    yield* send("@Dev one more thing", "msg-aimed");
+    expect(turnStarts(harness).at(-1)!.message.text).toContain("To request a follow-up");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a discussion that outruns ten minutes is no longer cut off", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
     yield* seedBots;
     const service = yield* PersonalGroupService.PersonalGroupService;
-    yield* makeGroup(["assistant", "dev", "planner"], 2);
-    yield* send("Discuss the release");
-    yield* speak(harness, "Friday.");
-    yield* speak(harness, "Monday.");
-    expect((yield* currentRound).status).toBe("paused_budget");
-    expect((yield* currentRound).queue).toEqual([botId("planner")]);
-    yield* service.continueRound({ groupId: GROUP });
+    yield* makeGroup(["assistant", "dev", "planner", "researcher", "writer", "tester"]);
+    yield* send("Research this properly", "msg-long");
+    // Seven serial turns cannot finish in ten minutes, so the window is sized
+    // to them: 7 x 3 minutes.
+    const opened = yield* currentRound;
+    expect(
+      DateTime.toEpochMillis(opened.deadlineAt) - DateTime.toEpochMillis(opened.createdAt),
+    ).toBe(21 * 60 * 1000);
+
+    for (const note of ["A.", "B.", "C.", "D.", "E.", "F."]) {
+      yield* TestClock.adjust("2 minutes");
+      yield* service.sweep;
+      yield* service.drain;
+      yield* speak(harness, note);
+    }
+    // Twelve minutes in: the old flat ten-minute clock had already swept this
+    // round, mid-discussion, for doing exactly what it was asked.
+    expect((yield* currentRound).status).toBe("running");
+    yield* TestClock.adjust("2 minutes");
+    yield* service.sweep;
     yield* service.drain;
-    expect((yield* currentRound).activeBotId).toBe(botId("planner"));
-    expect(turnStarts(harness).at(-1)!.message.text).toContain("Dev: Monday.");
+    yield* speak(harness, "Ship on Monday.");
+
+    expect((yield* currentRound).status).toBe("completed");
+    expect(systemRows(harness).some((row) => row.event === "round-interrupted")).toBe(false);
+    expect(turnStarts(harness)).toHaveLength(7);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
@@ -1577,6 +1689,49 @@ it.effect("the wall clock resolves an open vote, counting the silent as abstenti
     expect(parked.activeBotId).toBe(null);
     // And the member that was mid-sentence was stopped.
     expect(interrupts(harness).length).toBeGreaterThan(0);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("the wall clock says how much of the round it caught", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    // One queued turn, so the window is the ten-minute base and eleven
+    // minutes is past it.
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("@Assistant start");
+    yield* TestClock.adjust("11 minutes");
+    yield* service.sweep;
+    yield* service.drain;
+
+    const round = yield* currentRound;
+    expect(round.status).toBe("interrupted");
+    const note = systemRows(harness).find((row) => row.event === "round-interrupted");
+    // Honest about the size of what was lost, and it points at a follow-up:
+    // an expired round keeps no queue, so Continue would only close it.
+    expect(note?.text).toBe(
+      "The group ran out of time after 1 turn. Send a follow-up to carry on.",
+    );
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a deadline that passes mid-turn ends the round with the same honest note", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    // The pump's own expiry path: no sweep runs here, the clock simply ran
+    // out while Assistant was writing, and Dev never gets its turn.
+    yield* makeGroup(["assistant", "dev", "planner"], 6);
+    yield* send("@Assistant @Dev go");
+    yield* TestClock.adjust("11 minutes");
+    yield* speak(harness, "Still typing.");
+
+    expect((yield* currentRound).status).toBe("interrupted");
+    const note = systemRows(harness).find((row) => row.event === "round-interrupted");
+    expect(note?.text).toBe(
+      "The group ran out of time after 1 turn, with 1 member still to speak. Send a follow-up to carry on.",
+    );
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
