@@ -1,7 +1,7 @@
 # hbots Connections: giving bots real tools
 
 Date: 2026-09-20
-Status: approved design, not yet planned
+Status: amended 2026-09-20 after review; approved for implementation
 
 ## Problem
 
@@ -24,144 +24,197 @@ entries built on this framework, each with its own design (WhatsApp in
 particular needs a decision between the Business Cloud API and a web bridge
 that this spec must not pre-empt).
 
+## Amendment note
+
+The first draft of this spec placed the approval gate in Claude's `canUseTool`
+callback and treated `PB_SECRET_*` environment injection as a model-blind
+credential boundary. Review disproved both, and source inspection confirms it:
+
+- `ClaudeAdapter.ts:4734` returns `allow` immediately when
+  `runtimeMode === "full-access"`, and personal bots are launched `full-access`
+  at every call site (`PersonalBotService.ts:527` and `:582`,
+  `PersonalGroupService.ts:795`, `PersonalTaskService.ts:659`). A matcher on
+  that callback would never have run. Codex had no equivalent gate at all.
+- `PersonalSessionAccess.ts:121` writes decoded plaintext into the provider
+  environment, and `credentialRedactor.ts` states in its own header that it is
+  not a boundary. A bot with shell access could read a connection token and
+  call the vendor directly, bypassing any tool-level gate.
+
+Sections 2 through 5 below are the corrected design. The product decisions from
+the original are unchanged.
+
 ## Decisions taken
 
-| Decision           | Choice                                                                                                                       | Why                                                                                     |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Tool delivery      | Vendor MCP servers injected per turn, in-house toolkits where no good vendor server exists                                   | Least code for the big three; upstream maintains them                                   |
-| Access model       | Every bot gets every connection                                                                                              | Matches the existing shared-passwords decision; per-bot grants were explicitly rejected |
-| Risk control       | Per-tool approval card, not per-bot permissions                                                                              | Risk lives in the action, not in which bot takes it                                     |
-| Credential capture | Device flow where the provider offers it, guided token paste otherwise, plus import-from-machine for the owner's own install | No callback URL to host; works from the phone                                           |
-| Database           | Neon Postgres + Upstash Redis                                                                                                | What the owner's existing apps use                                                      |
+| Decision            | Choice                                                                                                                       | Why                                                                                     |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Tool delivery       | A server-side gateway on the existing scoped `t3-code` MCP endpoint; vendor MCP/REST adapters behind it                      | The only place both Claude and Codex are equally constrained                            |
+| Access model        | Every bot gets every enabled connection                                                                                      | Matches the existing shared-passwords decision; per-bot grants were explicitly rejected |
+| Risk control        | Approval bound to a validated operation and its arguments, not to a tool name                                                | Tool names miss destructive arguments; a general SQL tool can drop a table              |
+| Credential capture  | Device flow where the provider offers it, guided token paste otherwise, plus import-from-machine for the owner's own install | No callback URL to host; works from the phone                                           |
+| Credential handling | Opaque references; values never enter `PB_SECRET_*`, launch args, or provider env                                            | Environment injection is readable by the bot it is meant to be hidden from              |
+| Database            | Neon Postgres + Upstash Redis                                                                                                | What the owner's existing apps use                                                      |
+
+## Security guarantee, stated honestly
+
+Managed Connections operations are gated: the bot asks the gateway, the gateway
+validates and gets approval, and only the server holds the credential.
+
+This is **not** OS isolation. A full-access bot runs as the owner and can still
+reach credentials that independently exist on the machine — the `gh` CLI's own
+token, a project `.env.local`, the owner's shell history. Closing that requires
+filesystem, process and network isolation, which is separate work and is not
+promised here. No release note may claim that every service action is gated.
 
 ## Architecture
 
-### 1. Connection catalog
-
-`apps/server/src/personal/connections/catalog.ts` holds a static, typed entry
-per provider:
-
-```ts
-interface ConnectionDefinition {
-  readonly id: ConnectionId; // "github" | "vercel" | "neon" | "upstash"
-  readonly displayName: string;
-  readonly auth: DeviceFlowAuth | TokenPasteAuth | KeyPairAuth;
-  readonly secretNames: ReadonlyArray<string>; // UPPER_SNAKE, PersonalSecretService names
-  readonly mcp: McpServerSpec | InHouseToolkit; // how the capability reaches the bot
-  readonly destructiveTools: ReadonlyArray<string>;
-  readonly tokenPageUrl: string; // deep link used by the paste flow
-  readonly machineImport?: MachineImportProbe; // where an existing credential may already live
-}
+```
+Bot -> scoped t3-code MCP endpoint -> Connections gateway -> vendor adapter -> provider
 ```
 
-Adding a provider later is one catalog entry plus its secret names. No new
-plumbing, no schema migration.
+### 1. Connection catalog and state
+
+`apps/server/src/personal/connections/catalog.ts` describes each vendor: id,
+display name, auth kind, required credential fields, the adapter that executes
+its operations, the operations it exposes with their argument schemas and risk
+classification, and the deep link used by the paste flow.
+
+Persisted state is separate from the catalog, because a connection is an
+account, not a vendor. A new server migration stores: vendor id, connection id,
+status (`connecting`, `connected`, `needs_reauth`, `disabled`, `error`), safe
+account/team metadata, verified capabilities, an opaque credential reference
+plus its version, and the last validation time. One active account per vendor to
+start; every bot uses it.
+
+The original spec's claim that any future provider is "one catalog entry" is
+withdrawn. Differing auth, consent and execution semantics can require an
+adapter; the catalog removes the repetitive part, not the thinking.
 
 ### 2. Credentials
 
-Connections are stored through the existing `PersonalSecretService` with
-`shared: true`, so they resolve for every bot via the name-only store key.
-Values are exposed to the runtime as `PB_SECRET_<NAME>` env vars
-(`packages/contracts/src/personalSecrets.ts`) and never enter model context --
-the same model-blind path the passwords feature already uses. Only connection
-names and status are ever rendered into a prompt.
+Values live in the encrypted `ServerSecretStore` and are referenced by opaque
+handle from the connection record. They are never placed in `PB_SECRET_*`, in
+launch arguments, or in any provider environment, and the gateway never returns
+them to the model. Existing shared secrets keep their current behaviour
+untouched; this is a parallel store with a stricter rule, not a change to the
+passwords feature.
+
+Secret-to-environment transfers — a Neon connection string reaching a Vercel
+project — happen server-side, vendor to vendor, without the value passing
+through the transcript as intermediate text.
 
 Three capture paths:
 
-**Device flow.** GitHub only, of the first four. Server starts the flow, the UI
-shows the user code, the owner approves on any device, the server polls and
-stores the token. No callback URL, so it works identically from the phone over
-T3 Connect.
+**Device flow.** GitHub. Requires a registered OAuth app with device flow
+enabled; the client id is configuration, and its scopes must be proven against
+the operations we actually call before this ships. The UI shows the user code,
+the owner approves on any device, the server polls with the provider's interval
+and backoff, and handles expiry, denial and cancellation. No callback URL, so it
+works identically from the phone over T3 Connect.
 
-**Guided token paste.** Vercel, Neon and Upstash. A single screen with the
-deep link to the exact provider page that mints the token, a paste field, and
-an immediate validation call so a bad token fails at entry rather than
-mid-turn.
+**Guided token paste.** Vercel, Neon, Upstash. A deep link to the exact page
+that mints the token, a paste field, and a server-side validation call that
+resolves the account and capabilities at entry. Token fields never persist into
+client state or telemetry.
 
-**Import from this machine.** A scan the owner runs once that probes known
-local credential locations -- `gh` CLI auth, the Vercel CLI `auth.json` under
-`AppData/Roaming/xdg.data/com.vercel.cli`, a Neon API key file, and `.env.local`
-files in registered projects -- and presents each find as a one-tap adopt. This
-exists for the owner's own install; a beginner starting fresh simply sees
-nothing found and falls through to the flows above.
+**Import from this machine.** Owner-triggered only, over known locations and
+selected registered project roots: `gh` CLI auth, the Vercel CLI `auth.json`,
+a Neon API key file, and project `.env.local` files. Parsing is bounded, env
+files are never executed, and paths outside the selected roots are not followed.
+Probes return candidate identifiers and safe metadata, never token snippets, and
+adoption validates account and capabilities — finding a value is not proof it
+can provision anything, and an application database URL usually cannot. Original
+CLI files are left untouched. Tested against fixtures, never real credentials.
 
-### 3. Injection
+### 3. The gateway
 
-`PersonalConnectionService.buildMcpServers(botId)` runs at turn start and
-returns the map that the adapters currently hardcode.
-
-- **Claude:** fills the `mcpServers` object at the site that today evaluates to
-  `{}` for personal bots. `strictMcpConfig: true` is retained, so a bot still
-  inherits nothing from the owner's global config -- it sees exactly the
-  connections the catalog produced, plus the existing `t3-code` endpoint.
-- **Codex:** injected as `-c mcp_servers.<id>=...` launch args
-  (`codexLaunchArgs.ts`). Codex deep-merges `-c` tables, so added servers work.
-
-GitHub, Vercel and Neon use their official MCP servers. Upstash has no server
-worth trusting, so it becomes an in-house toolkit under
 `apps/server/src/mcp/toolkits/connections/`, registered in `McpHttpServer.ts`
-alongside the existing `BotsToolkit` and `PersonalToolkit`.
+beside `BotsToolkit` and `PersonalToolkit`, reusing the thread-bound MCP session
+identity that already exists.
 
-### 4. Guardrails
+Bots call reviewed operations with explicit schemas. For each call the gateway
+resolves the current connection, validates arguments, classifies risk, obtains
+approval if required, retrieves the credential, invokes the vendor, and returns
+an allowlisted result. Connection state is re-read per call, so disabling or
+rotating takes effect on the next call without restarting a conversation —
+which the original per-turn injection design could not do, since
+`ProviderService.ts:969` prepares access at session setup and long-lived
+sessions would keep stale configuration.
 
-Three layers, all reusing machinery that already exists:
+Generic SQL execution and generic Redis commands require approval as a class
+rather than by text matching. Repository writes that trigger a deployment are
+treated as deployments. Unknown operations and drifted vendor schemas do not
+execute unattended — they stop and surface.
 
-1. **Approval gate.** The `canUseTool` callback already passed to the Claude
-   adapter checks each call against the connection's `destructiveTools` list.
-   A match raises the existing "Needs your help" card, rendering the tool name
-   and its concrete arguments, and blocks until the owner answers. Covered:
-   production deploys, repo and project deletion, any DDL, and any Redis
-   flush.
-2. **Redaction.** `credentialRedactor` (today scoped to browser output in
-   `personal/browser/`) extends to cover MCP tool results, so a token echoed
-   back by a provider API never reaches the transcript.
-3. **Least privilege at capture.** Tokens are requested at the narrowest scope
-   that still does the job, and the connection card states what the token can
-   do in plain language before the owner confirms.
+The existing sensitive-site egress guard extends to these calls, so Connections
+cannot become a new route for protected browser data to leave the app.
 
-### 5. Starter flow
+Claude keeps `strictMcpConfig: true`. Codex still inherits `mcp_servers` from
+the owner's `config.toml` and cannot have them cleared by `-c`; until that is
+proven closed by integration test, the guarantee is explicitly scoped to
+managed gateway calls.
 
-A `create_app` tool in the connections toolkit, the piece that makes this
-usable by a beginner. Given a description it:
+No bot-accessible tool may add a credential, switch accounts, or change the
+owner's connection settings. Those are owner-only RPCs, authorized through
+`RpcAuthorization.ts`, and their list responses exclude values.
 
-1. Scaffolds the project locally from a known-good template.
-2. Creates the GitHub repo and pushes the initial commit.
-3. Provisions Neon Postgres and Upstash Redis through the Vercel integration.
-4. Wires the resulting connection strings into project env vars.
-5. Deploys and returns the live URL.
+### 4. Approval
 
-It raises one approval card up front listing every resource it is about to
-create, then runs unattended. Partial failure leaves a named, resumable task
-rather than half-built orphans, and the card names what already exists on a
-retry.
+Approval binds to a normalized action: the operation, its validated arguments,
+the connection and its version, and the target resources. Decisions and their
+execution receipts are persisted, so an approval survives restart and resume,
+and a duplicate click, an expiry, a denial or a cancellation each resolve once.
+State is rechecked immediately before dispatch.
 
-## Known gaps
+### 5. Starter flow: `create_app`
 
-- **Codex inherits owner MCP servers.** `mcp_servers` entries from the owner's
-  `config.toml` cannot be cleared via `-c` (Codex deep-merges tables, so an
-  empty table is a no-op). This is pre-existing and not introduced here, but it
-  means a Codex-backed bot's tool surface is wider than the catalog describes.
-  Claude-backed bots have no such gap. Worth closing separately.
-- **Vendor MCP server trust.** The approval gate matches on tool names the
-  vendor chooses. A vendor renaming or adding a destructive tool silently
-  widens what runs unattended. Mitigation: the catalog pins server versions and
-  the gate defaults to prompting on any tool name it does not recognise.
+Built on the existing durable task/reactor model, not as a single long call.
+
+Prerequisites resolve before the card is shown. The owner approves one concrete,
+bounded plan: account and team, resource names, visibility, region, tier and
+cost ceiling, the pinned template revision, and the deployment target, with
+preview and production named separately. Execution then runs unattended within
+that plan; only a material change, an added cost or a changed target needs a new
+decision.
+
+Each step persists its state and the remote identity it created. Provider
+idempotency is used where offered; where it is not, an ambiguous response is
+reconciled against known names and ownership before any retry, because a crash
+between "provider created it" and "server recorded it" is otherwise a duplicate
+factory. Exactly-once is not claimed. A partial failure stays a named, resumable
+task that shows what exists and what remains, and pre-existing resources are
+never deleted as rollback. Completion means a health-checked URL, not a 200 from
+a deploy API.
+
+## Milestones
+
+0. **Compatibility matrix and spec amendment.** Provider auth/capability matrix,
+   proven GitHub device-token scopes, Vercel REST adapter chosen over its OAuth
+   MCP for the no-callback requirement, narrow Neon management APIs, evaluation
+   of Upstash's official server, and verified runtime isolation behaviour.
+   (This document is that amendment.)
+1. **Connection state and credential storage.** Contracts, catalog, repository,
+   service, credential store, migration, owner-only RPCs.
+2. **Gateway and approval enforcement.** Toolkit, operation validation, risk
+   classification, persisted decisions and receipts, egress guard.
+3. **GitHub + Vercel vertical slice.** Connections screen, device flow, token
+   paste, machine import, repo creation and deployment.
+4. **Neon + Upstash provisioning.** Server-side credential transfer into Vercel
+   environments.
+5. **Durable `create_app`.**
+6. **Verification and release.**
 
 ## Testing
 
-- Unit: catalog validation, `buildMcpServers` output shape per provider, the
-  destructive-tool matcher including the unknown-name default, redactor
-  coverage of tool results, and each machine-import probe against a fixture
-  filesystem.
-- Integration: a bot turn with a connection enabled sees the server; with it
-  disabled sees `{}`; `strictMcpConfig` still blocks global config.
-- Gate: `vp test run src/personal` from `apps/server` (about 21s). A bare
-  `vp test run` in that package wedges and must not be used.
-
-## Phasing
-
-1. Framework: catalog, credential capture (all three paths), injection, gate,
-   redaction, Connections UI.
-2. The four dev-stack providers.
-3. `create_app` starter flow.
-4. Later specs: Kraken, WhatsApp.
+- Unit: account selection and status transitions, credential rotation, owner
+  authorization, argument policies, unknown and drifted schemas, device-flow
+  polling and cancellation, import parsing against fixtures, safe-output
+  filtering.
+- Integration: both runtimes, reused sessions, disabled connections, multiple
+  bots and groups, multi-device and duplicate approval, lost vendor responses,
+  restart after a remote success, plan changes.
+- Fake-token assertions across model-facing results, events, errors, logs, URLs,
+  process arguments and persistence, including nested and encoded vendor errors.
+- Gate: `vp test run <explicit affected test files>` from `apps/server` plus
+  affected-package typecheck. A bare `vp test run` in that package wedges and
+  must not be used.
+- Live provider work uses a disposable project and a concrete resource approval.
