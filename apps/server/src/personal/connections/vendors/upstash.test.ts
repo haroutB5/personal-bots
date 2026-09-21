@@ -1,3 +1,4 @@
+import { ConnectionId } from "@t3tools/contracts";
 import * as NodeUtil from "node:util";
 
 import { describe, expect, it } from "@effect/vitest";
@@ -20,6 +21,9 @@ const secondary = {
   credentials: { accessToken: Redacted.make(VERCEL_TOKEN) },
   account: { accountId: "u1", accountName: "harout", teamId: "team_abc", teamName: "Harout" },
 };
+
+/** One connection stands for the account under test. */
+const CONNECTION = ConnectionId.make("connection-under-test");
 
 const text = (value: unknown) =>
   NodeUtil.inspect(value, {
@@ -156,6 +160,8 @@ describe("upstash adapter", () => {
         operationId: "upstash.list_databases",
         arguments: {},
         credentials,
+        connectionId: CONNECTION,
+        settings: { whatsappDailySendCap: null },
         account: null,
       });
       expect(result).toEqual({
@@ -192,6 +198,8 @@ describe("upstash adapter", () => {
         operationId: "upstash.create_redis_database",
         arguments: { name: "hbots_demo_cache", primaryRegion: "eu-west-1", plan: "free" },
         credentials,
+        connectionId: CONNECTION,
+        settings: { whatsappDailySendCap: null },
         account: null,
       });
       expect(requests[0]?.body).toEqual({
@@ -227,6 +235,8 @@ describe("upstash adapter", () => {
             database: "hbots_demo_cache",
           },
           credentials,
+          connectionId: CONNECTION,
+          settings: { whatsappDailySendCap: null },
           account: null,
         }),
       );
@@ -251,6 +261,8 @@ describe("upstash adapter", () => {
           database: "hbots_demo_cache",
         },
         credentials,
+        connectionId: CONNECTION,
+        settings: { whatsappDailySendCap: null },
         account: null,
       });
       expect(result).toEqual({ database: "hbots_demo_cache", deleted: true });
@@ -273,6 +285,8 @@ describe("upstash server-side credential transfer", () => {
       tokenVariableName: "UPSTASH_REDIS_REST_TOKEN",
     },
     credentials,
+    connectionId: CONNECTION,
+    settings: { whatsappDailySendCap: null },
     account: null,
   };
 

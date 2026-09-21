@@ -3305,6 +3305,21 @@ const makeWsRpcLayer = (
             personalConnections.rotate(input),
             { "rpc.aggregate": "server" },
           ),
+        // Control is bound to this connection's auth session, like the
+        // browser's own take-control RPC: the owner scans the code on the
+        // device they are holding.
+        [WS_METHODS.personalConnectionsBrowserConnect]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionsBrowserConnect,
+            personalConnections.browserConnect(input, currentSessionId),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalConnectionsSetSettings]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionsSetSettings,
+            personalConnections.setSettings(input),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalConnectionsImportProbe]: (_input) =>
           observeRpcEffect(
             WS_METHODS.personalConnectionsImportProbe,

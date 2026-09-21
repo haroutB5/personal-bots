@@ -62,6 +62,22 @@ export const personalConnectionRotate = createEnvironmentRpcCommand(connectionAt
 });
 
 /**
+ * Signing in through the shared browser. The reply is an instruction for the
+ * owner, never a credential: there is nothing to carry back.
+ */
+export const personalConnectionBrowserConnect = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-connections:browser-connect",
+  tag: WS_METHODS.personalConnectionsBrowserConnect,
+  onSuccess: refreshConnections,
+});
+
+export const personalConnectionSetSettings = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-connections:set-settings",
+  tag: WS_METHODS.personalConnectionsSetSettings,
+  onSuccess: refreshConnections,
+});
+
+/**
  * Probing the machine is a command, not a query: it reads the filesystem, so
  * it runs when the owner asks rather than whenever a screen mounts.
  */

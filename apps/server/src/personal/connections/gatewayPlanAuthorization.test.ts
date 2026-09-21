@@ -117,6 +117,7 @@ const makeHarness = (options?: HarnessOptions) => {
         Option.some({
           connectionId: ConnectionId.make("connection-1"),
           vendorId,
+          settings: { whatsappDailySendCap: null },
           credentialRef: "opaque-1",
           credentialVersion: 1,
           account: null,

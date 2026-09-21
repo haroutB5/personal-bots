@@ -1,5 +1,8 @@
+import { WHATSAPP_DEFAULT_DAILY_SEND_CAP } from "@t3tools/contracts";
+
 import type {
   PersonalConnection,
+  PersonalConnectionAuthKind,
   PersonalConnectionImportSource,
   PersonalConnectionVendorId,
 } from "@t3tools/contracts";
@@ -16,6 +19,11 @@ import type {
 export interface ConnectionVendorInfo {
   readonly vendorId: PersonalConnectionVendorId;
   readonly displayName: string;
+  /**
+   * Mirrors the server catalog. It decides which way in the row offers: a
+   * paste field, or handing the owner the shared browser to sign in.
+   */
+  readonly authKind: PersonalConnectionAuthKind;
   readonly tokenPageUrl: string;
   readonly requiredScopes: ReadonlyArray<string>;
   readonly requiredCredentialFields: ReadonlyArray<string>;
@@ -26,6 +34,7 @@ export interface ConnectionVendorInfo {
 export const CONNECTION_VENDORS: ReadonlyArray<ConnectionVendorInfo> = [
   {
     vendorId: "github",
+    authKind: "token-paste",
     displayName: "GitHub",
     tokenPageUrl: "https://github.com/settings/tokens/new",
     requiredScopes: ["repo", "workflow"],
@@ -34,6 +43,7 @@ export const CONNECTION_VENDORS: ReadonlyArray<ConnectionVendorInfo> = [
   },
   {
     vendorId: "vercel",
+    authKind: "token-paste",
     displayName: "Vercel",
     tokenPageUrl: "https://vercel.com/account/settings/tokens",
     requiredScopes: [],
@@ -42,6 +52,7 @@ export const CONNECTION_VENDORS: ReadonlyArray<ConnectionVendorInfo> = [
   },
   {
     vendorId: "neon",
+    authKind: "token-paste",
     displayName: "Neon",
     tokenPageUrl: "https://console.neon.tech/app/settings/api-keys",
     requiredScopes: [],
@@ -51,12 +62,23 @@ export const CONNECTION_VENDORS: ReadonlyArray<ConnectionVendorInfo> = [
   },
   {
     vendorId: "upstash",
+    authKind: "token-paste",
     displayName: "Upstash",
     tokenPageUrl: "https://console.upstash.com/account/api",
     requiredScopes: [],
     requiredCredentialFields: ["email", "apiKey"],
     purpose:
       "Create Redis databases, and put their REST credentials straight into a Vercel project's environment without them passing through the chat.",
+  },
+  {
+    vendorId: "whatsapp",
+    authKind: "browser-session",
+    displayName: "WhatsApp",
+    tokenPageUrl: "https://web.whatsapp.com/",
+    requiredScopes: [],
+    requiredCredentialFields: [],
+    purpose:
+      "Read your conversations and send messages from your own WhatsApp. You approve every message before it goes, and there is a daily limit.",
   },
 ];
 
@@ -88,8 +110,13 @@ export interface ConnectionDescription {
   readonly detail: string;
 }
 
+/** The cap in force, whether or not the owner has changed it. */
+export const dailySendCap = (connection: PersonalConnection): number =>
+  connection.settings?.whatsappDailySendCap ?? WHATSAPP_DEFAULT_DAILY_SEND_CAP;
+
 export const describeConnection = (connection: PersonalConnection): ConnectionDescription => {
   const vendor = vendorInfo(connection.vendorId);
+  if (connection.vendorId === "whatsapp") return describeWhatsApp(connection);
   const account =
     connection.account === null
       ? null
@@ -131,6 +158,49 @@ export const describeConnection = (connection: PersonalConnection): ConnectionDe
   }
 };
 
+/**
+ * WhatsApp reads differently from a token vendor in every state, so it gets
+ * its own wording rather than a token sentence with the noun swapped. The two
+ * facts the owner needs on the row are which number this is and how many
+ * messages a day it may send.
+ */
+const describeWhatsApp = (connection: PersonalConnection): ConnectionDescription => {
+  const number = connection.account?.accountId ?? null;
+  const name = connection.account?.accountName ?? null;
+  const headline =
+    number === null ? "Not connected yet" : name === null ? number : `${name} - ${number}`;
+  const cap = `Up to ${dailySendCap(connection)} messages a day, and you approve each one.`;
+  switch (connection.status) {
+    case "connected":
+      return { tone: "ok", headline, detail: cap };
+    case "connecting":
+      return {
+        tone: "pending",
+        headline,
+        detail: "Scan the code in the shared browser, then tap Check now.",
+      };
+    case "needs_reauth":
+      // WhatsApp expires linked devices on its own schedule; this is routine.
+      return {
+        tone: "attention",
+        headline,
+        detail: "WhatsApp signed this device out. Scan the code again to carry on.",
+      };
+    case "disabled":
+      return {
+        tone: "off",
+        headline,
+        detail: "No bot can use WhatsApp until you turn it back on.",
+      };
+    default:
+      return {
+        tone: "attention",
+        headline,
+        detail: "hbots could not read WhatsApp Web. Scan the code again.",
+      };
+  }
+};
+
 export type ConnectionAction =
   | "connect"
   | "validate"
@@ -167,6 +237,30 @@ export const CONNECTION_ACTION_LABELS: Readonly<Record<ConnectionAction, string>
   enable: "Turn on",
   disable: "Turn off",
   disconnect: "Remove",
+};
+
+/** Only the way back in differs by auth kind; the rest of the labels do not. */
+export const connectionActionLabel = (
+  action: ConnectionAction,
+  vendorId: PersonalConnectionVendorId,
+): string => {
+  if (vendorInfo(vendorId).authKind !== "browser-session") return CONNECTION_ACTION_LABELS[action];
+  if (action === "reconnect") return "Scan the code again";
+  if (action === "connect") return "Scan the QR code";
+  return CONNECTION_ACTION_LABELS[action];
+};
+
+/**
+ * What removing this connection actually costs, which is not the same thing
+ * for a stored token and for a session hbots never held.
+ */
+export const disconnectWarning = (vendorId: PersonalConnectionVendorId): string => {
+  const vendor = vendorInfo(vendorId);
+  return vendor.authKind === "browser-session"
+    ? `Remove ${vendor.displayName}?
+No bot can use it and the daily limit is forgotten. Your phone stays linked and the browser is still signed in: unlink it in WhatsApp on your phone if that is what you want.`
+    : `Remove ${vendor.displayName}?
+The saved token is deleted and no bot can use this account.`;
 };
 
 /** Credential fields are wire names; the owner reads words. */

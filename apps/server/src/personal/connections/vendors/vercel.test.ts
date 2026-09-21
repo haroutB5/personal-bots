@@ -1,3 +1,4 @@
+import { ConnectionId } from "@t3tools/contracts";
 import * as NodeUtil from "node:util";
 
 import { describe, expect, it } from "@effect/vitest";
@@ -11,6 +12,9 @@ import { makeVercelAdapter } from "./vercel.ts";
 const TOKEN = "vercel_fake_TOKEN_value_0123456789";
 const credentials = { accessToken: Redacted.make(TOKEN) };
 const TEAM = { accountId: "u1", accountName: "harout", teamId: "team_abc", teamName: "Harout" };
+
+/** One connection stands for the account under test. */
+const CONNECTION = ConnectionId.make("connection-under-test");
 
 const text = (value: unknown) =>
   NodeUtil.inspect(value, { depth: null, breakLength: Infinity, maxStringLength: null });
@@ -122,6 +126,8 @@ describe("vercel adapter", () => {
         operationId: "vercel.list_projects",
         arguments: {},
         credentials,
+        connectionId: CONNECTION,
+        settings: { whatsappDailySendCap: null },
         account: TEAM,
       });
       expect(result).toEqual({
@@ -140,6 +146,8 @@ describe("vercel adapter", () => {
         operationId: "vercel.list_projects",
         arguments: {},
         credentials,
+        connectionId: CONNECTION,
+        settings: { whatsappDailySendCap: null },
         account: { ...TEAM, teamId: null, teamName: null },
       });
       expect(requests[0]?.url).not.toContain("teamId");
@@ -161,6 +169,8 @@ describe("vercel adapter", () => {
           githubRepository: "haroutB5/hbots-demo",
         },
         credentials,
+        connectionId: CONNECTION,
+        settings: { whatsappDailySendCap: null },
         account: TEAM,
       });
       expect(requests[0]?.body).toEqual({
@@ -192,6 +202,8 @@ describe("vercel adapter", () => {
           variables: [{ key: "DATABASE_URL", value: secret }],
         },
         credentials,
+        connectionId: CONNECTION,
+        settings: { whatsappDailySendCap: null },
         account: TEAM,
       });
       expect(requests[0]?.body).toEqual([
@@ -230,6 +242,8 @@ describe("vercel adapter", () => {
         operationId: "vercel.create_deployment",
         arguments: { project: "hbots-demo", target: "production", gitRef: "main" },
         credentials,
+        connectionId: CONNECTION,
+        settings: { whatsappDailySendCap: null },
         account: TEAM,
       });
       expect(requests[1]?.body).toEqual({
@@ -258,6 +272,8 @@ describe("vercel adapter", () => {
           operationId: "vercel.create_deployment",
           arguments: { project: "hbots-demo", target: "production", gitRef: "main" },
           credentials,
+          connectionId: CONNECTION,
+          settings: { whatsappDailySendCap: null },
           account: TEAM,
         }),
       );
@@ -280,6 +296,8 @@ describe("vercel adapter", () => {
           operationId: "vercel.create_project",
           arguments: { name: "hbots-demo", framework: null, githubRepository: null },
           credentials,
+          connectionId: CONNECTION,
+          settings: { whatsappDailySendCap: null },
           account: TEAM,
         }),
       );

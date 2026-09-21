@@ -13,6 +13,9 @@ import * as MachineImport from "./machineImport.ts";
 import * as CredentialStore from "./credentialStore.ts";
 import * as Repository from "./repository.ts";
 import * as Service from "./service.ts";
+import { WhatsAppSession } from "./whatsapp/session.ts";
+/** These cover token vendors; WhatsApp's shared browser is never opened here. */
+const noWhatsAppSession = Layer.mock(WhatsAppSession)({});
 
 const TOKEN = "fake-token-must-never-escape";
 const at = DateTime.makeUnsafe("2026-09-20T10:00:00.000Z");
@@ -137,6 +140,7 @@ const makeHarness = (options?: { readonly failCreate?: boolean }): Harness => {
     layer: Service.layer.pipe(
       Layer.provide(Adapters.layerOf([github])),
       Layer.provide(noMachineImport),
+      Layer.provide(noWhatsAppSession),
       Layer.provide(Layer.succeed(Repository.PersonalConnectionRepository, repository)),
       Layer.provide(
         Layer.succeed(CredentialStore.PersonalConnectionCredentialStore, credentialStore),
@@ -263,6 +267,7 @@ describe("PersonalConnectionService", () => {
       status: "connected",
       account: null,
       verifiedCapabilities: [],
+      settings: { whatsappDailySendCap: null },
       credentialRef: "opaque-existing",
       credentialVersion: 1,
       lastValidatedAt: at,

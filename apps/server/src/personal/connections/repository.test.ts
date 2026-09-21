@@ -17,6 +17,7 @@ const github: Repository.StoredPersonalConnection = {
   status: "connecting",
   account: null,
   verifiedCapabilities: [],
+  settings: { whatsappDailySendCap: null },
   credentialRef: "opaque-github",
   credentialVersion: 1,
   lastValidatedAt: null,
@@ -29,7 +30,8 @@ const TestLayer = Repository.layer.pipe(Layer.provideMerge(NodeSqliteClient.laye
 describe("PersonalConnectionRepository", () => {
   it.effect("creates, reads, updates, lists and removes connection rows", () =>
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 72 });
+      // 75 is where the settings column arrives; the repository writes it.
+      yield* runMigrations({ toMigrationInclusive: 75 });
       const repository = yield* Repository.PersonalConnectionRepository;
 
       yield* repository.create(github);

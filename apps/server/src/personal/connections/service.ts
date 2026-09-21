@@ -2,6 +2,8 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   ConnectionId,
+  EMPTY_PERSONAL_CONNECTION_SETTINGS,
+  WHATSAPP_DEFAULT_DAILY_SEND_CAP,
   PERSONAL_SECRET_MAX_VALUE_BYTES,
   PersonalConnectionsError,
   type PersonalConnection,
@@ -10,7 +12,11 @@ import {
   type PersonalConnectionImportAdoptInput,
   type PersonalConnectionImportResult,
   type PersonalConnectionListResult,
+  type PersonalConnectionBrowserConnectInput,
+  type PersonalConnectionBrowserConnectResult,
   type PersonalConnectionRotateInput,
+  type PersonalConnectionSettings,
+  type PersonalConnectionSettingsInput,
   type PersonalConnectionValidateInput,
   type PersonalConnectionValidationResult,
   type PersonalConnectionVendorId,
@@ -25,11 +31,12 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as Adapters from "./adapters.ts";
 import * as VendorAdapters from "./vendors/layer.ts";
-import { connectionDefinition } from "./catalog.ts";
+import { connectionDefinition, usesBrowserSession } from "./catalog.ts";
 import * as CredentialStore from "./credentialStore.ts";
 import * as MachineImport from "./machineImport.ts";
 import { scrubCredentialValues } from "./operations.ts";
 import * as Repository from "./repository.ts";
+import { WhatsAppSession } from "./whatsapp/session.ts";
 
 export interface ResolvedPersonalConnection {
   readonly connectionId: ConnectionId;
@@ -38,6 +45,8 @@ export interface ResolvedPersonalConnection {
   readonly credentialVersion: number;
   /** Safe identity only: what the adapter needs to scope a request, never a value. */
   readonly account: PersonalConnection["account"];
+  /** What the owner set on this connection; re-read per call, like the rest. */
+  readonly settings: PersonalConnectionSettings;
 }
 
 export class PersonalConnectionService extends Context.Service<
@@ -46,6 +55,21 @@ export class PersonalConnectionService extends Context.Service<
     readonly list: () => Effect.Effect<PersonalConnectionListResult, PersonalConnectionsError>;
     readonly connect: (
       input: PersonalConnectionConnectInput,
+    ) => Effect.Effect<PersonalConnection, PersonalConnectionsError>;
+    /**
+     * The browser-session way in: the server opens the vendor's site in the
+     * shared browser and hands the owner control so they can sign in - for
+     * WhatsApp, scan the QR with their phone. No credential moves in either
+     * direction, because there is none. `viewerSessionId` is the owner's own
+     * client session, so control lands on the device they are holding.
+     */
+    readonly browserConnect: (
+      input: PersonalConnectionBrowserConnectInput,
+      viewerSessionId: string,
+    ) => Effect.Effect<PersonalConnectionBrowserConnectResult, PersonalConnectionsError>;
+    /** Owner-only, never bot-reachable: the send cap is theirs to set. */
+    readonly setSettings: (
+      input: PersonalConnectionSettingsInput,
     ) => Effect.Effect<PersonalConnection, PersonalConnectionsError>;
     /** Calls the vendor. The client asks for this; it never reports the outcome. */
     readonly validate: (
@@ -91,11 +115,21 @@ export class PersonalConnectionService extends Context.Service<
   }
 >()("t3/personal/connections/service/PersonalConnectionService") {}
 
+/** A new connection starts at the vendor's own safe default, written down. */
+const defaultSettingsFor = (vendorId: PersonalConnectionVendorId): PersonalConnectionSettings =>
+  vendorId === "whatsapp"
+    ? {
+        ...EMPTY_PERSONAL_CONNECTION_SETTINGS,
+        whatsappDailySendCap: WHATSAPP_DEFAULT_DAILY_SEND_CAP,
+      }
+    : EMPTY_PERSONAL_CONNECTION_SETTINGS;
+
 export const make = Effect.gen(function* () {
   const repository = yield* Repository.PersonalConnectionRepository;
   const credentials = yield* CredentialStore.PersonalConnectionCredentialStore;
   const adapters = yield* Adapters.ConnectionVendorAdapters;
   const machineImport = yield* MachineImport.PersonalConnectionMachineImport;
+  const whatsappSession = yield* WhatsAppSession;
   const mutationLock = yield* Semaphore.make(1);
 
   // A future vendor adapter may fail with credential material nested in its
@@ -233,7 +267,15 @@ export const make = Effect.gen(function* () {
     if (check._tag === "needs_reauth" || check._tag === "error") {
       return yield* fail(check.problem);
     }
-    const storedCredential = yield* secret(credentials.create(values));
+    /**
+     * A browser-session vendor stores nothing, so nothing reaches the
+     * credential store - not even an empty record. The reference below is a
+     * marker that keeps the table's shape; there is no value behind it, and
+     * reading it back deliberately finds nothing.
+     */
+    const storedCredential = usesBrowserSession(input.vendorId)
+      ? { credentialRef: `browser-session-${NodeCrypto.randomUUID()}`, version: 1 }
+      : yield* secret(credentials.create(values));
     const now = yield* DateTime.now;
     const checked = check._tag === "ok";
     const stored: Repository.StoredPersonalConnection = {
@@ -242,6 +284,7 @@ export const make = Effect.gen(function* () {
       status: checked ? "connected" : "connecting",
       account: checked ? check.account : null,
       verifiedCapabilities: checked ? [...new Set(check.verifiedCapabilities)] : [],
+      settings: defaultSettingsFor(input.vendorId),
       credentialRef: storedCredential.credentialRef,
       credentialVersion: storedCredential.version,
       lastValidatedAt: checked ? now : null,
@@ -249,7 +292,11 @@ export const make = Effect.gen(function* () {
       updatedAt: now,
     };
     yield* db("create", repository.create(stored)).pipe(
-      Effect.tapError(() => credentials.remove(storedCredential).pipe(Effect.ignore)),
+      Effect.tapError(() =>
+        usesBrowserSession(input.vendorId)
+          ? Effect.void
+          : credentials.remove(storedCredential).pipe(Effect.ignore),
+      ),
     );
     return Repository.presentConnection(stored);
   });
@@ -267,12 +314,17 @@ export const make = Effect.gen(function* () {
     ) {
       return yield* fail(`A ${previous.status} connection must be reconnected before validation.`);
     }
-    const stored = yield* secret(
-      credentials.read({
-        credentialRef: previous.credentialRef,
-        version: previous.credentialVersion,
-      }),
-    );
+    // A browser session has nothing stored to read, and its "credential" is
+    // whether the page is still signed in - which is exactly what the adapter
+    // goes and looks at.
+    const stored = usesBrowserSession(previous.vendorId)
+      ? Option.some({} as PersonalConnectionConnectInput["credentials"])
+      : yield* secret(
+          credentials.read({
+            credentialRef: previous.credentialRef,
+            version: previous.credentialVersion,
+          }),
+        );
     if (Option.isNone(stored)) {
       const missing = yield* write({
         ...previous,
@@ -343,13 +395,17 @@ export const make = Effect.gen(function* () {
   ) {
     const previous = yield* requireConnection(input.connectionId);
     // Delete the value first so a partial failure never leaves an unreferenced
-    // credential on disk.
-    yield* secret(
-      credentials.remove({
-        credentialRef: previous.credentialRef,
-        version: previous.credentialVersion,
-      }),
-    );
+    // credential on disk. A browser session has no value to delete, and
+    // removing the connection deliberately does not sign the owner out of the
+    // site: that is theirs to do, and the screen says so.
+    if (!usesBrowserSession(previous.vendorId)) {
+      yield* secret(
+        credentials.remove({
+          credentialRef: previous.credentialRef,
+          version: previous.credentialVersion,
+        }),
+      );
+    }
     const removed = yield* db("delete", repository.remove(input.connectionId));
     if (!removed) return yield* fail("Connection changed while it was being disconnected.");
     return { disconnected: true as const };
@@ -359,6 +415,11 @@ export const make = Effect.gen(function* () {
     input: PersonalConnectionRotateInput,
   ) {
     const previous = yield* requireConnection(input.connectionId);
+    if (usesBrowserSession(previous.vendorId)) {
+      return yield* fail(
+        `${connectionDefinition(previous.vendorId).displayName} has no token to replace. Sign in again from the Connections screen instead.`,
+      );
+    }
     const values = yield* validateCredentials(previous.vendorId, input.credentials);
     const previousHandle = {
       credentialRef: previous.credentialRef,
@@ -422,6 +483,62 @@ export const make = Effect.gen(function* () {
     yield* write({ ...previous, status: "needs_reauth", updatedAt: yield* DateTime.now });
   });
 
+  const browserConnectUnlocked = Effect.fn("PersonalConnectionService.browserConnect")(function* (
+    input: PersonalConnectionBrowserConnectInput,
+    viewerSessionId: string,
+  ) {
+    const definition = connectionDefinition(input.vendorId);
+    if (!usesBrowserSession(input.vendorId)) {
+      return yield* fail(
+        `${definition.displayName} is connected by pasting a token, not by signing in.`,
+      );
+    }
+    const existing = yield* db("lookup", repository.getByVendor(input.vendorId));
+    const now = yield* DateTime.now;
+    // Re-running this is the way back from an expired session, so an existing
+    // connection moves to `connecting` rather than being refused: the owner is
+    // about to scan a new code for the same account.
+    const stored: Repository.StoredPersonalConnection = Option.isSome(existing)
+      ? { ...existing.value, status: "connecting", updatedAt: now }
+      : {
+          connectionId: ConnectionId.make(NodeCrypto.randomUUID()),
+          vendorId: input.vendorId,
+          status: "connecting",
+          account: null,
+          verifiedCapabilities: [],
+          settings: defaultSettingsFor(input.vendorId),
+          credentialRef: `browser-session-${NodeCrypto.randomUUID()}`,
+          credentialVersion: 1,
+          lastValidatedAt: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+    if (Option.isSome(existing)) yield* write(stored);
+    else yield* db("create", repository.create(stored));
+
+    yield* whatsappSession
+      .openForSignIn(viewerSessionId)
+      .pipe(
+        Effect.mapError(() =>
+          fail("The shared browser could not open WhatsApp Web. Try again from Connections."),
+        ),
+      );
+    return {
+      connection: Repository.presentConnection(stored),
+      instruction:
+        "WhatsApp Web is open in the shared browser and you have control. Scan the code with WhatsApp on your phone (Settings > Linked devices > Link a device), then come back here and tap Check now.",
+    };
+  });
+
+  const setSettingsUnlocked = Effect.fn("PersonalConnectionService.setSettings")(function* (
+    input: PersonalConnectionSettingsInput,
+  ) {
+    const previous = yield* requireConnection(input.connectionId);
+    return Repository.presentConnection(
+      yield* write({ ...previous, settings: input.settings, updatedAt: yield* DateTime.now }),
+    );
+  });
+
   const resolveForOperation: PersonalConnectionService["Service"]["resolveForOperation"] = (
     vendorId,
   ) =>
@@ -435,6 +552,7 @@ export const make = Effect.gen(function* () {
                 credentialRef: connection.credentialRef,
                 credentialVersion: connection.credentialVersion,
                 account: connection.account,
+                settings: connection.settings,
               })
             : Option.none(),
         ),
@@ -444,6 +562,9 @@ export const make = Effect.gen(function* () {
   return PersonalConnectionService.of({
     list,
     connect: (input) => mutationLock.withPermit(connectUnlocked(input)),
+    browserConnect: (input, viewerSessionId) =>
+      mutationLock.withPermit(browserConnectUnlocked(input, viewerSessionId)),
+    setSettings: (input) => mutationLock.withPermit(setSettingsUnlocked(input)),
     validate: (input) => mutationLock.withPermit(validateUnlocked(input)),
     disable: (input) => mutationLock.withPermit(disableUnlocked(input)),
     reconnect: (input) => mutationLock.withPermit(reconnectUnlocked(input)),

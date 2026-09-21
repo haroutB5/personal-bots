@@ -89,6 +89,8 @@ import * as PersonalSecretService from "./personal/secrets/PersonalSecretService
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
 import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
 import * as PersonalConnectionService from "./personal/connections/service.ts";
+import * as WhatsAppSendLog from "./personal/connections/whatsapp/sendLog.ts";
+import * as WhatsAppSession from "./personal/connections/whatsapp/session.ts";
 import * as PersonalLoginRepository from "./personal/secrets/PersonalLoginRepository.ts";
 import * as PersonalSessionAccess from "./personal/secrets/PersonalSessionAccess.ts";
 // personal browser
@@ -598,6 +600,11 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // the gateway asked for it over MCP, and both read the same rows.
   Layer.provideMerge(PersonalConnectionApprovalService.layerLive),
   Layer.provideMerge(PersonalConnectionService.layerLive),
+  // WhatsApp is a browser-session connection, so its adapter is built from the
+  // shared browser and a persisted send ledger rather than from a token. Merged
+  // as one step because a single pipe accepts at most 20; both still resolve
+  // their own requirements from the steps below.
+  Layer.provideMerge(Layer.mergeAll(WhatsAppSession.layer, WhatsAppSendLog.layer)),
   Layer.provideMerge(PersonalLoginService.layerLive),
   // personal browser: the service needs the lease (-> its repository ->
   // SqlClient), PreviewManager and PersonalBotRepository, all provided by

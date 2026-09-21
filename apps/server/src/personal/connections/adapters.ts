@@ -1,4 +1,8 @@
-import type { PersonalConnectionVendorId } from "@t3tools/contracts";
+import type {
+  ConnectionId,
+  PersonalConnectionSettings,
+  PersonalConnectionVendorId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -62,6 +66,17 @@ export interface ConnectionVendorCall {
   readonly arguments: Readonly<Record<string, unknown>>;
   readonly credentials: Readonly<Record<string, Redacted.Redacted<string>>>;
   /**
+   * Which connection this call is for, and what the owner set on it.
+   *
+   * A token vendor has no use for either: its account is the token. They exist
+   * for a vendor whose limits are the owner's own decision rather than a
+   * provider's — WhatsApp's daily send cap is a number in Settings, and the
+   * ledger that enforces it is keyed on the connection, not on the account
+   * name the page happens to report.
+   */
+  readonly connectionId: ConnectionId;
+  readonly settings: PersonalConnectionSettings;
+  /**
    * The account this connection was validated against, as the owner saw it on
    * the connect screen. A vendor that scopes requests by team reads it from
    * here rather than re-resolving one per call: the approval was given for a
@@ -117,14 +132,14 @@ export class ConnectionVendorAdapters extends Context.Service<
   }
 >()("t3/personal/connections/adapters/ConnectionVendorAdapters") {}
 
+export const makeAdapters = (adapters: ReadonlyArray<ConnectionVendorAdapter>) =>
+  ConnectionVendorAdapters.of({
+    forVendor: (vendorId) =>
+      Option.fromNullishOr(adapters.find((adapter) => adapter.vendorId === vendorId)),
+  });
+
 export const layerOf = (adapters: ReadonlyArray<ConnectionVendorAdapter>) =>
-  Layer.succeed(
-    ConnectionVendorAdapters,
-    ConnectionVendorAdapters.of({
-      forVendor: (vendorId) =>
-        Option.fromNullishOr(adapters.find((adapter) => adapter.vendorId === vendorId)),
-    }),
-  );
+  Layer.succeed(ConnectionVendorAdapters, makeAdapters(adapters));
 
 /** No vendors at all: what a test that is not about a vendor wants. */
 export const layerEmpty = layerOf([]);

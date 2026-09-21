@@ -116,6 +116,8 @@ import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.t
 import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
 import * as PersonalConnectionCredentialStore from "./personal/connections/credentialStore.ts";
 import * as PersonalConnectionService from "./personal/connections/service.ts";
+import * as WhatsAppSendLog from "./personal/connections/whatsapp/sendLog.ts";
+import * as WhatsAppSession from "./personal/connections/whatsapp/session.ts";
 import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
@@ -792,12 +794,13 @@ const buildAppUnderTest = (options?: {
           Layer.mock(PersonalSecretService.PersonalSecretService)({}),
           Layer.mock(PersonalLoginService.PersonalLoginService)({}),
           Layer.mock(PersonalConnectionService.PersonalConnectionService)({}),
-          Layer.mock(
-            PersonalConnectionApprovalService.PersonalConnectionApprovalService,
-          )({}),
-          Layer.mock(
-            PersonalConnectionCredentialStore.PersonalConnectionCredentialStore,
-          )({}),
+          Layer.mock(PersonalConnectionApprovalService.PersonalConnectionApprovalService)({}),
+          Layer.mock(PersonalConnectionCredentialStore.PersonalConnectionCredentialStore)({}),
+          // WhatsApp's browser session and its send ledger: in the graph
+          // because the connection service's vendor adapters are built from
+          // them, and never touched by these tests.
+          Layer.mock(WhatsAppSession.WhatsAppSession)({}),
+          Layer.mock(WhatsAppSendLog.WhatsAppSendLog)({}),
           Layer.mock(PersonalRoutineService.PersonalRoutineService)({}),
           Layer.mock(PersonalMemoryService.PersonalMemoryService)({}),
           Layer.mock(PersonalPushService.PersonalPushService)({}),
