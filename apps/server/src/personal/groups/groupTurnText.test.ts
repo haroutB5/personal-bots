@@ -79,4 +79,17 @@ describe("buildCatchUpBrief", () => {
     });
     expect(brief).toContain("You are the only member.");
   });
+
+  it("has the verdict speak for the group, not for its writer", () => {
+    const brief = buildCatchUpBrief({
+      groupName: "Lunas",
+      speakerName: "Luna1",
+      otherNames: ["Luna2"],
+      messages: [],
+      maxChars: 1_000,
+      phase: "verdict",
+    });
+    expect(brief).toContain("first person plural");
+    expect(brief).toContain("never as yourself");
+  });
 });

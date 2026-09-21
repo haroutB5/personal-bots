@@ -539,24 +539,35 @@ export function MessageList({
                   </details>
                 );
               }
-              return (
-                <div key={item.id}>
-                  {readGroupMarker(item.message)?.phase === "verdict" && (
-                    <p className="mb-2 text-base font-semibold text-[var(--personal-text)]">
-                      Final verdict
-                    </p>
-                  )}
-                  <GroupMessage
-                    key={item.id}
-                    message={item.message}
-                    threadRef={threadRef}
-                    workspaceRoot={workspaceRoot}
-                    speaker={groupSpeaker?.(item.speaker.botId) ?? null}
-                    botId={item.speaker.botId}
-                    showSpeaker={item.showSpeaker}
-                  />
-                </div>
-              );
+              {
+                // The verdict speaks for the whole group, so it is headed as
+                // the group's answer; its writer is only credited, not shown
+                // as the speaker.
+                const isVerdict = readGroupMarker(item.message)?.phase === "verdict";
+                return (
+                  <div key={item.id}>
+                    {isVerdict && (
+                      <div className="mb-2">
+                        <p className="text-base font-semibold text-[var(--personal-text)]">
+                          Group verdict
+                        </p>
+                        <p className="text-[13px] text-[var(--personal-text-secondary)]">
+                          From the whole group · written up by {item.speaker.name}
+                        </p>
+                      </div>
+                    )}
+                    <GroupMessage
+                      key={item.id}
+                      message={item.message}
+                      threadRef={threadRef}
+                      workspaceRoot={workspaceRoot}
+                      speaker={groupSpeaker?.(item.speaker.botId) ?? null}
+                      botId={item.speaker.botId}
+                      showSpeaker={isVerdict ? false : item.showSpeaker}
+                    />
+                  </div>
+                );
+              }
             case "group-system":
               return (
                 <p
