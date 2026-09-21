@@ -64,6 +64,85 @@ export const ConnectionCallResult = Schema.Struct({
 });
 export type ConnectionCallResult = typeof ConnectionCallResult.Type;
 
+export const CreateAppInput = Schema.Struct({
+  appName: TrimmedNonEmptyString.annotate({
+    description:
+      "The app's name. Used for the GitHub repository and the Vercel project, so letters, digits, dot, dash and underscore only.",
+  }),
+  visibility: Schema.Literals(["private", "public"]).annotate({
+    description:
+      "Whether the GitHub repository is readable by anyone. Ask the user; never choose for them.",
+  }),
+  deploymentTarget: Schema.Literals(["preview", "production"]).annotate({
+    description:
+      "Which environment to deploy. There is no default: ask the user which one they mean.",
+  }),
+});
+export type CreateAppInput = typeof CreateAppInput.Type;
+
+export const CreateAppStepView = Schema.Struct({
+  step: Schema.String,
+  title: Schema.String,
+  state: Schema.String,
+  /** What the provider called whatever this step made. Never a credential. */
+  remoteId: Schema.NullOr(Schema.String),
+  adopted: Schema.Boolean,
+  error: Schema.NullOr(Schema.String),
+});
+
+export const CreateAppResult = Schema.Struct({
+  status: Schema.Literals([
+    "awaiting_approval",
+    "running",
+    "completed",
+    "needs_attention",
+    "declined",
+  ]),
+  runId: Schema.String,
+  /** The server's own description of the plan, as the user is reading it. */
+  summary: Schema.NullOr(Schema.String),
+  note: Schema.NullOr(Schema.String),
+  /** Set only once a URL answered as the app itself. */
+  appUrl: Schema.NullOr(Schema.String),
+  steps: Schema.Array(CreateAppStepView),
+});
+export type CreateAppResult = typeof CreateAppResult.Type;
+
+export const CreateAppStatusInput = Schema.Struct({
+  runId: TrimmedNonEmptyString.annotate({ description: "The run id create_app returned." }),
+});
+export type CreateAppStatusInput = typeof CreateAppStatusInput.Type;
+
+const CreateAppTool = Tool.make("create_app", {
+  description:
+    "Build a new web app from a pinned template and put it live: a GitHub repository, a first commit, a Vercel project, its environment variables, a deployment, and a check that the URL actually answers. The server writes one plan describing every account, name, target and cost, and the user approves it once; you get status 'awaiting_approval', you say in one sentence what you are about to build, and you end your turn. You are resumed automatically when they answer, and the whole run then happens without further questions. Call it again with the same arguments to continue; the same plan is never approved twice. Changing any argument is a different plan and needs a new approval.",
+  parameters: CreateAppInput,
+  success: CreateAppResult,
+  failure: ConnectionsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Create and deploy an app")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  // Calling it again with the same arguments continues one run rather than
+  // starting a second; the plan's hash is what makes that true.
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true);
+
+const CreateAppStatusTool = Tool.make("create_app_status", {
+  description:
+    "Read where a create_app run got to: which steps are done, what each one created, and the app's URL once one answered. Use this to tell the user what exists after a run stopped part-way; do not use it to poll, you are resumed when the run ends.",
+  parameters: CreateAppStatusInput,
+  success: CreateAppResult,
+  failure: ConnectionsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Check an app build")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 const ListConnectionsTool = Tool.make("list_connections", {
   description:
     "List the services the user has connected (GitHub, Vercel, Neon, Upstash) and exactly which operations you may ask for, with their argument schemas. Only connected services appear. You cannot connect, switch or change a connection yourself; only the user can, in Settings.",
@@ -93,4 +172,9 @@ const ConnectionCallTool = Tool.make("connection_call", {
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true);
 
-export const ConnectionsToolkit = Toolkit.make(ListConnectionsTool, ConnectionCallTool);
+export const ConnectionsToolkit = Toolkit.make(
+  ListConnectionsTool,
+  ConnectionCallTool,
+  CreateAppTool,
+  CreateAppStatusTool,
+);

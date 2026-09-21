@@ -1,9 +1,15 @@
-import type { PersonalBotId, ThreadId } from "@t3tools/contracts";
+import {
+  CreateAppRunId,
+  type CreateAppRun,
+  type PersonalBotId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
+import * as CreateApp from "../../../personal/connections/createApp/service.ts";
 import * as Gateway from "../../../personal/connections/gateway.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -11,6 +17,7 @@ import { ConnectionsToolError, ConnectionsToolkit } from "./tools.ts";
 
 const make = Effect.gen(function* () {
   const gateway = yield* Gateway.PersonalConnectionGateway;
+  const createApp = yield* CreateApp.PersonalCreateAppService;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const tasks = yield* PersonalTaskService.PersonalTaskService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
@@ -53,6 +60,32 @@ const make = Effect.gen(function* () {
       .resolveCallerTask({ threadId: caller.threadId, botId: caller.botId, turnId })
       .pipe(Effect.option);
     return Option.isSome(task) ? task.value.taskId : null;
+  });
+
+  /**
+   * One run, rendered for the model.
+   *
+   * Every field is the server's own: the summary is the plan text, the step
+   * titles are written in the step definitions, and `remoteId` is what a
+   * provider called something. Nothing a bot wrote comes back through here.
+   */
+  const view = (
+    run: CreateAppRun,
+    extra: { readonly summary?: string; readonly note?: string },
+  ) => ({
+    status: run.status,
+    runId: run.runId,
+    summary: extra.summary ?? null,
+    note: extra.note ?? null,
+    appUrl: run.appUrl,
+    steps: run.steps.map((step) => ({
+      step: step.stepId,
+      title: step.title,
+      state: step.state,
+      remoteId: step.remoteId,
+      adopted: step.adopted,
+      error: step.error,
+    })),
   });
 
   return ConnectionsToolkit.of({
@@ -98,6 +131,36 @@ const make = Effect.gen(function* () {
               summary: outcome.summary,
               note: outcome.note,
             };
+      }),
+    create_app: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* callerBot();
+        const taskId = yield* callerTaskId(caller);
+        const outcome = yield* createApp
+          .startOrResume({
+            caller: { threadId: caller.threadId, botId: caller.botId, taskId },
+            appName: input.appName,
+            visibility: input.visibility,
+            deploymentTarget: input.deploymentTarget,
+          })
+          .pipe(Effect.mapError((error) => refuse(error.message)));
+        switch (outcome._tag) {
+          case "awaiting_approval":
+            return view(outcome.run, { summary: outcome.summary, note: outcome.note });
+          case "declined":
+          case "needs_attention":
+            return view(outcome.run, { note: outcome.message });
+          default:
+            return view(outcome.run, {});
+        }
+      }),
+    create_app_status: (input) =>
+      Effect.gen(function* () {
+        yield* callerBot();
+        const run = yield* createApp
+          .get(CreateAppRunId.make(input.runId))
+          .pipe(Effect.mapError((error) => refuse(error.message)));
+        return view(run, {});
       }),
   });
 });

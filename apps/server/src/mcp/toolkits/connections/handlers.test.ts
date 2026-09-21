@@ -1,11 +1,6 @@
 import * as NodeUtil from "node:util";
 
-import {
-  EnvironmentId,
-  PersonalBotId,
-  ProviderInstanceId,
-  ThreadId,
-} from "@t3tools/contracts";
+import { EnvironmentId, PersonalBotId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,6 +9,7 @@ import * as Stream from "effect/Stream";
 
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { PersonalBotRepository } from "../../../personal/PersonalBotRepository.ts";
+import * as CreateApp from "../../../personal/connections/createApp/service.ts";
 import * as Gateway from "../../../personal/connections/gateway.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
 import { McpInvocationContext } from "../../McpInvocationContext.ts";
@@ -88,6 +84,8 @@ const run = (input: {
       }),
     ),
     Layer.provide(Layer.mock(PersonalTaskService.PersonalTaskService)({})),
+    // Present but unused here: these tests are about connection_call.
+    Layer.provide(Layer.mock(CreateApp.PersonalCreateAppService)({})),
     Layer.provide(
       Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
         // No running turn in this chat: the card can still be raised, the bot
