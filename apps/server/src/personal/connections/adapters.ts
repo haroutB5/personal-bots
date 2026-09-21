@@ -69,6 +69,20 @@ export interface ConnectionVendorCall {
    * different one.
    */
   readonly account: ConnectionVendorAccount | null;
+  /**
+   * A second connection the operation declared it needs, resolved and read by
+   * the gateway in the same call.
+   *
+   * It is how a credential one provider minted reaches the place it is used
+   * without ever becoming an argument, a result, or transcript text. Absent
+   * for every ordinary operation; an operation that needs one refuses when it
+   * is missing rather than doing half of the work.
+   */
+  readonly secondary?: {
+    readonly vendorId: PersonalConnectionVendorId;
+    readonly credentials: Readonly<Record<string, Redacted.Redacted<string>>>;
+    readonly account: ConnectionVendorAccount | null;
+  };
 }
 
 export interface ConnectionVendorAdapter {

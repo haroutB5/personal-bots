@@ -16,9 +16,21 @@ import { ConnectionVendorError } from "../adapters.ts";
 
 export interface VendorHttpRequest {
   readonly operationId: string;
-  readonly method: "GET" | "POST" | "PATCH" | "PUT";
+  readonly method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   readonly url: string;
-  readonly bearer: Redacted.Redacted<string>;
+  /** A token vendor. Exactly one of `bearer` and `basic` belongs on a request. */
+  readonly bearer?: Redacted.Redacted<string>;
+  /**
+   * An account-and-key vendor (Upstash's management API is one).
+   *
+   * The two halves stay separate until the header is built below: joining
+   * them into `user:key` anywhere else would create a plaintext rendering of
+   * the pair that nothing downstream knows to redact.
+   */
+  readonly basic?: {
+    readonly username: Redacted.Redacted<string>;
+    readonly password: Redacted.Redacted<string>;
+  };
   readonly headers?: Readonly<Record<string, string>>;
   readonly body?: unknown;
 }
@@ -77,10 +89,31 @@ export const expectOk = (
         ),
       );
 
+/**
+ * The one place a credential becomes a header value.
+ *
+ * A request with neither half fails here rather than going out unauthenticated
+ * and coming back as a confusing 401 the owner would read as an expired token.
+ */
+const authorizationHeader = (
+  request: VendorHttpRequest,
+): Effect.Effect<string, ConnectionVendorError> => {
+  if (request.basic !== undefined) {
+    const pair = `${Redacted.value(request.basic.username)}:${Redacted.value(request.basic.password)}`;
+    return Effect.succeed(`Basic ${Buffer.from(pair, "utf8").toString("base64")}`);
+  }
+  return request.bearer === undefined
+    ? Effect.fail(
+        vendorFailure(request.operationId, "This request was built with no credential to send."),
+      )
+    : Effect.succeed(`Bearer ${Redacted.value(request.bearer)}`);
+};
+
 export const makeFetchVendorHttp = (
   fetchImpl: typeof globalThis.fetch = globalThis.fetch,
 ): VendorHttp =>
   Effect.fn("VendorHttp.request")(function* (request: VendorHttpRequest) {
+    const authorization = yield* authorizationHeader(request);
     const response = yield* Effect.tryPromise({
       try: () =>
         fetchImpl(request.url, {
@@ -89,7 +122,7 @@ export const makeFetchVendorHttp = (
             accept: "application/json",
             ...(request.body === undefined ? {} : { "content-type": "application/json" }),
             ...request.headers,
-            authorization: `Bearer ${Redacted.value(request.bearer)}`,
+            authorization,
           },
           ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
         }),

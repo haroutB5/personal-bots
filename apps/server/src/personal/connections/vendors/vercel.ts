@@ -1,10 +1,12 @@
 // @effect-diagnostics preferSchemaOverJson:off - quoting a vendor's own error body back, not decoding a known shape.
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 
 import type {
   ConnectionVendorAccount,
   ConnectionVendorAdapter,
   ConnectionVendorCall,
+  ConnectionVendorError,
 } from "../adapters.ts";
 import {
   expectOk,
@@ -30,12 +32,20 @@ import {
 
 const API = "https://api.vercel.com";
 
-const VENDOR_SCHEMAS: Readonly<Record<string, string>> = {
+/**
+ * Exported so an adapter that writes into a Vercel environment as the second
+ * half of a server-side credential transfer can pin the Vercel half of its own
+ * reviewed shape against this one. It still states its own literal; the test
+ * that compares them is what makes a bump here fail there first.
+ */
+export const VERCEL_VENDOR_SCHEMAS: Readonly<Record<string, string>> = {
   "vercel.list_projects": "vercel/v9-projects@2026-09-20",
   "vercel.create_project": "vercel/v10-projects@2026-09-20",
   "vercel.set_environment_variables": "vercel/v10-project-env@2026-09-20",
   "vercel.create_deployment": "vercel/v13-deployments@2026-09-20",
 };
+
+const VENDOR_SCHEMAS = VERCEL_VENDOR_SCHEMAS;
 
 const asRecord = (value: unknown): Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -50,6 +60,52 @@ const scoped = (path: string, account: ConnectionVendorAccount | null) => {
   if (teamId === null) return `${API}${path}`;
   return `${API}${path}${path.includes("?") ? "&" : "?"}teamId=${encodeURIComponent(teamId)}`;
 };
+
+/**
+ * Writes encrypted environment variables to exactly one Vercel environment and
+ * answers with the names only.
+ *
+ * Lives outside the adapter because it is also the second half of a
+ * server-side credential transfer: an adapter for a provisioning vendor fetches
+ * a secret and hands it here, so the value goes from one provider to the other
+ * inside one call without ever becoming an operation argument or a result. It
+ * takes `Redacted` values for the same reason the HTTP seam does — the
+ * plaintext exists only where the request body is built.
+ */
+export const setVercelEnvironmentVariables = (input: {
+  readonly http: VendorHttp;
+  readonly operationId: string;
+  readonly bearer: Redacted.Redacted<string>;
+  readonly account: ConnectionVendorAccount | null;
+  readonly project: string;
+  readonly target: string;
+  readonly variables: ReadonlyArray<{
+    readonly key: string;
+    readonly value: Redacted.Redacted<string>;
+  }>;
+}): Effect.Effect<ReadonlyArray<string>, ConnectionVendorError> =>
+  input
+    .http({
+      operationId: input.operationId,
+      method: "POST",
+      url: scoped(
+        `/v10/projects/${encodeURIComponent(input.project)}/env?upsert=true`,
+        input.account,
+      ),
+      bearer: input.bearer,
+      body: input.variables.map((variable) => ({
+        key: variable.key,
+        value: Redacted.value(variable.value),
+        type: "encrypted",
+        // Exactly the one environment the owner approved, never both.
+        target: [input.target],
+      })),
+    })
+    .pipe(
+      Effect.flatMap((response) => expectOk(input.operationId, response)),
+      // The reply repeats the values back; only the names leave this function.
+      Effect.map(() => input.variables.map((variable) => variable.key)),
+    );
 
 export const makeVercelAdapter = (http: VendorHttp): ConnectionVendorAdapter => {
   const token = (call: {
@@ -176,21 +232,19 @@ export const makeVercelAdapter = (http: VendorHttp): ConnectionVendorAdapter => 
           key: string;
           value: string;
         }>;
-        yield* send({
+        const keys = yield* setVercelEnvironmentVariables({
+          http,
           operationId: call.operationId,
-          method: "POST",
-          url: scoped(`/v10/projects/${encodeURIComponent(project)}/env?upsert=true`, call.account),
           bearer,
-          body: variables.map((variable) => ({
+          account: call.account,
+          project,
+          target,
+          variables: variables.map((variable) => ({
             key: variable.key,
-            value: variable.value,
-            type: "encrypted",
-            // Exactly the one environment the owner approved, never both.
-            target: [target],
+            value: Redacted.make(variable.value),
           })),
         });
-        // The reply repeats the values back; only the names leave this function.
-        return { project, target, keys: variables.map((variable) => variable.key) };
+        return { project, target, keys };
       }
       case "vercel.create_deployment":
         return yield* createDeployment(call);
