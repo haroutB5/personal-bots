@@ -25,6 +25,8 @@ import {
   type PersonalPushSettings,
   type PersonalPushSubscribeInput,
   type OrchestrationEvent,
+  type PersonalGroupRound,
+  type PersonalGroupRoundStatus,
   type PersonalTask,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -33,6 +35,7 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import * as PersonalGroupService from "../groups/PersonalGroupService.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import {
   base64UrlDecode,
@@ -210,6 +213,48 @@ export function chatReplyPushPayload(input: {
   };
 }
 
+/**
+ * The round statuses that end a group's turn, and so earn its one
+ * notification. "stopped" is the user's own doing, and "running" /
+ * "waiting_provider" are mid-turn.
+ */
+const GROUP_ROUND_NOTIFY_STATUSES: ReadonlySet<PersonalGroupRoundStatus> = new Set([
+  "completed",
+  "paused_budget",
+  "paused_vote",
+  "interrupted",
+]);
+
+/**
+ * A group finished its turn. Members' own replies never notify (see
+ * notifyChatReply): the group buzzes once, when the round ends, and says the
+ * verdict is in when there is one. One tag per group, so a later round
+ * replaces the earlier notification instead of stacking.
+ */
+export function groupRoundPushPayload(input: {
+  readonly groupId: string;
+  readonly groupName: string;
+  readonly status: PersonalGroupRoundStatus;
+  readonly hasVerdict: boolean;
+}): PersonalPushPayload {
+  const body =
+    input.status === "paused_vote"
+      ? "The group needs your vote."
+      : input.status === "paused_budget"
+        ? "The group paused. Continue to give it more replies."
+        : input.status === "interrupted"
+          ? "The group's turn stopped early. Open it to see why."
+          : input.hasVerdict
+            ? "The group verdict is ready."
+            : "The group has replied.";
+  return {
+    title: input.groupName,
+    body,
+    url: `/bots/groups/${encodeURIComponent(input.groupId)}`,
+    tag: `group-${input.groupId}`,
+  };
+}
+
 /** "Claude Code 2.1.264 is failing for your bots", linking to the Settings provider row. */
 export function providerBrokenPushPayload(input: {
   readonly instanceId: string;
@@ -272,6 +317,12 @@ interface GroupThreadForMemberRow {
   readonly threadId: string;
 }
 
+interface GroupForRoundRow {
+  readonly name: string;
+  readonly threadId: string;
+  readonly hasVerdict: number;
+}
+
 export class PersonalPushService extends Context.Service<
   PersonalPushService,
   {
@@ -300,6 +351,8 @@ export class PersonalPushService extends Context.Service<
       /** The session stamp the turn ended on; also the per-turn dedupe key. */
       readonly turnEndedAt: string;
     }) => Effect.Effect<void>;
+    /** Queues a group's one notification when its round ends (deduped per ending). */
+    readonly notifyGroupRound: (round: PersonalGroupRound) => Effect.Effect<void>;
     /** Feeds one orchestration event in (the start() stream uses this). */
     readonly ingestDomainEvent: (event: OrchestrationEvent) => Effect.Effect<void>;
     /**
@@ -334,6 +387,7 @@ export const make = Effect.gen(function* () {
   const botRepository = yield* PersonalBotRepository.PersonalBotRepository;
   const tasks = yield* Effect.serviceOption(PersonalTaskService.PersonalTaskService);
   const engine = yield* Effect.serviceOption(OrchestrationEngine.OrchestrationEngineService);
+  const groups = yield* Effect.serviceOption(PersonalGroupService.PersonalGroupService);
 
   const fail = (message: string, cause?: unknown) =>
     new PersonalPushError({ message, ...(cause === undefined ? {} : { cause }) });
@@ -716,24 +770,21 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
       if (presence.isViewing(input.threadId, nowMs)) return;
-      // A group displays member replies from their private provider threads in
-      // its shared transcript. Treat that shared thread as the visible chat:
-      // otherwise every member would still buzz the phone while the user is
-      // already watching the reply arrive in the open group.
+      // A group member's reply lands in its private provider thread and is
+      // mirrored into the group. It never notifies on its own: the group
+      // buzzes once, when its whole turn ends (notifyGroupRound).
       const groupThreads = yield* sql<GroupThreadForMemberRow>`
         SELECT g.thread_id AS "threadId"
         FROM personal_group_members m
         JOIN personal_groups g ON g.group_id = m.group_id
         WHERE m.thread_id = ${input.threadId}
-          AND m.left_at IS NULL
           AND g.deleted_at IS NULL
         LIMIT 1
       `;
-      const visibleGroupThread = groupThreads[0]?.threadId;
-      if (visibleGroupThread !== undefined && presence.isViewing(visibleGroupThread, nowMs)) {
-        yield* Effect.logDebug("personal notification held back: the member's group is open", {
+      if (groupThreads[0] !== undefined) {
+        yield* Effect.logDebug("personal notification held back: a group member's reply", {
           threadId: input.threadId,
-          groupThreadId: visibleGroupThread,
+          groupThreadId: groupThreads[0].threadId,
         });
         return;
       }
@@ -764,6 +815,53 @@ export const make = Effect.gen(function* () {
           ? Effect.interrupt
           : Effect.logWarning("personal notifications could not queue a chat reply", {
               threadId: input.threadId,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
+
+  const notifyGroupRound: PersonalPushService["Service"]["notifyGroupRound"] = (round) =>
+    Effect.gen(function* () {
+      if (!GROUP_ROUND_NOTIFY_STATUSES.has(round.status)) return;
+      const rows = yield* sql<GroupForRoundRow>`
+        SELECT
+          g.name AS "name",
+          g.thread_id AS "threadId",
+          EXISTS (
+            SELECT 1 FROM personal_group_messages msg
+            WHERE msg.round_id = ${round.roundId}
+              AND msg.message_id LIKE '%-verdict'
+          ) AS "hasVerdict"
+        FROM personal_groups g
+        WHERE g.group_id = ${round.groupId}
+          AND g.deleted_at IS NULL
+        LIMIT 1
+      `;
+      const group = rows[0];
+      if (group === undefined) return;
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      if (presence.isViewing(group.threadId as ThreadId, nowMs)) return;
+      const preferences = yield* readPreferences;
+      if (!preferences[PREFERENCE_FOR.chat_reply]) return;
+      // A round is re-published on later writes; spoken.length separates one
+      // Continue cycle's pause from the next while keeping replays silent.
+      const eventId = `group-round:${round.roundId}:${round.status}:${String(round.spoken.length)}`;
+      const queued = yield* enqueue(
+        eventId,
+        groupRoundPushPayload({
+          groupId: round.groupId,
+          groupName: group.name,
+          status: round.status,
+          hasVerdict: Number(group.hasVerdict) === 1,
+        }),
+      );
+      if (queued > 0) yield* kick;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal notifications could not queue a group round", {
+              roundId: round.roundId,
               cause: Cause.pretty(cause),
             }),
       ),
@@ -826,6 +924,13 @@ export const make = Effect.gen(function* () {
         const events = yield* engine.value.subscribeDomainEvents;
         yield* forkParked(Stream.runForEach(events, ingestDomainEvent));
       }
+      if (Option.isSome(groups)) {
+        yield* forkParked(
+          Stream.runForEach(groups.value.changes, (event) =>
+            event.type === "round" ? notifyGroupRound(event.round) : Effect.void,
+          ),
+        );
+      }
       yield* forkParked(
         Effect.gen(function* () {
           yield* kick;
@@ -843,6 +948,7 @@ export const make = Effect.gen(function* () {
     setPreferences,
     notifyTask,
     notifyChatReply,
+    notifyGroupRound,
     ingestDomainEvent,
     reportViewing,
     dropConnection,

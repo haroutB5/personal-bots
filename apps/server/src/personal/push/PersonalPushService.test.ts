@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type OrchestrationEvent,
+  type PersonalGroupRound,
   type PersonalTask,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -475,7 +476,7 @@ it.effect("the chat the user is reading gets no reply notification", () => {
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
-it.effect("an open group suppresses reply notifications from its member threads", () => {
+it.effect("a group buzzes once when its round ends, never per member reply", () => {
   const harness: Harness = { sent: [], status: 201 };
   const groupThread = ThreadId.make("thread-group");
   return Effect.gen(function* () {
@@ -501,13 +502,47 @@ it.effect("an open group suppresses reply notifications from its member threads"
     `;
     const push = yield* PersonalPushService.PersonalPushService;
     yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
-    yield* push.reportViewing({ connectionId: "phone", threadId: groupThread });
 
+    // Member turns are silent, whether or not the group is open.
     yield* runTurn(CHAT, "2026-09-18T09:00:00.000Z");
+    yield* push.reportViewing({ connectionId: "phone", threadId: groupThread });
+    yield* runTurn(CHAT, "2026-09-18T09:05:00.000Z");
+    yield* push.reportViewing({ connectionId: "phone", threadId: null });
     expect(yield* outbox).toEqual([]);
 
-    yield* push.reportViewing({ connectionId: "phone", threadId: null });
-    yield* runTurn(CHAT, "2026-09-18T09:05:00.000Z");
+    const round = (status: PersonalGroupRound["status"], spoken: number) =>
+      ({
+        roundId: "round-1",
+        groupId: "group-1",
+        status,
+        spoken: Array.from({ length: spoken }, () => BOT),
+      }) as unknown as PersonalGroupRound;
+
+    // Mid-round upserts notify nothing.
+    yield* push.notifyGroupRound(round("running", 2));
+    expect(yield* outbox).toEqual([]);
+
+    yield* sql`
+      INSERT INTO personal_group_messages (
+        group_id, message_id, speaker_kind, speaker_bot_id, round_id, created_at
+      ) VALUES (
+        'group-1', 'round-1-3-verdict', 'bot', ${BOT}, 'round-1', '2026-09-18T09:06:00.000Z'
+      )
+    `;
+    yield* push.notifyGroupRound(round("completed", 3));
+    // A re-published ending is the same event.
+    yield* push.notifyGroupRound(round("completed", 3));
+    const rows = yield* outbox;
+    expect(rows.length).toBe(1);
+    expect(JSON.parse(rows[0]!.payload)).toMatchObject({
+      title: "Launch crew",
+      body: "The group verdict is ready.",
+      url: "/bots/groups/group-1",
+    });
+
+    // The user reading the group needs no buzz for its ending.
+    yield* push.reportViewing({ connectionId: "phone", threadId: groupThread });
+    yield* push.notifyGroupRound(round("paused_budget", 4));
     expect((yield* outbox).length).toBe(1);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
