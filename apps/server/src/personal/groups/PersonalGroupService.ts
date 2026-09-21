@@ -1470,10 +1470,18 @@ export const make = Effect.gen(function* () {
       const published = yield* Effect.forEach(groups, (group) =>
         toPublicGroup(group, { withNewestMessage: true }),
       );
-      const rounds = yield* repository.listLiveRounds();
-      const votes = yield* repository.listPendingVotesForRounds(
-        rounds.map((round) => round.roundId),
+      const live = yield* repository.listLiveRounds();
+      const votes = yield* repository.listPendingVotesForRounds(live.map((round) => round.roundId));
+      // A group with no live round still reports its newest one, terminal or
+      // not. A client that missed the round ending (a phone asleep, a socket
+      // reconnecting) otherwise keeps its last "running" copy forever: the
+      // replay it resubscribes to would never mention the round again.
+      const liveGroupIds = new Set(live.map((round) => round.groupId));
+      const settled = yield* Effect.forEach(
+        groups.filter((group) => !liveGroupIds.has(group.groupId)),
+        (group) => repository.latestRoundForGroup(group.groupId),
       );
+      const rounds = [...live, ...settled.flatMap((round) => Option.toArray(round))];
       return {
         groups: published,
         rounds: rounds.map(toRound),

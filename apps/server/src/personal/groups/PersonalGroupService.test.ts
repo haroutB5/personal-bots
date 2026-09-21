@@ -571,6 +571,12 @@ it.effect("a broadcast gathers contributions then delivers exactly one final ver
     expect((yield* currentRound).status).toBe("completed");
     expect((yield* currentRound).spoken).toEqual([...order, order[0]]);
     expect(turnStarts(harness)).toHaveLength(4);
+    // A client that missed the ending must still learn it from the list (and
+    // so from the subscribe replay), or it shows "replying" forever.
+    const listed = (yield* (yield* PersonalGroupService.PersonalGroupService).list()).rounds;
+    expect(listed.map((entry) => [entry.roundId, entry.status])).toEqual([
+      [round.roundId, "completed"],
+    ]);
     const phases = groupTranscript(harness)
       .flatMap((message) => message.context?.records ?? [])
       .filter((record) => record.kind === "personal-group")
