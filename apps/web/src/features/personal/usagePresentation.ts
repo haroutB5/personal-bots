@@ -196,3 +196,43 @@ export function selectUsageCards(
   }
   return cards;
 }
+
+/**
+ * Whether opening the sheet should probe before believing what it shows.
+ *
+ * The sheet renders the provider snapshot the app already had, and a snapshot
+ * taken before any probe carries no windows at all — which used to render as
+ * "Usage is not reported for this account yet", a claim nobody had checked.
+ * Refreshing on open is what made the manual button appear to "fix" it.
+ *
+ * Fresh data is left alone so that reopening the sheet twice in a minute does
+ * not spend a probe each time.
+ */
+export const USAGE_STALE_AFTER_MS = 60_000;
+
+export function usageNeedsRefreshOnOpen(cards: readonly UsageCard[], now: number): boolean {
+  if (cards.length === 0) return true;
+  return cards.some(
+    (card) =>
+      card.status === "not-reported" &&
+      (card.checkedAt === null || now - card.checkedAt > USAGE_STALE_AFTER_MS),
+  );
+}
+
+/**
+ * What a card with no bars should say.
+ *
+ * A probe in flight says so rather than reporting an absence as a fact: the
+ * two are indistinguishable in the snapshot, and only one of them is something
+ * the owner can act on.
+ */
+export function usageCardEmptyText(
+  card: UsageCard,
+  options: { readonly checking: boolean },
+): string {
+  if (card.status === "unavailable") {
+    return card.notice ?? "This account has no subscription limits.";
+  }
+  if (options.checking) return "Checking…";
+  return card.notice ?? "Usage is not reported for this account yet.";
+}

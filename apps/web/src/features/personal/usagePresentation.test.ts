@@ -2,7 +2,15 @@ import type { ServerProvider, ServerProviderUsageWindow } from "@t3tools/contrac
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatResetCountdown, formatResetTime, selectUsageCards } from "./usagePresentation";
+import {
+  formatResetCountdown,
+  formatResetTime,
+  selectUsageCards,
+  usageCardEmptyText,
+  usageNeedsRefreshOnOpen,
+  USAGE_STALE_AFTER_MS,
+  type UsageCard,
+} from "./usagePresentation";
 
 const NOW = Date.parse("2026-09-13T12:00:00Z");
 
@@ -266,5 +274,69 @@ describe("selectUsageCards", () => {
     );
     expect(cards).toHaveLength(1);
     expect(cards[0]!.session).toMatchObject({ usedPercent: 11 });
+  });
+});
+
+describe("usage refresh on open", () => {
+  const card = (overrides: Partial<UsageCard> = {}): UsageCard => ({
+    driver: "claudeAgent",
+    title: "Claude",
+    plan: "Max",
+    status: "ready",
+    notice: null,
+    session: null,
+    weeklies: [],
+    checkedAt: 1_000_000,
+    ...overrides,
+  });
+
+  it("probes when a card has never been checked", () => {
+    expect(
+      usageNeedsRefreshOnOpen([card({ status: "not-reported", checkedAt: null })], 1_000_000),
+    ).toBe(true);
+  });
+
+  it("probes when the only reading is stale", () => {
+    const checkedAt = 1_000_000;
+    expect(
+      usageNeedsRefreshOnOpen(
+        [card({ status: "not-reported", checkedAt })],
+        checkedAt + USAGE_STALE_AFTER_MS + 1,
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves a fresh reading alone so reopening does not spend a probe", () => {
+    const checkedAt = 1_000_000;
+    expect(
+      usageNeedsRefreshOnOpen([card({ status: "not-reported", checkedAt })], checkedAt + 1_000),
+    ).toBe(false);
+  });
+
+  it("does not probe for an account that can never report", () => {
+    expect(usageNeedsRefreshOnOpen([card({ status: "unavailable", checkedAt: null })], 1)).toBe(
+      false,
+    );
+  });
+
+  it("probes when there are no cards at all", () => {
+    expect(usageNeedsRefreshOnOpen([], 1)).toBe(true);
+  });
+
+  it("says it is checking rather than reporting an absence it has not verified", () => {
+    const pending = card({ status: "not-reported", checkedAt: null });
+
+    expect(usageCardEmptyText(pending, { checking: true })).toBe("Checking…");
+    expect(usageCardEmptyText(pending, { checking: false })).toBe(
+      "Usage is not reported for this account yet.",
+    );
+  });
+
+  it("keeps the unavailable wording even mid-probe, because a probe cannot change it", () => {
+    const unavailable = card({ status: "unavailable", checkedAt: null });
+
+    expect(usageCardEmptyText(unavailable, { checking: true })).toBe(
+      "This account has no subscription limits.",
+    );
   });
 });

@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useState, type JSX } from "react";
+import { useEffect, useRef, useState, type JSX } from "react";
 import { RefreshCw, X } from "lucide-react";
 
 import { Sheet, SheetClose, SheetDescription, SheetPopup, SheetTitle } from "~/components/ui/sheet";
@@ -8,7 +8,13 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { formatRelativeTime } from "./relativeTime";
 import { usePersonalEnvironmentId } from "./usePersonalBots";
-import { selectUsageCards, type UsageCard, type UsageWindowRow } from "./usagePresentation";
+import {
+  selectUsageCards,
+  usageCardEmptyText,
+  usageNeedsRefreshOnOpen,
+  type UsageCard,
+  type UsageWindowRow,
+} from "./usagePresentation";
 import {
   formatStripPercent,
   selectUsageStripCells,
@@ -99,7 +105,15 @@ function MissingRow({ label }: { readonly label: string }) {
   );
 }
 
-function UsageCardView({ card, now }: { readonly card: UsageCard; readonly now: number }) {
+function UsageCardView({
+  card,
+  now,
+  checking,
+}: {
+  readonly card: UsageCard;
+  readonly now: number;
+  readonly checking: boolean;
+}) {
   return (
     <article
       aria-label={`${card.title} usage`}
@@ -128,9 +142,7 @@ function UsageCardView({ card, now }: { readonly card: UsageCard; readonly now: 
         </div>
       ) : (
         <p className="text-[14px] text-[var(--personal-text-secondary)]">
-          {card.status === "unavailable"
-            ? (card.notice ?? "This account has no subscription limits.")
-            : (card.notice ?? "Usage is not reported for this account yet.")}
+          {usageCardEmptyText(card, { checking })}
         </p>
       )}
       {card.checkedAt !== null ? (
@@ -159,6 +171,11 @@ function UsageSheetBody({
     reportFailure: false,
   });
   const [refreshing, setRefreshing] = useState(false);
+  // The sheet opens on whatever snapshot the app already had. Before this, a
+  // snapshot taken before any probe rendered as "not reported", which is why
+  // the refresh button looked like it fixed a bug: it was doing the first
+  // probe. Opening is the ask, so opening probes.
+  const probedRef = useRef(false);
 
   const onRefresh = async () => {
     if (environmentId === null || refreshing) return;
@@ -169,6 +186,15 @@ function UsageSheetBody({
       setRefreshing(false);
     }
   };
+
+  useEffect(() => {
+    if (probedRef.current || environmentId === null) return;
+    if (!usageNeedsRefreshOnOpen(cards, Date.now())) return;
+    probedRef.current = true;
+    void onRefresh();
+    // Once per mount, and the body is mounted only while the sheet is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [environmentId]);
 
   return (
     <>
@@ -201,7 +227,7 @@ function UsageSheetBody({
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-5 pb-5">
         {cards.map((card) => (
-          <UsageCardView key={card.driver} card={card} now={now} />
+          <UsageCardView key={card.driver} card={card} now={now} checking={refreshing} />
         ))}
       </div>
     </>
