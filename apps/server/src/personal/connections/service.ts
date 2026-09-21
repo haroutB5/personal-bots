@@ -200,12 +200,15 @@ export const make = Effect.gen(function* () {
         : { _tag: "error" as const, problem };
     }
     const granted = outcome.validation.grantedScopes;
-    // `null` is "the vendor does not report scopes", which cannot satisfy a
-    // requirement; an empty list is a token that genuinely has none.
+    // `null` is "this vendor will not tell us", not "this token has none". A
+    // fine-grained GitHub PAT sends no scope header by design, and it is both
+    // the token GitHub recommends and the one a beginner is steered to, so
+    // refusing it would turn away the better credential. Capabilities gate no
+    // operation here, so accepting one grants nothing: it proves identity, and
+    // a write the token cannot do fails against the vendor, whose 403 names
+    // the permission far more precisely than a guess from this side could.
     const missingScopes =
-      granted === null
-        ? [...definition.requiredScopes]
-        : definition.requiredScopes.filter((scope) => !granted.includes(scope));
+      granted === null ? [] : definition.requiredScopes.filter((scope) => !granted.includes(scope));
     if (missingScopes.length > 0) {
       return {
         _tag: "needs_reauth" as const,

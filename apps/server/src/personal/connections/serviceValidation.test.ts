@@ -166,15 +166,28 @@ describe("PersonalConnectionService token validation", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
-  it.effect("will not call a required scope satisfied by a vendor that reports none", () => {
+  it.effect("connects a token whose scopes the vendor will not report", () => {
     const harness = makeHarness();
-    // A fine-grained GitHub token sends no scope header at all. "We cannot
-    // tell" is not "it has them".
+    // A fine-grained GitHub PAT sends no scope header. Refusing it would turn
+    // away the token type GitHub recommends and the one a beginner is steered
+    // to, to satisfy a header it deliberately omits. Capabilities gate no
+    // operation, so connecting proves only identity; the first write that the
+    // token cannot do fails against GitHub with a reason worth reading.
     harness.vendor.grantedScopes = null;
     return Effect.gen(function* () {
+      const created = yield* connectGithub;
+      expect(created.status).toBe("connected");
+      expect(created.account).toEqual(ACCOUNT);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("still refuses a token the vendor says is short a scope", () => {
+    const harness = makeHarness();
+    harness.vendor.grantedScopes = ["repo"];
+    return Effect.gen(function* () {
       const error = yield* Effect.flip(connectGithub);
-      expect(error.message).toContain("repo");
       expect(error.message).toContain("workflow");
+      expect(harness.rows.size).toBe(0);
     }).pipe(Effect.provide(harness.layer));
   });
 
