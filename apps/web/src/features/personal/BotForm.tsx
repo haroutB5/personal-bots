@@ -70,22 +70,45 @@ function ModelSearchField({
   readonly onChange: (slug: string) => void;
 }): JSX.Element {
   const [query, setQuery] = useState("");
+  // The list stays folded until the field is tapped, so the form below it
+  // is not pushed a screen down by a catalogue nobody asked to browse.
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const selected = models.find((model) => model.slug === value);
   const trimmed = query.trim();
   // Browsing shows every model; typing narrows the same list.
-  const results = trimmed.length === 0 ? models : searchModels(models, trimmed, 80);
+  const results = !open ? [] : trimmed.length === 0 ? models : searchModels(models, trimmed, 80);
   const pick = (slug: string) => {
     onChange(slug);
     setQuery("");
+    setOpen(false);
   };
   return (
-    <>
+    <div
+      ref={containerRef}
+      onBlur={(event) => {
+        // Moving focus into the list (tapping a model) keeps it open.
+        if (containerRef.current?.contains(event.relatedTarget as Node | null)) return;
+        setOpen(false);
+        setQuery("");
+      }}
+    >
       <input
         id="bot-model"
         type="search"
         value={query}
-        onChange={(event) => setQuery(event.target.value)}
+        onFocus={() => setOpen(true)}
+        onClick={() => setOpen(true)}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          setOpen(true);
+        }}
         onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            setOpen(false);
+            setQuery("");
+            return;
+          }
           if (event.key !== "Enter") return;
           event.preventDefault();
           const first = trimmed.length > 0 ? results[0] : undefined;
@@ -116,6 +139,9 @@ function ModelSearchField({
           id="bot-model-results"
           role="listbox"
           aria-label="Models"
+          // iOS never focuses a tapped button, so the field's blur would fold
+          // the list before the tap lands; keep focus in the field instead.
+          onMouseDown={(event) => event.preventDefault()}
           className="mt-1.5 max-h-[264px] divide-y divide-[var(--personal-border)] overflow-y-auto overscroll-contain rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-surface)]"
         >
           {results.map((model) => {
@@ -137,7 +163,7 @@ function ModelSearchField({
           })}
         </ul>
       ) : null}
-    </>
+    </div>
   );
 }
 
