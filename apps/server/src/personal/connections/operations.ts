@@ -713,13 +713,18 @@ const WhatsAppReadChat = defineOperation({
 const WhatsAppMarkRead = defineOperation({
   operationId: "whatsapp.mark_read",
   vendorId: "whatsapp",
-  description: "Clear the unread badge on one WhatsApp conversation.",
+  description:
+    "Clear the unread badge on one WhatsApp conversation. The other person sees the read receipt, so do not do this to look at a message without the user knowing.",
   fields: { recipient: RecipientRef },
   resultFields: ["chat", "markedRead"],
   reviewedVendorSchema: "whatsapp/web-conversation@2026-09-21",
+  // Not approved, per the design's table, but not `read_only` either: it
+  // writes, and the other person sees blue ticks. Calling a write read-only
+  // would make this vocabulary untrustworthy exactly where someone reading a
+  // receipt needs to trust it.
   classify: (args) => ({
     approvalRequired: false,
-    reason: "read_only",
+    reason: "account_write",
     summary: `Mark the WhatsApp conversation with ${describeRecipient(args.recipient).label} as read.`,
   }),
   targetResources: (args) => [`whatsapp:chat:${describeRecipient(args.recipient).chatId}`],
