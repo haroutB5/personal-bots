@@ -10,6 +10,10 @@ import * as MachineImport from "./machineImport.ts";
 import * as CredentialStore from "./credentialStore.ts";
 import * as Repository from "./repository.ts";
 import * as Service from "./service.ts";
+import { WhatsAppSession } from "./whatsapp/session.ts";
+
+/** These cover token vendors; WhatsApp's shared browser is never opened here. */
+const noWhatsAppSession = Layer.mock(WhatsAppSession)({});
 
 /**
  * Connecting a vendor is a call to that vendor, not a write. These cover what
@@ -127,6 +131,7 @@ const makeHarness = () => {
           Layer.succeed(CredentialStore.PersonalConnectionCredentialStore, credentialStore),
           Adapters.layerOf([github]),
           noMachineImport,
+          noWhatsAppSession,
         ),
       ),
     ),

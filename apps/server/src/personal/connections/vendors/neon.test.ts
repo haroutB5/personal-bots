@@ -1,3 +1,4 @@
+import { ConnectionId } from "@t3tools/contracts";
 import * as NodeUtil from "node:util";
 
 import { describe, expect, it } from "@effect/vitest";
@@ -27,6 +28,9 @@ const secondary = {
   credentials: { accessToken: Redacted.make(VERCEL_TOKEN) },
   account: VERCEL_ACCOUNT,
 };
+
+/** One connection stands for the account under test. */
+const CONNECTION = ConnectionId.make("connection-under-test");
 
 const text = (value: unknown) =>
   NodeUtil.inspect(value, {
@@ -150,6 +154,8 @@ describe("neon adapter", () => {
           operationId: "neon.create_project",
           arguments: { name: "hbots-demo", regionId: "aws-eu-west-2" },
           credentials,
+          connectionId: CONNECTION,
+          settings: { whatsappDailySendCap: null },
           account: null,
         });
         expect(requests[0]?.body).toEqual({
@@ -185,6 +191,8 @@ describe("neon adapter", () => {
           ownerRole: "neondb_owner",
         },
         credentials,
+        connectionId: CONNECTION,
+        settings: { whatsappDailySendCap: null },
         account: null,
       });
       expect(requests[0]?.body).toEqual({ database: { name: "app", owner_name: "neondb_owner" } });
@@ -209,6 +217,8 @@ describe("neon adapter", () => {
           operationId: "neon.delete_project",
           arguments: { project: "shiny-wind-028834", name: "hbots-demo" },
           credentials,
+          connectionId: CONNECTION,
+          settings: { whatsappDailySendCap: null },
           account: null,
         }),
       );
@@ -232,6 +242,8 @@ describe("neon adapter", () => {
         operationId: "neon.delete_project",
         arguments: { project: "shiny-wind-028834", name: "hbots-demo" },
         credentials,
+        connectionId: CONNECTION,
+        settings: { whatsappDailySendCap: null },
         account: null,
       });
       expect(result).toEqual({ project: "hbots-demo", deleted: true });
@@ -254,6 +266,8 @@ describe("neon server-side credential transfer", () => {
       variableName: "DATABASE_URL",
     },
     credentials,
+    connectionId: CONNECTION,
+    settings: { whatsappDailySendCap: null },
     account: null,
   };
 

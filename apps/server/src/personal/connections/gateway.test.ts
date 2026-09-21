@@ -107,6 +107,7 @@ const makeHarness = (options?: HarnessOptions): Harness => {
               credentialRef: connection.credentialRef,
               credentialVersion: connection.credentialVersion,
               account: null,
+              settings: { whatsappDailySendCap: null },
             })
           : Option.none();
       }),
@@ -119,6 +120,7 @@ const makeHarness = (options?: HarnessOptions): Harness => {
             status: connection.status,
             account: null,
             verifiedCapabilities: [],
+            settings: { whatsappDailySendCap: null },
             credentialVersion: connection.credentialVersion,
             lastValidatedAt: null,
             createdAt: undefined as never,

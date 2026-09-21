@@ -1,3 +1,4 @@
+import { ConnectionId } from "@t3tools/contracts";
 import * as NodeUtil from "node:util";
 
 import { describe, expect, it } from "@effect/vitest";
@@ -11,6 +12,9 @@ import type { VendorHttp, VendorHttpRequest, VendorHttpResponse } from "./vendor
 /** Distinctive enough that finding it anywhere outside a header is a leak. */
 const TOKEN = "ghp_fake_TOKEN_value_0123456789";
 const credentials = { accessToken: Redacted.make(TOKEN) };
+
+/** One connection stands for the account under test. */
+const CONNECTION = ConnectionId.make("connection-under-test");
 
 const text = (value: unknown) =>
   NodeUtil.inspect(value, { depth: null, breakLength: Infinity, maxStringLength: null });
@@ -140,6 +144,8 @@ describe("github adapter", () => {
         operationId: "github.create_repository",
         arguments: { name: "scratch", visibility: "private" },
         credentials,
+        connectionId: CONNECTION,
+        settings: { whatsappDailySendCap: null },
         account: null,
       });
       expect(requests[0]?.body).toEqual({ name: "scratch", private: true, auto_init: false });
@@ -170,6 +176,8 @@ describe("github adapter", () => {
         operationId: "github.list_repositories",
         arguments: {},
         credentials,
+        connectionId: CONNECTION,
+        settings: { whatsappDailySendCap: null },
         account: null,
       });
       expect(result).toEqual({
@@ -223,6 +231,8 @@ describe("github adapter", () => {
       ],
     },
     credentials,
+    connectionId: CONNECTION,
+    settings: { whatsappDailySendCap: null },
     account: null,
   };
 
@@ -338,6 +348,8 @@ describe("github adapter", () => {
           operationId: "github.create_repository",
           arguments: { name: "scratch", visibility: "public" },
           credentials,
+          connectionId: CONNECTION,
+          settings: { whatsappDailySendCap: null },
           account: null,
         }),
       );

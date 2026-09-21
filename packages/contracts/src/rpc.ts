@@ -333,6 +333,9 @@ import {
   PersonalConnectionsError,
   PersonalConnectionValidateInput,
   PersonalConnectionValidationResult,
+  PersonalConnectionBrowserConnectInput,
+  PersonalConnectionBrowserConnectResult,
+  PersonalConnectionSettingsInput,
 } from "./personalConnections.ts";
 import {
   PersonalLogin,
@@ -586,6 +589,8 @@ export const WS_METHODS = {
   personalConnectionsReconnect: "personalConnections.reconnect",
   personalConnectionsDisconnect: "personalConnections.disconnect",
   personalConnectionsRotate: "personalConnections.rotate",
+  personalConnectionsBrowserConnect: "personalConnections.browserConnect",
+  personalConnectionsSetSettings: "personalConnections.setSettings",
   personalConnectionsImportProbe: "personalConnections.importProbe",
   personalConnectionsImportAdopt: "personalConnections.importAdopt",
 
@@ -1377,6 +1382,26 @@ const WsPersonalConnectionsDisconnectRpc = Rpc.make(WS_METHODS.personalConnectio
 
 const WsPersonalConnectionsRotateRpc = Rpc.make(WS_METHODS.personalConnectionsRotate, {
   payload: PersonalConnectionRotateInput,
+  success: PersonalConnection,
+  error: PersonalConnectionsRpcError,
+});
+
+/**
+ * Signing in to a browser-session vendor. No credential crosses the wire in
+ * either direction: the server opens the site and hands the owner control.
+ */
+const WsPersonalConnectionsBrowserConnectRpc = Rpc.make(
+  WS_METHODS.personalConnectionsBrowserConnect,
+  {
+    payload: PersonalConnectionBrowserConnectInput,
+    success: PersonalConnectionBrowserConnectResult,
+    error: PersonalConnectionsRpcError,
+  },
+);
+
+/** Owner-only. No bot-facing tool may change what the owner set here. */
+const WsPersonalConnectionsSetSettingsRpc = Rpc.make(WS_METHODS.personalConnectionsSetSettings, {
+  payload: PersonalConnectionSettingsInput,
   success: PersonalConnection,
   error: PersonalConnectionsRpcError,
 });
@@ -2232,6 +2257,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalConnectionsReconnectRpc,
   WsPersonalConnectionsDisconnectRpc,
   WsPersonalConnectionsRotateRpc,
+  WsPersonalConnectionsBrowserConnectRpc,
+  WsPersonalConnectionsSetSettingsRpc,
   WsPersonalConnectionsImportProbeRpc,
   WsPersonalConnectionsImportAdoptRpc,
   WsPersonalConnectionApprovalsListRpc,

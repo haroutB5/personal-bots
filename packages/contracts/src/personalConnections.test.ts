@@ -35,6 +35,7 @@ describe("personal connection contracts", () => {
         teamName: null,
       },
       verifiedCapabilities: ["repository:write"],
+      settings: { whatsappDailySendCap: null },
       credentialVersion: 2,
       lastValidatedAt: DateTime.makeUnsafe("2026-09-20T12:00:00.000Z"),
       createdAt: DateTime.makeUnsafe("2026-09-20T10:00:00.000Z"),

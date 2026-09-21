@@ -1,3 +1,4 @@
+// @effect-diagnostics preferSchemaOverJson:off - these assert on raw text, which is the point: what a model or an owner would see.
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 

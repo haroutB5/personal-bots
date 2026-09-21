@@ -98,6 +98,7 @@ const makeHarness = (options?: HarnessOptions) => {
             : Option.some({
                 connectionId: ConnectionId.make("connection-vercel"),
                 vendorId,
+                settings: { whatsappDailySendCap: null },
                 credentialRef: "opaque-vercel",
                 credentialVersion: state.vercelVersion,
                 account: {
@@ -111,6 +112,7 @@ const makeHarness = (options?: HarnessOptions) => {
         return Option.some({
           connectionId: ConnectionId.make("connection-neon"),
           vendorId,
+          settings: { whatsappDailySendCap: null },
           credentialRef: "opaque-neon",
           credentialVersion: 1,
           account: null,

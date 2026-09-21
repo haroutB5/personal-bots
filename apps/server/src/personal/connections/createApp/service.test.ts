@@ -82,6 +82,7 @@ const makeHarness = (script: GatewayScript = {}, healthReplies?: ReadonlyArray<n
         Option.some({
           connectionId: ConnectionId.make(`connection-${vendorId}`),
           vendorId,
+          settings: { whatsappDailySendCap: null },
           credentialRef: `opaque-${vendorId}`,
           credentialVersion: 1,
           account: {

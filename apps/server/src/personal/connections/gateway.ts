@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 
 import type { CreateAppPlan, PersonalConnectionApprovalId } from "@t3tools/contracts";
 
-import { connectionDefinition } from "./catalog.ts";
+import { connectionDefinition, usesBrowserSession } from "./catalog.ts";
 import { createAppPlanDigest, planCovers } from "./createApp/plan.ts";
 import * as Adapters from "./adapters.ts";
 import * as ApprovalService from "./approvalService.ts";
@@ -346,12 +346,24 @@ export const make = Effect.gen(function* () {
       );
     }
 
-    const stored = yield* credentials
-      .read({
-        credentialRef: current.value.credentialRef,
-        version: current.value.credentialVersion,
-      })
-      .pipe(Effect.mapError(() => refuse("Could not read the connection credential.")));
+    /**
+     * A browser-session connection has no credential to read.
+     *
+     * Its credential is the logged-in session in the shared browser profile,
+     * which this app never copies out, so there is nothing here to fetch and
+     * nothing to hand the adapter. Whether that session is still good is
+     * decided by the adapter looking at the page, and a signed-out one comes
+     * back as `unauthorized` exactly like a rejected token.
+     */
+    const browserSession = usesBrowserSession(operation.vendorId);
+    const stored = browserSession
+      ? Option.some<Readonly<Record<string, Redacted.Redacted<string>>>>({})
+      : yield* credentials
+          .read({
+            credentialRef: current.value.credentialRef,
+            version: current.value.credentialVersion,
+          })
+          .pipe(Effect.mapError(() => refuse("Could not read the connection credential.")));
     if (Option.isNone(stored)) {
       return yield* notDispatched(
         `The ${definition.displayName} credential is missing. Ask the user to reconnect it.`,
@@ -403,6 +415,10 @@ export const make = Effect.gen(function* () {
         operationId: operation.operationId,
         arguments: prepared.arguments,
         credentials: stored.value,
+        connectionId: current.value.connectionId,
+        // Read with the connection, immediately before dispatch, so a cap the
+        // owner lowered while the card was open is the cap that applies.
+        settings: current.value.settings,
         // From the re-read connection, so a vendor that scopes by team uses
         // the account the owner approved rather than resolving its own.
         account: current.value.account,
