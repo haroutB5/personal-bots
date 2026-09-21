@@ -1,6 +1,8 @@
 import {
   ConnectionId,
+  EMPTY_PERSONAL_CONNECTION_SETTINGS,
   type PersonalConnection,
+  type PersonalConnectionSettings,
   PersonalConnectionStatus,
   PersonalConnectionVendorId,
 } from "@t3tools/contracts";
@@ -21,6 +23,8 @@ export interface StoredPersonalConnection {
   readonly status: typeof PersonalConnectionStatus.Type;
   readonly account: PersonalConnection["account"];
   readonly verifiedCapabilities: ReadonlyArray<string>;
+  /** Owner-visible knobs. Never a credential; a browser-session vendor has none. */
+  readonly settings: PersonalConnectionSettings;
   readonly credentialRef: string;
   readonly credentialVersion: number;
   readonly lastValidatedAt: DateTime.Utc | null;
@@ -36,6 +40,7 @@ export const presentConnection = (stored: StoredPersonalConnection): PersonalCon
   status: stored.status,
   account: stored.account,
   verifiedCapabilities: [...stored.verifiedCapabilities],
+  settings: stored.settings,
   credentialVersion: stored.credentialVersion,
   lastValidatedAt: stored.lastValidatedAt,
   createdAt: stored.createdAt,
@@ -51,6 +56,13 @@ const ConnectionRow = Schema.Struct({
   teamId: Schema.NullOr(Schema.String),
   teamName: Schema.NullOr(Schema.String),
   capabilitiesJson: Schema.fromJsonString(Schema.Array(Schema.String)),
+  // Lenient on the way in on purpose: rows written before a setting existed
+  // simply do not carry it, and that is not a corrupt row.
+  settingsJson: Schema.fromJsonString(
+    Schema.Struct({
+      whatsappDailySendCap: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+    }),
+  ),
   credentialRef: Schema.String,
   credentialVersion: Schema.Int,
   lastValidatedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -68,6 +80,7 @@ const COLUMNS = `
   team_id AS "teamId",
   team_name AS "teamName",
   verified_capabilities_json AS "capabilitiesJson",
+  settings_json AS "settingsJson",
   credential_ref AS "credentialRef",
   credential_version AS "credentialVersion",
   last_validated_at AS "lastValidatedAt",
@@ -132,6 +145,10 @@ export const make = Effect.gen(function* () {
                   teamName: decoded.teamName,
                 },
           verifiedCapabilities: decoded.capabilitiesJson,
+          settings: {
+            ...EMPTY_PERSONAL_CONNECTION_SETTINGS,
+            whatsappDailySendCap: decoded.settingsJson.whatsappDailySendCap ?? null,
+          },
           credentialRef: decoded.credentialRef,
           credentialVersion: decoded.credentialVersion,
           lastValidatedAt: decoded.lastValidatedAt,
@@ -173,13 +190,14 @@ export const make = Effect.gen(function* () {
       sql`
         INSERT INTO personal_connections (
           connection_id, vendor_id, status, account_id, account_name, team_id, team_name,
-          verified_capabilities_json, credential_ref, credential_version, last_validated_at,
-          created_at, updated_at
+          verified_capabilities_json, settings_json, credential_ref, credential_version,
+          last_validated_at, created_at, updated_at
         ) VALUES (
           ${connection.connectionId}, ${connection.vendorId}, ${connection.status},
           ${connection.account?.accountId ?? null}, ${connection.account?.accountName ?? null},
           ${connection.account?.teamId ?? null}, ${connection.account?.teamName ?? null},
           ${JSON.stringify(connection.verifiedCapabilities)},
+          ${JSON.stringify(connection.settings)},
           ${connection.credentialRef}, ${connection.credentialVersion},
           ${connection.lastValidatedAt === null ? null : DateTime.formatIso(connection.lastValidatedAt)},
           ${DateTime.formatIso(connection.createdAt)}, ${DateTime.formatIso(connection.updatedAt)}
@@ -198,6 +216,7 @@ export const make = Effect.gen(function* () {
             team_id = ${connection.account?.teamId ?? null},
             team_name = ${connection.account?.teamName ?? null},
             verified_capabilities_json = ${JSON.stringify(connection.verifiedCapabilities)},
+            settings_json = ${JSON.stringify(connection.settings)},
             credential_ref = ${connection.credentialRef},
             credential_version = ${connection.credentialVersion},
             last_validated_at = ${connection.lastValidatedAt === null ? null : DateTime.formatIso(connection.lastValidatedAt)},

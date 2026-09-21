@@ -4,8 +4,55 @@ import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { PersonalBotId } from "./personalBots.ts";
 import { PersonalTaskId } from "./personalTasks.ts";
 
-export const PersonalConnectionVendorId = Schema.Literals(["github", "vercel", "neon", "upstash"]);
+export const PersonalConnectionVendorId = Schema.Literals([
+  "github",
+  "vercel",
+  "neon",
+  "upstash",
+  "whatsapp",
+]);
 export type PersonalConnectionVendorId = typeof PersonalConnectionVendorId.Type;
+
+/**
+ * How the owner proves the account is theirs.
+ *
+ * `browser-session` exists because a personal WhatsApp account has no token to
+ * paste: the credential is the logged-in session in the shared browser
+ * profile, and nothing about it is ever stored by this feature. The two kinds
+ * lead to different connect screens and different server paths, so a vendor
+ * has to say which it is rather than defaulting into the paste flow.
+ */
+export const PersonalConnectionAuthKind = Schema.Literals(["token-paste", "browser-session"]);
+export type PersonalConnectionAuthKind = typeof PersonalConnectionAuthKind.Type;
+
+/**
+ * The lowest daily send cap that is still useful, and the one a new WhatsApp
+ * connection gets. Volume is what turns automation into a banned number, so
+ * the default is deliberately small and the owner raises it deliberately.
+ */
+export const WHATSAPP_DEFAULT_DAILY_SEND_CAP = 10;
+export const WHATSAPP_MAX_DAILY_SEND_CAP = 100;
+
+/**
+ * Owner-visible knobs that belong to one connection rather than to the vendor.
+ *
+ * Kept as one nullable struct so the Connections screen can show and change
+ * them without a second round trip. `null` on a field means "this vendor does
+ * not have it"; a connected WhatsApp always has a number.
+ */
+export const PersonalConnectionSettings = Schema.Struct({
+  whatsappDailySendCap: Schema.NullOr(
+    Schema.Int.check(
+      Schema.isGreaterThanOrEqualTo(1),
+      Schema.isLessThanOrEqualTo(WHATSAPP_MAX_DAILY_SEND_CAP),
+    ),
+  ),
+});
+export type PersonalConnectionSettings = typeof PersonalConnectionSettings.Type;
+
+export const EMPTY_PERSONAL_CONNECTION_SETTINGS: PersonalConnectionSettings = {
+  whatsappDailySendCap: null,
+};
 
 export const ConnectionId = TrimmedNonEmptyString.pipe(Schema.brand("ConnectionId"));
 export type ConnectionId = typeof ConnectionId.Type;
@@ -33,6 +80,7 @@ export const PersonalConnection = Schema.Struct({
     }),
   ),
   verifiedCapabilities: Schema.Array(Schema.String),
+  settings: PersonalConnectionSettings,
   credentialVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   lastValidatedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   createdAt: Schema.DateTimeUtcFromString,
@@ -81,6 +129,31 @@ export type PersonalConnectionValidationResult = typeof PersonalConnectionValida
 
 export const PersonalConnectionIdInput = Schema.Struct({ connectionId: ConnectionId });
 export type PersonalConnectionIdInput = typeof PersonalConnectionIdInput.Type;
+
+/**
+ * Start (or restart) a browser-session connect: the server opens the vendor's
+ * site in the shared browser and hands the owner control so they can sign in.
+ * There is no credential in either direction, which is the point.
+ */
+export const PersonalConnectionBrowserConnectInput = Schema.Struct({
+  vendorId: PersonalConnectionVendorId,
+});
+export type PersonalConnectionBrowserConnectInput =
+  typeof PersonalConnectionBrowserConnectInput.Type;
+
+export const PersonalConnectionBrowserConnectResult = Schema.Struct({
+  connection: PersonalConnection,
+  /** What the owner has to do now, in their words. */
+  instruction: TrimmedNonEmptyString,
+});
+export type PersonalConnectionBrowserConnectResult =
+  typeof PersonalConnectionBrowserConnectResult.Type;
+
+export const PersonalConnectionSettingsInput = Schema.Struct({
+  connectionId: ConnectionId,
+  settings: PersonalConnectionSettings,
+});
+export type PersonalConnectionSettingsInput = typeof PersonalConnectionSettingsInput.Type;
 
 export const PersonalConnectionRotateInput = Schema.Struct({
   connectionId: ConnectionId,
