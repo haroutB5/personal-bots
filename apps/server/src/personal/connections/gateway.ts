@@ -6,7 +6,10 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
+import type { CreateAppPlan, PersonalConnectionApprovalId } from "@t3tools/contracts";
+
 import { connectionDefinition } from "./catalog.ts";
+import { createAppPlanDigest, planCovers } from "./createApp/plan.ts";
 import * as Adapters from "./adapters.ts";
 import * as ApprovalService from "./approvalService.ts";
 import * as CredentialStore from "./credentialStore.ts";
@@ -47,6 +50,24 @@ export interface ConnectionGatewayCaller {
   readonly taskId: PersonalTaskId | null;
 }
 
+/**
+ * An approved `create_app` plan, offered instead of a per-call card.
+ *
+ * The plan is handed in whole and authenticated against the approval it claims
+ * to come from: the approval's digest must be the hash of *this* plan, so a
+ * doctored plan cannot borrow a real decision. The gateway then checks that
+ * the plan covers this exact operation and every resource it touches. It is
+ * not a bypass — validation, the drift check, the egress guard and the
+ * pre-dispatch connection re-read all still run.
+ *
+ * Only server code sets this. The bot-facing toolkit never does, and nothing
+ * in the model's channel can reach it.
+ */
+export interface ConnectionPlanAuthorization {
+  readonly approvalId: PersonalConnectionApprovalId;
+  readonly plan: CreateAppPlan;
+}
+
 export type ConnectionCallResult =
   | {
       readonly _tag: "completed";
@@ -72,6 +93,14 @@ export class PersonalConnectionGateway extends Context.Service<
       readonly operation: string;
       readonly arguments: unknown;
       readonly caller: ConnectionGatewayCaller;
+      readonly planAuthorization?: ConnectionPlanAuthorization;
+      /**
+       * Secret values the caller is deliberately passing *as arguments* — a
+       * data store's connection string on its way into a host environment.
+       * They are scrubbed alongside the connection's own credentials, because
+       * a vendor error quotes the request body back.
+       */
+      readonly scrub?: ReadonlyArray<Redacted.Redacted<string>>;
     }) => Effect.Effect<ConnectionCallResult, PersonalConnectionGatewayError>;
     /** Vendors a bot can actually use right now, with their operations. */
     readonly describe: () => Effect.Effect<
@@ -102,6 +131,8 @@ export const make = Effect.gen(function* () {
     readonly operation: string;
     readonly arguments: unknown;
     readonly caller: ConnectionGatewayCaller;
+    readonly planAuthorization?: ConnectionPlanAuthorization;
+    readonly scrub?: ReadonlyArray<Redacted.Redacted<string>>;
   }) {
     // An operation we do not know by name is not approximated to a near one:
     // it stops here, and the bot is told what does exist.
@@ -132,6 +163,29 @@ export const make = Effect.gen(function* () {
       .prepare(input.arguments)
       .pipe(Effect.mapError((error) => refuse(error.message)));
 
+    /**
+     * The second connection a server-side credential transfer writes into.
+     *
+     * Resolved here, before the owner is asked anything, so a transfer with
+     * nowhere to write refuses rather than raising a card for an action that
+     * could never run.
+     */
+    const secondaryVendorId = operation.secondaryVendorId;
+    const secondaryDefinition =
+      secondaryVendorId === null ? null : connectionDefinition(secondaryVendorId);
+    const resolveSecondary = () =>
+      secondaryVendorId === null
+        ? Effect.succeedNone
+        : connections
+            .resolveForOperation(secondaryVendorId)
+            .pipe(Effect.mapError((error) => refuse(error.message)));
+    const secondary = yield* resolveSecondary();
+    if (secondaryDefinition !== null && Option.isNone(secondary)) {
+      return yield* refuse(
+        `${operation.operationId} puts a secret into ${secondaryDefinition.displayName}, which is not connected or was disabled. Ask the user to connect ${secondaryDefinition.displayName} in Settings; nothing was read and nothing was written.`,
+      );
+    }
+
     // Before the owner is asked anything: there is no point raising a card for
     // an action we already know we will not run.
     const adapter = adapters.forVendor(operation.vendorId);
@@ -140,13 +194,16 @@ export const make = Effect.gen(function* () {
         `${definition.displayName} operations are not available yet in this build. Tell the user this capability is not wired up.`,
       );
     }
-    const vendorSchema = yield* adapter.value
-      .vendorSchema(operation.operationId)
-      .pipe(
-        Effect.mapError(() =>
-          refuse(`Could not check what shape ${definition.displayName} speaks. Nothing ran.`),
+    const vendorSchema = yield* adapter.value.vendorSchema(operation.operationId).pipe(
+      // The adapter's own words: an operation it deliberately does not
+      // implement says so by name, which reads very differently from a
+      // vendor whose contract we could not check.
+      Effect.mapError((error) =>
+        refuse(
+          `${definition.displayName} cannot run ${operation.operationId} in this build: ${error.detail} Nothing ran.`,
         ),
-      );
+      ),
+    );
     if (vendorSchema !== operation.reviewedVendorSchema) {
       return yield* refuse(
         `${definition.displayName} changed its ${operation.operationId} contract (${vendorSchema}) from the one this build was reviewed against (${operation.reviewedVendorSchema}). Nothing ran. Tell the user the connection needs updating.`,
@@ -162,31 +219,88 @@ export const make = Effect.gen(function* () {
     });
     if (blocked !== null) return yield* refuse(blocked);
 
+    /**
+     * What the approval binds to.
+     *
+     * The primary connection and its credential version are digest fields of
+     * their own. The second connection is bound here instead, as a resource,
+     * so it is both part of the digest and a line the owner reads: an approval
+     * to write a secret into one Vercel account must not be spendable after
+     * that account is swapped or its token rotated.
+     */
+    const boundResources = Option.isNone(secondary)
+      ? prepared.targetResources
+      : [
+          ...prepared.targetResources,
+          `${secondary.value.vendorId}:connection:${secondary.value.connectionId}@v${secondary.value.credentialVersion}`,
+        ];
+
     const actionDigest = Operations.normalizedActionDigest({
       operationId: operation.operationId,
       arguments: prepared.arguments,
       connectionId: connection.connectionId,
       credentialVersion: connection.credentialVersion,
-      targetResources: prepared.targetResources,
+      targetResources: boundResources,
     });
 
-    const approval = prepared.risk.approvalRequired
-      ? yield* approvals
-          .require({
-            actionDigest,
-            connectionId: connection.connectionId,
-            vendorId: operation.vendorId,
-            operationId: operation.operationId,
-            riskReason: prepared.risk.reason,
-            summary: prepared.risk.summary,
-            targetResources: prepared.targetResources,
-            credentialVersion: connection.credentialVersion,
-            threadId: input.caller.threadId,
-            botId: input.caller.botId,
-            taskId: input.caller.taskId,
-          })
-          .pipe(Effect.mapError((error) => refuse(error.message)))
-      : null;
+    /**
+     * A plan already decided covers this action, or it does not.
+     *
+     * Checked here rather than folded into `require` because it answers a
+     * different question: `require` asks "has the owner said yes to this exact
+     * action", and this asks "did the owner say yes to a plan that includes
+     * it". An action outside the plan is refused outright rather than turned
+     * into a card, because the run that asked has to go back for a fresh plan
+     * decision — quietly raising a one-off card would let a run drift outside
+     * what was approved, one card at a time.
+     */
+    const planAuthorization = input.planAuthorization;
+    if (planAuthorization !== undefined) {
+      const decided = yield* approvals
+        .get(planAuthorization.approvalId)
+        .pipe(Effect.mapError((error) => refuse(error.message)));
+      if (Option.isNone(decided) || decided.value.status !== "approved") {
+        return yield* refuse(
+          "The plan this step belongs to is no longer approved, so nothing ran.",
+        );
+      }
+      if (decided.value.executedAt !== null) {
+        // The plan's single receipt is written when the run finishes. A plan
+        // that already has one is a run that already ended.
+        return yield* refuse("That plan was already carried out, so nothing ran.");
+      }
+      if (decided.value.actionDigest !== createAppPlanDigest(planAuthorization.plan)) {
+        return yield* refuse("The plan does not match the decision it claims, so nothing ran.");
+      }
+      const coverage = planCovers(planAuthorization.plan, {
+        operationId: operation.operationId,
+        targetResources: prepared.targetResources,
+      });
+      if (!coverage.covered) {
+        return yield* refuse(
+          `${coverage.reason ?? "The approved plan does not cover this."} Nothing ran.`,
+        );
+      }
+    }
+
+    const approval =
+      planAuthorization === undefined && prepared.risk.approvalRequired
+        ? yield* approvals
+            .require({
+              actionDigest,
+              connectionId: connection.connectionId,
+              vendorId: operation.vendorId,
+              operationId: operation.operationId,
+              riskReason: prepared.risk.reason,
+              summary: prepared.risk.summary,
+              targetResources: boundResources,
+              credentialVersion: connection.credentialVersion,
+              threadId: input.caller.threadId,
+              botId: input.caller.botId,
+              taskId: input.caller.taskId,
+            })
+            .pipe(Effect.mapError((error) => refuse(error.message)))
+        : null;
 
     if (approval !== null && approval._tag !== "approved") {
       if (approval._tag === "pending") {
@@ -243,9 +357,46 @@ export const make = Effect.gen(function* () {
         `The ${definition.displayName} credential is missing. Ask the user to reconnect it.`,
       );
     }
+    // The second connection gets the same treatment, in the same order: the
+    // card may have been open for minutes, and a transfer written with a
+    // credential the owner has since replaced is a write they did not approve.
+    const currentSecondary = yield* resolveSecondary();
+    if (
+      secondaryDefinition !== null &&
+      (Option.isNone(currentSecondary) ||
+        Option.isNone(secondary) ||
+        currentSecondary.value.connectionId !== secondary.value.connectionId ||
+        currentSecondary.value.credentialVersion !== secondary.value.credentialVersion)
+    ) {
+      return yield* notDispatched(
+        `The ${secondaryDefinition.displayName} connection this was going to write into changed while it was waiting, so nothing was read and nothing was written. Ask the user to confirm it, then start again.`,
+      );
+    }
+    const storedSecondary = Option.isNone(currentSecondary)
+      ? Option.none<Readonly<Record<string, Redacted.Redacted<string>>>>()
+      : yield* credentials
+          .read({
+            credentialRef: currentSecondary.value.credentialRef,
+            version: currentSecondary.value.credentialVersion,
+          })
+          .pipe(Effect.mapError(() => refuse("Could not read the connection credential.")));
+    if (secondaryDefinition !== null && Option.isNone(storedSecondary)) {
+      return yield* notDispatched(
+        `The ${secondaryDefinition.displayName} credential is missing, so nothing was read and nothing was written. Ask the user to reconnect it.`,
+      );
+    }
+
     // Held only for the length of this call, and only to remove every
-    // rendering of them from whatever the vendor says back.
-    const secrets = Object.values(stored.value).map(Redacted.value);
+    // rendering of them from whatever the vendor says back. Both connections'
+    // values, because both were read for this one call.
+    const secrets = [
+      ...Object.values(stored.value),
+      ...(Option.isNone(storedSecondary) ? [] : Object.values(storedSecondary.value)),
+      // And any value the caller is knowingly passing through the argument
+      // channel: a vendor error quotes the request body back, and the
+      // connection's own credentials are not the only secret in one.
+      ...(input.scrub ?? []),
+    ].map(Redacted.value);
 
     const outcome = yield* adapter.value
       .execute({
@@ -255,6 +406,15 @@ export const make = Effect.gen(function* () {
         // From the re-read connection, so a vendor that scopes by team uses
         // the account the owner approved rather than resolving its own.
         account: current.value.account,
+        ...(Option.isNone(currentSecondary) || Option.isNone(storedSecondary)
+          ? {}
+          : {
+              secondary: {
+                vendorId: currentSecondary.value.vendorId,
+                credentials: storedSecondary.value,
+                account: currentSecondary.value.account,
+              },
+            }),
       })
       .pipe(
         Effect.map((result) => ({ ok: true as const, result, unauthorized: false })),
