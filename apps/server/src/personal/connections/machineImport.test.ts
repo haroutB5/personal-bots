@@ -28,6 +28,8 @@ const GH_HOSTS = `github.com:
     oauth_token: ${GH_TOKEN}
 `;
 
+const NEON_PATH = "/fixtures/neonctl/credentials.json";
+
 const locations: MachineImport.ImportLocations = {
   github: { sourceId: "gh-cli", label: "GitHub CLI", path: GH_PATH },
   vercel: {
@@ -36,6 +38,10 @@ const locations: MachineImport.ImportLocations = {
     path: VERCEL_PATH,
     profilePath: VERCEL_CONFIG,
   },
+  neon: { sourceId: "neon-cli", label: "Neon CLI", path: NEON_PATH },
+  // The Neon and Upstash probes have their own suite; these tests are about
+  // the two CLI files, so this one scans no project directories.
+  envRoot: null,
 };
 
 const harnessFor = (files: Readonly<Record<string, string>>) => {
@@ -70,6 +76,7 @@ describe("connection machine import", () => {
       expect(result.sources.map((source) => [source.sourceId, source.state])).toEqual([
         ["gh-cli", "found"],
         ["vercel-cli", "found"],
+        ["neon-cli", "absent"],
       ]);
       expect(result.candidates.map((candidate) => candidate.vendorId)).toEqual([
         "github",
@@ -87,7 +94,7 @@ describe("connection machine import", () => {
       expect(rendered).not.toContain(VERCEL_TOKEN.slice(0, 10));
 
       // Only the configured locations, and nothing near them.
-      expect(new Set(full.read)).toEqual(new Set([GH_PATH, VERCEL_PATH, VERCEL_CONFIG]));
+      expect(new Set(full.read)).toEqual(new Set([GH_PATH, VERCEL_PATH, VERCEL_CONFIG, NEON_PATH]));
     }).pipe(Effect.provide(full.layer)),
   );
 
