@@ -21,8 +21,6 @@ export interface ConnectionVendorInfo {
   readonly requiredCredentialFields: ReadonlyArray<string>;
   /** What the owner gets out of connecting it, in their words. */
   readonly purpose: string;
-  /** Whether hbots can run anything against it yet. */
-  readonly operational: boolean;
 }
 
 export const CONNECTION_VENDORS: ReadonlyArray<ConnectionVendorInfo> = [
@@ -33,7 +31,6 @@ export const CONNECTION_VENDORS: ReadonlyArray<ConnectionVendorInfo> = [
     requiredScopes: ["repo", "workflow"],
     requiredCredentialFields: ["accessToken"],
     purpose: "Create repositories and push code.",
-    operational: true,
   },
   {
     vendorId: "vercel",
@@ -42,7 +39,6 @@ export const CONNECTION_VENDORS: ReadonlyArray<ConnectionVendorInfo> = [
     requiredScopes: [],
     requiredCredentialFields: ["accessToken"],
     purpose: "Create projects, set environment variables and deploy.",
-    operational: true,
   },
   {
     vendorId: "neon",
@@ -50,8 +46,8 @@ export const CONNECTION_VENDORS: ReadonlyArray<ConnectionVendorInfo> = [
     tokenPageUrl: "https://console.neon.tech/app/settings/api-keys",
     requiredScopes: [],
     requiredCredentialFields: ["apiKey"],
-    purpose: "Postgres databases. Not wired up yet.",
-    operational: false,
+    purpose:
+      "Create Postgres databases, and put their connection string straight into a Vercel project's environment without it passing through the chat.",
   },
   {
     vendorId: "upstash",
@@ -59,8 +55,8 @@ export const CONNECTION_VENDORS: ReadonlyArray<ConnectionVendorInfo> = [
     tokenPageUrl: "https://console.upstash.com/account/api",
     requiredScopes: [],
     requiredCredentialFields: ["email", "apiKey"],
-    purpose: "Redis databases. Not wired up yet.",
-    operational: false,
+    purpose:
+      "Create Redis databases, and put their REST credentials straight into a Vercel project's environment without them passing through the chat.",
   },
 ];
 

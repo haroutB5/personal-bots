@@ -8,6 +8,7 @@ import {
   describeImportSource,
   emptyTokenDraft,
   validateTokenDraft,
+  vendorInfo,
 } from "./connectionsModel";
 
 import type { PersonalConnection } from "@t3tools/contracts";
@@ -134,6 +135,26 @@ describe("token draft", () => {
       email: "Paste the email to connect.",
       apiKey: "Paste the API key to connect.",
     });
+  });
+});
+
+describe("what each vendor is for", () => {
+  it("says what every catalog vendor does, with none of them unwired", () => {
+    for (const vendor of CONNECTION_VENDORS) {
+      expect(vendor.purpose.length, vendor.vendorId).toBeGreaterThan(0);
+      // Neon and Upstash said "Not wired up yet" while they had no adapter.
+      // They have one now, and a screen that still says so is a screen telling
+      // the owner not to bother connecting something that works.
+      expect(vendor.purpose, vendor.vendorId).not.toContain("Not wired up");
+    }
+  });
+
+  it("names the database work a bot can now actually do", () => {
+    expect(vendorInfo("neon").purpose).toContain("Postgres");
+    expect(vendorInfo("upstash").purpose).toContain("Redis");
+    // The point of the milestone, said where the owner decides to connect.
+    expect(vendorInfo("neon").purpose).toContain("Vercel");
+    expect(vendorInfo("upstash").purpose).toContain("Vercel");
   });
 });
 
