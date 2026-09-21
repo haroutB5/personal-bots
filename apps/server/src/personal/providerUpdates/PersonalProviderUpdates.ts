@@ -159,7 +159,7 @@ interface SessionVersion {
 interface CheckRequest {
   readonly provider: ServerProvider;
   readonly version: string;
-  readonly model: string;
+  readonly models: ReadonlyArray<string>;
   readonly test: SmokeTest;
   readonly previous: PersistedSmokeCheck | null;
 }
@@ -167,11 +167,25 @@ interface CheckRequest {
 const versionOf = (providers: ReadonlyArray<ServerProvider>, instanceId: ProviderInstanceId) =>
   providers.find((provider) => provider.instanceId === instanceId)?.version ?? null;
 
-/** The configured model of the first bot (sort order) on the instance. */
-const botModelFor = (bots: ReadonlyArray<PersonalBot>, instanceId: ProviderInstanceId) =>
-  bots
-    .filter((bot) => bot.modelSelection.instanceId === instanceId)
-    .toSorted((left, right) => left.sortOrder - right.sortOrder)[0]?.modelSelection.model ?? null;
+/**
+ * Every distinct model the instance's bots use, in sort order.
+ *
+ * The check used to try only the first bot's model, so a single bot pinned to
+ * a withdrawn model reported the whole provider as broken while every other
+ * bot on it worked. The question this check answers is "did the update break
+ * this provider", and one model cannot answer it alone.
+ */
+const botModelsFor = (
+  bots: ReadonlyArray<PersonalBot>,
+  instanceId: ProviderInstanceId,
+): ReadonlyArray<string> => [
+  ...new Set(
+    bots
+      .filter((bot) => bot.modelSelection.instanceId === instanceId)
+      .toSorted((left, right) => left.sortOrder - right.sortOrder)
+      .map((bot) => bot.modelSelection.model),
+  ),
+];
 
 const projectionOf = (persisted: PersistedSmokeCheck): ServerProviderSmokeCheck | null =>
   persisted.status === "baseline"
@@ -329,11 +343,33 @@ export const makeWith = (
           message: null,
         });
         yield* Effect.logInfo("personal provider test message started", { instanceId, version });
-        const outcome = yield* Effect.exit(request.test(request.model));
+        // Stops at the first model that answers: one working model proves the
+        // provider survived the update. Every model is tried only when things
+        // are already failing, which is when the extra turns are worth it.
+        let lastFailure: { readonly model: string; readonly detail: string } | null = null;
+        let passed = false;
+        for (const model of request.models) {
+          const outcome = yield* Effect.exit(request.test(model));
+          if (Exit.isSuccess(outcome)) {
+            passed = true;
+            break;
+          }
+          lastFailure = { model, detail: failureDetail(outcome.cause) };
+        }
         const checkedAt = DateTime.formatIso(yield* DateTime.now);
-        const next: PersistedSmokeCheck = Exit.isSuccess(outcome)
+        const next: PersistedSmokeCheck = passed
           ? { version, status: "passed", checkedAt, message: null }
-          : { version, status: "failed", checkedAt, message: failureDetail(outcome.cause) };
+          : {
+              version,
+              status: "failed",
+              checkedAt,
+              // Named, because "it failed" alone sends someone hunting an
+              // outage when one bot simply points at a model that is gone.
+              message:
+                lastFailure === null
+                  ? "No model could be tested."
+                  : `${lastFailure.model}: ${lastFailure.detail}`,
+            };
         yield* writePersisted(instanceId, next);
         yield* deps.setSmokeCheck(instanceId, projectionOf(next));
         if (next.status === "passed") {
@@ -397,12 +433,12 @@ export const makeWith = (
           // Signed out is not a broken update; the check runs once the account is back.
           if (provider.auth.status === "unauthenticated") return;
         }
-        const model = botModelFor(bots, instanceId);
-        if (model === null) return;
+        const models = botModelsFor(bots, instanceId);
+        if (models.length === 0) return;
         const test = yield* deps.smokeTestFor(instanceId);
         if (Option.isNone(test)) return;
         checking.add(instanceId);
-        yield* worker.enqueue({ provider, version, model, test: test.value, previous: persisted });
+        yield* worker.enqueue({ provider, version, models, test: test.value, previous: persisted });
       });
 
     const handleProviders = (providers: ReadonlyArray<ServerProvider>) =>

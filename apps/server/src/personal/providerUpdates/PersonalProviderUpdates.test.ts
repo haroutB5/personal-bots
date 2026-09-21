@@ -99,6 +99,9 @@ const makeHarness = (meta = new Map<string, string>()) => {
     meta,
     smokeModels: [] as Array<string>,
     smokeFailure: null as string | null,
+    /** Per-model failures, for an instance whose bots do not all work. */
+    smokeFailureByModel: new Map<string, string>(),
+    bots: [bot] as Array<unknown>,
     projections: [] as Array<ServerProviderSmokeCheck | null>,
     pushes: [] as Array<{ instanceId: string; label: string; version: string }>,
   };
@@ -127,7 +130,7 @@ const makeHarness = (meta = new Map<string, string>()) => {
       }),
     threadShell: (threadId) => Effect.sync(() => Option.fromNullishOr(state.shells.get(threadId))),
     isPersonalThread: (threadId) => Effect.succeed(threadId === BOT_THREAD),
-    listBots: Effect.succeed([bot as unknown as PersonalBot]),
+    listBots: Effect.sync(() => state.bots as Array<PersonalBot>),
     getMeta: (key) => Effect.sync(() => Option.fromNullishOr(state.meta.get(key))),
     setMeta: (key, value) => Effect.sync(() => void state.meta.set(key, value)),
     smokeTestFor: () =>
@@ -135,9 +138,10 @@ const makeHarness = (meta = new Map<string, string>()) => {
         Option.some((model: string) =>
           Effect.suspend(() => {
             state.smokeModels.push(model);
-            return state.smokeFailure === null
+            const failure = state.smokeFailureByModel.get(model) ?? state.smokeFailure;
+            return failure === null || failure === undefined
               ? Effect.void
-              : Effect.fail({ detail: state.smokeFailure });
+              : Effect.fail({ detail: failure });
           }),
         ),
       ),
@@ -235,7 +239,9 @@ it.effect("a failing version is marked broken with one push; a later pass clears
       status: "failed",
       version: "2.1.264",
       checkedAt: state.providers[0]?.smokeCheck?.checkedAt ?? null,
-      message: "API Error: 500",
+      // The model is named: a bare "API Error: 500" does not say whether the
+      // provider is broken or one bot points at a model that is gone.
+      message: "claude-opus-5: API Error: 500",
     });
     assert.deepEqual(state.pushes, [
       { instanceId: CLAUDE, label: "Claude Code", version: "2.1.264" },
@@ -274,4 +280,75 @@ it.effect("a signed-out provider is not blamed on the update", () =>
     assert.deepEqual(state.smokeModels, []);
     assert.deepEqual(state.pushes, []);
   }).pipe(Effect.scoped),
+);
+
+it.effect("one bot on a dead model does not condemn an instance whose other model works", () =>
+  Effect.gen(function* () {
+    const { state, deps, setVersion } = makeHarness();
+    const service = yield* makeWith(deps);
+    // The shape that sent us hunting a provider outage: a bot pinned to a
+    // withdrawn stealth model, beside a bot on a model that answers fine.
+    state.bots = [
+      { modelSelection: { instanceId: CLAUDE, model: "dead-model" }, sortOrder: 0 },
+      { modelSelection: { instanceId: CLAUDE, model: "claude-opus-5" }, sortOrder: 1 },
+    ];
+    state.smokeFailureByModel.set("dead-model", "Unexpected server error.");
+
+    yield* service.handleProviders(state.providers);
+    setVersion("2.1.264");
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+
+    // It tried the dead one first, then found a model that works.
+    assert.deepEqual(state.smokeModels, ["dead-model", "claude-opus-5"]);
+    assert.equal(state.providers[0]?.smokeCheck?.status, "passed");
+    // Nothing is broken about the update, so the owner is not alerted.
+    assert.deepEqual(state.pushes, []);
+  }),
+);
+
+it.effect("still fails the instance, naming the model, when no model answers", () =>
+  Effect.gen(function* () {
+    const { state, deps, setVersion } = makeHarness();
+    const service = yield* makeWith(deps);
+    state.bots = [
+      { modelSelection: { instanceId: CLAUDE, model: "dead-model" }, sortOrder: 0 },
+      { modelSelection: { instanceId: CLAUDE, model: "claude-opus-5" }, sortOrder: 1 },
+    ];
+    state.smokeFailure = "API Error: 500";
+
+    yield* service.handleProviders(state.providers);
+    setVersion("2.1.264");
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+
+    assert.deepEqual(state.smokeModels, ["dead-model", "claude-opus-5"]);
+    assert.equal(state.providers[0]?.smokeCheck?.status, "failed");
+    // The message says which model was tried: "it failed" alone sent two
+    // people looking for an outage that did not exist.
+    assert.include(state.providers[0]?.smokeCheck?.message ?? "", "claude-opus-5");
+    assert.deepEqual(state.pushes, [
+      { instanceId: CLAUDE, label: "Claude Code", version: "2.1.264" },
+    ]);
+  }),
+);
+
+it.effect("tries each distinct model once, however many bots share it", () =>
+  Effect.gen(function* () {
+    const { state, deps, setVersion } = makeHarness();
+    const service = yield* makeWith(deps);
+    state.bots = [
+      { modelSelection: { instanceId: CLAUDE, model: "dead-model" }, sortOrder: 0 },
+      { modelSelection: { instanceId: CLAUDE, model: "dead-model" }, sortOrder: 1 },
+      { modelSelection: { instanceId: CLAUDE, model: "claude-opus-5" }, sortOrder: 2 },
+    ];
+    state.smokeFailureByModel.set("dead-model", "Unexpected server error.");
+
+    yield* service.handleProviders(state.providers);
+    setVersion("2.1.264");
+    yield* service.handleProviders(state.providers);
+    yield* service.drainChecks;
+
+    assert.deepEqual(state.smokeModels, ["dead-model", "claude-opus-5"]);
+  }),
 );
