@@ -70,6 +70,15 @@ export class PersonalConnectionApprovalService extends Context.Service<
     readonly require: (
       request: ConnectionApprovalRequest,
     ) => Effect.Effect<ConnectionApprovalOutcome, PersonalConnectionsError>;
+    /**
+     * One decision by id, whatever its status. The `create_app` runner reads
+     * its plan approval back through this on every step, so a decision
+     * withdrawn or spent between steps stops the run rather than being assumed
+     * to still hold from when it started.
+     */
+    readonly get: (
+      approvalId: PersonalConnectionApprovalId,
+    ) => Effect.Effect<Option.Option<PersonalConnectionApproval>, PersonalConnectionsError>;
     readonly listPending: () => Effect.Effect<
       PersonalConnectionApprovalListResult,
       PersonalConnectionsError
@@ -134,20 +143,21 @@ export const make = Effect.gen(function* () {
         // secret: the credential never went near the session.
         restartSession: false,
       });
-    yield* (status === "cancelled"
-      ? // The owner dismissed the card rather than answering it, so the work
-        // it was for does not continue.
-        tasks.failWaitingForUser({
-          taskId: approval.taskId,
-          message: `The user dismissed the approval for: ${approval.summary}`,
-        })
-      : resume(
-          status === "approved"
-            ? approvalResumeNote(approval)
-            : status === "denied"
-              ? denialResumeNote(approval)
-              : expiryResumeNote(approval),
-        )
+    yield* (
+      status === "cancelled"
+        ? // The owner dismissed the card rather than answering it, so the work
+          // it was for does not continue.
+          tasks.failWaitingForUser({
+            taskId: approval.taskId,
+            message: `The user dismissed the approval for: ${approval.summary}`,
+          })
+        : resume(
+            status === "approved"
+              ? approvalResumeNote(approval)
+              : status === "denied"
+                ? denialResumeNote(approval)
+                : expiryResumeNote(approval),
+          )
     ).pipe(
       // A task that is no longer waiting (its thread was deleted, it was
       // cancelled elsewhere) is not an error here: the decision is recorded
@@ -207,7 +217,9 @@ export const make = Effect.gen(function* () {
     // A denial stands for its own window, so a bot cannot answer "no" by
     // calling again immediately; after that the owner gets a fresh card.
     const denied = history.findLast(
-      (entry) => entry.status === "denied" && DateTime.toEpochMillis(entry.expiresAt) > DateTime.toEpochMillis(now),
+      (entry) =>
+        entry.status === "denied" &&
+        DateTime.toEpochMillis(entry.expiresAt) > DateTime.toEpochMillis(now),
     );
     if (denied !== undefined) return { _tag: "denied" as const, approval: denied };
 
@@ -289,6 +301,7 @@ export const make = Effect.gen(function* () {
 
   return PersonalConnectionApprovalService.of({
     require: (request) => lock.withPermit(requireUnlocked(request)),
+    get: (approvalId) => db("lookup", repository.get(approvalId)),
     listPending: () =>
       Effect.gen(function* () {
         yield* sweepExpired();

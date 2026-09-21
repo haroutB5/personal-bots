@@ -64,6 +64,16 @@ const StepRow = Schema.Struct({
 });
 const decodeStepRow = Schema.decodeUnknownEffect(StepRow);
 
+/**
+ * The same codecs the rows are read back through, used to write them. A plan
+ * that could be written one way and read another would be a plan whose hash
+ * stopped meaning anything.
+ */
+const PlanJson = Schema.fromJsonString(CreateAppPlan);
+const encodePlan = Schema.encodeSync(PlanJson);
+const ReceiptJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+const encodeReceipt = Schema.encodeSync(ReceiptJson);
+
 const RUN_COLUMNS = `
   run_id AS "runId",
   bot_id AS "botId",
@@ -226,7 +236,7 @@ export const make = Effect.gen(function* () {
             status, app_url, created_at, updated_at
           ) VALUES (
             ${run.runId}, ${run.botId}, ${run.threadId}, ${run.taskId},
-            ${JSON.stringify(run.plan)}, ${run.planDigest}, ${run.approvalId},
+            ${encodePlan(run.plan)}, ${run.planDigest}, ${run.approvalId},
             ${run.status}, ${run.appUrl},
             ${DateTime.formatIso(run.createdAt)}, ${DateTime.formatIso(run.updatedAt)}
           )
@@ -244,7 +254,7 @@ export const make = Effect.gen(function* () {
               ) VALUES (
                 ${run.runId}, ${step.stepId}, ${step.title}, ${step.position}, ${step.state},
                 ${step.attempts}, ${step.remoteId}, ${step.adopted ? 1 : 0},
-                ${JSON.stringify(step.receipt)}, ${step.error},
+                ${encodeReceipt(step.receipt)}, ${step.error},
                 ${step.startedAt === null ? null : DateTime.formatIso(step.startedAt)},
                 ${step.endedAt === null ? null : DateTime.formatIso(step.endedAt)}
               )
@@ -351,7 +361,7 @@ export const make = Effect.gen(function* () {
         SET state = ${input.state},
             remote_id = ${input.remoteId},
             adopted = ${input.adopted ? 1 : 0},
-            receipt_json = ${JSON.stringify(input.receipt)},
+            receipt_json = ${encodeReceipt(input.receipt)},
             error = ${input.error},
             ended_at = ${DateTime.formatIso(input.at)}
         WHERE run_id = ${input.runId} AND step_id = ${input.stepId}

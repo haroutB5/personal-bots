@@ -1,5 +1,7 @@
 import * as NodeCrypto from "node:crypto";
 
+import * as Option from "effect/Option";
+
 /**
  * The scaffold `create_app` starts from, pinned by content.
  *
@@ -123,6 +125,26 @@ export const STATIC_APP_TEMPLATE: AppTemplate = {
   environment: [{ key: "APP_ENVIRONMENT_LABEL", value: "hbots" }],
   healthCheck: { path: "/", marker: HEALTH_MARKER },
 };
+
+const TEMPLATES: ReadonlyArray<AppTemplate> = [STATIC_APP_TEMPLATE];
+
+/**
+ * The template a plan was approved with, or nothing.
+ *
+ * Both the revision *and* the digest have to match. A build that shipped a
+ * different scaffold under the same revision name would otherwise carry out a
+ * plan the owner read as something else, which is the one thing pinning is
+ * for. There is deliberately no nearest match.
+ */
+export const resolveTemplate = (pinned: {
+  readonly revision: string;
+  readonly digest: string;
+}): Option.Option<AppTemplate> =>
+  Option.fromNullishOr(
+    TEMPLATES.find(
+      (template) => template.revision === pinned.revision && template.digest === pinned.digest,
+    ),
+  );
 
 export const materializeTemplate = (
   template: AppTemplate,
