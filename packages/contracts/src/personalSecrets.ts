@@ -47,6 +47,24 @@ export const PersonalSecretRequest = Schema.Struct({
 export type PersonalSecretRequest = typeof PersonalSecretRequest.Type;
 
 /** A stored secret as the client may see it: name, label and dates only. */
+/**
+ * A key the owner saved themselves, rather than one a bot asked for.
+ *
+ * The name is the whole point and the only part that can be got wrong: a bot
+ * reads the value as `PB_SECRET_<NAME>`, so a key saved under a name nothing
+ * looks for is invisible rather than broken. It is validated to the same
+ * UPPER_SNAKE shape a bot's own request must use.
+ */
+export const PersonalSecretCreateInput = Schema.Struct({
+  name: PersonalSecretName,
+  /** What the owner calls it in the list. Defaults to the name. */
+  label: Schema.optional(Schema.String),
+  value: Schema.Redacted(Schema.String),
+  /** Owner-added keys are shared by default; every bot can use every saved key. */
+  shared: Schema.optional(Schema.Boolean),
+});
+export type PersonalSecretCreateInput = typeof PersonalSecretCreateInput.Type;
+
 export const PersonalSecretSummary = Schema.Struct({
   name: PersonalSecretName,
   label: Schema.String,

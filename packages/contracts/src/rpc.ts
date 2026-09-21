@@ -316,6 +316,7 @@ import {
   PersonalSecretsError,
   PersonalSecretsListPendingResult,
   PersonalSecretsListResult,
+  PersonalSecretCreateInput,
 } from "./personalSecrets.ts";
 import {
   PersonalConnection,
@@ -578,6 +579,7 @@ export const WS_METHODS = {
   personalSecretsFulfill: "personalSecrets.fulfill",
   personalSecretsCancel: "personalSecrets.cancel",
   personalSecretsList: "personalSecrets.list",
+  personalSecretsCreate: "personalSecrets.create",
   personalSecretsDelete: "personalSecrets.delete",
   personalSecretsSetSharing: "personalSecrets.setSharing",
 
@@ -1324,6 +1326,12 @@ const WsPersonalSecretsCancelRpc = Rpc.make(WS_METHODS.personalSecretsCancel, {
 const WsPersonalSecretsListRpc = Rpc.make(WS_METHODS.personalSecretsList, {
   payload: Schema.Struct({}),
   success: PersonalSecretsListResult,
+  error: PersonalSecretsRpcError,
+});
+
+const WsPersonalSecretsCreateRpc = Rpc.make(WS_METHODS.personalSecretsCreate, {
+  payload: PersonalSecretCreateInput,
+  success: PersonalSecretRequest,
   error: PersonalSecretsRpcError,
 });
 
@@ -2248,6 +2256,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalSecretsFulfillRpc,
   WsPersonalSecretsCancelRpc,
   WsPersonalSecretsListRpc,
+  WsPersonalSecretsCreateRpc,
   WsPersonalSecretsDeleteRpc,
   WsPersonalSecretsSetSharingRpc,
   WsPersonalConnectionsListRpc,

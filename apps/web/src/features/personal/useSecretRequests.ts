@@ -65,6 +65,21 @@ export const personalSavedSecrets = createEnvironmentRpcQueryAtomFamily(connecti
   staleTimeMs: 5_000,
 });
 
+/**
+ * Saves a key the owner typed, with no bot having asked for one.
+ *
+ * The value is a `Schema.Redacted` payload wrapped at the call site, so it is
+ * never logged by the command layer and the success row carries no value.
+ */
+export const personalSecretCreate = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-secrets:create",
+  tag: WS_METHODS.personalSecretsCreate,
+  onSuccess: (target, registry) =>
+    Effect.sync(() =>
+      registry.refresh(personalSavedSecrets({ environmentId: target.environmentId, input: {} })),
+    ),
+});
+
 export const personalSecretSetSharing = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-secrets:sharing",
   tag: WS_METHODS.personalSecretsSetSharing,

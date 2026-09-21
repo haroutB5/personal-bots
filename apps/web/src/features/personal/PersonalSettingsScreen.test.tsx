@@ -37,6 +37,7 @@ vi.mock("./usePersonalBots", () => ({
 vi.mock("./appVersion", () => ({ useAppVersion: () => state.versionInfo }));
 vi.mock("./useSecretRequests", () => ({
   personalSecretSetSharing: {},
+  personalSecretCreate: {},
   useSavedSecrets: () => ({ data: { secrets: [] }, error: null }),
 }));
 

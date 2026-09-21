@@ -705,3 +705,87 @@ describe("personal secret requests", () => {
     expect(withProviderSessionEnvironment(base, undefined)).toBe(base);
   });
 });
+
+describe("keys the owner saves themselves", () => {
+  it.effect("stores the value and lists it as shared, with no bot having asked", () =>
+    withLayer(() =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        const store = yield* ServerSecretStore.ServerSecretStore;
+
+        const saved = yield* secrets.create({
+          name: "OPENWEATHER_API_KEY",
+          label: "OpenWeather",
+          value: Redacted.make("fake-owner-typed-key"),
+        });
+
+        expect(saved.status).toBe("fulfilled");
+        expect(saved.shared).toBe(true);
+        expect(saved.taskId).toBeNull();
+
+        // Readable at the shared name-only key, which is what every bot's
+        // session reads; a key nobody can read would be worse than no key.
+        const stored = yield* store.get(
+          PersonalSecretService.personalSecretStoreKey("OPENWEATHER_API_KEY"),
+        );
+        expect(new TextDecoder().decode(Option.getOrThrow(stored))).toBe("fake-owner-typed-key");
+
+        const listed = yield* secrets.list();
+        expect(listed.secrets.map((entry) => entry.name)).toContain("OPENWEATHER_API_KEY");
+      }),
+    ),
+  );
+
+  it.effect("saving the same name again rotates the value instead of adding a second row", () =>
+    withLayer(() =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        const store = yield* ServerSecretStore.ServerSecretStore;
+
+        yield* secrets.create({ name: "ROTATING_KEY", value: Redacted.make("fake-first") });
+        yield* secrets.create({ name: "ROTATING_KEY", value: Redacted.make("fake-second") });
+
+        const listed = yield* secrets.list();
+        expect(listed.secrets.filter((entry) => entry.name === "ROTATING_KEY")).toHaveLength(1);
+        const stored = yield* store.get(
+          PersonalSecretService.personalSecretStoreKey("ROTATING_KEY"),
+        );
+        expect(new TextDecoder().decode(Option.getOrThrow(stored))).toBe("fake-second");
+      }),
+    ),
+  );
+
+  it.effect("refuses an empty value rather than saving a key that reads as nothing", () =>
+    withLayer(() =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+
+        const error = yield* Effect.flip(
+          secrets.create({ name: "EMPTY_KEY", value: Redacted.make("") }),
+        );
+
+        expect(error.message).toContain("empty");
+      }),
+    ),
+  );
+
+  it.effect("falls back to the name when the owner gives no label", () =>
+    withLayer(() =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+
+        const saved = yield* secrets.create({
+          name: "UNLABELLED_KEY",
+          label: "   ",
+          value: Redacted.make("fake-value"),
+        });
+
+        expect(saved.label).toBe("UNLABELLED_KEY");
+      }),
+    ),
+  );
+});

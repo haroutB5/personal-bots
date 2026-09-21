@@ -13,7 +13,8 @@ import {
   PersonalSecretRequestId,
   PersonalSecretsError,
   personalSecretEnvVar,
-  type PersonalBotId,
+  PersonalBotId,
+  type PersonalSecretCreateInput,
   type PersonalSecretFulfillInput,
   type PersonalSecretRequest,
   type PersonalSecretsListPendingResult,
@@ -21,7 +22,7 @@ import {
   type PersonalSecretSummary,
   type PersonalSecretSharingInput,
   type PersonalTask,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
@@ -45,6 +46,13 @@ export const personalSecretStoreKey = (
   }
   return `personal-secret-${input.botId}-${input.name}`;
 };
+
+/**
+ * The owner is not a bot, but a row needs an id. These are reserved and match
+ * no real bot or thread, so a key the owner saved is never attributed to one.
+ */
+export const OWNER_SAVED_BOT_ID = PersonalBotId.make("owner-saved");
+const OWNER_SAVED_THREAD_ID = ThreadId.make("owner-saved");
 
 /** Request rows carry the owner scope; the store key is derived from them. */
 interface SecretOwnerScope {
@@ -92,6 +100,10 @@ export class PersonalSecretService extends Context.Service<
     readonly cancel: (input: {
       readonly requestId: PersonalSecretRequestId;
     }) => Effect.Effect<PersonalSecretRequest, PersonalSecretsError>;
+    /** Saves a key the owner typed themselves, with no bot having asked. */
+    readonly create: (
+      input: PersonalSecretCreateInput,
+    ) => Effect.Effect<PersonalSecretRequest, PersonalSecretsError>;
     readonly list: () => Effect.Effect<PersonalSecretsListResult, PersonalSecretsError>;
     readonly setSharing: (
       input: PersonalSecretSharingInput,
@@ -399,12 +411,62 @@ export const make = Effect.gen(function* () {
     return yield* list();
   });
 
+  /**
+   * A key the owner saved themselves.
+   *
+   * There is no bot and no task behind it, so the row records a reserved
+   * owner id rather than pretending some bot asked: the list only ever renders
+   * `shared`, and inventing a real bot's id here would put a key in that bot's
+   * name. Saving over an existing name replaces the value, because the owner
+   * typing a key they already have means they are rotating it.
+   */
+  const create: PersonalSecretService["Service"]["create"] = Effect.fn(
+    "PersonalSecretService.create",
+  )(function* (input) {
+    const bytes = new TextEncoder().encode(Redacted.value(input.value));
+    if (bytes.byteLength === 0) {
+      return yield* fail("Secret value is empty.");
+    }
+    if (bytes.byteLength > PERSONAL_SECRET_MAX_VALUE_BYTES) {
+      return yield* fail(`Secret value must be at most ${PERSONAL_SECRET_MAX_VALUE_BYTES} bytes.`);
+    }
+    const shared = input.shared ?? true;
+    const label = (input.label ?? "").trim() || input.name;
+    yield* store
+      .set(personalSecretStoreKey({ name: input.name, botId: OWNER_SAVED_BOT_ID, shared }), bytes)
+      .pipe(Effect.mapError((cause) => fail("Could not store the secret.", cause)));
+
+    const existing = (yield* db("lookup", repository.listByStatus("fulfilled"))).find(
+      (entry) => entry.name === input.name && entry.shared === shared,
+    );
+    if (existing !== undefined) return existing;
+
+    const createdAt = yield* DateTime.now;
+    const row: PersonalSecretRequest = {
+      requestId: PersonalSecretRequestId.make(NodeCrypto.randomUUID()),
+      taskId: null,
+      rootTaskId: null,
+      threadId: OWNER_SAVED_THREAD_ID,
+      botId: OWNER_SAVED_BOT_ID,
+      name: input.name,
+      label,
+      purpose: "Saved by you in Settings.",
+      status: "fulfilled",
+      shared,
+      createdAt,
+      fulfilledAt: createdAt,
+    };
+    yield* db("create", repository.insertRequest(row));
+    return row;
+  });
+
   return {
     request,
     listPending,
     fulfill: (input) => mutationLock.withPermit(fulfill(input)),
     cancel,
     list,
+    create: (input) => mutationLock.withPermit(create(input)),
     remove: (input) => mutationLock.withPermit(remove(input)),
     setSharing: (input) => mutationLock.withPermit(setSharing(input)),
   } satisfies PersonalSecretService["Service"];

@@ -3261,6 +3261,10 @@ const makeWsRpcLayer = (
             personalSecrets.setSharing(input),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.personalSecretsCreate]: (input) =>
+          observeRpcEffect(WS_METHODS.personalSecretsCreate, personalSecrets.create(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.personalSecretsDelete]: (input) =>
           observeRpcEffect(WS_METHODS.personalSecretsDelete, personalSecrets.remove(input), {
             "rpc.aggregate": "server",
