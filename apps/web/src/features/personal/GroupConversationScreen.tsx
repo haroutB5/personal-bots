@@ -528,6 +528,12 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
             onDismissQuestion={() => undefined}
             onProvideSecret={() => undefined}
             onDeclineSecret={() => undefined}
+            // Inert like the secret and question handlers above, and for the
+            // same reason: the group thread runs no provider, so a gated call
+            // belongs to the member bot's own chat and its card appears there.
+            onDecideConnectionApproval={() => undefined}
+            approvalRespondingIds={NO_RESPONDING}
+            approvalsNowMs={now.getTime()}
             errorText={actionError}
             loadEarlier={loadEarlier}
             now={now}

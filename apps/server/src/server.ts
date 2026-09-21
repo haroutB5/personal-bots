@@ -87,6 +87,8 @@ import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
+import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
+import * as PersonalConnectionService from "./personal/connections/service.ts";
 import * as PersonalLoginRepository from "./personal/secrets/PersonalLoginRepository.ts";
 import * as PersonalSessionAccess from "./personal/secrets/PersonalSessionAccess.ts";
 // personal browser
@@ -592,6 +594,10 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
 );
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+  // The approval service is shared: the owner answers a card over RPC while
+  // the gateway asked for it over MCP, and both read the same rows.
+  Layer.provideMerge(PersonalConnectionApprovalService.layerLive),
+  Layer.provideMerge(PersonalConnectionService.layerLive),
   Layer.provideMerge(PersonalLoginService.layerLive),
   // personal browser: the service needs the lease (-> its repository ->
   // SqlClient), PreviewManager and PersonalBotRepository, all provided by

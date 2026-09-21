@@ -28,6 +28,8 @@ import { groupSystemLabel, readGroupMarker } from "./groupModel";
 import { QuestionCard } from "./QuestionCard";
 import type { UserInputAnswers } from "./questionCards";
 import { SecretRequestCard } from "./SecretRequestCard";
+import { ConnectionApprovalCard } from "./ConnectionApprovalCard";
+import { approvalHasExpired } from "./connectionApprovalCards";
 import { ToolDetails } from "./ToolDetails";
 
 /** A message the user sent that the server has not echoed back yet. */
@@ -371,6 +373,9 @@ export function MessageList({
   onDismissQuestion,
   onProvideSecret,
   onDeclineSecret,
+  onDecideConnectionApproval,
+  approvalRespondingIds,
+  approvalsNowMs,
   errorText,
   errorDetail = null,
   loadEarlier,
@@ -409,6 +414,10 @@ export function MessageList({
   /** The value goes straight to the fulfil RPC; nothing here stores it. */
   onProvideSecret: (requestId: string, value: string, shared: boolean) => void;
   onDeclineSecret: (requestId: string) => void;
+  onDecideConnectionApproval: (approvalId: string, decision: "approved" | "denied") => void;
+  approvalRespondingIds: ReadonlySet<string>;
+  /** Passed in rather than read here so a card cannot re-render itself live past its expiry. */
+  approvalsNowMs: number;
   errorText: string | null;
   /** The provider's own line, shown behind a "Details" toggle under `errorText`. */
   errorDetail?: string | null;
@@ -579,6 +588,21 @@ export function MessageList({
                   responding={respondingIds.has(item.card.requestId)}
                   onProvide={onProvideSecret}
                   onDecline={onDeclineSecret}
+                />
+              );
+            case "connection-approval":
+              return (
+                <ConnectionApprovalCard
+                  key={item.id}
+                  card={item.card}
+                  botName={botName}
+                  expired={
+                    item.card.kind === "pending" &&
+                    approvalHasExpired(item.card.approval, approvalsNowMs)
+                  }
+                  responding={approvalRespondingIds.has(item.card.approvalId)}
+                  onApprove={(approvalId) => onDecideConnectionApproval(approvalId, "approved")}
+                  onDeny={(approvalId) => onDecideConnectionApproval(approvalId, "denied")}
                 />
               );
             case "message":

@@ -318,6 +318,23 @@ import {
   PersonalSecretsListResult,
 } from "./personalSecrets.ts";
 import {
+  PersonalConnection,
+  PersonalConnectionApproval,
+  PersonalConnectionApprovalDecideInput,
+  PersonalConnectionApprovalIdInput,
+  PersonalConnectionApprovalListResult,
+  PersonalConnectionConnectInput,
+  PersonalConnectionDisconnectResult,
+  PersonalConnectionIdInput,
+  PersonalConnectionListResult,
+  PersonalConnectionRotateInput,
+  PersonalConnectionImportAdoptInput,
+  PersonalConnectionImportResult,
+  PersonalConnectionsError,
+  PersonalConnectionValidateInput,
+  PersonalConnectionValidationResult,
+} from "./personalConnections.ts";
+import {
   PersonalLogin,
   PersonalLoginCreateInput,
   PersonalLoginDeleteInput,
@@ -560,6 +577,22 @@ export const WS_METHODS = {
   personalSecretsList: "personalSecrets.list",
   personalSecretsDelete: "personalSecrets.delete",
   personalSecretsSetSharing: "personalSecrets.setSharing",
+
+  // Owner-managed service connections. Credential fields are write-only.
+  personalConnectionsList: "personalConnections.list",
+  personalConnectionsConnect: "personalConnections.connect",
+  personalConnectionsValidate: "personalConnections.validate",
+  personalConnectionsDisable: "personalConnections.disable",
+  personalConnectionsReconnect: "personalConnections.reconnect",
+  personalConnectionsDisconnect: "personalConnections.disconnect",
+  personalConnectionsRotate: "personalConnections.rotate",
+  personalConnectionsImportProbe: "personalConnections.importProbe",
+  personalConnectionsImportAdopt: "personalConnections.importAdopt",
+
+  // Owner decisions about what a bot asked a connection to do.
+  personalConnectionApprovalsList: "personalConnectionApprovals.list",
+  personalConnectionApprovalsDecide: "personalConnectionApprovals.decide",
+  personalConnectionApprovalsCancel: "personalConnectionApprovals.cancel",
 
   // Personal saved logins (passwords are write-only and never appear in results)
   personalLoginsList: "personalLogins.list",
@@ -1300,6 +1333,90 @@ const WsPersonalSecretsSetSharingRpc = Rpc.make(WS_METHODS.personalSecretsSetSha
   success: PersonalSecretsListResult,
   error: PersonalSecretsRpcError,
 });
+
+const PersonalConnectionsRpcError = Schema.Union([
+  PersonalConnectionsError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsPersonalConnectionsListRpc = Rpc.make(WS_METHODS.personalConnectionsList, {
+  payload: Schema.Struct({}),
+  success: PersonalConnectionListResult,
+  error: PersonalConnectionsRpcError,
+});
+
+const WsPersonalConnectionsConnectRpc = Rpc.make(WS_METHODS.personalConnectionsConnect, {
+  payload: PersonalConnectionConnectInput,
+  success: PersonalConnection,
+  error: PersonalConnectionsRpcError,
+});
+
+const WsPersonalConnectionsValidateRpc = Rpc.make(WS_METHODS.personalConnectionsValidate, {
+  payload: PersonalConnectionValidateInput,
+  success: PersonalConnectionValidationResult,
+  error: PersonalConnectionsRpcError,
+});
+
+const WsPersonalConnectionsDisableRpc = Rpc.make(WS_METHODS.personalConnectionsDisable, {
+  payload: PersonalConnectionIdInput,
+  success: PersonalConnection,
+  error: PersonalConnectionsRpcError,
+});
+
+const WsPersonalConnectionsReconnectRpc = Rpc.make(WS_METHODS.personalConnectionsReconnect, {
+  payload: PersonalConnectionIdInput,
+  success: PersonalConnection,
+  error: PersonalConnectionsRpcError,
+});
+
+const WsPersonalConnectionsDisconnectRpc = Rpc.make(WS_METHODS.personalConnectionsDisconnect, {
+  payload: PersonalConnectionIdInput,
+  success: PersonalConnectionDisconnectResult,
+  error: PersonalConnectionsRpcError,
+});
+
+const WsPersonalConnectionsRotateRpc = Rpc.make(WS_METHODS.personalConnectionsRotate, {
+  payload: PersonalConnectionRotateInput,
+  success: PersonalConnection,
+  error: PersonalConnectionsRpcError,
+});
+
+/** Owner-triggered only, and never from a bot: reading the machine is not a tool. */
+const WsPersonalConnectionsImportProbeRpc = Rpc.make(WS_METHODS.personalConnectionsImportProbe, {
+  payload: Schema.Struct({}),
+  success: PersonalConnectionImportResult,
+  error: PersonalConnectionsRpcError,
+});
+
+const WsPersonalConnectionsImportAdoptRpc = Rpc.make(WS_METHODS.personalConnectionsImportAdopt, {
+  payload: PersonalConnectionImportAdoptInput,
+  success: PersonalConnection,
+  error: PersonalConnectionsRpcError,
+});
+
+const WsPersonalConnectionApprovalsListRpc = Rpc.make(WS_METHODS.personalConnectionApprovalsList, {
+  payload: Schema.Struct({}),
+  success: PersonalConnectionApprovalListResult,
+  error: PersonalConnectionsRpcError,
+});
+
+const WsPersonalConnectionApprovalsDecideRpc = Rpc.make(
+  WS_METHODS.personalConnectionApprovalsDecide,
+  {
+    payload: PersonalConnectionApprovalDecideInput,
+    success: PersonalConnectionApproval,
+    error: PersonalConnectionsRpcError,
+  },
+);
+
+const WsPersonalConnectionApprovalsCancelRpc = Rpc.make(
+  WS_METHODS.personalConnectionApprovalsCancel,
+  {
+    payload: PersonalConnectionApprovalIdInput,
+    success: PersonalConnectionApproval,
+    error: PersonalConnectionsRpcError,
+  },
+);
 
 const PersonalLoginsRpcError = Schema.Union([PersonalLoginsError, EnvironmentAuthorizationError]);
 
@@ -2108,6 +2225,18 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalSecretsListRpc,
   WsPersonalSecretsDeleteRpc,
   WsPersonalSecretsSetSharingRpc,
+  WsPersonalConnectionsListRpc,
+  WsPersonalConnectionsConnectRpc,
+  WsPersonalConnectionsValidateRpc,
+  WsPersonalConnectionsDisableRpc,
+  WsPersonalConnectionsReconnectRpc,
+  WsPersonalConnectionsDisconnectRpc,
+  WsPersonalConnectionsRotateRpc,
+  WsPersonalConnectionsImportProbeRpc,
+  WsPersonalConnectionsImportAdoptRpc,
+  WsPersonalConnectionApprovalsListRpc,
+  WsPersonalConnectionApprovalsDecideRpc,
+  WsPersonalConnectionApprovalsCancelRpc,
   WsPersonalLoginsListRpc,
   WsPersonalLoginsCreateRpc,
   WsPersonalLoginsUpdateRpc,

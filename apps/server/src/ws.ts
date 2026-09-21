@@ -192,6 +192,8 @@ import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
+import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
+import * as PersonalConnectionService from "./personal/connections/service.ts";
 // personal browser
 import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
 import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
@@ -741,6 +743,9 @@ const makeWsRpcLayer = (
       const personalGroups = yield* PersonalGroupService.PersonalGroupService;
       const personalSecrets = yield* PersonalSecretService.PersonalSecretService;
       const personalLogins = yield* PersonalLoginService.PersonalLoginService;
+      const personalConnections = yield* PersonalConnectionService.PersonalConnectionService;
+      const personalConnectionApprovals =
+        yield* PersonalConnectionApprovalService.PersonalConnectionApprovalService;
       // personal browser
       const personalBrowser = yield* PersonalBrowser.PersonalBrowser;
       const personalRoutines = yield* PersonalRoutineService.PersonalRoutineService;
@@ -3260,6 +3265,76 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalSecretsDelete, personalSecrets.remove(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalConnectionsList]: (_input) =>
+          observeRpcEffect(WS_METHODS.personalConnectionsList, personalConnections.list(), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalConnectionsConnect]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionsConnect,
+            personalConnections.connect(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalConnectionsValidate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionsValidate,
+            personalConnections.validate(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalConnectionsDisable]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionsDisable,
+            personalConnections.disable(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalConnectionsReconnect]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionsReconnect,
+            personalConnections.reconnect(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalConnectionsDisconnect]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionsDisconnect,
+            personalConnections.disconnect(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalConnectionsRotate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionsRotate,
+            personalConnections.rotate(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalConnectionsImportProbe]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionsImportProbe,
+            personalConnections.importProbe(),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalConnectionsImportAdopt]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionsImportAdopt,
+            personalConnections.importAdopt(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalConnectionApprovalsList]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionApprovalsList,
+            personalConnectionApprovals.listPending(),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalConnectionApprovalsDecide]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionApprovalsDecide,
+            personalConnectionApprovals.decide(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalConnectionApprovalsCancel]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalConnectionApprovalsCancel,
+            personalConnectionApprovals.cancel(input),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalLoginsList]: (_input) =>
           observeRpcEffect(WS_METHODS.personalLoginsList, personalLogins.list(), {
             "rpc.aggregate": "server",
@@ -4226,6 +4301,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const personalTasks = yield* PersonalTaskService.PersonalTaskService;
     const personalSecrets = yield* PersonalSecretService.PersonalSecretService;
     const personalLogins = yield* PersonalLoginService.PersonalLoginService;
+    const personalConnections = yield* PersonalConnectionService.PersonalConnectionService;
+    const personalConnectionApprovals =
+      yield* PersonalConnectionApprovalService.PersonalConnectionApprovalService;
     const personalRoutines = yield* PersonalRoutineService.PersonalRoutineService;
     const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
     const personalPush = yield* PersonalPushService.PersonalPushService;
@@ -4289,6 +4367,18 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               ),
               Layer.provide(
                 Layer.succeed(PersonalLoginService.PersonalLoginService, personalLogins),
+              ),
+              Layer.provide(
+                Layer.succeed(
+                  PersonalConnectionService.PersonalConnectionService,
+                  personalConnections,
+                ),
+              ),
+              Layer.provide(
+                Layer.succeed(
+                  PersonalConnectionApprovalService.PersonalConnectionApprovalService,
+                  personalConnectionApprovals,
+                ),
               ),
               Layer.provide(
                 Layer.succeed(PersonalRoutineService.PersonalRoutineService, personalRoutines),

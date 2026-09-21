@@ -272,6 +272,23 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
     }).pipe(Effect.provide(Layer.provideMerge(ServerSecretStore.layer, makeServerConfigLayer()))),
   );
 
+  it.effect("keeps connection credentials sealed on disk", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const token = "fake-connection-token-on-disk";
+      const name = "personal-connection-opaque-ref-v1";
+
+      yield* secretStore.create(name, new TextEncoder().encode(token));
+      const onDisk = yield* fileSystem.readFile(`${config.secretsDir}/${name}.bin`);
+      const read = yield* secretStore.get(name);
+
+      assert.notInclude(Buffer.from(onDisk).toString("utf8"), token);
+      assert.equal(new TextDecoder().decode(Option.getOrThrow(read)), token);
+    }).pipe(Effect.provide(Layer.provideMerge(ServerSecretStore.layer, makeServerConfigLayer()))),
+  );
+
   it.effect("encrypts a legacy plaintext saved login on boot, idempotently", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

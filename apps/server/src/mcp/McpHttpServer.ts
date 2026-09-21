@@ -35,6 +35,13 @@ import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import { ProjectionThreadMessageRepositoryLive } from "../persistence/Layers/ProjectionThreadMessages.ts";
 import { BotsToolkitHandlersLive } from "./toolkits/bots/handlers.ts";
 import { BotsToolkit } from "./toolkits/bots/tools.ts";
+import { ConnectionsToolkitHandlersLive } from "./toolkits/connections/handlers.ts";
+import { ConnectionsToolkit } from "./toolkits/connections/tools.ts";
+import * as ConnectionAdapters from "../personal/connections/vendors/layer.ts";
+import * as ConnectionGateway from "../personal/connections/gateway.ts";
+import * as CreateAppHealthCheck from "../personal/connections/createApp/healthCheck.ts";
+import * as CreateAppRunRepository from "../personal/connections/createApp/runRepository.ts";
+import * as CreateAppService from "../personal/connections/createApp/service.ts";
 import { PersonalToolkitHandlersLive } from "./toolkits/personal/handlers.ts";
 import * as PersonalSessionAccess from "../personal/secrets/PersonalSessionAccess.ts";
 import { PersonalToolkit } from "./toolkits/personal/tools.ts";
@@ -644,6 +651,47 @@ export const PersonalToolkitRegistrationLive = McpServer.toolkit(PersonalToolkit
   Layer.provide(PersonalSessionAccess.layerLive),
 );
 
+/**
+ * The Connections gateway, the only path from a bot to a provider account.
+ * The gate lives here rather than in a provider adapter because personal bots
+ * launch full-access, where Claude's own tool callback allows everything and
+ * Codex has no equivalent at all: this endpoint is the one place both runtimes
+ * are equally constrained. The bot repository is stateless SQL, so this route
+ * brings its own, as the bots toolkit does.
+ */
+export const ConnectionsToolkitRegistrationLive = McpServer.toolkit(ConnectionsToolkit).pipe(
+  Layer.provide(ConnectionsToolkitHandlersLive),
+  Layer.provide(PersonalBotRepository.layer),
+  // create_app sits here rather than in the runtime core because its only
+  // caller is this endpoint: it is a bot-facing workflow, and the owner-facing
+  // half of it is the approval RPCs that already exist.
+  Layer.provide(CreateAppService.layer),
+  Layer.provide(CreateAppRunRepository.layer),
+  Layer.provide(CreateAppHealthCheck.layer),
+  Layer.provide(ConnectionGateway.layer),
+  Layer.provide(ConnectionAdapters.layer),
+);
+
+/**
+ * Runs a dead process left mid-flight, picked up once at startup.
+ *
+ * Detached: a run resumes from its own rows, so nothing here has to finish
+ * before the server can serve. A run whose steps were all confirmed simply
+ * finds nothing to do.
+ */
+export const CreateAppResumeLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const createApp = yield* CreateAppService.PersonalCreateAppService;
+    yield* Effect.forkDetach(createApp.resumeIncomplete());
+  }),
+).pipe(
+  Layer.provide(CreateAppService.layer),
+  Layer.provide(CreateAppRunRepository.layer),
+  Layer.provide(CreateAppHealthCheck.layer),
+  Layer.provide(ConnectionGateway.layer),
+  Layer.provide(ConnectionAdapters.layer),
+);
+
 const DeviceStandardToolkitRegistrationLive = McpServer.toolkit(DeviceStandardToolkit).pipe(
   Layer.provide(DeviceStandardToolkitHandlersLive),
 );
@@ -669,5 +717,7 @@ export const layer = Layer.mergeAll(
   PullRequestsToolkitRegistrationLive,
   BotsToolkitRegistrationLive,
   PersonalToolkitRegistrationLive,
+  ConnectionsToolkitRegistrationLive,
+  CreateAppResumeLive,
   DeviceToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

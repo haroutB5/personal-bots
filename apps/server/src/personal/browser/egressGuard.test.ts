@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { egressNeedingApproval, type Exposure } from "./egressGuard.ts";
+import {
+  connectionEgressRefusal,
+  egressNeedingApproval,
+  type Exposure,
+} from "./egressGuard.ts";
 
 const BANK = "https://bank.example";
 const MAIL = "https://mail.example";
@@ -135,5 +139,23 @@ describe("egress guard policy", () => {
         sensitive,
       }),
     ).toBeNull();
+  });
+});
+
+describe("connectionEgressRefusal", () => {
+  it("lets a gateway call through only while the chat carries nothing sensitive", () => {
+    expect(connectionEgressRefusal({ sources: [], vendorName: "GitHub" })).toBeNull();
+  });
+
+  it("refuses outright once a sensitive site has been open, naming no page content", () => {
+    const refusal = connectionEgressRefusal({ sources: [MAIL, BANK], vendorName: "GitHub" });
+    expect(refusal).not.toBeNull();
+    // The origins the bot itself opened, sorted, and nothing it read there.
+    expect(refusal).toContain(BANK);
+    expect(refusal).toContain(MAIL);
+    expect(refusal!.indexOf(BANK)).toBeLessThan(refusal!.indexOf(MAIL));
+    expect(refusal).toContain("GitHub");
+    // There is no approval to ask for, so the bot is not invited to try.
+    expect(refusal).toContain("no approval reopens them");
   });
 });

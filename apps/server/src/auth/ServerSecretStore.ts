@@ -138,15 +138,16 @@ export const isSecretAlreadyExistsError = (error: SecretStoreError): boolean =>
   "cause" in error && isPlatformError(error.cause) && error.cause.reason._tag === "AlreadyExists";
 
 /**
- * Secrets under this prefix are the saved website passwords. They are the ones
- * a prompt-injected bot has a motive to read off disk, so they are the ones
- * sealed at rest. Other store entries (session keys, DPoP material) keep their
- * existing plaintext format, so no existing install has to be migrated.
+ * Saved website passwords and managed connection credentials are sealed at
+ * rest. Other store entries (session keys, DPoP material) keep their existing
+ * plaintext format, so no existing install has to be migrated.
  */
 export const ENCRYPTED_SECRET_NAME_PREFIX = "personal-login-";
+export const ENCRYPTED_CONNECTION_SECRET_NAME_PREFIX = "personal-connection-";
 
 export const isEncryptedSecretName = (name: string): boolean =>
-  name.startsWith(ENCRYPTED_SECRET_NAME_PREFIX);
+  name.startsWith(ENCRYPTED_SECRET_NAME_PREFIX) ||
+  name.startsWith(ENCRYPTED_CONNECTION_SECRET_NAME_PREFIX);
 
 /** Holds the machine-wrapped data-encryption key. Never a secret value itself. */
 export const DATA_KEY_FILE_NAME = "data-encryption-key.json";

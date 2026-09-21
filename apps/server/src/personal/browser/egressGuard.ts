@@ -33,6 +33,28 @@ export interface EgressApproval {
   readonly destination: string;
 }
 
+/**
+ * The same policy for the Connections gateway, a channel the guard above
+ * cannot see: a gateway call leaves the app for a vendor API.
+ *
+ * The browser's shape does not transfer. A gateway call has no page and one
+ * fixed outside destination, so an approval here would be a standing permit to
+ * send anything this chat read on the bank to GitHub, bought with a question
+ * about a repository. This end therefore refuses outright while the thread's
+ * exposure set is non-empty and offers nothing to grant.
+ *
+ * The check is on thread state, never on the arguments, so renaming the
+ * operation or rewording a statement changes nothing. Returns what the bot is
+ * told, or null when the call may go ahead.
+ */
+export function connectionEgressRefusal(input: {
+  readonly sources: ReadonlyArray<string>;
+  readonly vendorName: string;
+}): string | null {
+  if (input.sources.length === 0) return null;
+  return `Blocked: this chat has had ${[...input.sources].toSorted().join(", ")} open, a site the user marked sensitive, so connection tools are closed for the rest of it. They send data to ${input.vendorName}, outside this app, and no approval reopens them; retrying with different arguments will not work. Tell the user in one sentence what you wanted to do there and ask them to do it themselves.`;
+}
+
 /** The approval an action needs, or null when it may run unattended. */
 export function egressNeedingApproval(input: {
   readonly exposure: Exposure;
