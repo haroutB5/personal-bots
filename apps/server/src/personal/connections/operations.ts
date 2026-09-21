@@ -71,6 +71,16 @@ export interface ConnectionOperation {
    * stops instead of executing against a shape nobody has looked at.
    */
   readonly reviewedVendorSchema: string;
+  /**
+   * A second connection this operation also needs, resolved by the gateway
+   * alongside the first.
+   *
+   * It exists for one thing: moving a credential a provisioning vendor minted
+   * into the place it is used, server-side, without the value ever becoming an
+   * argument, a result, or transcript text. `null` for everything else, and
+   * then the gateway resolves nothing extra.
+   */
+  readonly secondaryVendorId: PersonalConnectionVendorId | null;
   readonly prepare: (
     raw: unknown,
   ) => Effect.Effect<PreparedConnectionOperation, ConnectionOperationArgumentError>;
@@ -83,6 +93,7 @@ const defineOperation = <const Fields extends Schema.Struct.Fields>(input: {
   readonly fields: Fields;
   readonly resultFields: ReadonlyArray<string>;
   readonly reviewedVendorSchema: string;
+  readonly secondaryVendorId?: PersonalConnectionVendorId;
   readonly classify: (args: Schema.Struct<Fields>["Type"]) => ConnectionRisk;
   readonly targetResources: (args: Schema.Struct<Fields>["Type"]) => ReadonlyArray<string>;
 }): ConnectionOperation => {
@@ -106,6 +117,7 @@ const defineOperation = <const Fields extends Schema.Struct.Fields>(input: {
     argumentsJsonSchema: JSON.stringify(Tool.getJsonSchemaFromSchema(struct)),
     resultFields: input.resultFields,
     reviewedVendorSchema: input.reviewedVendorSchema,
+    secondaryVendorId: input.secondaryVendorId ?? null,
     prepare: (raw) =>
       Effect.gen(function* () {
         const fail = (message: string) =>
@@ -142,6 +154,16 @@ const SlugText = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9._\-\/]{1,100}
 const FreeText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(10_000));
 /** A file may legitimately be empty, so this one has no lower bound. */
 const FileText = Schema.String.check(Schema.isMaxLength(200_000));
+
+/**
+ * One segment of a provider resource name or id.
+ *
+ * Separate from `SlugText` for two reasons: these are interpolated into a URL
+ * path segment, so a slash would let one argument name a different resource
+ * than the one approved; and Neon's own default role is `neondb_owner`, which
+ * a pattern without an underscore would refuse on every default database.
+ */
+const ResourceName = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9._-]{1,100}$/));
 
 const GithubListRepositories = defineOperation({
   operationId: "github.list_repositories",
@@ -326,6 +348,131 @@ const NeonListProjects = defineOperation({
   targetResources: () => [],
 });
 
+/**
+ * The regions this build was reviewed against, as an allowlist.
+ *
+ * A free-text region would be passed straight into a provisioning call, and a
+ * value nobody has looked at either fails at the vendor or, worse, quietly
+ * creates the resource somewhere the owner did not choose. Adding one is a
+ * deliberate edit.
+ */
+const NeonRegion = Schema.Literals([
+  "aws-us-east-1",
+  "aws-us-east-2",
+  "aws-us-west-2",
+  "aws-eu-central-1",
+  "aws-eu-west-2",
+  "aws-ap-southeast-1",
+  "aws-ap-southeast-2",
+  "azure-eastus2",
+]);
+
+const NeonCreateProject = defineOperation({
+  operationId: "neon.create_project",
+  vendorId: "neon",
+  description:
+    "Create a Neon Postgres project. The region must be named; it decides where the data lives.",
+  fields: { name: ResourceName, regionId: NeonRegion },
+  // Neon replies to this call with a connection URI for the role it just
+  // created. It is a password, and it is not in this list: the way it reaches
+  // an application is `neon.attach_connection_string_to_vercel`, server-side.
+  resultFields: ["project", "projectId", "branchId", "database", "role"],
+  reviewedVendorSchema: "neon/v2-projects@2026-09-21",
+  classify: (args) => ({
+    approvalRequired: true,
+    reason: "account_write",
+    summary: `Create the Neon Postgres project ${args.name} in ${args.regionId}.`,
+  }),
+  targetResources: (args) => [`neon:project:${args.name}`],
+});
+
+const NeonCreateDatabase = defineOperation({
+  operationId: "neon.create_database",
+  vendorId: "neon",
+  description: "Create a database on a branch of an existing Neon project.",
+  fields: {
+    project: ResourceName,
+    branch: ResourceName,
+    name: ResourceName,
+    ownerRole: ResourceName,
+  },
+  resultFields: ["project", "branch", "database", "owner"],
+  reviewedVendorSchema: "neon/v2-branch-databases@2026-09-21",
+  classify: (args) => ({
+    approvalRequired: true,
+    reason: "account_write",
+    summary: `Create the database ${args.name} on branch ${args.branch} of the Neon project ${args.project}, owned by ${args.ownerRole}.`,
+  }),
+  targetResources: (args) => [`neon:project:${args.project}`, `neon:database:${args.name}`],
+});
+
+const NeonDeleteProject = defineOperation({
+  operationId: "neon.delete_project",
+  vendorId: "neon",
+  description:
+    "Delete a Neon project and everything in it. Always needs the user's approval, and cannot be undone.",
+  // Both, because they answer different questions. The id is what gets
+  // deleted; the name is what the owner recognises on the card. The adapter
+  // reads the project first and refuses if the two are not the same project,
+  // so an approval given for a name cannot be spent on another id.
+  fields: { project: ResourceName, name: ResourceName },
+  resultFields: ["project", "deleted"],
+  reviewedVendorSchema: "neon/v2-project-delete@2026-09-21",
+  classify: (args) => ({
+    approvalRequired: true,
+    // `account_write` is the enum's word for it. The sentence below is what
+    // the owner actually reads, and it does not understate what happens.
+    reason: "account_write",
+    summary: `Delete the Neon project ${args.name} (${args.project}), with every branch and database in it. This cannot be undone.`,
+  }),
+  targetResources: (args) => [`neon:project:${args.project}`],
+});
+
+/**
+ * The server-side credential transfer.
+ *
+ * A Neon connection string is a password. It is fetched from Neon and written
+ * into a Vercel environment inside one gateway call, and the only thing that
+ * comes back is which variable names were set: there is no argument a value
+ * could be put into and no result field it could come out of, so it never
+ * exists as transcript text, as a tool argument, or in an approval summary.
+ *
+ * The pinned shape names both vendors, because drift at either end is drift.
+ */
+const NeonAttachConnectionStringToVercel = defineOperation({
+  operationId: "neon.attach_connection_string_to_vercel",
+  vendorId: "neon",
+  secondaryVendorId: "vercel",
+  description:
+    "Copy a Neon database's connection string straight into a Vercel project's environment. The value is fetched and written on the server; you never see it, and you must not ask for it.",
+  fields: {
+    project: ResourceName,
+    /** null uses the project's default branch, which is what a new project has. */
+    branch: Schema.NullOr(ResourceName),
+    database: ResourceName,
+    role: ResourceName,
+    /** Pooled is what a serverless runtime wants; the owner sees which on the card. */
+    pooled: Schema.Boolean,
+    vercelProject: SlugText,
+    target: DeploymentTarget,
+    variableName: EnvVarName,
+  },
+  resultFields: ["vercelProject", "target", "keys"],
+  reviewedVendorSchema: "neon/v2-connection-uri@2026-09-21+vercel/v10-project-env@2026-09-20",
+  classify: (args) => ({
+    approvalRequired: true,
+    reason: args.target === "production" ? "deployment" : "account_write",
+    summary: `Put the ${args.pooled ? "pooled" : "direct"} Neon connection string for ${args.database} (project ${args.project}, role ${args.role}) into ${args.variableName} on the ${args.target} environment of the Vercel project ${args.vercelProject}. The value moves between the two providers on the server and is never shown to the bot or written into this chat.`,
+  }),
+  targetResources: (args) => [
+    `neon:project:${args.project}`,
+    `neon:database:${args.database}`,
+    `vercel:project:${args.vercelProject}`,
+    `vercel:target:${args.target}`,
+    `vercel:env:${args.target}:${args.variableName}`,
+  ],
+});
+
 const NeonRunSql = defineOperation({
   operationId: "neon.run_sql",
   vendorId: "neon",
@@ -360,6 +507,92 @@ const UpstashListDatabases = defineOperation({
   targetResources: () => [],
 });
 
+/** Same allowlist rule as Neon's: a region nobody reviewed is not provisioned into. */
+const UpstashRegion = Schema.Literals([
+  "us-east-1",
+  "us-west-1",
+  "us-west-2",
+  "eu-west-1",
+  "eu-central-1",
+  "ap-northeast-1",
+  "ap-southeast-1",
+  "ap-southeast-2",
+  "sa-east-1",
+]);
+
+const UpstashCreateRedisDatabase = defineOperation({
+  operationId: "upstash.create_redis_database",
+  vendorId: "upstash",
+  description:
+    "Create an Upstash Redis database. The region and the plan must both be named; the plan is what it costs.",
+  fields: {
+    name: ResourceName,
+    primaryRegion: UpstashRegion,
+    plan: Schema.Literals(["free", "payg"]),
+  },
+  // No token, no endpoint password: what an application needs is moved by
+  // `upstash.attach_rest_credentials_to_vercel`, server-side.
+  resultFields: ["database", "databaseId", "primaryRegion", "plan"],
+  reviewedVendorSchema: "upstash/v2-redis-database@2026-09-21",
+  classify: (args) => ({
+    approvalRequired: true,
+    reason: "account_write",
+    summary:
+      args.plan === "free"
+        ? `Create the Upstash Redis database ${args.name} in ${args.primaryRegion} on the free plan.`
+        : `Create the Upstash Redis database ${args.name} in ${args.primaryRegion} on the pay-as-you-go plan, which is billed per request against your Upstash account.`,
+  }),
+  targetResources: (args) => [`upstash:database:${args.name}`],
+});
+
+const UpstashDeleteDatabase = defineOperation({
+  operationId: "upstash.delete_database",
+  vendorId: "upstash",
+  description:
+    "Delete an Upstash database and everything stored in it. Always needs the user's approval, and cannot be undone.",
+  /** Id and name, for the reason `neon.delete_project` takes both. */
+  fields: { databaseId: ResourceName, database: ResourceName },
+  resultFields: ["database", "deleted"],
+  reviewedVendorSchema: "upstash/v2-redis-database-delete@2026-09-21",
+  classify: (args) => ({
+    approvalRequired: true,
+    reason: "account_write",
+    summary: `Delete the Upstash database ${args.database} (${args.databaseId}) and everything stored in it. This cannot be undone.`,
+  }),
+  targetResources: (args) => [`upstash:database:${args.databaseId}`],
+});
+
+/** The Upstash half of the server-side transfer; see the Neon one above. */
+const UpstashAttachRestCredentialsToVercel = defineOperation({
+  operationId: "upstash.attach_rest_credentials_to_vercel",
+  vendorId: "upstash",
+  secondaryVendorId: "vercel",
+  description:
+    "Copy an Upstash database's REST URL and token straight into a Vercel project's environment. The token is fetched and written on the server; you never see it, and you must not ask for it.",
+  fields: {
+    databaseId: ResourceName,
+    database: ResourceName,
+    vercelProject: SlugText,
+    target: DeploymentTarget,
+    urlVariableName: EnvVarName,
+    tokenVariableName: EnvVarName,
+  },
+  resultFields: ["vercelProject", "target", "keys"],
+  reviewedVendorSchema: "upstash/v2-redis-database@2026-09-21+vercel/v10-project-env@2026-09-20",
+  classify: (args) => ({
+    approvalRequired: true,
+    reason: args.target === "production" ? "deployment" : "account_write",
+    summary: `Put the Upstash REST URL and token for ${args.database} (${args.databaseId}) into ${args.urlVariableName} and ${args.tokenVariableName} on the ${args.target} environment of the Vercel project ${args.vercelProject}. The token moves between the two providers on the server and is never shown to the bot or written into this chat.`,
+  }),
+  targetResources: (args) => [
+    `upstash:database:${args.databaseId}`,
+    `vercel:project:${args.vercelProject}`,
+    `vercel:target:${args.target}`,
+    `vercel:env:${args.target}:${args.urlVariableName}`,
+    `vercel:env:${args.target}:${args.tokenVariableName}`,
+  ],
+});
+
 const UpstashRedisCommand = defineOperation({
   operationId: "upstash.redis_command",
   vendorId: "upstash",
@@ -389,8 +622,15 @@ export const CONNECTION_OPERATIONS: ReadonlyArray<ConnectionOperation> = [
   VercelSetEnvironmentVariables,
   VercelCreateDeployment,
   NeonListProjects,
+  NeonCreateProject,
+  NeonCreateDatabase,
+  NeonDeleteProject,
+  NeonAttachConnectionStringToVercel,
   NeonRunSql,
   UpstashListDatabases,
+  UpstashCreateRedisDatabase,
+  UpstashDeleteDatabase,
+  UpstashAttachRestCredentialsToVercel,
   UpstashRedisCommand,
 ];
 
