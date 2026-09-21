@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
+import { createAppDataStorePlan } from "../../../personal/connections/createApp/dataStores.ts";
 import * as CreateApp from "../../../personal/connections/createApp/service.ts";
 import * as Gateway from "../../../personal/connections/gateway.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
@@ -142,6 +143,16 @@ const make = Effect.gen(function* () {
             appName: input.appName,
             visibility: input.visibility,
             deploymentTarget: input.deploymentTarget,
+            // Deduplicated: asking for the same store twice is one resource,
+            // and a plan naming it twice would read like two.
+            dataStores: [...new Set(input.storage ?? [])].map((kind) =>
+              createAppDataStorePlan({
+                kind,
+                appName: input.appName,
+                vercelProject: input.appName,
+                environmentTargets: [input.deploymentTarget],
+              }),
+            ),
           })
           .pipe(Effect.mapError((error) => refuse(error.message)));
         switch (outcome._tag) {

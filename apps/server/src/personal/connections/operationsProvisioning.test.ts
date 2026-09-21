@@ -156,7 +156,9 @@ describe("upstash provisioning operations", () => {
       expect(prepared.risk.reason).toBe("account_write");
       expect(prepared.targetResources).toEqual(
         expect.arrayContaining([
-          "upstash:database:d1e2f3a4-0000-4a1b-9c2d-000000000000",
+          // The name, not the id: a create_app plan is written before the
+          // database exists and could never name an id.
+          "upstash:database:hbots_demo_cache",
           "vercel:env:preview:UPSTASH_REDIS_REST_URL",
           "vercel:env:preview:UPSTASH_REDIS_REST_TOKEN",
         ]),

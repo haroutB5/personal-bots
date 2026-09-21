@@ -584,8 +584,13 @@ const UpstashAttachRestCredentialsToVercel = defineOperation({
     reason: args.target === "production" ? "deployment" : "account_write",
     summary: `Put the Upstash REST URL and token for ${args.database} (${args.databaseId}) into ${args.urlVariableName} and ${args.tokenVariableName} on the ${args.target} environment of the Vercel project ${args.vercelProject}. The token moves between the two providers on the server and is never shown to the bot or written into this chat.`,
   }),
+  // Keyed on the name, not the id, exactly like `create_redis_database`. A
+  // create_app plan is written before the database exists, so an id here would
+  // be a resource no plan could ever name: the transfer would be refused
+  // mid-run, after the database had been created. The id is still an argument
+  // and still in the summary the owner reads.
   targetResources: (args) => [
-    `upstash:database:${args.databaseId}`,
+    `upstash:database:${args.database}`,
     `vercel:project:${args.vercelProject}`,
     `vercel:target:${args.target}`,
     `vercel:env:${args.target}:${args.urlVariableName}`,

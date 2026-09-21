@@ -77,6 +77,12 @@ export const CreateAppInput = Schema.Struct({
     description:
       "Which environment to deploy. There is no default: ask the user which one they mean.",
   }),
+  storage: Schema.optional(
+    Schema.Array(Schema.Literals(["postgres", "redis"])).annotate({
+      description:
+        "Databases the app needs, if any. 'postgres' is a Neon database for records the app keeps; 'redis' is an Upstash cache for short-lived values. Each one is created on its free tier and its connection details are put into the app's environment by the server, never shown to you. Omit it for an app that stores nothing; ask the user rather than guessing, because each one is a real resource in their account.",
+    }),
+  ),
 });
 export type CreateAppInput = typeof CreateAppInput.Type;
 

@@ -1,5 +1,6 @@
 import type {
   CreateAppDataStorePlan,
+  CreateAppDeploymentTarget,
   CreateAppPlan,
   CreateAppRun,
   PersonalConnectionVendorId,
@@ -10,6 +11,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import type { AppHealthCheck } from "./healthCheck.ts";
+import { NEON_DEFAULT_DATABASE } from "./dataStores.ts";
 import { materializeTemplate, resolveTemplate, validateTemplateFiles } from "./template.ts";
 
 /**
@@ -315,16 +317,22 @@ const EnvironmentStep: CreateAppStepDefinition = {
       for (const [key, value] of Object.entries(context.secrets)) {
         values.set(key, Redacted.value(value));
       }
-      const missing = context.plan.environmentKeys.filter((key) => !values.has(key));
+      // A store that moves its own credential provider-to-provider has already
+      // written its keys into this environment, and their values were never in
+      // this process to write. Requiring them here would fail a run whose
+      // variables are, in fact, set.
+      const storeKeys = new Set(context.plan.dataStores.flatMap((store) => store.environmentKeys));
+      const ownKeys = context.plan.environmentKeys.filter((key) => !storeKeys.has(key));
+      const missing = ownKeys.filter((key) => !values.has(key));
       if (missing.length > 0) {
         return yield* new CreateAppStepError({
           reason: `The plan names ${missing.join(", ")}, and no step produced ${missing.length === 1 ? "it" : "them"}. Nothing was set.`,
         });
       }
-      const variables = context.plan.environmentKeys.map((key) => ({
-        key,
-        value: values.get(key) ?? "",
-      }));
+      const variables = ownKeys.map((key) => ({ key, value: values.get(key) ?? "" }));
+      if (variables.length === 0) {
+        return { remoteId: null, receipt: { keys: "", targets: "" } };
+      }
       for (const target of context.plan.deployment.environmentTargets) {
         yield* context.call({
           operationId: "vercel.set_environment_variables",
@@ -443,7 +451,143 @@ export interface CreateAppDataStoreStepFactory {
   readonly build: (store: CreateAppDataStorePlan) => CreateAppStepDefinition;
 }
 
-export const DATA_STORE_STEP_FACTORIES: ReadonlyArray<CreateAppDataStoreStepFactory> = [];
+/**
+ * Both stores move their own credential into Vercel with the server-side
+ * transfer operations rather than handing the value back through `secrets`.
+ * The value is then never an argument, never in this process, and never in a
+ * scrub list that has to be right: there is no channel to get it wrong in.
+ * The environment step knows to skip the keys these steps write.
+ */
+const attachTargets = (plan: CreateAppPlan): ReadonlyArray<CreateAppDeploymentTarget> =>
+  plan.deployment.environmentTargets;
+
+const NeonStoreStepFactory: CreateAppDataStoreStepFactory = {
+  vendorId: "neon",
+  build: (store) => ({
+    stepId: store.stepId,
+    title: store.title,
+    // A database is a named, billable resource: a second one is the worst
+    // kind of duplicate, so a retry looks before it creates.
+    retryPolicy: "reconcile",
+    reconcile: (context) =>
+      context.call({ operationId: "neon.list_projects", arguments: {} }).pipe(
+        Effect.map((result) => {
+          const rows = result["projects"];
+          const found = (Array.isArray(rows) ? rows : [])
+            .map(asRecord)
+            .find((row) => asString(row["project"]) === store.resourceName);
+          return found === undefined
+            ? Option.none<CreateAppStepOutcome>()
+            : Option.some<CreateAppStepOutcome>({
+                remoteId: asString(found["projectId"]),
+                receipt: { project: store.resourceName, adopted: "yes" },
+              });
+        }),
+      ),
+    execute: (context) =>
+      Effect.gen(function* () {
+        const created = yield* context.call({
+          operationId: "neon.create_project",
+          arguments: { name: store.resourceName, regionId: store.region },
+        });
+        const database = asString(created["database"]) || NEON_DEFAULT_DATABASE;
+        const role = asString(created["role"]);
+        const variableName = store.environmentKeys[0];
+        if (variableName === undefined) {
+          return yield* new CreateAppStepError({
+            reason: `The plan gives ${store.resourceName} no environment variable to fill, so the app would never reach it.`,
+          });
+        }
+        for (const target of attachTargets(context.plan)) {
+          yield* context.call({
+            operationId: "neon.attach_connection_string_to_vercel",
+            arguments: {
+              project: store.resourceName,
+              branch: null,
+              database,
+              role,
+              pooled: true,
+              vercelProject: context.plan.vercel.project,
+              target,
+              variableName,
+            },
+          });
+        }
+        return {
+          remoteId: asString(created["projectId"]),
+          // Names only; the connection string never entered this process.
+          receipt: { project: store.resourceName, database, keys: variableName },
+        };
+      }),
+  }),
+};
+
+const UpstashStoreStepFactory: CreateAppDataStoreStepFactory = {
+  vendorId: "upstash",
+  build: (store) => ({
+    stepId: store.stepId,
+    title: store.title,
+    retryPolicy: "reconcile",
+    reconcile: (context) =>
+      context.call({ operationId: "upstash.list_databases", arguments: {} }).pipe(
+        Effect.map((result) => {
+          const rows = result["databases"];
+          const found = (Array.isArray(rows) ? rows : [])
+            .map(asRecord)
+            .find((row) => asString(row["database"]) === store.resourceName);
+          return found === undefined
+            ? Option.none<CreateAppStepOutcome>()
+            : Option.some<CreateAppStepOutcome>({
+                remoteId: asString(found["databaseId"]),
+                receipt: { database: store.resourceName, adopted: "yes" },
+              });
+        }),
+      ),
+    execute: (context) =>
+      Effect.gen(function* () {
+        const created = yield* context.call({
+          operationId: "upstash.create_redis_database",
+          arguments: {
+            name: store.resourceName,
+            primaryRegion: store.region,
+            plan: store.tier === "free" ? "free" : "payg",
+          },
+        });
+        const databaseId = asString(created["databaseId"]);
+        const [urlVariableName, tokenVariableName] = store.environmentKeys;
+        if (urlVariableName === undefined || tokenVariableName === undefined) {
+          return yield* new CreateAppStepError({
+            reason: `The plan gives ${store.resourceName} fewer than the two environment variables a Redis client needs, so the app would never reach it.`,
+          });
+        }
+        for (const target of attachTargets(context.plan)) {
+          yield* context.call({
+            operationId: "upstash.attach_rest_credentials_to_vercel",
+            arguments: {
+              databaseId,
+              database: store.resourceName,
+              vercelProject: context.plan.vercel.project,
+              target,
+              urlVariableName,
+              tokenVariableName,
+            },
+          });
+        }
+        return {
+          remoteId: databaseId,
+          receipt: {
+            database: store.resourceName,
+            keys: `${urlVariableName}, ${tokenVariableName}`,
+          },
+        };
+      }),
+  }),
+};
+
+export const DATA_STORE_STEP_FACTORIES: ReadonlyArray<CreateAppDataStoreStepFactory> = [
+  NeonStoreStepFactory,
+  UpstashStoreStepFactory,
+];
 
 /**
  * The run's steps, in order. Data-store steps sit after the project and before
