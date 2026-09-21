@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - resolving the fixed CLI locations is platform path arithmetic done once at layer construction, with no Effect to run it in.
 // @effect-diagnostics preferSchemaOverJson:off - CLI credential files are third-party shapes we probe defensively, not contracts we own.
-import * as OS from "node:os";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   PersonalConnectionsError,
@@ -211,10 +213,10 @@ export const parseVercelProfile = (text: string): string | null => {
  */
 export const defaultLocations = (
   env: Readonly<Record<string, string | undefined>> = process.env,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   envRoot: string | null = null,
 ): ImportLocations => {
-  const home = env["HOME"] ?? OS.homedir();
+  const home = env["HOME"] ?? NodeOS.homedir();
   const appData = env["APPDATA"] ?? NodePath.join(home, "AppData", "Roaming");
   const ghRoot =
     platform === "win32"
@@ -596,10 +598,14 @@ export const layer = Layer.effect(
   PersonalConnectionMachineImport,
   Effect.gen(function* () {
     const config = yield* ServerConfig;
+    // Injected rather than read off the global: a test provides a platform and
+    // gets that platform's CLI locations, which is the whole point of probing
+    // fixed paths.
+    const platform = yield* HostProcessPlatform;
     return yield* makeWith(
       defaultLocations(
         process.env,
-        process.platform,
+        platform,
         NodePath.join(config.baseDir, PERSONAL_WORKSPACE_DIRNAME),
       ),
     );

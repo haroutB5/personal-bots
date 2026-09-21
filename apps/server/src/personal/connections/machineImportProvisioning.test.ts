@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - this suite reads its own source tree to compare two literals, and builds fixture paths the way the probe does.
 // @effect-diagnostics preferSchemaOverJson:off - the fixtures stand in for third-party CLI files, which are arbitrary JSON we probe defensively.
-import * as NodeFs from "node:fs";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import * as NodeUrl from "node:url";
+import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 
 import { describe, expect, it } from "@effect/vitest";
@@ -297,8 +297,8 @@ describe("the workspace directory name", () => {
     // Stated in two places so this probe does not drag the bot service into
     // its module graph. If one is renamed, this fails rather than the probe
     // silently scanning a directory that does not exist.
-    const source = NodeFs.readFileSync(
-      NodeUrl.fileURLToPath(new URL("../PersonalBotService.ts", import.meta.url)),
+    const source = NodeFS.readFileSync(
+      NodeURL.fileURLToPath(new URL("../PersonalBotService.ts", import.meta.url)),
       "utf8",
     );
     expect(source).toContain(

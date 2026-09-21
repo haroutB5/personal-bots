@@ -238,7 +238,7 @@ const makeHarness = (options?: HarnessOptions) => {
 };
 
 /** Raises the card, approves it, and calls again: what the owner's yes looks like. */
-const approveAndRun = (harness: ReturnType<typeof makeHarness>) =>
+const approveAndRun = (_harness: ReturnType<typeof makeHarness>) =>
   Effect.gen(function* () {
     const gateway = yield* Gateway.PersonalConnectionGateway;
     const approvals = yield* ApprovalService.PersonalConnectionApprovalService;

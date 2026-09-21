@@ -91,22 +91,6 @@ export class PersonalConnectionService extends Context.Service<
   }
 >()("t3/personal/connections/service/PersonalConnectionService") {}
 
-/** What one call to a vendor concluded about a candidate credential. */
-type VendorCheck =
-  | {
-      readonly _tag: "ok";
-      readonly account: PersonalConnection["account"];
-      readonly verifiedCapabilities: ReadonlyArray<string>;
-    }
-  | {
-      readonly _tag: "needs_reauth";
-      readonly problem: string;
-      readonly missingScopes: ReadonlyArray<string>;
-    }
-  | { readonly _tag: "error"; readonly problem: string }
-  /** No adapter for this vendor yet: nothing was learned, good or bad. */
-  | { readonly _tag: "unchecked"; readonly problem: string };
-
 export const make = Effect.gen(function* () {
   const repository = yield* Repository.PersonalConnectionRepository;
   const credentials = yield* CredentialStore.PersonalConnectionCredentialStore;
