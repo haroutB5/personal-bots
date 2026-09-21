@@ -56,14 +56,12 @@ export const T3RestoreOwnerEnv = async () => ({
  */
 export function personalBotOpenCodeConfigContent(input: {
   readonly model?: string | undefined;
-  readonly denyTools?: boolean;
 }): string {
   const model = input.model?.trim();
   return JSON.stringify({
     share: "disabled",
     autoupdate: false,
     ...(model && model.includes("/") ? { small_model: model } : {}),
-    ...(input.denyTools ? { permission: { "*": "deny" } } : {}),
   });
 }
 
@@ -72,17 +70,13 @@ export function personalBotOpenCodeEnvironment(input: {
   readonly base: NodeJS.ProcessEnv;
   readonly configHome: string;
   readonly model?: string | undefined;
-  readonly denyTools?: boolean;
 }): NodeJS.ProcessEnv {
   return {
     ...input.base,
     ...PERSONAL_BOT_OPENCODE_ENVIRONMENT,
     XDG_CONFIG_HOME: input.configHome,
     [OWNER_XDG_CONFIG_HOME_ENV]: input.base.XDG_CONFIG_HOME ?? "",
-    OPENCODE_CONFIG_CONTENT: personalBotOpenCodeConfigContent({
-      model: input.model,
-      ...(input.denyTools ? { denyTools: true } : {}),
-    }),
+    OPENCODE_CONFIG_CONTENT: personalBotOpenCodeConfigContent({ model: input.model }),
   };
 }
 

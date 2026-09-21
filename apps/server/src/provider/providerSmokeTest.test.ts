@@ -8,6 +8,7 @@ import {
   claudeSmokeTestFailure,
   openCodeSmokeTestFailure,
   SMOKE_TEST_PROMPT,
+  openCodeSmokeTestEnvironment,
 } from "./providerSmokeTest.ts";
 
 const result = (fields: Record<string, unknown>) =>
@@ -92,6 +93,22 @@ describe("buildCodexSmokeTestArgs", () => {
 });
 
 describe("OpenCode smoke test", () => {
+  it("does not deny every tool, which OpenCode's free tier refuses outright", () => {
+    // Denying all tools made the probe fail with a 403 FreeTierError -- "can
+    // only be used from within OpenCode" -- while real bot turns, which allow
+    // tools, worked fine. A check that runs under conditions no session uses
+    // was not checking the thing it claimed to.
+    const config = JSON.parse(
+      openCodeSmokeTestEnvironment({
+        environment: {},
+        configHome: "C:/bots-home",
+        model: "opencode/muse-spark-1.3-contributor-free",
+      }).OPENCODE_CONFIG_CONTENT ?? "{}",
+    ) as Record<string, unknown>;
+
+    expect(config["permission"]).toBeUndefined();
+  });
+
   it("runs one JSON-formatted turn on the bot's model", () => {
     expect(
       buildOpenCodeSmokeTestArgs({ model: "opencode/muse-spark-1.3-contributor-free" }),

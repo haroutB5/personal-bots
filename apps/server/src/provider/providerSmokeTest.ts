@@ -281,6 +281,29 @@ export const runCodexSmokeTest = (input: {
   );
 
 /** `opencode run` argv for the smoke turn; the bot isolation and a deny-all tool rule ride in the env. */
+/**
+ * The environment one OpenCode smoke turn runs in.
+ *
+ * Notably it does NOT deny tools. It used to: a check has no business calling
+ * anything, and the prompt only asks for a word. But OpenCode's free tier
+ * answers a deny-everything session with a 403 "can only be used from within
+ * OpenCode", so the probe failed while every real bot turn — which allows
+ * tools — succeeded. The isolation home already keeps the owner's MCP servers,
+ * plugins and skills out, and the turn runs in a scratch directory, so the
+ * blast radius stays small without a setting that no real session uses.
+ */
+export function openCodeSmokeTestEnvironment(input: {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly configHome: string;
+  readonly model: string;
+}): NodeJS.ProcessEnv {
+  return personalBotOpenCodeEnvironment({
+    base: input.environment,
+    configHome: input.configHome,
+    model: input.model,
+  });
+}
+
 export function buildOpenCodeSmokeTestArgs(input: {
   readonly model: string;
 }): ReadonlyArray<string> {
@@ -358,12 +381,7 @@ export const runOpenCodeSmokeTest = (input: {
     const cwd = yield* fileSystem
       .makeTempDirectoryScoped({ prefix: "t3code-smoke-opencode-" })
       .pipe(Effect.mapError((cause) => fail("Could not create a scratch directory.", cause)));
-    const environment = personalBotOpenCodeEnvironment({
-      base: input.environment,
-      configHome: input.configHome,
-      model: input.model,
-      denyTools: true,
-    });
+    const environment = openCodeSmokeTestEnvironment(input);
     const spawnCommand = yield* resolveSpawnCommand(
       input.binaryPath || "opencode",
       buildOpenCodeSmokeTestArgs({ model: input.model }),

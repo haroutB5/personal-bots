@@ -51,15 +51,18 @@ it.layer(NodeServices.layer)("opencodeBotIsolation", (it) => {
     assert.strictEqual(env.T3_OWNER_XDG_CONFIG_HOME, "C:/owner/config");
   });
 
-  it("denies tools only when asked and skips a model that is not provider/model", () => {
+  it("never denies tools, and skips a model that is not provider/model", () => {
     assert.deepStrictEqual(JSON.parse(personalBotOpenCodeConfigContent({ model: "bare" })), {
       share: "disabled",
       autoupdate: false,
     });
-    assert.deepStrictEqual(
-      JSON.parse(personalBotOpenCodeConfigContent({ model: "a/b", denyTools: true })).permission,
-      { "*": "deny" },
-    );
+    // A deny-everything session is what OpenCode's free tier answers with a
+    // 403 "can only be used from within OpenCode", so nothing produces one.
+    assert.deepStrictEqual(JSON.parse(personalBotOpenCodeConfigContent({ model: "a/b" })), {
+      share: "disabled",
+      autoupdate: false,
+      small_model: "a/b",
+    });
   });
 
   it.effect("writes the env plugin once and rewrites it when it drifted", () =>
