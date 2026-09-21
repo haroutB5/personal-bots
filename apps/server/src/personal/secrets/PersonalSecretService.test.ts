@@ -280,6 +280,10 @@ const withLayer = <A, E>(
   return body(harness).pipe(Effect.provide(makeLayer(harness)));
 };
 
+/** The engine line the builder adds; spelled out here too, so this stays an oracle. */
+const engineLine =
+  "You run on claude. That is the setting the user chose for you: if you are asked which model or effort you use, answer with exactly that and do not guess from how this prompt reads.";
+
 describe("personal secret requests", () => {
   it.effect("fulfil stores the value only in the secret store and re-queues the task once", () =>
     withLayer((harness) =>
@@ -466,10 +470,10 @@ describe("personal secret requests", () => {
         // Spelled out rather than rebuilt with the builder, so the test is an
         // oracle for the reactor's format, not a copy of the implementation.
         expect((yield* access.forThread(thread)).systemInstructions).toBe(
-          `You are writer, one of the user's personal bots. When asked who you are, you are writer; any harness or model named elsewhere is only the engine you run on.\n\nWrite in short sentences.\n\n${PERSONAL_BOT_APP_RULES}`,
+          `You are writer, one of the user's personal bots. When asked who you are, you are writer; any harness or model named elsewhere is only the engine you run on.\n\n${engineLine}\n\nWrite in short sentences.\n\n${PERSONAL_BOT_APP_RULES}`,
         );
         expect(yield* access.instructionsForThread(thread)).toBe(
-          `You are writer, one of the user's personal bots. When asked who you are, you are writer; any harness or model named elsewhere is only the engine you run on.\n\nWrite in short sentences.\n\n${PERSONAL_BOT_APP_RULES}`,
+          `You are writer, one of the user's personal bots. When asked who you are, you are writer; any harness or model named elsewhere is only the engine you run on.\n\n${engineLine}\n\nWrite in short sentences.\n\n${PERSONAL_BOT_APP_RULES}`,
         );
         expect(yield* access.instructionsForThread(ThreadId.make("thread-plain"))).toBeNull();
         expect(PERSONAL_BOT_APP_RULES).toContain("save_memory");
@@ -536,14 +540,18 @@ describe("personal secret requests", () => {
           botId: botId("assistant"),
           environment: { PB_SECRET_GITHUB_TOKEN: "gh-value", PB_SECRET_SHARED_KEY: "shared-value" },
           systemInstructions: expect.stringMatching(
-            /^You are [^\n]+, one of the user's personal bots\. When asked who you are, you are [^\n]+\n\n<app_rules>/u,
+            // The engine line sits between the identity and the rules: a bot
+            // with no instructions of its own still learns what it runs on.
+            /^You are [^\n]+, one of the user's personal bots\. When asked who you are, you are [^\n]+\n\nYou run on [^\n]+\n\n<app_rules>/u,
           ),
         });
         expect(yield* access.forThread(developerThread)).toEqual({
           botId: botId("developer"),
           environment: { PB_SECRET_DEV_ONLY: "dev-value", PB_SECRET_SHARED_KEY: "shared-value" },
           systemInstructions: expect.stringMatching(
-            /^You are [^\n]+, one of the user's personal bots\. When asked who you are, you are [^\n]+\n\n<app_rules>/u,
+            // The engine line sits between the identity and the rules: a bot
+            // with no instructions of its own still learns what it runs on.
+            /^You are [^\n]+, one of the user's personal bots\. When asked who you are, you are [^\n]+\n\nYou run on [^\n]+\n\n<app_rules>/u,
           ),
         });
         expect(yield* access.forThread(ThreadId.make("thread-plain"))).toEqual({

@@ -80,3 +80,46 @@ describe("personalBotSystemInstructions", () => {
     );
   });
 });
+
+describe("what a bot knows about its own engine", () => {
+  const withEngine = (engine: { readonly model?: string; readonly effort?: string }) =>
+    personalBotSystemInstructions({
+      name: "Nova",
+      title: "Coach",
+      instructions: "",
+      ...engine,
+    });
+
+  it("states the model and effort it is actually running on", () => {
+    // Asked "which model and effort?", a bot with nothing to read guesses from
+    // its prompt and then agrees with whatever the user corrects it to. These
+    // are the only authoritative values, so they are given rather than implied.
+    const text = withEngine({ model: "opencode/muse-spark-1.3-contributor-free", effort: "xhigh" });
+
+    assert.include(text, "opencode/muse-spark-1.3-contributor-free");
+    assert.include(text, "xhigh");
+  });
+
+  it("tells the bot not to guess when it is asked", () => {
+    const text = withEngine({ model: "opencode/muse-spark-1.3-contributor-free", effort: "xhigh" });
+
+    assert.include(text, "do not guess");
+  });
+
+  it("says nothing about an engine it was not told about", () => {
+    const text = withEngine({});
+
+    assert.notInclude(text, "You run on");
+    assert.notInclude(text, "do not guess");
+  });
+
+  it("names the model alone when there is no effort setting", () => {
+    const text = withEngine({ model: "claude-opus-5" });
+
+    // The guidance still mentions effort, because "which effort?" deserves an
+    // answer even when the model takes no such setting; what must not appear
+    // is a claim about a level nobody chose.
+    assert.include(text, "You run on claude-opus-5.");
+    assert.notInclude(text, "at  effort");
+  });
+});

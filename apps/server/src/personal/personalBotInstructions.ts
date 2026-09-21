@@ -26,6 +26,28 @@ export interface PersonalBotPersona {
   readonly name: string;
   readonly title: string;
   readonly instructions: string;
+  /** The model id the user picked for this bot, when the caller knows it. */
+  readonly model?: string | undefined;
+  /** The effort/variant option on that selection, when the model takes one. */
+  readonly effort?: string | undefined;
+}
+
+/**
+ * What the bot runs on, in its own prompt.
+ *
+ * Without this a bot asked "which model and effort?" answers from whatever its
+ * harness hints at — Musey reported "effort level: low" while set to xhigh —
+ * and then agrees with the correction, because agreeing is cheaper than
+ * knowing. The selection the user made is the only authoritative answer, so it
+ * is stated rather than left to be inferred.
+ */
+function engineLine(persona: PersonalBotPersona): string {
+  const model = (persona.model ?? "").trim();
+  if (model.length === 0) return "";
+  const effort = (persona.effort ?? "").trim();
+  const runsOn =
+    effort.length > 0 ? `You run on ${model} at ${effort} effort.` : `You run on ${model}.`;
+  return `${runsOn} That is the setting the user chose for you: if you are asked which model or effort you use, answer with exactly that and do not guess from how this prompt reads.`;
 }
 
 /** Who the bot is, then its own instructions (possibly blank), then the app rules. */
@@ -34,7 +56,7 @@ export function personalBotSystemInstructions(persona: PersonalBotPersona): stri
   const title = persona.title.trim();
   // Codex's own prompt says "You are Codex", so the bot's name must win explicitly.
   const identity = `You are ${name}${title.length > 0 ? ` (${title})` : ""}, one of the user's personal bots. When asked who you are, you are ${name}; any harness or model named elsewhere is only the engine you run on.`;
-  return [identity, persona.instructions.trim(), PERSONAL_BOT_APP_RULES]
+  return [identity, engineLine(persona), persona.instructions.trim(), PERSONAL_BOT_APP_RULES]
     .filter((part) => part.length > 0)
     .join("\n\n");
 }

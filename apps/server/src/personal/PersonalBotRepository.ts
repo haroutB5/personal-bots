@@ -619,10 +619,14 @@ export const make = Effect.gen(function* () {
       name: Schema.String,
       title: Schema.String,
       instructions: Schema.String,
+      // The bot's own prompt says which engine it runs on, so the selection
+      // comes along: a bot with nothing to read invents an answer.
+      modelSelection: Schema.fromJsonString(ModelSelection),
     }),
     execute: ({ threadId }) =>
       sql`
-        SELECT b.name AS "name", b.title AS "title", b.instructions AS "instructions"
+        SELECT b.name AS "name", b.title AS "title", b.instructions AS "instructions",
+               b.model_selection_json AS "modelSelection"
         FROM personal_bot_threads t
         JOIN personal_bots b ON b.bot_id = t.bot_id
         WHERE t.thread_id = ${threadId}
@@ -853,6 +857,20 @@ export const make = Effect.gen(function* () {
     input,
   ) =>
     getInstructionsForThreadRow(input).pipe(
+      Effect.map(
+        Option.map((row) => {
+          const effort = row.modelSelection.options?.find(
+            (option) => option.id === "variant",
+          )?.value;
+          return {
+            name: row.name,
+            title: row.title,
+            instructions: row.instructions,
+            model: row.modelSelection.model,
+            ...(typeof effort === "string" && effort.length > 0 ? { effort } : {}),
+          };
+        }),
+      ),
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "PersonalBotRepository.getInstructionsForThread:query",
