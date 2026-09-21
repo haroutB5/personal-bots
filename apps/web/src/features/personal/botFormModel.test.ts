@@ -7,6 +7,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  botContextWindowDescriptor,
   botEffortDescriptor,
   botInstructionSupportWarning,
   defaultModelFor,
@@ -71,6 +72,35 @@ describe("botEffortDescriptor", () => {
     ]);
     expect(botEffortDescriptor(agentOnly, "opencode/a")).toBeNull();
     expect(botEffortDescriptor(undefined, "x")).toBeNull();
+  });
+});
+
+describe("botContextWindowDescriptor", () => {
+  it("offers the context window only when the model has more than one size", () => {
+    const claude = provider("claudeAgent", [
+      model({
+        slug: "claude-sonnet-5",
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            select("effort", ["low", "high"]),
+            select("contextWindow", ["200k", "1m"]),
+          ],
+        }),
+      }),
+      model({
+        slug: "claude-fixed",
+        capabilities: createModelCapabilities({
+          optionDescriptors: [select("contextWindow", ["200k"])],
+        }),
+      }),
+      model({ slug: "claude-plain" }),
+    ]);
+    expect(
+      botContextWindowDescriptor(claude, "claude-sonnet-5")?.options.map((option) => option.id),
+    ).toEqual(["200k", "1m"]);
+    expect(botContextWindowDescriptor(claude, "claude-fixed")).toBeNull();
+    expect(botContextWindowDescriptor(claude, "claude-plain")).toBeNull();
+    expect(botContextWindowDescriptor(undefined, "claude-sonnet-5")).toBeNull();
   });
 });
 

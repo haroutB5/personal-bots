@@ -99,10 +99,13 @@ export function searchModels<M extends Pick<ServerProviderModel, "slug" | "name"
   return [...leading, ...others].slice(0, limit);
 }
 
-/** The selected model's effort control, if its provider offers one. */
-export function botEffortDescriptor(
+/** The option id every provider uses for its context window size choice. */
+export const CONTEXT_WINDOW_OPTION_ID = "contextWindow";
+
+function botSelectDescriptor(
   provider: ServerProvider | undefined,
   model: string,
+  ids: ReadonlyArray<string>,
 ): SelectProviderOptionDescriptor | null {
   if (provider === undefined || model === "") return null;
   return (
@@ -110,7 +113,24 @@ export function botEffortDescriptor(
       caps: getProviderModelCapabilities(provider.models, model, provider.driver),
     }).find(
       (descriptor): descriptor is SelectProviderOptionDescriptor =>
-        descriptor.type === "select" && EFFORT_OPTION_IDS.includes(descriptor.id),
+        descriptor.type === "select" && ids.includes(descriptor.id),
     ) ?? null
   );
+}
+
+/** The selected model's effort control, if its provider offers one. */
+export function botEffortDescriptor(
+  provider: ServerProvider | undefined,
+  model: string,
+): SelectProviderOptionDescriptor | null {
+  return botSelectDescriptor(provider, model, EFFORT_OPTION_IDS);
+}
+
+/** The selected model's context window choice (e.g. 200k / 1M), if it offers more than one. */
+export function botContextWindowDescriptor(
+  provider: ServerProvider | undefined,
+  model: string,
+): SelectProviderOptionDescriptor | null {
+  const descriptor = botSelectDescriptor(provider, model, [CONTEXT_WINDOW_OPTION_ID]);
+  return descriptor !== null && descriptor.options.length > 1 ? descriptor : null;
 }

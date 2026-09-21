@@ -27,8 +27,10 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatarPicker } from "./BotAvatarPicker";
 import {
+  botContextWindowDescriptor,
   botEffortDescriptor,
   botInstructionSupportWarning,
+  CONTEXT_WINDOW_OPTION_ID,
   defaultModelFor,
   EFFORT_OPTION_IDS,
   isBotProviderSelectable,
@@ -150,6 +152,8 @@ interface BotDraft {
   model: string;
   /** Reasoning effort option id; "" keeps the model's default. */
   effort: string;
+  /** Context window option id (e.g. "1m"); "" keeps the model's default. */
+  contextWindow: string;
   team: PersonalBotTeam;
   lead: boolean;
   pinned: boolean;
@@ -172,6 +176,8 @@ function draftFromBot(bot: PersonalBot): BotDraft {
       EFFORT_OPTION_IDS.map((id) =>
         getModelSelectionStringOptionValue(bot.modelSelection, id),
       ).find((value) => value !== undefined) ?? "",
+    contextWindow:
+      getModelSelectionStringOptionValue(bot.modelSelection, CONTEXT_WINDOW_OPTION_ID) ?? "",
   };
 }
 
@@ -242,6 +248,7 @@ function BotForm({
       instanceId: first?.instanceId ?? "",
       model: defaultModelFor(first),
       effort: "",
+      contextWindow: "",
       team: DEFAULT_PERSONAL_BOT_TEAM,
       lead: false,
       pinned: false,
@@ -295,6 +302,11 @@ function BotForm({
     effortDescriptor?.options.some((option) => option.id === draft.effort) === true
       ? draft.effort
       : "";
+  const contextWindowDescriptor = botContextWindowDescriptor(selectedProvider, draft.model);
+  const contextWindowValue =
+    contextWindowDescriptor?.options.some((option) => option.id === draft.contextWindow) === true
+      ? draft.contextWindow
+      : "";
 
   const buildModelSelection = (): ModelSelection => {
     const unchanged =
@@ -304,11 +316,18 @@ function BotForm({
     const base = unchanged
       ? bot.modelSelection
       : ({ instanceId: draft.instanceId, model: draft.model } as ModelSelection);
-    const others = (base.options ?? []).filter((option) => !EFFORT_OPTION_IDS.includes(option.id));
-    const options =
-      effortDescriptor !== null && effortValue !== ""
-        ? [...others, { id: effortDescriptor.id, value: effortValue }]
-        : others;
+    const others = (base.options ?? []).filter(
+      (option) => !EFFORT_OPTION_IDS.includes(option.id) && option.id !== CONTEXT_WINDOW_OPTION_ID,
+    );
+    const options = [
+      ...others,
+      ...(effortDescriptor !== null && effortValue !== ""
+        ? [{ id: effortDescriptor.id, value: effortValue }]
+        : []),
+      ...(contextWindowDescriptor !== null && contextWindowValue !== ""
+        ? [{ id: contextWindowDescriptor.id, value: contextWindowValue }]
+        : []),
+    ];
     const { options: _previous, ...rest } = base;
     return (options.length > 0 ? { ...rest, options } : rest) as ModelSelection;
   };
@@ -536,6 +555,37 @@ function BotForm({
           </select>
           <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
             Higher effort thinks longer and uses more of your plan's limits.
+          </p>
+        </div>
+      ) : null}
+
+      {contextWindowDescriptor !== null ? (
+        <div>
+          <label htmlFor="bot-context-window" className={LABEL_CLASS}>
+            Context window
+          </label>
+          <select
+            id="bot-context-window"
+            value={contextWindowValue}
+            onChange={(event) => update({ contextWindow: event.target.value })}
+            className={`${FIELD_CLASS} h-11`}
+          >
+            <option value="">
+              Default
+              {(() => {
+                const fallback = contextWindowDescriptor.options.find((option) => option.isDefault);
+                return fallback === undefined ? "" : ` (${fallback.label})`;
+              })()}
+            </option>
+            {contextWindowDescriptor.options.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
+            A bigger window keeps longer chats in memory, but every reply resends it, so long chats
+            use your plan's limits faster.
           </p>
         </div>
       ) : null}
