@@ -19,6 +19,7 @@ import { readGroupMarker } from "./groupModel";
 import { PERSONAL_TIME_ZONE } from "./greeting";
 import type { QuestionCardItem } from "./questionCards";
 import type { SecretRequestCardItem } from "./secretRequestCards";
+import type { ConnectionApprovalCardItem } from "./connectionApprovalCards";
 
 /**
  * Header state for a bot conversation, derived only from session/turn/request
@@ -384,7 +385,12 @@ export type ConversationItem =
   /** A question the bot asked, at the point in the chat where it asked it. */
   | { readonly kind: "question"; readonly id: string; readonly card: QuestionCardItem }
   /** A secret the bot asked for, at the point in the chat where it asked. */
-  | { readonly kind: "secret"; readonly id: string; readonly card: SecretRequestCardItem };
+  | { readonly kind: "secret"; readonly id: string; readonly card: SecretRequestCardItem }
+  | {
+      readonly kind: "connection-approval";
+      readonly id: string;
+      readonly card: ConnectionApprovalCardItem;
+    };
 
 /**
  * Flattens the upstream timeline into chat rows: consecutive work entries
@@ -566,6 +572,7 @@ function itemTimeMs(item: ConversationItem): number {
     case "question":
       return Date.parse(item.card.createdAt);
     case "secret":
+    case "connection-approval":
       return item.card.createdAtMs;
   }
 }
@@ -677,6 +684,29 @@ export function placeSecretRequestCards(
     items,
     cards.map((card) => ({
       item: { kind: "secret", id: `secret:${card.requestId}`, card } as const,
+      atMs: card.createdAtMs,
+      pending: card.kind === "pending",
+    })),
+  );
+}
+
+/**
+ * A gated vendor call sits where the bot made it, like every other card, so
+ * the approval reads next to the work that asked for it rather than stacked at
+ * the bottom of the chat away from its own context.
+ */
+export function placeConnectionApprovalCards(
+  items: ReadonlyArray<ConversationItem>,
+  cards: ReadonlyArray<ConnectionApprovalCardItem>,
+): ConversationItem[] {
+  return placeTimedCards(
+    items,
+    cards.map((card) => ({
+      item: {
+        kind: "connection-approval",
+        id: `connection-approval:${card.approvalId}`,
+        card,
+      } as const,
       atMs: card.createdAtMs,
       pending: card.kind === "pending",
     })),

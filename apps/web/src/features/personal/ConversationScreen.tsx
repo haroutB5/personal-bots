@@ -68,6 +68,7 @@ import {
   placeDelegationCards,
   placeQuestionCards,
   placeSecretRequestCards,
+  placeConnectionApprovalCards,
   resolveConversationHeaderName,
 } from "./conversationModel";
 import { DelegationCard } from "./DelegationCard";
@@ -85,6 +86,7 @@ import {
   type UserInputAnswers,
 } from "./questionCards";
 import { deriveSecretRequestCards, type SecretRequestOutcome } from "./secretRequestCards";
+import { useConnectionApprovalCards } from "./useConnectionApprovalCards";
 import {
   personalSecretCancel,
   personalSecretFulfill,
@@ -385,16 +387,22 @@ export function ConversationScreen({
     () => deriveSecretRequestCards(pendingSecrets, threadId, seenSecrets, secretOutcomes),
     [pendingSecrets, secretOutcomes, seenSecrets, threadId],
   );
+  // Gated vendor calls, shared with the group screen so both can answer one.
+  const connectionApprovals = useConnectionApprovalCards(environmentId, threadId);
+  const connectionApprovalCards = connectionApprovals.cards;
   // The cards the bot put in the conversation belong in it: an answered
   // question keeps the spot where it was asked, so the bot's next reply reads
   // below it instead of above a card stuck at the bottom of the chat.
   const items = useMemo(
     () =>
-      placeSecretRequestCards(
-        placeQuestionCards(delegationItems, questionCards),
-        secretRequestCards,
+      placeConnectionApprovalCards(
+        placeSecretRequestCards(
+          placeQuestionCards(delegationItems, questionCards),
+          secretRequestCards,
+        ),
+        connectionApprovalCards,
       ),
-    [delegationItems, questionCards, secretRequestCards],
+    [connectionApprovalCards, delegationItems, questionCards, secretRequestCards],
   );
 
   const conversationState = deriveConversationState({
@@ -542,6 +550,14 @@ export function ConversationScreen({
       next.delete(requestId);
       return next;
     });
+  };
+
+  const onDecideConnectionApproval = async (
+    approvalId: string,
+    decision: "approved" | "denied",
+  ) => {
+    const error = await connectionApprovals.decide(approvalId, decision);
+    setActionError(error);
   };
 
   // Declining. The server cancels the request and fails the task that asked,
@@ -777,6 +793,7 @@ export function ConversationScreen({
             workspaceRoot={thread.worktreePath ?? project?.workspaceRoot}
             approvals={approvals}
             respondingIds={respondingIds}
+            approvalRespondingIds={connectionApprovals.respondingIds}
             onRespondToApproval={(requestId, decision) =>
               void onRespondToApproval(requestId, decision)
             }
@@ -786,6 +803,10 @@ export function ConversationScreen({
               void onProvideSecret(requestId, value, shared)
             }
             onDeclineSecret={(requestId) => void onDeclineSecret(requestId)}
+            onDecideConnectionApproval={(approvalId, decision) =>
+              void onDecideConnectionApproval(approvalId, decision)
+            }
+            approvalsNowMs={now.getTime()}
             errorText={actionError ?? retryNotice ?? sessionErrorInfo?.message ?? null}
             errorDetail={actionError === null ? (sessionErrorInfo?.detail ?? null) : null}
             loadEarlier={loadEarlier}
