@@ -1,7 +1,7 @@
 // @effect-diagnostics preferSchemaOverJson:off - these assert on raw text, which is the point: what a model or an owner would see.
 import { ConnectionId, EMPTY_PERSONAL_CONNECTION_SETTINGS } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as DateTime from "effect/DateTime";
+
 import * as Effect from "effect/Effect";
 
 import { operationsForVendor } from "../operations.ts";

@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { WHATSAPP_DEFAULT_DAILY_SEND_CAP } from "@t3tools/contracts";
+
 import {
   CONNECTION_VENDORS,
+  connectionActionLabel,
   connectionActions,
+  disconnectWarning,
   connectionRows,
   describeConnection,
   describeImportSource,
@@ -181,5 +185,54 @@ describe("import sources", () => {
     });
     expect(described.tone).toBe("attention");
     expect(described.text).toContain("Vercel CLI");
+  });
+});
+
+describe("whatsapp, which is signed into rather than pasted", () => {
+  it("offers the QR rather than a token field, in every state that needs a way in", () => {
+    expect(vendorInfo("whatsapp").authKind).toBe("browser-session");
+    expect(vendorInfo("whatsapp").requiredCredentialFields).toEqual([]);
+
+    expect(connectionActions(null)).toEqual(["connect"]);
+    // "Paste a new token" is meaningless here: reconnecting is scanning again.
+    expect(connectionActions(connection({ vendorId: "whatsapp", status: "needs_reauth" }))).toEqual(
+      ["reconnect", "validate", "disconnect"],
+    );
+    expect(connectionActionLabel("reconnect", "whatsapp")).toBe("Scan the code again");
+    expect(connectionActionLabel("reconnect", "github")).toBe("Paste a new token");
+  });
+
+  it("shows the number it is connected as, and the send cap, on the row", () => {
+    const described = describeConnection(
+      connection({
+        vendorId: "whatsapp",
+        status: "connected",
+        account: {
+          accountId: "+447700900000",
+          accountName: "Harout",
+          teamId: null,
+          teamName: null,
+        },
+        settings: { whatsappDailySendCap: 4 },
+      }),
+    );
+    expect(described.headline).toContain("+447700900000");
+    expect(described.detail).toContain("4");
+  });
+
+  it("names the default cap when the owner has not set one", () => {
+    const described = describeConnection(
+      connection({
+        vendorId: "whatsapp",
+        status: "connected",
+        settings: { whatsappDailySendCap: null },
+      }),
+    );
+    expect(described.detail).toContain(String(WHATSAPP_DEFAULT_DAILY_SEND_CAP));
+  });
+
+  it("says a removed WhatsApp is still signed in, because removing it does not sign out", () => {
+    expect(disconnectWarning("whatsapp")).toContain("still signed in");
+    expect(disconnectWarning("github")).toContain("token");
   });
 });

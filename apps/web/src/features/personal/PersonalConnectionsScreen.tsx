@@ -1,6 +1,7 @@
 import type { FormEvent, JSX } from "react";
 import { useState } from "react";
 
+import { WHATSAPP_MAX_DAILY_SEND_CAP } from "@t3tools/contracts";
 import type {
   PersonalConnection,
   PersonalConnectionImportResult,
@@ -15,10 +16,12 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
 import {
-  CONNECTION_ACTION_LABELS,
+  connectionActionLabel,
   connectionActions,
   connectionRows,
+  dailySendCap,
   describeConnection,
+  disconnectWarning,
   describeImportSource,
   emptyTokenDraft,
   fieldLabel,
@@ -29,6 +32,7 @@ import {
   type TokenDraft,
 } from "./connectionsModel";
 import {
+  personalConnectionBrowserConnect,
   personalConnectionConnect,
   personalConnectionDisable,
   personalConnectionDisconnect,
@@ -36,6 +40,7 @@ import {
   personalConnectionImportProbe,
   personalConnectionReconnect,
   personalConnectionRotate,
+  personalConnectionSetSettings,
   personalConnectionValidate,
   usePersonalConnections,
 } from "./usePersonalConnections";
@@ -288,6 +293,78 @@ function ImportPanel({ onClose }: { onClose: () => void }): JSX.Element {
   );
 }
 
+/**
+ * The one setting a WhatsApp connection has, on the row that owns it.
+ *
+ * It is here rather than behind a screen of its own because it is the number
+ * the owner is trusting: how many messages a day this can send in their name.
+ * Bounded by the contract, so a typo cannot become an unlimited connection.
+ */
+function SendCapField({ connection }: { connection: PersonalConnection }): JSX.Element {
+  const environmentId = usePersonalEnvironmentId();
+  const setSettings = useAtomCommand(personalConnectionSetSettings);
+  const [draft, setDraft] = useState(String(dailySendCap(connection)));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    if (environmentId === null) return;
+    const value = Number.parseInt(draft, 10);
+    if (!Number.isInteger(value) || value < 1 || value > WHATSAPP_MAX_DAILY_SEND_CAP) {
+      setError(`Choose a number between 1 and ${WHATSAPP_MAX_DAILY_SEND_CAP}.`);
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    const result = await setSettings({
+      environmentId,
+      input: {
+        connectionId: connection.connectionId,
+        settings: { whatsappDailySendCap: value },
+      },
+    });
+    setBusy(false);
+    setError(commandFailureMessage(result, "The daily limit could not be changed."));
+  };
+
+  return (
+    <div className="mt-3">
+      <label htmlFor="whatsapp-daily-cap" className={LABEL_CLASS}>
+        Messages a day
+      </label>
+      <div className="flex gap-2">
+        <input
+          id="whatsapp-daily-cap"
+          type="number"
+          inputMode="numeric"
+          min={1}
+          max={WHATSAPP_MAX_DAILY_SEND_CAP}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          className={`${FIELD_CLASS} w-24`}
+        />
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={busy}
+          className={`${ACTION_CLASS} px-5`}
+        >
+          {busy ? "Saving..." : "Save"}
+        </button>
+      </div>
+      <p className="mt-1.5 text-[13px] leading-snug text-[var(--personal-text-secondary)]">
+        hbots refuses to send past this rather than saving it for tomorrow, and leaves a gap between
+        messages so your account does not look automated.
+      </p>
+      {error === null ? null : (
+        <p role="alert" className="mt-1.5 text-sm text-[var(--personal-error)]">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** /bots/settings/connections: the accounts every bot can act on. */
 export function PersonalConnectionsScreen(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
@@ -296,6 +373,7 @@ export function PersonalConnectionsScreen(): JSX.Element {
   const disable = useAtomCommand(personalConnectionDisable);
   const reconnect = useAtomCommand(personalConnectionReconnect);
   const disconnect = useAtomCommand(personalConnectionDisconnect);
+  const browserConnect = useAtomCommand(personalConnectionBrowserConnect);
   const [pasting, setPasting] = useState<PersonalConnectionVendorId | null>(null);
   const [importing, setImporting] = useState(false);
   const [busyVendor, setBusyVendor] = useState<string | null>(null);
@@ -311,13 +389,33 @@ export function PersonalConnectionsScreen(): JSX.Element {
   ) => {
     if (action === "connect" || action === "reconnect") {
       setImporting(false);
-      setPasting(vendor.vendorId);
+      if (vendor.authKind !== "browser-session") {
+        setPasting(vendor.vendorId);
+        return;
+      }
+      // Nothing to type: the server opens the site and hands over control, and
+      // what comes back is what the owner should do next.
+      if (environmentId === null) return;
+      setPasting(null);
+      setBusyVendor(vendor.vendorId);
+      setNotice(null);
+      const started = await browserConnect({
+        environmentId,
+        input: { vendorId: vendor.vendorId },
+      });
+      setBusyVendor(null);
+      const failure = commandFailureMessage(
+        started,
+        `${vendor.displayName} could not be opened in the shared browser.`,
+      );
+      setError(failure);
+      if (started._tag === "Success") setNotice(started.value.instruction);
       return;
     }
     if (environmentId === null || connection === null) return;
     const input = { connectionId: connection.connectionId };
     if (action === "disconnect") {
-      const message = `Remove ${vendor.displayName}?\nThe saved token is deleted and no bot can use this account.`;
+      const message = disconnectWarning(vendor.vendorId);
       const confirmed =
         (await requestConfirmDialog(message, { variant: "destructive" })) ??
         window.confirm(message);
@@ -443,12 +541,16 @@ export function PersonalConnectionsScreen(): JSX.Element {
                           : ACTION_CLASS
                       }
                     >
-                      {CONNECTION_ACTION_LABELS[action]}
+                      {connectionActionLabel(action, row.vendorId)}
                     </button>
                   ))}
                 </div>
 
-                {pasting === row.vendorId ? (
+                {row.connection !== null && row.vendorId === "whatsapp" ? (
+                  <SendCapField connection={row.connection} />
+                ) : null}
+
+                {pasting === row.vendorId && row.vendor.authKind !== "browser-session" ? (
                   <TokenForm
                     vendor={row.vendor}
                     connection={row.connection}
