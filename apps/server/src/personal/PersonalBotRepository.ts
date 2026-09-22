@@ -566,29 +566,75 @@ export const make = Effect.gen(function* () {
   // capped at the length the list can show. `reasoning` is a provider's
   // thinking trace, never something the bot said, so it is skipped alongside
   // `system`.
+  //
+  // Only a bot's newest chats carry a preview. The one reader (the Chats
+  // screen's `buildBotSummaries`) shows the preview of each bot's newest
+  // thread: not archived (link or thread), not deleted, not an active group
+  // member relay, ordered by the thread's `updated_at`. Every other link used
+  // to ship up to 400 chars nobody read, and the list is refetched while bots
+  // stream. The newest TWO eligible threads per bot keep a preview, so a
+  // client whose shells are one update behind the server still finds its
+  // newest thread's text; anything else falls back to the thread title.
   const listThreadLinkRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: PersonalBotThreadListRawDbRow,
     execute: () =>
       sql`
+        WITH candidates AS (
+          SELECT
+            t.bot_id,
+            t.thread_id,
+            t.created_at,
+            t.archived_at,
+            CASE
+              WHEN t.archived_at IS NULL
+                AND p.archived_at IS NULL
+                AND p.deleted_at IS NULL
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM personal_group_members gm
+                  JOIN personal_groups g ON g.group_id = gm.group_id
+                  WHERE gm.thread_id = t.thread_id
+                    AND gm.left_at IS NULL
+                    AND g.deleted_at IS NULL
+                )
+              THEN 1
+              ELSE 0
+            END AS eligible,
+            p.updated_at
+          FROM personal_bot_threads t
+          LEFT JOIN projection_threads p ON p.thread_id = t.thread_id
+        ),
+        ranked AS (
+          SELECT
+            c.*,
+            ROW_NUMBER() OVER (
+              PARTITION BY c.bot_id, c.eligible
+              ORDER BY c.updated_at DESC, c.created_at ASC, c.thread_id ASC
+            ) AS preview_rank
+          FROM candidates c
+        )
         SELECT
-          t.bot_id AS "botId",
-          t.thread_id AS "threadId",
-          t.created_at AS "createdAt",
-          t.archived_at AS "archivedAt",
+          r.bot_id AS "botId",
+          r.thread_id AS "threadId",
+          r.created_at AS "createdAt",
+          r.archived_at AS "archivedAt",
           m.message_id AS "newestMessageId",
           m.role AS "newestRole",
           substr(m.text, 1, 400) AS "newestText",
           m.context_json AS "newestContext"
-        FROM personal_bot_threads t
-        LEFT JOIN projection_thread_messages m ON m.message_id = (
-          SELECT n.message_id
-          FROM projection_thread_messages n
-          WHERE n.thread_id = t.thread_id AND n.role NOT IN ('system', 'reasoning')
-          ORDER BY n.created_at DESC, n.message_id DESC
-          LIMIT 1
-        )
-        ORDER BY t.created_at ASC, t.thread_id ASC
+        FROM ranked r
+        LEFT JOIN projection_thread_messages m
+          ON r.eligible = 1
+          AND r.preview_rank <= 2
+          AND m.message_id = (
+            SELECT n.message_id
+            FROM projection_thread_messages n
+            WHERE n.thread_id = r.thread_id AND n.role NOT IN ('system', 'reasoning')
+            ORDER BY n.created_at DESC, n.message_id DESC
+            LIMIT 1
+          )
+        ORDER BY r.created_at ASC, r.thread_id ASC
       `,
   });
 
