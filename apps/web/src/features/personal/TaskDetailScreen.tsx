@@ -6,6 +6,7 @@ import { Link } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import { ChevronLeft } from "lucide-react";
 
+import { requestConfirmDialog } from "~/confirmDialog";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
@@ -13,6 +14,7 @@ import {
   canCancelTask,
   canRetryTask,
   formatLocalDateTime,
+  stopTaskConfirmMessage,
   taskStatusLabel,
   taskStatusTone,
 } from "./taskPresentation";
@@ -131,6 +133,13 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
   const bot = botById.get(task.botId);
   const parent = task.parentTaskId === null ? undefined : tasks?.get(task.parentTaskId);
   const run = async (action: "cancel" | "retry") => {
+    if (action === "cancel") {
+      const message = stopTaskConfirmMessage(task.title);
+      const confirmed =
+        (await requestConfirmDialog(message, { variant: "destructive" })) ??
+        window.confirm(message);
+      if (!confirmed) return;
+    }
     setBusy(true);
     setActionError(null);
     const result = await (action === "cancel" ? cancel : retry)({
@@ -139,7 +148,10 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
     });
     setBusy(false);
     setActionError(
-      commandFailureMessage(result, action === "cancel" ? "Could not cancel." : "Could not retry."),
+      commandFailureMessage(
+        result,
+        action === "cancel" ? "Could not stop the task." : "Could not retry.",
+      ),
     );
   };
 
@@ -225,7 +237,7 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
             disabled={busy}
             onClick={() => void run("cancel")}
           >
-            Cancel
+            Stop task
           </button>
         ) : null}
         {canRetryTask(task.status) ? (

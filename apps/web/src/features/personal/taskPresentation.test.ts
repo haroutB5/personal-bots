@@ -8,6 +8,7 @@ import {
   formatLocalDateTime,
   parseTaskListFilter,
   routineNextRunLabel,
+  stopTaskConfirmMessage,
   taskListFor,
   taskStatusTone,
 } from "./taskPresentation";
@@ -71,5 +72,19 @@ describe("formatLocalDateTime", () => {
       timeZone: "UTC",
     } as PersonalRoutine;
     expect(routineNextRunLabel(utc)).toBe("Next: Fri 18 Sep, 00:00");
+  });
+});
+
+describe("stop task confirm", () => {
+  it("names the task and says the work in progress is lost", () => {
+    expect(stopTaskConfirmMessage("  Refresh the fixtures ")).toBe(
+      "Stop Refresh the fixtures?\nThe bot stops now; work in progress is lost.",
+    );
+  });
+
+  it("falls back to a generic name for a blank title", () => {
+    expect(stopTaskConfirmMessage("   ")).toBe(
+      "Stop this task?\nThe bot stops now; work in progress is lost.",
+    );
   });
 });

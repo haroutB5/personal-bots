@@ -91,7 +91,7 @@ export function PersonalProviderRows({
                       <span
                         className={
                           row.status.tone === "review"
-                            ? "font-medium text-[var(--personal-review)]"
+                            ? "font-medium text-[var(--personal-review-text)]"
                             : undefined
                         }
                       >

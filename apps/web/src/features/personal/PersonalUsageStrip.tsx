@@ -38,7 +38,7 @@ function barColor(usedPercent: number): string {
  * a spent week may not clear for days. Ink the binding one to name it.
  */
 function bindingInk(cell: UsageStripCell, window: "session" | "weekly"): string {
-  return stripBindingWindow(cell) === window ? "text-[var(--personal-review)]" : "";
+  return stripBindingWindow(cell) === window ? "text-[var(--personal-review-text)]" : "";
 }
 
 function StripCellBar({ percent }: { readonly percent: number | null }): JSX.Element {

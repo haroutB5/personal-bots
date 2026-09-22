@@ -85,11 +85,16 @@ const PAIRS: ReadonlyArray<readonly [string, string, number, string]> = [
   ["--personal-error", "--personal-surface", 4.5, "inline error text on a card"],
   ["--personal-danger", "--personal-danger-bg", 4.5, "danger card text"],
   ["--personal-text", "--personal-danger-bg", 4.5, "body text on a danger card"],
-  ["--personal-review", "--personal-review-bg", 4.5, "review card accent text"],
-  // The amber is a status LABEL too, not only a dot: BotRow and GroupRow print
-  // "Needs you" in it, on the page and inside the pinned box.
-  ["--personal-review", "--personal-bg", 4.5, "amber status label on the page"],
-  ["--personal-review", "--personal-surface", 4.5, "amber status label on a card"],
+  // Amber GLYPHS ("Needs you" on BotRow/GroupRow, the usage strip's binding
+  // window, "Update available", the New group cap) use the text-safe token.
+  ["--personal-review-text", "--personal-review-bg", 4.5, "amber text on a review card"],
+  ["--personal-review-text", "--personal-bg", 4.5, "amber status label on the page"],
+  ["--personal-review-text", "--personal-surface", 4.5, "amber status label on a card"],
+  ["--personal-review-text", "--personal-fill-muted", 4.5, "amber label on a muted fill"],
+  // The bright amber is a non-text indicator only: status dots and usage bars.
+  ["--personal-review", "--personal-review-bg", 3, "amber dot on a review card"],
+  ["--personal-review", "--personal-bg", 3, "amber status dot on the page"],
+  ["--personal-review", "--personal-surface", 3, "amber status dot on a card"],
   ["--personal-text", "--personal-review-bg", 4.5, "body text on a review card"],
   ["--personal-section-label", "--personal-bg", 4.5, "uppercase section label on the page"],
   ["--personal-section-label", "--personal-surface", 4.5, "uppercase section label in a card"],
@@ -128,20 +133,17 @@ const DARK_ONLY_PAIRS: ReadonlyArray<readonly [string, string, number, string]> 
 ];
 
 /**
- * Pairs that were already below the bar in the light theme before dark mode
- * existed, with their measured ratio pinned.
+ * Pairs that sit below the bar in the light theme, with their measured ratio
+ * pinned so they cannot quietly get worse.
  *
- * They are recorded rather than "fixed" because the fix is a visible change to
- * a palette that is not this change's to redesign: the amber is the product's
- * review/attention colour, and darkening it far enough to carry 13px text
- * turns it brown. Pinning the ratio means they cannot quietly get worse, and
- * the dark values for the same pairs clear the real bar comfortably (10.3:1
- * and 9.5:1), so the dark surface does not inherit the problem.
- *
- * Worth fixing properly in a pass that owns the light palette.
+ * Only non-text indicators are left here. Amber TEXT moved to the text-safe
+ * `--personal-review-text` token (appreview 2026-09-22, pass 2 #1), so the
+ * bright amber now only paints dots, bars and borders, where it is the
+ * product's recognisable attention colour. It still misses the 3:1 non-text
+ * bar in light; the dark values clear it comfortably.
  */
 const LIGHT_EXCEPTIONS: Readonly<Record<string, number>> = {
-  // The amber status label ("needs you") on the chats list and in a chat.
+  // The bright amber status dot.
   "--personal-review on --personal-bg": 2.27,
   "--personal-review on --personal-surface": 2.38,
   "--personal-review on --personal-review-bg": 2.24,
