@@ -24,7 +24,8 @@ import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import { continuationSystemInstructions } from "./continuationInstructions.ts";
-import { isPersonalTaskMessageId } from "./personalThreadTitles.ts";
+import { isPersonalGroupMessageId, isPersonalTaskMessageId } from "./personalThreadTitles.ts";
+import * as PersonalTaskService from "./tasks/PersonalTaskService.ts";
 import {
   decideTurnRetry,
   nextRetryDelayMs,
@@ -83,8 +84,18 @@ export const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const personalBots = yield* PersonalBotRepository.PersonalBotRepository;
   const crypto = yield* Crypto.Crypto;
+  // Optional so this reactor stays testable alone; the server always has it.
+  const tasks = yield* Effect.serviceOption(PersonalTaskService.PersonalTaskService);
 
   const tracked = new Map<ThreadId, TrackedThread>();
+
+  /**
+   * A task attempt drives this thread's turn, or just did. That includes an
+   * owner chat turn a task tool adopted: the task service re-runs it on its
+   * own schedule, so a continuation from here would be a second answer.
+   */
+  const taskOwnsTurn = (threadId: ThreadId) =>
+    Option.isNone(tasks) ? Effect.succeed(false) : tasks.value.ownsThreadTurn(threadId);
 
   const logSkip = (threadId: ThreadId, decision: TurnRetryDecision) =>
     decision.kind === "skip"
@@ -213,6 +224,8 @@ export const make = Effect.gen(function* () {
       ) {
         return yield* clearMarker(threadId);
       }
+      // A task may have adopted the turn while we slept.
+      if (yield* taskOwnsTurn(threadId)) return yield* clearMarker(threadId);
       yield* sendContinuation(threadId, session, entry.interactionMode);
     }).pipe(
       Effect.catchCause((cause) => {
@@ -278,6 +291,12 @@ export const make = Effect.gen(function* () {
       const decision = decideTurnRetry({ session, tracked: tracked.get(threadId) ?? null });
       if (decision.kind === "skip") return yield* logSkip(threadId, decision);
       if (!(yield* isBotThread(threadId))) return;
+      if (yield* taskOwnsTurn(threadId)) {
+        return yield* Effect.logDebug("personal turn retry skipped", {
+          threadId,
+          reason: "task_owns_turn",
+        });
+      }
       if (decision.kind === "exhausted") {
         return yield* markSession(session, "exhausted", PERSONAL_TURN_RETRY_MAX_ATTEMPTS, null);
       }
@@ -291,10 +310,13 @@ export const make = Effect.gen(function* () {
         return cancelPending(threadId, false).pipe(
           Effect.andThen(
             Effect.sync(() => {
-              // A fresh turn resets the ledger. Tasks and routines keep their
-              // own attempt ledger, so their turns are tracked but never retried.
+              // A fresh turn resets the ledger. Tasks, routines and group
+              // rounds keep their own attempt ledger, so their turns are
+              // tracked but never retried here.
               tracked.set(threadId, {
-                taskDriven: isPersonalTaskMessageId(event.payload.messageId),
+                taskDriven:
+                  isPersonalTaskMessageId(event.payload.messageId) ||
+                  isPersonalGroupMessageId(event.payload.messageId),
                 interactionMode: event.payload.interactionMode,
                 attempts: 0,
                 pending: null,
@@ -304,9 +326,17 @@ export const make = Effect.gen(function* () {
         );
       }
       case "thread.turn-interrupt-requested":
-      case "thread.session-stop-requested":
-        // The owner asked it to stop. A pending retry is part of what stops.
-        return cancelPending(event.payload.threadId, true);
+      case "thread.session-stop-requested": {
+        // The owner (or a group, or a task cancel) asked it to stop. A pending
+        // retry is part of what stops, and so is any later one: forgetting the
+        // turn means the marker-less session the clear writes back is not read
+        // as a fresh failure to retry.
+        const threadId = event.payload.threadId;
+        return cancelPending(threadId, false).pipe(
+          Effect.andThen(Effect.sync(() => tracked.delete(threadId))),
+          Effect.andThen(clearMarker(threadId)),
+        );
+      }
       case "thread.session-set":
         return onSessionSet(event.payload.threadId, event.payload.session).pipe(Effect.ignore);
       default:

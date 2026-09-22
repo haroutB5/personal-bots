@@ -781,6 +781,26 @@ describe("bots toolkit voting", () => {
     ),
   );
 
+  it.effect("delegate_task is refused from a group member's turn", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const tasks = yield* PersonalTaskService.PersonalTaskService;
+        const threadId = yield* speakingInGroup(["assistant", "developer"]);
+        // The member turn is the round's. Adopting it as a task would bring
+        // the child's answer back as a hidden turn no round knows about.
+        const refused = yield* call(
+          "delegate_task",
+          { targetBot: "developer", objective: "Write the migration." },
+          { threadId },
+        ).pipe(Effect.flip);
+        expect(refused.message).toContain("Launch crew");
+        const listed = yield* tasks.list({});
+        expect(listed.tasks).toEqual([]);
+      }),
+    ),
+  );
+
   it.effect("call_vote opens one vote, names the voters, and announces it", () =>
     withHarness((harness) =>
       Effect.gen(function* () {

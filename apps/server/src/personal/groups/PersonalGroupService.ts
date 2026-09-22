@@ -845,6 +845,26 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * Ends a live round whose group has been deleted. There is no transcript
+   * left to write a note into, so it only stops the member turn and frees the
+   * slot; left alone, such a round would hold the one group slot or fail
+   * every pump at the same row, across restarts.
+   */
+  const closeRoundOfDeletedGroup = Effect.fn("PersonalGroupService.closeRoundOfDeletedGroup")(
+    function* (round: RoundRecord) {
+      yield* interruptActiveTurn(round, "group-deleted");
+      if (round.activeThreadId !== null) {
+        activeMemberThreadIds.delete(round.activeThreadId);
+      }
+      if (round.activeMessageId !== null) {
+        yield* repository.deleteMessage(round.activeMessageId);
+      }
+      yield* expirePendingVotes(round);
+      return yield* writeRound(round, { status: "stopped", queue: [], ...clearActive });
+    },
+  );
+
   /** Fills the single group slot; one member speaks at a time, server-wide. */
   const pump: Effect.Effect<
     void,
@@ -868,7 +888,12 @@ export const make = Effect.gen(function* () {
       if (round === undefined) {
         return;
       }
-      const group = yield* requireGroup(round.groupId);
+      const found = yield* repository.getGroup(round.groupId);
+      if (Option.isNone(found)) {
+        yield* closeRoundOfDeletedGroup(round);
+        continue;
+      }
+      const group = found.value;
       const gate = yield* voteGate(round.roundId);
       const verdict = nextStep({
         queue: round.queue,
@@ -1163,9 +1188,15 @@ export const make = Effect.gen(function* () {
     const shell = yield* snapshots
       .getThreadShellById(threadId)
       .pipe(Effect.mapError((cause) => fail("Personal groups could not read a session.", cause)));
-    const session: OrchestrationSession | null | undefined = Option.isSome(shell)
-      ? shell.value.session
-      : null;
+    if (Option.isNone(shell)) {
+      // The member thread is gone (its bot was deleted mid-reply). Its session
+      // can never settle, and waiting for it would hold the one group slot,
+      // server-wide, until the round's deadline. Keep what was said and move on.
+      yield* abandonActive(group, round);
+      yield* writeRound(round, clearActive);
+      return;
+    }
+    const session: OrchestrationSession | null | undefined = shell.value.session;
     if (session === null || session === undefined) {
       return;
     }
@@ -1329,6 +1360,7 @@ export const make = Effect.gen(function* () {
       }
       const group = yield* repository.getGroup(round.groupId);
       if (Option.isNone(group)) {
+        yield* closeRoundOfDeletedGroup(round);
         continue;
       }
       const expiredLease =
@@ -1592,6 +1624,16 @@ export const make = Effect.gen(function* () {
           const group = yield* repository.getGroup(input.groupId);
           if (Option.isNone(group)) {
             return;
+          }
+          // Its live rounds end here, under the same permit as the delete. A
+          // message sent after an earlier Stop would otherwise leave a running
+          // round on a group that no longer exists.
+          for (const round of yield* repository.listLiveRounds()) {
+            if (round.groupId !== input.groupId) continue;
+            yield* interruptActiveTurn(round, "delete");
+            yield* abandonActive(group.value, round);
+            yield* expirePendingVotes(round);
+            yield* writeRound(round, { status: "stopped", queue: [], ...clearActive });
           }
           const now = yield* DateTime.now;
           yield* repository.softDeleteGroup({ groupId: input.groupId, deletedAt: now });
@@ -2199,6 +2241,23 @@ export const make = Effect.gen(function* () {
             if (Option.isNone(group)) {
               continue;
             }
+            // A round the bot is speaking in, or queued for, moves on without
+            // it now. Its thread is deleted next, and a turn on a deleted
+            // thread never settles: the one group slot would stay held until
+            // the round's deadline.
+            for (const round of yield* repository.listLiveRounds()) {
+              if (round.groupId !== membership.groupId) continue;
+              const speaking = round.activeBotId === input.botId;
+              if (!speaking && !round.queue.includes(input.botId)) continue;
+              if (speaking) {
+                yield* interruptActiveTurn(round, "bot-deleted");
+                yield* abandonActive(group.value, round);
+              }
+              yield* writeRound(round, {
+                ...(speaking ? clearActive : {}),
+                queue: round.queue.filter((botId) => botId !== input.botId),
+              });
+            }
             yield* repository.removeMember({
               groupId: membership.groupId,
               botId: input.botId,
@@ -2219,6 +2278,8 @@ export const make = Effect.gen(function* () {
             }
             yield* publishGroup(group.value);
           }
+          // A round that just lost its speaker has a free slot to fill.
+          yield* worker.enqueue({ type: "pump" });
         }),
       )
       .pipe(toPublic("purgeBot"));

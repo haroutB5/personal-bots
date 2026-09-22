@@ -15,3 +15,12 @@ export const personalTaskMessageId = (taskId: string, attempt: number) =>
 
 export const isPersonalTaskMessageId = (messageId: string) =>
   messageId.startsWith(PERSONAL_TASK_MESSAGE_ID_PREFIX);
+
+/**
+ * Every message a group round writes, including the brief that starts a
+ * member's turn (`personal-group-<round>-brief-<n>`, see PersonalGroupService).
+ * A turn started by one belongs to the round: it skips, re-queues or waits
+ * out a provider fault itself, so nothing else may re-run it.
+ */
+export const isPersonalGroupMessageId = (messageId: string) =>
+  messageId.startsWith("personal-group-");

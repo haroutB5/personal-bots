@@ -61,6 +61,8 @@ interface Harness {
   readonly dispatched: Array<OrchestrationCommand>;
   readonly sessions: Map<string, OrchestrationSession>;
   readonly messages: Map<string, Array<ProjectionThreadMessage>>;
+  /** Threads a `thread.create` made and no `thread.delete` removed. */
+  readonly liveThreads: Set<string>;
   sequence: number;
 }
 
@@ -68,6 +70,7 @@ const makeHarness = (): Harness => ({
   dispatched: [],
   sessions: new Map(),
   messages: new Map(),
+  liveThreads: new Set(),
   sequence: 0,
 });
 
@@ -88,6 +91,14 @@ const listOf = (harness: Harness, threadId: string): Array<MutableMessage> => {
 /** The projection rules this service depends on, and only those. */
 const applyToProjection = (harness: Harness, command: OrchestrationCommand) => {
   switch (command.type) {
+    case "thread.create": {
+      harness.liveThreads.add(command.threadId);
+      return;
+    }
+    case "thread.delete": {
+      harness.liveThreads.delete(command.threadId);
+      return;
+    }
     case "thread.message.user.append": {
       listOf(harness, command.threadId).push({
         messageId: command.message.messageId,
@@ -185,10 +196,13 @@ const makeLayer = (harness: Harness, dbPath?: string) =>
         getProjectShellById: () => Effect.succeed(Option.none()),
         getProjectShells: () => Effect.succeed([]),
         getThreadShellById: (threadId: ThreadId) =>
-          Effect.sync(() => {
-            const session = harness.sessions.get(threadId);
-            return session === undefined ? Option.none() : Option.some({ id: threadId, session });
-          }),
+          Effect.sync(() =>
+            // As the real query: a live thread has a shell (its session may
+            // not exist yet); a missing or deleted one has none.
+            harness.liveThreads.has(threadId) || harness.sessions.has(threadId)
+              ? Option.some({ id: threadId, session: harness.sessions.get(threadId) ?? null })
+              : Option.none(),
+          ),
       } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
     ),
     Layer.provideMerge(
@@ -1293,8 +1307,10 @@ it.effect("an expired lease interrupts the round and nothing re-runs without Con
       return round.activeThreadId!;
     }).pipe(Effect.provide(makeLayer(before, dbPath)));
 
-    // A second service over the same database: a different lease owner.
+    // A second service over the same database: a different lease owner. The
+    // member thread is still there; only the process that ran it died.
     const after = makeHarness();
+    after.liveThreads.add(memberThread);
     yield* Effect.gen(function* () {
       const service = yield* PersonalGroupService.PersonalGroupService;
       // Before the old lease expires, nothing happens.
@@ -1366,6 +1382,96 @@ it.effect("purging a bot leaves the group readable, and empties are archived", (
     // Archived, never deleted.
     expect(emptied.archivedAt).not.toBeNull();
     expect(emptied.newestMessage).not.toBeNull();
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("deleting a bot mid-reply moves the round on instead of holding the slot", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("What do you both think?", "msg-mid-purge");
+    const speaking = yield* currentRound;
+    const speaker = speaking.activeBotId!;
+    const speakerThread = speaking.activeThreadId!;
+    yield* beginTurn(harness, speakerThread);
+
+    yield* service.purgeBot({ botId: speaker });
+    yield* service.drain;
+
+    // Interrupted by its own thread, and the other member has the slot now,
+    // not at the round's deadline.
+    expect(interrupts(harness).some((command) => command.threadId === speakerThread)).toBe(true);
+    const after = yield* currentRound;
+    expect(after.status).toBe("running");
+    expect(after.activeBotId).not.toBe(speaker);
+    expect(after.activeBotId).not.toBeNull();
+    expect(after.queue).not.toContain(speaker);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a member thread deleted under a live turn settles on the next sweep", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("What do you both think?", "msg-gone-thread");
+    const speaking = yield* currentRound;
+    const threadId = speaking.activeThreadId!;
+    yield* beginTurn(harness, threadId);
+    // The thread goes without the group being told (a purge that raced it).
+    harness.liveThreads.delete(threadId);
+    harness.sessions.delete(threadId);
+
+    yield* service.sweep;
+    yield* service.drain;
+
+    const after = yield* currentRound;
+    expect(after.activeThreadId).not.toBe(threadId);
+    expect(after.status).toBe("running");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("deleting a group ends its live round, and a round orphaned anyway never wedges", () => {
+  const harness = makeHarness();
+  const OTHER = PersonalGroupId.make("group-orphan-other");
+  const OTHER_THREAD = ThreadId.make("thread-group-orphan-other");
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    const repository = yield* PersonalGroupRepository.PersonalGroupRepository;
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("Are you there?", "msg-before-delete");
+    expect((yield* currentRound).status).toBe("running");
+
+    yield* service.remove({ groupId: GROUP });
+    const ended = yield* currentRound;
+    expect(ended.status).toBe("stopped");
+    expect(ended.activeBotId).toBeNull();
+
+    // A round left running on a deleted group by some other path: the sweep
+    // closes it, and another group's round still gets the slot.
+    yield* service.create({
+      groupId: OTHER,
+      threadId: OTHER_THREAD,
+      name: "Other crew",
+      botIds: [botId("assistant"), botId("dev")],
+    });
+    const orphanRound = yield* service.sendMessage({
+      groupId: OTHER,
+      messageId: MessageId.make("msg-orphan"),
+      text: "Still going?",
+    });
+    yield* service.drain;
+    yield* repository.softDeleteGroup({ groupId: OTHER, deletedAt: yield* DateTime.now });
+    yield* service.sweep;
+    yield* service.drain;
+    const closed = yield* repository.latestRoundForGroup(OTHER);
+    expect(Option.getOrThrow(closed).roundId).toBe(orphanRound.roundId);
+    expect(Option.getOrThrow(closed).status).toBe("stopped");
+    expect((yield* repository.listLiveRounds()).map((round) => round.groupId)).not.toContain(OTHER);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 

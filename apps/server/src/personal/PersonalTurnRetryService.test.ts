@@ -26,6 +26,7 @@ import { ProviderService } from "../provider/Services/ProviderService.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalTurnRetry from "./PersonalTurnRetryService.ts";
 import { PERSONAL_TURN_RETRY_DELAYS_MS } from "./personalTurnRetryPolicy.ts";
+import * as PersonalTaskService from "./tasks/PersonalTaskService.ts";
 
 const THREAD = ThreadId.make("thread-1");
 const INSTANCE = ProviderInstanceId.make("opencode");
@@ -46,6 +47,8 @@ interface Harness {
   isBotThread: boolean;
   /** The next sendTurn call throws instead of starting a turn. */
   failSend: boolean;
+  /** A task attempt drives (or just drove) the thread's turn. */
+  taskOwnsTurn: boolean;
   sequence: number;
 }
 
@@ -55,6 +58,7 @@ const makeHarness = (): Harness => ({
   session: null,
   isBotThread: true,
   failSend: false,
+  taskOwnsTurn: false,
   sequence: 0,
 });
 
@@ -131,6 +135,11 @@ const makeLayer = (harness: Harness) =>
             }),
           ),
       } as unknown as PersonalBotRepository.PersonalBotRepository["Service"]),
+    ),
+    Layer.provideMerge(
+      Layer.mock(PersonalTaskService.PersonalTaskService)({
+        ownsThreadTurn: () => Effect.sync(() => harness.taskOwnsTurn),
+      }),
     ),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -325,6 +334,68 @@ it.effect("leaves a task or routine turn to its own attempt ledger", () =>
         const retry = yield* PersonalTurnRetry.PersonalTurnRetry;
         // Task attempts use a deterministic `personal-task-` message id.
         yield* failOwnerTurnWithMessage(retry, harness, MessageId.make("personal-task-abc-1"));
+        yield* TestClock.adjust(SECOND_DELAY_MS! * 4);
+        expect(harness.sends).toHaveLength(0);
+        expect(autoMarker(harness)).toBeUndefined();
+      }),
+      makeLayer(harness),
+    );
+  }),
+);
+
+it.effect("leaves a group member's turn to its round", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.provide(
+      Effect.gen(function* () {
+        const retry = yield* PersonalTurnRetry.PersonalTurnRetry;
+        // The round skips or re-queues the member itself; a continuation from
+        // here would be a second speaker the round does not know about.
+        yield* failOwnerTurnWithMessage(
+          retry,
+          harness,
+          MessageId.make("personal-group-round-1-brief-2"),
+        );
+        yield* TestClock.adjust(SECOND_DELAY_MS! * 4);
+        expect(harness.sends).toHaveLength(0);
+        expect(autoMarker(harness)).toBeUndefined();
+      }),
+      makeLayer(harness),
+    );
+  }),
+);
+
+it.effect("leaves an owner turn a task adopted to the task's own retry", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    harness.taskOwnsTurn = true;
+    yield* Effect.provide(
+      Effect.gen(function* () {
+        const retry = yield* PersonalTurnRetry.PersonalTurnRetry;
+        yield* failOwnerTurn(retry, harness);
+        yield* TestClock.adjust(SECOND_DELAY_MS! * 4);
+        expect(harness.sends).toHaveLength(0);
+        expect(autoMarker(harness)).toBeUndefined();
+      }),
+      makeLayer(harness),
+    );
+  }),
+);
+
+it.effect("does not re-arm a retry from the session its own Stop wrote back", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.provide(
+      Effect.gen(function* () {
+        const retry = yield* PersonalTurnRetry.PersonalTurnRetry;
+        yield* failOwnerTurn(retry, harness);
+        yield* retry.ingestDomainEvent(interruptEvent(harness));
+        yield* retry.drain;
+        // The engine echoes the marker-less error session back as an event.
+        const cleared = harness.session;
+        expect(cleared?.providerRetry?.auto).toBeUndefined();
+        yield* retry.ingestDomainEvent(sessionEvent(harness, cleared!));
+        yield* retry.drain;
         yield* TestClock.adjust(SECOND_DELAY_MS! * 4);
         expect(harness.sends).toHaveLength(0);
         expect(autoMarker(harness)).toBeUndefined();

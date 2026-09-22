@@ -213,6 +213,16 @@ const make = Effect.gen(function* () {
 
   const callerTask = Effect.fn("BotsToolkit.callerTask")(function* () {
     const caller = yield* callerBot();
+    // A group member thread only ever runs the round's turns. Adopting one as
+    // a task would later start a "[Task continuation]" turn on it that no
+    // round knows about: its answer never reaches the group, and it can
+    // overlap the member's next group turn.
+    const group = yield* groups.groupNameForMemberThread(caller.threadId);
+    if (Option.isSome(group)) {
+      return yield* toolError(
+        `You are speaking in the group "${group.value}", and a group turn cannot hand out, stop or park tasks. Answer in the group instead; if the work needs another bot or the user's help, say so there.`,
+      );
+    }
     const turnId = yield* currentTurnId(caller.threadId);
     const task = yield* tasks
       .resolveCallerTask({ threadId: caller.threadId, botId: caller.botId, turnId })
