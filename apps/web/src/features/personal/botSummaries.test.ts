@@ -18,6 +18,7 @@ import {
   filterBotSummaries,
   isThreadLive,
   isThreadRateLimited,
+  previewRefreshKey,
   providerLine,
   resolveBotProvider,
 } from "./botSummaries";
@@ -331,5 +332,52 @@ describe("botStatusLine", () => {
         .tone,
     ).toBe("review");
     expect(botStatus(summary({ live: true }), now).tone).toBe("normal");
+  });
+});
+
+describe("previewRefreshKey", () => {
+  const bots = [bot("bot-a", "Ada", "codex", 0)];
+  const keyFor = (overrides: Partial<Record<string, unknown>>) =>
+    previewRefreshKey(
+      buildBotSummaries({
+        bots,
+        links: [link("bot-a", "t1")],
+        shells: [shell("t1", "2026-09-01T10:00:00.000Z", overrides)],
+        providers: [provider("codex")],
+      }),
+    );
+  const running = {
+    turnId: "turn-1",
+    state: "running",
+    requestedAt: "2026-09-01T10:00:00.000Z",
+    startedAt: "2026-09-01T10:00:00.000Z",
+    completedAt: null,
+    assistantMessageId: "msg-1",
+  };
+
+  it("ignores streamed chunks, which only move the shell's updatedAt", () => {
+    const first = keyFor({ latestTurn: running });
+    const later = previewRefreshKey(
+      buildBotSummaries({
+        bots,
+        links: [link("bot-a", "t1")],
+        shells: [shell("t1", "2026-09-01T10:00:09.500Z", { latestTurn: running })],
+        providers: [provider("codex")],
+      }),
+    );
+    expect(later).toBe(first);
+  });
+
+  it("moves on a new owner message, a new assistant message and turn settlement", () => {
+    const base = keyFor({ latestTurn: running });
+    expect(
+      keyFor({ latestTurn: running, latestUserMessageAt: "2026-09-01T10:01:00.000Z" }),
+    ).not.toBe(base);
+    expect(keyFor({ latestTurn: { ...running, assistantMessageId: "msg-2" } })).not.toBe(base);
+    expect(
+      keyFor({
+        latestTurn: { ...running, state: "completed", completedAt: "2026-09-01T10:02:00.000Z" },
+      }),
+    ).not.toBe(base);
   });
 });

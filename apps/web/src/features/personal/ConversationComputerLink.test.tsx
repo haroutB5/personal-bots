@@ -75,7 +75,7 @@ describe("ConversationComputerLink", () => {
     );
     expect(output).toContain("Needs your help on the computer");
     expect(output).toContain('"to":"/computer"');
-    expect(output).toContain("--personal-review");
+    expect(output).toContain("--personal-review-text");
   });
 
   it("says the bot is using the computer only while its turn is running", () => {

@@ -301,6 +301,34 @@ export function buildBotSummaries(input: {
 }
 
 /** Client-side search over bot names and their thread titles. */
+/**
+ * What the Chats previews depend on, per bot: which thread is newest, and the
+ * message boundaries of that thread. Deliberately NOT the shell's
+ * `updatedAt`: the server bumps it on every streamed `message-sent` delta, so
+ * keying the `personalBots.list` refetch on it refetched the whole list once
+ * per chunk while any bot replied. This key moves when the owner sends a
+ * message (`latestUserMessageAt`), a turn starts (`turnId`), the bot starts a
+ * new message (`assistantMessageId`: commentary between tool calls is one
+ * message each) and when the turn settles (`state`, `completedAt`).
+ */
+export function previewRefreshKey(summaries: ReadonlyArray<BotSummary>): string {
+  return summaries
+    .map((summary) => {
+      const thread = summary.newestThread;
+      if (thread === null) return "";
+      const turn = thread.latestTurn;
+      return [
+        thread.id,
+        thread.latestUserMessageAt ?? "",
+        turn?.turnId ?? "",
+        turn?.state ?? "",
+        turn?.assistantMessageId ?? "",
+        turn?.completedAt ?? "",
+      ].join(",");
+    })
+    .join("|");
+}
+
 export function filterBotSummaries(
   summaries: ReadonlyArray<BotSummary>,
   query: string,

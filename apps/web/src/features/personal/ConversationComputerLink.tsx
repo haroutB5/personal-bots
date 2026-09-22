@@ -8,7 +8,7 @@ import { cn } from "~/lib/utils";
 import { computerChatLink, type ComputerDotTone } from "./computer/computerModel";
 
 const TONE_CLASS: Record<ComputerDotTone, string> = {
-  pending: "font-medium text-[var(--personal-review)]",
+  pending: "font-medium text-[var(--personal-review-text)]",
   problem: "font-medium text-[var(--personal-danger)]",
   live: "text-[var(--personal-text-secondary)]",
   idle: "text-[var(--personal-text-tertiary)]",

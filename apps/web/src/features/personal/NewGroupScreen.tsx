@@ -112,7 +112,9 @@ export function NewGroupScreen(): JSX.Element {
                 aria-live="polite"
                 className={cn(
                   "text-sm tabular-nums",
-                  full ? "text-[var(--personal-review)]" : "text-[var(--personal-text-secondary)]",
+                  full
+                    ? "text-[var(--personal-review-text)]"
+                    : "text-[var(--personal-text-secondary)]",
                 )}
               >
                 {picked.length} of {PERSONAL_GROUP_MAX_MEMBERS}

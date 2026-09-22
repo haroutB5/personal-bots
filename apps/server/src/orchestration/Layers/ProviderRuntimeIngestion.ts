@@ -52,6 +52,7 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
+import { stripToolResultMedia } from "../toolResultMedia.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -961,7 +962,11 @@ export function runtimeEventToActivities(
             ...(event.payload.toolSurface ? { toolSurface: event.payload.toolSurface } : {}),
             ...(event.payload.toolIcon ? { toolIcon: event.payload.toolIcon } : {}),
             ...(event.payload.toolSource ? { toolSource: event.payload.toolSource } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            // Full payload, minus inline base64 media (image Read results,
+            // preview snapshots): see stripToolResultMedia.
+            ...(event.payload.data !== undefined
+              ? { data: stripToolResultMedia(event.payload.data) }
+              : {}),
             ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
             ...(event.payload.parentToolUseId
               ? { parentToolUseId: event.payload.parentToolUseId }

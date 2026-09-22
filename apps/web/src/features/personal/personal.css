@@ -38,7 +38,12 @@
    * effectively invisible, so dark carries a stronger value. */
   --personal-border-strong: #e6e6e3;
   --personal-live: #34a853;
-  --personal-review: #d4a017;
+  --personal-review: #d4a017; /* dots, bars, borders, connectors: never text */
+  /* Amber for GLYPHS ("Needs you", "Weekly 89% used", "Update available").
+   * The bright amber above is only 2.3:1 on the page, fine for a dot and
+   * unreadable as 11-13px text. 5.1:1 on --personal-bg, 5.3:1 on
+   * --personal-surface, 5.0:1 on --personal-review-bg. */
+  --personal-review-text: #8a6500;
   --personal-review-bg: #fbf8ee;
   --personal-review-border: #efe8d2;
   --personal-danger: #8c1d18;
@@ -125,6 +130,9 @@
   --personal-track: #3f3f3c;
   --personal-live: #3ecf6b; /* status dot, 9.5:1 on bg (needs 3:1) */
   --personal-review: #e3b855; /* 8.8:1 on --personal-review-bg */
+  /* Dark already clears AA with the bright amber: 10.3:1 on bg, 9.3:1 on
+   * surface, 8.8:1 on --personal-review-bg. */
+  --personal-review-text: #e3b855;
   --personal-review-bg: #241f12;
   --personal-review-border: #453a1d;
   --personal-danger: #f2a49b; /* 8.6:1 on --personal-danger-bg, 8.8:1 on surface */

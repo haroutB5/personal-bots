@@ -72,6 +72,17 @@ export function canCancelTask(status: PersonalTaskStatus): boolean {
   return !PERSONAL_TASK_TERMINAL_STATUSES.includes(status);
 }
 
+/**
+ * The confirm shown before Stop task. Stopping abandons in-flight work
+ * (delegations included) and Retry starts over rather than resuming, so it is
+ * a destructive action and says so.
+ */
+export function stopTaskConfirmMessage(title: string): string {
+  const name = title.trim().length > 0 ? title.trim() : "this task";
+  return `Stop ${name}?
+The bot stops now; work in progress is lost.`;
+}
+
 export function canRetryTask(status: PersonalTaskStatus): boolean {
   return PERSONAL_TASK_RETRYABLE_STATUSES.includes(status);
 }

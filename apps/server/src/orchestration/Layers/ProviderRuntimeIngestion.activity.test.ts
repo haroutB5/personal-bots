@@ -142,3 +142,59 @@ describe("runtimeEventToActivities tool streaming persistence", () => {
     expect(payload.data).toEqual(streamingData);
   });
 });
+
+describe("runtimeEventToActivities image tool results", () => {
+  it("replaces inline base64 image data on tool.completed with a size placeholder", () => {
+    const imageBase64 = "/9j/4AAQSkZJRgABAgAAAQABAAD".repeat(4_000);
+    const readData = {
+      toolName: "Read",
+      input: { file_path: "C:/attachments/shot.jpg" },
+      result: {
+        tool_use_id: "toolu_1",
+        type: "tool_result",
+        content: [
+          {
+            type: "image",
+            source: { type: "base64", data: imageBase64, media_type: "image/jpeg" },
+          },
+        ],
+      },
+    };
+    const event = {
+      ...base,
+      provider: ProviderDriverKind.make("claudeAgent"),
+      type: "item.completed",
+      eventId: EventId.make("evt-image-read"),
+      payload: {
+        itemType: "image_view",
+        status: "completed",
+        title: "Image view",
+        data: readData,
+      },
+    } satisfies ProviderRuntimeEvent;
+
+    const activities = runtimeEventToActivities(event);
+
+    expect(activities).toHaveLength(1);
+    const payload = activities[0]?.payload as Record<string, unknown>;
+    expect(payload.data).toEqual({
+      ...readData,
+      result: {
+        ...readData.result,
+        content: [
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/jpeg",
+              omittedBytes: (imageBase64.length * 3) / 4,
+            },
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(payload).includes(imageBase64.slice(0, 64))).toBe(false);
+    // The event's own payload is not mutated.
+    expect(readData.result.content[0]!.source.data).toBe(imageBase64);
+  });
+});

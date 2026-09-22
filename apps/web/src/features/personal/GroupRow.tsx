@@ -76,7 +76,7 @@ export const GroupRow = memo(function GroupRow({
           className={cn(
             "truncate text-sm leading-5",
             status.tone === "review"
-              ? "text-[var(--personal-review)]"
+              ? "text-[var(--personal-review-text)]"
               : "text-[var(--personal-text-secondary)]",
           )}
         >

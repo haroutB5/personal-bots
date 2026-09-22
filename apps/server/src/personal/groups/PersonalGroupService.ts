@@ -1313,31 +1313,36 @@ export const make = Effect.gen(function* () {
       return;
     }
     const group = yield* requireGroup(round.groupId);
-    const all = yield* liveBots();
-    const reserved = yield* repository.getMessageByMessageId(round.activeMessageId);
+    // The marker (speaker + seq) rides only on a reply's first chunk, so the
+    // bot roster and the reserved message are read once per reply, not once
+    // per streamed delta (8-14 relays per reply).
+    const reserved =
+      round.relayedChars > 0
+        ? Option.none()
+        : yield* repository.getMessageByMessageId(round.activeMessageId);
+    const all = Option.isNone(reserved) ? [] : yield* liveBots();
     yield* relayDelta({
       group,
       messageId: round.activeMessageId,
       delta,
       offset: round.relayedChars,
-      marker:
-        round.relayedChars > 0 || Option.isNone(reserved)
-          ? null
-          : {
-              groupId: group.groupId,
-              seq: reserved.value.seq,
-              roundId: round.roundId,
-              speaker: {
-                kind: "bot",
-                botId: round.activeBotId,
-                name: botName(all, round.activeBotId),
-              },
-              ...(round.activeMessageId.endsWith("-verdict")
-                ? { phase: "verdict" as const }
-                : round.verdictBotId
-                  ? { phase: "discussion" as const }
-                  : {}),
+      marker: Option.isNone(reserved)
+        ? null
+        : {
+            groupId: group.groupId,
+            seq: reserved.value.seq,
+            roundId: round.roundId,
+            speaker: {
+              kind: "bot",
+              botId: round.activeBotId,
+              name: botName(all, round.activeBotId),
             },
+            ...(round.activeMessageId.endsWith("-verdict")
+              ? { phase: "verdict" as const }
+              : round.verdictBotId
+                ? { phase: "discussion" as const }
+                : {}),
+          },
     });
     yield* writeRound(round, { relayedChars: round.relayedChars + delta.length });
   });

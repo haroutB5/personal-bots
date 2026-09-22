@@ -682,10 +682,56 @@ describe("ChatsScreen preview refresh", () => {
     expect(state.refresh).not.toHaveBeenCalled();
   });
 
-  it("still refetches once a message bumps the newest thread", async () => {
+  /** Runs the timers scheduled since `since` (the debounced refetch among them). */
+  async function flushTimersAfter(since: number) {
+    const due = [...state.timeouts.entries()].filter(([id]) => id >= since);
+    for (const [id] of due) state.timeouts.delete(id);
+    await act(async () => {
+      for (const [, callback] of due) callback();
+    });
+  }
+
+  const running = (assistantMessageId: string) => ({
+    turnId: "turn-1",
+    state: "running",
+    requestedAt: "2026-09-01T10:04:00.000Z",
+    startedAt: "2026-09-01T10:04:00.000Z",
+    completedAt: null,
+    assistantMessageId,
+  });
+
+  it("does not refetch per streamed chunk (updatedAt alone moving)", async () => {
     await populate();
-    state.shells = [shell("thread-1", "2026-09-01T10:05:00.000Z")];
+    const since = state.nextTimeoutId;
+    for (const second of ["01", "02", "03"]) {
+      state.shells = [shell("thread-1", `2026-09-01T10:05:${second}.000Z`)];
+      await act(async () => renderer!.update(<ChatsScreen />));
+    }
+    await flushTimersAfter(since);
+    expect(state.refresh).not.toHaveBeenCalled();
+  });
+
+  it("refetches once per message boundary, coalescing moves that land together", async () => {
+    await populate();
+    const since = state.nextTimeoutId;
+    // The owner's message and the turn it starts arrive tens of ms apart.
+    state.shells = [
+      {
+        ...shell("thread-1", "2026-09-01T10:04:00.000Z"),
+        latestUserMessageAt: "2026-09-01T10:04:00.000Z",
+      },
+    ];
     await act(async () => renderer!.update(<ChatsScreen />));
+    state.shells = [
+      {
+        ...shell("thread-1", "2026-09-01T10:04:00.050Z"),
+        latestUserMessageAt: "2026-09-01T10:04:00.000Z",
+        latestTurn: running("msg-1"),
+      },
+    ];
+    await act(async () => renderer!.update(<ChatsScreen />));
+    expect(state.refresh).not.toHaveBeenCalled();
+    await flushTimersAfter(since);
     expect(state.refresh).toHaveBeenCalledTimes(1);
   });
 });

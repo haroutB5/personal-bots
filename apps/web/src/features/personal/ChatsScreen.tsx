@@ -24,6 +24,7 @@ import {
   collectAttentionThreads,
   filterBotSummaries,
   partitionPinnedSummaries,
+  previewRefreshKey,
   type BotSummary,
 } from "./botSummaries";
 import { useTogglePinBot } from "./usePinBot";
@@ -68,6 +69,8 @@ import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots
 import { formatRelativeTime } from "./relativeTime";
 
 const MINUTE_MS = 60_000;
+/** Coalesces preview-key moves that land together (message sent + turn start). */
+const PREVIEW_REFRESH_DEBOUNCE_MS = 250;
 
 /** Re-render once a minute so relative timestamps and the greeting stay true. */
 export function useMinuteClock(): number {
@@ -323,11 +326,14 @@ export function ChatsScreen(): JSX.Element {
       waitingByThread,
     ],
   );
-  // Previews ride on `personalBots.list`; a message landing on a bot's newest
-  // thread bumps that shell's updatedAt (already live), which refetches the
-  // list once instead of every row holding a full thread subscription.
-  const previewKey = summaries.map((summary) => summary.newestThread?.updatedAt ?? "").join("|");
+  // Previews ride on `personalBots.list`; a message boundary on a bot's newest
+  // thread (see `previewRefreshKey`) refetches the list once instead of every
+  // row holding a full thread subscription. Not per streamed chunk: the shell's
+  // updatedAt moves on every delta and used to refetch the whole list each time.
+  const previewKey = previewRefreshKey(summaries);
   const previewKeyRef = useRef<string | null>(null);
+  const previewRefreshTimerRef = useRef<number | null>(null);
+  const previewRefreshRef = useRef(list.refresh);
   // `newestThread` comes from the thread shells and the rows from the list, so
   // until both have landed the key is a placeholder of empty segments.
   // Adopting that placeholder as the baseline made the initial population read
@@ -335,6 +341,7 @@ export function ChatsScreen(): JSX.Element {
   // start (measured: two byte-identical 12,035 B responses, 28 ms apart).
   const previewKeyReady = list.data !== null && shells.length > 0;
   useEffect(() => {
+    previewRefreshRef.current = list.refresh;
     if (!previewKeyReady) return;
     if (previewKeyRef.current === null) {
       previewKeyRef.current = previewKey;
@@ -342,8 +349,25 @@ export function ChatsScreen(): JSX.Element {
     }
     if (previewKeyRef.current === previewKey) return;
     previewKeyRef.current = previewKey;
-    list.refresh();
+    // Trailing, so the owner's message and the turn it starts (two key moves
+    // tens of ms apart) cost one refetch, not two. The pending timer lives in a
+    // ref, not in this effect's cleanup: `list` can change identity before it
+    // fires, and a cleanup would drop the refetch the key change asked for.
+    if (previewRefreshTimerRef.current !== null) return;
+    previewRefreshTimerRef.current = window.setTimeout(() => {
+      previewRefreshTimerRef.current = null;
+      previewRefreshRef.current();
+    }, PREVIEW_REFRESH_DEBOUNCE_MS);
   }, [list, previewKey, previewKeyReady]);
+  useEffect(
+    () => () => {
+      if (previewRefreshTimerRef.current !== null) {
+        window.clearTimeout(previewRefreshTimerRef.current);
+        previewRefreshTimerRef.current = null;
+      }
+    },
+    [],
+  );
   const visible = useMemo(() => filterBotSummaries(summaries, query), [query, summaries]);
   const visibleGroups = useMemo(() => filterGroups(groups, query, nameOf), [groups, nameOf, query]);
   const botsById = useMemo(
