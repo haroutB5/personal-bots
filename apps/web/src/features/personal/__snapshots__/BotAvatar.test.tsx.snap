@@ -1,0 +1,50 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`BotAvatar static output > draws blob byte for byte as before without motion 1`] = `
+[
+  "<svg role="img" aria-label="Bot" width="40" height="40" viewBox="0 0 100 100" class="bot-avatar shrink-0"><path d="M50 9C66 7 88 24 90 48C92 72 70 91 49 92C28 93 9 74 10 50C11 27 33 11 50 9Z" fill="#1A73E8" stroke="none" stroke-width="0" stroke-linejoin="round"></path><g class="bot-avatar-eyes"><rect x="33.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 38 57)"></rect><rect x="49.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 54 57)"></rect></g></svg>",
+  "<svg role="img" aria-label="Bot" width="40" height="40" viewBox="0 0 100 100" class="bot-avatar shrink-0"><path d="M50 9C66 7 88 24 90 48C92 72 70 91 49 92C28 93 9 74 10 50C11 27 33 11 50 9Z" fill="none" stroke="var(--personal-avatar-halo)" stroke-width="6" stroke-linejoin="round"></path><path d="M50 9C66 7 88 24 90 48C92 72 70 91 49 92C28 93 9 74 10 50C11 27 33 11 50 9Z" fill="#171717" stroke="none" stroke-width="0" stroke-linejoin="round"></path><g class="bot-avatar-eyes"><rect x="33.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 38 57)"></rect><rect x="49.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 54 57)"></rect></g></svg>",
+]
+`;
+
+exports[`BotAvatar static output > draws droplet byte for byte as before without motion 1`] = `
+[
+  "<svg role="img" aria-label="Bot" width="40" height="40" viewBox="0 0 100 100" class="bot-avatar shrink-0"><path d="M50 6C58 22 78 42 78 62A28 28 0 1 1 22 62C22 42 42 22 50 6Z" fill="#1A73E8" stroke="none" stroke-width="0" stroke-linejoin="round"></path><g class="bot-avatar-eyes"><rect x="33.5" y="49" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 38 60)"></rect><rect x="49.5" y="49" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 54 60)"></rect></g></svg>",
+  "<svg role="img" aria-label="Bot" width="40" height="40" viewBox="0 0 100 100" class="bot-avatar shrink-0"><path d="M50 6C58 22 78 42 78 62A28 28 0 1 1 22 62C22 42 42 22 50 6Z" fill="none" stroke="var(--personal-avatar-halo)" stroke-width="6" stroke-linejoin="round"></path><path d="M50 6C58 22 78 42 78 62A28 28 0 1 1 22 62C22 42 42 22 50 6Z" fill="#171717" stroke="none" stroke-width="0" stroke-linejoin="round"></path><g class="bot-avatar-eyes"><rect x="33.5" y="49" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 38 60)"></rect><rect x="49.5" y="49" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 54 60)"></rect></g></svg>",
+]
+`;
+
+exports[`BotAvatar static output > draws pill byte for byte as before without motion 1`] = `
+[
+  "<svg role="img" aria-label="Bot" width="40" height="40" viewBox="0 0 100 100" class="bot-avatar shrink-0"><path d="M30 26H70Q94 26 94 50Q94 74 70 74H30Q6 74 6 50Q6 26 30 26Z" fill="#1A73E8" stroke="none" stroke-width="0" stroke-linejoin="round"></path><g class="bot-avatar-eyes"><rect x="33.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 38 57)"></rect><rect x="49.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 54 57)"></rect></g></svg>",
+  "<svg role="img" aria-label="Bot" width="40" height="40" viewBox="0 0 100 100" class="bot-avatar shrink-0"><path d="M30 26H70Q94 26 94 50Q94 74 70 74H30Q6 74 6 50Q6 26 30 26Z" fill="none" stroke="var(--personal-avatar-halo)" stroke-width="6" stroke-linejoin="round"></path><path d="M30 26H70Q94 26 94 50Q94 74 70 74H30Q6 74 6 50Q6 26 30 26Z" fill="#171717" stroke="none" stroke-width="0" stroke-linejoin="round"></path><g class="bot-avatar-eyes"><rect x="33.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 38 57)"></rect><rect x="49.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 54 57)"></rect></g></svg>",
+]
+`;
+
+exports[`BotAvatar static output > draws roundedHexagon byte for byte as before without motion 1`] = `
+[
+  "<svg role="img" aria-label="Bot" width="40" height="40" viewBox="0 0 100 100" class="bot-avatar shrink-0"><path d="M50 8L84.6 28V72L50 92L15.4 72V28Z" fill="#1A73E8" stroke="#1A73E8" stroke-width="7" stroke-linejoin="round"></path><g class="bot-avatar-eyes"><rect x="33.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 38 57)"></rect><rect x="49.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 54 57)"></rect></g></svg>",
+  "<svg role="img" aria-label="Bot" width="40" height="40" viewBox="0 0 100 100" class="bot-avatar shrink-0"><path d="M50 8L84.6 28V72L50 92L15.4 72V28Z" fill="none" stroke="var(--personal-avatar-halo)" stroke-width="13" stroke-linejoin="round"></path><path d="M50 8L84.6 28V72L50 92L15.4 72V28Z" fill="#171717" stroke="#171717" stroke-width="7" stroke-linejoin="round"></path><g class="bot-avatar-eyes"><rect x="33.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 38 57)"></rect><rect x="49.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 54 57)"></rect></g></svg>",
+]
+`;
+
+exports[`BotAvatar static output > draws roundedSquare byte for byte as before without motion 1`] = `
+[
+  "<svg role="img" aria-label="Bot" width="40" height="40" viewBox="0 0 100 100" class="bot-avatar shrink-0"><path d="M38 10H62Q90 10 90 38V62Q90 90 62 90H38Q10 90 10 62V38Q10 10 38 10Z" fill="#1A73E8" stroke="none" stroke-width="0" stroke-linejoin="round"></path><g class="bot-avatar-eyes"><rect x="33.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 38 57)"></rect><rect x="49.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 54 57)"></rect></g></svg>",
+  "<svg role="img" aria-label="Bot" width="40" height="40" viewBox="0 0 100 100" class="bot-avatar shrink-0"><path d="M38 10H62Q90 10 90 38V62Q90 90 62 90H38Q10 90 10 62V38Q10 10 38 10Z" fill="none" stroke="var(--personal-avatar-halo)" stroke-width="6" stroke-linejoin="round"></path><path d="M38 10H62Q90 10 90 38V62Q90 90 62 90H38Q10 90 10 62V38Q10 10 38 10Z" fill="#171717" stroke="none" stroke-width="0" stroke-linejoin="round"></path><g class="bot-avatar-eyes"><rect x="33.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 38 57)"></rect><rect x="49.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 54 57)"></rect></g></svg>",
+]
+`;
+
+exports[`BotAvatar static output > draws scallopedCloud byte for byte as before without motion 1`] = `
+[
+  "<svg role="img" aria-label="Bot" width="40" height="40" viewBox="0 0 100 100" class="bot-avatar shrink-0"><path d="M33.5 24.4Q50 1.8 66.5 24.4Q94.4 27.4 83 53Q94.4 78.6 66.5 81.6Q50 104.3 33.5 81.6Q5.6 78.6 17 53Q5.6 27.4 33.5 24.4Z" fill="#1A73E8" stroke="none" stroke-width="0" stroke-linejoin="round"></path><g class="bot-avatar-eyes"><rect x="33.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 38 57)"></rect><rect x="49.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 54 57)"></rect></g></svg>",
+  "<svg role="img" aria-label="Bot" width="40" height="40" viewBox="0 0 100 100" class="bot-avatar shrink-0"><path d="M33.5 24.4Q50 1.8 66.5 24.4Q94.4 27.4 83 53Q94.4 78.6 66.5 81.6Q50 104.3 33.5 81.6Q5.6 78.6 17 53Q5.6 27.4 33.5 24.4Z" fill="none" stroke="var(--personal-avatar-halo)" stroke-width="6" stroke-linejoin="round"></path><path d="M33.5 24.4Q50 1.8 66.5 24.4Q94.4 27.4 83 53Q94.4 78.6 66.5 81.6Q50 104.3 33.5 81.6Q5.6 78.6 17 53Q5.6 27.4 33.5 24.4Z" fill="#171717" stroke="none" stroke-width="0" stroke-linejoin="round"></path><g class="bot-avatar-eyes"><rect x="33.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 38 57)"></rect><rect x="49.5" y="46" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 54 57)"></rect></g></svg>",
+]
+`;
+
+exports[`BotAvatar static output > draws triangle byte for byte as before without motion 1`] = `
+[
+  "<svg role="img" aria-label="Bot" width="40" height="40" viewBox="0 0 100 100" class="bot-avatar shrink-0"><path d="M50 14Q52 14 53.2 16.2L84.6 79.4Q89.6 88 80.4 88H19.6Q10.4 88 15.4 79.4L46.8 16.2Q48 14 50 14Z" fill="#1A73E8" stroke="#1A73E8" stroke-width="7" stroke-linejoin="round"></path><g class="bot-avatar-eyes"><rect x="33.5" y="53" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 38 64)"></rect><rect x="49.5" y="53" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 54 64)"></rect></g></svg>",
+  "<svg role="img" aria-label="Bot" width="40" height="40" viewBox="0 0 100 100" class="bot-avatar shrink-0"><path d="M50 14Q52 14 53.2 16.2L84.6 79.4Q89.6 88 80.4 88H19.6Q10.4 88 15.4 79.4L46.8 16.2Q48 14 50 14Z" fill="none" stroke="var(--personal-avatar-halo)" stroke-width="13" stroke-linejoin="round"></path><path d="M50 14Q52 14 53.2 16.2L84.6 79.4Q89.6 88 80.4 88H19.6Q10.4 88 15.4 79.4L46.8 16.2Q48 14 50 14Z" fill="#171717" stroke="#171717" stroke-width="7" stroke-linejoin="round"></path><g class="bot-avatar-eyes"><rect x="33.5" y="53" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 38 64)"></rect><rect x="49.5" y="53" width="9" height="22" rx="4.5" fill="#111111" transform="rotate(15 54 64)"></rect></g></svg>",
+]
+`;
