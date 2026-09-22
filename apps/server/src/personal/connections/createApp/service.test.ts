@@ -23,6 +23,7 @@ import * as ConnectionService from "../service.ts";
 import { ConnectionId } from "@t3tools/contracts";
 import { makeAppHealthCheck, AppHealthCheck, type AppProbe } from "./healthCheck.ts";
 import * as RunRepository from "./runRepository.ts";
+import { createAppDataStorePlan } from "./dataStores.ts";
 import * as CreateApp from "./service.ts";
 
 /**
@@ -54,6 +55,15 @@ interface GatewayScript {
   readonly dieOn?: ReadonlySet<string>;
   /** Operation names that should be refused by the provider. */
   readonly failOn?: ReadonlySet<string>;
+  /** Refusals from `failOn` carry no definite answer: the provider may have acted. */
+  readonly failAmbiguously?: boolean;
+  /** What `vercel.create_deployment` reports as the project's production domain. */
+  readonly productionUrl?: string;
+  /** Upstash databases `upstash.list_databases` reports. */
+  readonly existingDatabases?: ReadonlyArray<{
+    readonly database: string;
+    readonly databaseId: string;
+  }>;
   /** Repositories `github.list_repositories` reports. */
   readonly existingRepositories?: ReadonlyArray<{
     readonly repository: string;
@@ -75,6 +85,7 @@ const makeHarness = (script: GatewayScript = {}, healthReplies?: ReadonlyArray<n
   const parked: Array<string> = [];
   const existingRepositories = [...(script.existingRepositories ?? [])];
   const existingProjects = [...(script.existingProjects ?? [])];
+  const existingDatabases = [...(script.existingDatabases ?? [])];
 
   const connections = Layer.mock(ConnectionService.PersonalConnectionService)({
     resolveForOperation: (vendorId) =>
@@ -111,6 +122,7 @@ const makeHarness = (script: GatewayScript = {}, healthReplies?: ReadonlyArray<n
           return yield* Effect.fail(
             new Gateway.PersonalConnectionGatewayError({
               reason: `the provider refused ${input.operation}`,
+              ...(script.failAmbiguously === true ? { ambiguous: true } : {}),
             }),
           );
         }
@@ -128,6 +140,13 @@ const makeHarness = (script: GatewayScript = {}, healthReplies?: ReadonlyArray<n
               return { repository: "octocat/my-app", branch: "main", commitSha: "abc1234" };
             case "vercel.list_projects":
               return { projects: existingProjects };
+            case "upstash.list_databases":
+              return { databases: existingDatabases };
+            case "upstash.create_redis_database":
+              existingDatabases.push({ database: "my-app", databaseId: "db_1" });
+              return { database: "my-app", databaseId: "db_1" };
+            case "upstash.attach_rest_credentials_to_vercel":
+              return { vercelProject: "my-app", target: "production", keys: [] };
             case "vercel.create_project":
               existingProjects.push({ project: "my-app", projectId: "prj_1" });
               return { project: "my-app", projectId: "prj_1", framework: "" };
@@ -138,6 +157,9 @@ const makeHarness = (script: GatewayScript = {}, healthReplies?: ReadonlyArray<n
                 deploymentId: "dpl_1",
                 url: "https://my-app.example",
                 target: "production",
+                ...(script.productionUrl === undefined
+                  ? {}
+                  : { productionUrl: script.productionUrl }),
               };
             default:
               return {};
@@ -205,8 +227,10 @@ const makeHarness = (script: GatewayScript = {}, healthReplies?: ReadonlyArray<n
   });
 
   let probeIndex = 0;
-  const probe: AppProbe = () =>
+  const probed: Array<string> = [];
+  const probe: AppProbe = (url) =>
     Effect.sync(() => {
+      probed.push(url);
       const status = healthReplies?.[Math.min(probeIndex, healthReplies.length - 1)] ?? 200;
       probeIndex += 1;
       return { status, body: status === 200 ? "hbots-app-ok" : "building" };
@@ -240,16 +264,41 @@ const makeHarness = (script: GatewayScript = {}, healthReplies?: ReadonlyArray<n
     Layer.provideMerge(NodeSqliteClient.layerMemory()),
   );
 
-  return { layer, approvals, calls, resumes, parked, existingRepositories, existingProjects };
+  return {
+    layer,
+    approvals,
+    calls,
+    resumes,
+    parked,
+    probed,
+    existingRepositories,
+    existingProjects,
+    existingDatabases,
+  };
 };
 
 type Harness = ReturnType<typeof makeHarness>;
 
-const request = (overrides?: { readonly visibility?: "private" | "public" }) => ({
+const request = (overrides?: {
+  readonly visibility?: "private" | "public";
+  readonly redis?: boolean;
+}) => ({
   caller,
   appName: "my-app",
   visibility: overrides?.visibility ?? ("private" as const),
   deploymentTarget: "production" as const,
+  ...(overrides?.redis === true
+    ? {
+        dataStores: [
+          createAppDataStorePlan({
+            kind: "redis",
+            appName: "my-app",
+            vercelProject: "my-app",
+            environmentTargets: ["production"],
+          }),
+        ],
+      }
+    : {}),
 });
 
 /** How often a creating call actually reached the provider. */
@@ -276,10 +325,12 @@ const armApprovedRun = (runId: CreateAppRunId, approvalId: PersonalConnectionApp
     });
   });
 
-const startAndApprove = Effect.fn("startAndApprove")(function* () {
+const startAndApprove = Effect.fn("startAndApprove")(function* (options?: {
+  readonly redis?: boolean;
+}) {
   const service = yield* CreateApp.PersonalCreateAppService;
   const approvalService = yield* ApprovalService.PersonalConnectionApprovalService;
-  const started = yield* service.startOrResume(request());
+  const started = yield* service.startOrResume(request(options));
   assert.equal(started._tag, "awaiting_approval");
   if (started._tag !== "awaiting_approval") throw new Error("unreachable");
   const pending = yield* approvalService.listPending();
@@ -383,6 +434,45 @@ it.layer(Layer.empty)("create_app runner", (it) => {
       // Prerequisites resolve before the owner is shown anything, so a plan
       // that cannot work never costs them a decision.
       assert.equal(harness.approvals.size, 0);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("refuses a store name already in use, rather than adopting a stranger's", () => {
+    const harness = makeHarness({
+      existingDatabases: [{ database: "my-app", databaseId: "db_0" }],
+    });
+    return Effect.gen(function* () {
+      const service = yield* CreateApp.PersonalCreateAppService;
+      yield* runMigrations({ toMigrationInclusive: 76 });
+      const error = yield* Effect.flip(service.startOrResume(request({ redis: true })));
+      assert.ok(error.message.includes("Upstash database my-app already exists"));
+      assert.equal(harness.approvals.size, 0);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("writes an adopted store's credentials into Vercel before calling it done", () => {
+    // The store is created, then the attach fails. The retry finds the store
+    // and adopts it; the attach must run again or the app has no database.
+    const failOn = new Set(["upstash.attach_rest_credentials_to_vercel"]);
+    const harness = makeHarness({ failOn });
+    return Effect.gen(function* () {
+      const service = yield* CreateApp.PersonalCreateAppService;
+      yield* runMigrations({ toMigrationInclusive: 76 });
+      const { runId, approvalId } = yield* startAndApprove({ redis: true });
+      const first = yield* service.advance(runId);
+      assert.equal(first.status, "needs_attention");
+      assert.equal(timesCalled(harness, "upstash.create_redis_database"), 1);
+
+      failOn.delete("upstash.attach_rest_credentials_to_vercel");
+      yield* armApprovedRun(runId, approvalId);
+      const second = yield* service.advance(runId);
+      assert.equal(second.status, "completed");
+      // Adopted, not created twice, and the credential write ran again.
+      assert.equal(timesCalled(harness, "upstash.create_redis_database"), 1);
+      assert.equal(timesCalled(harness, "upstash.attach_rest_credentials_to_vercel"), 2);
+      const store = second.steps.find((entry) => entry.stepId === "upstash.store");
+      assert.equal(store?.state, "done");
+      assert.equal(store?.adopted, true);
     }).pipe(Effect.provide(harness.layer));
   });
 
@@ -572,6 +662,69 @@ it.layer(Layer.empty)("create_app runner", (it) => {
       assert.deepEqual(pending, ["vercel.environment", "vercel.deployment", "health"]);
       // Nothing after the failure was attempted, and nothing before it undone.
       assert.equal(timesCalled(harness, "vercel.create_deployment"), 0);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("checks the production domain, not the protected deployment URL", () => {
+    const harness = makeHarness({ productionUrl: "https://my-app-octocat.vercel.app" });
+    return Effect.gen(function* () {
+      const service = yield* CreateApp.PersonalCreateAppService;
+      yield* runMigrations({ toMigrationInclusive: 76 });
+      const { runId } = yield* startAndApprove();
+      const run = yield* service.advance(runId);
+      assert.equal(run.status, "completed");
+      assert.ok(harness.probed.length > 0);
+      assert.ok(harness.probed.every((url) => url.startsWith("https://my-app-octocat.vercel.app")));
+      assert.equal(run.appUrl, "https://my-app-octocat.vercel.app/");
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("deploys again after a deployment the provider refused outright", () => {
+    // A clean 4xx did nothing, so once the owner fixes the cause and approves
+    // again the step runs; it is not the ambiguous case that has to stop.
+    const failOn = new Set(["vercel.create_deployment"]);
+    const harness = makeHarness({ failOn });
+    return Effect.gen(function* () {
+      const service = yield* CreateApp.PersonalCreateAppService;
+      yield* runMigrations({ toMigrationInclusive: 76 });
+      const { runId, approvalId } = yield* startAndApprove();
+      const first = yield* service.advance(runId);
+      assert.equal(first.status, "needs_attention");
+      const refused = first.steps.find((entry) => entry.stepId === "vercel.deployment");
+      assert.equal(refused?.state, "failed");
+
+      failOn.delete("vercel.create_deployment");
+      yield* armApprovedRun(runId, approvalId);
+      const second = yield* service.advance(runId);
+      assert.equal(timesCalled(harness, "vercel.create_deployment"), 2);
+      assert.equal(
+        second.steps.find((entry) => entry.stepId === "vercel.deployment")?.state,
+        "done",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("parks a deployment that failed without a definite answer", () => {
+    const failOn = new Set(["vercel.create_deployment"]);
+    const harness = makeHarness({ failOn, failAmbiguously: true });
+    return Effect.gen(function* () {
+      const service = yield* CreateApp.PersonalCreateAppService;
+      yield* runMigrations({ toMigrationInclusive: 76 });
+      const { runId, approvalId } = yield* startAndApprove();
+      const first = yield* service.advance(runId);
+      assert.equal(first.status, "needs_attention");
+      // Left in flight: the provider may have started a deployment.
+      assert.equal(
+        first.steps.find((entry) => entry.stepId === "vercel.deployment")?.state,
+        "in_flight",
+      );
+
+      failOn.delete("vercel.create_deployment");
+      yield* armApprovedRun(runId, approvalId);
+      const second = yield* service.advance(runId);
+      assert.equal(second.status, "needs_attention");
+      assert.equal(timesCalled(harness, "vercel.create_deployment"), 1);
+      assert.ok((harness.resumes.at(-1)?.note ?? "").includes("look at the provider"));
     }).pipe(Effect.provide(harness.layer));
   });
 

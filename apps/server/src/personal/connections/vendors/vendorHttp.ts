@@ -47,8 +47,42 @@ export type VendorHttp = (
   request: VendorHttpRequest,
 ) => Effect.Effect<VendorHttpResponse, ConnectionVendorError>;
 
-/** 401 and 403 are the owner's problem, not the bot's: the token has to be replaced. */
+/**
+ * 401 and 403 are the owner's problem, not the bot's: the token has to be
+ * replaced. Only for the identity reads a connection is validated with, where
+ * the token is the one thing a 403 can be about.
+ */
 export const isUnauthorizedStatus = (status: number) => status === 401 || status === 403;
+
+/**
+ * Whether a failed operation says the token itself is dead.
+ *
+ * A 401 always does. A 403 usually does not: GitHub answers 403 for a
+ * fine-grained token missing one permission ("Resource not accessible by
+ * personal access token") and for its secondary rate limit, and Vercel for a
+ * project outside the token's scope. Disabling the connection for those
+ * would stop every read too, while "Check now" keeps passing. So a 403 counts
+ * only when the body names the token as invalid (Vercel sets `invalidToken`).
+ */
+export const isCredentialRejection = (response: VendorHttpResponse): boolean => {
+  if (response.status === 401) return true;
+  if (response.status !== 403) return false;
+  const body = response.body;
+  if (typeof body === "object" && body !== null) {
+    const error = (body as Record<string, unknown>)["error"];
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      (error as Record<string, unknown>)["invalidToken"] === true
+    ) {
+      return true;
+    }
+  }
+  const text = typeof body === "string" ? body : JSON.stringify(body ?? "");
+  return /bad credentials|invalid[ _-]?token|token (?:has )?(?:expired|been revoked|is revoked)/i.test(
+    text,
+  );
+};
 
 /**
  * The vendor's own words about a failed request, short enough to read and long
@@ -82,11 +116,12 @@ export const expectOk = (
   response.status >= 200 && response.status < 300
     ? Effect.succeed(response.body)
     : Effect.fail(
-        vendorFailure(
+        new ConnectionVendorError({
           operationId,
-          describeFailure(response),
-          isUnauthorizedStatus(response.status),
-        ),
+          detail: describeFailure(response),
+          status: response.status,
+          ...(isCredentialRejection(response) ? { unauthorized: true } : {}),
+        }),
       );
 
 /**

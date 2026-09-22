@@ -329,7 +329,10 @@ const VercelCreateDeployment = defineOperation({
   description:
     "Deploy a Vercel project from a git ref to preview or production. The target must be named.",
   fields: { project: SlugText, target: DeploymentTarget, gitRef: SlugText },
-  resultFields: ["deploymentId", "url", "target"],
+  // `productionUrl` is present for a production deployment whose project has
+  // a `*.vercel.app` production domain: the address that is not behind
+  // Deployment Protection.
+  resultFields: ["deploymentId", "url", "target", "productionUrl"],
   reviewedVendorSchema: "vercel/v13-deployments@2026-09-20",
   classify: (args) => ({
     approvalRequired: true,

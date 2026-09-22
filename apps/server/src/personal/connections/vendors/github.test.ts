@@ -261,46 +261,76 @@ describe("github adapter", () => {
     }),
   );
 
-  it.effect(
-    "makes the first commit of an empty repository instead of failing on a missing ref",
-    () =>
-      Effect.gen(function* () {
-        const routes = pushRoutes(false);
-        const { adapter, requests } = harness({
-          ...routes,
-          "GET https://api.github.com/repos/haroutB5/app": {
-            body: { default_branch: "trunk" },
-          },
-          "GET https://api.github.com/repos/haroutB5/app/git/ref/heads/trunk": {
-            status: 404,
-            body: { message: "Not Found" },
-          },
-        });
-        const result = yield* adapter.execute(pushCall);
-        expect(result).toEqual({
-          repository: "haroutB5/app",
-          branch: "main",
-          commitSha: "commit-1",
-        });
-        const commit = requests.find((request) => request.url.endsWith("/git/commits"))?.body as {
-          parents: ReadonlyArray<string>;
-        };
-        expect(commit.parents).toEqual([]);
-        const tree = requests.find((request) => request.url.endsWith("/git/trees"))?.body as {
-          base_tree?: string;
-        };
-        expect(tree.base_tree).toBeUndefined();
-        // A branch that does not exist is created, never force-moved.
-        expect(requests.some((request) => request.method === "PATCH")).toBe(false);
-        expect(
-          requests.some(
-            (request) =>
-              request.method === "POST" &&
-              request.url.endsWith("/git/refs") &&
-              request.body !== null,
-          ),
-        ).toBe(true);
-      }),
+  /** What GitHub answers for any Git Data read or write on a repository with no commit. */
+  const EMPTY_REPOSITORY: Route = { status: 409, body: { message: "Git Repository is empty." } };
+  const SEED: Route = { status: 201, body: { commit: { sha: "seed-commit" } } };
+
+  it.effect("seeds an empty repository through the Contents API, then pushes on top of it", () =>
+    Effect.gen(function* () {
+      // The create_app case: a repository made with auto_init false, pushed
+      // to its default branch. The ref read answers 409 until the seed lands.
+      const { adapter, requests } = harness({
+        ...pushRoutes(true),
+        "GET https://api.github.com/repos/haroutB5/app/git/ref/heads/main": [
+          EMPTY_REPOSITORY,
+          { body: { object: { sha: "seed-commit" } } },
+        ],
+        "PUT https://api.github.com/repos/haroutB5/app/contents/index.html": SEED,
+      });
+      const result = yield* adapter.execute(pushCall);
+      expect(result).toEqual({ repository: "haroutB5/app", branch: "main", commitSha: "commit-1" });
+
+      const seedIndex = requests.findIndex((request) => request.method === "PUT");
+      const firstBlob = requests.findIndex((request) => request.url.endsWith("/git/blobs"));
+      // Nothing touches Git Data before the repository has a commit.
+      expect(seedIndex).toBeGreaterThanOrEqual(0);
+      expect(seedIndex).toBeLessThan(firstBlob);
+      expect(requests[seedIndex]?.body).toMatchObject({
+        content: Buffer.from("<h1>hi</h1>", "utf8").toString("base64"),
+      });
+      const commit = requests.find((request) => request.url.endsWith("/git/commits"))?.body as {
+        parents: ReadonlyArray<string>;
+      };
+      expect(commit.parents).toEqual(["seed-commit"]);
+      const tree = requests.find((request) => request.url.endsWith("/git/trees"))?.body as {
+        base_tree?: string;
+        tree: ReadonlyArray<{ path: string }>;
+      };
+      expect(tree.base_tree).toBe("seed-commit");
+      expect(tree.tree.map((entry) => entry.path)).toEqual(["index.html", "README.md"]);
+      // The seeded branch is fast-forwarded, never forced.
+      const patch = requests.find((request) => request.method === "PATCH");
+      expect(patch?.body).toEqual({ sha: "commit-1", force: false });
+    }),
+  );
+
+  it.effect("creates a non-default branch off the seed of an empty repository", () =>
+    Effect.gen(function* () {
+      const { adapter, requests } = harness({
+        ...pushRoutes(true),
+        "GET https://api.github.com/repos/haroutB5/app": { body: { default_branch: "trunk" } },
+        "GET https://api.github.com/repos/haroutB5/app/git/ref/heads/main": [
+          EMPTY_REPOSITORY,
+          { status: 404, body: { message: "Not Found" } },
+        ],
+        "GET https://api.github.com/repos/haroutB5/app/git/ref/heads/trunk": [
+          EMPTY_REPOSITORY,
+          { body: { object: { sha: "seed-commit" } } },
+        ],
+        "PUT https://api.github.com/repos/haroutB5/app/contents/index.html": SEED,
+      });
+      const result = yield* adapter.execute(pushCall);
+      expect(result).toMatchObject({ branch: "main", commitSha: "commit-1" });
+      const commit = requests.find((request) => request.url.endsWith("/git/commits"))?.body as {
+        parents: ReadonlyArray<string>;
+      };
+      expect(commit.parents).toEqual(["seed-commit"]);
+      // A branch that does not exist is created, never force-moved.
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+      expect(
+        requests.some((request) => request.method === "POST" && request.url.endsWith("/git/refs")),
+      ).toBe(true);
+    }),
   );
 
   it.effect("branches a new branch off the default branch rather than orphaning it", () =>
@@ -321,6 +351,38 @@ describe("github adapter", () => {
         parents: ReadonlyArray<string>;
       };
       expect(commit.parents).toEqual(["base-commit"]);
+    }),
+  );
+
+  it.effect("does not call a missing permission a dead token", () =>
+    Effect.gen(function* () {
+      // A fine-grained token without Contents: write. The token is fine;
+      // disabling the connection would stop every read as well.
+      const { adapter } = harness({
+        ...pushRoutes(true),
+        "POST https://api.github.com/repos/haroutB5/app/git/blobs": {
+          status: 403,
+          body: { message: "Resource not accessible by personal access token" },
+        },
+      });
+      const error = yield* Effect.flip(adapter.execute(pushCall));
+      expect(error.unauthorized).toBeUndefined();
+      expect(error.status).toBe(403);
+      expect(error.detail).toContain("Resource not accessible");
+    }),
+  );
+
+  it.effect("still calls a 401 on an operation a dead token", () =>
+    Effect.gen(function* () {
+      const { adapter } = harness({
+        ...pushRoutes(true),
+        "POST https://api.github.com/repos/haroutB5/app/git/blobs": {
+          status: 401,
+          body: { message: "Bad credentials" },
+        },
+      });
+      const error = yield* Effect.flip(adapter.execute(pushCall));
+      expect(error.unauthorized).toBe(true);
     }),
   );
 

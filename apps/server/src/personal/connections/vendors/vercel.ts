@@ -166,12 +166,53 @@ export const makeVercelAdapter = (http: VendorHttp): ConnectionVendorAdapter => 
       }),
     );
     const url = asString(deployment["url"]);
+    const deployedTarget =
+      asString(deployment["target"]) === "" ? target : asString(deployment["target"]);
+
+    /**
+     * The address the public actually reaches.
+     *
+     * The per-deployment host above sits behind Vercel's default Deployment
+     * Protection, which gates every domain except production ones, so a
+     * health check against it answers with a login page. For a production
+     * deployment the project's own `*.vercel.app` production domain is the
+     * one to check. Read after the deployment exists, so this is best effort:
+     * a failed read must never turn a created deployment into a failure.
+     */
+    const productionUrl =
+      deployedTarget !== "production"
+        ? ""
+        : yield* send({
+            operationId: call.operationId,
+            method: "GET",
+            url: scoped(
+              `/v9/projects/${encodeURIComponent(asString(found["id"]))}/domains`,
+              call.account,
+            ),
+            bearer,
+          }).pipe(
+            Effect.map((body) => {
+              const domains = asRecord(body)["domains"];
+              const production = (Array.isArray(domains) ? domains : [])
+                .map(asRecord)
+                .find(
+                  (domain) =>
+                    asString(domain["name"]).endsWith(".vercel.app") &&
+                    domain["verified"] !== false &&
+                    asString(domain["redirect"]) === "" &&
+                    asString(domain["gitBranch"]) === "",
+                );
+              return production === undefined ? "" : `https://${asString(production["name"])}`;
+            }),
+            Effect.catchCause(() => Effect.succeed("")),
+          );
     return {
       deploymentId: asString(deployment["id"]),
       // Vercel reports a bare host; a bot handing the owner a link should not
       // have to guess the scheme.
       url: url.length === 0 ? "" : url.startsWith("http") ? url : `https://${url}`,
-      target: asString(deployment["target"]) === "" ? target : asString(deployment["target"]),
+      target: deployedTarget,
+      ...(productionUrl === "" ? {} : { productionUrl }),
     };
   });
 

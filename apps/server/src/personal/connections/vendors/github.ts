@@ -81,7 +81,10 @@ export const makeGithubAdapter = (http: VendorHttp): ConnectionVendorAdapter => 
         headers: HEADERS,
       }).pipe(
         Effect.flatMap((response): Effect.Effect<string | null, ConnectionVendorError> =>
-          response.status === 404
+          // 404 is a branch that does not exist; 409 is GitHub's "Git
+          // Repository is empty." for a repository with no commit at all.
+          // Both mean there is no tip to build on.
+          response.status === 404 || response.status === 409
             ? Effect.succeed(null)
             : expectOk(input.operationId, response).pipe(
                 Effect.map((body) => {
@@ -128,13 +131,56 @@ export const makeGithubAdapter = (http: VendorHttp): ConnectionVendorAdapter => 
       );
     }
     const [owner, repo] = [parts[0], parts[1]];
-    const base = yield* resolveBase({
-      operationId: call.operationId,
-      bearer,
-      owner,
-      repo,
-      branch,
-    });
+    const resolve = () =>
+      resolveBase({
+        operationId: call.operationId,
+        bearer,
+        owner,
+        repo,
+        branch,
+      });
+    let base = yield* resolve();
+
+    /**
+     * A repository with no commit at all refuses every Git Data write
+     * (blobs, trees, refs answer 409 "Git Repository is empty."), and
+     * `create_repository` makes exactly such a repository. The Contents API
+     * does work on an empty repository, so the first file goes in through it
+     * (onto the default branch), and the rest of the push then builds on that
+     * commit as on any other. The file is written again in the tree below
+     * with the same contents, so the final tree is exactly `files`.
+     */
+    if (base.parent === null) {
+      const first = files[0];
+      if (first === undefined) {
+        return yield* Effect.fail(
+          vendorFailure(call.operationId, "An empty repository needs at least one file to push."),
+        );
+      }
+      yield* send({
+        operationId: call.operationId,
+        method: "PUT",
+        url: `${API}/repos/${owner}/${repo}/contents/${first.path
+          .split("/")
+          .map(encodeURIComponent)
+          .join("/")}`,
+        bearer,
+        body: {
+          // Server-written, like the main commit message.
+          message: `Start the repository with ${first.path}`,
+          content: Buffer.from(first.contents, "utf8").toString("base64"),
+        },
+      });
+      base = yield* resolve();
+      if (base.parent === null) {
+        return yield* Effect.fail(
+          vendorFailure(
+            call.operationId,
+            "GitHub accepted the first file but the repository still shows no commit. Try the push again in a moment.",
+          ),
+        );
+      }
+    }
 
     const blobs: Array<{ path: string; sha: string }> = [];
     for (const file of files) {

@@ -45,7 +45,11 @@ import { materializeTemplate, resolveTemplate, validateTemplateFiles } from "./t
 
 export class CreateAppStepError extends Schema.TaggedError<CreateAppStepError>()(
   "CreateAppStepError",
-  { reason: Schema.String },
+  {
+    reason: Schema.String,
+    /** The provider was asked and may have acted; see PersonalConnectionGatewayError. */
+    ambiguous: Schema.optionalKey(Schema.Boolean),
+  },
 ) {
   override get message(): string {
     return this.reason;
@@ -112,6 +116,17 @@ export interface CreateAppStepDefinition {
   ) => Effect.Effect<Option.Option<CreateAppStepOutcome>, CreateAppStepError>;
   readonly execute: (
     context: CreateAppStepContext,
+  ) => Effect.Effect<CreateAppStepOutcome, CreateAppStepError>;
+  /**
+   * Finishes a step whose resource `reconcile` adopted. A step that does two
+   * things (create a store, then write its credential into Vercel) is found
+   * by the first alone, so without this a retry adopts the store and never
+   * writes the credential, and the run reports an app that cannot reach its
+   * database as live. Must be safe to repeat.
+   */
+  readonly completeAdopted?: (
+    context: CreateAppStepContext,
+    adopted: CreateAppStepOutcome,
   ) => Effect.Effect<CreateAppStepOutcome, CreateAppStepError>;
 }
 
@@ -374,15 +389,21 @@ const DeploymentStep: CreateAppStepDefinition = {
         },
       })
       .pipe(
-        Effect.map((result) => ({
-          remoteId: asString(result["deploymentId"]),
-          appUrl: asString(result["url"]),
-          receipt: {
-            deploymentId: asString(result["deploymentId"]),
-            url: asString(result["url"]),
-            target: asString(result["target"]) || context.plan.deployment.target,
-          },
-        })),
+        Effect.map((result) => {
+          // The public production address when Vercel has one: the
+          // per-deployment host is behind Deployment Protection.
+          const productionUrl = asString(result["productionUrl"]);
+          return {
+            remoteId: asString(result["deploymentId"]),
+            appUrl: productionUrl || asString(result["url"]),
+            receipt: {
+              deploymentId: asString(result["deploymentId"]),
+              url: asString(result["url"]),
+              target: asString(result["target"]) || context.plan.deployment.target,
+              ...(productionUrl === "" ? {} : { productionUrl }),
+            },
+          };
+        }),
       ),
 };
 
@@ -394,7 +415,10 @@ const HealthStep: CreateAppStepDefinition = {
   reconcile: nothingToReconcile,
   execute: (context) =>
     Effect.gen(function* () {
-      const url = context.receipts["vercel.deployment"]?.["url"] ?? context.run.appUrl;
+      // The production domain first: the per-deployment URL answers a
+      // protected deployment with Vercel's login page, never the app.
+      const deployment = context.receipts["vercel.deployment"];
+      const url = deployment?.["productionUrl"] || deployment?.["url"] || context.run.appUrl;
       if (url === undefined || url === null || url.length === 0) {
         return yield* new CreateAppStepError({
           reason: "The deployment did not report a URL, so there is nothing to check.",
@@ -461,6 +485,41 @@ export interface CreateAppDataStoreStepFactory {
 const attachTargets = (plan: CreateAppPlan): ReadonlyArray<CreateAppDeploymentTarget> =>
   plan.deployment.environmentTargets;
 
+/**
+ * Writes one Neon database's connection string into every target. An upsert
+ * on Vercel's side, so running it again converges rather than duplicating.
+ */
+const attachNeon = (
+  context: CreateAppStepContext,
+  store: CreateAppDataStorePlan,
+  database: string,
+  role: string,
+) =>
+  Effect.gen(function* () {
+    const variableName = store.environmentKeys[0];
+    if (variableName === undefined) {
+      return yield* new CreateAppStepError({
+        reason: `The plan gives ${store.resourceName} no environment variable to fill, so the app would never reach it.`,
+      });
+    }
+    for (const target of attachTargets(context.plan)) {
+      yield* context.call({
+        operationId: "neon.attach_connection_string_to_vercel",
+        arguments: {
+          project: store.resourceName,
+          branch: null,
+          database,
+          role,
+          pooled: true,
+          vercelProject: context.plan.vercel.project,
+          target,
+          variableName,
+        },
+      });
+    }
+    return variableName;
+  });
+
 const NeonStoreStepFactory: CreateAppDataStoreStepFactory = {
   vendorId: "neon",
   build: (store) => ({
@@ -492,35 +551,55 @@ const NeonStoreStepFactory: CreateAppDataStoreStepFactory = {
         });
         const database = asString(created["database"]) || NEON_DEFAULT_DATABASE;
         const role = asString(created["role"]);
-        const variableName = store.environmentKeys[0];
-        if (variableName === undefined) {
-          return yield* new CreateAppStepError({
-            reason: `The plan gives ${store.resourceName} no environment variable to fill, so the app would never reach it.`,
-          });
-        }
-        for (const target of attachTargets(context.plan)) {
-          yield* context.call({
-            operationId: "neon.attach_connection_string_to_vercel",
-            arguments: {
-              project: store.resourceName,
-              branch: null,
-              database,
-              role,
-              pooled: true,
-              vercelProject: context.plan.vercel.project,
-              target,
-              variableName,
-            },
-          });
-        }
+        const variableName = yield* attachNeon(context, store, database, role);
         return {
           remoteId: asString(created["projectId"]),
           // Names only; the connection string never entered this process.
           receipt: { project: store.resourceName, database, keys: variableName },
         };
       }),
+    // The list read that found the project does not say which database and
+    // role it has. A project this run created has Neon's defaults: the
+    // `neondb` database owned by `neondb_owner`. If that is wrong, Neon
+    // refuses the attach and the run stops, rather than reporting live.
+    completeAdopted: (context, adopted) =>
+      attachNeon(context, store, NEON_DEFAULT_DATABASE, `${NEON_DEFAULT_DATABASE}_owner`).pipe(
+        Effect.map((variableName) => ({
+          ...adopted,
+          receipt: { ...adopted.receipt, database: NEON_DEFAULT_DATABASE, keys: variableName },
+        })),
+      ),
   }),
 };
+
+/** Writes one Upstash database's REST URL and token into every target; an upsert. */
+const attachUpstash = (
+  context: CreateAppStepContext,
+  store: CreateAppDataStorePlan,
+  databaseId: string,
+) =>
+  Effect.gen(function* () {
+    const [urlVariableName, tokenVariableName] = store.environmentKeys;
+    if (urlVariableName === undefined || tokenVariableName === undefined) {
+      return yield* new CreateAppStepError({
+        reason: `The plan gives ${store.resourceName} fewer than the two environment variables a Redis client needs, so the app would never reach it.`,
+      });
+    }
+    for (const target of attachTargets(context.plan)) {
+      yield* context.call({
+        operationId: "upstash.attach_rest_credentials_to_vercel",
+        arguments: {
+          databaseId,
+          database: store.resourceName,
+          vercelProject: context.plan.vercel.project,
+          target,
+          urlVariableName,
+          tokenVariableName,
+        },
+      });
+    }
+    return `${urlVariableName}, ${tokenVariableName}`;
+  });
 
 const UpstashStoreStepFactory: CreateAppDataStoreStepFactory = {
   vendorId: "upstash",
@@ -554,33 +633,16 @@ const UpstashStoreStepFactory: CreateAppDataStoreStepFactory = {
           },
         });
         const databaseId = asString(created["databaseId"]);
-        const [urlVariableName, tokenVariableName] = store.environmentKeys;
-        if (urlVariableName === undefined || tokenVariableName === undefined) {
-          return yield* new CreateAppStepError({
-            reason: `The plan gives ${store.resourceName} fewer than the two environment variables a Redis client needs, so the app would never reach it.`,
-          });
-        }
-        for (const target of attachTargets(context.plan)) {
-          yield* context.call({
-            operationId: "upstash.attach_rest_credentials_to_vercel",
-            arguments: {
-              databaseId,
-              database: store.resourceName,
-              vercelProject: context.plan.vercel.project,
-              target,
-              urlVariableName,
-              tokenVariableName,
-            },
-          });
-        }
+        const keys = yield* attachUpstash(context, store, databaseId);
         return {
           remoteId: databaseId,
-          receipt: {
-            database: store.resourceName,
-            keys: `${urlVariableName}, ${tokenVariableName}`,
-          },
+          receipt: { database: store.resourceName, keys },
         };
       }),
+    completeAdopted: (context, adopted) =>
+      attachUpstash(context, store, adopted.remoteId ?? "").pipe(
+        Effect.map((keys) => ({ ...adopted, receipt: { ...adopted.receipt, keys } })),
+      ),
   }),
 };
 

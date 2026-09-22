@@ -36,7 +36,15 @@ import { PersonalBrowser } from "../browser/PersonalBrowser.ts";
 /** Any refusal or failure of a gateway call, worded for the model. */
 export class PersonalConnectionGatewayError extends Schema.TaggedError<PersonalConnectionGatewayError>()(
   "PersonalConnectionGatewayError",
-  { reason: Schema.String },
+  {
+    reason: Schema.String,
+    /**
+     * Set when the call reached the vendor and failed without a definite
+     * answer (no reply, a 5xx, a defect): the vendor may have acted. Absent
+     * means nothing ran, or the vendor refused it outright with a 4xx.
+     */
+    ambiguous: Schema.optionalKey(Schema.Boolean),
+  },
 ) {
   override get message(): string {
     return this.reason;
@@ -455,6 +463,9 @@ export const make = Effect.gen(function* () {
           Effect.succeed({
             ok: false as const,
             unauthorized: error.unauthorized === true,
+            secondaryRejected: error.rejectedCredential === "secondary",
+            // Only a 4xx is a definite "no": anything else may have acted.
+            ambiguous: !(error.status !== undefined && error.status >= 400 && error.status < 500),
             detail: Operations.scrubCredentialValues(error.detail, secrets),
           }),
         ),
@@ -463,6 +474,8 @@ export const make = Effect.gen(function* () {
           Effect.succeed({
             ok: false as const,
             unauthorized: false,
+            secondaryRejected: false,
+            ambiguous: true,
             detail: Operations.scrubCredentialValues(cause, secrets),
           }),
         ),
@@ -483,15 +496,27 @@ export const make = Effect.gen(function* () {
       if (outcome.unauthorized) {
         // Personal access tokens expire on the provider's schedule, so this is
         // an ordinary path. Moving the connection now means the owner sees it
-        // in Settings instead of a run of identical failures in a chat.
-        yield* connections.markNeedsReauth(connection.connectionId).pipe(Effect.ignore);
+        // in Settings instead of a run of identical failures in a chat. A
+        // transfer's second half runs on the other account, and that is the
+        // one whose token was refused.
+        const rejected =
+          outcome.secondaryRejected &&
+          secondaryDefinition !== null &&
+          Option.isSome(currentSecondary)
+            ? {
+                connectionId: currentSecondary.value.connectionId,
+                displayName: secondaryDefinition.displayName,
+              }
+            : { connectionId: connection.connectionId, displayName: definition.displayName };
+        yield* connections.markNeedsReauth(rejected.connectionId).pipe(Effect.ignore);
         return yield* refuse(
-          `${definition.displayName} would not accept the saved credential, so the connection now needs reconnecting. Tell the user to reconnect ${definition.displayName} in Settings; you cannot do it yourself.`,
+          `${rejected.displayName} would not accept the saved credential (${outcome.detail}), so the connection now needs reconnecting. Tell the user to reconnect ${rejected.displayName} in Settings; you cannot do it yourself.`,
         );
       }
-      return yield* refuse(
-        `${definition.displayName} refused ${operation.operationId}: ${outcome.detail}`,
-      );
+      return yield* new PersonalConnectionGatewayError({
+        reason: `${definition.displayName} refused ${operation.operationId}: ${outcome.detail}`,
+        ...(outcome.ambiguous ? { ambiguous: true } : {}),
+      });
     }
 
     return {

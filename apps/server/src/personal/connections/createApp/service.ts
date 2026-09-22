@@ -194,6 +194,7 @@ export const make = Effect.gen(function* () {
     readonly caller: CreateAppCaller;
     readonly repository: string;
     readonly project: string;
+    readonly dataStores: CreateAppPlan["dataStores"];
   }) {
     const repositories = yield* read(input.caller, "github.list_repositories");
     const repositoryRows = repositories["repositories"];
@@ -222,6 +223,34 @@ export const make = Effect.gen(function* () {
       return yield* fail(
         `The Vercel project ${input.project} already exists. Ask the user for a different app name; nothing has been created.`,
       );
+    }
+    // A store's reconcile adopts whatever carries the plan's name, so a name
+    // already in use before the card would be adopted as this app's own.
+    const listings = {
+      neon: { operation: "neon.list_projects", rows: "projects", name: "project" },
+      upstash: { operation: "upstash.list_databases", rows: "databases", name: "database" },
+    } as const;
+    for (const store of input.dataStores) {
+      const listing =
+        store.vendorId === "neon"
+          ? listings.neon
+          : store.vendorId === "upstash"
+            ? listings.upstash
+            : undefined;
+      if (listing === undefined) continue;
+      const existing = (yield* read(input.caller, listing.operation))[listing.rows];
+      if (
+        (Array.isArray(existing) ? existing : []).some(
+          (row) =>
+            typeof row === "object" &&
+            row !== null &&
+            (row as Record<string, unknown>)[listing.name] === store.resourceName,
+        )
+      ) {
+        return yield* fail(
+          `${store.vendorId === "neon" ? "The Neon project" : "The Upstash database"} ${store.resourceName} already exists. Ask the user for a different app name; nothing has been created.`,
+        );
+      }
     }
   });
 
@@ -327,7 +356,13 @@ export const make = Effect.gen(function* () {
             ...(request.scrub === undefined ? {} : { scrub: request.scrub }),
           })
           .pipe(
-            Effect.mapError((error) => new CreateAppStepError({ reason: error.reason })),
+            Effect.mapError(
+              (error) =>
+                new CreateAppStepError({
+                  reason: error.reason,
+                  ...(error.ambiguous === true ? { ambiguous: true } : {}),
+                }),
+            ),
             Effect.flatMap((outcome) =>
               outcome._tag === "completed"
                 ? Effect.succeed(outcome.result)
@@ -357,7 +392,11 @@ export const make = Effect.gen(function* () {
       // A retry, not a first attempt. Everything ambiguous is decided here,
       // before anything is sent.
       if (persisted.attempts > 0) {
-        if (definition.retryPolicy === "manual") {
+        // Only a step left `in_flight` is ambiguous: a crash mid-call, or a
+        // call that failed without a definite answer. One the provider
+        // refused cleanly (settled `failed`) did nothing and may run again,
+        // or a single 4xx would dead-end every later approval of this plan.
+        if (definition.retryPolicy === "manual" && persisted.state === "in_flight") {
           const note = `The run stopped part-way and cannot safely continue on its own.\n\n${describeProgress(run, run.steps)}\n\nThe step "${definition.title}" was interrupted after the provider had been asked, and this build has no way to check what it did. Nothing has been deleted. Tell the user what exists, and that they should look at the provider before asking you to try again.`;
           return yield* finish(run, "needs_attention", note);
         }
@@ -373,8 +412,41 @@ export const make = Effect.gen(function* () {
             return yield* finish(run, "needs_attention", note);
           }
           if (Option.isSome(found.value)) {
+            let outcome = found.value.value;
+            // Adopting the resource is not the whole step when the step also
+            // wired it up; that half runs again (it is an upsert) before the
+            // step counts as done.
+            if (definition.completeAdopted !== undefined) {
+              const beganAt = yield* DateTime.now;
+              yield* db(
+                "written",
+                runs.beginStep({ runId, stepId: definition.stepId, at: beganAt }),
+              );
+              const completed = yield* definition
+                .completeAdopted(context(definition), outcome)
+                .pipe(Effect.result);
+              if (completed._tag === "Failure") {
+                const failedAt = yield* DateTime.now;
+                yield* db(
+                  "written",
+                  runs.settleStep({
+                    runId,
+                    stepId: definition.stepId,
+                    state: "failed",
+                    remoteId: outcome.remoteId,
+                    adopted: true,
+                    receipt: outcome.receipt,
+                    error: completed.failure.reason,
+                    at: failedAt,
+                  }),
+                );
+                run = yield* requireRun(runId);
+                const note = `The app was not finished.\n\n${describeProgress(run, run.steps)}\n\nNothing has been deleted, and everything above that exists is still there. Tell the user what got done and what stopped it.`;
+                return yield* finish(run, "needs_attention", note);
+              }
+              outcome = completed.success;
+            }
             const at = yield* DateTime.now;
-            const outcome = found.value.value;
             yield* db(
               "written",
               runs.settleStep({
@@ -408,7 +480,13 @@ export const make = Effect.gen(function* () {
           runs.settleStep({
             runId,
             stepId: definition.stepId,
-            state: "failed",
+            // A step that cannot be checked afterwards stays `in_flight` when
+            // the provider may have acted, so a retry stops for the owner
+            // instead of firing it a second time.
+            state:
+              definition.retryPolicy === "manual" && attempt.failure.ambiguous === true
+                ? "in_flight"
+                : "failed",
             remoteId: null,
             adopted: false,
             receipt: {},
@@ -491,6 +569,7 @@ export const make = Effect.gen(function* () {
         caller: request.caller,
         repository: plan.github.repository,
         project: plan.vercel.project,
+        dataStores: plan.dataStores,
       });
       const definitions = yield* definitionsFor(plan);
       const at = yield* DateTime.now;

@@ -638,6 +638,34 @@ describe("gateway reauthorisation", () => {
     }),
   );
 
+  it.effect("passes a permission 403 through with the vendor's words, connection untouched", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        execute: () =>
+          Effect.fail(
+            new Adapters.ConnectionVendorError({
+              operationId: "github.create_repository",
+              detail: "HTTP 403: Resource not accessible by personal access token",
+              status: 403,
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const gateway = yield* Gateway.PersonalConnectionGateway;
+        const approvals = yield* ApprovalService.PersonalConnectionApprovalService;
+        const pending = yield* gateway.call(createRepository);
+        const approvalId =
+          pending._tag === "awaiting_approval" ? pending.approvalId : "no approval was raised";
+        yield* approvals.decide({ approvalId: approvalId as never, decision: "approved" });
+        const refusal = yield* Effect.flip(gateway.call(createRepository));
+        expect(refusal.reason).toContain("Resource not accessible");
+        // A definite refusal: nothing was created, so it is not ambiguous.
+        expect(refusal.ambiguous).toBeUndefined();
+        expect(harness.reauthed).toEqual([]);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("leaves the connection alone when the vendor refused the request, not the token", () =>
     Effect.gen(function* () {
       const harness = makeHarness({

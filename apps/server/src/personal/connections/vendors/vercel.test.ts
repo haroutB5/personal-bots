@@ -260,6 +260,74 @@ describe("vercel adapter", () => {
     }),
   );
 
+  it.effect("reports the production domain, which Deployment Protection does not gate", () =>
+    Effect.gen(function* () {
+      const { adapter } = harness({
+        "GET https://api.vercel.com/v9/projects/hbots-demo?teamId=team_abc": {
+          body: { id: "prj_1", name: "hbots-demo", link: { type: "github", repoId: 12345 } },
+        },
+        "POST https://api.vercel.com/v13/deployments?teamId=team_abc": {
+          body: { id: "dpl_1", url: "hbots-demo-abc.vercel.app", target: "production" },
+        },
+        "GET https://api.vercel.com/v9/projects/prj_1/domains?teamId=team_abc": {
+          body: {
+            domains: [
+              // A branch alias and a redirect are not where the public lands.
+              { name: "hbots-demo-git-dev.vercel.app", gitBranch: "dev", verified: true },
+              { name: "old.vercel.app", redirect: "hbots-demo-harout.vercel.app", verified: true },
+              {
+                name: "hbots-demo-harout.vercel.app",
+                redirect: null,
+                gitBranch: null,
+                verified: true,
+              },
+            ],
+          },
+        },
+      });
+      const result = yield* adapter.execute({
+        operationId: "vercel.create_deployment",
+        arguments: { project: "hbots-demo", target: "production", gitRef: "main" },
+        credentials,
+        connectionId: CONNECTION,
+        settings: { whatsappDailySendCap: null },
+        account: TEAM,
+      });
+      expect(result).toMatchObject({
+        url: "https://hbots-demo-abc.vercel.app",
+        productionUrl: "https://hbots-demo-harout.vercel.app",
+      });
+    }),
+  );
+
+  it.effect("still reports a created deployment when the domain read fails", () =>
+    Effect.gen(function* () {
+      // No route for the domains read: it fails. The deployment exists, so
+      // failing the call would invite a second one.
+      const { adapter } = harness({
+        "GET https://api.vercel.com/v9/projects/hbots-demo?teamId=team_abc": {
+          body: { id: "prj_1", name: "hbots-demo", link: { type: "github", repoId: 12345 } },
+        },
+        "POST https://api.vercel.com/v13/deployments?teamId=team_abc": {
+          body: { id: "dpl_1", url: "hbots-demo-abc.vercel.app", target: "production" },
+        },
+      });
+      const result = yield* adapter.execute({
+        operationId: "vercel.create_deployment",
+        arguments: { project: "hbots-demo", target: "production", gitRef: "main" },
+        credentials,
+        connectionId: CONNECTION,
+        settings: { whatsappDailySendCap: null },
+        account: TEAM,
+      });
+      expect(result).toEqual({
+        deploymentId: "dpl_1",
+        url: "https://hbots-demo-abc.vercel.app",
+        target: "production",
+      });
+    }),
+  );
+
   it.effect("refuses to deploy a project with no repository linked to it", () =>
     Effect.gen(function* () {
       const { adapter, requests } = harness({

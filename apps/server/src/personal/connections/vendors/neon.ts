@@ -2,10 +2,10 @@
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
-import type {
-  ConnectionVendorAdapter,
-  ConnectionVendorCall,
+import {
   ConnectionVendorError,
+  type ConnectionVendorAdapter,
+  type ConnectionVendorCall,
 } from "../adapters.ts";
 import { scrubCredentialValues } from "../operations.ts";
 import { setVercelEnvironmentVariables } from "./vercel.ts";
@@ -149,7 +149,16 @@ export const makeNeonAdapter = (http: VendorHttp): ConnectionVendorAdapter => {
     }).pipe(
       Effect.mapError((error): ConnectionVendorError => {
         const detail = scrubCredentialValues(error.detail, [uri]);
-        return vendorFailure(call.operationId, detail, error.unauthorized);
+        // This half ran on the Vercel connection, so a refused token is
+        // Vercel's to reconnect, not this vendor's.
+        return new ConnectionVendorError({
+          operationId: call.operationId,
+          detail,
+          ...(error.status === undefined ? {} : { status: error.status }),
+          ...(error.unauthorized === true
+            ? { unauthorized: true, rejectedCredential: "secondary" as const }
+            : {}),
+        });
       }),
     );
     return { vercelProject, target, keys };

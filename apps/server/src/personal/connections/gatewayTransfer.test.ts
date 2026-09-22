@@ -78,11 +78,15 @@ const makeHarness = (options?: HarnessOptions) => {
   const approvals = new Map<string, PersonalConnectionApproval>();
   const calls: Array<Adapters.ConnectionVendorCall> = [];
   const logs: Array<string> = [];
+  const reauthed: Array<string> = [];
   const state = { vercelVersion: 1 };
   let vercelResolves = 0;
 
   const connections = Layer.mock(ConnectionService.PersonalConnectionService)({
-    markNeedsReauth: () => Effect.void,
+    markNeedsReauth: (connectionId: string) =>
+      Effect.sync(() => {
+        reauthed.push(connectionId);
+      }),
     resolveForOperation: (vendorId: PersonalConnectionVendorId) =>
       Effect.sync(() => {
         if (vendorId === "vercel") {
@@ -240,7 +244,7 @@ const makeHarness = (options?: HarnessOptions) => {
     Layer.provideMerge(Logger.layer([Logger.make((entry) => logs.push(text(entry)))])),
   );
 
-  return { layer, approvals, calls, logs, state };
+  return { layer, approvals, calls, logs, reauthed, state };
 };
 
 /** Raises the card, approves it, and calls again: what the owner's yes looks like. */
@@ -360,6 +364,30 @@ describe("gateway: server-side credential transfer", () => {
         expect(text(error)).not.toContain(VERCEL_TOKEN);
         expect(text(harness.logs)).not.toContain(NEON_KEY);
         expect(text(harness.logs)).not.toContain(VERCEL_TOKEN);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("sends the owner to reconnect Vercel when the Vercel half refuses its token", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        execute: () =>
+          Effect.fail(
+            new Adapters.ConnectionVendorError({
+              operationId: "neon.attach_connection_string_to_vercel",
+              detail: "HTTP 401: Not authorized",
+              status: 401,
+              unauthorized: true,
+              rejectedCredential: "secondary",
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const error = yield* Effect.flip(approveAndRun(harness));
+        // The Vercel token is the dead one; Neon keeps working.
+        expect(harness.reauthed).toEqual(["connection-vercel"]);
+        expect(error.message).toContain("reconnect Vercel");
+        expect(error.message).not.toContain("reconnect Neon");
       }).pipe(Effect.provide(harness.layer));
     }),
   );

@@ -35,6 +35,18 @@ export class ConnectionVendorError extends Schema.TaggedError<ConnectionVendorEr
      * only a status we read says a token has to be replaced.
      */
     unauthorized: Schema.optionalKey(Schema.Boolean),
+    /**
+     * Whose credential was refused when `unauthorized` is set. Absent means
+     * the call's own (primary) connection; `secondary` is the account a
+     * transfer writes into, which is the one that has to be reconnected.
+     */
+    rejectedCredential: Schema.optionalKey(Schema.Literals(["primary", "secondary"])),
+    /**
+     * The HTTP status the vendor answered with, when it answered at all. A
+     * 4xx is a definite refusal (nothing was done); absent or 5xx means the
+     * vendor may or may not have acted.
+     */
+    status: Schema.optionalKey(Schema.Number),
   },
 ) {}
 
