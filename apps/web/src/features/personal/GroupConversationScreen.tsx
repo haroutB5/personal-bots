@@ -167,22 +167,31 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
       }),
     [botsById, group],
   );
+  // One presentation object per bot, rebuilt only when the roster or the group
+  // changes. `groupSpeaker` used to build a fresh object per call, so every
+  // group message row's `speaker` prop changed on every render (every stream
+  // delta) and the `GroupMessage` memo never held.
+  const speakersById = useMemo(() => {
+    const threadByBot = new Map(
+      (group === null ? NO_MEMBERS : activeGroupMembers(group)).map(
+        (member) => [member.botId as string, member.threadId] as const,
+      ),
+    );
+    return new Map(
+      [...botsById.values()].map((bot): readonly [string, GroupSpeakerPresentation] => [
+        bot.botId as string,
+        {
+          name: bot.name,
+          avatarShape: bot.avatarShape,
+          avatarColor: bot.avatarColor,
+          threadId: threadByBot.get(bot.botId as string) ?? null,
+        },
+      ]),
+    );
+  }, [botsById, group]);
   const groupSpeaker = useCallback(
-    (botId: string): GroupSpeakerPresentation | null => {
-      const bot = botsById.get(botId);
-      if (bot === undefined) return null;
-      const member =
-        (group === null ? NO_MEMBERS : activeGroupMembers(group)).find(
-          (candidate) => candidate.botId === botId,
-        ) ?? null;
-      return {
-        name: bot.name,
-        avatarShape: bot.avatarShape,
-        avatarColor: bot.avatarColor,
-        threadId: member?.threadId ?? null,
-      };
-    },
-    [botsById, group],
+    (botId: string): GroupSpeakerPresentation | null => speakersById.get(botId) ?? null,
+    [speakersById],
   );
   const mentionCandidates = useMemo(
     () =>

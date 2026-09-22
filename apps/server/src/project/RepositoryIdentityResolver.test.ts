@@ -255,6 +255,55 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
   });
 
+  /**
+   * The settlement / pull-request sweeps resolve every project root once a
+   * minute. With the positive TTL equal to that period every sweep missed and
+   * re-spawned `git rev-parse` + `git remote -v` for a repository root: a
+   * git pair every idle minute (appreview 2026-09-22, pass 3 P3).
+   */
+  it.effect("does not re-shell git for a repository on every one-minute sweep", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    const repositoryRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+      run: (input) =>
+        Effect.sync(() => {
+          calls.push(input.args);
+          return {
+            stdout: input.args.includes("rev-parse")
+              ? "/repo\n"
+              : "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }),
+    });
+    const resolverLayer = Layer.effect(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+      RepositoryIdentityResolver.make(),
+    ).pipe(Layer.provide(repositoryRunner));
+
+    return Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      expect((yield* resolver.resolve("/repo"))?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(calls).toHaveLength(2);
+
+      for (const _minute of [1, 2, 3, 4]) {
+        yield* TestClock.adjust(Duration.minutes(1));
+        expect((yield* resolver.resolve("/repo"))?.canonicalKey).toBe("github.com/t3tools/t3code");
+      }
+      expect(calls).toHaveLength(2);
+
+      // Remote URLs still refresh on their own, one TTL later.
+      yield* TestClock.adjust(Duration.minutes(2));
+      yield* resolver.resolve("/repo");
+      expect(calls).toHaveLength(4);
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
+  });
+
   it.effect("retries a root lookup git could not answer", () => {
     const calls: Array<ReadonlyArray<string>> = [];
     const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {

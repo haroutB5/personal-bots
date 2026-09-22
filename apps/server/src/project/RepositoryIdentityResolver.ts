@@ -13,7 +13,15 @@ import * as Layer from "effect/Layer";
 import * as ProcessRunner from "../processRunner.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
-const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
+/**
+ * Longer than the one-minute settlement / pull-request sweep on purpose. At
+ * exactly the sweep period every sweep found the entry just expired and
+ * re-spawned `git rev-parse` + `git remote -v` for each repository root: the
+ * one recurring idle CPU burst (812 ms per minute on Windows) in the
+ * 2026-09-22 audit. A remote URL rarely changes, and `refresh: true` still
+ * bypasses the cache.
+ */
+const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(5);
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 /**
  * "This directory is not a repository" is the one answer that cannot go stale
