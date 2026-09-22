@@ -19,6 +19,7 @@ import {
   deriveConversationState,
   formatDayDivider,
   friendlyTurnError,
+  isTurnThinking,
   placeQuestionCards,
   placeSecretRequestCards,
   providerWaitState,
@@ -717,5 +718,75 @@ describe("buildConversationItems in a group", () => {
   it("leaves a bot chat exactly as it was: no marker is read without `groups`", () => {
     const items = buildConversationItems([spoken("a1", "2026-09-19T10:00:00.000Z", ada)]);
     expect(items.map((item) => item.kind)).toEqual(["divider", "message"]);
+  });
+});
+
+describe("isTurnThinking", () => {
+  const session = (status: "running" | "starting" | "ready", activeTurnId: string | null) =>
+    ({ status, activeTurnId }) as Pick<OrchestrationSession, "status" | "activeTurnId">;
+  const turn = (
+    turnId: string,
+    state: OrchestrationLatestTurn["state"],
+    assistantMessageId: string | null,
+  ) =>
+    ({ turnId, state, assistantMessageId }) as Pick<
+      OrchestrationLatestTurn,
+      "turnId" | "state" | "assistantMessageId"
+    >;
+
+  it("thinks while the running turn has no reply and no tool call", () => {
+    expect(
+      isTurnThinking({
+        session: session("running", "t1"),
+        latestTurn: turn("t1", "running", null),
+      }),
+    ).toBe(true);
+    // Reasoning and info activities do not end the thinking stretch.
+    expect(
+      isTurnThinking({
+        session: session("running", "t1"),
+        latestTurn: turn("t1", "running", null),
+        activities: [{ tone: "info", turnId: "t1" } as never],
+      }),
+    ).toBe(true);
+  });
+
+  it("works from the first assistant message on", () => {
+    expect(
+      isTurnThinking({
+        session: session("running", "t1"),
+        latestTurn: turn("t1", "running", "m1"),
+      }),
+    ).toBe(false);
+  });
+
+  it("works from the first tool call of this turn, not an older one", () => {
+    const base = { session: session("running", "t2"), latestTurn: turn("t2", "running", null) };
+    expect(isTurnThinking({ ...base, activities: [{ tone: "tool", turnId: "t2" } as never] })).toBe(
+      false,
+    );
+    expect(isTurnThinking({ ...base, activities: [{ tone: "tool", turnId: "t1" } as never] })).toBe(
+      true,
+    );
+  });
+
+  it("thinks while a session starts or runs a turn the shell has not caught up with", () => {
+    expect(isTurnThinking({ session: session("starting", null), latestTurn: null })).toBe(true);
+    expect(
+      isTurnThinking({
+        session: session("running", "t2"),
+        latestTurn: turn("t1", "completed", "m1"),
+      }),
+    ).toBe(true);
+  });
+
+  it("is false with nothing running", () => {
+    expect(
+      isTurnThinking({
+        session: session("ready", null),
+        latestTurn: turn("t1", "completed", "m1"),
+      }),
+    ).toBe(false);
+    expect(isTurnThinking({ session: null, latestTurn: null })).toBe(false);
   });
 });

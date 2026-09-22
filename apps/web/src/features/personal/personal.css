@@ -23,6 +23,10 @@
  * tinted review/danger cards). Ratios are noted per token; the floor is AA
  * 4.5:1 for body text, and the lowest value in the set is 5.16:1. */
 
+/* Bot avatar pose keyframes, generated from the Remotion-authored poses
+ * (`avatarRemotion/avatarStates.ts`); the guardrails are further down. */
+@import "./avatarMotion.generated.css";
+
 .personal-app {
   --personal-bg: #fafaf8;
   --personal-surface: #ffffff;
@@ -187,83 +191,27 @@
 }
 
 /* Bot avatar state poses (`BotAvatar`'s `motion` prop, mapped in
- * `avatarMotion.ts`). Rules, in order of how easy they are to break:
+ * `avatarMotion.ts`). The poses themselves are the generated keyframes
+ * imported at the top of this file; this block holds the guardrails, in order
+ * of how easy they are to break:
  *
- * 1. Only `working` repeats. Every other state is a one-shot transition into a
- *    static pose, so an idle screen repaints nothing.
- * 2. Only `transform`, only on the <svg> and its eye group, so no state can
+ * 1. Only `thinking` and `working` repeat, and `capContinuousMotion` lets one
+ *    avatar per list run them. Every other state is a one-shot into a held
+ *    pose, and idle has no animation, so an idle screen repaints nothing.
+ * 2. Transform and opacity only, on the avatar's inner layers, so no state can
  *    move the avatar's box or the row's layout.
- * 3. The working bob is capped at 2px and pauses with the document (the root
- *    gets `data-hidden` from `useHiddenRootAttribute`), so a backgrounded tab
- *    costs nothing.
- * 4. Reduced motion drops all of it; the status dots still carry the state.
- *
- * Eye transforms are in viewBox user units (the default `transform-box:
- * view-box`), hence the origin near the eye pair at 46,58. */
-.bot-avatar[data-motion] {
-  transition: transform 240ms ease-out;
-}
-
-.bot-avatar[data-motion] .bot-avatar-eyes {
-  transform-origin: 46px 58px;
-  transition: transform 240ms ease-out;
-}
-
-/* Kicked into gear. The only continuous animation on the personal surface. */
-.bot-avatar[data-motion="working"] {
-  animation: bot-avatar-bob 2.6s ease-in-out infinite;
-}
-
-/* Attentive: eyes raised and widened, then held. */
-.bot-avatar[data-motion="waiting"] .bot-avatar-eyes {
-  transform: translateY(-3px) scaleY(1.3);
-}
-
-/* Drooped and static; the amber/red dot stays the readable signal. */
-.bot-avatar[data-motion="blocked"] {
-  transform: translateY(1px);
-}
-
-.bot-avatar[data-motion="blocked"] .bot-avatar-eyes {
-  transform: translateY(2px) scaleY(0.55);
-}
-
-/* Work finished: play the bob out instead of snapping back to rest. */
-.bot-avatar[data-motion="done"] {
-  animation: bot-avatar-settle 320ms ease-out 1;
-}
-
-@keyframes bot-avatar-bob {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-2px);
-  }
-}
-
-@keyframes bot-avatar-settle {
-  0% {
-    transform: translateY(-2px);
-  }
-  60% {
-    transform: translateY(0.5px);
-  }
-  100% {
-    transform: translateY(0);
-  }
-}
-
-:root[data-hidden] .bot-avatar[data-motion="working"] {
+ * 3. The loops pause with the document (the root gets `data-hidden` from
+ *    `useHiddenRootAttribute`), so a backgrounded tab costs nothing.
+ * 4. Reduced motion drops all of it and the layers sit at rest; the status
+ *    dots still carry the state. (Only `animation` is cleared: the eyes' tilt
+ *    is a transform attribute that a `transform: none` would wipe out.) */
+:root[data-hidden] .bot-avatar[data-motion="thinking"] *,
+:root[data-hidden] .bot-avatar[data-motion="working"] * {
   animation-play-state: paused;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bot-avatar[data-motion],
-  .bot-avatar[data-motion] .bot-avatar-eyes {
+  .bot-avatar[data-motion] * {
     animation: none !important;
-    transition: none !important;
-    transform: none !important;
   }
 }

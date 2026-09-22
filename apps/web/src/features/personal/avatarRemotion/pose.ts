@@ -1,7 +1,7 @@
 /**
  * The pose vocabulary of the animated avatar, kept free of any `remotion`
- * import so the always-loaded wrapper can draw a rest frame without pulling
- * the Remotion runtime into the main chunk.
+ * import. `AvatarFace` draws it for the Studio; `avatarKeyframes.ts` turns it
+ * into the CSS the app ships.
  */
 export interface AvatarPose {
   /** Whole-body translate, viewBox units. */
@@ -22,6 +22,10 @@ export interface AvatarPose {
   /** 0..1 cross-fade from pill eyes to happy "^" arcs. */
   readonly happy: number;
 }
+
+/** Body pivot in viewBox units: bottom centre, so squash and tilt read as weight. */
+export const AVATAR_BODY_PIVOT_X = 50;
+export const AVATAR_BODY_PIVOT_Y = 90;
 
 export const REST_POSE: AvatarPose = {
   bodyX: 0,

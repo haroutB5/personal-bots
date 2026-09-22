@@ -5,7 +5,7 @@ import type { BotAvatarShape } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
 
-import type { AvatarMotion } from "./avatarMotion";
+import { isContinuousMotion, type AvatarMotion } from "./avatarMotion";
 import {
   BOT_AVATAR_EYE_COLOR,
   BOT_AVATAR_EYE_HEIGHT,
@@ -45,8 +45,12 @@ export interface BotAvatarProps {
  * near-black swatches stay visible. The stored colour is never changed.
  *
  * With `motion`, the pose carries the bot's state as decoration on top of those
- * dots. Everything is transform-only, so the avatar's box never moves, and only
- * `working` repeats (see `personal.css` and `avatarMotion.ts`).
+ * dots. The avatar is then drawn in layers (body, eye pair, each eye's pill and
+ * a hidden happy arc) that `avatarMotion.generated.css` animates: the poses
+ * authored in `avatarRemotion/avatarStates.ts`, sampled into CSS keyframes.
+ * Transform and opacity only, so the avatar's box never moves; only `thinking`
+ * and `working` repeat (see `personal.css` and `avatarMotion.ts`). Without
+ * `motion` the markup is the flat, unlayered original.
  */
 export function BotAvatar({
   shape,
@@ -56,15 +60,15 @@ export function BotAvatar({
   className,
   motion,
 }: BotAvatarProps): JSX.Element {
-  // Work stopping is the one transition that needs its own pose: dropping the
-  // continuous bob would snap the avatar back to rest mid-cycle, so `done`
-  // plays it out. Adjusted during render (no effect, no timer) and cleared by
-  // the settle animation ending.
+  // Work stopping is the one transition that needs its own pose: dropping a
+  // continuous loop would snap the avatar back to rest mid-cycle, so `done`
+  // plays a small hop that lands exactly on rest. Adjusted during render (no
+  // effect, no timer) and cleared by the done animation ending.
   const [settling, setSettling] = useState(false);
   const [lastMotion, setLastMotion] = useState(motion);
   if (lastMotion !== motion) {
     setLastMotion(motion);
-    setSettling(lastMotion === "working" && motion === "idle");
+    setSettling(lastMotion !== undefined && isContinuousMotion(lastMotion) && motion === "idle");
   }
   const pose = motion === undefined ? undefined : settling ? "done" : motion;
   const silhouette = BOT_AVATAR_SILHOUETTES[shape];
@@ -80,7 +84,14 @@ export function BotAvatar({
       height={size}
       viewBox={BOT_AVATAR_VIEWBOX}
       data-motion={pose}
-      onAnimationEnd={settling ? () => setSettling(false) : undefined}
+      onAnimationEnd={
+        settling
+          ? (event) => {
+              // Every done layer ends together; any of them retires the pose.
+              if (event.animationName.startsWith("bot-avatar-done-")) setSettling(false);
+            }
+          : undefined
+      }
       className={cn("bot-avatar shrink-0", className)}
     >
       {/*
@@ -96,36 +107,102 @@ export function BotAvatar({
         #171717, and at that strength an unconditional one would make every
         saturated avatar in the chats list look deliberately bordered.
       */}
-      {halo ? (
-        <path
-          d={silhouette.d}
-          fill="none"
-          stroke="var(--personal-avatar-halo)"
-          strokeWidth={(silhouette.roundCorners ? BOT_AVATAR_ROUND_CORNER_STROKE : 0) + 6}
-          strokeLinejoin="round"
-        />
-      ) : null}
-      <path
-        d={silhouette.d}
-        fill={color}
-        stroke={silhouette.roundCorners ? color : "none"}
-        strokeWidth={silhouette.roundCorners ? BOT_AVATAR_ROUND_CORNER_STROKE : 0}
-        strokeLinejoin="round"
-      />
-      <g className="bot-avatar-eyes">
-        {eyes.map((eye) => (
-          <rect
-            key={`${eye.cx}-${eye.cy}`}
-            x={eye.cx - BOT_AVATAR_EYE_WIDTH / 2}
-            y={eye.cy - BOT_AVATAR_EYE_HEIGHT / 2}
-            width={BOT_AVATAR_EYE_WIDTH}
-            height={BOT_AVATAR_EYE_HEIGHT}
-            rx={eyeRx}
-            fill={BOT_AVATAR_EYE_COLOR}
-            transform={`rotate(${BOT_AVATAR_EYE_TILT_DEG} ${eye.cx} ${eye.cy})`}
-          />
-        ))}
-      </g>
+      {motion === undefined ? (
+        <>
+          {halo ? <SilhouetteHalo d={silhouette.d} roundCorners={silhouette.roundCorners} /> : null}
+          <SilhouetteFill d={silhouette.d} roundCorners={silhouette.roundCorners} color={color} />
+          <g className="bot-avatar-eyes">
+            {eyes.map((eye) => (
+              <rect
+                key={`${eye.cx}-${eye.cy}`}
+                x={eye.cx - BOT_AVATAR_EYE_WIDTH / 2}
+                y={eye.cy - BOT_AVATAR_EYE_HEIGHT / 2}
+                width={BOT_AVATAR_EYE_WIDTH}
+                height={BOT_AVATAR_EYE_HEIGHT}
+                rx={eyeRx}
+                fill={BOT_AVATAR_EYE_COLOR}
+                transform={`rotate(${BOT_AVATAR_EYE_TILT_DEG} ${eye.cx} ${eye.cy})`}
+              />
+            ))}
+          </g>
+        </>
+      ) : (
+        // Posed layers. At rest (no animation running, e.g. idle or reduced
+        // motion) they draw exactly the flat avatar above: the eye tilt moves
+        // to the parent <g> so the pill's own CSS transform can scale it about
+        // its centre, and the happy arc sits at opacity 0 until `done`.
+        <g className="bot-avatar-body">
+          {halo ? <SilhouetteHalo d={silhouette.d} roundCorners={silhouette.roundCorners} /> : null}
+          <SilhouetteFill d={silhouette.d} roundCorners={silhouette.roundCorners} color={color} />
+          <g className="bot-avatar-eyes">
+            {eyes.map((eye) => (
+              <g
+                key={`${eye.cx}-${eye.cy}`}
+                transform={`rotate(${BOT_AVATAR_EYE_TILT_DEG} ${eye.cx} ${eye.cy})`}
+              >
+                <rect
+                  className="bot-avatar-pill"
+                  x={eye.cx - BOT_AVATAR_EYE_WIDTH / 2}
+                  y={eye.cy - BOT_AVATAR_EYE_HEIGHT / 2}
+                  width={BOT_AVATAR_EYE_WIDTH}
+                  height={BOT_AVATAR_EYE_HEIGHT}
+                  rx={eyeRx}
+                  fill={BOT_AVATAR_EYE_COLOR}
+                />
+                <path
+                  className="bot-avatar-arc"
+                  d={happyArcPath(eye.cx, eye.cy)}
+                  fill="none"
+                  stroke={BOT_AVATAR_EYE_COLOR}
+                  strokeWidth={5}
+                  strokeLinecap="round"
+                  opacity={0}
+                />
+              </g>
+            ))}
+          </g>
+        </g>
+      )}
     </svg>
+  );
+}
+
+/**
+ * Happy squint: an upward-bowed stroke ("^") in the pill's place, the same
+ * curve `avatarRemotion/AvatarFace.tsx` draws in the Studio.
+ */
+function happyArcPath(cx: number, cy: number): string {
+  return `M${cx - 4} ${cy + 3}Q${cx} ${cy - 9} ${cx + 4} ${cy + 3}`;
+}
+
+function SilhouetteHalo({ d, roundCorners }: { d: string; roundCorners: boolean }): JSX.Element {
+  return (
+    <path
+      d={d}
+      fill="none"
+      stroke="var(--personal-avatar-halo)"
+      strokeWidth={(roundCorners ? BOT_AVATAR_ROUND_CORNER_STROKE : 0) + 6}
+      strokeLinejoin="round"
+    />
+  );
+}
+
+function SilhouetteFill({
+  d,
+  roundCorners,
+  color,
+}: {
+  d: string;
+  roundCorners: boolean;
+  color: string;
+}): JSX.Element {
+  return (
+    <path
+      d={d}
+      fill={color}
+      stroke={roundCorners ? color : "none"}
+      strokeWidth={roundCorners ? BOT_AVATAR_ROUND_CORNER_STROKE : 0}
+      strokeLinejoin="round"
+    />
   );
 }

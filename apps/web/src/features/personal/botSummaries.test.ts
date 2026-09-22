@@ -16,6 +16,7 @@ import {
   type BotSummary,
   collectAttentionThreads,
   filterBotSummaries,
+  isBotThinking,
   isThreadLive,
   isThreadRateLimited,
   previewRefreshKey,
@@ -379,5 +380,53 @@ describe("previewRefreshKey", () => {
         latestTurn: { ...running, state: "completed", completedAt: "2026-09-01T10:02:00.000Z" },
       }),
     ).not.toBe(base);
+  });
+});
+
+describe("isBotThinking", () => {
+  const running = (turnId: string, assistantMessageId: string | null) => ({
+    session: { status: "running", activeTurnId: turnId },
+    latestTurn: { turnId, state: "running", assistantMessageId },
+  });
+
+  it("thinks while a live turn has produced no reply yet", () => {
+    expect(isBotThinking([shell("a", "2026-09-13T09:00:00.000Z", running("t1", null))])).toBe(true);
+  });
+
+  it("works once the turn's first assistant message arrives", () => {
+    expect(isBotThinking([shell("a", "2026-09-13T09:00:00.000Z", running("t1", "m1"))])).toBe(
+      false,
+    );
+  });
+
+  it("works when any live thread is producing, and ignores idle threads", () => {
+    expect(
+      isBotThinking([
+        shell("a", "2026-09-13T09:00:00.000Z", running("t1", null)),
+        shell("b", "2026-09-13T09:00:00.000Z", running("t2", "m2")),
+      ]),
+    ).toBe(false);
+    expect(
+      isBotThinking([
+        shell("a", "2026-09-13T09:00:00.000Z", running("t1", null)),
+        shell("b", "2026-09-13T09:00:00.000Z"),
+      ]),
+    ).toBe(true);
+  });
+
+  it("is false for a bot with nothing running", () => {
+    expect(isBotThinking([shell("a", "2026-09-13T09:00:00.000Z")])).toBe(false);
+    expect(isBotThinking([])).toBe(false);
+  });
+
+  it("feeds the summary", () => {
+    const [summary] = buildBotSummaries({
+      bots: [bot("assistant", "Assistant", "codex", 0)],
+      links: [link("assistant", "thread-a")],
+      shells: [shell("thread-a", "2026-09-13T09:00:00.000Z", running("t1", null))],
+      providers: [provider("codex")],
+    });
+    expect(summary?.live).toBe(true);
+    expect(summary?.thinking).toBe(true);
   });
 });

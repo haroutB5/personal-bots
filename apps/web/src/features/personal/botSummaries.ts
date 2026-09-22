@@ -17,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import {
   type ConversationState,
   conversationStateLabel,
+  isTurnThinking,
   providerWaitState,
 } from "./conversationModel";
 import { routineNextRunLabel } from "./taskPresentation";
@@ -39,6 +40,11 @@ export interface BotSummary {
   readonly threadTitles: ReadonlyArray<string>;
   /** A linked thread has a turn or session running right now (not stuck on a rate limit). */
   readonly live: boolean;
+  /**
+   * Live, and every live thread is still in its opening stretch with no reply
+   * yet (`isTurnThinking`). One thread producing output makes the bot working.
+   */
+  readonly thinking: boolean;
   /** A linked thread is stuck on a provider rate limit. */
   readonly rateLimited: boolean;
   readonly rateLimitedThread: EnvironmentThreadShell | null;
@@ -141,6 +147,12 @@ export function isThreadLive(shell: EnvironmentThreadShell): boolean {
     shell.session?.status === "running" ||
     shell.session?.status === "starting"
   );
+}
+
+/** Every live linked thread is still thinking (see {@link BotSummary.thinking}). */
+export function isBotThinking(shells: ReadonlyArray<EnvironmentThreadShell>): boolean {
+  const live = shells.filter(isThreadLive);
+  return live.length > 0 && live.every((shell) => isTurnThinking(shell));
 }
 
 export function threadNeedsAttention(shell: EnvironmentThreadShell): boolean {
@@ -259,6 +271,7 @@ export function buildBotSummaries(input: {
         newestThread === null ? null : (newestMessageByThread.get(newestThread.id) ?? null),
       threadTitles: shells.map((shell) => shell.title),
       live: shells.some(isThreadLive),
+      thinking: isBotThinking(shells),
       rateLimited: rateLimitedThread !== null,
       rateLimitedThread,
       attentionThreads: shells.filter(threadNeedsAttention),

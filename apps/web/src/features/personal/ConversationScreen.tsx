@@ -65,6 +65,7 @@ import {
   conversationStateLabel,
   deriveConversationState,
   friendlyTurnError,
+  isTurnThinking,
   placeDelegationCards,
   placeQuestionCards,
   placeSecretRequestCards,
@@ -414,6 +415,14 @@ export function ConversationScreen({
     threadId,
     waitingForAgent: waitingLabel !== null,
   });
+  // The avatar's thinking pose: working, but no reply text or tool call yet.
+  const turnThinking =
+    conversationState === "working" &&
+    isTurnThinking({
+      session: thread?.session ?? null,
+      latestTurn: thread?.latestTurn ?? null,
+      activities,
+    });
   const phase = derivePhase(thread?.session ?? null);
   // Stop depends on the thread alone, never on the bots list.
   const interruptInput = buildRunningThreadTurnInterruptInput(thread, phase);
@@ -683,7 +692,7 @@ export function ConversationScreen({
               color={bot.avatarColor}
               size={48}
               label={bot.name}
-              motion={motionForConversationState(conversationState)}
+              motion={motionForConversationState(conversationState, turnThinking)}
             />
             <div className="min-w-0 flex-1">
               <span className="flex min-w-0 items-baseline gap-1.5">

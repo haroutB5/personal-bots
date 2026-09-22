@@ -3,9 +3,9 @@ import { AbsoluteFill, useCurrentFrame } from "remotion";
 
 import type { BotAvatarShape } from "@t3tools/contracts";
 
+import { AVATAR_MOTIONS } from "../avatarMotion";
 import { AvatarFace } from "./AvatarFace";
 import { AVATAR_STATE_SPECS, avatarPoseAt } from "./avatarStates";
-import { AVATAR_ANIM_STATES } from "./playerMode";
 
 export type PreviewTheme = "light" | "dark";
 
@@ -70,7 +70,7 @@ export function AvatarStateGrid({ theme, avatars }: AvatarStateGridProps): JSX.E
     <AbsoluteFill style={{ background: tokens.bg, fontFamily: font, color: tokens.text }}>
       <div style={{ display: "flex", height: GRID_HEADER, alignItems: "center" }}>
         <div style={{ width: GRID_LABEL_WIDTH }} />
-        {AVATAR_ANIM_STATES.map((state) => (
+        {AVATAR_MOTIONS.map((state) => (
           <div
             key={state}
             style={{
@@ -100,7 +100,7 @@ export function AvatarStateGrid({ theme, avatars }: AvatarStateGridProps): JSX.E
           >
             {avatar.name}
           </div>
-          {AVATAR_ANIM_STATES.map((state) => (
+          {AVATAR_MOTIONS.map((state) => (
             <div
               key={state}
               style={{

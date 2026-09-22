@@ -1,17 +1,20 @@
 import { Easing, interpolate, spring } from "remotion";
 
-import { REST_POSE, type AvatarPose } from "./pose";
-import type { AvatarAnimState } from "./playerMode";
+// Explicit `.ts` extensions: `scripts/generate-avatar-keyframes.ts` runs this
+// module under plain Node, which does not resolve extensionless specifiers.
+import type { AvatarMotion } from "../avatarMotion.ts";
+import { REST_POSE, type AvatarPose } from "./pose.ts";
 
-export { REST_POSE, type AvatarPose } from "./pose";
+export { REST_POSE, type AvatarPose } from "./pose.ts";
 
 /**
- * Frame-driven poses for the Remotion bot avatar.
+ * Frame-driven poses for the bot avatar: the one authored copy of its motion.
  *
- * Every state is a pure function of the frame number, so the Player, the
- * Studio and `remotion render` all draw exactly the same thing and a frame can
- * be unit-tested. No CSS animation or transition is involved (Remotion renders
- * frame by frame and would never see them).
+ * Every state is a pure function of the frame number, so the Studio,
+ * `remotion render` and the shipped CSS keyframes (sampled from these by
+ * `avatarKeyframes.ts` into `avatarMotion.generated.css`) all draw exactly the
+ * same thing, and a frame can be unit-tested. This module is dev-only: the app
+ * never imports it, so `remotion` stays out of the production bundle.
  *
  * Units are the avatar's 0-100 viewBox. At a 56px list avatar one unit is about
  * 0.56px, so the ranges below are deliberately small: the silhouette never
@@ -26,8 +29,9 @@ export interface AvatarStateSpec {
   readonly loop: boolean;
 }
 
-export const AVATAR_STATE_SPECS: Record<AvatarAnimState, AvatarStateSpec> = {
-  // Idle never mounts a Player in the app; this exists for the Studio/previews.
+export const AVATAR_STATE_SPECS: Record<AvatarMotion, AvatarStateSpec> = {
+  // Idle is the static rest pose in the app (no animation, so an idle screen
+  // repaints nothing); this loop exists for the Studio/previews only.
   idle: { durationInFrames: 120, loop: true },
   thinking: { durationInFrames: 72, loop: true },
   working: { durationInFrames: 36, loop: true },
@@ -153,7 +157,7 @@ function donePose(frame: number, duration: number): AvatarPose {
  * Pose for `state` at `frame`. Looping states wrap the frame; one-shots clamp
  * it, so any frame past the end is the held final pose.
  */
-export function avatarPoseAt(state: AvatarAnimState, frame: number): AvatarPose {
+export function avatarPoseAt(state: AvatarMotion, frame: number): AvatarPose {
   const { durationInFrames: duration, loop } = AVATAR_STATE_SPECS[state];
   const f = loop
     ? ((frame % duration) + duration) % duration
@@ -175,6 +179,6 @@ export function avatarPoseAt(state: AvatarAnimState, frame: number): AvatarPose 
 }
 
 /** The pose a one-shot state holds once it has played. */
-export function avatarFinalPose(state: AvatarAnimState): AvatarPose {
+export function avatarFinalPose(state: AvatarMotion): AvatarPose {
   return avatarPoseAt(state, AVATAR_STATE_SPECS[state].durationInFrames - 1);
 }

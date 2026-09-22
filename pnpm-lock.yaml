@@ -615,9 +615,6 @@ importers:
       '@pierre/trees':
         specifier: 1.0.0-beta.4
         version: 1.0.0-beta.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
-      '@remotion/player':
-        specifier: 4.0.524
-        version: 4.0.524(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@t3tools/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime
@@ -702,9 +699,6 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
-      remotion:
-        specifier: 4.0.524
-        version: 4.0.524(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       tailwind-merge:
         specifier: ^3.4.0
         version: 3.6.0
@@ -766,6 +760,9 @@ importers:
       react-test-renderer:
         specifier: 19.2.6
         version: 19.2.6(react@19.2.6)
+      remotion:
+        specifier: 4.0.524
+        version: 4.0.524(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       tailwindcss:
         specifier: 4.3.3
         version: 4.3.3

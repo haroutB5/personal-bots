@@ -49,8 +49,14 @@
       "ignoreDependencies": ["playwright-core", "electron-builder"],
     },
     "apps/web": {
-      // Worktree setup invokes this directly from t3.json.
-      "entry": ["scripts/warm-dep-cache.ts"],
+      // Worktree setup invokes this directly from t3.json. The generators run by
+      // hand (node scripts/generate-*.ts), and the Remotion Studio/CLI entry
+      // (`remotion:studio`, `remotion:render`) is loaded by the remotion binary.
+      "entry": [
+        "scripts/warm-dep-cache.ts",
+        "scripts/generate-*.ts",
+        "src/features/personal/avatarRemotion/index.ts",
+      ],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.

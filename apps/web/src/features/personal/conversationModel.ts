@@ -3,6 +3,7 @@ import type {
   OrchestrationLatestTurn,
   OrchestrationSession,
   OrchestrationSessionProviderRetry,
+  OrchestrationThreadActivity,
   PersonalBrowserStatus,
   PersonalGroupSystemEvent,
   PersonalTask,
@@ -95,6 +96,43 @@ export function deriveConversationState(input: {
   if (input.waitingForAgent === true) return "delegating";
   if (status === "error" || input.latestTurn?.state === "error") return "error";
   return "idle";
+}
+
+/**
+ * The opening stretch of a working turn, before the bot has produced anything:
+ * no reply text (reasoning traces do not count) and, when the caller has the
+ * thread's activities, no tool call either. Drives the avatar's `thinking`
+ * pose; only meaningful while the conversation is `working`.
+ *
+ * `latestTurn.assistantMessageId` is the signal: the server and the client
+ * reducer both set it on the turn's first assistant message (streaming or
+ * not) and never clear it within the turn. A session that is running a turn
+ * the shell has not caught up with yet (or still starting one) is thinking too.
+ * The chats list has shells only, so a turn that goes straight to tools reads
+ * as thinking there until its first line of text; the conversation header,
+ * which has the activities, switches to working on the first tool call.
+ */
+export function isTurnThinking(input: {
+  readonly session: Pick<OrchestrationSession, "status" | "activeTurnId"> | null;
+  readonly latestTurn: Pick<
+    OrchestrationLatestTurn,
+    "turnId" | "state" | "assistantMessageId"
+  > | null;
+  readonly activities?: ReadonlyArray<Pick<OrchestrationThreadActivity, "tone" | "turnId">>;
+}): boolean {
+  const { session, latestTurn: turn } = input;
+  if (turn !== null && turn.state === "running") {
+    if (turn.assistantMessageId !== null) return false;
+    const activities = input.activities ?? [];
+    return !activities.some(
+      (activity) => activity.tone === "tool" && activity.turnId === turn.turnId,
+    );
+  }
+  if (session?.status === "starting") return true;
+  if (session?.status === "running") {
+    return session.activeTurnId === null || session.activeTurnId !== turn?.turnId;
+  }
+  return false;
 }
 
 /**

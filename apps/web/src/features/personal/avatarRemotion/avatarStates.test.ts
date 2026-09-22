@@ -7,13 +7,7 @@ import {
   REST_POSE,
   type AvatarPose,
 } from "./avatarStates";
-import {
-  AVATAR_ANIM_STATES,
-  avatarPlayerMode,
-  isContinuousAvatarState,
-  staticMotionFor,
-  type AvatarPlayerModeInput,
-} from "./playerMode";
+import { AVATAR_MOTIONS as AVATAR_ANIM_STATES } from "../avatarMotion";
 
 const POSE_KEYS = Object.keys(REST_POSE) as (keyof AvatarPose)[];
 
@@ -74,48 +68,5 @@ describe("avatarPoseAt", () => {
     expect(avatarPoseAt("done", 12).happy).toBe(1); // happy squint mid-hop
     expect(avatarPoseAt("working", 18).bodyY).toBeLessThan(-2.9); // top of the bob
     expect(avatarPoseAt("thinking", 18).gazeX).toBeGreaterThan(2.9); // scanning
-  });
-});
-
-describe("avatarPlayerMode", () => {
-  const base: AvatarPlayerModeInput = {
-    state: "working",
-    reducedMotion: false,
-    documentHidden: false,
-    continuousAllowed: true,
-  };
-
-  it("never mounts a Player for idle", () => {
-    expect(avatarPlayerMode({ ...base, state: "idle" })).toBe("static");
-  });
-
-  it("is fully static under reduced motion and when the document is hidden", () => {
-    for (const state of AVATAR_ANIM_STATES) {
-      expect(avatarPlayerMode({ ...base, state, reducedMotion: true })).toBe("static");
-      expect(avatarPlayerMode({ ...base, state, documentHidden: true })).toBe("static");
-    }
-  });
-
-  it("loops thinking/working only for the holder of the continuous slot", () => {
-    expect(avatarPlayerMode({ ...base, state: "working" })).toBe("loop");
-    expect(avatarPlayerMode({ ...base, state: "thinking" })).toBe("loop");
-    expect(avatarPlayerMode({ ...base, continuousAllowed: false })).toBe("static");
-    expect(avatarPlayerMode({ ...base, state: "thinking", continuousAllowed: false })).toBe(
-      "static",
-    );
-  });
-
-  it("plays waiting/blocked/done once, whatever the slot", () => {
-    for (const state of ["waiting", "blocked", "done"] as const) {
-      expect(avatarPlayerMode({ ...base, state, continuousAllowed: false })).toBe("once");
-      expect(isContinuousAvatarState(state)).toBe(false);
-    }
-  });
-
-  it("never falls back to a CSS bob for a looping state that lost its slot", () => {
-    expect(staticMotionFor("working", false)).toBe("idle");
-    expect(staticMotionFor("thinking", true)).toBe("idle");
-    expect(staticMotionFor("working", true)).toBe("working");
-    expect(staticMotionFor("blocked", false)).toBe("blocked");
   });
 });

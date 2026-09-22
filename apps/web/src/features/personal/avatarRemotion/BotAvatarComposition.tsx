@@ -3,16 +3,16 @@ import { AbsoluteFill, useCurrentFrame } from "remotion";
 
 import type { BotAvatarShape } from "@t3tools/contracts";
 
+import type { AvatarMotion } from "../avatarMotion";
 import { AvatarFace } from "./AvatarFace";
 import { avatarPoseAt } from "./avatarStates";
-import type { AvatarAnimState } from "./playerMode";
 
 // A type alias, not an interface: Remotion needs props assignable to
 // Record<string, unknown>, which interfaces are not.
 export type BotAvatarCompositionProps = {
   readonly shape: BotAvatarShape;
   readonly color: string;
-  readonly state: AvatarAnimState;
+  readonly state: AvatarMotion;
   readonly haloColor: string;
   /** Transparent in the app; a theme surface in renders. */
   readonly background: string;
@@ -22,7 +22,7 @@ export type BotAvatarCompositionProps = {
 
 /**
  * One bot avatar in one state. Every value comes from `useCurrentFrame`, so
- * Player, Studio and render agree frame for frame.
+ * the Studio and renders agree frame for frame.
  */
 export function BotAvatarComposition({
   shape,

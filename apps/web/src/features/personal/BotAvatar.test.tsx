@@ -18,3 +18,29 @@ describe("BotAvatar static output", () => {
     expect(markup).toMatchSnapshot();
   });
 });
+
+describe("BotAvatar posed layers", () => {
+  const posed = (motion: "idle" | "thinking" | "done") =>
+    renderToStaticMarkup(
+      <BotAvatar shape="roundedHexagon" color="#171717" size={40} label="Bot" motion={motion} />,
+    );
+
+  it("draws the body, eye pair, pills and a hidden happy arc for the keyframes", () => {
+    const markup = posed("thinking");
+    expect(markup).toContain('data-motion="thinking"');
+    expect(markup.match(/class="bot-avatar-body"/g)).toHaveLength(1);
+    expect(markup.match(/class="bot-avatar-eyes"/g)).toHaveLength(1);
+    expect(markup.match(/class="bot-avatar-pill"/g)).toHaveLength(2);
+    expect(markup.match(/class="bot-avatar-arc"[^>]*opacity="0"/g)).toHaveLength(2);
+    // The halo moves with the body.
+    expect(markup).toMatch(/class="bot-avatar-body"><path[^>]*var\(--personal-avatar-halo\)/);
+  });
+
+  it("carries no inline pose, so an unanimated avatar sits exactly at rest", () => {
+    const markup = posed("idle");
+    // The only transforms are the eyes' fixed tilt, as in the flat avatar.
+    expect(markup.match(/transform="/g)).toHaveLength(2);
+    expect(markup.match(/transform="rotate\(/g)).toHaveLength(2);
+    expect(markup).not.toContain("style=");
+  });
+});

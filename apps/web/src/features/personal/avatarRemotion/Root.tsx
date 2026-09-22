@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import { Composition, Folder } from "remotion";
 
+import { AVATAR_MOTIONS } from "../avatarMotion";
 import { AVATAR_FPS, AVATAR_STATE_SPECS } from "./avatarStates";
 import {
   AvatarStateGrid,
@@ -13,10 +14,9 @@ import {
   type PreviewTheme,
 } from "./AvatarStateGrid";
 import { BotAvatarComposition } from "./BotAvatarComposition";
-import { AVATAR_ANIM_STATES } from "./playerMode";
 
-/** Canvas side of a single-avatar composition (the app's Player scales it). */
-export const AVATAR_COMPOSITION_SIZE = 200;
+/** Canvas side of a single-avatar composition. */
+const AVATAR_COMPOSITION_SIZE = 200;
 
 const THEMES: readonly PreviewTheme[] = ["light", "dark"];
 
@@ -29,7 +29,7 @@ export function RemotionRoot(): JSX.Element {
   return (
     <>
       <Folder name="states">
-        {AVATAR_ANIM_STATES.map((state) => (
+        {AVATAR_MOTIONS.map((state) => (
           <Composition
             key={state}
             id={`avatar-${state}`}
@@ -57,7 +57,7 @@ export function RemotionRoot(): JSX.Element {
             component={AvatarStateGrid}
             durationInFrames={GRID_DURATION}
             fps={AVATAR_FPS}
-            width={GRID_LABEL_WIDTH + GRID_CELL * AVATAR_ANIM_STATES.length}
+            width={GRID_LABEL_WIDTH + GRID_CELL * AVATAR_MOTIONS.length}
             height={GRID_HEADER + GRID_CELL * PREVIEW_AVATARS.length}
             defaultProps={{ theme, avatars: PREVIEW_AVATARS }}
           />

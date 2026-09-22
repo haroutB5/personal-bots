@@ -13,7 +13,11 @@ import {
   BOT_AVATAR_VIEWBOX,
   botAvatarNeedsHalo,
 } from "../botAvatarShapes";
-import type { AvatarPose } from "./pose";
+import {
+  AVATAR_BODY_PIVOT_X as PIVOT_X,
+  AVATAR_BODY_PIVOT_Y as PIVOT_Y,
+  type AvatarPose,
+} from "./pose";
 
 export interface AvatarFaceProps {
   readonly shape: BotAvatarShape;
@@ -26,14 +30,11 @@ export interface AvatarFaceProps {
   readonly haloColor: string;
 }
 
-/** Body pivot: bottom centre, so squash and tilt read as weight. */
-const PIVOT_X = 50;
-const PIVOT_Y = 90;
-
 /**
  * The bot's own parametric avatar (same silhouette, colour, eyes and halo rule
- * as `BotAvatar`) drawn in a given pose. Pure: no hooks, no timing, so the
- * Player, the Studio and the post-animation static frame share it.
+ * as `BotAvatar`) drawn in a given pose. Pure: no hooks, no timing. Studio and
+ * renders only; the app draws `BotAvatar` and animates it with the generated
+ * keyframes (`avatarMotion.generated.css`).
  * Decorative - the caller carries the accessible label.
  */
 export function AvatarFace({ shape, color, pose, haloColor }: AvatarFaceProps): JSX.Element {

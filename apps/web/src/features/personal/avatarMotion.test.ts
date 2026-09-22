@@ -26,6 +26,12 @@ describe("motionForSummary", () => {
     expect(motionForSummary(summary({ live: true }))).toBe("working");
   });
 
+  it("thinks while live with no reply yet", () => {
+    expect(motionForSummary(summary({ live: true, thinking: true }))).toBe("thinking");
+    // Thinking is a refinement of live: without it the flag means nothing.
+    expect(motionForSummary(summary({ thinking: true }))).toBe("idle");
+  });
+
   it("keeps working ahead of a rate limit on another thread, like the row dot", () => {
     expect(motionForSummary(summary({ live: true, rateLimited: true }))).toBe("working");
   });
@@ -54,6 +60,12 @@ describe("motionForConversationState", () => {
     expect(motionForConversationState("retrying")).toBe("blocked");
     expect(motionForConversationState("error")).toBe("blocked");
   });
+
+  it("thinks only when a working turn has produced nothing yet", () => {
+    expect(motionForConversationState("working", true)).toBe("thinking");
+    expect(motionForConversationState("working", false)).toBe("working");
+    expect(motionForConversationState("waiting", true)).toBe("waiting");
+  });
 });
 
 describe("capContinuousMotion", () => {
@@ -71,6 +83,19 @@ describe("capContinuousMotion", () => {
       "working",
       "blocked",
       "idle",
+      "idle",
+    ]);
+  });
+
+  it("counts thinking as continuous under the same single slot", () => {
+    expect(capContinuousMotion(["thinking", "working", "thinking"])).toEqual([
+      "thinking",
+      "idle",
+      "idle",
+    ]);
+    expect(capContinuousMotion(["waiting", "working", "thinking"])).toEqual([
+      "waiting",
+      "working",
       "idle",
     ]);
   });
