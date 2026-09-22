@@ -78,6 +78,12 @@ export const ProviderSessionStartInput = Schema.Struct({
    * plugins, connectors or native memory. Absent means upstream behaviour.
    */
   personalBot: Schema.optional(Schema.Boolean),
+  /**
+   * Set by the server alongside `personalBot` when the thread belongs to a
+   * specific bot. Adapters use it to load that bot's own plugin folder
+   * (per-bot skills and commands). Absent means no per-bot extras.
+   */
+  personalBotId: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 

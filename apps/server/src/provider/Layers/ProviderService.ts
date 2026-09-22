@@ -1003,6 +1003,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         // Only recovery uses this: fresh starts carry the reactor's own
         // instructions (plus memory context) on their start input.
         systemInstructions: personal?.systemInstructions ?? undefined,
+        // Lets the adapter load the bot's own plugin folder (per-bot skills).
+        personalBotId: personal?.botId ?? undefined,
       };
     });
   const clearMcpSession = (threadId: ThreadId) =>
@@ -1320,6 +1322,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
       const prepared = yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
       const personalBot = prepared.personalBot;
+      const personalBotId = prepared.personalBotId;
       // The reactor's turn instructions carry the memory block for this
       // message; the bot-only ones are the fallback (e.g. a continuation).
       const systemInstructions = input.systemInstructions ?? prepared.systemInstructions;
@@ -1333,6 +1336,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           runtimeMode: input.binding.runtimeMode ?? "full-access",
           ...(personalBot ? { personalBot: true } : {}),
+          ...(personalBot && personalBotId ? { personalBotId } : {}),
           // Session-scoped instructions (Claude's appended system prompt) are
           // read only at start, and this start bypasses the reactor, so a
           // resumed bot chat would otherwise lose its persona and app rules.
@@ -1561,14 +1565,21 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
-        const { personalBot } = yield* prepareMcpSession(threadId, resolvedInstanceId);
+        const { personalBot, personalBotId } = yield* prepareMcpSession(
+          threadId,
+          resolvedInstanceId,
+        );
+        // The bot id comes only from the thread's personal-bot link, never
+        // from the caller's input.
+        const { personalBotId: _callerBotId, ...startInput } = input;
         const session = yield* adapter
           .startSession({
-            ...input,
+            ...startInput,
             providerInstanceId: resolvedInstanceId,
             ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
             ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
             ...(personalBot ? { personalBot: true } : {}),
+            ...(personalBot && personalBotId ? { personalBotId } : {}),
           })
           .pipe(Effect.onError(() => clearMcpSession(threadId)));
 

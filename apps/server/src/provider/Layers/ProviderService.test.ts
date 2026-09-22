@@ -5233,6 +5233,35 @@ describe("agent browser access", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  // The adapter loads `<baseDir>/bot-plugins/<botId>` from this id, so both
+  // the fresh start and a recovery must carry the thread's own bot id.
+  it.effect("passes the thread's bot id on start and recovery; plain threads get none", () =>
+    Effect.gen(function* () {
+      const personalStarts: Array<unknown> = [];
+      const personalRecoveries: Array<unknown> = [];
+      const plainStarts: Array<unknown> = [];
+      const plainRecoveries: Array<unknown> = [];
+
+      yield* startSessionWith(false, asThreadId("thread-bot-id-personal"), undefined, {
+        personalBotThread: true,
+        startInputs: personalStarts,
+        recoveryInputs: personalRecoveries,
+      });
+      yield* startSessionWith(false, asThreadId("thread-bot-id-plain"), undefined, {
+        personalBotThread: false,
+        startInputs: plainStarts,
+        recoveryInputs: plainRecoveries,
+      });
+
+      const botIdsOf = (inputs: ReadonlyArray<unknown>) =>
+        inputs.map((input) => (input as { personalBotId?: string }).personalBotId);
+      assert.deepEqual(botIdsOf(personalStarts), ["bot-personal"]);
+      assert.deepEqual(botIdsOf(personalRecoveries), ["bot-personal"]);
+      assert.deepEqual(botIdsOf(plainStarts), [undefined]);
+      assert.deepEqual(botIdsOf(plainRecoveries), [undefined]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   // The reactor's turn instructions include the "Known facts" memory block, so
   // a recovery triggered by a user message must start with those; a turn sent
   // without any (the post-restart continuation) still gets the bot's own.

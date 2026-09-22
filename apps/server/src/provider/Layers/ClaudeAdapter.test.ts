@@ -606,6 +606,106 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  const BOT_ID = "df17a657-d7bf-4439-856f-389848e1cec9";
+  const makeBotPluginBaseDir = (withManifest: boolean) => {
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-bot-plugins-"));
+    const pluginDir = NodePath.join(baseDir, "bot-plugins", BOT_ID);
+    NodeFS.mkdirSync(NodePath.join(pluginDir, ".claude", "skills"), { recursive: true });
+    if (withManifest) {
+      NodeFS.mkdirSync(NodePath.join(pluginDir, ".claude-plugin"), { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(pluginDir, ".claude-plugin", "plugin.json"),
+        JSON.stringify({ name: "frontend-bot", skills: "./.claude/skills/" }),
+      );
+    }
+    return { baseDir, pluginDir };
+  };
+  const startWithBotPlugins = (
+    baseDir: string,
+    start: { readonly personalBot?: boolean; readonly personalBotId?: string },
+  ) => {
+    const harness = makeHarness({ baseDir });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: ThreadId.make("thread-bot-plugins"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        ...start,
+      });
+      return harness.getLastCreateQueryInput()?.options;
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(baseDir, { recursive: true, force: true }))),
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  };
+
+  it.effect("loads a personal bot's own plugin folder when it has a manifest", () => {
+    const { baseDir, pluginDir } = makeBotPluginBaseDir(true);
+    return Effect.gen(function* () {
+      const options = yield* startWithBotPlugins(baseDir, {
+        personalBot: true,
+        personalBotId: BOT_ID,
+      });
+      assert.deepEqual(options?.plugins, [{ type: "local", path: pluginDir }]);
+      // The plugin loads explicitly; the owner's settings files stay out.
+      assert.deepEqual(options?.settingSources, []);
+      assert.equal(options?.strictMcpConfig, true);
+    });
+  });
+
+  it.effect("loads no plugins for a bot whose folder has no manifest", () => {
+    const { baseDir } = makeBotPluginBaseDir(false);
+    return Effect.gen(function* () {
+      const options = yield* startWithBotPlugins(baseDir, {
+        personalBot: true,
+        personalBotId: BOT_ID,
+      });
+      assert.equal(options?.plugins, undefined);
+      assert.deepEqual(options?.settingSources, []);
+    });
+  });
+
+  it.effect("loads no bot plugins for a bot without an id or a folder", () => {
+    const { baseDir } = makeBotPluginBaseDir(true);
+    return Effect.gen(function* () {
+      const withoutId = yield* startWithBotPlugins(baseDir, { personalBot: true });
+      assert.equal(withoutId?.plugins, undefined);
+    });
+  });
+
+  it.effect("loads no bot plugins for another bot's id", () => {
+    const { baseDir } = makeBotPluginBaseDir(true);
+    return Effect.gen(function* () {
+      const options = yield* startWithBotPlugins(baseDir, {
+        personalBot: true,
+        personalBotId: "00000000-0000-4000-8000-000000000000",
+      });
+      assert.equal(options?.plugins, undefined);
+    });
+  });
+
+  it.effect("never turns a path-like bot id into a plugin path", () => {
+    const { baseDir } = makeBotPluginBaseDir(true);
+    return Effect.gen(function* () {
+      const options = yield* startWithBotPlugins(baseDir, {
+        personalBot: true,
+        personalBotId: `../bot-plugins/${BOT_ID}`,
+      });
+      assert.equal(options?.plugins, undefined);
+    });
+  });
+
+  it.effect("loads no bot plugins for a normal thread, even with a bot id", () => {
+    const { baseDir } = makeBotPluginBaseDir(true);
+    return Effect.gen(function* () {
+      const options = yield* startWithBotPlugins(baseDir, { personalBotId: BOT_ID });
+      assert.equal(options?.plugins, undefined);
+      assert.deepEqual(options?.settingSources, ["user", "project", "local"]);
+    });
+  });
+
   it.effect("leaves normal threads on the upstream settings and MCP config", () => {
     const threadId = ThreadId.make("thread-normal-claude");
     const harness = makeHarness({ environment: { PATH: "/usr/bin" } });

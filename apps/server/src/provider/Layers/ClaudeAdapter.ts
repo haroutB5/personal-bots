@@ -1555,11 +1555,17 @@ const CLAUDE_SETTING_SOURCES = [
  * `enabledPlugins`, and use `strictMcpConfig` so only T3's server is loaded.
  * Auto-memory and claude.ai connectors are read regardless of settingSources,
  * so both are switched off by setting and by env var. Built-in tools stay.
+ * A bot's own plugin folder (`<baseDir>/bot-plugins/<botId>/`, when it holds
+ * `.claude-plugin/plugin.json`) is passed explicitly via `plugins`.
  */
 export const PERSONAL_BOT_CLAUDE_SETTINGS = {
   autoMemoryEnabled: false,
   disableClaudeAiConnectors: true,
 } as const;
+/** Per-bot plugin folders live at `<baseDir>/bot-plugins/<botId>/`. */
+export const PERSONAL_BOT_PLUGINS_DIR = "bot-plugins";
+// Bot ids are UUIDs; anything else never becomes a path segment.
+const PERSONAL_BOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 export const PERSONAL_BOT_CLAUDE_ENVIRONMENT = {
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
   ENABLE_CLAUDEAI_MCP_SERVERS: "false",
@@ -2093,6 +2099,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
   const crypto = yield* Crypto.Crypto;
+  /** `<baseDir>/bot-plugins/<botId>` when it holds a Claude plugin manifest. */
+  const resolvePersonalBotPluginDir = (botId: string | undefined) =>
+    Effect.gen(function* () {
+      if (botId === undefined || !PERSONAL_BOT_ID_PATTERN.test(botId)) return undefined;
+      const pluginDir = path.join(serverConfig.baseDir, PERSONAL_BOT_PLUGINS_DIR, botId);
+      const hasManifest = yield* fileSystem
+        .exists(path.join(pluginDir, ".claude-plugin", "plugin.json"))
+        .pipe(Effect.orElseSucceed(() => false));
+      return hasManifest ? pluginDir : undefined;
+    });
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
     Effect.provideService(Path.Path, path),
@@ -4931,6 +4947,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(personalBot ? PERSONAL_BOT_CLAUDE_SETTINGS : {}),
       };
       const settingSources: Array<SettingSource> = personalBot ? [] : [...CLAUDE_SETTING_SOURCES];
+      // A bot's own plugin folder (skills, commands) loads explicitly: it is
+      // unaffected by the empty settingSources above, so the machine owner's
+      // user-level plugins stay out while this bot keeps its extras.
+      const botPluginDir = personalBot
+        ? yield* resolvePersonalBotPluginDir(input.personalBotId)
+        : undefined;
+      const plugins: ClaudeQueryOptions["plugins"] = botPluginDir
+        ? [{ type: "local", path: botPluginDir }]
+        : undefined;
       if (requestThinkingSummaries && extraArgs["thinking-display"] === undefined) {
         extraArgs["thinking-display"] = "summarized";
       }
@@ -5008,6 +5033,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpServers ? { mcpServers } : {}),
         ...(personalBot ? { strictMcpConfig: true } : {}),
+        ...(plugins ? { plugins } : {}),
       };
 
       yield* Effect.annotateCurrentSpan({
@@ -5031,6 +5057,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.additional_directories": additionalDirectories,
         "claude.query.setting_sources": settingSources,
         "claude.query.personal_bot": personalBot,
+        "claude.query.plugins": botPluginDir ? [botPluginDir] : [],
         "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
         "claude.query.extra_args_json": encodeJsonStringForDiagnostics(extraArgs) ?? "",
         "claude.query.path_to_executable": claudeBinaryPath,
