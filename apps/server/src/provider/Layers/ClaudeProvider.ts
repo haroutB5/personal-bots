@@ -479,6 +479,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
   /** Shared with the adapter so turn events reuse the scoped-bucket names this probe saw. */
   scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
+  resolveInstalledModelCatalog?: (
+    cliVersion: string,
+  ) => Effect.Effect<ClaudeModelCatalog, never, never>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -576,12 +579,19 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  const installedModelCatalog =
+    parsedVersion && resolveInstalledModelCatalog
+      ? yield* resolveInstalledModelCatalog(parsedVersion)
+      : modelCatalog;
   const models = providerModelsFromSettings(
-    resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
+    resolveClaudeModelsForVersion(installedModelCatalog, parsedVersion),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
-  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
+  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(
+    installedModelCatalog,
+    parsedVersion,
+  );
 
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))

@@ -13,12 +13,15 @@
  * @module provider/Drivers/ClaudeDriver
  */
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -38,6 +41,7 @@ import {
 } from "../Layers/ClaudeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import {
+  mergeDiscoveredClaudeModels,
   resolveClaudeCatalogApiModelId,
   resolveClaudeModelCatalog,
 } from "../ClaudeModelCatalog.ts";
@@ -70,6 +74,7 @@ import {
   makeClaudeEnvironment,
 } from "./ClaudeHome.ts";
 import { discoverClaudeSkills } from "./ClaudeSkills.ts";
+import { discoverClaudeModelSlugs } from "./ClaudeModelDiscovery.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -118,12 +123,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const { cwd } = yield* ServerConfig;
+      const { cwd, providerStatusCacheDir } = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
-      const modelCatalog = modelManifest.current.pipe(Effect.map(resolveClaudeModelCatalog));
+      const discoveredModelSlugs = yield* Ref.make<ReadonlyArray<string>>([]);
+      const modelCatalog = Effect.all([modelManifest.current, Ref.get(discoveredModelSlugs)]).pipe(
+        Effect.map(([manifest, discoveredSlugs]) =>
+          mergeDiscoveredClaudeModels(resolveClaudeModelCatalog(manifest), discoveredSlugs),
+        ),
+      );
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -181,13 +191,39 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           ),
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
+      const modelDiscoveryCachePath = path.join(
+        providerStatusCacheDir,
+        "claude-model-discovery.json",
+      );
+      const resolveInstalledModelCatalog = (cliVersion: string) =>
+        Effect.gen(function* () {
+          const claudeEnvironment = yield* makeClaudeEnvironment(effectiveConfig, processEnv);
+          const sdkExecutablePath = yield* resolveClaudeSdkExecutablePath(
+            effectiveConfig.binaryPath,
+            claudeEnvironment,
+          );
+          const platform = yield* HostProcessPlatform;
+          const resolveExecutable = yield* SpawnExecutableResolution;
+          const executablePath =
+            resolveExecutable(sdkExecutablePath, platform, claudeEnvironment) ?? sdkExecutablePath;
+          const slugs = yield* discoverClaudeModelSlugs({
+            executablePath,
+            cliVersion,
+            cachePath: modelDiscoveryCachePath,
+          });
+          yield* Ref.set(discoveredModelSlugs, slugs);
+          return yield* modelCatalog;
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        );
 
       // Start the TTL-gated refresh without delaying provider readiness. The
       // next check observes a remote manifest after the background fetch lands.
       const checkProvider = modelManifest.refreshInBackground.pipe(
         Effect.andThen(
-          modelManifest.current.pipe(
-            Effect.flatMap((manifest) =>
+          modelCatalog.pipe(
+            Effect.flatMap((catalog) =>
               checkClaudeProviderStatus(
                 effectiveConfig,
                 // A probe that could not read usage (or failed outright) is not
@@ -203,8 +239,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
                   ),
                 processEnv,
                 cwd,
-                resolveClaudeModelCatalog(manifest),
+                catalog,
                 scopedLimitNames,
+                resolveInstalledModelCatalog,
               ),
             ),
             Effect.map(stampIdentity),
@@ -222,10 +259,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          modelManifest.current.pipe(
-            Effect.flatMap((manifest) =>
-              makePendingClaudeProvider(settings.provider, resolveClaudeModelCatalog(manifest)),
-            ),
+          modelCatalog.pipe(
+            Effect.flatMap((catalog) => makePendingClaudeProvider(settings.provider, catalog)),
             Effect.map(stampIdentity),
           ),
         checkProvider,
