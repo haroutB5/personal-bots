@@ -53,7 +53,8 @@ const caller = {
 const transfer = {
   operation: "neon.attach_connection_string_to_vercel",
   arguments: {
-    project: "shiny-wind-028834",
+    project: "hbots-demo",
+    projectId: "shiny-wind-028834",
     branch: null,
     database: "neondb",
     role: "neondb_owner",
@@ -204,7 +205,7 @@ const makeHarness = (options?: HarnessOptions) => {
         : Effect.succeed(
             operationId === "neon.list_projects"
               ? "neon/v2-projects@2026-09-20"
-              : "neon/v2-connection-uri@2026-09-21+vercel/v10-project-env@2026-09-20",
+              : "neon/v2-connection-uri@2026-09-22+vercel/v10-project-env@2026-09-20",
           ),
     execute: (call) =>
       Effect.sync(() => {

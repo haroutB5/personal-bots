@@ -59,6 +59,11 @@ interface GatewayScript {
   readonly failAmbiguously?: boolean;
   /** What `vercel.create_deployment` reports as the project's production domain. */
   readonly productionUrl?: string;
+  /** Neon projects `neon.list_projects` reports; ids are Neon's, never the name. */
+  readonly existingNeonProjects?: ReadonlyArray<{
+    readonly project: string;
+    readonly projectId: string;
+  }>;
   /** Upstash databases `upstash.list_databases` reports. */
   readonly existingDatabases?: ReadonlyArray<{
     readonly database: string;
@@ -80,12 +85,14 @@ const makeHarness = (script: GatewayScript = {}, healthReplies?: ReadonlyArray<n
   const calls: Array<{
     readonly operation: string;
     readonly authorized: boolean;
+    readonly arguments: Readonly<Record<string, unknown>>;
   }> = [];
   const resumes: Array<{ readonly taskId: string; readonly note: string }> = [];
   const parked: Array<string> = [];
   const existingRepositories = [...(script.existingRepositories ?? [])];
   const existingProjects = [...(script.existingProjects ?? [])];
   const existingDatabases = [...(script.existingDatabases ?? [])];
+  const existingNeonProjects = [...(script.existingNeonProjects ?? [])];
 
   const connections = Layer.mock(ConnectionService.PersonalConnectionService)({
     resolveForOperation: (vendorId) =>
@@ -112,6 +119,7 @@ const makeHarness = (script: GatewayScript = {}, healthReplies?: ReadonlyArray<n
         calls.push({
           operation: input.operation,
           authorized: input.planAuthorization !== undefined,
+          arguments: input.arguments as Readonly<Record<string, unknown>>,
         });
         if (script.dieOn?.has(input.operation) === true) {
           // A process that stopped between "the provider was asked" and "the
@@ -140,6 +148,20 @@ const makeHarness = (script: GatewayScript = {}, healthReplies?: ReadonlyArray<n
               return { repository: "octocat/my-app", branch: "main", commitSha: "abc1234" };
             case "vercel.list_projects":
               return { projects: existingProjects };
+            case "neon.list_projects":
+              return { projects: existingNeonProjects };
+            case "neon.create_project":
+              // As Neon does: the id is generated, and is not the name.
+              existingNeonProjects.push({ project: "my-app", projectId: "shiny-wind-028834" });
+              return {
+                project: "my-app",
+                projectId: "shiny-wind-028834",
+                branchId: "br-main-1",
+                database: "neondb",
+                role: "neondb_owner",
+              };
+            case "neon.attach_connection_string_to_vercel":
+              return { vercelProject: "my-app", target: "production", keys: ["DATABASE_URL"] };
             case "upstash.list_databases":
               return { databases: existingDatabases };
             case "upstash.create_redis_database":
@@ -282,16 +304,17 @@ type Harness = ReturnType<typeof makeHarness>;
 const request = (overrides?: {
   readonly visibility?: "private" | "public";
   readonly redis?: boolean;
+  readonly postgres?: boolean;
 }) => ({
   caller,
   appName: "my-app",
   visibility: overrides?.visibility ?? ("private" as const),
   deploymentTarget: "production" as const,
-  ...(overrides?.redis === true
+  ...(overrides?.redis === true || overrides?.postgres === true
     ? {
         dataStores: [
           createAppDataStorePlan({
-            kind: "redis",
+            kind: overrides.postgres === true ? "postgres" : "redis",
             appName: "my-app",
             vercelProject: "my-app",
             environmentTargets: ["production"],
@@ -327,6 +350,7 @@ const armApprovedRun = (runId: CreateAppRunId, approvalId: PersonalConnectionApp
 
 const startAndApprove = Effect.fn("startAndApprove")(function* (options?: {
   readonly redis?: boolean;
+  readonly postgres?: boolean;
 }) {
   const service = yield* CreateApp.PersonalCreateAppService;
   const approvalService = yield* ApprovalService.PersonalConnectionApprovalService;
@@ -472,6 +496,54 @@ it.layer(Layer.empty)("create_app runner", (it) => {
       assert.equal(timesCalled(harness, "upstash.attach_rest_credentials_to_vercel"), 2);
       const store = second.steps.find((entry) => entry.stepId === "upstash.store");
       assert.equal(store?.state, "done");
+      assert.equal(store?.adopted, true);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("attaches a new Postgres database by the id Neon gave it, not by its name", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const service = yield* CreateApp.PersonalCreateAppService;
+      yield* runMigrations({ toMigrationInclusive: 76 });
+      const { runId } = yield* startAndApprove({ postgres: true });
+      const run = yield* service.advance(runId);
+      assert.equal(run.status, "completed");
+      const attaches = harness.calls.filter(
+        (entry) => entry.operation === "neon.attach_connection_string_to_vercel",
+      );
+      assert.equal(attaches.length, 1);
+      // Neon's API is addressed by id; the plan, and so the approval, by name.
+      assert.equal(attaches[0]?.arguments["projectId"], "shiny-wind-028834");
+      assert.equal(attaches[0]?.arguments["project"], "my-app");
+      const store = run.steps.find((entry) => entry.stepId === "neon.store");
+      assert.equal(store?.remoteId, "shiny-wind-028834");
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("attaches an adopted Postgres database by the id the list reported", () => {
+    const failOn = new Set(["neon.attach_connection_string_to_vercel"]);
+    const harness = makeHarness({ failOn });
+    return Effect.gen(function* () {
+      const service = yield* CreateApp.PersonalCreateAppService;
+      yield* runMigrations({ toMigrationInclusive: 76 });
+      const { runId, approvalId } = yield* startAndApprove({ postgres: true });
+      const first = yield* service.advance(runId);
+      assert.equal(first.status, "needs_attention");
+      assert.equal(timesCalled(harness, "neon.create_project"), 1);
+
+      failOn.delete("neon.attach_connection_string_to_vercel");
+      yield* armApprovedRun(runId, approvalId);
+      const second = yield* service.advance(runId);
+      assert.equal(second.status, "completed");
+      assert.equal(timesCalled(harness, "neon.create_project"), 1);
+      const attaches = harness.calls.filter(
+        (entry) => entry.operation === "neon.attach_connection_string_to_vercel",
+      );
+      assert.equal(attaches.length, 2);
+      // The retry had no create reply to read; the id came from the list.
+      assert.equal(attaches[1]?.arguments["projectId"], "shiny-wind-028834");
+      assert.equal(attaches[1]?.arguments["project"], "my-app");
+      const store = second.steps.find((entry) => entry.stepId === "neon.store");
       assert.equal(store?.adopted, true);
     }).pipe(Effect.provide(harness.layer));
   });

@@ -68,6 +68,7 @@ describe("create_app data stores", () => {
       });
       yield* expectCovered(plan, "neon.attach_connection_string_to_vercel", {
         project: "my-app",
+        projectId: "shiny-wind-028834",
         branch: null,
         database: "neondb",
         role: "neondb_owner",

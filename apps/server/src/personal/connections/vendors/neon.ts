@@ -47,7 +47,7 @@ const VENDOR_SCHEMAS: Readonly<Record<string, string>> = {
   // Both halves, because drift at either end is drift. The Vercel half is
   // stated here independently of `vercel.ts`; the test compares them.
   "neon.attach_connection_string_to_vercel":
-    "neon/v2-connection-uri@2026-09-21+vercel/v10-project-env@2026-09-20",
+    "neon/v2-connection-uri@2026-09-22+vercel/v10-project-env@2026-09-20",
 };
 
 const IMPLEMENTED = Object.keys(VENDOR_SCHEMAS);
@@ -103,6 +103,7 @@ export const makeNeonAdapter = (http: VendorHttp): ConnectionVendorAdapter => {
     }
     const bearer = yield* token(call);
     const project = asString(call.arguments["project"]);
+    const projectId = asString(call.arguments["projectId"]);
     const branch = call.arguments["branch"];
     const database = asString(call.arguments["database"]);
     const role = asString(call.arguments["role"]);
@@ -120,12 +121,35 @@ export const makeNeonAdapter = (http: VendorHttp): ConnectionVendorAdapter => {
       ...(typeof branch === "string" ? [`branch_id=${encodeURIComponent(branch)}`] : []),
     ].join("&");
 
+    // Neon's API addresses a project by id; the owner approved a name. Proving
+    // the id is that project, before a secret is fetched, is what stops an
+    // approval for one project moving another project's password.
+    const found = asRecord(
+      asRecord(
+        yield* send({
+          operationId: call.operationId,
+          method: "GET",
+          url: `${API}/projects/${segment(projectId)}`,
+          bearer,
+        }),
+      )["project"],
+    );
+    const actual = asString(found["name"]);
+    if (actual !== project) {
+      return yield* Effect.fail(
+        vendorFailure(
+          call.operationId,
+          `The Neon project ${projectId} is called ${actual}, not ${project}, so nothing was fetched and nothing was written to Vercel.`,
+        ),
+      );
+    }
+
     const uri = asString(
       asRecord(
         yield* send({
           operationId: call.operationId,
           method: "GET",
-          url: `${API}/projects/${segment(project)}/connection_uri?${query}`,
+          url: `${API}/projects/${segment(projectId)}/connection_uri?${query}`,
           bearer,
         }),
       )["uri"],

@@ -26,7 +26,8 @@ describe("neon provisioning operations", () => {
       // `neondb_owner` is what Neon names the role it creates with a project.
       // A pattern that excluded it would refuse every default Neon database.
       const prepared = yield* prepare("neon.attach_connection_string_to_vercel", {
-        project: "shiny-wind-028834",
+        project: "hbots-demo",
+        projectId: "shiny-wind-028834",
         branch: null,
         database: "neondb",
         role: "neondb_owner",
@@ -73,7 +74,8 @@ describe("neon provisioning operations", () => {
   it.effect("binds a credential transfer to both ends and never quotes a value", () =>
     Effect.gen(function* () {
       const prepared = yield* prepare("neon.attach_connection_string_to_vercel", {
-        project: "shiny-wind-028834",
+        project: "hbots-demo",
+        projectId: "shiny-wind-028834",
         branch: "br-main-1",
         database: "neondb",
         role: "neondb_owner",
@@ -86,9 +88,13 @@ describe("neon provisioning operations", () => {
       expect(prepared.risk.reason).toBe("deployment");
       expect(prepared.risk.summary).toContain("DATABASE_URL");
       expect(prepared.risk.summary).toContain("never shown");
+      // The owner reads both the name and the id Neon will be asked about.
+      expect(prepared.risk.summary).toContain("hbots-demo (shiny-wind-028834)");
+      // A plan names the project before it exists, so coverage is by name.
+      expect(prepared.targetResources).not.toContain("neon:project:shiny-wind-028834");
       expect(prepared.targetResources).toEqual(
         expect.arrayContaining([
-          "neon:project:shiny-wind-028834",
+          "neon:project:hbots-demo",
           "neon:database:neondb",
           "vercel:project:hbots-demo",
           "vercel:target:production",
@@ -102,6 +108,7 @@ describe("neon provisioning operations", () => {
         "database",
         "pooled",
         "project",
+        "projectId",
         "role",
         "target",
         "variableName",

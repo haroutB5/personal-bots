@@ -256,7 +256,9 @@ describe("neon server-side credential transfer", () => {
   const transfer = {
     operationId: "neon.attach_connection_string_to_vercel",
     arguments: {
-      project: "shiny-wind-028834",
+      // Neon's ids are generated and never the name; the fixture keeps them apart.
+      project: "hbots-demo",
+      projectId: "shiny-wind-028834",
       branch: "br-main-1",
       database: "neondb",
       role: "neondb_owner",
@@ -273,6 +275,9 @@ describe("neon server-side credential transfer", () => {
 
   const transferHarness = () =>
     harness({
+      "GET https://console.neon.tech/api/v2/projects/shiny-wind-028834": {
+        body: { project: CREATED_PROJECT.project },
+      },
       "GET https://console.neon.tech/api/v2/projects/shiny-wind-028834/connection_uri?database_name=neondb&role_name=neondb_owner&pooled=true&branch_id=br-main-1":
         { body: { uri: CONNECTION_STRING } },
       "POST https://api.vercel.com/v10/projects/hbots-demo/env?upsert=true&teamId=team_abc": {
@@ -292,8 +297,8 @@ describe("neon server-side credential transfer", () => {
       // The value exists exactly once on the wire: in the body of the write
       // that puts it where it is used.
       expect(text(result)).not.toContain("npg_fakeSECRET9999");
-      expect(requests).toHaveLength(2);
-      expect(requests[1]?.body).toEqual([
+      expect(requests).toHaveLength(3);
+      expect(requests[2]?.body).toEqual([
         {
           key: "DATABASE_URL",
           value: CONNECTION_STRING,
@@ -313,13 +318,17 @@ describe("neon server-side credential transfer", () => {
       // The account-level provisioning key talks to Neon; the Vercel token
       // talks to Vercel. Neither is ever presented to the other provider.
       expect(Redacted.value(requests[0]?.bearer ?? Redacted.make(""))).toBe(API_KEY);
-      expect(Redacted.value(requests[1]?.bearer ?? Redacted.make(""))).toBe(VERCEL_TOKEN);
+      expect(Redacted.value(requests[1]?.bearer ?? Redacted.make(""))).toBe(API_KEY);
+      expect(Redacted.value(requests[2]?.bearer ?? Redacted.make(""))).toBe(VERCEL_TOKEN);
     }),
   );
 
   it.effect("leaves the branch out when the caller named none, so Neon uses the default", () =>
     Effect.gen(function* () {
       const { adapter, requests } = harness({
+        "GET https://console.neon.tech/api/v2/projects/shiny-wind-028834": {
+          body: { project: CREATED_PROJECT.project },
+        },
         "GET https://console.neon.tech/api/v2/projects/shiny-wind-028834/connection_uri?database_name=neondb&role_name=neondb_owner&pooled=false":
           { body: { uri: CONNECTION_STRING } },
         "POST https://api.vercel.com/v10/projects/hbots-demo/env?upsert=true&teamId=team_abc": {
@@ -331,7 +340,7 @@ describe("neon server-side credential transfer", () => {
         arguments: { ...transfer.arguments, branch: null, pooled: false },
         secondary,
       });
-      expect(requests[0]?.url).not.toContain("branch_id");
+      expect(requests[1]?.url).not.toContain("branch_id");
     }),
   );
 
@@ -362,6 +371,9 @@ describe("neon server-side credential transfer", () => {
   it.effect("keeps the connection string out of a failed write's error", () =>
     Effect.gen(function* () {
       const { adapter } = harness({
+        "GET https://console.neon.tech/api/v2/projects/shiny-wind-028834": {
+          body: { project: CREATED_PROJECT.project },
+        },
         "GET https://console.neon.tech/api/v2/projects/shiny-wind-028834/connection_uri?database_name=neondb&role_name=neondb_owner&pooled=true&branch_id=br-main-1":
           { body: { uri: CONNECTION_STRING } },
         "POST https://api.vercel.com/v10/projects/hbots-demo/env?upsert=true&teamId=team_abc": {
@@ -379,9 +391,43 @@ describe("neon server-side credential transfer", () => {
     }),
   );
 
+  it.effect("addresses Neon by the project id, never by the name the owner approved", () =>
+    Effect.gen(function* () {
+      const { adapter, requests } = transferHarness();
+      yield* adapter.execute({ ...transfer, secondary });
+      const neonUrls = requests
+        .map((request) => request.url)
+        .filter((url) => url.startsWith("https://console.neon.tech"));
+      expect(neonUrls).toEqual([
+        "https://console.neon.tech/api/v2/projects/shiny-wind-028834",
+        "https://console.neon.tech/api/v2/projects/shiny-wind-028834/connection_uri?database_name=neondb&role_name=neondb_owner&pooled=true&branch_id=br-main-1",
+      ]);
+      // The name is not a path Neon knows; using it was a 404 on every attach.
+      expect(neonUrls.some((url) => url.includes("/projects/hbots-demo"))).toBe(false);
+    }),
+  );
+
+  it.effect("refuses an id that is not the approved project's, before fetching a secret", () =>
+    Effect.gen(function* () {
+      const { adapter, requests } = harness({
+        "GET https://console.neon.tech/api/v2/projects/shiny-wind-028834": {
+          body: { project: { id: "shiny-wind-028834", name: "someone-elses-app" } },
+        },
+      });
+      const error = yield* Effect.flip(adapter.execute({ ...transfer, secondary }));
+      expect(error.detail).toContain("someone-elses-app");
+      expect(error.detail).toContain("hbots-demo");
+      // One read, and nothing after it: no connection string, no Vercel write.
+      expect(requests).toHaveLength(1);
+    }),
+  );
+
   it.effect("stops before writing anything when Neon will not give the connection string", () =>
     Effect.gen(function* () {
       const { adapter, requests } = harness({
+        "GET https://console.neon.tech/api/v2/projects/shiny-wind-028834": {
+          body: { project: CREATED_PROJECT.project },
+        },
         "GET https://console.neon.tech/api/v2/projects/shiny-wind-028834/connection_uri?database_name=neondb&role_name=neondb_owner&pooled=true&branch_id=br-main-1":
           { status: 404, body: { message: "database not found" } },
       });

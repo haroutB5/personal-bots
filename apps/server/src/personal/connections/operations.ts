@@ -455,7 +455,14 @@ const NeonAttachConnectionStringToVercel = defineOperation({
   description:
     "Copy a Neon database's connection string straight into a Vercel project's environment. The value is fetched and written on the server; you never see it, and you must not ask for it.",
   fields: {
+    /** The project's name: what the owner recognises and what a plan can cover. */
     project: ResourceName,
+    /**
+     * The project's id, which is what Neon's API addresses. Neon names are not
+     * ids and not even unique, so the adapter reads the id back and refuses
+     * unless it is the project named above.
+     */
+    projectId: ResourceName,
     /** null uses the project's default branch, which is what a new project has. */
     branch: Schema.NullOr(ResourceName),
     database: ResourceName,
@@ -467,12 +474,16 @@ const NeonAttachConnectionStringToVercel = defineOperation({
     variableName: EnvVarName,
   },
   resultFields: ["vercelProject", "target", "keys"],
-  reviewedVendorSchema: "neon/v2-connection-uri@2026-09-21+vercel/v10-project-env@2026-09-20",
+  reviewedVendorSchema: "neon/v2-connection-uri@2026-09-22+vercel/v10-project-env@2026-09-20",
   classify: (args) => ({
     approvalRequired: true,
     reason: args.target === "production" ? "deployment" : "account_write",
-    summary: `Put the ${args.pooled ? "pooled" : "direct"} Neon connection string for ${args.database} (project ${args.project}, role ${args.role}) into ${args.variableName} on the ${args.target} environment of the Vercel project ${args.vercelProject}. The value moves between the two providers on the server and is never shown to the bot or written into this chat.`,
+    summary: `Put the ${args.pooled ? "pooled" : "direct"} Neon connection string for ${args.database} (project ${args.project} (${args.projectId}), role ${args.role}) into ${args.variableName} on the ${args.target} environment of the Vercel project ${args.vercelProject}. The value moves between the two providers on the server and is never shown to the bot or written into this chat.`,
   }),
+  // Keyed on the name, like `upstash.attach_rest_credentials_to_vercel` and
+  // for the same reason: a create_app plan is written before the project
+  // exists, so it can only name it. The id is an argument, is in the summary,
+  // and is proven to be that name's project before anything is fetched.
   targetResources: (args) => [
     `neon:project:${args.project}`,
     `neon:database:${args.database}`,

@@ -492,6 +492,7 @@ const attachTargets = (plan: CreateAppPlan): ReadonlyArray<CreateAppDeploymentTa
 const attachNeon = (
   context: CreateAppStepContext,
   store: CreateAppDataStorePlan,
+  projectId: string,
   database: string,
   role: string,
 ) =>
@@ -502,11 +503,19 @@ const attachNeon = (
         reason: `The plan gives ${store.resourceName} no environment variable to fill, so the app would never reach it.`,
       });
     }
+    // Neon addresses a project by id, and the plan can only name it. Without
+    // the id Neon gave back there is nothing to attach from.
+    if (projectId.length === 0) {
+      return yield* new CreateAppStepError({
+        reason: `Neon did not say which project ${store.resourceName} is, so its connection string could not be given to the app.`,
+      });
+    }
     for (const target of attachTargets(context.plan)) {
       yield* context.call({
         operationId: "neon.attach_connection_string_to_vercel",
         arguments: {
           project: store.resourceName,
+          projectId,
           branch: null,
           database,
           role,
@@ -551,9 +560,10 @@ const NeonStoreStepFactory: CreateAppDataStoreStepFactory = {
         });
         const database = asString(created["database"]) || NEON_DEFAULT_DATABASE;
         const role = asString(created["role"]);
-        const variableName = yield* attachNeon(context, store, database, role);
+        const projectId = asString(created["projectId"]);
+        const variableName = yield* attachNeon(context, store, projectId, database, role);
         return {
-          remoteId: asString(created["projectId"]),
+          remoteId: projectId,
           // Names only; the connection string never entered this process.
           receipt: { project: store.resourceName, database, keys: variableName },
         };
@@ -563,7 +573,13 @@ const NeonStoreStepFactory: CreateAppDataStoreStepFactory = {
     // `neondb` database owned by `neondb_owner`. If that is wrong, Neon
     // refuses the attach and the run stops, rather than reporting live.
     completeAdopted: (context, adopted) =>
-      attachNeon(context, store, NEON_DEFAULT_DATABASE, `${NEON_DEFAULT_DATABASE}_owner`).pipe(
+      attachNeon(
+        context,
+        store,
+        adopted.remoteId ?? "",
+        NEON_DEFAULT_DATABASE,
+        `${NEON_DEFAULT_DATABASE}_owner`,
+      ).pipe(
         Effect.map((variableName) => ({
           ...adopted,
           receipt: { ...adopted.receipt, database: NEON_DEFAULT_DATABASE, keys: variableName },
