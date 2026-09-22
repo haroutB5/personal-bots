@@ -410,6 +410,21 @@ export const make = Effect.gen(function* () {
       ...(input.scrub ?? []),
     ].map(Redacted.value);
 
+    // Spend the approval before the vendor sees anything. Two identical calls
+    // in one parallel tool batch both pass `require`; only one wins this
+    // conditional write, and the loser runs nothing. A crash after this point
+    // leaves the approval spent rather than replayable.
+    if (approvalId !== null) {
+      const claimed = yield* approvals
+        .recordExecution({ approvalId, outcome: "dispatching" })
+        .pipe(Effect.mapError(() => refuse("Could not record the approval, so nothing ran.")));
+      if (!claimed) {
+        return yield* refuse(
+          "That approval was already used by another call, so nothing ran this time. Do not call it again; report the result of the call that ran.",
+        );
+      }
+    }
+
     const outcome = yield* adapter.value
       .execute({
         operationId: operation.operationId,

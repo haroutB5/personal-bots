@@ -21,7 +21,9 @@ import type * as SqlError from "effect/unstable/sql/SqlError";
 
 import { PersistenceDecodeError, PersistenceSqlError } from "../../persistence/Errors.ts";
 
-export type PersonalConnectionApprovalRepositoryError = PersistenceSqlError | PersistenceDecodeError;
+export type PersonalConnectionApprovalRepositoryError =
+  | PersistenceSqlError
+  | PersistenceDecodeError;
 
 const ApprovalRow = Schema.Struct({
   approvalId: PersonalConnectionApprovalId,
@@ -110,7 +112,9 @@ export class PersonalConnectionApprovalRepository extends Context.Service<
     }) => Effect.Effect<boolean, PersonalConnectionApprovalRepositoryError>;
     /**
      * Records what became of an approved action. Written only while the row
-     * has no receipt, so an approval is spent exactly once.
+     * has no receipt, so an approval is spent exactly once. The one exception
+     * is the `dispatching` claim: whoever wrote it (and only they got `true`
+     * back) may replace it with the final outcome.
      */
     readonly writeReceipt: (input: {
       readonly approvalId: PersonalConnectionApprovalId;
@@ -139,28 +143,26 @@ export const make = Effect.gen(function* () {
   const decode = (operation: string, rows: ReadonlyArray<unknown>) =>
     Effect.forEach(rows, (row) =>
       decodeRow(row).pipe(
-        Effect.map(
-          (decoded): PersonalConnectionApproval => ({
-            approvalId: decoded.approvalId,
-            connectionId: decoded.connectionId,
-            vendorId: decoded.vendorId,
-            operationId: decoded.operationId,
-            actionDigest: decoded.actionDigest,
-            riskReason: decoded.riskReason,
-            summary: decoded.summary,
-            targetResources: decoded.targetResourcesJson,
-            credentialVersion: decoded.credentialVersion,
-            threadId: decoded.threadId,
-            botId: decoded.botId,
-            taskId: decoded.taskId,
-            status: decoded.status,
-            createdAt: decoded.createdAt,
-            expiresAt: decoded.expiresAt,
-            decidedAt: decoded.decidedAt,
-            executedAt: decoded.executedAt,
-            executionOutcome: decoded.executionOutcome,
-          }),
-        ),
+        Effect.map((decoded): PersonalConnectionApproval => ({
+          approvalId: decoded.approvalId,
+          connectionId: decoded.connectionId,
+          vendorId: decoded.vendorId,
+          operationId: decoded.operationId,
+          actionDigest: decoded.actionDigest,
+          riskReason: decoded.riskReason,
+          summary: decoded.summary,
+          targetResources: decoded.targetResourcesJson,
+          credentialVersion: decoded.credentialVersion,
+          threadId: decoded.threadId,
+          botId: decoded.botId,
+          taskId: decoded.taskId,
+          status: decoded.status,
+          createdAt: decoded.createdAt,
+          expiresAt: decoded.expiresAt,
+          decidedAt: decoded.decidedAt,
+          executedAt: decoded.executedAt,
+          executionOutcome: decoded.executionOutcome,
+        })),
         Effect.mapError((cause) =>
           PersistenceDecodeError.fromSchemaError(
             `PersonalConnectionApprovalRepository.${operation}`,
@@ -247,7 +249,11 @@ export const make = Effect.gen(function* () {
         UPDATE personal_connection_approvals
         SET executed_at = ${DateTime.formatIso(input.executedAt)},
             execution_outcome = ${input.outcome}
-        WHERE approval_id = ${input.approvalId} AND executed_at IS NULL
+        WHERE approval_id = ${input.approvalId}
+          AND (
+            executed_at IS NULL
+            OR (${input.outcome} != 'dispatching' AND execution_outcome = 'dispatching')
+          )
         RETURNING approval_id
       `,
     ).pipe(Effect.map((rows) => rows.length > 0));

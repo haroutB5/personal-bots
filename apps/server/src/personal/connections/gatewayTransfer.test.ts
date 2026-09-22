@@ -163,7 +163,11 @@ const makeHarness = (options?: HarnessOptions) => {
     writeReceipt: (input) =>
       Effect.sync(() => {
         const row = approvals.get(input.approvalId);
-        if (row === undefined || row.executedAt !== null) return false;
+        if (row === undefined) return false;
+        // As the SQL: unspent, or the claim being settled by its owner.
+        const settlingClaim =
+          input.outcome !== "dispatching" && row.executionOutcome === "dispatching";
+        if (row.executedAt !== null && !settlingClaim) return false;
         approvals.set(input.approvalId, {
           ...row,
           executedAt: input.executedAt,

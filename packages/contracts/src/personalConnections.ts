@@ -197,8 +197,13 @@ export const PersonalConnectionApprovalStatus = Schema.Literals([
 ]);
 export type PersonalConnectionApprovalStatus = typeof PersonalConnectionApprovalStatus.Type;
 
-/** What happened to the approved action; the receipt the owner can be shown. */
+/**
+ * What happened to the approved action; the receipt the owner can be shown.
+ * `dispatching` is the claim written before the vendor is called, so one
+ * approval cannot be spent twice; a row left there by a crash stays spent.
+ */
 export const PersonalConnectionExecutionOutcome = Schema.Literals([
+  "dispatching",
   "succeeded",
   "failed",
   "not_dispatched",

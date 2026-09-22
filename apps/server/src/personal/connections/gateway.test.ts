@@ -170,7 +170,11 @@ const makeHarness = (options?: HarnessOptions): Harness => {
     writeReceipt: (input) =>
       Effect.sync(() => {
         const row = approvals.get(input.approvalId);
-        if (row === undefined || row.executedAt !== null) return false;
+        if (row === undefined) return false;
+        // As the SQL: unspent, or the claim being settled by its owner.
+        const settlingClaim =
+          input.outcome !== "dispatching" && row.executionOutcome === "dispatching";
+        if (row.executedAt !== null && !settlingClaim) return false;
         approvals.set(input.approvalId, {
           ...row,
           executedAt: input.executedAt,
@@ -390,6 +394,47 @@ describe("gateway approval", () => {
         const third = yield* gateway.call(createRepository);
         expect(third._tag).toBe("awaiting_approval");
         expect(harness.calls).toHaveLength(1);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("spends one approval once when two identical calls race after it", () =>
+    Effect.gen(function* () {
+      // The vendor call takes a moment, so the second call reaches dispatch
+      // while the first is still out: the old receipt-after-dispatch let both run.
+      const harness = makeHarness({
+        execute: () =>
+          Effect.yieldNow.pipe(
+            Effect.andThen(Effect.yieldNow),
+            Effect.as({ repository: "me/hbots-demo", htmlUrl: "https://github.com/me/hbots-demo" }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const gateway = yield* Gateway.PersonalConnectionGateway;
+        const approvals = yield* ApprovalService.PersonalConnectionApprovalService;
+
+        const first = yield* gateway.call(createRepository);
+        const approvalId =
+          first._tag === "awaiting_approval" ? first.approvalId : "no approval was raised";
+        yield* approvals.decide({ approvalId: approvalId as never, decision: "approved" });
+
+        const results = yield* Effect.all(
+          [
+            Effect.result(gateway.call(createRepository)),
+            Effect.result(gateway.call(createRepository)),
+          ],
+          { concurrency: "unbounded" },
+        );
+        // One dispatch. The other call either lost the claim or, arriving
+        // after it, found the approval spent and raised a fresh card.
+        expect(harness.calls).toHaveLength(1);
+        const tags = results.map((result) =>
+          result._tag === "Success" ? result.success._tag : result.failure.reason,
+        );
+        expect(tags.filter((tag) => tag === "completed")).toHaveLength(1);
+        const other = tags.find((tag) => tag !== "completed");
+        expect(other === "awaiting_approval" || (other ?? "").includes("already used")).toBe(true);
+        expect(harness.approvals.get(approvalId)?.executionOutcome).toBe("succeeded");
       }).pipe(Effect.provide(harness.layer));
     }),
   );

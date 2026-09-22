@@ -69,7 +69,11 @@ const makeHarness = (options?: { readonly taskIsWaiting?: boolean }): Harness =>
     writeReceipt: (input) =>
       Effect.sync(() => {
         const row = rows.get(input.approvalId);
-        if (row === undefined || row.executedAt !== null) return false;
+        if (row === undefined) return false;
+        // As the SQL: unspent, or the claim being settled by its owner.
+        const settlingClaim =
+          input.outcome !== "dispatching" && row.executionOutcome === "dispatching";
+        if (row.executedAt !== null && !settlingClaim) return false;
         rows.set(input.approvalId, {
           ...row,
           executedAt: input.executedAt,
@@ -89,9 +93,7 @@ const makeHarness = (options?: { readonly taskIsWaiting?: boolean }): Harness =>
       }).pipe(
         Effect.andThen(
           options?.taskIsWaiting === true
-            ? Effect.fail(
-                new PersonalTasksError({ message: "Task 'task-1' is waiting_for_user." }),
-              )
+            ? Effect.fail(new PersonalTasksError({ message: "Task 'task-1' is waiting_for_user." }))
             : parked,
         ),
       ),

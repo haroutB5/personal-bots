@@ -40,9 +40,7 @@ const pending: PersonalConnectionApproval = {
   executionOutcome: null,
 };
 
-const TestLayer = ApprovalRepository.layer.pipe(
-  Layer.provideMerge(NodeSqliteClient.layerMemory()),
-);
+const TestLayer = ApprovalRepository.layer.pipe(Layer.provideMerge(NodeSqliteClient.layerMemory()));
 
 describe("PersonalConnectionApprovalRepository", () => {
   it.effect("stores a decision and its receipt, each written once", () =>
@@ -95,6 +93,28 @@ describe("PersonalConnectionApprovalRepository", () => {
       ).toBe(false);
       const executed = Option.getOrThrow(yield* repository.get(pending.approvalId));
       expect(executed.executionOutcome).toBe("succeeded");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("lets one dispatch claim an approval and only that claim settle it", () =>
+    Effect.gen(function* () {
+      yield* runMigrations({ toMigrationInclusive: 76 });
+      const repository = yield* ApprovalRepository.PersonalConnectionApprovalRepository;
+      yield* repository.insert({ ...pending, status: "approved", decidedAt: at });
+      const receipt = (outcome: "dispatching" | "succeeded") =>
+        repository.writeReceipt({ approvalId: pending.approvalId, executedAt: at, outcome });
+
+      // Claimed before the vendor is called: the second racer gets nothing.
+      expect(yield* receipt("dispatching")).toBe(true);
+      expect(yield* receipt("dispatching")).toBe(false);
+      const claimed = Option.getOrThrow(yield* repository.get(pending.approvalId));
+      expect(claimed.executionOutcome).toBe("dispatching");
+      expect(claimed.executedAt).not.toBeNull();
+
+      // The claimant settles it once; after that it is an ordinary receipt.
+      expect(yield* receipt("succeeded")).toBe(true);
+      expect(yield* receipt("succeeded")).toBe(false);
+      expect(yield* receipt("dispatching")).toBe(false);
     }).pipe(Effect.provide(TestLayer)),
   );
 
