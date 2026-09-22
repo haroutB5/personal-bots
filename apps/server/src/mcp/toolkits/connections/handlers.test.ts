@@ -11,6 +11,7 @@ import * as ProjectionSnapshotQuery from "../../../orchestration/Services/Projec
 import { PersonalBotRepository } from "../../../personal/PersonalBotRepository.ts";
 import * as CreateApp from "../../../personal/connections/createApp/service.ts";
 import * as Gateway from "../../../personal/connections/gateway.ts";
+import * as PersonalGroupService from "../../../personal/groups/PersonalGroupService.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
 import { McpInvocationContext } from "../../McpInvocationContext.ts";
 import { ConnectionsToolkitHandlersLive } from "./handlers.ts";
@@ -31,6 +32,12 @@ const run = (input: {
   readonly gatewayResult?: Gateway.ConnectionCallResult;
   readonly gatewayError?: string;
   readonly recorded: Array<CallRecord>;
+  /** The chat has a turn running, which a task could own. */
+  readonly liveTurn?: boolean;
+  /** The chat is this group's member thread. */
+  readonly groupName?: string;
+  /** Every turn the task service was asked to adopt. */
+  readonly adopted?: Array<string>;
 }) => {
   const layer = ConnectionsToolkitHandlersLive.pipe(
     Layer.provide(
@@ -83,14 +90,32 @@ const run = (input: {
           ),
       }),
     ),
-    Layer.provide(Layer.mock(PersonalTaskService.PersonalTaskService)({})),
+    Layer.provide(
+      Layer.mock(PersonalTaskService.PersonalTaskService)({
+        resolveCallerTask: (request) =>
+          Effect.sync(() => {
+            input.adopted?.push(request.turnId);
+            return { taskId: "task-adopted" } as never;
+          }),
+      }),
+    ),
     // Present but unused here: these tests are about connection_call.
     Layer.provide(Layer.mock(CreateApp.PersonalCreateAppService)({})),
     Layer.provide(
       Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-        // No running turn in this chat: the card can still be raised, the bot
-        // just is not resumed automatically.
-        getThreadShellById: () => Effect.succeedNone,
+        // By default no running turn in this chat: the card can still be
+        // raised, the bot just is not resumed automatically.
+        getThreadShellById: () =>
+          Effect.succeed(
+            input.liveTurn === true
+              ? Option.some({ session: { activeTurnId: "turn-1" }, latestTurn: null } as never)
+              : Option.none(),
+          ),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(PersonalGroupService.PersonalGroupService)({
+        groupNameForMemberThread: () => Effect.succeed(Option.fromNullishOr(input.groupName)),
       }),
     ),
   );
@@ -149,6 +174,40 @@ describe("connections toolkit", () => {
             botId: "bot",
             taskId: null,
           },
+        },
+      ]);
+    }),
+  );
+
+  it.effect("parks the running task a chat turn belongs to", () =>
+    Effect.gen(function* () {
+      const recorded: Array<CallRecord> = [];
+      const adopted: Array<string> = [];
+      yield* run({ capability: true, linked: true, recorded, liveTurn: true, adopted });
+      expect(adopted).toEqual(["turn-1"]);
+      expect(recorded[0]?.caller.taskId).toBe("task-adopted");
+    }),
+  );
+
+  it.effect("never adopts a group member's turn as a task, but still makes the call", () =>
+    Effect.gen(function* () {
+      const recorded: Array<CallRecord> = [];
+      const adopted: Array<string> = [];
+      yield* run({
+        capability: true,
+        linked: true,
+        recorded,
+        liveTurn: true,
+        groupName: "Launch crew",
+        adopted,
+      });
+      // A task continuation on a member thread would run where no round sees
+      // it; the card is raised all the same, the bot is just not resumed.
+      expect(adopted).toEqual([]);
+      expect(recorded).toEqual([
+        {
+          operation: "github.list_repositories",
+          caller: { threadId: "thread", botId: "bot", taskId: null },
         },
       ]);
     }),

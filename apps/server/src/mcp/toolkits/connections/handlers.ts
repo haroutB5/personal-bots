@@ -12,6 +12,7 @@ import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.
 import { createAppDataStorePlan } from "../../../personal/connections/createApp/dataStores.ts";
 import * as CreateApp from "../../../personal/connections/createApp/service.ts";
 import * as Gateway from "../../../personal/connections/gateway.ts";
+import * as PersonalGroupService from "../../../personal/groups/PersonalGroupService.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { ConnectionsToolError, ConnectionsToolkit } from "./tools.ts";
@@ -22,6 +23,7 @@ const make = Effect.gen(function* () {
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const tasks = yield* PersonalTaskService.PersonalTaskService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const groups = yield* PersonalGroupService.PersonalGroupService;
 
   const refuse = (reason: string) => new ConnectionsToolError({ reason });
 
@@ -45,11 +47,20 @@ const make = Effect.gen(function* () {
    * Best effort by design: a chat with no running task still gets its card,
    * the bot is just not resumed automatically. Failing the call instead would
    * mean the gate is unavailable exactly when the bookkeeping is unusual.
+   *
+   * Never from a group member thread, for the reason the bots toolkit refuses
+   * task tools there: that thread only runs the round's turns, and adopting
+   * one as a task would later start a "[Task continuation]" turn on it that
+   * no round knows about. Its answer would never reach the group, and it
+   * could overlap the member's next group turn. The call still goes through
+   * and its card is still raised; the bot is simply not resumed by it.
    */
   const callerTaskId = Effect.fn("ConnectionsToolkit.callerTaskId")(function* (caller: {
     readonly threadId: ThreadId;
     readonly botId: PersonalBotId;
   }) {
+    const group = yield* groups.groupNameForMemberThread(caller.threadId);
+    if (Option.isSome(group)) return null;
     const shell = yield* snapshots
       .getThreadShellById(caller.threadId)
       .pipe(Effect.orElseSucceed(() => Option.none<never>()));

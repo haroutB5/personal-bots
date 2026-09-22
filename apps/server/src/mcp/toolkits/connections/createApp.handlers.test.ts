@@ -24,6 +24,7 @@ import {
 import * as CreateApp from "../../../personal/connections/createApp/service.ts";
 import { STATIC_APP_TEMPLATE } from "../../../personal/connections/createApp/template.ts";
 import * as Gateway from "../../../personal/connections/gateway.ts";
+import * as PersonalGroupService from "../../../personal/groups/PersonalGroupService.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
 import { McpInvocationContext } from "../../McpInvocationContext.ts";
 import { ConnectionsToolkitHandlersLive } from "./handlers.ts";
@@ -129,6 +130,11 @@ const harness = (createApp: Partial<CreateApp.PersonalCreateAppService["Service"
     Layer.provide(
       Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
         getThreadShellById: () => Effect.succeedNone,
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(PersonalGroupService.PersonalGroupService)({
+        groupNameForMemberThread: () => Effect.succeedNone,
       }),
     ),
   );
