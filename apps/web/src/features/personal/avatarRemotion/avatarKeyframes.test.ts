@@ -3,20 +3,28 @@ import * as NodeFS from "node:fs";
 
 import { describe, expect, it } from "vite-plus/test";
 
+import { AVATAR_COMETS } from "../avatarComet";
 import { AVATAR_MOTIONS } from "../avatarMotion";
 import { avatarKeyframesName, avatarMotionCss } from "./avatarKeyframes";
-import { AVATAR_STATE_SPECS } from "./avatarStates";
+import { avatarStateTiming } from "./avatarStates";
 
 const cssUrl = new URL("../avatarMotion.generated.css", import.meta.url);
 const css = NodeFS.readFileSync(cssUrl, "utf8");
 
+function ruleFor(selector: string): string | undefined {
+  const start = css.indexOf(`${selector} {`);
+  if (start < 0) return undefined;
+  return css.slice(start, css.indexOf("}", start) + 1);
+}
+
 /**
- * The app ships the poses as CSS sampled from `avatarStates.ts`, never
- * Remotion itself. These tests are what keeps that one copy rather than two:
- * retouch a pose and forget to regenerate, and the suite says so.
+ * The app ships the motion as CSS sampled from `avatarStates.ts` and
+ * `avatarComet.ts`, never Remotion itself. These tests are what keeps that one
+ * copy rather than two: retouch a pose and forget to regenerate, and the suite
+ * says so.
  */
 describe("avatarMotion.generated.css", () => {
-  it("matches the pose functions byte for byte (run scripts/generate-avatar-keyframes.ts)", () => {
+  it("matches the motion modules byte for byte (run scripts/generate-avatar-keyframes.ts)", () => {
     expect(css).toBe(avatarMotionCss());
   });
 
@@ -27,35 +35,48 @@ describe("avatarMotion.generated.css", () => {
         expect(css).not.toContain(selector);
         continue;
       }
-      expect(css).toContain(`${selector} .bot-avatar-body`);
+      expect(ruleFor(selector)).toContain(avatarKeyframesName(state, "body"));
       expect(css).toContain(`@keyframes ${avatarKeyframesName(state, "body")} {`);
     }
   });
 
-  it("loops only thinking and working; one-shots play once and hold", () => {
+  it("loops thinking and working after a spring-in; one-shots play once and hold", () => {
     for (const state of AVATAR_MOTIONS) {
       if (state === "idle") continue;
-      const rules = css.match(
-        new RegExp(`data-motion="${state}"\\][^{]*\\{\\s*animation: [^;]+;`, "g"),
-      );
-      expect(rules?.length).toBeGreaterThan(0);
-      for (const rule of rules ?? []) {
-        if (AVATAR_STATE_SPECS[state].loop) expect(rule).toMatch(/ infinite;$/);
-        else expect(rule).toMatch(/ 1 both;$/);
+      const rule = ruleFor(`.bot-avatar[data-motion="${state}"]`)!;
+      const name = avatarKeyframesName(state, "body");
+      if (avatarStateTiming(state).loop) {
+        expect(rule).toContain(`${name}-in 1.2s linear 1,`);
+        expect(rule).toMatch(new RegExp(`${name} [\\d.]+s linear 1\\.2s infinite;`));
+      } else {
+        expect(rule).toMatch(new RegExp(`animation: ${name} [\\d.]+s linear 1 both;`));
       }
     }
   });
 
-  it("gives done's happy squint its arc layer and ends every layer at rest", () => {
-    expect(css).toContain(`@keyframes ${avatarKeyframesName("done", "arc")} {`);
+  it("ends done's every layer at rest", () => {
     const done = css.slice(css.indexOf(`@keyframes ${avatarKeyframesName("done", "body")}`));
-    expect(done).toMatch(
-      /100% \{\s*transform: translate\(0, 0\) rotate\(0deg\) scale\(1, 1\);\s*\}/,
+    const body = done.slice(0, done.indexOf("\n}\n"));
+    expect(body).toMatch(
+      /100% \{\s*transform: translate\(0, 0\) rotate\(0deg\) scale\(1, 1\);\s*\}$/,
     );
+    expect(css).toContain(`@keyframes ${avatarKeyframesName("done", "arc")} {`);
   });
 
-  it("animates only transform and opacity", () => {
-    const declarations = [...css.matchAll(/^\s{4}([a-z-]+):/gm)].map((match) => match[1]);
-    expect(new Set(declarations)).toEqual(new Set(["transform", "opacity"]));
+  it("spins and recolours each comet, starting it part-way round", () => {
+    AVATAR_COMETS.forEach((spec, index) => {
+      expect(ruleFor(`.bot-avatar-comet-${index}`)).toContain(
+        `animation-duration: ${spec.orbitSeconds}s;`,
+      );
+      expect(ruleFor(`.bot-avatar-comet-stop-${index}-0`)).toMatch(/infinite;/);
+    });
+    expect(css).toContain("@keyframes bot-avatar-comet-orbit {");
+  });
+
+  it("animates only transform, opacity and gradient stop colours; no filters", () => {
+    const keyframes = css.slice(css.indexOf("@keyframes"));
+    const declarations = [...keyframes.matchAll(/^\s{4}([a-z-]+):/gm)].map((match) => match[1]);
+    expect(new Set(declarations)).toEqual(new Set(["transform", "opacity", "stop-color"]));
+    expect(css).not.toMatch(/filter|box-shadow|width:|height:|top:|left:/);
   });
 });

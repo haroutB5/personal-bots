@@ -28,12 +28,11 @@ describe("BotAvatar posed layers", () => {
   it("draws the body, eye pair, pills and a hidden happy arc for the keyframes", () => {
     const markup = posed("thinking");
     expect(markup).toContain('data-motion="thinking"');
-    expect(markup.match(/class="bot-avatar-body"/g)).toHaveLength(1);
     expect(markup.match(/class="bot-avatar-eyes"/g)).toHaveLength(1);
     expect(markup.match(/class="bot-avatar-pill"/g)).toHaveLength(2);
     expect(markup.match(/class="bot-avatar-arc"[^>]*opacity="0"/g)).toHaveLength(2);
-    // The halo moves with the body.
-    expect(markup).toMatch(/class="bot-avatar-body"><path[^>]*var\(--personal-avatar-halo\)/);
+    // No comet unless the caller opts in and the pose is working.
+    expect(markup).not.toContain("bot-avatar-orbit");
   });
 
   it("carries no inline pose, so an unanimated avatar sits exactly at rest", () => {
@@ -42,5 +41,30 @@ describe("BotAvatar posed layers", () => {
     expect(markup.match(/transform="/g)).toHaveLength(2);
     expect(markup.match(/transform="rotate\(/g)).toHaveLength(2);
     expect(markup).not.toContain("style=");
+  });
+
+  it("wraps a working avatar in the comet only when asked, back and front of the body", () => {
+    const render = (comet: boolean, motion: "working" | "thinking") =>
+      renderToStaticMarkup(
+        <BotAvatar
+          shape="blob"
+          color="#1A73E8"
+          size={48}
+          label="Bot"
+          motion={motion}
+          comet={comet}
+        />,
+      );
+    expect(render(false, "working")).not.toContain("bot-avatar-orbit");
+    expect(render(true, "thinking")).not.toContain("bot-avatar-orbit");
+    const markup = render(true, "working");
+    const orbits = [...markup.matchAll(/class="bot-avatar-orbit"/g)].map((match) => match.index);
+    const eyes = markup.indexOf('class="bot-avatar-eyes"');
+    expect(orbits).toHaveLength(2);
+    expect(orbits[0]).toBeLessThan(eyes);
+    expect(orbits[1]).toBeGreaterThan(eyes);
+    // Strokes keep their on-screen width through the tilt squash.
+    expect(markup).toContain('vector-effect="non-scaling-stroke"');
+    expect(markup).not.toMatch(/filter/);
   });
 });

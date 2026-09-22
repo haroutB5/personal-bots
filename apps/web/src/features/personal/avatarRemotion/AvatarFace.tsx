@@ -1,4 +1,5 @@
 import type { JSX } from "react";
+import { useId } from "react";
 
 import type { BotAvatarShape } from "@t3tools/contracts";
 
@@ -11,8 +12,10 @@ import {
   BOT_AVATAR_ROUND_CORNER_STROKE,
   BOT_AVATAR_SILHOUETTES,
   BOT_AVATAR_VIEWBOX,
+  botAvatarHappyArcPath,
   botAvatarNeedsHalo,
 } from "../botAvatarShapes";
+import { AvatarCometDefs, AvatarCometLayer } from "../BotAvatarComet";
 import {
   AVATAR_BODY_PIVOT_X as PIVOT_X,
   AVATAR_BODY_PIVOT_Y as PIVOT_Y,
@@ -28,16 +31,31 @@ export interface AvatarFaceProps {
    * `var(--personal-avatar-halo)`; renders pass the theme's resolved value.
    */
   readonly haloColor: string;
+  /**
+   * Seconds into the working state: draws the orbiting comet at that time,
+   * exactly as the app's CSS would. Omitted for every other state.
+   */
+  readonly cometSeconds?: number | undefined;
+  /** Rendered width in px: the comet's strokes are sized in screen pixels. */
+  readonly sizePx?: number | undefined;
 }
 
 /**
  * The bot's own parametric avatar (same silhouette, colour, eyes and halo rule
- * as `BotAvatar`) drawn in a given pose. Pure: no hooks, no timing. Studio and
+ * as `BotAvatar`) drawn in a given pose. No timing of its own. Studio and
  * renders only; the app draws `BotAvatar` and animates it with the generated
  * keyframes (`avatarMotion.generated.css`).
  * Decorative - the caller carries the accessible label.
  */
-export function AvatarFace({ shape, color, pose, haloColor }: AvatarFaceProps): JSX.Element {
+export function AvatarFace({
+  shape,
+  color,
+  pose,
+  haloColor,
+  cometSeconds,
+  sizePx = 100,
+}: AvatarFaceProps): JSX.Element {
+  const idPrefix = `face${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const silhouette = BOT_AVATAR_SILHOUETTES[shape];
   const eyes = BOT_AVATAR_EYES[shape];
   const halo = botAvatarNeedsHalo(color);
@@ -57,6 +75,17 @@ export function AvatarFace({ shape, color, pose, haloColor }: AvatarFaceProps): 
       overflow="visible"
       style={{ display: "block" }}
     >
+      {cometSeconds === undefined ? null : (
+        <>
+          <AvatarCometDefs idPrefix={idPrefix} seconds={cometSeconds} />
+          <AvatarCometLayer
+            idPrefix={idPrefix}
+            side="back"
+            seconds={cometSeconds}
+            pixelsPerUnit={sizePx / 100}
+          />
+        </>
+      )}
       <g transform={bodyTransform}>
         {halo ? (
           <path
@@ -98,7 +127,7 @@ export function AvatarFace({ shape, color, pose, haloColor }: AvatarFaceProps): 
               {pose.happy > 0.001 ? (
                 // Happy squint: an upward-bowed stroke ("^") in the pill's place.
                 <path
-                  d={`M${eye.cx - 4} ${eye.cy + 3}Q${eye.cx} ${eye.cy - 9} ${eye.cx + 4} ${eye.cy + 3}`}
+                  d={botAvatarHappyArcPath(eye.cx, eye.cy)}
                   fill="none"
                   stroke={BOT_AVATAR_EYE_COLOR}
                   strokeWidth={5}
@@ -110,6 +139,14 @@ export function AvatarFace({ shape, color, pose, haloColor }: AvatarFaceProps): 
           ))}
         </g>
       </g>
+      {cometSeconds === undefined ? null : (
+        <AvatarCometLayer
+          idPrefix={idPrefix}
+          side="front"
+          seconds={cometSeconds}
+          pixelsPerUnit={sizePx / 100}
+        />
+      )}
     </svg>
   );
 }

@@ -13,10 +13,10 @@ import {
   PREVIEW_THEME_TOKENS,
   type PreviewTheme,
 } from "./AvatarStateGrid";
-import { BotAvatarComposition } from "./BotAvatarComposition";
-
-/** Canvas side of a single-avatar composition. */
-const AVATAR_COMPOSITION_SIZE = 200;
+import {
+  AVATAR_COMPOSITION_PX as AVATAR_COMPOSITION_SIZE,
+  BotAvatarComposition,
+} from "./BotAvatarComposition";
 
 const THEMES: readonly PreviewTheme[] = ["light", "dark"];
 

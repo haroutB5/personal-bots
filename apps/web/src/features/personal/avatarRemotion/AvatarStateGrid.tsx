@@ -5,7 +5,7 @@ import type { BotAvatarShape } from "@t3tools/contracts";
 
 import { AVATAR_MOTIONS } from "../avatarMotion";
 import { AvatarFace } from "./AvatarFace";
-import { AVATAR_STATE_SPECS, avatarPoseAt } from "./avatarStates";
+import { AVATAR_FPS, AVATAR_STATE_SPECS, avatarPoseAt } from "./avatarStates";
 
 export type PreviewTheme = "light" | "dark";
 
@@ -46,10 +46,10 @@ export const PREVIEW_AVATARS: readonly PreviewAvatar[] = [
 export const GRID_CELL = 160;
 export const GRID_LABEL_WIDTH = 130;
 export const GRID_HEADER = 44;
-/** lcm(120, 72, 36) frames, and a multiple of the one-shot replay period. */
-export const GRID_DURATION = 360;
-/** One-shots replay every 2s: play, then hold the final pose. */
-const ONE_SHOT_PERIOD = 60;
+/** 15s: long enough for the loops' glances and blinks; a multiple of the replay period. */
+export const GRID_DURATION = 450;
+/** One-shots (up to 2.4s) replay every 3s: play, then hold the final pose. */
+const ONE_SHOT_PERIOD = 90;
 
 /** Frame inside the cell: loops wrap, one-shots replay with a hold. */
 function cellFrame(state: keyof typeof AVATAR_STATE_SPECS, frame: number): number {
@@ -127,6 +127,8 @@ export function AvatarStateGrid({ theme, avatars }: AvatarStateGridProps): JSX.E
                   color={avatar.color}
                   pose={avatarPoseAt(state, cellFrame(state, frame))}
                   haloColor={tokens.halo}
+                  cometSeconds={state === "working" ? frame / AVATAR_FPS : undefined}
+                  sizePx={64}
                 />
               </div>
               <div style={{ width: 52, height: 52 }}>
@@ -135,6 +137,8 @@ export function AvatarStateGrid({ theme, avatars }: AvatarStateGridProps): JSX.E
                   color={avatar.color}
                   pose={avatarPoseAt(state, cellFrame(state, frame))}
                   haloColor={tokens.halo}
+                  cometSeconds={state === "working" ? frame / AVATAR_FPS : undefined}
+                  sizePx={52}
                 />
               </div>
             </div>

@@ -1,10 +1,11 @@
 import type { JSX } from "react";
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import type { BotAvatarShape } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
 
+import { AvatarCometDefs, AvatarCometLayer } from "./BotAvatarComet";
 import { isContinuousMotion, type AvatarMotion } from "./avatarMotion";
 import {
   BOT_AVATAR_EYE_COLOR,
@@ -15,6 +16,7 @@ import {
   BOT_AVATAR_ROUND_CORNER_STROKE,
   BOT_AVATAR_SILHOUETTES,
   BOT_AVATAR_VIEWBOX,
+  botAvatarHappyArcPath,
   botAvatarNeedsHalo,
 } from "./botAvatarShapes";
 
@@ -33,6 +35,12 @@ export interface BotAvatarProps {
    * nothing and are unaffected.
    */
   motion?: AvatarMotion | undefined;
+  /**
+   * Draw the rainbow comet orbiting the head while the pose is `working`
+   * (`avatarComet.ts`). Off by default: it is the costliest pose, so only the
+   * callers that can afford it opt in.
+   */
+  comet?: boolean | undefined;
 }
 
 /**
@@ -59,6 +67,7 @@ export function BotAvatar({
   label,
   className,
   motion,
+  comet = false,
 }: BotAvatarProps): JSX.Element {
   // Work stopping is the one transition that needs its own pose: dropping a
   // continuous loop would snap the avatar back to rest mid-cycle, so `done`
@@ -75,6 +84,9 @@ export function BotAvatar({
   const eyes = BOT_AVATAR_EYES[shape];
   const eyeRx = BOT_AVATAR_EYE_WIDTH / 2;
   const halo = botAvatarNeedsHalo(color);
+  // SVG ids are document-global; strip React's punctuation for url(#...).
+  const idPrefix = `bot-avatar${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const showComet = comet && pose === "working";
 
   return (
     <svg
@@ -130,8 +142,14 @@ export function BotAvatar({
         // Posed layers. At rest (no animation running, e.g. idle or reduced
         // motion) they draw exactly the flat avatar above: the eye tilt moves
         // to the parent <g> so the pill's own CSS transform can scale it about
-        // its centre, and the happy arc sits at opacity 0 until `done`.
-        <g className="bot-avatar-body">
+        // its centre, and the happy arc sits at opacity 0 until `done`. The
+        // body's own motion moves the whole <svg> (compositor-friendly). The
+        // working comet wraps the body: back half below, front half above.
+        <>
+          {showComet ? <AvatarCometDefs idPrefix={idPrefix} /> : null}
+          {showComet ? (
+            <AvatarCometLayer idPrefix={idPrefix} side="back" pixelsPerUnit={size / 100} />
+          ) : null}
           {halo ? <SilhouetteHalo d={silhouette.d} roundCorners={silhouette.roundCorners} /> : null}
           <SilhouetteFill d={silhouette.d} roundCorners={silhouette.roundCorners} color={color} />
           <g className="bot-avatar-eyes">
@@ -151,7 +169,7 @@ export function BotAvatar({
                 />
                 <path
                   className="bot-avatar-arc"
-                  d={happyArcPath(eye.cx, eye.cy)}
+                  d={botAvatarHappyArcPath(eye.cx, eye.cy)}
                   fill="none"
                   stroke={BOT_AVATAR_EYE_COLOR}
                   strokeWidth={5}
@@ -161,18 +179,13 @@ export function BotAvatar({
               </g>
             ))}
           </g>
-        </g>
+          {showComet ? (
+            <AvatarCometLayer idPrefix={idPrefix} side="front" pixelsPerUnit={size / 100} />
+          ) : null}
+        </>
       )}
     </svg>
   );
-}
-
-/**
- * Happy squint: an upward-bowed stroke ("^") in the pill's place, the same
- * curve `avatarRemotion/AvatarFace.tsx` draws in the Studio.
- */
-function happyArcPath(cx: number, cy: number): string {
-  return `M${cx - 4} ${cy + 3}Q${cx} ${cy - 9} ${cx + 4} ${cy + 3}`;
 }
 
 function SilhouetteHalo({ d, roundCorners }: { d: string; roundCorners: boolean }): JSX.Element {

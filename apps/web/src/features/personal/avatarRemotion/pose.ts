@@ -7,9 +7,9 @@ export interface AvatarPose {
   /** Whole-body translate, viewBox units. */
   readonly bodyX: number;
   readonly bodyY: number;
-  /** Whole-body rotation in degrees, pivoting on the bottom centre (50, 90). */
+  /** Whole-body rotation in degrees, about the body pivot. */
   readonly bodyRotate: number;
-  /** Squash/stretch around the bottom centre. */
+  /** Squash/stretch about the body pivot. */
   readonly bodyScaleX: number;
   readonly bodyScaleY: number;
   /** Eye-pair translate (gaze), viewBox units, on top of the body. */
@@ -23,9 +23,12 @@ export interface AvatarPose {
   readonly happy: number;
 }
 
-/** Body pivot in viewBox units: bottom centre, so squash and tilt read as weight. */
+/**
+ * Body pivot in viewBox units: the head's centre, as in xAI's widget (their
+ * body transform scales and rotates about the head centre).
+ */
 export const AVATAR_BODY_PIVOT_X = 50;
-export const AVATAR_BODY_PIVOT_Y = 90;
+export const AVATAR_BODY_PIVOT_Y = 52;
 
 export const REST_POSE: AvatarPose = {
   bodyX: 0,

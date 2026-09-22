@@ -254,6 +254,14 @@ export function botAvatarGeometryJson(): string {
   return `${JSON.stringify(BOT_AVATAR_GEOMETRY, null, 2)}\n`;
 }
 
+/**
+ * The happy squint: an upward-bowed stroke ("^") drawn in a pill eye's place
+ * (`done`'s landing). Stroke it 5 units wide with round caps.
+ */
+export function botAvatarHappyArcPath(cx: number, cy: number): string {
+  return `M${cx - 4} ${cy + 3}Q${cx} ${cy - 9} ${cx + 4} ${cy + 3}`;
+}
+
 export function botAvatarNeedsHalo(color: string): boolean {
   if (!/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color.trim())) return true;
   return contrastRatio(color, DARK_CARD_SURFACE) < 3;
