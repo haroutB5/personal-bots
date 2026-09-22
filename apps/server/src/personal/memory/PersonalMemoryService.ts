@@ -27,6 +27,11 @@ import {
 } from "@t3tools/contracts";
 
 import { forkParked } from "../../serverActivation.ts";
+import {
+  makeSensitiveExposureStore,
+  rootExposureKey,
+  threadExposureKey,
+} from "../browser/sensitiveExposureStore.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 
 /** Entries handed to one turn at most. */
@@ -185,6 +190,7 @@ export class PersonalMemoryService extends Context.Service<
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const exposures = makeSensitiveExposureStore(sql);
   const tasks = yield* Effect.serviceOption(PersonalTaskService.PersonalTaskService);
 
   const fail = (message: string, cause?: unknown) =>
@@ -395,6 +401,25 @@ export const make = Effect.gen(function* () {
       const content = `Task "${task.title}": ${clipped}`;
       // Never persist anything credential-shaped, even from a bot's reply.
       if (looksLikeSecret(content)) return;
+      // Nor anything from a task tree that had a user-marked sensitive site
+      // open: bot-scope memory is injected into every new chat of the bot,
+      // where the egress guard would see a clean thread carrying the page.
+      // A record that cannot be read counts as tainted.
+      const tainted = yield* exposures
+        .read([
+          rootExposureKey(task.rootTaskId),
+          ...(task.threadId === null ? [] : [threadExposureKey(task.threadId)]),
+        ])
+        .pipe(
+          Effect.map((exposure) => exposure.sources.size > 0),
+          Effect.orElseSucceed(() => true),
+        );
+      if (tainted) {
+        return yield* Effect.logInfo(
+          "personal memory skipped a task summary: its task tree saw a sensitive site",
+          { taskId: task.taskId },
+        );
+      }
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       yield* sql`
         INSERT INTO personal_memory (

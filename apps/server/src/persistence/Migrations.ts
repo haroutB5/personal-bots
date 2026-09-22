@@ -90,6 +90,7 @@ import Migration0073 from "./Migrations/073_PersonalConnectionApprovals.ts";
 import Migration0074 from "./Migrations/074_PersonalCreateAppRuns.ts";
 import Migration0075 from "./Migrations/075_PersonalWhatsApp.ts";
 import Migration0076 from "./Migrations/076_PersonalConnectionApprovalsWhatsApp.ts";
+import Migration0077 from "./Migrations/077_PersonalSensitiveExposures.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -179,6 +180,7 @@ const migrationEntries = [
   [74, "PersonalCreateAppRuns", Migration0074],
   [75, "PersonalWhatsApp", Migration0075],
   [76, "PersonalConnectionApprovalsWhatsApp", Migration0076],
+  [77, "PersonalSensitiveExposures", Migration0077],
   // Ids are contiguous. The migrator runs only ids above the latest applied
   // one, so every new migration (ours or upstream's) takes the next free id;
   // never deploy a gap. Upstream migrations keep their file name and are

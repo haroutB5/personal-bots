@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 
 import {
@@ -46,6 +47,11 @@ import {
 import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
+import {
+  groupExposureKey,
+  makeSensitiveExposureStore,
+  threadExposureKey,
+} from "../browser/sensitiveExposureStore.ts";
 import * as PersonalGroupRepository from "./PersonalGroupRepository.ts";
 import * as PersonalGroupService from "./PersonalGroupService.ts";
 
@@ -1474,6 +1480,35 @@ it.effect("deleting a group ends its live round, and a round orphaned anyway nev
     expect((yield* repository.listLiveRounds()).map((round) => round.groupId)).not.toContain(OTHER);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+it.effect(
+  "a member's sensitive-site taint follows its reply into the next speaker's thread",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const store = makeSensitiveExposureStore(yield* SqlClient.SqlClient);
+      yield* makeGroup(["assistant", "dev"], 6);
+      yield* send("What do you both think?", "msg-taint");
+      const first = yield* currentRound;
+      const firstThread = first.activeThreadId!;
+      // This member read the bank in its own chat earlier.
+      yield* store.record([threadExposureKey(firstThread)], "source", "https://bank.example");
+      yield* speak(harness, "My balance says we can afford it.");
+
+      const second = yield* currentRound;
+      const secondThread = second.activeThreadId!;
+      expect(secondThread).not.toBe(firstThread);
+      // The reply went to the group, and the group's catch-up to the next member.
+      expect([...(yield* store.read([groupExposureKey(GROUP)])).sources]).toEqual([
+        "https://bank.example",
+      ]);
+      expect([...(yield* store.read([threadExposureKey(secondThread)])).sources]).toEqual([
+        "https://bank.example",
+      ]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
 
 // The group-delete path (`deletePersonalGroup`) purges ticked bots through
 // `purgePersonalBot`, which calls this. A bot that sat in a SECOND group must

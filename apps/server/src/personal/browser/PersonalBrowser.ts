@@ -63,6 +63,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerConfig from "../../config.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
@@ -72,6 +73,12 @@ import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { AGENT_LEASE_TTL_MS, BrowserLease, PERSONAL_BROWSER_PROFILE_ID } from "./BrowserLease.ts";
 import { makeCredentialRedactor } from "./credentialRedactor.ts";
 import { type EgressApproval, type EgressIntent, egressNeedingApproval } from "./egressGuard.ts";
+import {
+  makeSensitiveExposureStore,
+  rootExposureKey,
+  type SensitiveExposureKind,
+  threadExposureKey,
+} from "./sensitiveExposureStore.ts";
 import {
   type BrowserContextHandle,
   type BrowserDriver,
@@ -493,14 +500,13 @@ export const make = (options: PersonalBrowserOptions) =>
 
     // Sensitive-site egress guard (policy in egressGuard.ts). What a bot has
     // had open is kept per thread and per delegation tree, since a delegated
-    // brief can carry it; in memory only, like the provider session that saw
-    // the page. It governs the shared browser and nothing else.
+    // brief can carry it. Persisted (sensitiveExposureStore.ts): the provider
+    // session that saw the page is recovered with its resume cursor after a
+    // restart, so a taint held in memory would be dropped while the model
+    // still holds the page. It governs the shared browser and nothing else.
     const logins = yield* PersonalLoginRepository.PersonalLoginRepository;
     let sensitiveOrigins: ReadonlySet<string> = new Set();
-    const exposures = new Map<
-      string,
-      { readonly sources: Set<string>; readonly approved: Set<string> }
-    >();
+    const exposureStore = makeSensitiveExposureStore(yield* SqlClient.SqlClient);
     // The approval a thread was refused for, until its next request_browser_help
     // turns it into the question the user actually sees.
     const pendingApprovals = new Map<string, EgressApproval>();
@@ -531,38 +537,45 @@ export const make = (options: PersonalBrowserOptions) =>
       tasks.rootTaskIdForThread(ThreadId.make(threadId)).pipe(
         Effect.map(
           Option.match({
-            onNone: () => [`thread:${threadId}`],
-            onSome: (root) => [`thread:${threadId}`, `root:${root}`],
+            onNone: () => [threadExposureKey(threadId)],
+            onSome: (root) => [threadExposureKey(threadId), rootExposureKey(root)],
           }),
         ),
-        Effect.catchCause(() => Effect.succeed([`thread:${threadId}`])),
+        Effect.catchCause(() => Effect.succeed([threadExposureKey(threadId)])),
       );
 
-    const exposureOf = (keys: ReadonlyArray<string>) => {
-      const sources = new Set<string>();
-      const approved = new Set<string>();
-      for (const key of keys) {
-        const entry = exposures.get(key);
-        if (entry === undefined) continue;
-        for (const source of entry.sources) sources.add(source);
-        for (const destination of entry.approved) approved.add(destination);
-      }
-      return { sources, approved };
-    };
+    /**
+     * Fails closed: a record that cannot be read is treated as carrying a
+     * sensitive page, so a database hiccup never waves content through.
+     */
+    const exposureOf = (keys: ReadonlyArray<string>) =>
+      exposureStore.read(keys).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Sensitive-site exposure could not be read; treating as exposed.", {
+            cause: Cause.pretty(cause),
+          }).pipe(
+            Effect.as({
+              sources: new Set(["a sensitive site (its record could not be read)"]),
+              approved: new Set<string>(),
+            }),
+          ),
+        ),
+      );
 
     const recordExposure = (
       keys: ReadonlyArray<string>,
-      update: (entry: { readonly sources: Set<string>; readonly approved: Set<string> }) => void,
-    ) => {
-      for (const key of keys) {
-        let entry = exposures.get(key);
-        if (entry === undefined) {
-          entry = { sources: new Set(), approved: new Set() };
-          exposures.set(key, entry);
-        }
-        update(entry);
-      }
-    };
+      kind: SensitiveExposureKind,
+      value: string,
+    ) =>
+      exposureStore.record(keys, kind, value).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Sensitive-site exposure could not be recorded.", {
+            kind,
+            value,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
 
     /** Remembers that the thread has had `url` open when it is a sensitive site. */
     const exposeIfSensitive = (threadId: string, url: string) =>
@@ -570,7 +583,7 @@ export const make = (options: PersonalBrowserOptions) =>
         const origin = webOrigin(url);
         if (origin === null || !sensitiveOrigins.has(origin)) return;
         const keys = yield* exposureKeys(threadId);
-        recordExposure(keys, (entry) => entry.sources.add(origin));
+        yield* recordExposure(keys, "source", origin);
       });
 
     /**
@@ -579,7 +592,10 @@ export const make = (options: PersonalBrowserOptions) =>
      * caller cannot use it to widen its own exposure.
      */
     const sensitiveExposure = (threadId: ThreadId): Effect.Effect<ReadonlyArray<string>> =>
-      exposureKeys(threadId).pipe(Effect.map((keys) => [...exposureOf(keys).sources].toSorted()));
+      exposureKeys(threadId).pipe(
+        Effect.flatMap(exposureOf),
+        Effect.map((exposure) => [...exposure.sources].toSorted()),
+      );
 
     /**
      * Refuses an action that needs the user's approval. The bot is told to
@@ -590,7 +606,7 @@ export const make = (options: PersonalBrowserOptions) =>
       Effect.gen(function* () {
         const keys = yield* exposureKeys(threadId);
         const approval = egressNeedingApproval({
-          exposure: exposureOf(keys),
+          exposure: yield* exposureOf(keys),
           intent,
           sensitive: sensitiveOrigins,
         });
@@ -1831,7 +1847,7 @@ export const make = (options: PersonalBrowserOptions) =>
             const approval = finishedHelp.approval;
             if (approval !== null) {
               const keys = yield* exposureKeys(finishedHelp.request.threadId);
-              recordExposure(keys, (entry) => entry.approved.add(approval.key));
+              yield* recordExposure(keys, "approved", approval.key);
             }
             yield* tasks
               .resumeFromUser({

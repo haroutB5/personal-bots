@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { makeSensitiveExposureStore, rootExposureKey } from "../browser/sensitiveExposureStore.ts";
 import {
   buildMemoryMatchQuery,
   looksLikeSecret,
@@ -211,6 +212,47 @@ it.effect("task summaries are labelled, saved once per task and never resurrecte
       taskId: PersonalTaskId.make("task-2"),
       result: { summary: "Your token: ghp_abcdefghijklmnopqrstuvwxyz0123" },
     });
+    expect(yield* memory.list({ kind: "task_summary" })).toEqual([]);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("a task tree that saw a sensitive site leaves no summary in bot memory", () =>
+  Effect.gen(function* () {
+    yield* linkThread;
+    const memory = yield* PersonalMemoryService;
+    const store = makeSensitiveExposureStore(yield* SqlClient.SqlClient);
+    const now = yield* DateTime.now;
+    const rootId = PersonalTaskId.make("task-root");
+    const childId = PersonalTaskId.make("task-child");
+    // The child read the bank; only the tree key carries it to the parent.
+    yield* store.record([rootExposureKey(rootId)], "source", "https://bank.example");
+    const task: PersonalTask = {
+      taskId: childId,
+      rootTaskId: rootId,
+      parentTaskId: rootId,
+      botId: BOT_A,
+      threadId: THREAD_A,
+      title: "Check my balance",
+      objective: "Read the balance",
+      acceptanceCriteria: "",
+      expectedOutput: "",
+      status: "completed",
+      source: "user",
+      idempotencyKey: "k-balance",
+      depth: 1,
+      maxDepth: 2,
+      maxChildren: 4,
+      result: { summary: "Current account balance is 1,234.56." },
+      errorCategory: null,
+      errorMessage: null,
+      availableAt: null,
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+      completedAt: now,
+    };
+    yield* memory.saveTaskSummary(task);
+    // Injected into every new chat of the bot, where nothing would be tainted.
     expect(yield* memory.list({ kind: "task_summary" })).toEqual([]);
   }).pipe(Effect.provide(TestLayer)),
 );

@@ -12,6 +12,7 @@ import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
   CommandId,
@@ -64,6 +65,11 @@ import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { classifyProviderError, providerWaitPause } from "../tasks/PersonalTaskService.ts";
+import {
+  groupExposureKey,
+  makeSensitiveExposureStore,
+  threadExposureKey,
+} from "../browser/sensitiveExposureStore.ts";
 import { parseMentions } from "./groupMentions.ts";
 import { admitMentions, nextStep, roundBudget, roundWallClockMs } from "./groupRoundPolicy.ts";
 import { buildCatchUpBrief, type GroupCatchUpMessage } from "./groupTurnText.ts";
@@ -241,6 +247,19 @@ const briefMessageId = (roundId: PersonalGroupRoundId, turn: number) =>
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const repository = yield* PersonalGroupRepository.PersonalGroupRepository;
+  // The sensitive-site taint travels with the transcript: a member's reply
+  // carries its thread's taint into the group, and the group's taint rides the
+  // catch-up brief into the next speaker's thread (audit K2).
+  const exposures = makeSensitiveExposureStore(yield* SqlClient.SqlClient);
+  const carryTaint = (from: ReadonlyArray<string>, to: string) =>
+    exposures.copySources(from, to).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("personal groups could not carry a sensitive-site taint", {
+          to,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
   const botRepository = yield* PersonalBotRepository.PersonalBotRepository;
   const bots = yield* PersonalBotService.PersonalBotService;
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
@@ -641,6 +660,9 @@ export const make = Effect.gen(function* () {
       yield* repository.deleteMessage(round.activeMessageId);
       return;
     }
+    if (round.activeThreadId !== null) {
+      yield* carryTaint([threadExposureKey(round.activeThreadId)], groupExposureKey(group.groupId));
+    }
     yield* relayComplete({ group, messageId: round.activeMessageId });
   });
 
@@ -684,6 +706,8 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.mapError((cause) => fail("Personal groups could not open a member chat.", cause)),
       );
+    // The brief below hands this member everything the group has said.
+    yield* carryTaint([groupExposureKey(group.groupId)], threadExposureKey(threadId));
 
     // Catch-up first, cursor second, reservation third: the speaker must not
     // be shown its own pending reply, whose seq is by construction the highest.
@@ -1021,6 +1045,8 @@ export const make = Effect.gen(function* () {
     }
     if (round.activeThreadId !== null) {
       activeMemberThreadIds.delete(round.activeThreadId);
+      // Whatever the member saw can be in what it just said to the group.
+      yield* carryTaint([threadExposureKey(round.activeThreadId)], groupExposureKey(group.groupId));
     }
     throttles.delete(`${round.roundId}:${botId}`);
     const all = yield* liveBots();

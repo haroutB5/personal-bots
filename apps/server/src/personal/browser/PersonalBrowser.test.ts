@@ -21,6 +21,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerConfig from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -42,6 +43,7 @@ import type {
 import * as PersonalBrowser from "./PersonalBrowser.ts";
 import * as PersonalBrowserLeaseRepository from "./PersonalBrowserLeaseRepository.ts";
 import * as PersonalBrowserProtectionRepository from "./PersonalBrowserProtectionRepository.ts";
+import { makeSensitiveExposureStore, threadExposureKey } from "./sensitiveExposureStore.ts";
 
 const encodeInput = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserInputMessage));
 const encodeViewer = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserViewerMessage));
@@ -1815,6 +1817,27 @@ describe("PersonalBrowser", () => {
 
         expect((yield* refused(browser, exfil)).message).toContain("request_browser_help");
       }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
+    // Audit K1: the provider session that saw the page is recovered with its
+    // resume cursor after a restart, so the taint has to outlive the process.
+    it.effect("keeps what a thread has seen in the database, so a restart cannot clear it", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        yield* markSensitive(BANK);
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const store = makeSensitiveExposureStore(yield* SqlClient.SqlClient);
+        yield* browser.handleAutomationRequest(request("navigate", { url: `${BANK}/accounts` }));
+        // Written through to the table, not only held by this process.
+        const stored = yield* store.read([threadExposureKey(threadId)]);
+        expect([...stored.sources]).toEqual([BANK]);
+
+        // A thread tainted before this process started (a row, no memory of
+        // it here) is refused just the same.
+        const earlier = ThreadId.make("thread-before-restart");
+        yield* store.record([threadExposureKey(earlier)], "source", BANK);
+        expect(yield* browser.sensitiveExposure(earlier)).toEqual([BANK]);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
     });
 
     // The server's question replaces the bot's reason only while an approval
