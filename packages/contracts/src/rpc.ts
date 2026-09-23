@@ -347,6 +347,7 @@ import {
   PersonalLoginUpdateInput,
   PersonalLoginSetSensitiveInput,
 } from "./personalLogins.ts";
+import { PersonalDesktopError, PersonalDesktopStatus } from "./personalDesktop.ts";
 // personal browser
 import {
   PersonalBrowserError,
@@ -615,6 +616,9 @@ export const WS_METHODS = {
   personalBrowserClose: "personalBrowser.close",
   personalBrowserListFiles: "personalBrowser.listFiles",
   personalBrowserActivity: "personalBrowser.activity",
+  // personal desktop (the user's real PC)
+  personalDesktopStatus: "personalDesktop.status",
+  personalDesktopStop: "personalDesktop.stop",
   // Personal routines methods
   personalRoutinesList: "personalRoutines.list",
   personalRoutinesCreate: "personalRoutines.create",
@@ -1524,6 +1528,23 @@ const WsPersonalBrowserActivityRpc = Rpc.make(WS_METHODS.personalBrowserActivity
   stream: true,
 });
 
+const PersonalDesktopRpcError = Schema.Union([PersonalDesktopError, EnvironmentAuthorizationError]);
+
+/** Current desktop status, then every change. */
+const WsPersonalDesktopStatusRpc = Rpc.make(WS_METHODS.personalDesktopStatus, {
+  payload: Schema.Struct({}),
+  success: PersonalDesktopStatus,
+  error: PersonalDesktopRpcError,
+  stream: true,
+});
+
+/** The app's own stop button: same as the hotkey. */
+const WsPersonalDesktopStopRpc = Rpc.make(WS_METHODS.personalDesktopStop, {
+  payload: Schema.Struct({}),
+  success: PersonalDesktopStatus,
+  error: PersonalDesktopRpcError,
+});
+
 const PersonalRoutinesRpcError = Schema.Union([
   PersonalRoutinesError,
   EnvironmentAuthorizationError,
@@ -2285,6 +2306,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalBrowserCloseRpc,
   WsPersonalBrowserListFilesRpc,
   WsPersonalBrowserActivityRpc,
+  WsPersonalDesktopStatusRpc,
+  WsPersonalDesktopStopRpc,
   WsPersonalRoutinesListRpc,
   WsPersonalRoutinesCreateRpc,
   WsPersonalRoutinesUpdateRpc,
