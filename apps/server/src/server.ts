@@ -748,7 +748,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     // shares the single PreviewAutomationBroker provided below)
     personalBrowserStreamRouteLayer,
     personalBrowserFilesRouteLayer,
-    // Signed-in only: one log line per notification tap (see clientDiagRoute.ts).
+    // Open, allowlisted and rate limited: notification-tap diagnostics (see clientDiagRoute.ts).
     personalClientDiagRouteLayer,
     // Unauthenticated by necessity; the URL token is the whole credential.
     personalRoutineHookRouteLayer,

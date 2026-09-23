@@ -14,8 +14,11 @@ import { EnvironmentAuth, ServerAuthMissingCredentialError } from "../../auth/En
 import {
   CLIENT_DIAG_LOGGED_CHARS,
   CLIENT_DIAG_MAX_BYTES,
+  CLIENT_DIAG_MAX_PER_CLIENT_PER_MINUTE,
   CLIENT_DIAG_MAX_PER_MINUTE,
+  CLIENT_DIAG_MAX_REFUSALS_LOGGED_PER_MINUTE,
   clientDiagLine,
+  sanitizeClientDiag,
   makePersonalClientDiagRouteLayer,
 } from "./clientDiagRoute.ts";
 
@@ -52,49 +55,127 @@ const fixture = (auth: "missing" | ReadonlyArray<AuthEnvironmentScope>) => {
 };
 
 const URL_ = "http://t3.test/api/personal/client-diag";
-const post = (body: string, contentType = "application/json") =>
-  new Request(URL_, { method: "POST", body, headers: { "content-type": contentType } });
+const post = (body: string, contentType = "application/json", ip?: string) =>
+  new Request(URL_, {
+    method: "POST",
+    body,
+    headers: { "content-type": contentType, ...(ip ? { "cf-connecting-ip": ip } : {}) },
+  });
+const tap = (extra: Record<string, unknown> = {}) =>
+  JSON.stringify({ event: "notificationclick", route: "page", clients: [], ...extra });
 
 describe("client diagnostics route", () => {
-  it("logs one line for a signed-in tap record", async () => {
+  it("logs one line for a signed-in tap record, marked signed-in", async () => {
     const { handler, lines } = fixture([AuthOrchestrationReadScope]);
-    const response = await handler(
-      post(JSON.stringify({ event: "notificationclick", route: "page", clients: [] })),
-    );
+    const response = await handler(post(tap()));
     expect(response.status).toBe(204);
-    expect(lines).toEqual(['{"event":"notificationclick","route":"page","clients":[]}']);
+    expect(lines).toEqual([
+      '{"event":"notificationclick","route":"page","clients":[],"auth":"signed-in"}',
+    ]);
   });
 
-  it("refuses anonymous callers before reading anything", async () => {
+  it("accepts anonymous callers (the phone's worker may hold no cookie), marked anonymous", async () => {
     const { handler, lines } = fixture("missing");
-    const response = await handler(post("{}"));
-    expect(response.status).toBe(401);
-    expect(lines).toEqual([]);
+    const response = await handler(post(tap({ id: "tap-1" })));
+    expect(response.status).toBe(204);
+    expect(lines).toEqual([
+      '{"event":"notificationclick","id":"tap-1","route":"page","clients":[],"auth":"anonymous"}',
+    ]);
   });
 
-  it("accepts JSON objects only", async () => {
-    const { handler, lines } = fixture([AuthOrchestrationReadScope]);
+  it("refuses non-JSON, non-objects, unknown events and oversize bodies, and logs each refusal", async () => {
+    const { handler, lines } = fixture("missing");
     expect((await handler(post("a=1", "application/x-www-form-urlencoded"))).status).toBe(415);
     expect((await handler(post("[1,2]"))).status).toBe(400);
     expect((await handler(post("not json"))).status).toBe(400);
+    expect((await handler(post('{"event":"anything-else"}'))).status).toBe(400);
     expect((await handler(post("x".repeat(CLIENT_DIAG_MAX_BYTES + 10)))).status).toBe(413);
-    expect(lines).toEqual([]);
+    expect(lines).toEqual([
+      '{"event":"refused","reason":"content-type","status":415,"auth":"anonymous"}',
+      '{"event":"refused","reason":"not-allowlisted","status":400,"auth":"anonymous"}',
+      '{"event":"refused","reason":"not-allowlisted","status":400,"auth":"anonymous"}',
+      '{"event":"refused","reason":"not-allowlisted","status":400,"auth":"anonymous"}',
+      '{"event":"refused","reason":"too-large","status":413,"auth":"anonymous"}',
+    ]);
   });
 
-  it("caps the rate so a looping client cannot flood the log", async () => {
-    const { handler, lines } = fixture([AuthOrchestrationReadScope]);
+  it("caps each client, and all clients together", async () => {
+    const { handler, lines } = fixture("missing");
     const statuses: number[] = [];
-    for (let index = 0; index < CLIENT_DIAG_MAX_PER_MINUTE + 3; index++) {
-      statuses.push((await handler(post(`{"n":${index}}`))).status);
+    for (let index = 0; index < CLIENT_DIAG_MAX_PER_CLIENT_PER_MINUTE + 2; index++) {
+      statuses.push((await handler(post(tap({ ms: index }), undefined, "203.0.113.7"))).status);
     }
-    expect(statuses.filter((status) => status === 204)).toHaveLength(CLIENT_DIAG_MAX_PER_MINUTE);
-    expect(statuses.slice(-3)).toEqual([429, 429, 429]);
-    expect(lines).toHaveLength(CLIENT_DIAG_MAX_PER_MINUTE);
+    expect(statuses.filter((status) => status === 204)).toHaveLength(
+      CLIENT_DIAG_MAX_PER_CLIENT_PER_MINUTE,
+    );
+    expect(statuses.slice(-2)).toEqual([429, 429]);
+
+    let accepted = CLIENT_DIAG_MAX_PER_CLIENT_PER_MINUTE;
+    for (let index = 0; accepted < CLIENT_DIAG_MAX_PER_MINUTE + 5; index++) {
+      const status = (await handler(post(tap(), undefined, `198.51.100.${index}`))).status;
+      if (status === 204) accepted += 1;
+      else {
+        expect(status).toBe(429);
+        break;
+      }
+    }
+    expect(accepted).toBe(CLIENT_DIAG_MAX_PER_MINUTE);
+    const refusals = lines.filter((line) => line.includes('"refused"'));
+    expect(refusals.length).toBeLessThanOrEqual(CLIENT_DIAG_MAX_REFUSALS_LOGGED_PER_MINUTE);
+  });
+
+  it("rebuilds the record from the allowlist and drops everything else", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "tap-received",
+          id: "abc-123",
+          url: "/bots/x/y?z=1",
+          via: "cache-poll",
+          visibility: "visible",
+          navigated: true,
+          controlled: false,
+          secret: "sk-live-nope",
+          page: "<script>",
+          ms: 12,
+          clients: [{ path: "/bots", visibility: "visible", focused: true, extra: 1 }],
+          ack: { via: "broadcast", visibility: "visible", nested: { a: 1 } },
+        }),
+      ),
+    ).toEqual({
+      event: "tap-received",
+      id: "abc-123",
+      url: "/bots/x/y?z=1",
+      via: "cache-poll",
+      visibility: "visible",
+      navigated: true,
+      controlled: false,
+      ms: 12,
+      clients: [{ path: "/bots", visibility: "visible", focused: true }],
+      ack: { via: "broadcast", visibility: "visible" },
+    });
+  });
+
+  it("drops paths and tokens that could forge or bloat a log line", () => {
+    const record = sanitizeClientDiag(
+      JSON.stringify({
+        event: "notificationclick",
+        url: "/bots\nforged line",
+        id: "x".repeat(65),
+        route: "page page",
+        error: `TypeError: ${String.fromCharCode(7)}bell`,
+        ms: -1,
+      }),
+    );
+    expect(record).toEqual({ event: "notificationclick" });
+    expect(
+      sanitizeClientDiag(JSON.stringify({ event: "page-boot", url: "//evil.test/x" })),
+    ).toEqual({ event: "page-boot" });
   });
 
   it("keeps one record on one bounded line", () => {
-    expect(clientDiagLine('{"url":"/bots\\nforged line"}')).toBe('{"url":"/bots\\nforged line"}');
-    const long = clientDiagLine(JSON.stringify({ text: "y".repeat(3000) }));
-    expect(long?.length).toBe(CLIENT_DIAG_LOGGED_CHARS + 3);
+    const line = clientDiagLine(tap(), "anonymous");
+    expect(line).not.toContain(String.fromCharCode(10));
+    expect(line!.length).toBeLessThanOrEqual(CLIENT_DIAG_LOGGED_CHARS + 3);
   });
 });
