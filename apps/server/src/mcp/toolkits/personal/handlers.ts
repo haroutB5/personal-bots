@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   describePersonalRoutineTrigger,
   PersonalRoutineId,
+  type PersonalRoutine,
   type PersonalRoutineSchedule,
   savesMemoryWithoutAsking,
   type ThreadId,
@@ -19,7 +20,13 @@ import { createResearchClient } from "../../../personal/research/researchClient.
 import * as PersonalMemoryService from "../../../personal/memory/PersonalMemoryService.ts";
 import * as PersonalRoutineService from "../../../personal/routines/PersonalRoutineService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { CreateRoutineInput, PersonalToolError, PersonalToolkit } from "./tools.ts";
+import {
+  CreateRoutineInput,
+  PersonalToolError,
+  PersonalToolkit,
+  type RoutineScheduleToolFields,
+  type UpdateRoutineInput,
+} from "./tools.ts";
 
 const encodeCreateRoutineInput = Schema.encodeSync(Schema.fromJsonString(CreateRoutineInput));
 
@@ -65,7 +72,7 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Maps the tool's natural fields onto a routine schedule, or explains what is missing. */
 export function routineScheduleFromToolInput(
-  input: CreateRoutineInput,
+  input: RoutineScheduleToolFields,
 ): PersonalRoutineSchedule | string {
   const time = input.time?.trim();
   const needsTime = input.frequency !== "every_n_hours";
@@ -108,6 +115,30 @@ export function formatNextRun(instantIso: string | null, timeZone: string): stri
   }).format(Date.parse(instantIso));
 }
 
+/** The confirmation update_routine and set_routine_enabled hand back. */
+export function routineChangeResult(routine: PersonalRoutine) {
+  const nextRunUtc =
+    routine.enabled && routine.nextDueAt !== null ? DateTime.formatIso(routine.nextDueAt) : null;
+  const nextRunLocal = formatNextRun(nextRunUtc, routine.timeZone);
+  const state = routine.enabled ? `Next run: ${nextRunLocal ?? "none"}` : "Paused";
+  return {
+    routineId: routine.routineId,
+    summary: `${routine.title}: ${describePersonalRoutineTrigger(routine)}. ${state}.`,
+    enabled: routine.enabled,
+    timeZone: routine.timeZone,
+    nextRunLocal,
+    nextRunUtc,
+  };
+}
+
+/** Whether update_routine was handed any of the schedule fields. */
+const touchesSchedule = (input: UpdateRoutineInput) =>
+  input.frequency !== undefined ||
+  input.time !== undefined ||
+  input.days !== undefined ||
+  input.everyHours !== undefined ||
+  input.date !== undefined;
+
 const make = Effect.gen(function* () {
   const routines = yield* PersonalRoutineService.PersonalRoutineService;
   const memory = yield* PersonalMemoryService.PersonalMemoryService;
@@ -130,6 +161,55 @@ const make = Effect.gen(function* () {
   });
 
   const liveBots = bots.listBots().pipe(Effect.mapError(() => refuse("Could not read the bots.")));
+
+  /**
+   * The live bot a routine tool names, matched case-insensitively on the
+   * whole name; undefined when no name was given. Any live bot may run a
+   * routine, as in the app's own routine editor: routines are not team-scoped.
+   */
+  const botByName = Effect.fn("personal.routineBotByName")(function* (name: string | undefined) {
+    const wanted = name?.trim().toLowerCase();
+    if (wanted === undefined || wanted.length === 0) return undefined;
+    const all = yield* liveBots;
+    const match = all.find((bot) => bot.name.toLowerCase() === wanted);
+    if (match === undefined) {
+      return yield* refuse(
+        `No bot is named '${name}'. Bots: ${all.map((bot) => bot.name).join(", ")}.`,
+      );
+    }
+    return match.botId;
+  });
+
+  const routineError = (error: { readonly message: string }) => refuse(error.message);
+
+  /** Reads a routine by the id the model gave, with a refusal that says what to do next. */
+  const requireRoutine = (routineId: string) =>
+    routines
+      .get({ routineId: PersonalRoutineId.make(routineId) })
+      .pipe(
+        Effect.mapError(() =>
+          refuse(
+            `No routine has the id '${routineId}'. Call list_routines and use a routineId exactly as it returns it.`,
+          ),
+        ),
+      );
+
+  /** Pauses or resumes, leaving a routine already in that state untouched. */
+  const setEnabled = (routine: PersonalRoutine, enabled: boolean) =>
+    routine.enabled === enabled
+      ? Effect.succeed(routine)
+      : (enabled
+          ? routines.resume({ routineId: routine.routineId })
+          : routines.pause({ routineId: routine.routineId })
+        ).pipe(
+          Effect.mapError((error) =>
+            enabled && routine.schedule?.kind === "once"
+              ? refuse(
+                  `'${routine.title}' was a one-off whose time has passed, so it could not be resumed and has been removed. Create a new routine for a new time.`,
+                )
+              : routineError(error),
+          ),
+        );
 
   /**
    * The sensitive-site egress guard, for the one channel it cannot see.
@@ -215,18 +295,7 @@ const make = Effect.gen(function* () {
         const { scope, botId } = yield* requireBotThread;
         const schedule = routineScheduleFromToolInput(input);
         if (typeof schedule === "string") return yield* refuse(schedule);
-        let targetBotId = botId;
-        const wanted = input.botName?.trim().toLowerCase();
-        if (wanted !== undefined && wanted.length > 0) {
-          const all = yield* liveBots;
-          const match = all.find((bot) => bot.name.toLowerCase() === wanted);
-          if (match === undefined) {
-            return yield* refuse(
-              `No bot is named '${input.botName}'. Bots: ${all.map((bot) => bot.name).join(", ")}.`,
-            );
-          }
-          targetBotId = match.botId;
-        }
+        const targetBotId = (yield* botByName(input.botName)) ?? botId;
         // Derived from the call itself, so a retried tool call dedupes.
         const routineId = PersonalRoutineId.make(
           `routine-${NodeCrypto.createHash("sha256")
@@ -271,6 +340,7 @@ const make = Effect.gen(function* () {
             botName: names.get(routine.botId) ?? "(deleted bot)",
             schedule: describePersonalRoutineTrigger(routine),
             enabled: routine.enabled,
+            prompt: routine.prompt,
             nextRunLocal: routine.enabled
               ? formatNextRun(
                   routine.nextDueAt === null ? null : DateTime.formatIso(routine.nextDueAt),
@@ -278,6 +348,80 @@ const make = Effect.gen(function* () {
                 )
               : null,
           })),
+        };
+      }),
+    update_routine: (input) =>
+      Effect.gen(function* () {
+        yield* requireBotThread;
+        const current = yield* requireRoutine(input.routineId);
+        let schedule: PersonalRoutineSchedule | undefined;
+        if (touchesSchedule(input)) {
+          if (current.schedule === null) {
+            return yield* refuse(
+              `'${current.title}' runs when its webhook event '${current.eventLabel ?? "event"}' fires, so it has no schedule to change.`,
+            );
+          }
+          if (input.frequency === undefined) {
+            return yield* refuse(
+              "Give the whole new schedule: frequency, plus the time, days, everyHours or date it needs.",
+            );
+          }
+          const mapped = routineScheduleFromToolInput({ ...input, frequency: input.frequency });
+          if (typeof mapped === "string") return yield* refuse(mapped);
+          schedule = mapped;
+        }
+        const botId = yield* botByName(input.botName);
+        const timeZone = input.timeZone?.trim();
+        const edits = {
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+          ...(schedule === undefined ? {} : { schedule }),
+          ...(timeZone === undefined || timeZone.length === 0 ? {} : { timeZone }),
+          ...(input.missedRuns === undefined
+            ? {}
+            : {
+                missedPolicy:
+                  input.missedRuns === "skip" ? ("skip" as const) : ("coalesce" as const),
+              }),
+          ...(botId === undefined ? {} : { botId }),
+        };
+        if (Object.keys(edits).length === 0 && input.enabled === undefined) {
+          return yield* refuse("Nothing to change: pass at least one field to update.");
+        }
+        let routine = current;
+        if (Object.keys(edits).length > 0) {
+          routine = yield* routines
+            .update({ routineId: current.routineId, ...edits })
+            .pipe(Effect.mapError(routineError));
+        }
+        if (input.enabled !== undefined) {
+          routine = yield* setEnabled(routine, input.enabled);
+        }
+        return routineChangeResult(routine);
+      }),
+    set_routine_enabled: (input) =>
+      Effect.gen(function* () {
+        yield* requireBotThread;
+        const current = yield* requireRoutine(input.routineId);
+        return routineChangeResult(yield* setEnabled(current, input.enabled));
+      }),
+    delete_routine: (input) =>
+      Effect.gen(function* () {
+        yield* requireBotThread;
+        const current = yield* requireRoutine(input.routineId);
+        // The title is the model restating which routine it means: an id
+        // copied from the wrong row, or a stale one, deletes nothing.
+        if (current.title.trim() !== input.title.trim()) {
+          return yield* refuse(
+            `Nothing was deleted: routine '${current.routineId}' is titled '${current.title}', not '${input.title}'. Call list_routines and check which routine the user means.`,
+          );
+        }
+        yield* routines
+          .remove({ routineId: current.routineId })
+          .pipe(Effect.mapError(routineError));
+        return {
+          routineId: current.routineId,
+          summary: `Deleted the routine '${current.title}' (${describePersonalRoutineTrigger(current)}).`,
         };
       }),
     search_memory: (input) =>

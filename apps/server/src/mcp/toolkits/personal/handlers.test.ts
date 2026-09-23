@@ -13,8 +13,6 @@ describe("create_routine input mapping", () => {
   it("maps natural fields onto schedules", () => {
     expect(
       routineScheduleFromToolInput({
-        title: "t",
-        prompt: "p",
         frequency: "weekly",
         days: ["monday", "friday"],
         time: "08:30",
@@ -22,16 +20,12 @@ describe("create_routine input mapping", () => {
     ).toEqual({ kind: "weekly", days: [1, 5], time: "08:30" });
     expect(
       routineScheduleFromToolInput({
-        title: "t",
-        prompt: "p",
         frequency: "every_n_hours",
         everyHours: 4,
       }),
     ).toEqual({ kind: "interval", everyHours: 4 });
     expect(
       routineScheduleFromToolInput({
-        title: "t",
-        prompt: "p",
         frequency: "once",
         date: "2026-12-24",
         time: "18:00",
@@ -40,15 +34,13 @@ describe("create_routine input mapping", () => {
   });
 
   it("explains missing or malformed fields", () => {
-    expect(
-      routineScheduleFromToolInput({ title: "t", prompt: "p", frequency: "daily", time: "9am" }),
-    ).toContain("HH:MM");
-    expect(
-      routineScheduleFromToolInput({ title: "t", prompt: "p", frequency: "weekly", time: "09:00" }),
-    ).toContain("at least one day");
-    expect(
-      routineScheduleFromToolInput({ title: "t", prompt: "p", frequency: "once", time: "09:00" }),
-    ).toContain("YYYY-MM-DD");
+    expect(routineScheduleFromToolInput({ frequency: "daily", time: "9am" })).toContain("HH:MM");
+    expect(routineScheduleFromToolInput({ frequency: "weekly", time: "09:00" })).toContain(
+      "at least one day",
+    );
+    expect(routineScheduleFromToolInput({ frequency: "once", time: "09:00" })).toContain(
+      "YYYY-MM-DD",
+    );
   });
 
   it("formats the next run in the routine's own zone", () => {

@@ -29,16 +29,12 @@ export const Weekday = Schema.Literals([
   "sunday",
 ]);
 
-export const CreateRoutineInput = Schema.Struct({
-  title: TrimmedNonEmptyString.annotate({
-    description: "Short name for the routine, e.g. 'Morning briefing'.",
-  }),
-  prompt: TrimmedNonEmptyString.annotate({
-    description: "What the bot should do each time the routine runs, written as a task.",
-  }),
-  frequency: Schema.Literals(["daily", "weekly", "every_n_hours", "once"]).annotate({
-    description: "daily, weekly (with days), every_n_hours (with everyHours) or once (with date).",
-  }),
+const RoutineFrequency = Schema.Literals(["daily", "weekly", "every_n_hours", "once"]).annotate({
+  description: "daily, weekly (with days), every_n_hours (with everyHours) or once (with date).",
+});
+
+/** The natural schedule fields create_routine and update_routine share. */
+const routineScheduleFields = {
   time: Schema.optional(
     Schema.String.annotate({
       description: "Local 24-hour time HH:MM. Required for daily, weekly and once.",
@@ -55,6 +51,17 @@ export const CreateRoutineInput = Schema.Struct({
   date: Schema.optional(
     Schema.String.annotate({ description: "Local date YYYY-MM-DD, for once routines." }),
   ),
+};
+
+export const CreateRoutineInput = Schema.Struct({
+  title: TrimmedNonEmptyString.annotate({
+    description: "Short name for the routine, e.g. 'Morning briefing'.",
+  }),
+  prompt: TrimmedNonEmptyString.annotate({
+    description: "What the bot should do each time the routine runs, written as a task.",
+  }),
+  frequency: RoutineFrequency,
+  ...routineScheduleFields,
   timeZone: Schema.optional(
     Schema.String.annotate({
       description: "IANA time zone of the wall-clock time. Defaults to Europe/London.",
@@ -74,6 +81,88 @@ export const CreateRoutineInput = Schema.Struct({
   ),
 });
 export type CreateRoutineInput = typeof CreateRoutineInput.Type;
+
+/** What routineScheduleFromToolInput reads: the frequency and its fields. */
+export interface RoutineScheduleToolFields {
+  readonly frequency: typeof RoutineFrequency.Type;
+  readonly time?: string | undefined;
+  readonly days?: ReadonlyArray<typeof Weekday.Type> | undefined;
+  readonly everyHours?: number | undefined;
+  readonly date?: string | undefined;
+}
+
+const RoutineIdField = TrimmedNonEmptyString.annotate({
+  description: "The routine's exact routineId, as list_routines returns it.",
+});
+
+export const UpdateRoutineInput = Schema.Struct({
+  routineId: RoutineIdField,
+  title: Schema.optional(
+    TrimmedNonEmptyString.annotate({ description: "New short name for the routine." }),
+  ),
+  prompt: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description:
+        "New task text, replacing the old one entirely. The bot starts each run from nothing but this, so keep it self-contained.",
+    }),
+  ),
+  frequency: Schema.optional(
+    RoutineFrequency.annotate({
+      description:
+        "A new schedule: daily, weekly (with days), every_n_hours (with everyHours) or once (with date), with time where needed. Give the whole schedule, not only the part that changes.",
+    }),
+  ),
+  ...routineScheduleFields,
+  timeZone: Schema.optional(
+    Schema.String.annotate({ description: "New IANA time zone for the routine's times." }),
+  ),
+  missedRuns: Schema.optional(
+    Schema.Literals(["catch_up_once", "skip"]).annotate({
+      description: "catch_up_once runs once for the latest missed time, skip runs none.",
+    }),
+  ),
+  botName: Schema.optional(
+    Schema.String.annotate({
+      description: "Hand the routine to another bot: its exact name, in any letter case.",
+    }),
+  ),
+  enabled: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "false pauses the routine, true resumes it, as set_routine_enabled does.",
+    }),
+  ),
+});
+export type UpdateRoutineInput = typeof UpdateRoutineInput.Type;
+
+export const RoutineChangeResult = Schema.Struct({
+  routineId: Schema.String,
+  summary: Schema.String.annotate({
+    description: "One-line confirmation to show the user: schedule, state and next run.",
+  }),
+  enabled: Schema.Boolean,
+  timeZone: Schema.String,
+  nextRunLocal: Schema.NullOr(Schema.String),
+  nextRunUtc: Schema.NullOr(Schema.String),
+});
+export type RoutineChangeResult = typeof RoutineChangeResult.Type;
+
+export const SetRoutineEnabledInput = Schema.Struct({
+  routineId: RoutineIdField,
+  enabled: Schema.Boolean.annotate({ description: "false pauses, true resumes." }),
+});
+
+export const DeleteRoutineInput = Schema.Struct({
+  routineId: RoutineIdField,
+  title: TrimmedNonEmptyString.annotate({
+    description:
+      "The routine's current title exactly as list_routines shows it, as a check that the id names the routine you mean.",
+  }),
+});
+
+export const DeleteRoutineResult = Schema.Struct({
+  routineId: Schema.String,
+  summary: Schema.String,
+});
 
 export const CreateRoutineResult = Schema.Struct({
   routineId: Schema.String,
@@ -95,6 +184,7 @@ export const ListRoutinesResult = Schema.Struct({
       schedule: Schema.String,
       enabled: Schema.Boolean,
       nextRunLocal: Schema.NullOr(Schema.String),
+      prompt: Schema.String.annotate({ description: "The task text the bot gets at each run." }),
     }),
   ),
 });
@@ -149,7 +239,7 @@ export const SaveMemoryResult = Schema.Struct({
 
 const CreateRoutineTool = Tool.make("create_routine", {
   description:
-    "Schedule a recurring or one-off routine: at each run the chosen bot gets the prompt as a task, starting from nothing but that prompt, so write it self-contained. Times are local wall-clock times in the routine's time zone (default Europe/London). Calling again with identical arguments in this chat returns the same routine rather than a second one. Routines cannot be edited, paused or deleted with these tools; the user does that from the routine in the app. Show the returned summary, including the time zone and next run, to the user.",
+    "Schedule a recurring or one-off routine: at each run the chosen bot gets the prompt as a task, starting from nothing but that prompt, so write it self-contained. Times are local wall-clock times in the routine's time zone (default Europe/London). Calling again with identical arguments in this chat returns the same routine rather than a second one. To change, pause or delete one later, use update_routine, set_routine_enabled or delete_routine with its routineId. Show the returned summary, including the time zone and next run, to the user.",
   parameters: CreateRoutineInput,
   success: CreateRoutineResult,
   failure: PersonalToolFailure,
@@ -163,7 +253,7 @@ const CreateRoutineTool = Tool.make("create_routine", {
 
 const ListRoutinesTool = Tool.make("list_routines", {
   description:
-    "List every routine the user has, for all bots and not only yours: its title, the bot that runs it, its schedule in words, whether it is enabled, and its next run in the routine's own time zone (null when it is disabled or will not run again). Nothing here edits a routine: to change, pause or delete one, tell the user to open it in the app.",
+    "List every routine the user has, for all bots and not only yours: its routineId, title, the bot that runs it, its schedule in words ('On event: ...' for one a webhook starts), whether it is enabled, its next run in the routine's own time zone (null when it is disabled or will not run again) and its prompt. The routineId is what update_routine, set_routine_enabled and delete_routine take.",
   success: ListRoutinesResult,
   failure: PersonalToolFailure,
   dependencies,
@@ -172,6 +262,48 @@ const ListRoutinesTool = Tool.make("list_routines", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+const UpdateRoutineTool = Tool.make("update_routine", {
+  description:
+    "Change an existing routine, any bot's, by its routineId from list_routines: its title, prompt, schedule, time zone, missed-run rule, the bot that runs it, or whether it is enabled. Fields you leave out keep their current value. A new prompt replaces the old one entirely. A schedule change needs the whole new schedule (frequency plus its time, days, everyHours or date), and the next run is then worked out from now. A routine a webhook event starts has no schedule, so schedule fields are refused for it. Show the returned summary to the user.",
+  parameters: UpdateRoutineInput,
+  success: RoutineChangeResult,
+  failure: PersonalToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Update routine")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+const SetRoutineEnabledTool = Tool.make("set_routine_enabled", {
+  description:
+    "Pause (enabled false) or resume (enabled true) a routine by its routineId from list_routines. A paused routine keeps its settings and does not run; a paused event routine ignores its webhook. Resuming never replays runs that fell due while paused: the next run is the next scheduled time after now. A one-off whose time has passed cannot be resumed, and trying removes it. Show the returned summary to the user.",
+  parameters: SetRoutineEnabledInput,
+  success: RoutineChangeResult,
+  failure: PersonalToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Pause or resume routine")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+const DeleteRoutineTool = Tool.make("delete_routine", {
+  description:
+    "Delete one routine for good, named by its exact routineId from list_routines plus its current title as a check. Nothing else is removed: its past runs and their tasks stay in the history. There is no undo, so before calling, name the routine to the user and get their clear yes in this chat, unless they already asked for that routine to be deleted. When the id is unknown or the title does not match, nothing is deleted; call list_routines again rather than guessing. To stop a routine for now, pause it with set_routine_enabled instead.",
+  parameters: DeleteRoutineInput,
+  success: DeleteRoutineResult,
+  failure: PersonalToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Delete routine")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, false);
 
 const SearchMemoryTool = Tool.make("search_memory", {
@@ -295,6 +427,9 @@ export const PersonalToolkit = Toolkit.make(
   SearchProductsTool,
   CreateRoutineTool,
   ListRoutinesTool,
+  UpdateRoutineTool,
+  SetRoutineEnabledTool,
+  DeleteRoutineTool,
   SearchMemoryTool,
   SaveMemoryTool,
 );
