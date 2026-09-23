@@ -6,7 +6,7 @@ import { Link } from "@tanstack/react-router";
 
 import { cn } from "~/lib/utils";
 
-import { ROW_CLASS } from "./BotRow";
+import { ROW_CLASS, SELECTED_ROW_CLASS, selectedChatProps } from "./BotRow";
 import { GroupAvatarCluster } from "./GroupAvatarCluster";
 import {
   activeGroupMembers,
@@ -29,6 +29,7 @@ export const GroupRow = memo(function GroupRow({
   round,
   bots,
   now,
+  selected = false,
 }: {
   readonly group: PersonalGroup;
   /** The group's live round, or null. Drives the working dot and the status. */
@@ -36,6 +37,8 @@ export const GroupRow = memo(function GroupRow({
   /** Member bots that have loaded, in sort order. */
   readonly bots: ReadonlyArray<PersonalBot>;
   readonly now: number;
+  /** This group's chat is open in the desktop pane. */
+  readonly selected?: boolean | undefined;
 }): JSX.Element {
   const members = activeGroupMembers(group);
   const nameOf = (botId: string) =>
@@ -51,7 +54,8 @@ export const GroupRow = memo(function GroupRow({
       // The cluster says "group" visually; this says it to a screen reader,
       // which would otherwise hear a row that looks like every bot row.
       aria-label={`${group.name}, group chat`}
-      className={ROW_CLASS}
+      className={cn(ROW_CLASS, selected && SELECTED_ROW_CLASS)}
+      {...selectedChatProps(selected)}
     >
       <GroupAvatarCluster bots={bots} memberCount={members.length} size={56} />
       <span className="flex min-w-0 flex-1 flex-col">

@@ -81,6 +81,35 @@ export function desktopPaneLayout(pathname: string): DesktopPaneLayout {
   return "column";
 }
 
+/**
+ * Which row the desktop bot list (md+) marks as open, read off the route
+ * params. A bot's chat (any of its threads, not only the newest one the row
+ * links to), its chats list and its editor select that bot; a group chat
+ * selects the group. Team/home, settings, the new bot/group forms, Tasks,
+ * Files and Computer carry neither param and select nothing.
+ *
+ * A key rather than an object so the router `select` stays a primitive (no
+ * re-render per navigation) and a row compares one string.
+ */
+export type SidebarSelectionKey = `bot:${string}` | `group:${string}`;
+
+export function sidebarSelectionKey(params: {
+  readonly botId?: string | undefined;
+  readonly groupId?: string | undefined;
+}): SidebarSelectionKey | null {
+  if (params.groupId) return groupSelectionKey(params.groupId);
+  if (params.botId) return botSelectionKey(params.botId);
+  return null;
+}
+
+export function botSelectionKey(botId: string): SidebarSelectionKey {
+  return `bot:${botId}`;
+}
+
+export function groupSelectionKey(groupId: string): SidebarSelectionKey {
+  return `group:${groupId}`;
+}
+
 export function readDeveloperView(): boolean {
   try {
     return window.sessionStorage.getItem(DEVELOPER_VIEW_KEY) === "1";

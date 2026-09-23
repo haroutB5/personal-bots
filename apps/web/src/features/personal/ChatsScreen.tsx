@@ -13,12 +13,19 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronRight, Network, Plus, Search, Settings } from "lucide-react";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { cn } from "~/lib/utils";
 import { useThreadShells } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 
 import { capContinuousMotion, motionForSummary } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
-import { BotRow, ROW_CLASS, snapshotPreviewLabel } from "./BotRow";
+import {
+  BotRow,
+  ROW_CLASS,
+  SELECTED_ROW_CLASS,
+  selectedChatProps,
+  snapshotPreviewLabel,
+} from "./BotRow";
 import {
   buildBotSummaries,
   collectAttentionThreads,
@@ -67,10 +74,18 @@ import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 import { formatRelativeTime } from "./relativeTime";
+import { botSelectionKey, groupSelectionKey, type SidebarSelectionKey } from "./personalMode";
+import { revealInSidebar } from "./sidebarReveal";
 
 const MINUTE_MS = 60_000;
 /** Coalesces preview-key moves that land together (message sent + turn start). */
 const PREVIEW_REFRESH_DEBOUNCE_MS = 250;
+/**
+ * How long after a chat opens the list keeps its row in view while the rows
+ * settle (snapshot to live list, activity order landing). Short, so it never
+ * fights the owner's own scrolling.
+ */
+const REVEAL_SETTLE_MS = 3_000;
 
 /** Re-render once a minute so relative timestamps and the greeting stay true. */
 export function useMinuteClock(): number {
@@ -82,8 +97,9 @@ export function useMinuteClock(): number {
   return now;
 }
 
+// `md:-mx-3` pairs with the rows' `md:px-3` (see ROW_CLASS in BotRow).
 const UNPINNED_LIST_CLASS =
-  "mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)]";
+  "mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)] md:-mx-3";
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]";
@@ -121,7 +137,15 @@ function ChatsSkeletonRows(): JSX.Element {
  * no review row — because those need live data. The live list replaces this
  * seamlessly the moment it arrives.
  */
-function SnapshotBotRows({ snapshot, now }: { snapshot: ChatsSnapshot; now: number }): JSX.Element {
+function SnapshotBotRows({
+  snapshot,
+  now,
+  selectedChat,
+}: {
+  snapshot: ChatsSnapshot;
+  now: number;
+  selectedChat: SidebarSelectionKey | null;
+}): JSX.Element {
   // Rows were stored in render order, so the two sections come straight off
   // the `pinned` flag and the live list lands on the same layout.
   const { pinned, rest } = partitionPinnedSnapshotRows(snapshot.rows);
@@ -133,14 +157,23 @@ function SnapshotBotRows({ snapshot, now }: { snapshot: ChatsSnapshot; now: numb
       {pinned.length > 0 ? (
         <PinnedStrip>
           {pinned.map((row) => (
-            <PinnedSnapshotTile key={row.botId} row={row} />
+            <PinnedSnapshotTile
+              key={row.botId}
+              row={row}
+              selected={selectedChat === botSelectionKey(row.botId)}
+            />
           ))}
         </PinnedStrip>
       ) : null}
       {rest.length > 0 ? (
         <ul aria-label="Your bots" className={UNPINNED_LIST_CLASS}>
           {rest.map((row) => (
-            <SnapshotBotRow key={row.botId} row={row} now={now} />
+            <SnapshotBotRow
+              key={row.botId}
+              row={row}
+              now={now}
+              selected={selectedChat === botSelectionKey(row.botId)}
+            />
           ))}
         </ul>
       ) : null}
@@ -148,7 +181,16 @@ function SnapshotBotRows({ snapshot, now }: { snapshot: ChatsSnapshot; now: numb
   );
 }
 
-function SnapshotBotRow({ row, now }: { row: ChatsSnapshotRow; now: number }): JSX.Element {
+function SnapshotBotRow({
+  row,
+  now,
+  selected,
+}: {
+  row: ChatsSnapshotRow;
+  now: number;
+  selected: boolean;
+}): JSX.Element {
+  const rowClass = cn(ROW_CLASS, selected && SELECTED_ROW_CLASS);
   const content = (
     <>
       <BotAvatar shape={row.avatarShape} color={row.avatarColor} size={56} label={row.name} />
@@ -184,19 +226,32 @@ function SnapshotBotRow({ row, now }: { row: ChatsSnapshotRow; now: number }): J
             botId: row.botId as PersonalBotId,
             threadId: row.threadId as ThreadId,
           }}
-          className={ROW_CLASS}
+          className={rowClass}
+          {...selectedChatProps(selected)}
         >
           {content}
         </Link>
       ) : (
-        <div className={ROW_CLASS}>{content}</div>
+        <div className={rowClass} {...selectedChatProps(selected)}>
+          {content}
+        </div>
       )}
     </li>
   );
 }
 
-/** ui-spec Screen 1: header, greeting, search, bot rows, review row. */
-export function ChatsScreen(): JSX.Element {
+/**
+ * ui-spec Screen 1: header, greeting, search, bot rows, review row.
+ *
+ * `selectedChat` is the chat open in the desktop pane, from the route params
+ * (`sidebarSelectionKey`); only the md+ shell passes it. On the phone the list
+ * is its own screen and nothing is ever selected.
+ */
+export function ChatsScreen({
+  selectedChat = null,
+}: {
+  readonly selectedChat?: SidebarSelectionKey | null | undefined;
+} = {}): JSX.Element {
   const navigate = useNavigate();
   const environmentId = usePersonalEnvironmentId();
   const list = usePersonalBotsList(environmentId);
@@ -430,6 +485,7 @@ export function ChatsScreen(): JSX.Element {
             now={now}
             describeTurn={describeTurn}
             motion={motionByBotId.get(summary.bot.botId)}
+            selected={selectedChat === botSelectionKey(summary.bot.botId)}
           />
         </SwipeToDelete>
       </li>
@@ -500,8 +556,59 @@ export function ChatsScreen(): JSX.Element {
     );
   }, [environmentId, snapshotRows, snapshotKey]);
 
+  // Keep the open chat's row on screen when the chat changes from outside the
+  // list (a notification, a delegation card, the Team chart, a deep link).
+  // Per selection, not per render: a row re-sorting under a streaming reply
+  // must not drag the list along. The one exception is the settle window just
+  // after a chat opens, when the live list replaces the snapshot and the
+  // activity order lands with the thread shells, which can carry the row off
+  // screen again. A row the owner just clicked is already in view, and a fully
+  // visible row is never nudged.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const clickedRef = useRef<Element | null>(null);
+  const revealedRef = useRef<{
+    readonly key: SidebarSelectionKey;
+    readonly at: number;
+    readonly fromList: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (selectedChat === null) {
+      revealedRef.current = null;
+      return;
+    }
+    // The live rows are deps on purpose: a re-sort re-runs this within the
+    // settle window below. Before they land (skeleton or cold-start snapshot)
+    // there is nothing to reveal yet.
+    if (pinned.length === 0 && restRows.length === 0) return;
+    const root = rootRef.current;
+    const row = root?.querySelector<HTMLElement>("[data-sidebar-selected]") ?? null;
+    // Not painted yet (list still loading) or filtered out by the search:
+    // this runs again when the rows change.
+    if (root == null || row === null) return;
+    const boundary = root.closest("aside");
+    const prior = revealedRef.current;
+    if (prior !== null && prior.key === selectedChat) {
+      if (!prior.fromList && performance.now() - prior.at < REVEAL_SETTLE_MS) {
+        revealInSidebar(row, boundary);
+      }
+      return;
+    }
+    const clicked = clickedRef.current;
+    clickedRef.current = null;
+    const fromList =
+      clicked !== null && (clicked === row || clicked.contains(row) || row.contains(clicked));
+    revealedRef.current = { key: selectedChat, at: performance.now(), fromList };
+    if (!fromList) revealInSidebar(row, boundary);
+  }, [selectedChat, pinned, restRows]);
+
   return (
-    <div className="flex min-h-full min-w-0 flex-col px-5 pb-6">
+    <div
+      ref={rootRef}
+      onClickCapture={(event) => {
+        clickedRef.current = (event.target as Element).closest("a, button");
+      }}
+      className="flex min-h-full min-w-0 flex-col px-5 pb-6"
+    >
       <header className="flex h-14 items-center justify-between">
         <div className="flex min-w-0 items-baseline gap-1.5">
           <h1 className="text-[28px] leading-none font-bold text-[var(--personal-text)]">Bots</h1>
@@ -633,6 +740,7 @@ export function ChatsScreen(): JSX.Element {
                       now={now}
                       motion={motionByBotId.get(summary.bot.botId)}
                       onUnpin={() => void togglePin(summary.bot)}
+                      selected={selectedChat === botSelectionKey(summary.bot.botId)}
                     />
                   ))}
                 </PinnedStrip>
@@ -649,6 +757,7 @@ export function ChatsScreen(): JSX.Element {
                           round={roundForGroup(rounds, row.group.groupId)}
                           bots={memberBotsOf(row.group)}
                           now={now}
+                          selected={selectedChat === groupSelectionKey(row.group.groupId)}
                         />
                       </li>
                     ),
@@ -688,7 +797,7 @@ export function ChatsScreen(): JSX.Element {
       ) : null}
 
       {loaded ? null : showingSnapshot && snapshot !== null ? (
-        <SnapshotBotRows snapshot={snapshot} now={now} />
+        <SnapshotBotRows snapshot={snapshot} now={now} selectedChat={selectedChat} />
       ) : list.error === null ? (
         <ChatsSkeletonRows />
       ) : null}

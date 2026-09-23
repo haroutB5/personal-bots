@@ -13,8 +13,47 @@ import { readServerTurn, type ServerTurn } from "./delegationModel";
 import { formatRelativeTime } from "./relativeTime";
 import { useStartBotChat } from "./startBotChat";
 
+/**
+ * md+ (the desktop bot list) pads the row by 12px, and the list pulls itself
+ * out by the same amount (`md:-mx-3` in ChatsScreen), so the content stays on
+ * the header's edge while the selected fill gets room either side of it.
+ */
 export const ROW_CLASS =
-  "flex w-full min-w-0 items-center gap-[18px] py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]";
+  "flex w-full min-w-0 items-center gap-[18px] py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)] md:px-3";
+
+/**
+ * The row of the chat open in the desktop pane: a muted fill between the
+ * dividers plus a short primary bar at its leading edge. Every row text token
+ * clears AA on `--personal-fill-muted` (pinned in personalThemeContrast), and
+ * the bar clears the 3:1 non-text bar in both appearances. md+ only, so the
+ * phone, where the list and the chat are separate screens, never shows it.
+ *
+ * No clash with the swipe layer: the fill is the row's own background, which
+ * slides with the row over the layer's page colour. Rows have no hover or
+ * pressed background to fight with.
+ *
+ * Inside the row the page token becomes the fill (as `.personal-pane` does for
+ * the pane), so whatever is cut out "in the page colour" (the group cluster's
+ * rings, a badge ring) matches the fill instead of drawing dark boxes on it.
+ */
+export const SELECTED_ROW_CLASS = cn(
+  "md:relative md:rounded-[var(--personal-radius-button)] md:bg-[var(--personal-fill-muted)]",
+  "md:[--personal-bg:var(--personal-fill-muted)]",
+  "md:before:absolute md:before:inset-y-6 md:before:left-1 md:before:w-[3px]",
+  "md:before:rounded-full md:before:bg-[var(--personal-primary)]",
+);
+
+/**
+ * Attributes of the selected row or tile: `aria-current` for assistive tech
+ * (TanStack sets the same value itself when the row's link is the exact page;
+ * this also covers an older thread, the bot's chats list and its editor), and
+ * the hook the list uses to scroll it into view.
+ */
+export function selectedChatProps(
+  selected: boolean,
+): { "aria-current": "page"; "data-sidebar-selected": "" } | Record<string, never> {
+  return selected ? { "aria-current": "page", "data-sidebar-selected": "" } : {};
+}
 
 /**
  * First non-empty line of the newest user/assistant message, else the thread
@@ -69,6 +108,7 @@ export const BotRow = memo(function BotRow({
   now,
   describeTurn,
   motion,
+  selected = false,
 }: {
   environmentId: EnvironmentId;
   summary: BotSummary;
@@ -76,11 +116,15 @@ export const BotRow = memo(function BotRow({
   describeTurn: (turn: ServerTurn) => string;
   /** Avatar pose for this row; the list decides which row may animate. */
   motion?: AvatarMotion | undefined;
+  /** This bot's chat (or chats list, or editor) is open in the desktop pane. */
+  selected?: boolean | undefined;
 }): JSX.Element {
   const preview = previewOf(summary, describeTurn);
   const { bot, newestThread, provider, live, lastActivityMs } = summary;
   const status = botStatus(summary, now);
   const { start, starting } = useStartBotChat(environmentId, bot.botId);
+  const rowClass = cn(ROW_CLASS, selected && SELECTED_ROW_CLASS);
+  const selectedProps = selectedChatProps(selected);
 
   const content: ReactNode = (
     <>
@@ -137,7 +181,8 @@ export const BotRow = memo(function BotRow({
         to="/bots/$botId/edit"
         params={{ botId: bot.botId }}
         aria-label={`${bot.name}: provider unavailable, edit bot`}
-        className={ROW_CLASS}
+        className={rowClass}
+        {...selectedProps}
       >
         {content}
       </Link>
@@ -149,7 +194,8 @@ export const BotRow = memo(function BotRow({
       <Link
         to="/bots/$botId/$threadId"
         params={{ botId: bot.botId, threadId: newestThread.id }}
-        className={ROW_CLASS}
+        className={rowClass}
+        {...selectedProps}
       >
         {content}
       </Link>
@@ -162,7 +208,8 @@ export const BotRow = memo(function BotRow({
       onClick={() => void start()}
       disabled={starting}
       aria-busy={starting}
-      className={cn(ROW_CLASS, "cursor-pointer disabled:cursor-wait")}
+      className={cn(rowClass, "cursor-pointer disabled:cursor-wait")}
+      {...selectedProps}
     >
       {content}
     </button>

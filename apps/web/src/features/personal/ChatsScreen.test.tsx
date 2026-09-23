@@ -635,6 +635,82 @@ describe("ChatsScreen groups", () => {
 });
 
 /**
+ * Desktop (md+): the shell passes the chat open in the pane, and exactly that
+ * bot's row, tile or group row is marked. The phone renders the list without
+ * the prop, so nothing is ever marked there.
+ */
+describe("ChatsScreen selected chat", () => {
+  const decodeGroup = Schema.decodeUnknownSync(PersonalGroup);
+  const crew = () =>
+    decodeGroup({
+      groupId: "group-1",
+      name: "Launch crew",
+      description: "",
+      threadId: "group-thread-1",
+      maxBotTurns: 6,
+      members: [],
+      createdAt: "2026-09-19T09:00:00.000Z",
+      updatedAt: "2026-09-19T09:00:00.000Z",
+      archivedAt: null,
+    });
+
+  async function render(selectedChat?: "bot:bot-cto" | "bot:bot-scout" | "group:group-1") {
+    stubWindow();
+    state.listData = {
+      bots: [
+        bot("bot-cto", "CTO", { team: "dev", lead: true, pinned: true }),
+        bot("bot-scout", "Scout"),
+      ],
+      threads: [],
+      personalProjectId: null,
+    };
+    state.groupsData = { groups: [crew()], rounds: [] };
+    await act(async () => {
+      renderer = create(<ChatsScreen selectedChat={selectedChat} />);
+    });
+  }
+
+  /** Every element marked as the open chat. Host `<a>`s from the Link mock carry no props. */
+  const marked = () =>
+    renderer!.root.findAll(
+      (node) => node.props["aria-current"] === "page" && node.props["data-sidebar-selected"] === "",
+    );
+
+  it("marks nothing without a selection (the phone, Team, Tasks, Files, Computer)", async () => {
+    await render();
+    expect(marked()).toEqual([]);
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("md:bg-[var(--personal-fill-muted)]");
+  });
+
+  it("marks the open bot's row, and only it", async () => {
+    await render("bot:bot-scout");
+    const [row, ...rest] = marked();
+    expect(rest).toEqual([]);
+    expect(row!.props.params).toEqual({ botId: "bot-scout" });
+    expect(row!.props.className).toContain("md:bg-[var(--personal-fill-muted)]");
+  });
+
+  it("marks a pinned bot's tile in the strip", async () => {
+    await render("bot:bot-cto");
+    const [tile, ...rest] = marked();
+    expect(rest).toEqual([]);
+    expect(tile!.props["aria-label"]).toContain("CTO");
+    expect(tile!.props.className).toContain("md:bg-[var(--personal-fill-muted)]");
+  });
+
+  it("marks a group chat's row and follows the selection when it changes", async () => {
+    await render("group:group-1");
+    expect(marked().map((node) => node.props["aria-label"])).toEqual(["Launch crew, group chat"]);
+
+    await act(async () => renderer!.update(<ChatsScreen selectedChat="bot:bot-scout" />));
+    expect(marked().map((node) => node.props.params)).toEqual([{ botId: "bot-scout" }]);
+
+    await act(async () => renderer!.update(<ChatsScreen selectedChat={null} />));
+    expect(marked()).toEqual([]);
+  });
+});
+
+/**
  * The preview-refresh effect exists to catch a message landing on a bot's
  * newest thread. Its key is built from the thread shells, which arrive after
  * the bot list, so seeding the baseline from the pre-data render made the

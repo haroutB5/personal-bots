@@ -108,6 +108,13 @@ const PAIRS: ReadonlyArray<readonly [string, string, number, string]> = [
   // The filled part of a usage bar against its own track. This, not the track
   // against the page, is the ratio that carries "how much is used".
   ["--personal-text-tertiary", "--personal-track", 3, "usage bar fill on its track"],
+  // The selected row/tile in the desktop bot list sits on --personal-fill-muted
+  // (SELECTED_ROW_CLASS). Name, secondary, amber status (above), timestamp and
+  // preview all have to hold there, and so do its bar and the live dot.
+  ["--personal-text-tertiary", "--personal-fill-muted", 4.5, "timestamp on the selected row"],
+  ["--personal-text-preview", "--personal-fill-muted", 4.5, "preview on the selected row"],
+  ["--personal-primary", "--personal-fill-muted", 3, "selected row's accent bar"],
+  ["--personal-live", "--personal-fill-muted", 3, "live dot on the selected row"],
 ];
 
 /**
@@ -149,6 +156,7 @@ const LIGHT_EXCEPTIONS: Readonly<Record<string, number>> = {
   "--personal-review on --personal-review-bg": 2.24,
   // The green "live" dot, a hair under the 3:1 non-text bar.
   "--personal-live on --personal-bg": 2.92,
+  "--personal-live on --personal-fill-muted": 2.75,
 };
 
 describe.each([

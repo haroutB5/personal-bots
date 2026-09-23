@@ -1,7 +1,7 @@
 import type { CSSProperties, JSX } from "react";
 import { useRef } from "react";
 
-import { Outlet, useLocation } from "@tanstack/react-router";
+import { Outlet, useLocation, useParams } from "@tanstack/react-router";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 
@@ -15,7 +15,12 @@ import {
   useChatSidePanel,
 } from "./desktopColumns";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
-import { activeTabFor, type DesktopPaneLayout, desktopPaneLayout } from "./personalMode";
+import {
+  activeTabFor,
+  type DesktopPaneLayout,
+  desktopPaneLayout,
+  sidebarSelectionKey,
+} from "./personalMode";
 import { setPersonalNumberPreference, usePersonalNumberPreference } from "./personalPreferences";
 import { PersonalTabBar } from "./PersonalTabBar";
 import { TeamScreen } from "./TeamScreen";
@@ -40,8 +45,9 @@ const PANE_CONTENT_CLASS: Record<DesktopPaneLayout, string> = {
  * Phone: the routed screen fills the column and the tab bar sits below it
  * (hidden on focused editors). md+: the bot list is a fixed left column with
  * the tab bar, and the routed screen fills the pane to its right. With no chat
- * open the pane shows the team rather than an empty page. The list's inner
- * edge drags to resize it (`desktopColumns` has the limits).
+ * open the pane shows the team rather than an empty page, and with one open
+ * its row in the list is marked. The list's inner edge drags to resize it
+ * (`desktopColumns` has the limits).
  */
 export function PersonalShell(): JSX.Element {
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -51,6 +57,9 @@ export function PersonalShell(): JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sidebarWidth = usePersonalNumberPreference("sidebarWidth");
   const sidePanel = useChatSidePanel();
+  // The chat open in the pane, marked in the bot list beside it. Straight off
+  // the route params, so it follows every navigation and holds no state.
+  const selectedChat = useParams({ strict: false, select: sidebarSelectionKey });
 
   if (!isWide) {
     return (
@@ -90,7 +99,7 @@ export function PersonalShell(): JSX.Element {
         style={{ width: "var(--personal-sidebar-effective)" }}
       >
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pt-[env(safe-area-inset-top)]">
-          <ChatsScreen />
+          <ChatsScreen selectedChat={selectedChat} />
         </div>
         <PersonalTabBar active={activeTab ?? "chats"} />
         <ColumnResizeHandle

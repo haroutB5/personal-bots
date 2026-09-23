@@ -1,6 +1,45 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { activeTabFor, desktopPaneLayout, isPersonalPath } from "./personalMode";
+import {
+  activeTabFor,
+  botSelectionKey,
+  desktopPaneLayout,
+  groupSelectionKey,
+  isPersonalPath,
+  sidebarSelectionKey,
+} from "./personalMode";
+
+describe("sidebarSelectionKey", () => {
+  it("selects the bot for any of its chats, its chats list and its editor", () => {
+    // /bots/$botId/$threadId: an older thread still selects the bot's row.
+    expect(sidebarSelectionKey({ botId: "b1", threadId: "t1" } as { botId: string })).toBe(
+      "bot:b1",
+    );
+    // /bots/$botId (the bot's chats) and /bots/$botId/edit.
+    expect(sidebarSelectionKey({ botId: "b1" })).toBe("bot:b1");
+    expect(sidebarSelectionKey({ botId: "b1" })).toBe(botSelectionKey("b1"));
+  });
+
+  it("selects the group for a group chat", () => {
+    expect(sidebarSelectionKey({ groupId: "g1" })).toBe("group:g1");
+    expect(sidebarSelectionKey({ groupId: "g1" })).toBe(groupSelectionKey("g1"));
+  });
+
+  it("selects nothing on Team/home, Tasks, Files, Computer and the forms", () => {
+    // /bots, /bots/team, /bots/settings, /bots/new, /bots/groups/new, /files,
+    // /computer (its bot rides in the search, not a param), /tasks and task or
+    // routine detail: none of them carries a botId or groupId param.
+    expect(sidebarSelectionKey({})).toBeNull();
+    expect(sidebarSelectionKey({ taskId: "t1" } as {})).toBeNull();
+    expect(sidebarSelectionKey({ routineId: "r1" } as {})).toBeNull();
+    expect(sidebarSelectionKey({ botId: undefined, groupId: undefined })).toBeNull();
+    expect(sidebarSelectionKey({ botId: "" })).toBeNull();
+  });
+
+  it("keeps bot and group keys apart even when the ids collide", () => {
+    expect(botSelectionKey("x")).not.toBe(groupSelectionKey("x"));
+  });
+});
 
 describe("isPersonalPath", () => {
   it("claims the four tabs and everything under /bots and /tasks", () => {

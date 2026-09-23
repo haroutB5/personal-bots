@@ -17,6 +17,7 @@ import { cn } from "~/lib/utils";
 
 import type { AvatarMotion } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
+import { selectedChatProps } from "./BotRow";
 import { botStatus, type BotSummary } from "./botSummaries";
 import type { ChatsSnapshotRow } from "./chatsSnapshot";
 import { GroupAvatarCluster } from "./GroupAvatarCluster";
@@ -65,6 +66,16 @@ const TILE_CLASS = cn(
   "text-center outline-none select-none [-webkit-touch-callout:none]",
   "focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
 );
+
+/**
+ * The tile of the chat open in the desktop pane (md+ only; see
+ * `SELECTED_ROW_CLASS` for the row version): the same muted fill in the
+ * tile's own rounded card, with the page token swapped for the fill so the
+ * badge's cut-out ring matches it. No bar: under the caption it read as an
+ * underlined link, and there is no room for one without moving the strip.
+ */
+const SELECTED_TILE_CLASS =
+  "md:bg-[var(--personal-fill-muted)] md:[--personal-bg:var(--personal-fill-muted)]";
 
 const TILE_NAME_CLASS =
   "w-full truncate text-[12px] leading-[15px] font-medium text-[var(--personal-text)]";
@@ -159,6 +170,7 @@ export function PinnedTile({
   statusLabel,
   target,
   onUnpin,
+  selected = false,
 }: {
   readonly name: string;
   readonly avatar: ReactNode;
@@ -168,6 +180,8 @@ export function PinnedTile({
   readonly target: PinnedTileTarget;
   /** Null on the cold-start tile, which has no bot record to update yet. */
   readonly onUnpin: (() => void) | null;
+  /** This chat is open in the desktop pane. */
+  readonly selected?: boolean | undefined;
 }): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const anchor = useRef<HTMLLIElement | null>(null);
@@ -252,6 +266,8 @@ export function PinnedTile({
   // the tile states its own name once — plus the status the strip would
   // otherwise have dropped with the preview line.
   const label = statusLabel === null ? name : `${name}, ${statusLabel}`;
+  const tileClass = cn(TILE_CLASS, selected && SELECTED_TILE_CLASS);
+  const selectedProps = selectedChatProps(selected);
 
   return (
     <li ref={anchor} className="relative shrink-0 snap-start" style={{ width: TILE_WIDTH_PX }}>
@@ -260,7 +276,8 @@ export function PinnedTile({
           to="/bots/$botId/$threadId"
           params={{ botId: target.botId, threadId: target.threadId }}
           aria-label={label}
-          className={TILE_CLASS}
+          className={tileClass}
+          {...selectedProps}
           {...pressProps}
         >
           {content}
@@ -270,7 +287,8 @@ export function PinnedTile({
           to="/bots/$botId/edit"
           params={{ botId: target.botId }}
           aria-label={`${label}, edit bot`}
-          className={TILE_CLASS}
+          className={tileClass}
+          {...selectedProps}
           {...pressProps}
         >
           {content}
@@ -280,7 +298,8 @@ export function PinnedTile({
           to="/bots/groups/$groupId"
           params={{ groupId: target.groupId }}
           aria-label={`${label}, group chat`}
-          className={TILE_CLASS}
+          className={tileClass}
+          {...selectedProps}
           {...pressProps}
         >
           {content}
@@ -292,13 +311,14 @@ export function PinnedTile({
           disabled={target.starting}
           aria-busy={target.starting}
           aria-label={label}
-          className={cn(TILE_CLASS, "cursor-pointer disabled:cursor-wait")}
+          className={cn(tileClass, "cursor-pointer disabled:cursor-wait")}
+          {...selectedProps}
           {...pressProps}
         >
           {content}
         </button>
       ) : (
-        <div aria-label={label} className={TILE_CLASS} {...pressProps}>
+        <div aria-label={label} className={tileClass} {...selectedProps} {...pressProps}>
           {content}
         </div>
       )}
@@ -332,6 +352,7 @@ export function PinnedBotTile({
   now,
   motion,
   onUnpin,
+  selected = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly summary: BotSummary;
@@ -339,6 +360,7 @@ export function PinnedBotTile({
   /** Pose for this face; the screen caps the continuous one across every row. */
   readonly motion?: AvatarMotion | undefined;
   readonly onUnpin: () => void;
+  readonly selected?: boolean | undefined;
 }): JSX.Element {
   const { bot, newestThread, provider } = summary;
   const { start, starting } = useStartBotChat(environmentId, bot.botId);
@@ -366,6 +388,7 @@ export function PinnedBotTile({
       statusLabel={badge === null ? null : status.label}
       target={target}
       onUnpin={onUnpin}
+      selected={selected}
     />
   );
 }
@@ -384,11 +407,13 @@ export function PinnedGroupTile({
   round,
   bots,
   onUnpin,
+  selected = false,
 }: {
   readonly group: PersonalGroup;
   readonly round: PersonalGroupRound | null;
   readonly bots: ReadonlyArray<PersonalBot>;
   readonly onUnpin: () => void;
+  readonly selected?: boolean | undefined;
 }): JSX.Element {
   const nameOf = (botId: string) =>
     bots.find((candidate) => candidate.botId === botId)?.name ?? null;
@@ -412,6 +437,7 @@ export function PinnedGroupTile({
       statusLabel={badge === null ? groupSubtitle(group, nameOf) : status.label}
       target={{ kind: "group", groupId: group.groupId }}
       onUnpin={onUnpin}
+      selected={selected}
     />
   );
 }
@@ -422,7 +448,13 @@ export function PinnedGroupTile({
  * there is no badge and no status to speak — the live tile replaces it in
  * place the moment `personalBots.list` lands.
  */
-export function PinnedSnapshotTile({ row }: { readonly row: ChatsSnapshotRow }): JSX.Element {
+export function PinnedSnapshotTile({
+  row,
+  selected = false,
+}: {
+  readonly row: ChatsSnapshotRow;
+  readonly selected?: boolean | undefined;
+}): JSX.Element {
   return (
     <PinnedTile
       name={row.name}
@@ -446,6 +478,7 @@ export function PinnedSnapshotTile({ row }: { readonly row: ChatsSnapshotRow }):
             }
       }
       onUnpin={null}
+      selected={selected}
     />
   );
 }
