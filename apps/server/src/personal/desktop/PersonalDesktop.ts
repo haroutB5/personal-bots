@@ -1,0 +1,456 @@
+/**
+ * The user's real Windows desktop, shared by every bot one at a time.
+ *
+ * A bot's first desktop action claims the PC; it keeps it until its turn
+ * ends, it calls `computer_release`, it goes {@link DESKTOP_IDLE_TIMEOUT_MS}
+ * without an action, or the user stops it (Esc, or the
+ * app's Stop button). Other bots wait in line inside their tool call.
+ *
+ * Approval is deliberately off (the owner's decision); the rails are the
+ * always-visible overlay while a bot holds the PC, the stop hotkey, and the
+ * helper refusing to inject input while the user's own mouse or keyboard is
+ * active.
+ */
+// @effect-diagnostics nodeBuiltinImport:off - the helper's directory is a plain path join.
+// @effect-diagnostics globalTimers:off - queue waits bridge a promise-based driver.
+// @effect-diagnostics globalDate:off - status timestamps are plain ISO strings.
+import * as NodePath from "node:path";
+
+import {
+  PERSONAL_DESKTOP_STOP_HOTKEY,
+  type PersonalDesktopStatus,
+  type PersonalDesktopStop,
+  type PersonalDesktopStopReason,
+} from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Context from "effect/Context";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Stream from "effect/Stream";
+
+import * as ServerConfig from "../../config.ts";
+import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
+import { type DesktopDriver, DesktopHelperError, WindowsDesktopDriver } from "./DesktopHelper.ts";
+import {
+  type DesktopClaimant,
+  type DesktopHolderState,
+  DESKTOP_IDLE_TIMEOUT_MS,
+  DesktopLockCore,
+  type HandOver,
+} from "./DesktopLock.ts";
+import { DesktopCoordinateError, type ScreenFrame } from "./desktopGeometry.ts";
+import { DesktopKeyError } from "./desktopKeys.ts";
+
+/** How long a bot waits in line inside one tool call before being told to try later. */
+export const DESKTOP_QUEUE_WAIT_MS = 5 * 60_000;
+const IDLE_SWEEP_MS = 10_000;
+
+export type DesktopActionErrorKind =
+  | "unavailable"
+  | "stopped"
+  | "busy"
+  | "user_active"
+  | "invalid"
+  | "failed";
+
+/** `reason` is written for the calling model. */
+export class PersonalDesktopActionError extends Data.TaggedError("PersonalDesktopActionError")<{
+  readonly kind: DesktopActionErrorKind;
+  readonly reason: string;
+}> {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
+export const STOPPED_REASON = `The user took back control of the PC (they pressed ${PERSONAL_DESKTOP_STOP_HOTKEY} or Stop in the app). Stop using the desktop now: do not retry. Tell the user what you had done so far and ask whether they want you to continue.`;
+
+export interface DesktopActionContext {
+  readonly driver: DesktopDriver;
+  /** The last screenshot this chat took, which its coordinates refer to. */
+  readonly frame: ScreenFrame | null;
+  readonly setFrame: (frame: ScreenFrame) => void;
+  /** False once the user stopped this bot or it lost the PC mid-action. */
+  readonly stillHeld: () => boolean;
+}
+
+export interface PersonalDesktopShape {
+  readonly available: boolean;
+  /**
+   * Runs one desktop action for a bot: waits for the PC if another bot has
+   * it, then runs `run` with the PC held. Actions of the holder run one at a
+   * time even when the model issues them in parallel.
+   */
+  readonly act: <A>(
+    claimant: DesktopClaimant,
+    operation: string,
+    run: (context: DesktopActionContext) => Promise<A>,
+  ) => Effect.Effect<A, PersonalDesktopActionError>;
+  /** The bot is done with the PC. False when it did not hold it. */
+  readonly release: (threadId: string) => Effect.Effect<boolean>;
+  /** The user took the PC back (hotkey or app). */
+  readonly stop: (
+    by: Exclude<PersonalDesktopStopReason, "idle">,
+  ) => Effect.Effect<PersonalDesktopStatus>;
+  /** A chat's turn ended: it lets go of the PC and leaves the line. */
+  readonly threadTurnEnded: (threadId: string) => Effect.Effect<void>;
+  readonly status: Effect.Effect<PersonalDesktopStatus>;
+  readonly changes: Stream.Stream<PersonalDesktopStatus>;
+}
+
+export class PersonalDesktop extends Context.Service<PersonalDesktop, PersonalDesktopShape>()(
+  "t3/personal/desktop/PersonalDesktop",
+) {}
+
+interface Waiter {
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+  readonly reject: (error: PersonalDesktopActionError) => void;
+}
+
+export interface DesktopServiceOptions {
+  /** Null where there is no desktop to drive (not Windows). */
+  readonly driver: DesktopDriver | null;
+  readonly now?: () => number;
+  readonly idleTimeoutMs?: number;
+  readonly queueWaitMs?: number;
+  /** Overlay left visible to screenshots, for evidence captures. */
+  readonly overlayCapturable?: boolean;
+}
+
+const iso = (millis: number) => new Date(millis).toISOString();
+
+export const overlayText = (botName: string) =>
+  `${botName} is using your PC  ·  press ${PERSONAL_DESKTOP_STOP_HOTKEY} to take it back`;
+
+function helperFailure(error: unknown): PersonalDesktopActionError {
+  if (error instanceof PersonalDesktopActionError) return error;
+  if (error instanceof DesktopHelperError) {
+    switch (error.code) {
+      case "aborted":
+        return new PersonalDesktopActionError({ kind: "stopped", reason: STOPPED_REASON });
+      case "user_active":
+        return new PersonalDesktopActionError({
+          kind: "user_active",
+          reason: `${error.message} Nothing more was done. Wait a few seconds, take a fresh screenshot and try again; if the user keeps using the PC, ask them whether you should continue.`,
+        });
+      case "unavailable":
+        return new PersonalDesktopActionError({ kind: "unavailable", reason: error.message });
+      default:
+        return new PersonalDesktopActionError({ kind: "failed", reason: error.message });
+    }
+  }
+  if (error instanceof DesktopCoordinateError || error instanceof DesktopKeyError) {
+    return new PersonalDesktopActionError({ kind: "invalid", reason: error.message });
+  }
+  return new PersonalDesktopActionError({
+    kind: "failed",
+    reason: `The desktop action failed: ${error instanceof Error ? error.message : String(error)}`,
+  });
+}
+
+/** The service without its runtime wiring, so tests drive it with a fake driver and clock. */
+export const makeDesktopService = (options: DesktopServiceOptions) =>
+  Effect.gen(function* () {
+    const now = options.now ?? Date.now;
+    const driver = options.driver;
+    const lock = new DesktopLockCore(options.idleTimeoutMs ?? DESKTOP_IDLE_TIMEOUT_MS);
+    const queueWaitMs = options.queueWaitMs ?? DESKTOP_QUEUE_WAIT_MS;
+    const waiters = new Map<string, Waiter>();
+    const frames = new Map<string, ScreenFrame>();
+    /** Chats the user stopped, refused until their turn ends. */
+    const stopped = new Set<string>();
+    let lastStop: PersonalDesktopStop | null = null;
+    let overlayShownFor: string | null = null;
+    /** One action at a time, whoever holds the PC. */
+    let actionChain: Promise<unknown> = Promise.resolve();
+    const pubsub = yield* PubSub.unbounded<PersonalDesktopStatus>();
+
+    const snapshot = (): PersonalDesktopStatus => {
+      const holder = lock.holder;
+      return {
+        available: driver !== null,
+        holder:
+          holder === null
+            ? null
+            : {
+                threadId: holder.threadId,
+                botId: holder.botId,
+                botName: holder.botName,
+                since: iso(holder.since),
+                lastActionAt: iso(holder.lastActionAt),
+              },
+        waiting: lock.waiting.map((entry) => ({ ...entry })),
+        lastStop,
+        stopHotkey: PERSONAL_DESKTOP_STOP_HOTKEY,
+      };
+    };
+
+    const publish = () => {
+      Effect.runSync(PubSub.publish(pubsub, snapshot()));
+    };
+
+    /** Shows the overlay for the holder, or hides it; failures only log. */
+    const syncOverlay = () => {
+      if (driver === null) return;
+      const holder = lock.holder;
+      const wanted = holder === null ? null : holder.botName;
+      if (wanted === overlayShownFor) return;
+      overlayShownFor = wanted;
+      driver
+        .request("overlay", {
+          show: wanted !== null,
+          text: wanted === null ? "" : overlayText(wanted),
+          capturable: options.overlayCapturable === true,
+        })
+        .catch(() => {
+          // The helper may be gone; it restarts (and the overlay with it) on
+          // the next action. Forget what was shown so that action re-shows it.
+          overlayShownFor = null;
+        });
+    };
+
+    const applyHandOver = (handOver: HandOver) => {
+      if (handOver.previous !== null) frames.delete(handOver.previous.threadId);
+      if (handOver.promoted !== null) {
+        const waiter = waiters.get(handOver.promoted.threadId);
+        waiters.delete(handOver.promoted.threadId);
+        waiter?.resolve();
+      }
+      if (handOver.previous !== null || handOver.promoted !== null) {
+        syncOverlay();
+        publish();
+      }
+    };
+
+    const expireIdle = () => {
+      const handOver = lock.expireIdle(now());
+      if (handOver.previous !== null) {
+        lastStop = {
+          threadId: handOver.previous.threadId,
+          botName: handOver.previous.botName,
+          by: "idle",
+          at: iso(now()),
+        };
+      }
+      applyHandOver(handOver);
+    };
+
+    const stopAllNow = (by: PersonalDesktopStopReason) => {
+      const { stopped: holder, turnedAway } = lock.stopAll();
+      const error = new PersonalDesktopActionError({ kind: "stopped", reason: STOPPED_REASON });
+      if (holder !== null) {
+        stopped.add(holder.threadId);
+        frames.delete(holder.threadId);
+        lastStop = { threadId: holder.threadId, botName: holder.botName, by, at: iso(now()) };
+      }
+      for (const entry of turnedAway) {
+        stopped.add(entry.threadId);
+        const waiter = waiters.get(entry.threadId);
+        waiters.delete(entry.threadId);
+        waiter?.reject(error);
+      }
+      syncOverlay();
+      publish();
+    };
+
+    driver?.onKill(() => stopAllNow("hotkey"));
+
+    const waitForTurn = (claimant: DesktopClaimant): Promise<void> => {
+      let waiter = waiters.get(claimant.threadId);
+      if (waiter === undefined) {
+        let resolve!: () => void;
+        let reject!: (error: PersonalDesktopActionError) => void;
+        const promise = new Promise<void>((res, rej) => {
+          resolve = res;
+          reject = rej;
+        });
+        // A waiter nobody awaits (its call was interrupted) must not surface
+        // as an unhandled rejection when the user later hits stop.
+        promise.catch(() => undefined);
+        waiter = { promise, resolve, reject };
+        waiters.set(claimant.threadId, waiter);
+      }
+      return waiter.promise;
+    };
+
+    const leaveLine = (threadId: string) => {
+      const waiter = waiters.get(threadId);
+      waiters.delete(threadId);
+      if (lock.leaveLine(threadId)) publish();
+      return waiter;
+    };
+
+    /** Claims the PC for `claimant`, waiting in line when another bot has it. */
+    const acquire = (claimant: DesktopClaimant): Effect.Effect<void, PersonalDesktopActionError> =>
+      Effect.suspend(() => {
+        if (stopped.has(claimant.threadId)) {
+          return Effect.fail(
+            new PersonalDesktopActionError({ kind: "stopped", reason: STOPPED_REASON }),
+          );
+        }
+        expireIdle();
+        const claim = lock.claim(claimant, now());
+        if (claim.status === "granted") {
+          syncOverlay();
+          publish();
+          return Effect.void;
+        }
+        publish();
+        const holderName = claim.holder.botName;
+        return Effect.tryPromise({
+          try: (signal) =>
+            new Promise<void>((resolve, reject) => {
+              const timer = setTimeout(() => {
+                leaveLine(claimant.threadId);
+                reject(
+                  new PersonalDesktopActionError({
+                    kind: "busy",
+                    reason: `${holderName} is still using the PC after ${Math.round(queueWaitMs / 60_000)} minutes of waiting. Nothing was done. Carry on with other work or try again later; tell the user if you need the PC urgently.`,
+                  }),
+                );
+              }, queueWaitMs);
+              signal.addEventListener("abort", () => {
+                clearTimeout(timer);
+                leaveLine(claimant.threadId);
+              });
+              waitForTurn(claimant).then(
+                () => {
+                  clearTimeout(timer);
+                  resolve();
+                },
+                (error: unknown) => {
+                  clearTimeout(timer);
+                  reject(error);
+                },
+              );
+            }),
+          catch: helperFailure,
+        });
+      });
+
+    const runExclusive = <A>(task: () => Promise<A>): Promise<A> => {
+      const result = actionChain.then(task, task);
+      actionChain = result.catch(() => undefined);
+      return result;
+    };
+
+    const act: PersonalDesktopShape["act"] = (claimant, operation, run) =>
+      Effect.gen(function* () {
+        if (driver === null) {
+          return yield* new PersonalDesktopActionError({
+            kind: "unavailable",
+            reason: "Desktop control only works when the bots server runs on Windows.",
+          });
+        }
+        yield* acquire(claimant);
+        const result = yield* Effect.tryPromise({
+          try: () =>
+            runExclusive(async () => {
+              // Checked again inside the chain: a stop can land while this
+              // action waited behind another one of the same bot.
+              if (!lock.isHolder(claimant.threadId)) {
+                throw stopped.has(claimant.threadId)
+                  ? new PersonalDesktopActionError({ kind: "stopped", reason: STOPPED_REASON })
+                  : new PersonalDesktopActionError({
+                      kind: "busy",
+                      reason:
+                        "You no longer hold the PC (it was idle too long). Take a fresh screenshot to claim it again.",
+                    });
+              }
+              lock.touch(claimant.threadId, now());
+              try {
+                return await run({
+                  driver,
+                  frame: frames.get(claimant.threadId) ?? null,
+                  setFrame: (frame) => {
+                    frames.set(claimant.threadId, frame);
+                  },
+                  stillHeld: () => lock.isHolder(claimant.threadId),
+                });
+              } finally {
+                lock.touch(claimant.threadId, now());
+              }
+            }),
+          catch: helperFailure,
+        }).pipe(Effect.withSpan(`PersonalDesktop.${operation}`));
+        return result;
+      });
+
+    const release: PersonalDesktopShape["release"] = (threadId) =>
+      Effect.sync(() => {
+        const handOver = lock.release(threadId, now());
+        applyHandOver(handOver);
+        return handOver.previous !== null;
+      });
+
+    const stop: PersonalDesktopShape["stop"] = (by) =>
+      Effect.sync(() => {
+        stopAllNow(by);
+        return snapshot();
+      });
+
+    const threadTurnEnded: PersonalDesktopShape["threadTurnEnded"] = (threadId) =>
+      Effect.sync(() => {
+        stopped.delete(threadId);
+        const waiter = leaveLine(threadId);
+        waiter?.reject(
+          new PersonalDesktopActionError({ kind: "busy", reason: "Your turn ended." }),
+        );
+        applyHandOver(lock.release(threadId, now()));
+      });
+
+    return {
+      service: PersonalDesktop.of({
+        available: driver !== null,
+        act,
+        release,
+        stop,
+        threadTurnEnded,
+        status: Effect.sync(snapshot),
+        changes: Stream.fromPubSub(pubsub),
+      }),
+      /** Drops a holder idle past the timeout; the layer runs it on a timer. */
+      sweep: Effect.sync(expireIdle),
+    };
+  });
+
+const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
+
+export const layer = Layer.effect(
+  PersonalDesktop,
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+    const platform = yield* HostProcessPlatform;
+    const driver =
+      platform === "win32"
+        ? new WindowsDesktopDriver(NodePath.join(config.stateDir, "desktop-helper"))
+        : null;
+    yield* Effect.addFinalizer(() => Effect.sync(() => driver?.dispose()));
+    const { service, sweep } = yield* makeDesktopService({
+      driver,
+      overlayCapturable: process.env.PB_DESKTOP_OVERLAY_CAPTURABLE === "1",
+    });
+    // A turn that ends lets go of the PC: nobody should hold the user's
+    // desktop across a finished reply, and a stopped chat may try again on
+    // the user's next message.
+    const events = yield* engine.subscribeDomainEvents;
+    yield* Stream.runForEach(events, (event) =>
+      event.type === "thread.session-set" &&
+      !ACTIVE_SESSION_STATUSES.has(event.payload.session.status)
+        ? service.threadTurnEnded(event.payload.threadId)
+        : Effect.void,
+    ).pipe(Effect.forkScoped);
+    yield* sweep.pipe(
+      Effect.andThen(Effect.sleep(IDLE_SWEEP_MS)),
+      Effect.forever,
+      Effect.forkScoped,
+    );
+    return service;
+  }),
+);
+
+export type { DesktopClaimant, DesktopHolderState };
