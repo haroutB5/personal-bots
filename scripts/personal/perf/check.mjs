@@ -50,6 +50,9 @@ for (const [journey, metrics] of Object.entries(budget.journeys)) {
   }
   for (const [metric, rule] of Object.entries(metrics)) {
     const observed = summary[metric]?.p50;
+    // The ratchet uses p75, so one quick run cannot set a budget that the
+    // next ordinary run fails.
+    const settled = summary[metric]?.p75 ?? observed;
     if (observed === undefined || observed === null) continue;
     const ok = observed <= rule.max;
     console.log(
@@ -61,7 +64,7 @@ for (const [journey, metrics] of Object.entries(budget.journeys)) {
     // `slack` is an absolute floor for small deterministic counters (0 KB
     // must not become a budget of 0).
     const candidate = round(
-      Math.max(observed * (1 + (rule.headroom ?? 0)), observed + (rule.slack ?? 0)),
+      Math.max(settled * (1 + (rule.headroom ?? 0)), settled + (rule.slack ?? 0)),
       0,
     );
     if (ratchet && ok && candidate < rule.max) {

@@ -44,12 +44,15 @@ for (const [journey, metrics] of Object.entries(budget.journeys)) {
   }
   for (const [metric, rule] of Object.entries(metrics)) {
     const observed = summary[metric]?.p50;
+    // The ratchet uses p75, so one quick run cannot set a budget that the
+    // next ordinary run fails.
+    const settled = summary[metric]?.p75 ?? observed;
     if (observed === undefined || observed === null) continue;
     const ok = observed <= rule.max;
     console.log(`${ok ? "ok  " : "FAIL"} ${journey}.${metric} p50=${observed} budget=${rule.max}`);
     if (!ok) failed += 1;
     const candidate = Math.round(
-      Math.max(observed * (1 + (rule.headroom ?? 0)), observed + (rule.slack ?? 0)),
+      Math.max(settled * (1 + (rule.headroom ?? 0)), settled + (rule.slack ?? 0)),
     );
     if (argv.includes("--ratchet") && ok && candidate < rule.max) {
       rule.max = candidate;

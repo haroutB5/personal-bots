@@ -83,8 +83,10 @@ wall and its run-to-run spread (cv). The first baseline (2026-09-23, local,
   in every accepted change.
 
 `budget.json` therefore gates wall p50 with headroom (machine noise), plus
-deterministic counters with tight headroom. Budgets only move down
-(`--ratchet`), and each lowering is committed with the change that earned it.
+deterministic counters with tight headroom and an absolute `slack`. Budgets only
+move down: `--ratchet` lowers a beaten budget to p75 x (1 + headroom), using p75
+so that one quick run cannot set a budget the next ordinary run fails. Each
+lowering is committed with the change that earned it.
 
 ## Kill switches
 

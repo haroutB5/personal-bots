@@ -182,7 +182,9 @@ node <skill>/scripts/check.mjs --config perf.config.json --ratchet  # lower beat
 `budget.json` (created from `templates/budget.example.json`) holds p50
 ceilings per journey. Wall ceilings get headroom (machine noise, 30-50%).
 Deterministic counters get tight headroom plus an absolute `slack`. Budgets
-only move down, and each lowering is committed with the change that earned it.
+only move down. `--ratchet` lowers a beaten budget to p75 x (1 + headroom), not
+p50, so one fast run cannot set a budget that ordinary runs then fail. Each
+lowering is committed with the change that earned it.
 Run the check before every release, and in CI or a nightly job if the app has
 one.
 
