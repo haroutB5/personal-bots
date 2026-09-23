@@ -17,6 +17,9 @@ the rollback target. -NoPrune skips it. This runs here rather than in
 build.ps1 because only here is the new release known to actually start, and
 only here is the rollback target known at all.
 
+The server (node) and its T3 Connect relay (cloudflared) are then raised to
+AboveNormal priority, best-effort (Set-PbServerPriority in common.ps1).
+
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\restart.ps1
 #>
@@ -77,6 +80,7 @@ if ($task -and $taskRoot -eq $Root -and -not $Node) {
         $next = Read-PbServerState -Paths $paths
         if ($next -and (Test-PbServerProcess -ProcessId ([int]$next.pid) -BinPath $next.binPath -BaseDir $next.baseDir)) {
             Write-Host "Personal Bots restarted through the '$PbTaskName' task (pid $($next.pid), release $($next.release))."
+            Set-PbServerPriority -RootProcessId ([int]$next.pid)
             Invoke-PbPostRestartPrune
             exit 0
         }
@@ -90,4 +94,6 @@ if ($Node) { $startArgs.Node = $Node }
 & (Join-Path $PSScriptRoot 'start.ps1') @startArgs
 # start.ps1 throws if the server did not come up, so reaching this line means
 # the release works.
+$started = Read-PbServerState -Paths $paths
+if ($started -and $started.pid) { Set-PbServerPriority -RootProcessId ([int]$started.pid) }
 Invoke-PbPostRestartPrune

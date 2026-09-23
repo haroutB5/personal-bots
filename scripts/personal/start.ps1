@@ -113,6 +113,8 @@ function Start-PbServerOnce {
         $runtime = Read-PbRuntimeState -BaseDir $paths.BaseDir
         if ($runtime -and $runtime.startedAt -and ([datetime]$runtime.startedAt) -ge $launchedAt.AddSeconds(-2)) {
             Write-Host ("Personal Bots started: pid {0}, {1}, root {2}, release {3}" -f $proc.Id, $runtime.origin, $Root, $releaseInfo.Name)
+            # Best-effort; see Set-PbServerPriority in common.ps1.
+            Set-PbServerPriority -RootProcessId $proc.Id
             return $proc
         }
         Start-Sleep -Milliseconds 500
