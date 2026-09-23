@@ -417,8 +417,10 @@ export function PersonalConnectionsScreen(): JSX.Element {
     if (action === "disconnect") {
       const message = disconnectWarning(vendor.vendorId);
       const confirmed =
-        (await requestConfirmDialog(message, { variant: "destructive" })) ??
-        window.confirm(message);
+        (await requestConfirmDialog(message, {
+          variant: "destructive",
+          confirmLabel: "Disconnect",
+        })) ?? window.confirm(message);
       if (!confirmed) return;
     }
     setBusyVendor(vendor.vendorId);

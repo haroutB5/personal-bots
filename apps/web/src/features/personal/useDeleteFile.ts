@@ -22,7 +22,10 @@ export function useDeleteFile(
     }
     const message = deleteFileConfirmMessage(file.name);
     const confirmed =
-      (await requestConfirmDialog(message, { variant: "destructive" })) ?? window.confirm(message);
+      (await requestConfirmDialog(message, {
+        variant: "destructive",
+        confirmLabel: "Delete file",
+      })) ?? window.confirm(message);
     if (!confirmed) return { status: "cancelled" };
     const result = await deleteFile({ environmentId, input: { fileId: file.fileId } });
     const failure = commandFailureMessage(result, "Couldn't delete this file. Try again.");

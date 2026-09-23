@@ -1440,6 +1440,8 @@ export type ConfirmDialogVariant = "default" | "destructive";
 
 export interface ConfirmDialogOptions {
   readonly variant?: ConfirmDialogVariant;
+  /** The action button's label ("Delete bot"); the themed host says "Confirm" without it. */
+  readonly confirmLabel?: string;
 }
 
 /**

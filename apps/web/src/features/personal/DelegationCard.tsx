@@ -173,7 +173,7 @@ export const DelegationCard = memo(function DelegationCard({
             >
               <Ellipsis aria-hidden="true" className="size-5" strokeWidth={1.75} />
             </MenuTrigger>
-            <MenuPopup align="end" className="min-w-44">
+            <MenuPopup align="end" className="personal-app personal-menu min-w-44">
               <MenuItem
                 onClick={() =>
                   void navigate({

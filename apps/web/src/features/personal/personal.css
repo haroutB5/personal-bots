@@ -282,6 +282,42 @@
   }
 }
 
+/* The Bots app's "…" and "+" menus (MenuPopup className "personal-app
+ * personal-menu"). They are portaled outside the shell, so they carry
+ * `.personal-app` for the tokens; this puts them on the same surface, ink and
+ * hairline as the sheets and cards they open from, instead of the upstream
+ * popover palette. On touch every item is a 44px row: at the upstream 32px
+ * "Delete chat" sat one thumb-width under "Archive chat". */
+.personal-menu {
+  border-color: var(--personal-border);
+  background-color: var(--personal-surface);
+  color: var(--personal-text);
+}
+
+.personal-menu [data-slot="menu-item"]:not([data-variant="destructive"]) {
+  color: var(--personal-text);
+}
+
+.personal-menu [data-slot="menu-item"][data-variant="destructive"] {
+  color: var(--personal-error);
+}
+
+.personal-menu [data-slot="menu-item"][data-highlighted] {
+  background-color: var(--personal-fill-muted);
+}
+
+.personal-menu [data-slot="menu-separator"] {
+  background-color: var(--personal-border);
+}
+
+@media (pointer: coarse) {
+  .personal-menu [data-slot="menu-item"] {
+    min-height: 44px;
+    padding-inline: 12px;
+    font-size: 16px;
+  }
+}
+
 /* Hover fill for the desktop bot list's rows and pinned tiles: a lighter
  * version of the selected fill, mouse-only (touch never gets a sticky hover),
  * and never on the selected row, which already carries the full fill. */

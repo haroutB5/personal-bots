@@ -779,7 +779,7 @@ export function ConversationScreen({
           >
             <Ellipsis aria-hidden="true" className="size-6" strokeWidth={1.75} />
           </MenuTrigger>
-          <MenuPopup align="end" className="min-w-48">
+          <MenuPopup align="end" className="personal-app personal-menu min-w-48">
             {interruptInput !== null ? (
               <MenuItem onClick={() => void onStopFromMenu()}>Stop</MenuItem>
             ) : null}

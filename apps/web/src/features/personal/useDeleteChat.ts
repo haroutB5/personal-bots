@@ -28,7 +28,10 @@ export function useDeleteChat(
     }
     const message = deleteChatConfirmMessage();
     const confirmed =
-      (await requestConfirmDialog(message, { variant: "destructive" })) ?? window.confirm(message);
+      (await requestConfirmDialog(message, {
+        variant: "destructive",
+        confirmLabel: "Delete chat",
+      })) ?? window.confirm(message);
     if (!confirmed) return { status: "cancelled" };
     const result = await deleteThread({ environmentId, input: { threadId } });
     const failure = commandFailureMessage(result, "Couldn't delete this chat. Try again.");

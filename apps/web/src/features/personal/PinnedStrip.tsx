@@ -11,6 +11,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import { Ellipsis } from "lucide-react";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
@@ -331,12 +332,28 @@ export function PinnedTile({
             VoiceOver swipe path — a long press is not an affordance a screen
             reader can find.
           */}
-          <MenuTrigger render={<button type="button" className="sr-only" />}>
-            Options for {name}
+          {/* A sighted keyboard user tabs onto it too, so it surfaces as a small
+              "…" chip on the tile while it holds keyboard focus (WCAG 2.4.7). */}
+          <MenuTrigger
+            render={
+              <button
+                type="button"
+                className={cn(
+                  "sr-only outline-none",
+                  "focus-visible:not-sr-only focus-visible:absolute focus-visible:top-0 focus-visible:right-1 focus-visible:z-10",
+                  "focus-visible:flex focus-visible:size-7 focus-visible:items-center focus-visible:justify-center focus-visible:rounded-full",
+                  "focus-visible:bg-[var(--personal-surface)] focus-visible:text-[var(--personal-text)] focus-visible:shadow-[var(--personal-shadow-card)]",
+                  "focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+                )}
+              />
+            }
+          >
+            <span className="sr-only">Options for {name}</span>
+            <Ellipsis aria-hidden="true" className="size-4" strokeWidth={2} />
           </MenuTrigger>
           {/* Anchored on the tile, not on the 1px trigger, so the popup lands
               under the face the owner actually pressed. */}
-          <MenuPopup align="center" anchor={anchor} className="min-w-44">
+          <MenuPopup align="center" anchor={anchor} className="personal-app personal-menu min-w-44">
             <MenuItem onClick={onUnpin}>Unpin {name}</MenuItem>
           </MenuPopup>
         </Menu>

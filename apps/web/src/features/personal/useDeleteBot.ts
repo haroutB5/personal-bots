@@ -22,7 +22,10 @@ export function useDeleteBot(
     }
     const message = `Delete ${bot.name} completely?\nIts chats, routines and memories are removed too. This can't be undone.`;
     const confirmed =
-      (await requestConfirmDialog(message, { variant: "destructive" })) ?? window.confirm(message);
+      (await requestConfirmDialog(message, {
+        variant: "destructive",
+        confirmLabel: "Delete bot",
+      })) ?? window.confirm(message);
     if (!confirmed) return { status: "cancelled" };
     const result = await deleteBot({ environmentId, input: { botId: bot.botId } });
     const failure = commandFailureMessage(result, `Couldn't delete ${bot.name}. Try again.`);

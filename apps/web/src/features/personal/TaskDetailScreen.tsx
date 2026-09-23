@@ -136,8 +136,10 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
     if (action === "cancel") {
       const message = stopTaskConfirmMessage(task.title);
       const confirmed =
-        (await requestConfirmDialog(message, { variant: "destructive" })) ??
-        window.confirm(message);
+        (await requestConfirmDialog(message, {
+          variant: "destructive",
+          confirmLabel: "Stop task",
+        })) ?? window.confirm(message);
       if (!confirmed) return;
     }
     setBusy(true);

@@ -362,8 +362,10 @@ export function ComputerBrowserPane(props: {
     const confirmMessage = closeBrowserConfirmMessage(status, agentTurnRunning);
     if (confirmMessage !== null) {
       const confirmed =
-        (await requestConfirmDialog(confirmMessage, { variant: "destructive" })) ??
-        window.confirm(confirmMessage);
+        (await requestConfirmDialog(confirmMessage, {
+          variant: "destructive",
+          confirmLabel: "Close browser",
+        })) ?? window.confirm(confirmMessage);
       if (!confirmed) return;
     }
     setPending(true);
@@ -616,10 +618,7 @@ function BrowserToolbar(props: {
         >
           <MoreHorizontal className="size-5" strokeWidth={ICON_STROKE} />
         </MenuTrigger>
-        <MenuPopup
-          align="end"
-          className="personal-app w-48 border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)]"
-        >
+        <MenuPopup align="end" className="personal-app personal-menu w-48">
           <MenuItem disabled={!props.canReload} onClick={props.onReload}>
             <RotateCw />
             Reload

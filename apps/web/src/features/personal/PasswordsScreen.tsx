@@ -268,7 +268,10 @@ export function PasswordsScreen(): JSX.Element {
     if (environmentId === null) return;
     const message = `Delete ${login.label}?\nBots will no longer be able to use this login.`;
     const confirmed =
-      (await requestConfirmDialog(message, { variant: "destructive" })) ?? window.confirm(message);
+      (await requestConfirmDialog(message, {
+        variant: "destructive",
+        confirmLabel: "Delete login",
+      })) ?? window.confirm(message);
     if (!confirmed) return;
     setBusyId(login.loginId);
     const result = await removeLogin({ environmentId, input: { loginId: login.loginId } });

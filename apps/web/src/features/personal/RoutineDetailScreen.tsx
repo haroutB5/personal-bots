@@ -93,8 +93,10 @@ export function RoutineDetailScreen({ routineId }: { routineId: PersonalRoutineI
     if (action === "delete") {
       const message = `Delete the routine "${routine.title}"?\nTasks it already started stay in Tasks.`;
       const confirmed =
-        (await requestConfirmDialog(message, { variant: "destructive" })) ??
-        window.confirm(message);
+        (await requestConfirmDialog(message, {
+          variant: "destructive",
+          confirmLabel: "Delete routine",
+        })) ?? window.confirm(message);
       if (!confirmed) return;
     }
     setBusy(true);
@@ -151,7 +153,10 @@ export function RoutineDetailScreen({ routineId }: { routineId: PersonalRoutineI
       "The current URL stops working straight away, so anything already using it must be updated.",
     ].join("\n");
     const confirmed =
-      (await requestConfirmDialog(message, { variant: "destructive" })) ?? window.confirm(message);
+      (await requestConfirmDialog(message, {
+        variant: "destructive",
+        confirmLabel: "Get new URL",
+      })) ?? window.confirm(message);
     if (!confirmed) return;
     setBusy(true);
     const result = await regenerateHook({ environmentId, input: { routineId: routine.routineId } });

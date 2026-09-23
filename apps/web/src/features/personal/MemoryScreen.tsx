@@ -71,7 +71,10 @@ export function MemoryScreen(): JSX.Element {
     const message =
       "Delete this memory?\nBots stop receiving it. Chats where it was mentioned still contain the text.";
     const confirmed =
-      (await requestConfirmDialog(message, { variant: "destructive" })) ?? window.confirm(message);
+      (await requestConfirmDialog(message, {
+        variant: "destructive",
+        confirmLabel: "Delete memory",
+      })) ?? window.confirm(message);
     if (!confirmed) return;
     setBusyId(entry.memoryId);
     const result = await deleteEntry({ environmentId, input: { memoryId: entry.memoryId } });

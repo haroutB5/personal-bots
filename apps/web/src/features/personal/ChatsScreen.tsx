@@ -647,7 +647,7 @@ export function ChatsScreen({
             >
               <Plus aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
             </MenuTrigger>
-            <MenuPopup align="end" className="min-w-44">
+            <MenuPopup align="end" className="personal-app personal-menu min-w-44">
               <MenuItem onClick={() => void navigate({ to: "/bots/new" })}>New bot</MenuItem>
               <MenuItem onClick={() => void navigate({ to: "/bots/groups/new" })}>
                 New group
