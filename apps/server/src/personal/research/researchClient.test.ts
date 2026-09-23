@@ -274,3 +274,88 @@ describe("public research", () => {
     expect(kept?.sources[0]?.url).toBe("https://shop.example/camera");
   });
 });
+
+describe("Google search", () => {
+  const organic = (results: unknown[]) =>
+    new Response(JSON.stringify({ organic_results: results }), {
+      headers: { "Content-Type": "application/json" },
+    });
+
+  it("asks SerpAPI for Google organic results and keeps the date Google shows", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      organic([
+        {
+          title: "Camera review",
+          link: "https://reviews.example/camera",
+          snippet: "Sharp and light.",
+          date: "3 days ago",
+        },
+        { title: "Camera shop", link: "https://shop.example/camera", snippet: "In stock" },
+      ]),
+    );
+    const result = await createResearchClient(fetcher).google("bot", "serp-key", "camera", {
+      country: "uk",
+      timeRange: "week",
+      num: 5,
+    });
+    const url = new URL(String(fetcher.mock.calls[0]![0]));
+    expect(url.origin + url.pathname).toBe("https://serpapi.com/search.json");
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      engine: "google",
+      q: "camera",
+      gl: "uk",
+      num: "5",
+      tbs: "qdr:w",
+      api_key: "serp-key",
+    });
+    expect(result.provider).toBe("serpapi");
+    expect(result.error).toBeNull();
+    expect(result.sources[0]).toMatchObject({
+      url: "https://reviews.example/camera",
+      content: "Sharp and light.",
+      publishedAt: "3 days ago",
+      evidence: "search-snippet",
+    });
+    expect(result.sources[1]?.publishedAt).toBeNull();
+    expect(JSON.stringify(result)).not.toContain("serp-key");
+  });
+
+  it("returns at most eight results whatever the provider sends", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      organic(
+        Array.from({ length: 10 }, (_, index) => ({
+          title: `Result ${index}`,
+          link: `https://example.com/${index}`,
+          snippet: "text",
+        })),
+      ),
+    );
+    const result = await createResearchClient(fetcher).google("bot", "key", "anything", {});
+    expect(new URL(String(fetcher.mock.calls[0]![0])).searchParams.get("num")).toBe("8");
+    expect(result.sources).toHaveLength(8);
+  });
+
+  it("treats a search with no hits as an empty answer, not a failure", async () => {
+    const fetcher = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({ error: "Google hasn't returned any results for this query." }),
+        ),
+    );
+    const result = await createResearchClient(fetcher).google("bot", "key", "zzqx", {});
+    expect(result.error).toBeNull();
+    expect(result.sources).toEqual([]);
+  });
+
+  it("refuses a query with a share link pasted into it", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const result = await createResearchClient(fetcher).google(
+      "bot",
+      "key",
+      "https://www.dropbox.com/scl/fi/abc/report.pdf?rlkey=9f2k1lqz0d",
+      {},
+    );
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(result.error).toContain("access token");
+  });
+});

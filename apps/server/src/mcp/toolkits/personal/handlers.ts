@@ -281,6 +281,21 @@ const make = Effect.gen(function* () {
         });
         return { results };
       }),
+    search_google: (input) =>
+      Effect.gen(function* () {
+        const access = yield* researchAccess("SERPAPI_API_KEY");
+        return yield* Effect.tryPromise({
+          try: (signal) =>
+            research.google(
+              access.scope,
+              access.key,
+              input.query,
+              { country: input.country, timeRange: input.timeRange, num: input.num },
+              signal,
+            ),
+          catch: () => refuse("Google search failed."),
+        });
+      }),
     search_products: (input) =>
       Effect.gen(function* () {
         const access = yield* researchAccess("SERPAPI_API_KEY");

@@ -23,6 +23,7 @@ function search(
   linked: boolean,
   key?: string,
   exposure: ReadonlyArray<string> = [],
+  tool: "search_web" | "search_google" = "search_web",
 ) {
   const layer = PersonalToolkitHandlersLive.pipe(
     Layer.provide(
@@ -42,13 +43,22 @@ function search(
           Effect.succeed({
             botId: PersonalBotId.make("bot"),
             systemInstructions: null,
-            environment: key ? { PB_SECRET_TAVILY_API_KEY: key } : {},
+            environment: key
+              ? tool === "search_web"
+                ? { PB_SECRET_TAVILY_API_KEY: key }
+                : { PB_SECRET_SERPAPI_API_KEY: key }
+              : {},
           }),
       }),
     ),
   );
   return Effect.gen(function* () {
     const toolkit = yield* PersonalToolkit;
+    if (tool === "search_google") {
+      return yield* toolkit
+        .handle("search_google", { query: "public facts" })
+        .pipe(Stream.unwrap, Stream.runCollect);
+    }
     return yield* toolkit
       .handle("search_web", { queries: ["public facts"] })
       .pipe(Stream.unwrap, Stream.runCollect);
@@ -131,6 +141,57 @@ describe("research tool access", () => {
       });
       expect(encodeResult(result)).toContain("https://example.com/facts");
       expect(encodeResult(result)).not.toContain("private-key");
+    }),
+  );
+});
+
+describe("search_google access", () => {
+  it.effect("needs the SerpAPI key and says which one", () =>
+    Effect.gen(function* () {
+      const fetcher = vi.fn<typeof fetch>();
+      vi.stubGlobal("fetch", fetcher);
+      const result = yield* search(true, true, undefined, [], "search_google").pipe(
+        Effect.catch((error) => Effect.succeed(String(error))),
+      );
+      expect(encodeResult(result)).toContain("SERPAPI_API_KEY");
+      expect(fetcher).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("is closed like the other research tools once a sensitive site was open", () =>
+    Effect.gen(function* () {
+      const fetcher = vi.fn<typeof fetch>();
+      vi.stubGlobal("fetch", fetcher);
+      const result = yield* search(
+        true,
+        true,
+        "serp-key",
+        ["https://bank.example"],
+        "search_google",
+      ).pipe(Effect.catch((error) => Effect.succeed(String(error))));
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(encodeResult(result)).toMatch(/sensitive/i);
+    }),
+  );
+
+  it.effect("searches Google with the saved key without echoing it", () =>
+    Effect.gen(function* () {
+      const fetcher = vi.fn<typeof fetch>(
+        async () =>
+          new Response(
+            JSON.stringify({
+              organic_results: [
+                { title: "Source", link: "https://example.com/facts", snippet: "Facts" },
+              ],
+            }),
+          ),
+      );
+      vi.stubGlobal("fetch", fetcher);
+      const result = yield* search(true, true, "serp-key", [], "search_google");
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(new URL(String(fetcher.mock.calls[0]?.[0])).searchParams.get("engine")).toBe("google");
+      expect(encodeResult(result)).toContain("https://example.com/facts");
+      expect(encodeResult(result)).not.toContain("serp-key");
     }),
   );
 });

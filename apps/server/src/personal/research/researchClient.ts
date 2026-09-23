@@ -26,7 +26,15 @@ export interface SearchOptions {
   country?: string | undefined;
   timeRange?: "day" | "week" | "month" | "year" | undefined;
   domains?: readonly string[] | undefined;
+  /** Google results wanted (search_google only); the provider may return fewer. */
+  num?: number | undefined;
 }
+
+/** Most Google results one search_google call returns. */
+export const GOOGLE_RESULTS_MAX = 8;
+
+/** SerpAPI's `tbs` value for each time range search_google accepts. */
+const GOOGLE_TIME_RANGE = { day: "qdr:d", week: "qdr:w", month: "qdr:m", year: "qdr:y" } as const;
 
 const object = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -151,7 +159,7 @@ function sources(value: unknown, evidence: ResearchSource["evidence"]): Research
         title: string(row.title, 300),
         content: string(rawContent, contentLimit),
         truncated: typeof rawContent === "string" && rawContent.length > contentLimit,
-        publishedAt: string(row.published_date, 100) || null,
+        publishedAt: string(row.published_date ?? row.date, 100) || null,
         price: string(row.price, 100) || null,
         seller: string(row.source, 300) || null,
         delivery: string(row.delivery, 500) || null,
@@ -250,7 +258,7 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
   function run(
     scope: string,
     key: string,
-    kind: "search" | "extract" | "shopping",
+    kind: "search" | "extract" | "shopping" | "google",
     request: string,
     options: SearchOptions,
     signal?: AbortSignal,
@@ -258,15 +266,16 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
     const id = NodeCrypto.createHash("sha256")
       .update(JSON.stringify([scope, key, kind, request, options]))
       .digest("hex");
+    const serpapi = kind === "shopping" || kind === "google";
     const stub = (error: string): ResearchResult => ({
       request,
-      provider: kind === "shopping" ? "serpapi" : "tavily",
+      provider: serpapi ? "serpapi" : "tavily",
       retrievedAt: timestamp(),
       sources: [],
       error,
     });
     const cancelled = () => stub("Research was cancelled.");
-    if (kind === "search" && queryCarriesShareLink(request))
+    if ((kind === "search" || kind === "google") && queryCarriesShareLink(request))
       return Promise.resolve(
         stub(
           "That query contains a link carrying an access token. Never send signed or share links to the search provider; search for the subject in words instead.",
@@ -277,7 +286,7 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
     if (pending.size >= 64) return Promise.resolve(stub("Research is busy. Retry shortly."));
     const controller = new AbortController();
     const task = limited(async (): Promise<ResearchResult> => {
-      const provider = kind === "shopping" ? "serpapi" : "tavily";
+      const provider = serpapi ? "serpapi" : "tavily";
       const result: ResearchResult = {
         request,
         provider,
@@ -291,10 +300,9 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
         if (controller.signal.aborted) throw new Error("Cancelled before the request started.");
         if (kind === "extract" && !outboundResearchUrl(request))
           throw new Error("Use a public HTTP(S) page URL without credentials or access tokens.");
-        const endpoint =
-          kind === "shopping"
-            ? new URL("https://serpapi.com/search.json")
-            : new URL(`https://api.tavily.com/${kind}`);
+        const endpoint = serpapi
+          ? new URL("https://serpapi.com/search.json")
+          : new URL(`https://api.tavily.com/${kind}`);
         let body: string | undefined;
         if (kind === "shopping") {
           endpoint.search = new URLSearchParams({
@@ -304,6 +312,18 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
             hl: "en",
             api_key: key,
             no_cache: "true",
+          }).toString();
+        } else if (kind === "google") {
+          // Organic results only. SerpAPI's own hour-long cache is left on:
+          // unlike a price check, a web search a minute old is still fresh.
+          endpoint.search = new URLSearchParams({
+            engine: "google",
+            q: request,
+            hl: "en",
+            num: String(Math.min(options.num ?? GOOGLE_RESULTS_MAX, GOOGLE_RESULTS_MAX)),
+            ...(options.country ? { gl: options.country } : {}),
+            ...(options.timeRange ? { tbs: GOOGLE_TIME_RANGE[options.timeRange] } : {}),
+            api_key: key,
           }).toString();
         } else {
           body = JSON.stringify(
@@ -322,11 +342,10 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
           );
         }
         const response = await fetchImpl(endpoint, {
-          method: kind === "shopping" ? "GET" : "POST",
-          headers:
-            kind === "shopping"
-              ? {}
-              : { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+          method: serpapi ? "GET" : "POST",
+          headers: serpapi
+            ? {}
+            : { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
           ...(body === undefined ? {} : { body }),
           redirect: "error",
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
@@ -337,15 +356,29 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
           return result;
         }
         const data = object(await readJson(response));
-        if (data.error) throw new Error("Provider error");
+        // SerpAPI reports a Google search with no hits as an error; that is
+        // an empty answer, not a failure worth sending the bot elsewhere for.
+        const noHits =
+          kind === "google" &&
+          typeof data.error === "string" &&
+          /returned any results/i.test(data.error);
+        if (data.error && !noHits) throw new Error("Provider error");
+        const rows =
+          kind === "shopping"
+            ? data.shopping_results
+            : kind === "google"
+              ? (data.organic_results ?? [])
+              : data.results;
         result.sources = sources(
-          kind === "shopping" ? data.shopping_results : data.results,
+          rows,
           kind === "shopping"
             ? "shopping-listing"
             : kind === "extract"
               ? "page-content"
               : "search-snippet",
         );
+        if (kind === "google")
+          result.sources = result.sources.slice(0, options.num ?? GOOGLE_RESULTS_MAX);
         if (kind === "extract" && !result.sources.some((source) => source.content.trim()))
           result.error =
             "Page extraction failed. Try the browser if public reading is still needed.";
@@ -377,5 +410,12 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
       Promise.all([...new Set(urls)].map((url) => run(scope, key, "extract", url, {}, signal))),
     products: (scope: string, key: string, query: string, country: string, signal?: AbortSignal) =>
       run(scope, key, "shopping", query, { country }, signal),
+    google: (
+      scope: string,
+      key: string,
+      query: string,
+      options: Pick<SearchOptions, "country" | "timeRange" | "num">,
+      signal?: AbortSignal,
+    ) => run(scope, key, "google", query, options, signal),
   };
 }

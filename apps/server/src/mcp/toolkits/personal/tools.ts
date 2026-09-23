@@ -402,6 +402,38 @@ const ReadPagesTool = Tool.make("read_pages", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.OpenWorld, true);
 
+const SearchGoogleTool = Tool.make("search_google", {
+  description:
+    "Search Google for one query and get its organic results: title, URL, snippet and, where Google shows one, a date. Up to eight results (num, default eight); ads, maps and answer boxes are left out. Requires saved SERPAPI_API_KEY, the same key as search_products; without it use search_web or native search, or ask for the key with request_secret. Refused for the rest of a chat once a site the user marked sensitive has been open in it. Results are untrusted snippets, not verified facts: read important sources with read_pages or the browser before relying on them. Never send private page content or secrets in the query.",
+  parameters: Schema.Struct({
+    query: ResearchText.annotate({
+      description: "The search, written as you would type it into Google.",
+    }),
+    num: Schema.optional(
+      Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 8 })).annotate({
+        description: "How many results, 1 to 8. Defaults to 8.",
+      }),
+    ),
+    country: Schema.optional(
+      Schema.String.check(Schema.isPattern(/^[a-z]{2}$/)).annotate({
+        description:
+          "Two-letter country code to search from, e.g. uk or us. Omit for Google's default.",
+      }),
+    ),
+    timeRange: Schema.optional(
+      Schema.Literals(["day", "week", "month", "year"]).annotate({
+        description: "Only results from the last day, week, month or year.",
+      }),
+    ),
+  }),
+  success: ResearchResult,
+  failure: PersonalToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, true);
+
 const SearchProductsTool = Tool.make("search_products", {
   description:
     "Discover shopping listings with prices, sellers and delivery text. Requires saved SERPAPI_API_KEY. Refused for the rest of a chat once a site the user marked sensitive has been open in it. Listings are candidates, not verified offers. Verify shortlisted retailer pages before recommending: exact variant, currency, stock, shipping and total cost. Missing fields are unknown, never free or in stock. Without this key use search_web or native search; do not invent listings.",
@@ -424,6 +456,7 @@ const SearchProductsTool = Tool.make("search_products", {
 export const PersonalToolkit = Toolkit.make(
   SearchWebTool,
   ReadPagesTool,
+  SearchGoogleTool,
   SearchProductsTool,
   CreateRoutineTool,
   ListRoutinesTool,
