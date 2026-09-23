@@ -313,3 +313,21 @@ export const describeImportSource = (
       };
   }
 };
+
+/**
+ * What a rejected token says on screen. The server passes the vendor's own
+ * reply through ("GitHub did not accept this token: HTTP 401:
+ * {"message":"Bad credentials","documentation_url":"https://docs.github.c…"),
+ * which read as a crash and ran an unbroken URL off the card. An auth refusal
+ * becomes a plain sentence; anything else is kept, since it may be the only
+ * clue to what went wrong.
+ */
+export function friendlyTokenFailure(vendorName: string, message: string): string {
+  if (/\bHTTP 401\b|bad credentials|unauthori[sz]ed/i.test(message)) {
+    return `${vendorName} rejected this token. Check it was copied whole and has not expired.`;
+  }
+  if (/\bHTTP 403\b|forbidden/i.test(message)) {
+    return `${vendorName} accepted this token but refused access. Check the token has the permissions listed above.`;
+  }
+  return message;
+}

@@ -2,7 +2,7 @@ import type { JSX } from "react";
 import { useState } from "react";
 
 import type { EnvironmentId } from "@t3tools/contracts";
-import { Cpu } from "lucide-react";
+import { Cpu, RefreshCw } from "lucide-react";
 
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -137,9 +137,15 @@ export function PersonalProviderRows({
                       `Couldn't check ${row.label}.`,
                     )
                   }
-                  className={`${ROW_BUTTON} px-3 text-[var(--personal-primary)]`}
+                  // An icon, not the words: beside "Update" the label squeezed
+                  // the version line to four lines on a phone.
+                  className={`${ROW_BUTTON} -mr-2 flex w-11 items-center justify-center text-[var(--personal-text-secondary)]`}
                 >
-                  {pending === "check" ? "Checking…" : "Check again"}
+                  <RefreshCw
+                    aria-hidden="true"
+                    className={`size-[18px] ${pending === "check" ? "animate-spin" : ""}`}
+                    strokeWidth={1.75}
+                  />
                 </button>
               ) : null}
             </div>

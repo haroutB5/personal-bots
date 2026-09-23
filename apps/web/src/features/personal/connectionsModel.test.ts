@@ -10,6 +10,7 @@ import {
   connectionRows,
   describeConnection,
   describeImportSource,
+  friendlyTokenFailure,
   emptyTokenDraft,
   validateTokenDraft,
   vendorInfo,
@@ -234,5 +235,24 @@ describe("whatsapp, which is signed into rather than pasted", () => {
   it("says a removed WhatsApp is still signed in, because removing it does not sign out", () => {
     expect(disconnectWarning("whatsapp")).toContain("still signed in");
     expect(disconnectWarning("github")).toContain("token");
+  });
+});
+
+describe("friendlyTokenFailure", () => {
+  it("turns an auth refusal into a sentence, not the vendor's JSON", () => {
+    const raw =
+      'GitHub did not accept this token: HTTP 401: {"message":"Bad credentials","documentation_url":"https://docs.github.com/rest"}';
+    expect(friendlyTokenFailure("GitHub", raw)).toBe(
+      "GitHub rejected this token. Check it was copied whole and has not expired.",
+    );
+    expect(
+      friendlyTokenFailure("Neon", "Neon did not accept this token: HTTP 403: nope"),
+    ).toContain("refused access");
+  });
+
+  it("keeps any other failure as it is", () => {
+    expect(friendlyTokenFailure("Vercel", "Vercel could not be reached.")).toBe(
+      "Vercel could not be reached.",
+    );
   });
 });

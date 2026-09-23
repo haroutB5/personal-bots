@@ -30,6 +30,7 @@ import {
   type ConnectionTone,
   type ConnectionVendorInfo,
   type TokenDraft,
+  friendlyTokenFailure,
 } from "./connectionsModel";
 import {
   personalConnectionBrowserConnect,
@@ -56,7 +57,9 @@ const ACTION_CLASS =
   "h-11 rounded-full border border-[var(--personal-border-strong)] px-3.5 text-[13px] font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40";
 
 const TONE_DOT: Readonly<Record<ConnectionTone, string>> = {
-  ok: "bg-[var(--personal-success,#22A559)]",
+  // The app's own live green (there is no --personal-success token; this fell
+  // back to a hardcoded green that ignored the dark theme).
+  ok: "bg-[var(--personal-live)]",
   pending: "bg-[var(--personal-text-secondary)]",
   attention: "bg-[var(--personal-danger)]",
   off: "bg-[var(--personal-border-strong)]",
@@ -110,7 +113,7 @@ function TokenForm({
     // Whatever happens, the pasted value does not outlive this call.
     setDraft(emptyTokenDraft(vendor.vendorId));
     const failure = commandFailureMessage(result, `${vendor.displayName} could not be connected.`);
-    setSubmitError(failure);
+    setSubmitError(failure === null ? null : friendlyTokenFailure(vendor.displayName, failure));
     if (failure === null) onDone();
   };
 
@@ -118,7 +121,8 @@ function TokenForm({
     <form
       aria-label={`Connect ${vendor.displayName}`}
       onSubmit={(event) => void onSubmit(event)}
-      className={`mt-3 flex flex-col gap-4 ${CARD} p-4`}
+      // Inside the vendor's own card: a hairline, not a second card in the card.
+      className="mt-4 flex flex-col gap-4 border-t border-[var(--personal-border)] pt-4"
       noValidate
     >
       <div>
@@ -136,7 +140,7 @@ function TokenForm({
           href={vendor.tokenPageUrl}
           target="_blank"
           rel="noreferrer"
-          className="mt-2 inline-flex h-9 items-center gap-1.5 text-[14px] font-medium text-[var(--personal-primary,#1A73E8)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          className="mt-1 inline-flex min-h-11 items-center gap-1.5 rounded-[var(--personal-radius-button)] text-[14px] font-medium text-[var(--personal-text)] underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >
           Open the {vendor.displayName} token page
           <ExternalLink aria-hidden="true" className="size-4" strokeWidth={1.75} />
@@ -162,7 +166,7 @@ function TokenForm({
             className={FIELD_CLASS}
           />
           {errors[field] === undefined ? null : (
-            <p role="alert" className="mt-1.5 text-sm text-[var(--personal-error)]">
+            <p role="alert" className="mt-1.5 text-sm break-words text-[var(--personal-error)]">
               {errors[field]}
             </p>
           )}
@@ -170,7 +174,7 @@ function TokenForm({
       ))}
 
       {submitError === null ? null : (
-        <p role="alert" className="text-sm text-[var(--personal-error)]">
+        <p role="alert" className="text-sm break-words text-[var(--personal-error)]">
           {submitError}
         </p>
       )}
@@ -179,7 +183,7 @@ function TokenForm({
         <button
           type="submit"
           disabled={busy}
-          className="h-11 flex-1 rounded-[var(--personal-radius-button)] bg-[var(--personal-text)] text-[15px] font-semibold text-[var(--personal-surface)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+          className="h-11 flex-1 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-surface)] disabled:opacity-40"
         >
           {busy ? "Checking..." : "Save and check"}
         </button>
@@ -246,7 +250,7 @@ function ImportPanel({ onClose }: { onClose: () => void }): JSX.Element {
       </div>
 
       {error === null ? null : (
-        <p role="alert" className="mt-3 text-sm text-[var(--personal-error)]">
+        <p role="alert" className="mt-3 text-sm break-words text-[var(--personal-error)]">
           {error}
         </p>
       )}
@@ -357,7 +361,7 @@ function SendCapField({ connection }: { connection: PersonalConnection }): JSX.E
         messages so your account does not look automated.
       </p>
       {error === null ? null : (
-        <p role="alert" className="mt-1.5 text-sm text-[var(--personal-error)]">
+        <p role="alert" className="mt-1.5 text-sm break-words text-[var(--personal-error)]">
           {error}
         </p>
       )}
@@ -482,12 +486,12 @@ export function PersonalConnectionsScreen(): JSX.Element {
       {importing ? <ImportPanel onClose={() => setImporting(false)} /> : null}
 
       {error === null ? null : (
-        <p role="alert" className="mt-3 text-sm text-[var(--personal-error)]">
+        <p role="alert" className="mt-3 text-sm break-words text-[var(--personal-error)]">
           {error}
         </p>
       )}
       {notice === null ? null : (
-        <p role="status" className="mt-3 text-sm text-[var(--personal-text-secondary)]">
+        <p role="status" className="mt-3 text-sm break-words text-[var(--personal-text-secondary)]">
           {notice}
         </p>
       )}
@@ -530,7 +534,9 @@ export function PersonalConnectionsScreen(): JSX.Element {
                   </span>
                 </div>
 
-                <div className="mt-3 flex flex-wrap gap-2">
+                {/* While its token form is open the form is the one path: the
+                    row's own Connect stayed visible above it and did nothing. */}
+                <div className={pasting === row.vendorId ? "hidden" : "mt-3 flex flex-wrap gap-2"}>
                   {connectionActions(row.connection).map((action) => (
                     <button
                       key={action}

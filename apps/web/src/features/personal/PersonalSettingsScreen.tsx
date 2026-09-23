@@ -13,15 +13,14 @@ import {
   KeyRound,
   Plug,
   Network,
+  Plus,
   SquareTerminal,
 } from "lucide-react";
 
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { BotAvatar } from "./BotAvatar";
 import { PersonalPageHeader } from "./BotForm";
-import { providerLine, resolveBotProvider } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
 import { setDeveloperView } from "./personalMode";
 import {
@@ -42,6 +41,7 @@ import {
   usePersonalTheme,
 } from "./personalTheme";
 import { useAppVersion } from "./appVersion";
+import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { PersonalProviderRows } from "./PersonalProviderRows";
 import { buildProviderUpdateRows } from "./providerUpdateRows";
 import { SecretAccessSettings } from "./SecretAccessSettings";
@@ -197,6 +197,19 @@ function AppearanceControl(): JSX.Element {
   );
 }
 
+/**
+ * Where the name field goes while there is no profile (offline, or still
+ * loading). The field used to vanish and leave a heading over nothing.
+ */
+function DisplayNamePlaceholder({ failed }: { readonly failed: boolean }): JSX.Element {
+  const laptopOffline = useLaptopOffline();
+  return (
+    <div className="flex min-h-[60px] items-center rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-4 text-[15px] text-[var(--personal-text-secondary)]">
+      {laptopOffline || failed ? "Available when your laptop is back online." : "Loading…"}
+    </div>
+  );
+}
+
 /** /bots/settings: greeting name, bot management and the Developer view exit. */
 export function PersonalSettingsScreen(): JSX.Element {
   const navigate = useNavigate();
@@ -233,7 +246,9 @@ export function PersonalSettingsScreen(): JSX.Element {
             environmentId={environmentId}
             initialName={profile.data.displayName}
           />
-        ) : null}
+        ) : (
+          <DisplayNamePlaceholder failed={profile.error !== null} />
+        )}
         <p className="mt-2 px-1 text-sm text-[var(--personal-text-secondary)]">
           How your bots address you, and your name on the Team screen.
         </p>
@@ -270,11 +285,22 @@ export function PersonalSettingsScreen(): JSX.Element {
             editor. Two lists of the same thing is one to keep in sync.
           */}
           <li>
-            <Link
-              to="/bots/new"
-              className="flex min-h-12 items-center px-4 text-[15px] font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
-            >
-              New bot
+            {/* Same row as Team above it (icon, label, chevron), so the card
+                reads as one list rather than a row and a stray link. */}
+            <Link to="/bots/new" className={SETTINGS_ROW}>
+              <Plus
+                aria-hidden="true"
+                className="size-5 shrink-0 text-[var(--personal-text)]"
+                strokeWidth={1.75}
+              />
+              <span className="min-w-0 flex-1 text-[15px] font-semibold text-[var(--personal-text)]">
+                New bot
+              </span>
+              <ChevronRight
+                aria-hidden="true"
+                className="size-5 shrink-0 text-[var(--personal-text-secondary)]"
+                strokeWidth={1.75}
+              />
             </Link>
           </li>
         </ul>
