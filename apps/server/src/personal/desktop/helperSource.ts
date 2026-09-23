@@ -308,8 +308,10 @@ public static class PbDesktopHelper {
     int bytes;
     if (Native.WTSQuerySessionInformation(IntPtr.Zero, -1, 25, out info, out bytes)) {
       try {
-        // WTSINFOEX: Level (DWORD), then WTSINFOEX_LEVEL1: SessionId, SessionState, SessionFlags.
-        int flags = Marshal.ReadInt32(info, 12);
+        // WTSINFOEX: Level (DWORD), then the 8-byte aligned WTSINFOEX_LEVEL1
+        // union at offset 8: SessionId (8), SessionState (12), SessionFlags (16).
+        // SessionFlags: 0 = WTS_SESSIONSTATE_LOCK, 1 = UNLOCK, -1 = unknown.
+        int flags = Marshal.ReadInt32(info, 16);
         if (flags == 0) return true;
       } finally {
         Native.WTSFreeMemory(info);
