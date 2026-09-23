@@ -9,7 +9,8 @@ import { perfOptimizationOn, whenIdle } from "./perfFlags";
  * app's shiki, 15 lines of TypeScript took 100 ms the first time and 5 ms the
  * second (desktop CPU; 4x that on the throttled bench, where a reply's first
  * code block froze the chat for 700-900 ms). Tokenizing these samples while
- * the chat sits idle pays that compile before a reply needs it.
+ * the reply is being written (ConversationScreen calls this on send) pays
+ * that compile before a reply needs it, and never while the user is typing.
  */
 const SAMPLES: ReadonlyArray<readonly [string, string]> = [
   [

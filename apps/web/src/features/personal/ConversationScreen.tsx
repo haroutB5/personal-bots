@@ -279,15 +279,18 @@ export function ConversationScreen({
   useEffect(() => {
     if (usableThreadId === null) return;
     reportChatUsable(window.location.pathname);
-    // Compile the code-highlighting grammars before a reply needs them.
-    warmHighlighterWhenIdle();
   }, [usableThreadId]);
   useEffect(() => {
     observeChatMessages(threadId, messages);
   }, [threadId, messages]);
   const pendingCount = useRef(0);
   useEffect(() => {
-    if (pending.length > pendingCount.current) markMessageSent(threadId, messages);
+    if (pending.length > pendingCount.current) {
+      markMessageSent(threadId, messages);
+      // Compile the code-highlighting grammars while the reply is being
+      // written (seconds), not while the user may still be typing.
+      warmHighlighterWhenIdle();
+    }
     pendingCount.current = pending.length;
     // Only a new pending message starts a send; the messages it saw are a snapshot.
   }, [pending.length, threadId, messages]);
