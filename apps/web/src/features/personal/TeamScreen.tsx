@@ -742,8 +742,11 @@ function TeamManager({
   );
 }
 
-/** /bots/team: teams behind their leads, and current or recent handoffs. */
-export function TeamScreen(): JSX.Element {
+/**
+ * /bots/team: teams behind their leads, and current or recent handoffs. Also
+ * the desktop pane when no chat is open, where it is the home and has no Back.
+ */
+export function TeamScreen({ showBack = true }: { readonly showBack?: boolean }): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const list = usePersonalBotsList(environmentId);
   const profile = usePersonalProfile(environmentId);
@@ -776,7 +779,7 @@ export function TeamScreen(): JSX.Element {
 
   return (
     <div className="flex min-h-full flex-col px-5 pb-8">
-      <PersonalPageHeader title="Team" />
+      <PersonalPageHeader title="Team" showBack={showBack} />
       <TeamManager
         environmentId={profile.data === null ? null : environmentId}
         teams={profile.data?.customTeams ?? []}

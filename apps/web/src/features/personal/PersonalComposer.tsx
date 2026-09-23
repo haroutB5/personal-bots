@@ -545,7 +545,7 @@ export function PersonalComposer({
   const statusText = disabledReason ?? error;
 
   return (
-    <div className="border-t border-[var(--personal-border)] bg-[var(--personal-bg)] px-3 pt-2">
+    <div className="personal-column border-t border-[var(--personal-border)] bg-[var(--personal-bg)] px-3 pt-2">
       {statusText !== null ? (
         <p role="alert" className="px-1 pb-2 text-sm text-[var(--personal-text-secondary)]">
           {statusText}

@@ -25,7 +25,7 @@ export function ConversationRoutinesPanel({
   return (
     <section
       aria-labelledby="conversation-routines-heading"
-      className="shrink-0 border-t border-[var(--personal-border)] bg-[var(--personal-surface)] px-4 pb-1"
+      className="personal-column shrink-0 border-t border-[var(--personal-border)] bg-[var(--personal-surface)] px-4 pb-1"
     >
       <div className="flex min-h-11 items-center justify-between gap-3">
         <h2

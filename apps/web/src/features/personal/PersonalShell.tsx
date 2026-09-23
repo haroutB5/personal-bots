@@ -6,9 +6,22 @@ import { useMediaQuery } from "~/hooks/useMediaQuery";
 
 import { ChatsScreen } from "./ChatsScreen";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
-import { activeTabFor } from "./personalMode";
+import { activeTabFor, type DesktopPaneLayout, desktopPaneLayout } from "./personalMode";
 import { PersonalTabBar } from "./PersonalTabBar";
+import { TeamScreen } from "./TeamScreen";
 import { useHiddenRootAttribute } from "./useHiddenRootAttribute";
+
+/**
+ * Width of the routed screen inside the desktop pane. A chat takes the whole
+ * pane and centres its own content (`.personal-column`); everything else sits
+ * in a centred column. Never a max-width box on a chat: that is what left a
+ * narrow chat floating mid-screen with empty gutters either side.
+ */
+const PANE_CONTENT_CLASS: Record<DesktopPaneLayout, string> = {
+  conversation: "h-full",
+  column: "mx-auto h-full w-full max-w-[var(--personal-reading-column)]",
+  form: "mx-auto h-full w-full max-w-[var(--personal-form-column)]",
+};
 
 /**
  * Layout for /bots, /tasks, /computer and /files. One scroller per column
@@ -16,7 +29,8 @@ import { useHiddenRootAttribute } from "./useHiddenRootAttribute";
  *
  * Phone: the routed screen fills the column and the tab bar sits below it
  * (hidden on focused editors). md+: the bot list is a fixed left column with
- * the tab bar, and the routed screen fills the right side.
+ * the tab bar, and the routed screen fills the pane to its right. With no chat
+ * open the pane shows the team rather than an empty page.
  */
 export function PersonalShell(): JSX.Element {
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -38,27 +52,28 @@ export function PersonalShell(): JSX.Element {
     );
   }
 
-  const showsChats = activeTab === "chats" && pathname.replace(/\/$/, "") === "/bots";
+  const showsHome = activeTab === "chats" && pathname.replace(/\/$/, "") === "/bots";
+  const layout = desktopPaneLayout(pathname);
   return (
     <div className="personal-app flex h-dvh overflow-hidden pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
       <aside
         aria-label="Bots"
-        className="flex w-[380px] shrink-0 flex-col border-r border-[var(--personal-border)]"
+        className="flex w-[320px] shrink-0 flex-col border-r border-[var(--personal-border)] lg:w-[340px] min-[1600px]:w-[360px]"
       >
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pt-[env(safe-area-inset-top)]">
           <ChatsScreen />
         </div>
         <PersonalTabBar active={activeTab ?? "chats"} />
       </aside>
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-[env(safe-area-inset-top)]">
+      <main className="personal-pane flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-[env(safe-area-inset-top)]">
         <PersonalOfflineBanner />
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
-          {showsChats ? (
-            <div className="flex h-full items-center justify-center px-8 text-center text-[15px] text-[var(--personal-text-secondary)]">
-              Choose a bot on the left to open its latest chat.
+          {showsHome ? (
+            <div className={PANE_CONTENT_CLASS.column}>
+              <TeamScreen showBack={false} />
             </div>
           ) : (
-            <div className="mx-auto h-full max-w-[560px]">
+            <div className={PANE_CONTENT_CLASS[layout]}>
               <Outlet />
             </div>
           )}

@@ -401,8 +401,9 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
         paddingBottom: keyboardInset > 0 ? keyboardInset : "max(env(safe-area-inset-bottom), 8px)",
       }}
     >
-      <header className="flex h-16 shrink-0 items-center gap-3 px-2">
-        <Link to="/bots" aria-label="Back to Bots" className={ICON_BUTTON}>
+      <header className="personal-column flex h-16 shrink-0 items-center gap-3 px-2">
+        {/* md+: the bot list is always beside the chat, so Back has nowhere to go. */}
+        <Link to="/bots" aria-label="Back to Bots" className={cn(ICON_BUTTON, "md:hidden")}>
           <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
         </Link>
         <button
@@ -429,7 +430,9 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
                         : "bg-[var(--personal-text-tertiary)]",
                   )}
                 />
-                <span className="min-w-0 flex-1 truncate">{groupSubtitle(group, nameOf)}</span>
+                <span className="min-w-0 flex-1 truncate md:flex-initial">
+                  {groupSubtitle(group, nameOf)}
+                </span>
                 <span className="shrink-0 whitespace-nowrap">· {stateLabel.label}</span>
               </span>
             ) : null}
@@ -470,7 +473,7 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
       {showMembers && group !== null ? (
         <section
           aria-label="Members"
-          className="mx-4 mb-2 shrink-0 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)]"
+          className="mx-4 mb-2 shrink-0 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] md:mx-0 md:w-[min(calc(100%-2rem),var(--personal-reading-column))] md:self-center"
         >
           <ul className="divide-y divide-[var(--personal-border)]">
             {members.map((member) => {
@@ -564,7 +567,7 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
                belongs, and it stays on screen without a scroll. Continue and
                Retry are the same RPC — `continueRound` re-claims a throttled
                round as readily as it spends a fresh budget. */
-            <div className="shrink-0 px-4 pb-2">
+            <div className="personal-column shrink-0 px-4 pb-2">
               <GroupRoundCard card={card} onAct={onContinue} />
             </div>
           ) : null}

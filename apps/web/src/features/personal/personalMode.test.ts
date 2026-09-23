@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { activeTabFor, isPersonalPath } from "./personalMode";
+import { activeTabFor, desktopPaneLayout, isPersonalPath } from "./personalMode";
 
 describe("isPersonalPath", () => {
   it("claims the four tabs and everything under /bots and /tasks", () => {
@@ -41,5 +41,43 @@ describe("activeTabFor", () => {
     expect(activeTabFor("/tasks/routines/r1")).toBe("tasks");
     expect(activeTabFor("/tasks/routines/new")).toBeNull();
     expect(activeTabFor("/tasks/routines/r1/edit")).toBeNull();
+  });
+});
+
+describe("desktopPaneLayout", () => {
+  it("lets a chat (bot or group) fill the pane", () => {
+    expect(desktopPaneLayout("/bots/b1/t1")).toBe("conversation");
+    expect(desktopPaneLayout("/bots/b1/t1/")).toBe("conversation");
+    expect(desktopPaneLayout("/bots/groups/g1")).toBe("conversation");
+  });
+
+  it("puts editors and settings in the form column, even where they look like a chat path", () => {
+    for (const path of [
+      "/bots/new",
+      "/bots/b1/edit",
+      "/bots/groups/new",
+      "/bots/settings",
+      "/bots/settings/connections",
+      "/bots/settings/passwords",
+      "/tasks/routines/new",
+      "/tasks/routines/r1/edit",
+    ]) {
+      expect(desktopPaneLayout(path)).toBe("form");
+    }
+  });
+
+  it("keeps lists and detail screens in the reading column", () => {
+    for (const path of [
+      "/bots",
+      "/bots/team",
+      "/bots/b1",
+      "/tasks",
+      "/tasks/t1",
+      "/tasks/routines/r1",
+      "/computer",
+      "/files",
+    ]) {
+      expect(desktopPaneLayout(path)).toBe("column");
+    }
   });
 });

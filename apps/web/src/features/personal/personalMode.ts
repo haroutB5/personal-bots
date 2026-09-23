@@ -56,6 +56,31 @@ function isRoutineEditorPath(path: string): boolean {
   return path === "/tasks/routines/new" || /^\/tasks\/routines\/[^/]+\/edit$/.test(path);
 }
 
+/**
+ * How a routed screen sits in the desktop pane (md+, right of the bot list).
+ * The phone never reads this: there every screen fills the column.
+ *
+ * - `conversation`: a chat. It fills the whole pane and centres its own
+ *   header, messages and composer on the reading column, so the scroller and
+ *   the composer's rule run edge to edge instead of floating in a box.
+ * - `column`: lists and detail screens (Tasks, Files, Computer, a bot's chats,
+ *   Team) in the reading column, centred in the pane.
+ * - `form`: editors and settings, in a narrower centred column.
+ */
+export type DesktopPaneLayout = "conversation" | "column" | "form";
+
+export function desktopPaneLayout(pathname: string): DesktopPaneLayout {
+  const path = normalizePath(pathname);
+  if (path === "/bots/settings" || path.startsWith("/bots/settings/")) return "form";
+  if (path === "/bots/new" || path === "/bots/groups/new" || /^\/bots\/[^/]+\/edit$/.test(path)) {
+    return "form";
+  }
+  if (isRoutineEditorPath(path)) return "form";
+  if (/^\/bots\/groups\/[^/]+$/.test(path)) return "conversation";
+  if (/^\/bots\/[^/]+\/[^/]+$/.test(path)) return "conversation";
+  return "column";
+}
+
 export function readDeveloperView(): boolean {
   try {
     return window.sessionStorage.getItem(DEVELOPER_VIEW_KEY) === "1";

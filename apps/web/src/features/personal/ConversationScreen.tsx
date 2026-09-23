@@ -145,7 +145,9 @@ function ConversationSubtitle({
       {title !== "" ? (
         // The separator truncates with the role: a squeezed role must not
         // leave a lone "·" beside the dot.
-        <span className="min-w-0 flex-1 truncate">
+        // md+: the role keeps its natural width so the status reads right after
+        // it instead of being pushed to the far edge of a wide header.
+        <span className="min-w-0 flex-1 truncate md:flex-initial">
           {title}
           <span aria-hidden="true"> ·</span>
         </span>
@@ -676,8 +678,9 @@ export function ConversationScreen({
       }}
     >
       {diagnosticsEnabled() ? <DiagnosticsOverlay /> : null}
-      <header className="flex h-16 shrink-0 items-center gap-3 px-2">
-        <Link to="/bots" aria-label="Back to Bots" className={ICON_BUTTON}>
+      <header className="personal-column flex h-16 shrink-0 items-center gap-3 px-2">
+        {/* md+: the bot list is always beside the chat, so Back has nowhere to go. */}
+        <Link to="/bots" aria-label="Back to Bots" className={cn(ICON_BUTTON, "md:hidden")}>
           <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
         </Link>
         {bot !== null ? (

@@ -211,10 +211,13 @@ describe("personal.css appearances", () => {
     // tokens (radii, font stack) are shared on purpose.
     // --personal-destructive is one saturated red in both appearances on
     // purpose: it is the delete colour, and it reads on either surface.
+    // The desktop column widths are layout, not colour.
     const shared = new Set([
       "--personal-font",
       "--personal-destructive",
       "--personal-destructive-text",
+      "--personal-reading-column",
+      "--personal-form-column",
     ]);
     const darkOnly = tokensIn(":root.dark .personal-app {");
     const missing = Object.keys(light).filter(

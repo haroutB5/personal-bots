@@ -106,6 +106,12 @@
   --personal-radius-button: 10px;
   --personal-radius-bubble: 16px;
 
+  /* Desktop (md+) layout. A chat's messages, header and composer share the
+   * reading column; lists and detail screens use it too. Editors and settings
+   * were drawn for the phone and read better a little narrower. */
+  --personal-reading-column: 840px;
+  --personal-form-column: 640px;
+
   background-color: var(--personal-bg);
   color: var(--personal-text);
   font-family: var(--personal-font);
@@ -178,6 +184,31 @@
 :root.dark .personal-app input[type="checkbox"]:not(:checked) {
   border-radius: 4px;
   box-shadow: 0 0 0 1.5px var(--personal-border-strong);
+}
+
+/* Desktop pane: the routed screen to the right of the bot list (the shell only
+ * renders `.personal-pane` at md+). The pane reads as the lighter sheet and
+ * the list as the tray beside it, so the page token is swapped for the surface
+ * inside it. Everything drawn "on the page" follows (the composer's bar, swipe
+ * rows, the Computer's full-screen overlay), and every text token already
+ * clears AA on the surface. A screen that carries its own `.personal-app`
+ * (Computer) would redeclare the page colour and paint a box in the pane, so
+ * it is covered too; `:root` lifts both selectors over the dark block above. */
+:root .personal-pane,
+:root .personal-pane .personal-app {
+  --personal-bg: var(--personal-surface);
+  background-color: var(--personal-bg);
+}
+
+/* Centre an edge-to-edge row's content on the reading column: the element
+ * keeps the chat's full width (so the scrollbar sits at the pane edge and the
+ * composer's rule runs across it) while its padding pulls the content in. The
+ * percentage is of the containing block, i.e. the chat's width. Below md the
+ * phone keeps each element's own padding. */
+@media (min-width: 768px) {
+  .personal-column {
+    padding-inline: max(1rem, calc((100% - var(--personal-reading-column)) / 2));
+  }
 }
 
 /* The personal surface honours reduced-motion: no perpetual animations. */
