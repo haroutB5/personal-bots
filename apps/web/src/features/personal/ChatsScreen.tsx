@@ -75,6 +75,7 @@ import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
+import { usePreloadChatRoute } from "./usePreloadChatRoute";
 import { reportChatsListPainted } from "./perfRum";
 import { formatRelativeTime } from "./relativeTime";
 import { botSelectionKey, groupSelectionKey, type SidebarSelectionKey } from "./personalMode";
@@ -314,6 +315,7 @@ export function ChatsScreen({
   // first paint (snapshot, skeleton or live list) so it cannot contend with
   // that paint; the timeout covers background tabs where rAF never fires.
   const loaded = list.data !== null;
+  usePreloadChatRoute(loaded);
   const showingSnapshot = !loaded && snapshot !== null && snapshot.rows.length > 0;
   const firstPaintReady = loaded || showingSnapshot || list.error !== null;
   const rowsPainted = showingSnapshot || (list.data !== null && list.data.bots.length > 0);

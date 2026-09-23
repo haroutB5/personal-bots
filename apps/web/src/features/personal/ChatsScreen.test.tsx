@@ -89,6 +89,7 @@ vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => u
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
   useNavigate: () => state.navigate,
+  useRouter: () => ({ routesById: {}, loadRouteChunk: async () => undefined }),
 }));
 // Base UI's menu needs a DOM; the list only cares that the two items exist.
 vi.mock("~/components/ui/menu", () => ({
