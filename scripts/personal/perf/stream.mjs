@@ -125,6 +125,9 @@ const result = await page.evaluate(
       framesOver100: frames.filter((d) => d > 100).length,
       frameGaps: frames,
       cls: shifts.reduce((s, [, v]) => s + v, 0),
+      shiftRegions: shifts
+        .map(([t, v, w]) => `${Math.round(t - from)}ms ${v.toFixed(3)} ${w}`)
+        .slice(0, 12),
       textLength: document.querySelector('[role="log"]')?.textContent.length ?? 0,
     };
   },
