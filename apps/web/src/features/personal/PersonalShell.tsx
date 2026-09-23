@@ -1,12 +1,22 @@
-import type { JSX } from "react";
+import type { CSSProperties, JSX } from "react";
+import { useRef } from "react";
 
 import { Outlet, useLocation } from "@tanstack/react-router";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 
 import { ChatsScreen } from "./ChatsScreen";
+import { ColumnResizeHandle } from "./ColumnResizeHandle";
+import {
+  SIDEBAR_ID,
+  SIDEBAR_WIDTH,
+  sidebarMaxWidth,
+  sidebarWidthCss,
+  useChatSidePanel,
+} from "./desktopColumns";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
 import { activeTabFor, type DesktopPaneLayout, desktopPaneLayout } from "./personalMode";
+import { setPersonalNumberPreference, usePersonalNumberPreference } from "./personalPreferences";
 import { PersonalTabBar } from "./PersonalTabBar";
 import { TeamScreen } from "./TeamScreen";
 import { useHiddenRootAttribute } from "./useHiddenRootAttribute";
@@ -30,13 +40,17 @@ const PANE_CONTENT_CLASS: Record<DesktopPaneLayout, string> = {
  * Phone: the routed screen fills the column and the tab bar sits below it
  * (hidden on focused editors). md+: the bot list is a fixed left column with
  * the tab bar, and the routed screen fills the pane to its right. With no chat
- * open the pane shows the team rather than an empty page.
+ * open the pane shows the team rather than an empty page. The list's inner
+ * edge drags to resize it (`desktopColumns` has the limits).
  */
 export function PersonalShell(): JSX.Element {
   const pathname = useLocation({ select: (location) => location.pathname });
   const isWide = useMediaQuery("md");
   const activeTab = activeTabFor(pathname);
   useHiddenRootAttribute();
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const sidebarWidth = usePersonalNumberPreference("sidebarWidth");
+  const sidePanel = useChatSidePanel();
 
   if (!isWide) {
     return (
@@ -54,16 +68,44 @@ export function PersonalShell(): JSX.Element {
 
   const showsHome = activeTab === "chats" && pathname.replace(/\/$/, "") === "/bots";
   const layout = desktopPaneLayout(pathname);
+  // A bot chat (not a group) is where the side panel opens; the list leaves
+  // room for it there.
+  const sidePanelOpen =
+    sidePanel.open && layout === "conversation" && !pathname.startsWith("/bots/groups/");
   return (
-    <div className="personal-app flex h-dvh overflow-hidden pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
+    <div
+      ref={rootRef}
+      className="personal-app flex h-dvh overflow-hidden pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]"
+      style={
+        {
+          "--personal-sidebar-width": `${sidebarWidth}px`,
+          "--personal-sidebar-effective": sidebarWidthCss(sidePanelOpen),
+        } as CSSProperties
+      }
+    >
       <aside
+        id={SIDEBAR_ID}
         aria-label="Bots"
-        className="flex w-[320px] shrink-0 flex-col border-r border-[var(--personal-border)] lg:w-[340px] min-[1600px]:w-[360px]"
+        className="relative flex shrink-0 flex-col border-r border-[var(--personal-border)]"
+        style={{ width: "var(--personal-sidebar-effective)" }}
       >
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pt-[env(safe-area-inset-top)]">
           <ChatsScreen />
         </div>
         <PersonalTabBar active={activeTab ?? "chats"} />
+        <ColumnResizeHandle
+          label="Resize bot list"
+          edge="right"
+          controls={SIDEBAR_ID}
+          value={sidebarWidth}
+          min={SIDEBAR_WIDTH.min}
+          maxWidth={() => sidebarMaxWidth(window.innerWidth, sidePanelOpen)}
+          defaultWidth={SIDEBAR_WIDTH.default}
+          cssVar="--personal-sidebar-width"
+          target={() => rootRef.current}
+          measure={() => document.getElementById(SIDEBAR_ID)?.getBoundingClientRect().width ?? null}
+          onCommit={(next) => setPersonalNumberPreference("sidebarWidth", next)}
+        />
       </aside>
       <main className="personal-pane flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-[env(safe-area-inset-top)]">
         <PersonalOfflineBanner />

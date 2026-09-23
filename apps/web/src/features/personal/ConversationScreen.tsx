@@ -30,7 +30,6 @@ import { ChevronLeft, Ellipsis, PanelRightClose, PanelRightOpen } from "lucide-r
 
 import { buildRunningThreadTurnInterruptInput } from "~/components/ChatView.logic";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
-import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { deriveLatestContextWindowSnapshot } from "~/lib/contextWindow";
 import { cn } from "~/lib/utils";
 import {
@@ -75,6 +74,7 @@ import {
   resolveConversationHeaderName,
 } from "./conversationModel";
 import { DelegationCard } from "./DelegationCard";
+import { useChatSidePanel } from "./desktopColumns";
 import {
   delegatedChildren,
   resolveTurnChildren,
@@ -160,12 +160,6 @@ function ConversationSubtitle({
     </p>
   );
 }
-
-/**
- * Where the Computer + Routines panel fits beside a chat: the bot list (up to
- * 360px) and the panel (360px) still leave the chat a ~700px reading column.
- */
-const SIDE_PANEL_MIN_WIDTH = 1440;
 
 const EMPTY_MESSAGES: ReadonlyArray<ChatMessage> = [];
 const EMPTY_SECRET_REQUESTS: ReadonlyArray<PersonalSecretRequest> = [];
@@ -291,9 +285,7 @@ export function ConversationScreen({
   // Wide desktop: the Computer and the routines sit in a panel beside the chat
   // instead of the link and strip under it. Below the width the chat is laid
   // out exactly as it always was.
-  const sidePanelFits = useMediaQuery({ min: SIDE_PANEL_MIN_WIDTH });
-  const sidePanelPreferred = usePersonalPreference("showChatSidePanel");
-  const sidePanelOpen = sidePanelFits && sidePanelPreferred;
+  const { fits: sidePanelFits, open: sidePanelOpen } = useChatSidePanel();
   /* oxlint-disable react/refs -- The ref is a pure render cache, not UI state:
      it only ever holds the last projection for the last thread, and dropping it
      costs a full re-fold, never a different result. Moving the read or the

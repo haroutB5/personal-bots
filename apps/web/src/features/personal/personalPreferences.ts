@@ -63,3 +63,57 @@ export function usePersonalPreference(preference: PersonalPreference): boolean {
   const serverSnapshot = useCallback(() => PERSONAL_PREFERENCE_DEFAULTS[preference], [preference]);
   return useSyncExternalStore(subscribe, snapshot, serverSnapshot);
 }
+
+/**
+ * Numeric view preferences: the desktop column widths the owner dragged to,
+ * in CSS pixels. Same storage and the same subscribers as the flags above.
+ * Only a finite positive number is ever read back; anything else (a hand-edited
+ * key, a value from an older build) is the default. Clamping to what fits is
+ * the layout's job, not the store's.
+ */
+const NUMBER_PREFERENCE_KEYS = {
+  /** Width of the bot list beside the pane (md+). */
+  sidebarWidth: "personal-desktop-sidebar-width",
+  /** Width of the Computer + Routines panel beside a chat (1440px+). */
+  sidePanelWidth: "personal-desktop-side-panel-width",
+} as const;
+
+export type PersonalNumberPreference = keyof typeof NUMBER_PREFERENCE_KEYS;
+
+export const PERSONAL_NUMBER_PREFERENCE_DEFAULTS: Record<PersonalNumberPreference, number> = {
+  sidebarWidth: 340,
+  sidePanelWidth: 360,
+};
+
+export function readPersonalNumberPreference(preference: PersonalNumberPreference): number {
+  try {
+    const raw = window.localStorage.getItem(NUMBER_PREFERENCE_KEYS[preference]);
+    const value = raw === null ? Number.NaN : Number(raw);
+    return Number.isFinite(value) && value > 0
+      ? value
+      : PERSONAL_NUMBER_PREFERENCE_DEFAULTS[preference];
+  } catch {
+    return PERSONAL_NUMBER_PREFERENCE_DEFAULTS[preference];
+  }
+}
+
+export function setPersonalNumberPreference(
+  preference: PersonalNumberPreference,
+  value: number,
+): void {
+  try {
+    window.localStorage.setItem(NUMBER_PREFERENCE_KEYS[preference], String(Math.round(value)));
+  } catch {
+    // Storage unavailable: the drag still applied to the page for this visit.
+  }
+  for (const listener of listeners) listener();
+}
+
+export function usePersonalNumberPreference(preference: PersonalNumberPreference): number {
+  const snapshot = useCallback(() => readPersonalNumberPreference(preference), [preference]);
+  const serverSnapshot = useCallback(
+    () => PERSONAL_NUMBER_PREFERENCE_DEFAULTS[preference],
+    [preference],
+  );
+  return useSyncExternalStore(subscribe, snapshot, serverSnapshot);
+}
