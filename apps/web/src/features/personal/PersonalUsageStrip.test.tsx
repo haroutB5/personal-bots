@@ -114,12 +114,36 @@ describe("PersonalUsageStrip", () => {
     expect(json).not.toContain("resets in");
   });
 
-  it("shows a dash, not 0%, for a provider that cannot report", async () => {
+  it("says the provider did not report, never 0%, when it cannot report", async () => {
     state.providers = [
       provider("claudeAgent", {
         checkedAt: "2026-09-13T11:59:00Z",
         windows: [],
         unavailable: { reason: "unsupported" },
+      }),
+    ];
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+    const json = JSON.stringify(renderer!.toJSON());
+    // Both windows missing: one plain phrase, not "Session – · Weekly – used".
+    expect(json).toContain("Not reported");
+    expect(json).not.toContain("0%");
+  });
+
+  it("keeps a dash for the one window a provider did not report", async () => {
+    state.providers = [
+      provider("claudeAgent", {
+        checkedAt: "2026-09-13T11:59:00Z",
+        windows: [
+          {
+            id: "seven_day",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 12,
+            resetsAt: "2026-09-18T09:00:00Z",
+          },
+        ],
       }),
     ];
     await act(async () => {

@@ -291,13 +291,21 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
                 filled to (the sheet and the label carry the other). */}
             <span className="truncate text-[11px] leading-4 text-[var(--personal-text-tertiary)] tabular-nums md:text-[12px]">
               <span className="md:hidden md:@min-[196px]:inline">
-                <span className={bindingInk(cell, "session")}>
-                  Session {formatStripPercent(cell.sessionPercent)}
-                </span>{" "}
-                ·{" "}
-                <span className={bindingInk(cell, "weekly")}>
-                  Weekly {formatStripPercent(cell.weeklyPercent)} used
-                </span>
+                {cell.sessionPercent === null && cell.weeklyPercent === null ? (
+                  // Nothing reported yet: "Session – · Weekly – used" read as a
+                  // broken line of dashes.
+                  "Not reported"
+                ) : (
+                  <>
+                    <span className={bindingInk(cell, "session")}>
+                      Session {formatStripPercent(cell.sessionPercent)}
+                    </span>{" "}
+                    ·{" "}
+                    <span className={bindingInk(cell, "weekly")}>
+                      Weekly {formatStripPercent(cell.weeklyPercent)} used
+                    </span>
+                  </>
+                )}
               </span>
               <ShortWindowFigure cell={cell} />
             </span>
