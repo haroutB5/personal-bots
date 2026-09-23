@@ -90,6 +90,9 @@ export const BotRow = memo(function BotRow({
         size={56}
         label={bot.name}
         motion={motion}
+        // The list's single uncapped working row gets the comet too (the cap in
+        // ChatsScreen keeps it to one per list); the owner found no lag on device.
+        comet
       />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex min-w-0 items-center">

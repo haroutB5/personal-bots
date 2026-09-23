@@ -693,8 +693,6 @@ export function ConversationScreen({
               size={48}
               label={bot.name}
               motion={motionForConversationState(conversationState, turnThinking)}
-              // The comet is the costliest pose: the single header avatar
-              // only, never the chat list rows (see PHASE-B.md bench).
               comet
             />
             <div className="min-w-0 flex-1">

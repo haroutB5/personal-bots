@@ -359,6 +359,7 @@ export function PinnedBotTile({
           size={PINNED_AVATAR_SIZE}
           label={bot.name}
           motion={motion}
+          comet
         />
       }
       badge={badge}
