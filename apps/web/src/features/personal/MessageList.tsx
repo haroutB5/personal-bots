@@ -159,7 +159,7 @@ const UserMessage = memo(function UserMessage({
         />
       )}
       {message.text.trim().length > 0 ? (
-        <p className="max-w-[78%] rounded-[var(--personal-radius-bubble)] bg-[var(--personal-fill-muted)] px-3.5 py-2.5 text-[15px] leading-[1.4] break-words whitespace-pre-wrap text-[var(--personal-text)]">
+        <p className="max-w-[78%] rounded-[var(--personal-radius-bubble)] bg-[var(--personal-fill-muted)] px-3.5 py-2.5 text-[15px] leading-[1.4] break-words whitespace-pre-wrap text-[var(--personal-text)] md:text-[16px] md:leading-[1.5]">
           {message.text}
         </p>
       ) : null}
@@ -180,7 +180,7 @@ const AssistantMessage = memo(function AssistantMessage({
 }) {
   if (message.text.length === 0) return null;
   return (
-    <div className="personal-markdown max-w-[90%] text-[15px] leading-[1.45] text-[var(--personal-text)]">
+    <div className="personal-markdown max-w-[90%] text-[15px] leading-[1.45] text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]">
       <span className="sr-only">{botName} said:</span>
       <ChatMarkdown
         text={message.text}
@@ -632,7 +632,7 @@ export function MessageList({
               return (
                 <div
                   key={item.id}
-                  className="max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-3.5 text-[15px] leading-[1.45] text-[var(--personal-text)]"
+                  className="personal-markdown max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-3.5 text-[15px] leading-[1.45] text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]"
                 >
                   <p className="mb-1 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
                     Plan
@@ -668,7 +668,7 @@ export function MessageList({
               </span>
             ))}
             {message.text.length > 0 ? (
-              <p className="max-w-[78%] rounded-[var(--personal-radius-bubble)] bg-[var(--personal-fill-muted)] px-3.5 py-2.5 text-[15px] leading-[1.4] break-words whitespace-pre-wrap text-[var(--personal-text)]">
+              <p className="max-w-[78%] rounded-[var(--personal-radius-bubble)] bg-[var(--personal-fill-muted)] px-3.5 py-2.5 text-[15px] leading-[1.4] break-words whitespace-pre-wrap text-[var(--personal-text)] md:text-[16px] md:leading-[1.5]">
                 {message.text}
               </p>
             ) : null}

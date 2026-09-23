@@ -430,9 +430,9 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
                         : "bg-[var(--personal-text-tertiary)]",
                   )}
                 />
-                <span className="min-w-0 flex-1 truncate md:flex-initial">
-                  {groupSubtitle(group, nameOf)}
-                </span>
+                {/* No flex-1: on the phone it pushed the state away from the
+                    members across a gap; now it follows them, as in a bot chat. */}
+                <span className="min-w-0 truncate">{groupSubtitle(group, nameOf)}</span>
                 <span className="shrink-0 whitespace-nowrap">· {stateLabel.label}</span>
               </span>
             ) : null}

@@ -127,10 +127,12 @@ const STATE_DOT: Record<ConversationState, string> = {
 };
 
 /**
- * Header subtitle: the state dot, the bot's role, then the provider and what
- * the bot is doing. Only the role truncates. The status used to share one
+ * Header subtitle: the state dot, the provider and what the bot is doing, then
+ * the bot's role. Only the role truncates. The status used to share one
  * truncating span with the provider, so a long role turned "Waiting for you"
- * into "Wait…" - the one part of the line worth reading.
+ * into "Wait…" - the one part of the line worth reading. The role came first
+ * after that, which cut it to a stub ("Chief techn…") and, on the phone, left a
+ * gap between it and the status; last, it just runs out at the edge.
  */
 function ConversationSubtitle({
   state,
@@ -144,19 +146,15 @@ function ConversationSubtitle({
   return (
     <p className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
       <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", STATE_DOT[state])} />
-      {title !== "" ? (
-        // The separator truncates with the role: a squeezed role must not
-        // leave a lone "·" beside the dot.
-        // md+: the role keeps its natural width so the status reads right after
-        // it instead of being pushed to the far edge of a wide header.
-        <span className="min-w-0 flex-1 truncate md:flex-initial">
-          {title}
-          <span aria-hidden="true"> ·</span>
-        </span>
-      ) : null}
       <span className="shrink-0 whitespace-nowrap">
         {parts.prefix === null ? parts.status : `${parts.prefix} · ${parts.status}`}
       </span>
+      {title !== "" ? (
+        <span className="min-w-0 truncate">
+          <span aria-hidden="true">· </span>
+          {title}
+        </span>
+      ) : null}
     </p>
   );
 }
@@ -705,16 +703,18 @@ export function ConversationScreen({
               comet
             />
             <div className="min-w-0 flex-1">
-              <span className="flex min-w-0 items-baseline gap-1.5">
+              <span className="flex min-w-0 items-center gap-2">
                 <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
                   {bot.name}
                 </h1>
                 {contextBadge !== null ? (
-                  // Only on a heavy chat: it costs more per turn and compaction
-                  // is coming, so the size is worth the space by then.
+                  // The chat's context size, at every size. A quiet outlined
+                  // chip, so it reads as a measure of the chat and not as a
+                  // second, smaller word of the name.
                   <span
+                    role="img"
                     aria-label={`Chat context ${contextBadge} tokens`}
-                    className="shrink-0 text-[12px] leading-6 font-medium tabular-nums text-[var(--personal-text-tertiary)]"
+                    className="shrink-0 rounded-full border border-[var(--personal-border-strong)] px-1.5 text-[11px] leading-[18px] font-medium tabular-nums text-[var(--personal-text-secondary)]"
                   >
                     {contextBadge}
                   </span>

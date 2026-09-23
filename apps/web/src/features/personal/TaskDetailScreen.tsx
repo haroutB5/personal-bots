@@ -6,6 +6,8 @@ import { Link } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import { ChevronLeft } from "lucide-react";
 
+import ChatMarkdown from "~/components/ChatMarkdown";
+import { shouldPreserveAssistantLineBreaks } from "~/components/chat/MessagesTimeline.logic";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -203,9 +205,15 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
       {task.result !== null && task.result.summary.trim().length > 0 ? (
         <section className={DETAIL_CARD}>
           <h3 className="text-[14px] font-semibold text-[var(--personal-text)]">Result</h3>
-          <p className="mt-1 text-[15px] leading-relaxed break-words whitespace-pre-wrap text-[var(--personal-text)]">
-            {task.result.summary}
-          </p>
+          {/* A bot writes its result in markdown, the same as a reply: shown
+              as plain text it read "**Cause**" and `code` with the marks in. */}
+          <div className="personal-markdown mt-1 text-[15px] leading-[1.5] break-words text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]">
+            <ChatMarkdown
+              text={task.result.summary}
+              cwd={undefined}
+              lineBreaks={shouldPreserveAssistantLineBreaks(task.result.summary)}
+            />
+          </div>
         </section>
       ) : null}
 

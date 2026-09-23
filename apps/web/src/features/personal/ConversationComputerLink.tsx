@@ -2,6 +2,7 @@ import type { JSX } from "react";
 
 import type { PersonalBrowserStatus } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import { Laptop } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
@@ -41,12 +42,16 @@ export function ConversationComputerLink({
         // Carries where he came from, so Back returns to this chat even when
         // the browser never ran and the status carries no `lastAgent`.
         search={{ fromBot: botId, fromThread: threadId }}
+        // The laptop glyph is the Computer tab's own, so the line reads as a
+        // route to that tab and not as a stray grey label over the composer.
         className={cn(
-          "inline-flex min-h-11 items-center rounded-[var(--personal-radius-button)] px-3 text-[13px] outline-none",
+          "inline-flex min-h-11 items-center gap-1.5 rounded-[var(--personal-radius-button)] px-3 text-[13px] outline-none",
           "active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+          "personal-row-hover",
           TONE_CLASS[link.tone],
         )}
       >
+        <Laptop aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} />
         {link.text}
       </Link>
     </div>
