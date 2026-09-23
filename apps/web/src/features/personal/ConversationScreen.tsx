@@ -26,10 +26,11 @@ import {
 } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import * as Redacted from "effect/Redacted";
-import { ChevronLeft, Ellipsis } from "lucide-react";
+import { ChevronLeft, Ellipsis, PanelRightClose, PanelRightOpen } from "lucide-react";
 
 import { buildRunningThreadTurnInterruptInput } from "~/components/ChatView.logic";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { deriveLatestContextWindowSnapshot } from "~/lib/contextWindow";
 import { cn } from "~/lib/utils";
 import {
@@ -55,6 +56,7 @@ import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerLink } from "./ConversationComputerLink";
 import { useComputerFeed } from "./computer/computerState";
 import { ConversationRoutinesPanel } from "./ConversationRoutinesPanel";
+import { CONVERSATION_SIDE_PANEL_ID, ConversationSidePanel } from "./ConversationSidePanel";
 import {
   botLastSpokeAtMs,
   autoRetryNotice,
@@ -158,6 +160,12 @@ function ConversationSubtitle({
     </p>
   );
 }
+
+/**
+ * Where the Computer + Routines panel fits beside a chat: the bot list (up to
+ * 360px) and the panel (360px) still leave the chat a ~700px reading column.
+ */
+const SIDE_PANEL_MIN_WIDTH = 1440;
 
 const EMPTY_MESSAGES: ReadonlyArray<ChatMessage> = [];
 const EMPTY_SECRET_REQUESTS: ReadonlyArray<PersonalSecretRequest> = [];
@@ -280,6 +288,12 @@ export function ConversationScreen({
   } | null>(null);
   const showToolSteps = usePersonalPreference("showToolSteps");
   const showRoutinesStrip = usePersonalPreference("showRoutinesStrip");
+  // Wide desktop: the Computer and the routines sit in a panel beside the chat
+  // instead of the link and strip under it. Below the width the chat is laid
+  // out exactly as it always was.
+  const sidePanelFits = useMediaQuery({ min: SIDE_PANEL_MIN_WIDTH });
+  const sidePanelPreferred = usePersonalPreference("showChatSidePanel");
+  const sidePanelOpen = sidePanelFits && sidePanelPreferred;
   /* oxlint-disable react/refs -- The ref is a pure render cache, not UI state:
      it only ever holds the last projection for the last thread, and dropping it
      costs a full re-fold, never a different result. Moving the read or the
@@ -669,7 +683,7 @@ export function ConversationScreen({
     if (error !== null) setActionError(error);
   };
 
-  return (
+  const chat = (
     <div
       ref={shellRef}
       className="flex h-full min-h-0 flex-col"
@@ -751,6 +765,22 @@ export function ConversationScreen({
             </div>
           </>
         )}
+        {sidePanelFits ? (
+          <button
+            type="button"
+            aria-label="Computer and routines panel"
+            aria-expanded={sidePanelOpen}
+            aria-controls={sidePanelOpen ? CONVERSATION_SIDE_PANEL_ID : undefined}
+            onClick={() => setPersonalPreference("showChatSidePanel", !sidePanelOpen)}
+            className={cn(ICON_BUTTON, "text-[var(--personal-text-secondary)]")}
+          >
+            {sidePanelOpen ? (
+              <PanelRightClose aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
+            ) : (
+              <PanelRightOpen aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
+            )}
+          </button>
+        ) : null}
         <Menu>
           <MenuTrigger
             render={<button type="button" aria-label="Chat options" className={ICON_BUTTON} />}
@@ -827,13 +857,15 @@ export function ConversationScreen({
             describeTurn={describeTurn}
             renderDelegation={renderDelegation}
           />
-          <ConversationComputerLink
-            status={computerFeed.status}
-            botId={botId}
-            threadId={threadId}
-            agentTurnRunning={conversationState === "working"}
-          />
-          {showRoutinesStrip && conversationState !== "needs_help" ? (
+          {sidePanelOpen ? null : (
+            <ConversationComputerLink
+              status={computerFeed.status}
+              botId={botId}
+              threadId={threadId}
+              agentTurnRunning={conversationState === "working"}
+            />
+          )}
+          {showRoutinesStrip && conversationState !== "needs_help" && !sidePanelOpen ? (
             <ConversationRoutinesPanel
               environmentId={environmentId}
               botId={botId}
@@ -882,6 +914,25 @@ export function ConversationScreen({
           )}
         </div>
       )}
+    </div>
+  );
+
+  // The phone and narrower desktops get the chat exactly as before. Where the
+  // panel fits the chat is wrapped whether or not the panel is open, so the
+  // toggle never remounts the transcript (scroll position, composer focus).
+  if (!sidePanelFits) return chat;
+  return (
+    <div className="flex h-full min-h-0">
+      <div className="h-full min-w-0 flex-1">{chat}</div>
+      {sidePanelOpen ? (
+        <ConversationSidePanel
+          environmentId={environmentId}
+          botId={botId}
+          threadId={threadId}
+          showRoutines={showRoutinesStrip}
+          onHideRoutines={() => setPersonalPreference("showRoutinesStrip", false)}
+        />
+      ) : null}
     </div>
   );
 }

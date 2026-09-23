@@ -91,6 +91,12 @@ export interface ComputerScreenProps {
    * `fromThread` search params. Null when the user came from the tab bar.
    */
   readonly origin?: BackToChatTarget | null;
+  /**
+   * `panel`: pinned beside a chat on a wide desktop, so the conversation stays
+   * open while the browser is followed. There is no Back (the chat is right
+   * there) and the title is a section heading under the chat's own h1.
+   */
+  readonly variant?: "screen" | "panel";
 }
 
 const ICON_STROKE = 1.75;
@@ -163,7 +169,11 @@ function usePageVisible(): boolean {
   return visible;
 }
 
-export function ComputerScreen({ onBackToChat, origin = null }: ComputerScreenProps) {
+export function ComputerScreen({
+  onBackToChat,
+  origin = null,
+  variant = "screen",
+}: ComputerScreenProps) {
   const environmentId = usePersonalEnvironmentId();
   const { feed, error, loading } = useComputerFeed(environmentId);
   const [segment, setSegment] = useState<"browser" | "files">("browser");
@@ -206,22 +216,30 @@ export function ComputerScreen({ onBackToChat, origin = null }: ComputerScreenPr
         "personal-app flex min-h-0 flex-1 flex-col outline-none",
         fullScreen
           ? "fixed inset-0 z-50 overflow-hidden bg-[var(--personal-bg)] pb-[env(safe-area-inset-bottom)]"
-          : "overflow-y-auto px-5 pb-6",
+          : variant === "panel"
+            ? "overflow-y-auto px-4 pb-4"
+            : "overflow-y-auto px-5 pb-6",
       )}
       style={{ paddingTop: "env(safe-area-inset-top)" }}
     >
       <header className={cn("flex min-h-16 items-center gap-1", fullScreen && "hidden")}>
-        <button
-          type="button"
-          aria-label="Back to chat"
-          onClick={goBackToChat}
-          className="-ml-3 flex size-11 shrink-0 items-center justify-center rounded-full"
-        >
-          <ChevronLeft className="size-[22px]" strokeWidth={ICON_STROKE} />
-        </button>
+        {variant === "panel" ? null : (
+          <button
+            type="button"
+            aria-label="Back to chat"
+            onClick={goBackToChat}
+            className="-ml-3 flex size-11 shrink-0 items-center justify-center rounded-full"
+          >
+            <ChevronLeft className="size-[22px]" strokeWidth={ICON_STROKE} />
+          </button>
+        )}
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="text-[19px] font-bold leading-tight">Computer</h1>
+            {variant === "panel" ? (
+              <h2 className="text-[17px] font-bold leading-tight">Computer</h2>
+            ) : (
+              <h1 className="text-[19px] font-bold leading-tight">Computer</h1>
+            )}
             <StatusDot tone={state.tone} />
           </div>
           <p className="truncate text-[14px] text-[var(--personal-text-secondary)]">

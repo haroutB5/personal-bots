@@ -11,6 +11,11 @@ const PREFERENCE_KEYS = {
   showToolSteps: "personal-show-tool-steps",
   /** The "Routines / See all" strip under a chat. On by default. */
   showRoutinesStrip: "personal-show-routines-strip",
+  /**
+   * The Computer + Routines panel pinned beside a chat on a wide desktop
+   * (1440px+). On by default; the chat header toggles it.
+   */
+  showChatSidePanel: "personal-show-chat-side-panel",
 } as const;
 
 export type PersonalPreference = keyof typeof PREFERENCE_KEYS;
@@ -18,6 +23,7 @@ export type PersonalPreference = keyof typeof PREFERENCE_KEYS;
 export const PERSONAL_PREFERENCE_DEFAULTS: Record<PersonalPreference, boolean> = {
   showToolSteps: false,
   showRoutinesStrip: true,
+  showChatSidePanel: true,
 };
 
 const listeners = new Set<() => void>();
