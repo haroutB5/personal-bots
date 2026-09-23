@@ -1556,7 +1556,8 @@ const CLAUDE_SETTING_SOURCES = [
  * Auto-memory and claude.ai connectors are read regardless of settingSources,
  * so both are switched off by setting and by env var. Built-in tools stay.
  * A bot's own plugin folder (`<baseDir>/bot-plugins/<botId>/`, when it holds
- * `.claude-plugin/plugin.json`) is passed explicitly via `plugins`.
+ * `.claude-plugin/plugin.json`) is passed explicitly via `plugins`, after the
+ * shared folder every bot loads (`<baseDir>/bot-plugins/_shared/`, same rule).
  */
 export const PERSONAL_BOT_CLAUDE_SETTINGS = {
   autoMemoryEnabled: false,
@@ -1564,6 +1565,11 @@ export const PERSONAL_BOT_CLAUDE_SETTINGS = {
 } as const;
 /** Per-bot plugin folders live at `<baseDir>/bot-plugins/<botId>/`. */
 export const PERSONAL_BOT_PLUGINS_DIR = "bot-plugins";
+/**
+ * Skills every bot gets (`<baseDir>/bot-plugins/_shared/`). The leading
+ * underscore keeps it out of the bot id pattern, so no bot can claim it.
+ */
+export const PERSONAL_BOT_SHARED_PLUGIN = "_shared";
 // Bot ids are UUIDs; anything else never becomes a path segment.
 const PERSONAL_BOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 export const PERSONAL_BOT_CLAUDE_ENVIRONMENT = {
@@ -2099,15 +2105,27 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
   const crypto = yield* Crypto.Crypto;
-  /** `<baseDir>/bot-plugins/<botId>` when it holds a Claude plugin manifest. */
-  const resolvePersonalBotPluginDir = (botId: string | undefined) =>
+  /** The folder when it holds a Claude plugin manifest. */
+  const pluginDirWithManifest = (pluginDir: string) =>
+    fileSystem.exists(path.join(pluginDir, ".claude-plugin", "plugin.json")).pipe(
+      Effect.orElseSucceed(() => false),
+      Effect.map((hasManifest) => (hasManifest ? pluginDir : undefined)),
+    );
+  /**
+   * The shared plugin folder (`<baseDir>/bot-plugins/_shared`), then the bot's
+   * own (`<baseDir>/bot-plugins/<botId>`), each only when it has a manifest.
+   */
+  const resolvePersonalBotPluginDirs = (botId: string | undefined) =>
     Effect.gen(function* () {
-      if (botId === undefined || !PERSONAL_BOT_ID_PATTERN.test(botId)) return undefined;
-      const pluginDir = path.join(serverConfig.baseDir, PERSONAL_BOT_PLUGINS_DIR, botId);
-      const hasManifest = yield* fileSystem
-        .exists(path.join(pluginDir, ".claude-plugin", "plugin.json"))
-        .pipe(Effect.orElseSucceed(() => false));
-      return hasManifest ? pluginDir : undefined;
+      const pluginsRoot = path.join(serverConfig.baseDir, PERSONAL_BOT_PLUGINS_DIR);
+      const shared = yield* pluginDirWithManifest(
+        path.join(pluginsRoot, PERSONAL_BOT_SHARED_PLUGIN),
+      );
+      const own =
+        botId === undefined || !PERSONAL_BOT_ID_PATTERN.test(botId)
+          ? undefined
+          : yield* pluginDirWithManifest(path.join(pluginsRoot, botId));
+      return [shared, own].filter((dir): dir is string => dir !== undefined);
     });
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
@@ -4950,12 +4968,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // A bot's own plugin folder (skills, commands) loads explicitly: it is
       // unaffected by the empty settingSources above, so the machine owner's
       // user-level plugins stay out while this bot keeps its extras.
-      const botPluginDir = personalBot
-        ? yield* resolvePersonalBotPluginDir(input.personalBotId)
-        : undefined;
-      const plugins: ClaudeQueryOptions["plugins"] = botPluginDir
-        ? [{ type: "local", path: botPluginDir }]
-        : undefined;
+      const botPluginDirs = personalBot
+        ? yield* resolvePersonalBotPluginDirs(input.personalBotId)
+        : [];
+      const plugins: ClaudeQueryOptions["plugins"] =
+        botPluginDirs.length > 0
+          ? botPluginDirs.map((pluginDir) => ({ type: "local" as const, path: pluginDir }))
+          : undefined;
       if (requestThinkingSummaries && extraArgs["thinking-display"] === undefined) {
         extraArgs["thinking-display"] = "summarized";
       }
@@ -5057,7 +5076,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.additional_directories": additionalDirectories,
         "claude.query.setting_sources": settingSources,
         "claude.query.personal_bot": personalBot,
-        "claude.query.plugins": botPluginDir ? [botPluginDir] : [],
+        "claude.query.plugins": botPluginDirs,
         "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
         "claude.query.extra_args_json": encodeJsonStringForDiagnostics(extraArgs) ?? "",
         "claude.query.path_to_executable": claudeBinaryPath,

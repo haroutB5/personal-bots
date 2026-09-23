@@ -655,6 +655,52 @@ describe("ClaudeAdapterLive", () => {
     });
   });
 
+  const addSharedPlugin = (baseDir: string) => {
+    const sharedDir = NodePath.join(baseDir, "bot-plugins", "_shared");
+    NodeFS.mkdirSync(NodePath.join(sharedDir, ".claude-plugin"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(sharedDir, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "hbots-shared", skills: "./.claude/skills/" }),
+    );
+    return sharedDir;
+  };
+
+  it.effect("loads the shared plugin folder for every bot, before the bot's own", () => {
+    const { baseDir, pluginDir } = makeBotPluginBaseDir(true);
+    const sharedDir = addSharedPlugin(baseDir);
+    return Effect.gen(function* () {
+      const options = yield* startWithBotPlugins(baseDir, {
+        personalBot: true,
+        personalBotId: BOT_ID,
+      });
+      assert.deepEqual(options?.plugins, [
+        { type: "local", path: sharedDir },
+        { type: "local", path: pluginDir },
+      ]);
+    });
+  });
+
+  it.effect("a bot with no folder of its own still gets the shared plugin", () => {
+    const { baseDir } = makeBotPluginBaseDir(false);
+    const sharedDir = addSharedPlugin(baseDir);
+    return Effect.gen(function* () {
+      const options = yield* startWithBotPlugins(baseDir, {
+        personalBot: true,
+        personalBotId: "00000000-0000-4000-8000-000000000000",
+      });
+      assert.deepEqual(options?.plugins, [{ type: "local", path: sharedDir }]);
+    });
+  });
+
+  it.effect("normal threads never load the shared bot plugin", () => {
+    const { baseDir } = makeBotPluginBaseDir(false);
+    addSharedPlugin(baseDir);
+    return Effect.gen(function* () {
+      const options = yield* startWithBotPlugins(baseDir, {});
+      assert.equal(options?.plugins, undefined);
+    });
+  });
+
   it.effect("loads no plugins for a bot whose folder has no manifest", () => {
     const { baseDir } = makeBotPluginBaseDir(false);
     return Effect.gen(function* () {
