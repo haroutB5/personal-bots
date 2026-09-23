@@ -70,6 +70,7 @@ import { useDeleteBot } from "./useDeleteBot";
 import { threadIdsAwaitingSecret } from "./secretRequestCards";
 import { usePendingSecretRequests } from "./useSecretRequests";
 import { usePersonalRoutines, usePersonalTasks } from "./usePersonalAutomation";
+import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
@@ -99,10 +100,26 @@ export function useMinuteClock(): number {
 
 // `md:-mx-3` pairs with the rows' `md:px-3` (see ROW_CLASS in BotRow).
 const UNPINNED_LIST_CLASS =
-  "mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)] md:-mx-3";
+  "personal-row-list mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)] md:-mx-3";
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]";
+
+/**
+ * The list's load error, in the owner's words. Never the transport's own:
+ * offline that was "Couldn't load your bots. Environment 0af49158-… is
+ * offline." under a banner that already said so.
+ */
+function ListErrorText(): JSX.Element {
+  const laptopOffline = useLaptopOffline();
+  return (
+    <p className="min-w-0 text-[15px] text-[var(--personal-text)]">
+      {laptopOffline
+        ? "Your laptop is offline. Your bots come back when it reconnects."
+        : "Couldn't load your bots."}
+    </p>
+  );
+}
 
 /**
  * Cold-start placeholder: static muted rows shown only when there is no live
@@ -607,7 +624,9 @@ export function ChatsScreen({
       onClickCapture={(event) => {
         clickedRef.current = (event.target as Element).closest("a, button");
       }}
-      className="flex min-h-full min-w-0 flex-col px-5 pb-6"
+      // md+: 6px less on the right, where the list's scrollbar lane sits
+      // (`personal-scroll-quiet` reserves it), so both edges read as 20px.
+      className="flex min-h-full min-w-0 flex-col px-5 pb-6 md:pr-3.5"
     >
       <header className="flex h-14 items-center justify-between">
         <div className="flex min-w-0 items-baseline gap-1.5">
@@ -673,9 +692,7 @@ export function ChatsScreen({
 
       {list.error !== null ? (
         <div className="mt-6 flex items-center justify-between gap-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-4">
-          <p className="min-w-0 text-[15px] text-[var(--personal-text)]">
-            Couldn't load your bots. {list.error}
-          </p>
+          <ListErrorText />
           <button
             type="button"
             onClick={list.refresh}

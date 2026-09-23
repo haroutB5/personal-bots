@@ -98,7 +98,7 @@ export function PersonalShell(): JSX.Element {
         className="relative flex shrink-0 flex-col border-r border-[var(--personal-border)]"
         style={{ width: "var(--personal-sidebar-effective)" }}
       >
-        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pt-[env(safe-area-inset-top)]">
+        <div className="personal-scroll-quiet min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pt-[env(safe-area-inset-top)]">
           <ChatsScreen selectedChat={selectedChat} />
         </div>
         <PersonalTabBar active={activeTab ?? "chats"} />
@@ -118,7 +118,7 @@ export function PersonalShell(): JSX.Element {
       </aside>
       <main className="personal-pane flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-[env(safe-area-inset-top)]">
         <PersonalOfflineBanner />
-        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+        <div className="personal-scroll-quiet min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
           {showsHome ? (
             <div className={PANE_CONTENT_CLASS.column}>
               <TeamScreen showBack={false} />

@@ -318,6 +318,83 @@
   }
 }
 
+/* Quiet scroller for the desktop columns (the bot list, the chat's side panel).
+ * The app-wide 6px thumb stays, but it only shows while the pointer is over
+ * the column or focus is inside it, so an idle list reads as one surface
+ * instead of a list, a grey stripe and then the border. Mouse-only: touch
+ * keeps the platform's own overlay scrollbar. */
+@media (min-width: 768px) {
+  /* Reserve the lane either way, so the content's right edge never jumps when
+   * the list grows past the column; the list pads 6px less on that side. */
+  .personal-scroll-quiet {
+    scrollbar-gutter: stable;
+  }
+}
+
+@media (hover: hover) and (min-width: 768px) {
+  .personal-scroll-quiet::-webkit-scrollbar-thumb {
+    background: transparent;
+  }
+
+  .personal-scroll-quiet:hover::-webkit-scrollbar-thumb,
+  .personal-scroll-quiet:focus-within::-webkit-scrollbar-thumb {
+    background: var(--app-scrollbar-thumb);
+  }
+
+  .personal-scroll-quiet::-webkit-scrollbar-thumb:hover {
+    background: var(--app-scrollbar-thumb-hover);
+  }
+}
+
+/* Desktop bot list dividers. The rows are pulled out 12px each side (md:-mx-3)
+ * so the hover and selected fills have room, which drew every divider 12px
+ * past the header's edges. On md+ the rules are drawn per row, inset back onto
+ * the content edge, and the two rules around the hovered or selected fill are
+ * dropped so a rounded fill never sits between two lines. The phone keeps the
+ * list's own full-width dividers. */
+@media (min-width: 768px) {
+  .personal-row-list {
+    border-block-width: 0;
+  }
+
+  .personal-row-list > li {
+    position: relative;
+    border-block-width: 0;
+  }
+
+  .personal-row-list > li::before,
+  .personal-row-list > li:last-child::after {
+    content: "";
+    position: absolute;
+    inset-inline: 12px;
+    height: 1px;
+    background: var(--personal-border);
+    pointer-events: none;
+  }
+
+  .personal-row-list > li::before {
+    top: 0;
+  }
+
+  .personal-row-list > li:last-child::after {
+    bottom: 0;
+  }
+
+  .personal-row-list > li:has([aria-current])::before,
+  .personal-row-list > li:has([aria-current])::after,
+  .personal-row-list > li:has([aria-current]) + li::before {
+    opacity: 0;
+  }
+}
+
+@media (hover: hover) and (min-width: 768px) {
+  .personal-row-list > li:hover::before,
+  .personal-row-list > li:hover::after,
+  .personal-row-list > li:hover + li::before {
+    opacity: 0;
+  }
+}
+
 /* Hover fill for the desktop bot list's rows and pinned tiles: a lighter
  * version of the selected fill, mouse-only (touch never gets a sticky hover),
  * and never on the selected row, which already carries the full fill. */

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type JSX } from "react";
 import { RefreshCw, X } from "lucide-react";
 
 import { Sheet, SheetClose, SheetDescription, SheetPopup, SheetTitle } from "~/components/ui/sheet";
+import { cn } from "~/lib/utils";
 import { primaryServerProvidersAtom, serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -20,6 +21,7 @@ import {
   selectUsageStripCells,
   stripBindingWindow,
   stripCellBarPercent,
+  stripShortWindow,
   usageStripAriaLabel,
   type UsageStripCell,
 } from "./usageStrip";
@@ -39,6 +41,21 @@ function barColor(usedPercent: number): string {
  */
 function bindingInk(cell: UsageStripCell, window: "session" | "weekly"): string {
   return stripBindingWindow(cell) === window ? "text-[var(--personal-review-text)]" : "";
+}
+
+/** A narrow desktop cell's figure: just the window its bar is filled to. */
+function ShortWindowFigure({ cell }: { readonly cell: UsageStripCell }): JSX.Element {
+  const window = stripShortWindow(cell);
+  const nothing = cell.sessionPercent === null && cell.weeklyPercent === null;
+  return (
+    <span className={cn("hidden md:inline md:@min-[196px]:hidden", bindingInk(cell, window))}>
+      {nothing
+        ? "Not reported"
+        : `${window === "session" ? "Session" : "Weekly"} ${formatStripPercent(
+            window === "session" ? cell.sessionPercent : cell.weeklyPercent,
+          )} used`}
+    </span>
+  );
 }
 
 function StripCellBar({ percent }: { readonly percent: number | null }): JSX.Element {
@@ -193,7 +210,6 @@ function UsageSheetBody({
     probedRef.current = true;
     void onRefresh();
     // Once per mount, and the body is mounted only while the sheet is open.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [environmentId]);
 
   return (
@@ -263,18 +279,27 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
         className="mt-0.5 grid min-h-11 w-full grid-cols-2 items-center gap-3 rounded-[var(--personal-radius-button)] text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
       >
         {cells.map((cell) => (
-          <span key={cell.driver} className="flex min-w-0 flex-col gap-0.5">
-            <span className="truncate text-[12px] leading-4 font-semibold text-[var(--personal-text-secondary)]">
+          // A container so the figures can fit the cell they are given: the
+          // desktop list is as narrow as 280px, where both windows at a
+          // readable size ran into the next cell ("59% used Session 2%").
+          <span key={cell.driver} className="@container flex min-w-0 flex-col gap-0.5">
+            <span className="truncate text-[12px] leading-4 font-semibold text-[var(--personal-text-secondary)] md:text-[13px]">
               {cell.title}
             </span>
-            <span className="whitespace-nowrap text-[11px] leading-4 text-[var(--personal-text-tertiary)] tabular-nums">
-              <span className={bindingInk(cell, "session")}>
-                Session {formatStripPercent(cell.sessionPercent)}
-              </span>{" "}
-              ·{" "}
-              <span className={bindingInk(cell, "weekly")}>
-                Weekly {formatStripPercent(cell.weeklyPercent)} used
+            {/* Phone: both windows at 11px, as before. md+: 12px, both windows
+                where the cell is wide enough, else only the one the bar is
+                filled to (the sheet and the label carry the other). */}
+            <span className="truncate text-[11px] leading-4 text-[var(--personal-text-tertiary)] tabular-nums md:text-[12px]">
+              <span className="md:hidden md:@min-[196px]:inline">
+                <span className={bindingInk(cell, "session")}>
+                  Session {formatStripPercent(cell.sessionPercent)}
+                </span>{" "}
+                ·{" "}
+                <span className={bindingInk(cell, "weekly")}>
+                  Weekly {formatStripPercent(cell.weeklyPercent)} used
+                </span>
               </span>
+              <ShortWindowFigure cell={cell} />
             </span>
             <StripCellBar percent={stripCellBarPercent(cell)} />
           </span>

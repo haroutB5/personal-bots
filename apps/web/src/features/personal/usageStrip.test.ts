@@ -6,8 +6,30 @@ import {
   selectUsageStripCells,
   stripBindingWindow,
   stripCellBarPercent,
+  stripShortWindow,
   usageStripAriaLabel,
 } from "./usageStrip";
+
+describe("stripShortWindow", () => {
+  const cell = (sessionPercent: number | null, weeklyPercent: number | null) => ({
+    driver: "claudeAgent" as UsageCardDriver,
+    title: "Claude",
+    sessionPercent,
+    weeklyPercent,
+  });
+
+  it("names the window the bar is filled to", () => {
+    expect(stripShortWindow(cell(60, 59))).toBe("session");
+    expect(stripShortWindow(cell(2, 90))).toBe("weekly");
+  });
+
+  it("reads a tie or a missing figure as the other window, weekly first", () => {
+    expect(stripShortWindow(cell(40, 40))).toBe("weekly");
+    expect(stripShortWindow(cell(null, 12))).toBe("weekly");
+    expect(stripShortWindow(cell(12, null))).toBe("session");
+    expect(stripShortWindow(cell(null, null))).toBe("weekly");
+  });
+});
 
 function row(overrides: Partial<UsageWindowRow> = {}): UsageWindowRow {
   return {

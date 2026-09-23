@@ -144,6 +144,8 @@ export function PinnedStrip({ children }: { readonly children: ReactNode }): JSX
       <ul
         className={cn(
           "-mx-5 flex snap-x snap-proximity gap-3 overflow-x-auto overscroll-x-contain px-5 pb-1",
+          // md+: the list pads 14px on the right (its scrollbar lane is the rest).
+          "md:-mr-3.5 md:pr-3.5",
           "[justify-content:safe_center]",
           "scroll-px-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         )}

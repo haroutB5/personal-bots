@@ -470,7 +470,7 @@ export function MessageList({
   return (
     <div
       ref={scrollerRef}
-      className="personal-column min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4"
+      className="personal-column personal-scroll-quiet min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4"
     >
       <div
         ref={contentRef}

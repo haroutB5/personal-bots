@@ -64,6 +64,19 @@ export function stripBindingWindow(cell: UsageStripCell): "session" | "weekly" |
   return session !== null && session === worst ? "session" : null;
 }
 
+/**
+ * The one window a cell names when it is too narrow for both: the window the
+ * bar is filled to, i.e. the further spent (a tie, or nothing reported, reads
+ * as weekly, the one that takes longer to come back).
+ */
+export function stripShortWindow(cell: UsageStripCell): "session" | "weekly" {
+  const session = cell.sessionPercent;
+  const weekly = cell.weeklyPercent;
+  if (session === null) return "weekly";
+  if (weekly === null) return "session";
+  return session > weekly ? "session" : "weekly";
+}
+
 /** "26%" for a figure the provider reported, an en dash for one it did not. */
 export function formatStripPercent(percent: number | null): string {
   return percent === null ? "–" : `${percent}%`;
