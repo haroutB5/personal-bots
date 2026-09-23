@@ -17,8 +17,20 @@ export const TASK_LIST_FILTERS: ReadonlyArray<{
   { id: "active", label: "Active" },
   { id: "waiting", label: "Waiting" },
   { id: "scheduled", label: "Scheduled" },
-  { id: "completed", label: "Completed" },
+  // "Done", not "Completed": four segments share a 350px phone row, and the
+  // long word truncated to "Complet…" beside its count.
+  { id: "completed", label: "Done" },
 ];
+
+/**
+ * Tabs whose count is worth a number: work in flight and work waiting on
+ * someone. A count on Done (105) or Scheduled read as more things needing
+ * attention, and was the only figure on screen while the tabs that did need
+ * it were blank at zero.
+ */
+export function taskListShowsCount(filter: TaskListFilter): boolean {
+  return filter === "active" || filter === "waiting";
+}
 
 export function parseTaskListFilter(value: unknown): TaskListFilter {
   return value === "waiting" || value === "scheduled" || value === "completed" ? value : "active";

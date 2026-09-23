@@ -17,6 +17,7 @@ import { routineTriggerStatusLabel } from "./routineHook";
 import {
   TASK_LIST_FILTERS,
   taskListFor,
+  taskListShowsCount,
   taskStatusLabel,
   taskStatusTone,
   type TaskListFilter,
@@ -206,8 +207,16 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
               }`}
             >
               <span className="truncate">{filter.label}</span>
-              {counts[filter.id] > 0 ? (
-                <span className="text-[11px] tabular-nums opacity-70">{counts[filter.id]}</span>
+              {taskListShowsCount(filter.id) && counts[filter.id] > 0 ? (
+                <span
+                  className={`min-w-[18px] shrink-0 rounded-full px-1 text-center text-[12px] leading-[18px] font-semibold tabular-nums ${
+                    active
+                      ? "bg-[var(--personal-fill-muted)] text-[var(--personal-text)]"
+                      : "bg-[var(--personal-surface)] text-[var(--personal-text)]"
+                  }`}
+                >
+                  {counts[filter.id]}
+                </span>
               ) : null}
             </Link>
           );

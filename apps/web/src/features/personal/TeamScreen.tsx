@@ -315,8 +315,8 @@ function TeamDiagram({
   return (
     <>
       <p className="mt-2 text-[15px] leading-5 text-[var(--personal-text-secondary)]">
-        Press and hold a bot to move it to the other team, or onto a lead slot to put it in charge.
-        You can also change this from the bot&apos;s own page.
+        Each team can have a lead. Press and hold a bot to move it to another team, or onto a lead
+        slot to put it in charge. You can also change this from the bot&apos;s own page.
       </p>
       <span aria-live="polite" role="status" className="sr-only">
         {liveHint}
@@ -518,10 +518,13 @@ function TeamDiagram({
           <div
             key={`heading:${band.team}`}
             aria-hidden="true"
-            className="absolute inset-x-0 z-0 flex items-center gap-2"
+            className="absolute inset-x-0 z-[5] flex items-center gap-2"
             style={{ top: band.labelY }}
           >
-            <span className="min-w-0 truncate text-xs font-semibold tracking-wide text-[var(--personal-section-label)] uppercase">
+            {/* The label knocks the owner's connectors out behind it (the page
+                colour, like the node captions); they ran straight through the
+                letters ("DEV TEAM" struck through) on every width. */}
+            <span className="min-w-0 truncate bg-[var(--personal-bg)] pr-2 text-xs font-semibold tracking-wide text-[var(--personal-section-label)] uppercase">
               {band.label}
             </span>
             <span className="h-px flex-1 bg-[var(--personal-border)]" />
@@ -601,7 +604,7 @@ function TeamDiagram({
                   params={{ botId: bot.botId }}
                   aria-label={`Edit ${bot.name}`}
                   draggable={false}
-                  className="flex min-h-11 max-w-24 items-center gap-1.5 rounded-[var(--personal-radius-button)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+                  className="flex min-h-11 max-w-24 min-w-11 items-center justify-center gap-1.5 rounded-[var(--personal-radius-button)] px-1 outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
                 >
                   {live ? (
                     <span
@@ -838,10 +841,8 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
 
       {bots.length > 0 || (profile.data?.customTeams?.length ?? 0) > 0 ? (
         <>
-          <p className="mt-2 text-[15px] leading-5 text-[var(--personal-text-secondary)]">
-            Each team can have a lead. Move bots by long-pressing and dragging them onto a team, or
-            choose a team in the bot's settings.
-          </p>
+          {/* One line of help, the diagram's own ("Press and hold a bot…"): a
+              second paragraph above it said the same thing in other words. */}
           <TeamDiagram
             bots={bots}
             ownerName={ownerName}

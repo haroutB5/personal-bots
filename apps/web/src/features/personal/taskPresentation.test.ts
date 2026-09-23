@@ -9,9 +9,29 @@ import {
   parseTaskListFilter,
   routineNextRunLabel,
   stopTaskConfirmMessage,
+  TASK_LIST_FILTERS,
   taskListFor,
+  taskListShowsCount,
   taskStatusTone,
 } from "./taskPresentation";
+
+describe("task list tabs", () => {
+  it("fit a phone row: no label longer than the widest that fits beside a count", () => {
+    expect(TASK_LIST_FILTERS.map((filter) => filter.label)).toEqual([
+      "Active",
+      "Waiting",
+      "Scheduled",
+      "Done",
+    ]);
+  });
+
+  it("count only the lists that need attention", () => {
+    expect(taskListShowsCount("active")).toBe(true);
+    expect(taskListShowsCount("waiting")).toBe(true);
+    expect(taskListShowsCount("scheduled")).toBe(false);
+    expect(taskListShowsCount("completed")).toBe(false);
+  });
+});
 
 describe("task lists", () => {
   it("puts every status in exactly one list", () => {

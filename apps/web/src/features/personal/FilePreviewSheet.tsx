@@ -174,16 +174,6 @@ export function FilePreviewSheet({
                   <ExternalLink aria-hidden="true" className="size-5" strokeWidth={1.75} />
                 </a>
               ) : null}
-              {url !== null && kind !== "image" ? (
-                <a
-                  href={url}
-                  download={file.name}
-                  aria-label={`Download ${file.name}`}
-                  className={ICON_BUTTON}
-                >
-                  <Download aria-hidden="true" className="size-5" strokeWidth={1.75} />
-                </a>
-              ) : null}
               <SheetClose aria-label="Close preview" className={ICON_BUTTON}>
                 <X aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
               </SheetClose>
@@ -197,15 +187,34 @@ export function FilePreviewSheet({
                 <TextBody url={url} markdown={kind === "markdown"} />
               ) : null}
             </div>
-            <div className="border-t border-[var(--personal-border)] px-5 py-3">
+            {/* Download is the sheet's one filled action; Delete is still one
+                tap (and still confirmed) but no longer the only saturated,
+                full-width button on a preview. */}
+            <div className="flex gap-2 border-t border-[var(--personal-border)] px-5 py-3">
+              {url !== null ? (
+                <a
+                  href={url}
+                  download={file.name}
+                  aria-label={`Download ${file.name}`}
+                  className="flex h-11 flex-1 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-surface)]"
+                >
+                  <Download aria-hidden="true" className="size-[18px]" strokeWidth={1.75} />
+                  Download
+                </a>
+              ) : (
+                <span className="flex h-11 flex-1 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] opacity-40">
+                  <Download aria-hidden="true" className="size-[18px]" strokeWidth={1.75} />
+                  Download
+                </span>
+              )}
               <button
                 type="button"
                 disabled={deleting}
                 onClick={() => void deleteFile()}
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[var(--personal-destructive)] px-4 text-[15px] font-semibold text-[var(--personal-destructive-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-destructive)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-50"
+                className="flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] px-4 text-[15px] font-semibold text-[var(--personal-error)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50"
               >
                 <Trash2 aria-hidden="true" className="size-[18px]" strokeWidth={1.75} />
-                {deleting ? "Deleting..." : "Delete file"}
+                {deleting ? "Deleting..." : "Delete"}
               </button>
             </div>
           </>
