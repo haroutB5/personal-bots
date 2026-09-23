@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { previewOf, snapshotPreviewLabel } from "./BotRow";
+import { plainPreviewLine, previewOf, snapshotPreviewLabel } from "./BotRow";
 import type { BotSummary } from "./botSummaries";
 import type { ServerTurn } from "./delegationModel";
 
@@ -42,5 +42,32 @@ describe("chats list preview", () => {
     expect(snapshotPreviewLabel(summary(null), describeTurn)).toBeNull();
     // The thread title is the builder's fallback, and it is server metadata.
     expect(previewOf(summary(null), describeTurn)).toBe("Weekly plan");
+  });
+});
+
+describe("plainPreviewLine", () => {
+  it("drops the markdown around the words", () => {
+    expect(plainPreviewLine("## VERDICT")).toBe("VERDICT");
+    expect(plainPreviewLine("**Cause** was the offset")).toBe("Cause was the offset");
+    expect(plainPreviewLine("Done. Report at `C:/Claude/AI/report.md`")).toBe(
+      "Done. Report at C:/Claude/AI/report.md",
+    );
+    expect(plainPreviewLine("- first point")).toBe("first point");
+    expect(plainPreviewLine("2. second point")).toBe("second point");
+    expect(plainPreviewLine("> quoted")).toBe("quoted");
+    expect(plainPreviewLine("See [the docs](https://example.com/x) now")).toBe("See the docs now");
+    expect(plainPreviewLine("an _emphasised_ word")).toBe("an emphasised word");
+  });
+
+  it("keeps words that only look like markdown", () => {
+    expect(plainPreviewLine("snake_case_name stays")).toBe("snake_case_name stays");
+    expect(plainPreviewLine("2 * 3 = 6")).toBe("2 * 3 = 6");
+  });
+
+  it("treats a fence or a rule as an empty line, so the preview moves on", () => {
+    expect(plainPreviewLine("```ts")).toBe("");
+    expect(plainPreviewLine("---")).toBe("");
+    const row = summary({ id: "m", role: "assistant", text: "## \n---\n**Result:** it works" });
+    expect(previewOf(row, describeTurn)).toBe("Result: it works");
   });
 });

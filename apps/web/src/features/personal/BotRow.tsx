@@ -70,11 +70,33 @@ export function previewOf(summary: BotSummary, describeTurn: (turn: ServerTurn) 
     if (turn !== null) return describeTurn(turn);
     const line = message.text
       .split("\n")
-      .map((part) => part.trim())
+      .map((part) => plainPreviewLine(part))
       .find((part) => part.length > 0);
     if (line) return line;
   }
   return thread.title;
+}
+
+/**
+ * One line of a reply as a row preview: the words, not the markdown around
+ * them. Replies are markdown, and the first line read "## VERDICT", "**Cause**"
+ * or a backticked path with the marks in, where the chat itself shows a
+ * heading, bold or a code chip. Heading, quote and list markers, emphasis,
+ * code ticks and link targets go; the text stays. A line that is only a rule
+ * or a code fence is empty, so the next line is used.
+ */
+export function plainPreviewLine(line: string): string {
+  const trimmed = line.trim();
+  if (/^(`{3,}|~{3,}|[-*_]{3,}\s*$)/.test(trimmed)) return "";
+  return trimmed
+    .replace(/^#{1,6}(\s+|$)/, "")
+    .replace(/^>\s?/, "")
+    .replace(/^(?:[-*+]|\d+[.)])\s+/, "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__)(.+?)\1/g, "$2")
+    .replace(/(^|[^\w*])[*_]([^*_\s][^*_]*?)[*_](?=[^\w*]|$)/g, "$1$2")
+    .replace(/`([^`]+)`/g, "$1")
+    .trim();
 }
 
 /**
