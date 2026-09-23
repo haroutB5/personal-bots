@@ -152,10 +152,13 @@
   /* Toned down from #e8e8e5. The light inversion of the light theme's black
    * button is correct, but at 0.81 relative luminance a full-width "Create bot"
    * slab and the 44px "+" were the brightest things on the page by a factor of
-   * ~15 and glared when read in the dark. 0.39 is ~half the emitted light and
-   * still reads as the one filled action; the label keeps 7.8:1. */
-  --personal-primary: #a9a9a4;
-  --personal-primary-text: #141413; /* 7.8:1 on --personal-primary */
+   * ~15 and glared when read in the dark. 0.39 (#a9a9a4) went too far the
+   * other way: a muddy mid-grey that read as a disabled control ("+", "New
+   * team", "Take control", "Update"), with its own 40% disabled state barely
+   * different. 0.58 sits between the two: plainly the filled action, still
+   * well short of the old glare. The label keeps 11.6:1. */
+  --personal-primary: #c9c9c5;
+  --personal-primary-text: #141413; /* 11.6:1 on --personal-primary */
   --personal-team-line: #8f8f8a;
   --personal-team-live: #49c46e;
   --personal-team-recent: #6f6f6b;
