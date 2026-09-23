@@ -364,6 +364,50 @@ it.effect("createTask is idempotent on its key and starts exactly one turn", () 
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+it.effect("relay posts the text as the bot's message in a new chat, completed, once", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const input = {
+      idempotencyKey: "routine:weekly:event:2026-09-20T09:00:00.000Z",
+      botId: botId("assistant"),
+      title: "Weekly upstream sync report",
+      text: "Synced 12 commits. Gates green.",
+      source: "routine" as const,
+    };
+    const first = yield* service.relay(input);
+    const again = yield* service.relay(input);
+    yield* service.drain;
+
+    expect(again.taskId).toBe(first.taskId);
+    expect(first).toMatchObject({
+      status: "completed",
+      source: "routine",
+      result: { summary: input.text },
+    });
+    expect(first.threadId).not.toBeNull();
+    expect(turnStarts(harness)).toEqual([]);
+    // The first chat of the bot also creates the personal project.
+    const types = harness.dispatched
+      .map((command) => command.type)
+      .filter((type) => type !== "project.create");
+    expect(types).toEqual([
+      "thread.create",
+      "thread.meta.update",
+      "thread.message.assistant.delta",
+      "thread.message.assistant.complete",
+    ]);
+    const delta = harness.dispatched.find(
+      (command) => command.type === "thread.message.assistant.delta",
+    );
+    expect(delta).toMatchObject({ threadId: first.threadId, delta: input.text });
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const link = yield* bots.getThreadLink({ threadId: first.threadId! });
+    expect(Option.map(link, (entry) => entry.botId)).toEqual(Option.some(botId("assistant")));
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 it.effect("depth and child limits are persisted on the root and survive a restart", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

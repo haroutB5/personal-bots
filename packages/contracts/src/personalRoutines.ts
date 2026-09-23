@@ -1,3 +1,4 @@
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -49,6 +50,46 @@ export const PERSONAL_ROUTINE_DEFAULT_TIME_ZONE = "Europe/London";
 export const PersonalRoutineTrigger = Schema.Literals(["schedule", "event"]);
 export type PersonalRoutineTrigger = typeof PersonalRoutineTrigger.Type;
 
+/**
+ * How a run reaches the user. `model`: the bot gets the prompt as a task and
+ * replies. `relay`: no model turn; the text is posted into a new chat of the
+ * bot as its own message and the run completes at once. A scheduled relay
+ * posts the routine's prompt; an event relay posts the payload's `message`
+ * field (see {@link personalRoutineRelayMessage}).
+ */
+export const PersonalRoutineDelivery = Schema.Literals(["model", "relay"]);
+export type PersonalRoutineDelivery = typeof PersonalRoutineDelivery.Type;
+
+const decodeRelayJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
+/** A relayed message longer than this is cut, with a note saying so. */
+export const PERSONAL_ROUTINE_RELAY_MAX_CHARS = 8_000;
+
+/**
+ * The text an event relay posts: the payload's top-level `message` string,
+ * from a JSON or form body. Null when there is none, and the run then fails
+ * rather than post an arbitrary body as the bot's words.
+ */
+export function personalRoutineRelayMessage(
+  contentType: string | null,
+  body: string,
+): string | null {
+  const mediaType = (contentType ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  let message: unknown = null;
+  if (mediaType === "application/x-www-form-urlencoded") {
+    message = new URLSearchParams(body).get("message");
+  } else {
+    const parsed = Option.getOrNull(decodeRelayJson(body));
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      message = (parsed as Record<string, unknown>).message;
+    }
+  }
+  if (typeof message !== "string" || message.trim().length === 0) return null;
+  return message.length > PERSONAL_ROUTINE_RELAY_MAX_CHARS
+    ? `${message.slice(0, PERSONAL_ROUTINE_RELAY_MAX_CHARS)}\n\n(message cut at ${PERSONAL_ROUTINE_RELAY_MAX_CHARS} of ${message.length} characters)`
+    : message;
+}
+
 /** Path prefix of the unauthenticated webhook endpoint: `<prefix>/<hookToken>`. */
 export const PERSONAL_ROUTINE_HOOK_ROUTE_PREFIX = "/api/personal/hooks";
 
@@ -85,6 +126,11 @@ export const PersonalRoutine = Schema.Struct({
   timeZone: Schema.String,
   enabled: Schema.Boolean,
   missedPolicy: PersonalRoutineMissedPolicy,
+  /**
+   * Optional on the wire so a client that updated before the server still
+   * decodes an older list; the server always sends it. Absent means `model`.
+   */
+  delivery: Schema.optionalKey(PersonalRoutineDelivery),
   /** Null once a one-off has run, and always null for event routines. */
   nextDueAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   lastOccurrenceLocal: Schema.NullOr(Schema.String),
@@ -122,6 +168,8 @@ export const PersonalRoutineCreateInput = Schema.Struct({
   eventLabel: Schema.optional(TrimmedNonEmptyString),
   timeZone: Schema.optional(TrimmedNonEmptyString),
   missedPolicy: Schema.optional(PersonalRoutineMissedPolicy),
+  /** Omitted means `model`. */
+  delivery: Schema.optional(PersonalRoutineDelivery),
 });
 export type PersonalRoutineCreateInput = typeof PersonalRoutineCreateInput.Type;
 
@@ -136,6 +184,7 @@ export const PersonalRoutineUpdateInput = Schema.Struct({
   eventLabel: Schema.optional(TrimmedNonEmptyString),
   timeZone: Schema.optional(TrimmedNonEmptyString),
   missedPolicy: Schema.optional(PersonalRoutineMissedPolicy),
+  delivery: Schema.optional(PersonalRoutineDelivery),
 });
 export type PersonalRoutineUpdateInput = typeof PersonalRoutineUpdateInput.Type;
 
@@ -193,7 +242,7 @@ export function describePersonalRoutineSchedule(
     case "daily":
       return `Every day at ${schedule.time} (${timeZone})`;
     case "weekly": {
-      const days = [...new Set(schedule.days)].toSorted((left, right) => left - right);
+      const days = [...new Set(schedule.days)].sort((left, right) => left - right);
       const label =
         days.length === 7
           ? "Every day"

@@ -1,3 +1,4 @@
+import { PERSONAL_ROUTINE_RELAY_MAX_CHARS, personalRoutineRelayMessage } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildEventRoutinePrompt, formatHookPayload } from "./eventPrompt.ts";
@@ -76,5 +77,40 @@ describe("buildEventRoutinePrompt", () => {
   it("says so rather than showing an empty block for a bodiless POST", () => {
     const text = buildEventRoutinePrompt({ prompt: "Go.", eventLabel: "Ping", payload: "  " });
     expect(text).toContain("(the request had an empty body)");
+  });
+});
+
+describe("personalRoutineRelayMessage", () => {
+  it("reads the top-level message of a JSON or form body, verbatim", () => {
+    expect(
+      personalRoutineRelayMessage(
+        "application/json",
+        JSON.stringify({ message: "  Synced." + String.fromCharCode(10) + "All green. " }),
+      ),
+    ).toBe("  Synced.\nAll green. ");
+    expect(personalRoutineRelayMessage(null, '{"message":"no content type"}')).toBe(
+      "no content type",
+    );
+    expect(
+      personalRoutineRelayMessage("application/x-www-form-urlencoded", "message=Hi+there&x=1"),
+    ).toBe("Hi there");
+  });
+
+  it("finds nothing to relay in any other shape", () => {
+    expect(personalRoutineRelayMessage("application/json", '{"text":"x"}')).toBeNull();
+    expect(personalRoutineRelayMessage("application/json", '{"message":42}')).toBeNull();
+    expect(personalRoutineRelayMessage("application/json", '{"message":"   "}')).toBeNull();
+    expect(personalRoutineRelayMessage("application/json", '["message"]')).toBeNull();
+    expect(personalRoutineRelayMessage("text/plain", "just words")).toBeNull();
+  });
+
+  it("cuts an oversized message and says so", () => {
+    const long = "x".repeat(PERSONAL_ROUTINE_RELAY_MAX_CHARS + 5);
+    const relayed = personalRoutineRelayMessage(
+      "application/json",
+      JSON.stringify({ message: long }),
+    );
+    expect(relayed?.startsWith("x".repeat(PERSONAL_ROUTINE_RELAY_MAX_CHARS))).toBe(true);
+    expect(relayed).toContain("message cut at");
   });
 });

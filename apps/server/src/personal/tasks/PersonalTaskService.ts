@@ -16,6 +16,7 @@ import * as Stream from "effect/Stream";
 import {
   CommandId,
   ComposerContextId,
+  MessageId,
   PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
   PERSONAL_TASK_RETRYABLE_STATUSES,
   PERSONAL_TASK_TERMINAL_STATUSES,
@@ -111,6 +112,18 @@ export interface PersonalTaskCreateOptions extends PersonalTaskCreateInput {
   readonly maxChildren?: number;
 }
 
+/** A message to post into a new chat of the bot, verbatim, with no model turn. */
+export interface PersonalTaskRelayInput {
+  /** Same meaning as on createTask: a second relay with this key returns the first task. */
+  readonly idempotencyKey: string;
+  readonly botId: PersonalBotId;
+  /** The task's title, and the new chat's. */
+  readonly title: string;
+  /** Posted as the bot's message, exactly as given. */
+  readonly text: string;
+  readonly source?: PersonalTaskSource;
+}
+
 export interface PersonalTaskDelegateInput {
   readonly parentTaskId: PersonalTaskId;
   readonly targetBotId: PersonalBotId;
@@ -125,6 +138,15 @@ export class PersonalTaskService extends Context.Service<
   {
     readonly createTask: (
       input: PersonalTaskCreateOptions,
+    ) => Effect.Effect<PersonalTask, PersonalTasksError>;
+    /**
+     * Posts `text` into a new chat of the bot as the bot's own message and
+     * records a task that is already completed with it as the result, so the
+     * run shows in Tasks and notifies exactly like a finished task. No
+     * provider turn is started.
+     */
+    readonly relay: (
+      input: PersonalTaskRelayInput,
     ) => Effect.Effect<PersonalTask, PersonalTasksError>;
     readonly delegate: (
       input: PersonalTaskDelegateInput,
@@ -1132,6 +1154,103 @@ export const make = Effect.gen(function* () {
       )
       .pipe(toPublic("create"));
 
+  // Everything the relay writes is keyed on the idempotency key: the thread
+  // id, the message id and every command id. A retry after a crash between
+  // the dispatches and the insert re-sends commands the engine has already
+  // receipted, and then records the task. The dispatches run outside the
+  // service lock, as startTurn's do, so engine events never wait on it.
+  const relay: PersonalTaskService["Service"]["relay"] = (input) =>
+    Effect.gen(function* () {
+      const existing = yield* repository.getTaskByIdempotencyKey(input.idempotencyKey);
+      if (Option.isSome(existing)) {
+        return existing.value;
+      }
+      yield* requireLiveBot(input.botId);
+      const digest = NodeCrypto.createHash("sha256")
+        .update(`personal-relay\n${input.idempotencyKey}`)
+        .digest("hex");
+      const threadId = ThreadId.make(
+        [
+          digest.slice(0, 8),
+          digest.slice(8, 12),
+          digest.slice(12, 16),
+          digest.slice(16, 20),
+          digest.slice(20, 32),
+        ].join("-"),
+      );
+      const messageId = MessageId.make(`personal-relay-${digest.slice(0, 32)}`);
+      const title = input.title.trim().length > 0 ? input.title.trim() : "Routine";
+      yield* bots
+        .createThread({ botId: input.botId, threadId })
+        .pipe(Effect.mapError((cause) => fail("The relay could not open a chat.", cause)));
+      const createdAt = DateTime.formatIso(yield* DateTime.now);
+      const commandId = (step: string) =>
+        CommandId.make(`personal-relay:${digest.slice(0, 32)}:${step}`);
+      yield* Effect.gen(function* () {
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: commandId("title"),
+          threadId,
+          title,
+        });
+        yield* engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: commandId("delta"),
+          threadId,
+          messageId,
+          delta: input.text,
+          createdAt,
+        });
+        yield* engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: commandId("complete"),
+          threadId,
+          messageId,
+          createdAt,
+        });
+      }).pipe(Effect.mapError((cause) => fail("The relay could not post its message.", cause)));
+      return yield* lock.withPermit(
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          const taskId = PersonalTaskId.make(NodeCrypto.randomUUID());
+          const task: PersonalTask = {
+            taskId,
+            rootTaskId: taskId,
+            parentTaskId: null,
+            botId: input.botId,
+            threadId,
+            title,
+            objective: input.text,
+            acceptanceCriteria: "",
+            expectedOutput: "",
+            status: "completed",
+            source: input.source ?? "user",
+            idempotencyKey: input.idempotencyKey,
+            depth: 0,
+            maxDepth: PERSONAL_TASKS_DEFAULT_MAX_DEPTH,
+            maxChildren: PERSONAL_TASKS_DEFAULT_MAX_CHILDREN,
+            result: { summary: input.text },
+            errorCategory: null,
+            errorMessage: null,
+            availableAt: null,
+            createdAt: now,
+            updatedAt: now,
+            startedAt: now,
+            completedAt: now,
+          };
+          const inserted = yield* repository.insertTask(task);
+          const stored = yield* repository.getTaskByIdempotencyKey(input.idempotencyKey);
+          if (Option.isNone(stored)) {
+            return yield* fail("Personal task could not be read after creation.");
+          }
+          if (inserted) {
+            yield* publish([stored.value]);
+          }
+          return stored.value;
+        }),
+      );
+    }).pipe(toPublic("relay"));
+
   const delegate: PersonalTaskService["Service"]["delegate"] = (input) =>
     lock
       .withPermit(
@@ -1671,6 +1790,7 @@ export const make = Effect.gen(function* () {
 
   return {
     createTask,
+    relay,
     delegate,
     cancel,
     retry,

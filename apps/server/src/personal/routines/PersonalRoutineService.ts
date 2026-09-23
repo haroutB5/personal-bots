@@ -18,6 +18,7 @@ import {
   PERSONAL_ROUTINE_HOOK_TOKEN_BYTES,
   PERSONAL_ROUTINE_HOOK_TOKEN_PATTERN,
   PersonalBotId,
+  PersonalRoutineDelivery,
   PersonalRoutineId,
   PersonalRoutineMissedPolicy,
   PersonalRoutineOccurrenceStatus,
@@ -25,6 +26,7 @@ import {
   PersonalRoutinesError,
   PersonalRoutineTrigger,
   PersonalTaskId,
+  personalRoutineRelayMessage,
   type PersonalRoutine,
   type PersonalRoutineCreateInput,
   type PersonalRoutineListResult,
@@ -33,6 +35,7 @@ import {
   type PersonalRoutineRunNowResult,
   type PersonalRoutineUpdateInput,
   type PersonalTask,
+  type PersonalTasksError,
 } from "@t3tools/contracts";
 
 import { timingSafeEqualBase64Url } from "../../auth/utils.ts";
@@ -61,6 +64,7 @@ const RoutineDbRow = Schema.Struct({
   timeZone: Schema.String,
   enabled: Schema.Number,
   missedPolicy: PersonalRoutineMissedPolicy,
+  delivery: PersonalRoutineDelivery,
   nextDueAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   lastOccurrenceLocal: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtcFromString,
@@ -93,6 +97,7 @@ const ROUTINE_COLUMNS = `
   time_zone AS "timeZone",
   enabled AS "enabled",
   missed_policy AS "missedPolicy",
+  delivery AS "delivery",
   next_due_utc AS "nextDueAt",
   last_occurrence_local AS "lastOccurrenceLocal",
   created_at AS "createdAt",
@@ -282,10 +287,16 @@ export const make = Effect.gen(function* () {
   // Records the slot and, unless skipped, starts its task. Safe to repeat:
   // the occurrence row dedupes the slot and the task idempotency key dedupes
   // the task, so a crash between the two is completed on the next pass.
+  //
+  // A relay routine starts no turn: its text goes into the bot's chat as the
+  // bot's message, recorded as an already-completed task. `relayText` is
+  // what an event delivered (null: the payload had nothing to relay); left
+  // out, a relay posts the routine's own prompt.
   const fireSlot = Effect.fn("PersonalRoutineService.fireSlot")(function* (
     routine: PersonalRoutine,
     slot: RoutineSlot,
     mode: "run" | "skip",
+    relayText?: string | null,
   ) {
     const now = yield* DateTime.now;
     yield* sql`
@@ -306,15 +317,31 @@ export const make = Effect.gen(function* () {
     ) {
       return null;
     }
-    const created = yield* tasks
-      .createTask({
-        idempotencyKey: routineTaskIdempotencyKey(routine.routineId, slot.localKey),
-        botId: routine.botId,
-        title: routine.title,
-        objective: routine.prompt,
-        source: "routine",
-      })
-      .pipe(Effect.result);
+    const idempotencyKey = routineTaskIdempotencyKey(routine.routineId, slot.localKey);
+    const relay = routine.delivery === "relay";
+    const text = relayText === undefined ? routine.prompt : relayText;
+    const start: Effect.Effect<PersonalTask, PersonalRoutinesError | PersonalTasksError> = !relay
+      ? tasks.createTask({
+          idempotencyKey,
+          botId: routine.botId,
+          title: routine.title,
+          objective: routine.prompt,
+          source: "routine",
+        })
+      : text === null
+        ? Effect.fail(
+            fail(
+              "The event had no 'message' text to relay. Send a JSON or form body with a message field.",
+            ),
+          )
+        : tasks.relay({
+            idempotencyKey,
+            botId: routine.botId,
+            title: routine.title,
+            text,
+            source: "routine",
+          });
+    const created = yield* Effect.result(start);
     if (created._tag === "Failure") {
       yield* sql`
         UPDATE personal_routine_occurrences
@@ -503,13 +530,14 @@ export const make = Effect.gen(function* () {
             yield* sql`
               INSERT INTO personal_routines (
                 routine_id, bot_id, title, prompt, trigger_kind, schedule_json, event_label,
-                hook_token, last_fired_utc, time_zone, enabled, missed_policy, next_due_utc,
-                last_occurrence_local, created_at, updated_at
+                hook_token, last_fired_utc, time_zone, enabled, missed_policy, delivery,
+                next_due_utc, last_occurrence_local, created_at, updated_at
               )
               VALUES (
                 ${input.routineId}, ${input.botId}, ${input.title}, ${input.prompt}, 'event',
                 ${encodeSchedule(null)}, ${eventLabel}, ${makeHookToken()}, NULL, ${timeZone},
-                1, ${input.missedPolicy ?? "coalesce"}, NULL, NULL, ${nowIso}, ${nowIso}
+                1, ${input.missedPolicy ?? "coalesce"}, ${input.delivery ?? "model"}, NULL, NULL,
+                ${nowIso}, ${nowIso}
               )
               ON CONFLICT (routine_id) DO NOTHING
             `;
@@ -526,12 +554,12 @@ export const make = Effect.gen(function* () {
           yield* sql`
             INSERT INTO personal_routines (
               routine_id, bot_id, title, prompt, trigger_kind, schedule_json, time_zone, enabled,
-              missed_policy, next_due_utc, last_occurrence_local, created_at, updated_at
+              missed_policy, delivery, next_due_utc, last_occurrence_local, created_at, updated_at
             )
             VALUES (
               ${input.routineId}, ${input.botId}, ${input.title}, ${input.prompt}, 'schedule',
               ${encodeSchedule(schedule)}, ${timeZone}, 1, ${input.missedPolicy ?? "coalesce"},
-              ${isoOfMs(next.dueMs)}, NULL, ${nowIso}, ${nowIso}
+              ${input.delivery ?? "model"}, ${isoOfMs(next.dueMs)}, NULL, ${nowIso}, ${nowIso}
             )
             ON CONFLICT (routine_id) DO NOTHING
           `;
@@ -563,6 +591,7 @@ export const make = Effect.gen(function* () {
                   prompt = ${input.prompt ?? current.prompt},
                   event_label = ${eventLabel},
                   time_zone = ${timeZone},
+                  delivery = ${input.delivery ?? current.delivery ?? "model"},
                   updated_at = ${DateTime.formatIso(now)}
               WHERE routine_id = ${input.routineId}
             `;
@@ -592,6 +621,7 @@ export const make = Effect.gen(function* () {
                 schedule_json = ${encodeSchedule(schedule)},
                 time_zone = ${timeZone},
                 missed_policy = ${input.missedPolicy ?? current.missedPolicy},
+                delivery = ${input.delivery ?? current.delivery ?? "model"},
                 next_due_utc = ${nextDueAt},
                 updated_at = ${DateTime.formatIso(now)}
             WHERE routine_id = ${input.routineId}
@@ -749,18 +779,29 @@ export const make = Effect.gen(function* () {
             UPDATE personal_routines SET last_fired_utc = ${nowIso}, updated_at = ${nowIso}
             WHERE routine_id = ${routine.routineId}
           `;
-          const prompt = buildEventRoutinePrompt({
-            prompt: routine.prompt,
-            eventLabel: routine.eventLabel ?? "event",
-            payload: formatHookPayload(input.contentType, input.body),
-          });
+          const slot = { localKey: `event:${nowIso}`, dueMs: nowMs };
           // Each accepted delivery gets a distinct occurrence. Retries outside
           // the rate-limit window are new runs; no delivery ID is supplied.
-          const task = yield* fireSlot(
-            { ...routine, prompt },
-            { localKey: `event:${nowIso}`, dueMs: nowMs },
-            "run",
-          );
+          const task =
+            routine.delivery === "relay"
+              ? yield* fireSlot(
+                  routine,
+                  slot,
+                  "run",
+                  personalRoutineRelayMessage(input.contentType, input.body),
+                )
+              : yield* fireSlot(
+                  {
+                    ...routine,
+                    prompt: buildEventRoutinePrompt({
+                      prompt: routine.prompt,
+                      eventLabel: routine.eventLabel ?? "event",
+                      payload: formatHookPayload(input.contentType, input.body),
+                    }),
+                  },
+                  slot,
+                  "run",
+                );
           return task === null
             ? ({ _tag: "Failed" } as const)
             : ({ _tag: "Fired", taskId: task.taskId } as const);

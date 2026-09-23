@@ -13,6 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -31,13 +32,13 @@ import {
 import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
+import { pushEventForTask } from "../push/PersonalPushService.ts";
 import * as PersonalTaskRepository from "../tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalRoutineService from "./PersonalRoutineService.ts";
 
 /** Orchestration is a recorder: routines only need tasks to be created. */
-const makeLayer = (dbPath?: string) => {
-  const dispatched: Array<OrchestrationCommand> = [];
+const makeLayer = (dbPath?: string, dispatched: Array<OrchestrationCommand> = []) => {
   return PersonalRoutineService.layer.pipe(
     Layer.provideMerge(PersonalTaskService.layer),
     Layer.provideMerge(PersonalTaskRepository.layer),
@@ -84,6 +85,7 @@ const makeLayer = (dbPath?: string) => {
 };
 
 const BOT = PersonalBotId.make("bot-planner");
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const seedBot = Effect.gen(function* () {
   const bots = yield* PersonalBotService.PersonalBotService;
@@ -791,3 +793,115 @@ it.effect("moves an event routine to another time zone", () =>
     expect(updated.nextDueAt).toBeNull();
   }).pipe(Effect.provide(makeLayer())),
 );
+
+// A relay routine posts text into the bot's chat as the bot's own message and
+// starts no model turn; the run is a task that is already completed, so it
+// shows in Tasks and notifies like any finished routine run.
+const assistantPosts = (dispatched: ReadonlyArray<OrchestrationCommand>) =>
+  dispatched.flatMap((command) =>
+    command.type === "thread.message.assistant.delta" ? [command] : [],
+  );
+const turnStarts = (dispatched: ReadonlyArray<OrchestrationCommand>) =>
+  dispatched.filter((command) => command.type === "thread.turn.start");
+
+it.effect("relays an event payload's message verbatim into the bot's chat, with no turn", () => {
+  const dispatched: Array<OrchestrationCommand> = [];
+  return Effect.gen(function* () {
+    yield* setNow("2026-09-14T10:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const tasks = yield* PersonalTaskService.PersonalTaskService;
+    const created = yield* routines.create({
+      routineId: EVENT_ROUTINE,
+      botId: BOT,
+      title: "Weekly upstream sync report",
+      prompt: "A weekly upstream sync report arrived.",
+      trigger: "event",
+      eventLabel: "Upstream sync",
+      delivery: "relay",
+    });
+    expect(created.delivery).toBe("relay");
+
+    const message = "Synced 12 upstream commits.\n\nGates: all green.";
+    const fired = yield* routines.fireEvent({
+      hookToken: created.hookToken!,
+      contentType: "application/json",
+      body: encodeJson({ message }),
+    });
+    expect(fired._tag).toBe("Fired");
+    yield* tasks.drain;
+
+    const posts = assistantPosts(dispatched);
+    expect(posts.map((post) => post.delta)).toEqual([message]);
+    expect(turnStarts(dispatched)).toEqual([]);
+    const completes = dispatched.filter(
+      (command) => command.type === "thread.message.assistant.complete",
+    );
+    expect(completes.length).toBe(1);
+
+    const [task] = yield* routineTasks(EVENT_ROUTINE);
+    expect(task?.status).toBe("completed");
+    expect(task?.source).toBe("routine");
+    expect(task?.result?.summary).toBe(message);
+    expect(task?.threadId).toBe(posts[0]!.threadId);
+    // The same event the task stream turns into a routine notification.
+    expect(pushEventForTask(task!)).toBe("routine_result");
+  }).pipe(Effect.provide(makeLayer(undefined, dispatched)));
+});
+
+it.effect("fails a relay whose payload has no message, and posts nothing", () => {
+  const dispatched: Array<OrchestrationCommand> = [];
+  return Effect.gen(function* () {
+    yield* setNow("2026-09-14T10:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const created = yield* routines.create({
+      routineId: EVENT_ROUTINE,
+      botId: BOT,
+      title: "Weekly upstream sync report",
+      prompt: "A weekly upstream sync report arrived.",
+      trigger: "event",
+      eventLabel: "Upstream sync",
+      delivery: "relay",
+    });
+    const fired = yield* routines.fireEvent({
+      hookToken: created.hookToken!,
+      contentType: "application/json",
+      body: '{"text":"wrong field"}',
+    });
+    expect(fired._tag).toBe("Failed");
+    expect(assistantPosts(dispatched)).toEqual([]);
+    expect((yield* occurrences(EVENT_ROUTINE)).map((row) => row.status)).toEqual(["failed"]);
+  }).pipe(Effect.provide(makeLayer(undefined, dispatched)));
+});
+
+it.effect("a scheduled relay posts its prompt, and an edit keeps the delivery", () => {
+  const dispatched: Array<OrchestrationCommand> = [];
+  return Effect.gen(function* () {
+    // 09:00 in London is 08:00 UTC in September.
+    yield* setNow("2026-09-14T06:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const routineId = PersonalRoutineId.make("stand-up-reminder");
+    yield* routines.create({
+      routineId,
+      botId: BOT,
+      title: "Stand-up",
+      prompt: "Stand-up in five minutes.",
+      schedule: { kind: "daily", time: "09:00" },
+      delivery: "relay",
+    });
+    const edited = yield* routines.update({ routineId, title: "Daily stand-up" });
+    expect(edited.delivery).toBe("relay");
+
+    yield* setNow("2026-09-14T07:30:00Z");
+    yield* tickAndDrain;
+    expect(assistantPosts(dispatched)).toEqual([]);
+    yield* setNow("2026-09-14T08:00:10Z");
+    yield* tickAndDrain;
+    expect(assistantPosts(dispatched).map((post) => post.delta)).toEqual([
+      "Stand-up in five minutes.",
+    ]);
+    expect(turnStarts(dispatched)).toEqual([]);
+  }).pipe(Effect.provide(makeLayer(undefined, dispatched)));
+});
