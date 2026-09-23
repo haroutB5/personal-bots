@@ -33,8 +33,11 @@ CPU throttle to stand in for an iPhone. The network is whatever the origin is:
 | `J2`      | tap a chat row on the list -> transcript and typeable composer painted     |
 | `J1-deep` | warm relaunch straight into that chat (a notification tap) -> chat usable  |
 
-J3 (send, echo, first token) and J4 (streaming) are measured from the real
-phone through the RUM beacons (below), and J4 with `stream.mjs`.
+J3 (send, echo, first token) comes from the RUM beacons (below), and also from
+`stream.mjs --rum`. J4 (a long streamed reply with code blocks and a table) is
+measured by `stream.mjs`, which opens a new chat, costs one model turn and deletes
+the chat afterwards. J5 (server cold start) is `coldstart.mjs`, run against a
+throwaway data root, never the live one.
 
 For each journey the bench records:
 
@@ -58,6 +61,10 @@ node scripts/personal/perf/correlate.mjs %USERPROFILE%\.personal-bots\perf\bench
 node scripts/personal/perf/check.mjs
 node scripts/personal/perf/check.mjs --ratchet
 # or: pnpm perf:check
+# J4 streaming (add --off warm-highlighter for the A side, --profile 1 for a CPU profile):
+node scripts/personal/perf/stream.mjs --origin local
+# J5 server cold start, with and without NODE_COMPILE_CACHE:
+node scripts/personal/perf/coldstart.mjs --runs 5
 # real-user timings from the phone:
 node scripts/personal/perf/rum.mjs --days 7
 ```
