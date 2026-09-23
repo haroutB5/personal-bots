@@ -1,0 +1,29 @@
+{
+  "about": "perf:check budgets (p50 ceilings). Lowered only, by check.mjs --ratchet, and committed with the change that earned them. See README.md.",
+  "settings": {
+    "origin": "local",
+    "runs": 5,
+    "journeys": "J1,J2",
+    "cpu": 4,
+    "bot": "Frontend"
+  },
+  "journeys": {
+    "J1-warm": {
+      "wall": { "max": 1200, "headroom": 0.35 },
+      "longTaskMs": { "max": 960, "headroom": 0.4 },
+      "requests": { "max": 202, "headroom": 0.03 },
+      "jsKB": { "max": 3632, "headroom": 0.03 }
+    },
+    "J2": {
+      "chatShell": { "max": 840, "headroom": 0.4 },
+      "requests": { "max": 50, "headroom": 0.05 },
+      "jsKB": { "max": 1340, "headroom": 0.05 }
+    },
+    "J1-deep": {
+      "wall": { "max": 1800, "headroom": 0.4 },
+      "longTaskMs": { "max": 1510, "headroom": 0.4 },
+      "requests": { "max": 247, "headroom": 0.03 },
+      "jsKB": { "max": 4935, "headroom": 0.03 }
+    }
+  }
+}
