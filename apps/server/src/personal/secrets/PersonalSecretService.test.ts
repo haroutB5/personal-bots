@@ -463,6 +463,9 @@ describe("personal secret requests", () => {
           avatarShape: "blob",
           avatarColor: "#1A73E8",
           modelSelection: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude" },
+          // New bots save memories without asking by default (its own rule
+          // line); off here so the oracle stays "own instructions + app rules".
+          memoryAutoSave: false,
         });
         const thread = ThreadId.make("thread-writer");
         yield* bots.createThread({ botId: botId("writer"), threadId: thread });
