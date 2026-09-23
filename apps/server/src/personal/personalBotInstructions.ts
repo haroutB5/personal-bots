@@ -30,7 +30,17 @@ export interface PersonalBotPersona {
   readonly model?: string | undefined;
   /** The effort/variant option on that selection, when the model takes one. */
   readonly effort?: string | undefined;
+  /** The owner let this bot save memories without being asked each time. */
+  readonly memoryAutoSave?: boolean | undefined;
 }
+
+/**
+ * The bot-specific half of the memory rule. The app rules say to save when
+ * asked; a bot the owner gave standing permission is told it may save on its
+ * own, and the server skips the explicit-ask check for it (save_memory).
+ */
+export const MEMORY_AUTO_SAVE_RULE =
+  "The user has given you standing permission to save memories: when they tell you something worth keeping for later chats, or something you saved has changed, call save_memory without waiting to be asked, and pass the user's message it came from as userRequest. Save what the user told you, not your own guesses. Once a site the user marked sensitive has been open in a chat, saving without being asked is refused for the rest of it: say what you would have saved and ask the user to tell you to remember it.";
 
 /**
  * What the bot runs on, in its own prompt.
@@ -56,7 +66,13 @@ export function personalBotSystemInstructions(persona: PersonalBotPersona): stri
   const title = persona.title.trim();
   // Codex's own prompt says "You are Codex", so the bot's name must win explicitly.
   const identity = `You are ${name}${title.length > 0 ? ` (${title})` : ""}, one of the user's personal bots. When asked who you are, you are ${name}; any harness or model named elsewhere is only the engine you run on.`;
-  return [identity, engineLine(persona), persona.instructions.trim(), PERSONAL_BOT_APP_RULES]
+  return [
+    identity,
+    engineLine(persona),
+    persona.instructions.trim(),
+    PERSONAL_BOT_APP_RULES,
+    persona.memoryAutoSave === true ? MEMORY_AUTO_SAVE_RULE : "",
+  ]
     .filter((part) => part.length > 0)
     .join("\n\n");
 }

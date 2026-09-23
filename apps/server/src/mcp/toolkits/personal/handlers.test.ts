@@ -6,6 +6,7 @@ import {
   EXPLICIT_REMEMBER_REQUEST,
   formatNextRun,
   routineScheduleFromToolInput,
+  saveMemoryRefusal,
 } from "./handlers.ts";
 
 describe("create_routine input mapping", () => {
@@ -80,4 +81,36 @@ describe("save_memory consent", () => {
       expect(EXPLICIT_REMEMBER_REQUEST.test(request)).toBe(false);
     },
   );
+});
+
+describe("save_memory standing permission", () => {
+  const clean = { autoSave: false, sensitiveOrigins: [] as ReadonlyArray<string> };
+
+  it("accepts an explicit ask whatever the bot's setting", () => {
+    expect(saveMemoryRefusal({ ...clean, userRequest: "remember I hold 2 ETH" })).toBeNull();
+  });
+
+  it("refuses an unasked save for a bot without the permission", () => {
+    expect(saveMemoryRefusal({ ...clean, userRequest: "I hold 2 ETH on Kraken" })).toContain(
+      "explicitly asks",
+    );
+  });
+
+  it("accepts an unasked save for a bot with the permission in a clean chat", () => {
+    expect(
+      saveMemoryRefusal({ ...clean, autoSave: true, userRequest: "I hold 2 ETH on Kraken" }),
+    ).toBeNull();
+  });
+
+  // The permission covers what the user says, not what the bot read on a site
+  // the user marked sensitive: memory reaches every later chat.
+  it("refuses an unasked save once the chat has had a sensitive site open", () => {
+    const refusal = saveMemoryRefusal({
+      autoSave: true,
+      sensitiveOrigins: ["https://www.kraken.com"],
+      userRequest: "I hold 2 ETH on Kraken",
+    });
+    expect(refusal).toContain("https://www.kraken.com");
+    expect(refusal).toContain("remember");
+  });
 });

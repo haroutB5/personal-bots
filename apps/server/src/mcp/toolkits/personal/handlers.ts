@@ -4,6 +4,7 @@ import {
   describePersonalRoutineTrigger,
   PersonalRoutineId,
   type PersonalRoutineSchedule,
+  savesMemoryWithoutAsking,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -32,9 +33,32 @@ const WEEKDAY_NUMBER = {
   sunday: 7,
 } as const;
 
-/** save_memory only runs on an explicit ask from the user. */
+/** save_memory runs on an explicit ask from the user, or with the bot's standing permission. */
 export const EXPLICIT_REMEMBER_REQUEST =
   /\b(remember|memori[sz]e|don'?t forget|do not forget|keep in mind|save (this|that|it)|note (this|that|it) down|for future reference)\b/i;
+
+/**
+ * Why save_memory must not write, or null when it may. An explicit ask always
+ * may. Otherwise only a bot the owner gave standing permission (memoryAutoSave)
+ * may, and never in a chat that has had a user-marked sensitive site open: the
+ * permission covers what the user tells the bot, not what the bot read on
+ * their bank, and bot memory reaches every later chat where the egress guard
+ * would see a clean thread.
+ */
+export function saveMemoryRefusal(input: {
+  readonly userRequest: string;
+  readonly autoSave: boolean;
+  readonly sensitiveOrigins: ReadonlyArray<string>;
+}): string | null {
+  if (EXPLICIT_REMEMBER_REQUEST.test(input.userRequest)) return null;
+  if (!input.autoSave) {
+    return "Only save memory when the user explicitly asks you to remember something, and pass their words in userRequest.";
+  }
+  if (input.sensitiveOrigins.length > 0) {
+    return `Not saved: this chat has had ${input.sensitiveOrigins.join(", ")} open, a site the user marked sensitive, so saving without being asked is closed for the rest of it. Tell the user what you would have saved and ask them to say "remember" if they want it kept.`;
+  }
+  return null;
+}
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -274,12 +298,24 @@ const make = Effect.gen(function* () {
       }),
     save_memory: (input) =>
       Effect.gen(function* () {
-        const { botId } = yield* requireBotThread;
-        if (!EXPLICIT_REMEMBER_REQUEST.test(input.userRequest)) {
-          return yield* refuse(
-            "Only save memory when the user explicitly asks you to remember something, and pass their words in userRequest.",
-          );
-        }
+        const { scope: invocation, botId } = yield* requireBotThread;
+        // The bot row and the thread's taint are read only when the words
+        // alone do not already carry the user's ask.
+        const explicit = EXPLICIT_REMEMBER_REQUEST.test(input.userRequest);
+        const autoSave = explicit
+          ? false
+          : yield* bots.getBotById({ botId }).pipe(
+              Effect.map((bot) => Option.isSome(bot) && savesMemoryWithoutAsking(bot.value)),
+              Effect.mapError(() => refuse("Could not read the bot.")),
+            );
+        const sensitiveOrigins =
+          explicit || !autoSave ? [] : yield* browser.sensitiveExposure(invocation.threadId);
+        const refusal = saveMemoryRefusal({
+          userRequest: input.userRequest,
+          autoSave,
+          sensitiveOrigins,
+        });
+        if (refusal !== null) return yield* refuse(refusal);
         const scope = input.scope ?? "shared";
         const entry = yield* memory
           .save({

@@ -111,6 +111,13 @@ export const PersonalBot = Schema.Struct({
   team: Schema.optionalKey(PersonalBotTeam),
   lead: Schema.optionalKey(Schema.Boolean),
   pinned: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Standing permission to save memories without the user asking each time:
+   * save_memory then skips its explicit-ask check for this bot. Optional on the
+   * wire for the same reason as the team fields; read it through
+   * {@link savesMemoryWithoutAsking}.
+   */
+  memoryAutoSave: Schema.optionalKey(Schema.Boolean),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
 });
@@ -139,6 +146,9 @@ export const isBotOnTeam = (
 export const isTeamLead = (bot: { readonly lead?: boolean }): boolean => bot.lead === true;
 
 export const isBotPinned = (bot: { readonly pinned?: boolean }): boolean => bot.pinned === true;
+
+export const savesMemoryWithoutAsking = (bot: { readonly memoryAutoSave?: boolean }): boolean =>
+  bot.memoryAutoSave === true;
 
 /**
  * The newest user/assistant message of a linked thread, for the chats list
@@ -176,6 +186,8 @@ export const PersonalBotCreateInput = Schema.Struct({
   team: Schema.optional(PersonalBotTeam),
   lead: Schema.optional(Schema.Boolean),
   pinned: Schema.optional(Schema.Boolean),
+  /** Omitted means off: save_memory needs the user's explicit ask. */
+  memoryAutoSave: Schema.optional(Schema.Boolean),
 });
 export type PersonalBotCreateInput = typeof PersonalBotCreateInput.Type;
 
@@ -194,6 +206,7 @@ export const PersonalBotUpdateInput = Schema.Struct({
   /** Setting this true clears the lead flag on the team's previous lead. */
   lead: Schema.optional(Schema.Boolean),
   pinned: Schema.optional(Schema.Boolean),
+  memoryAutoSave: Schema.optional(Schema.Boolean),
 });
 export type PersonalBotUpdateInput = typeof PersonalBotUpdateInput.Type;
 

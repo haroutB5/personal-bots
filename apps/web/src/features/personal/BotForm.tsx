@@ -15,6 +15,7 @@ import {
   type PersonalBot,
   PersonalBotId,
   type PersonalBotTeam,
+  savesMemoryWithoutAsking,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -183,6 +184,7 @@ interface BotDraft {
   team: PersonalBotTeam;
   lead: boolean;
   pinned: boolean;
+  memoryAutoSave: boolean;
 }
 
 function draftFromBot(bot: PersonalBot): BotDraft {
@@ -198,6 +200,7 @@ function draftFromBot(bot: PersonalBot): BotDraft {
     team: botTeam(bot),
     lead: isTeamLead(bot),
     pinned: isBotPinned(bot),
+    memoryAutoSave: savesMemoryWithoutAsking(bot),
     effort:
       EFFORT_OPTION_IDS.map((id) =>
         getModelSelectionStringOptionValue(bot.modelSelection, id),
@@ -278,6 +281,7 @@ function BotForm({
       team: DEFAULT_PERSONAL_BOT_TEAM,
       lead: false,
       pinned: false,
+      memoryAutoSave: false,
     };
   });
 
@@ -384,6 +388,7 @@ function BotForm({
       team: draft.team,
       lead: draft.lead,
       pinned: draft.pinned,
+      memoryAutoSave: draft.memoryAutoSave,
     };
     const result =
       bot === null
@@ -670,6 +675,22 @@ function BotForm({
           Pin to top
           <span className="block text-sm text-[var(--personal-text-secondary)]">
             Keeps this bot in the Pinned box at the top of Bots.
+          </span>
+        </span>
+      </label>
+
+      <label className="flex min-h-11 items-center gap-3 text-[15px] text-[var(--personal-text)]">
+        <input
+          type="checkbox"
+          checked={draft.memoryAutoSave}
+          onChange={(event) => update({ memoryAutoSave: event.target.checked })}
+          className="size-5 shrink-0"
+        />
+        <span className="min-w-0">
+          Save memories without asking
+          <span className="block text-sm text-[var(--personal-text-secondary)]">
+            Keeps what you tell this bot for later chats without you saying "remember", except in a
+            chat that had a sensitive site open.
           </span>
         </span>
       </label>

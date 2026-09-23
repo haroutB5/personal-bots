@@ -42,6 +42,7 @@ export const CreatePersonalBotInput = Schema.Struct({
   team: PersonalBotTeam,
   lead: Schema.Boolean,
   pinned: Schema.Boolean,
+  memoryAutoSave: Schema.optional(Schema.Boolean),
   sortOrder: Schema.Number,
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
@@ -62,6 +63,7 @@ export const UpdatePersonalBotInput = Schema.Struct({
   team: Schema.optional(PersonalBotTeam),
   lead: Schema.optional(Schema.Boolean),
   pinned: Schema.optional(Schema.Boolean),
+  memoryAutoSave: Schema.optional(Schema.Boolean),
   updatedAt: Schema.DateTimeUtcFromString,
 });
 export type UpdatePersonalBotInput = typeof UpdatePersonalBotInput.Type;
@@ -194,6 +196,7 @@ const PersonalBotDbRow = Schema.Struct({
   team: PersonalBotTeam,
   lead: Schema.Number,
   pinned: Schema.Number,
+  memoryAutoSave: Schema.Number,
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -213,6 +216,7 @@ const PersonalBotRawDbRow = Schema.Struct({
   team: Schema.Unknown,
   lead: Schema.Unknown,
   pinned: Schema.Unknown,
+  memoryAutoSave: Schema.Unknown,
   createdAt: Schema.Unknown,
   updatedAt: Schema.Unknown,
   deletedAt: Schema.Unknown,
@@ -298,6 +302,7 @@ function toPersonalBot(row: typeof PersonalBotDbRow.Type): PersonalBot {
     team: row.team,
     lead: row.lead === 1,
     pinned: row.pinned === 1,
+    memoryAutoSave: row.memoryAutoSave === 1,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -364,6 +369,7 @@ export const make = Effect.gen(function* () {
           team,
           is_lead,
           pinned,
+          memory_auto_save,
           created_at,
           updated_at,
           deleted_at
@@ -382,6 +388,7 @@ export const make = Effect.gen(function* () {
           ${input.team},
           ${input.lead ? 1 : 0},
           ${input.pinned ? 1 : 0},
+          ${input.memoryAutoSave === true ? 1 : 0},
           ${input.createdAt},
           ${input.updatedAt},
           NULL
@@ -408,6 +415,7 @@ export const make = Effect.gen(function* () {
           team AS "team",
           is_lead AS "lead",
           pinned AS "pinned",
+          memory_auto_save AS "memoryAutoSave",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -435,6 +443,7 @@ export const make = Effect.gen(function* () {
           team AS "team",
           is_lead AS "lead",
           pinned AS "pinned",
+          memory_auto_save AS "memoryAutoSave",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -465,6 +474,10 @@ export const make = Effect.gen(function* () {
             team = COALESCE(${input.team ?? null}, team),
             is_lead = COALESCE(${input.lead === undefined ? null : input.lead ? 1 : 0}, is_lead),
             pinned = COALESCE(${input.pinned === undefined ? null : input.pinned ? 1 : 0}, pinned),
+            memory_auto_save = COALESCE(
+              ${input.memoryAutoSave === undefined ? null : input.memoryAutoSave ? 1 : 0},
+              memory_auto_save
+            ),
             updated_at = ${input.updatedAt}
         WHERE bot_id = ${input.botId}
         RETURNING
@@ -481,6 +494,7 @@ export const make = Effect.gen(function* () {
           team AS "team",
           is_lead AS "lead",
           pinned AS "pinned",
+          memory_auto_save AS "memoryAutoSave",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -668,11 +682,13 @@ export const make = Effect.gen(function* () {
       // The bot's own prompt says which engine it runs on, so the selection
       // comes along: a bot with nothing to read invents an answer.
       modelSelection: Schema.fromJsonString(ModelSelection),
+      memoryAutoSave: Schema.Number,
     }),
     execute: ({ threadId }) =>
       sql`
         SELECT b.name AS "name", b.title AS "title", b.instructions AS "instructions",
-               b.model_selection_json AS "modelSelection"
+               b.model_selection_json AS "modelSelection",
+               b.memory_auto_save AS "memoryAutoSave"
         FROM personal_bot_threads t
         JOIN personal_bots b ON b.bot_id = t.bot_id
         WHERE t.thread_id = ${threadId}
@@ -913,6 +929,7 @@ export const make = Effect.gen(function* () {
             title: row.title,
             instructions: row.instructions,
             model: row.modelSelection.model,
+            memoryAutoSave: row.memoryAutoSave === 1,
             ...(typeof effort === "string" && effort.length > 0 ? { effort } : {}),
           };
         }),

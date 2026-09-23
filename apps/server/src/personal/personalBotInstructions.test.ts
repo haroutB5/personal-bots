@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import { withBotInstructions } from "../provider/RuntimeInstructions.ts";
-import { personalBotSystemInstructions } from "./personalBotInstructions.ts";
+import { MEMORY_AUTO_SAVE_RULE, personalBotSystemInstructions } from "./personalBotInstructions.ts";
 
 const persona = (instructions: string, title = "Coach") => ({ name: "Nova", title, instructions });
 const precedence =
@@ -121,5 +121,23 @@ describe("what a bot knows about its own engine", () => {
     // is a claim about a level nobody chose.
     assert.include(text, "You run on claude-opus-5.");
     assert.notInclude(text, "at  effort");
+  });
+});
+
+describe("a bot with standing permission to save memories", () => {
+  it("is told it may save without being asked, and where that stops", () => {
+    const text = personalBotSystemInstructions({ ...persona(""), memoryAutoSave: true });
+
+    assert.include(text, MEMORY_AUTO_SAVE_RULE);
+    assert.include(text, "without waiting to be asked");
+    assert.include(text, "sensitive");
+  });
+
+  it("is not told so when the setting is off", () => {
+    assert.notInclude(personalBotSystemInstructions(persona("")), MEMORY_AUTO_SAVE_RULE);
+    assert.notInclude(
+      personalBotSystemInstructions({ ...persona(""), memoryAutoSave: false }),
+      MEMORY_AUTO_SAVE_RULE,
+    );
   });
 });

@@ -172,6 +172,29 @@ it.effect("update changes name and avatar; delete hides the bot from list", () =
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
 
+// The standing permission to save memories is off unless the owner turns it
+// on, and an edit that does not mention it leaves it as it was.
+it.effect("stores the save-memories-without-asking setting per bot", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+
+    const plain = yield* service.create(botInput("bot-plain"));
+    expect(plain.memoryAutoSave).toBe(false);
+
+    const cfo = yield* service.create({ ...botInput("bot-cfo"), memoryAutoSave: true });
+    expect(cfo.memoryAutoSave).toBe(true);
+
+    const renamed = yield* service.update({ botId: cfo.botId, name: "CFO" });
+    expect(renamed.memoryAutoSave).toBe(true);
+
+    const turnedOn = yield* service.update({ botId: plain.botId, memoryAutoSave: true });
+    expect(turnedOn.memoryAutoSave).toBe(true);
+    const turnedOff = yield* service.update({ botId: plain.botId, memoryAutoSave: false });
+    expect(turnedOff.memoryAutoSave).toBe(false);
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});
+
 // Each team has exactly one lead, so promoting a bot has to demote whoever
 // led that team before — including when the promotion also moves the bot
 // across teams.

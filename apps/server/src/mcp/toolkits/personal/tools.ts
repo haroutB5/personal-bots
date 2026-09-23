@@ -128,7 +128,7 @@ export const SaveMemoryInput = Schema.Struct({
   }),
   userRequest: TrimmedNonEmptyString.annotate({
     description:
-      "The user's own words asking you to remember this, quoted verbatim (e.g. 'remember that I take my coffee black').",
+      "The user's own words, quoted verbatim: their ask to remember this (e.g. 'remember that I take my coffee black'), or, when your instructions say you have standing permission to save, the message the fact came from.",
   }),
   kind: Schema.optional(
     Schema.Literals(["note", "preference"]).annotate({ description: "Defaults to note." }),
@@ -190,7 +190,7 @@ const SearchMemoryTool = Tool.make("search_memory", {
 
 const SaveMemoryTool = Tool.make("save_memory", {
   description:
-    "Save a fact or preference to long-term memory, only when the user has explicitly asked you to remember something. Pass their words verbatim in userRequest: the server refuses the save unless those words ask for it, with a phrase such as 'remember', 'don't forget', 'keep in mind', 'save this', 'note that down' or 'for future reference'. Passwords, tokens, keys and other secrets are rejected. A shared entry is seen by every bot; use scope 'bot' for one only you should see.",
+    "Save a fact or preference to long-term memory when the user has explicitly asked you to remember something. Pass their words verbatim in userRequest: the server refuses the save unless those words ask for it, with a phrase such as 'remember', 'don't forget', 'keep in mind', 'save this', 'note that down' or 'for future reference'. The user can give a bot standing permission to save without being asked; your instructions say so when you have it, and only then is a save without those words accepted, except in a chat that has had a site the user marked sensitive open, where it is refused for the rest of the chat. Passwords, tokens, keys and other secrets are rejected. A shared entry is seen by every bot; use scope 'bot' for one only you should see.",
   parameters: SaveMemoryInput,
   success: SaveMemoryResult,
   failure: PersonalToolFailure,
