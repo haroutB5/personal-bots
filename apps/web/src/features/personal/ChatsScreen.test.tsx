@@ -269,6 +269,50 @@ describe("ChatsScreen cold start", () => {
     expect(json).not.toContain("Open details");
   });
 
+  it("paints the snapshot before the environment is known, and drops a foreign one once it is", async () => {
+    // The app boots without an environment id for a few hundred ms; the
+    // skeleton used to sit there over a good snapshot until it arrived.
+    stubWindow();
+    seedSnapshot();
+    state.environmentId = null;
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Cached Ada");
+
+    // The id arrives and it is the snapshot's own: the rows stay.
+    state.environmentId = "env-1";
+    await act(async () => renderer!.update(<ChatsScreen />));
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Cached Ada");
+  });
+
+  it("replaces an early snapshot from another environment with the skeleton", async () => {
+    stubWindow();
+    seedSnapshot();
+    state.environmentId = null;
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Cached Ada");
+    state.environmentId = "env-2";
+    await act(async () => renderer!.update(<ChatsScreen />));
+    const json = JSON.stringify(renderer!.toJSON());
+    expect(json).not.toContain("Cached Ada");
+    expect(json).toContain("Loading your bots");
+  });
+
+  it("waits for the environment when the early paint is switched off", async () => {
+    stubWindow();
+    seedSnapshot();
+    state.environmentId = null;
+    localStorage.setItem("bots:perf-off", "snapshot-early");
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Cached Ada");
+    localStorage.removeItem("bots:perf-off");
+  });
+
   it("keeps the actionable update prompt on the home screen", async () => {
     stubWindow();
     state.versionInfo = { label: "v9.9.10-test", updateAvailable: true };

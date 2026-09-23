@@ -10,7 +10,7 @@
  */
 export const PERF_OFF_STORAGE_KEY = "bots:perf-off";
 
-export type PerfOptimization = "preload-chat" | "rum";
+export type PerfOptimization = "preload-chat" | "snapshot-early" | "warm-highlighter" | "rum";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

@@ -41,6 +41,7 @@ import {
   buildChatsSnapshot,
   partitionPinnedSnapshotRows,
   readChatsSnapshot,
+  readChatsSnapshotBeforeEnvironment,
   writeChatsSnapshot,
   type ChatsSnapshot,
   type ChatsSnapshotRow,
@@ -77,6 +78,7 @@ import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 import { usePreloadChatRoute } from "./usePreloadChatRoute";
 import { reportChatsListPainted } from "./perfRum";
+import { perfOptimizationOn } from "./perfFlags";
 import { formatRelativeTime } from "./relativeTime";
 import { botSelectionKey, groupSelectionKey, type SidebarSelectionKey } from "./personalMode";
 import { revealInSidebar } from "./sidebarReveal";
@@ -300,8 +302,13 @@ export function ChatsScreen({
   // Cold-start snapshot: read synchronously on first mount so the list paints
   // before auth + websocket + `personalBots.list` complete. Re-read when the
   // environment changes (a miss then clears the other environment's entry).
+  // Before the environment id is known the saved snapshot paints anyway
+  // (kill switch "snapshot-early"); the effect below checks it the moment the
+  // id arrives.
   const [snapshot, setSnapshot] = useState<ChatsSnapshot | null>(() =>
-    readChatsSnapshot(environmentId),
+    environmentId === null && perfOptimizationOn("snapshot-early")
+      ? readChatsSnapshotBeforeEnvironment()
+      : readChatsSnapshot(environmentId),
   );
   const snapshotEnv = useRef(environmentId);
   useEffect(() => {

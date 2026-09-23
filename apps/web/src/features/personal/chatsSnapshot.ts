@@ -205,6 +205,22 @@ export function readChatsSnapshot(environmentId: string | null): ChatsSnapshot |
 }
 
 /**
+ * The saved snapshot before the environment is known. The app boots with no
+ * environment id for a few hundred milliseconds (it arrives with the
+ * connection), and waiting for it left the skeleton on screen while a good
+ * snapshot sat in storage. The entry is read as-is here and never deleted: the
+ * environment check happens as soon as the id is known (readChatsSnapshot),
+ * which replaces a foreign snapshot with the skeleton. Never throws.
+ */
+export function readChatsSnapshotBeforeEnvironment(): ChatsSnapshot | null {
+  try {
+    return getLocalStorageItem(STORAGE_KEY, ChatsSnapshotEnvelope)?.snapshot ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Persists a snapshot. Quota or encode failures drop the cache instead of
  * surfacing: the list simply paints from skeletons next launch. Never throws.
  */
