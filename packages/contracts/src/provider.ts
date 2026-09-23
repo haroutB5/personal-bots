@@ -104,6 +104,12 @@ export const ProviderSendTurnInput = Schema.Struct({
       on ProviderSessionStartInput, for adapters whose instructions slot is
       per turn rather than per session. */
   systemInstructions: Schema.optional(TrimmedNonEmptyString),
+  /** Context for this turn only (a personal bot's memory matched to the
+      message). The server puts it in front of the provider prompt, never in
+      the visible message, so it stays in the transcript with its turn and the
+      session's system prompt is the same on every start. Dropped when it would
+      push the prompt past the input limit. */
+  turnContext: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 

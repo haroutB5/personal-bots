@@ -865,13 +865,13 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       yield* adapter.sendTurn({
         threadId: turnThread,
         input: "plan it",
-        systemInstructions: "You are Ada.\n\nKnown facts (from memory): likes tea",
+        systemInstructions: "You are Ada.\n\nKeep it short.",
         modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), BOT_MODEL, [
           { id: "agent", value: "plan" },
         ]),
       });
       const second = runtimeMock.state.promptCalls[1] as { system: string; agent?: string };
-      NodeAssert.match(second.system, /likes tea/);
+      NodeAssert.match(second.system, /Keep it short\./);
       NodeAssert.equal(second.agent, "plan");
 
       yield* adapter.stopSession(startThread);

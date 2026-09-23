@@ -4960,8 +4960,12 @@ describe("agent browser access", () => {
        * Receives each input the adapter's startSession got during recovery.
        */
       readonly recoveryInputs?: Array<unknown>;
-      /** Instructions the recovering turn itself carries (the reactor's, with memory). */
+      /** Instructions the recovering turn itself carries (the reactor's). */
       readonly turnInstructions?: string;
+      /** Context the recovering turn carries (the reactor's memory block). */
+      readonly turnContext?: string;
+      /** Text of the recovering turn; defaults to "resume". */
+      readonly turnInput?: string;
       /** Receives each input the adapter's sendTurn got during recovery. */
       readonly sentTurns?: Array<unknown>;
     },
@@ -5107,9 +5111,10 @@ describe("agent browser access", () => {
         codex.startSession.mockClear();
         yield* provider.sendTurn({
           threadId,
-          input: "resume",
+          input: options.turnInput ?? "resume",
           attachments: [],
           ...(options.turnInstructions ? { systemInstructions: options.turnInstructions } : {}),
+          ...(options.turnContext ? { turnContext: options.turnContext } : {}),
         });
         options.recoveryInputs.push(...codex.startSession.mock.calls.map(([input]) => input));
         options.sentTurns?.push(...codex.sendTurn.mock.calls.map(([input]) => input));
@@ -5262,13 +5267,13 @@ describe("agent browser access", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  // The reactor's turn instructions include the "Known facts" memory block, so
-  // a recovery triggered by a user message must start with those; a turn sent
-  // without any (the post-restart continuation) still gets the bot's own.
+  // A recovery triggered by a user message starts with the instructions the
+  // reactor sent with that message; a turn sent without any (the post-restart
+  // continuation) still gets the bot's own.
   it.effect("recovery prefers the turn's instructions; bare turns get the bot's", () =>
     Effect.gen(function* () {
       const botInstructions = "Answer as Nova.";
-      const withMemory = `${botInstructions}\n\nKnown facts (from memory).\n- [note] Likes tea`;
+      const withMemory = `${botInstructions}\n\nKeep it short.`;
       const memoryStarts: Array<unknown> = [];
       const memoryTurns: Array<unknown> = [];
       const bareStarts: Array<unknown> = [];
@@ -5294,6 +5299,48 @@ describe("agent browser access", () => {
       assert.deepEqual(instructionsOf(memoryTurns), [withMemory]);
       assert.deepEqual(instructionsOf(bareStarts), [botInstructions]);
       assert.deepEqual(instructionsOf(bareTurns), [botInstructions]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // Memory rides with the turn, never in the instructions: a session's system
+  // prompt must read the same on every start of one conversation.
+  it.effect("puts turn context in front of the prompt, not in the instructions", () =>
+    Effect.gen(function* () {
+      const botInstructions = "Answer as Nova.";
+      const memory = "Known facts (from memory).\n- [note] Likes tea";
+      const starts: Array<unknown> = [];
+      const turns: Array<unknown> = [];
+      const oversizedTurns: Array<unknown> = [];
+
+      yield* startSessionWith(false, asThreadId("thread-turn-context"), undefined, {
+        personalBotThread: true,
+        botInstructions,
+        turnInstructions: botInstructions,
+        turnContext: memory,
+        recoveryInputs: starts,
+        sentTurns: turns,
+      });
+      const longInput = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - 10);
+      yield* startSessionWith(false, asThreadId("thread-turn-context-full"), undefined, {
+        personalBotThread: true,
+        botInstructions,
+        turnInstructions: botInstructions,
+        turnContext: memory,
+        turnInput: longInput,
+        recoveryInputs: [],
+        sentTurns: oversizedTurns,
+      });
+
+      const turn = turns[0] as Record<string, unknown> | undefined;
+      assert.equal(turn?.input, `${memory}\n\nresume`);
+      assert.equal(turn?.systemInstructions, botInstructions);
+      assert.isFalse(turn !== undefined && "turnContext" in turn);
+      assert.deepEqual(
+        starts.map((input) => (input as { systemInstructions?: string }).systemInstructions),
+        [botInstructions],
+      );
+      // Too long to fit: the turn goes without its memory rather than failing.
+      assert.equal((oversizedTurns[0] as { input?: string } | undefined)?.input, longInput);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

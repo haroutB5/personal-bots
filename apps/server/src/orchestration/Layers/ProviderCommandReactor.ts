@@ -249,30 +249,26 @@ const make = Effect.gen(function* () {
       ),
     );
   /**
-   * Bot instructions plus, when `memory` is given, up to 8 relevant memory
-   * entries for the turn's text ("Known facts (from memory)"). Memory only
-   * applies to personal-bot threads and never fails the turn.
+   * Up to 8 memory entries relevant to a turn's text ("Known facts (from
+   * memory)"), sent as that turn's context rather than in the bot's system
+   * instructions: those must read the same on every session start of a
+   * conversation, and a Claude session reads them only when it starts. Memory
+   * only applies to personal-bot threads and never fails the turn.
    */
-  const personalBotInstructionsForThread = (
-    threadId: ThreadId,
-    memory?: { readonly query: string; readonly record: boolean },
-  ) =>
+  const personalMemoryForTurn = (threadId: ThreadId, query: string) =>
     Effect.gen(function* () {
-      const instructions = yield* personalBotInstructions(threadId);
-      if (memory === undefined || Option.isNone(personalMemory)) return instructions;
+      if (Option.isNone(personalMemory)) return undefined;
       const thread = yield* projectionSnapshotQuery
         .getThreadShellById(threadId)
         .pipe(Effect.orElseSucceed(() => Option.none()));
       const context = yield* personalMemory.value.contextForThread({
         threadId,
-        query: memory.query,
+        query,
         projectId: Option.isSome(thread) ? thread.value.projectId : undefined,
-        record: memory.record,
+        record: true,
       });
-      const joined = [instructions?.trim(), context.block]
-        .filter((part) => part !== undefined && part !== null && part.length > 0)
-        .join("\n\n");
-      return joined.length > 0 ? joined : undefined;
+      const block = context.block?.trim() ?? "";
+      return block.length > 0 ? block : undefined;
     });
   /**
    * Whether a thread is linked in personal_bot_threads (bot chats, and the
@@ -632,8 +628,6 @@ const make = Effect.gen(function* () {
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
-      /** The first turn's text: session-level instructions carry its memory. */
-      readonly memoryQuery?: string;
     },
   ) {
     const thread = yield* resolveThreadShell(threadId);
@@ -776,12 +770,7 @@ const make = Effect.gen(function* () {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
     }) =>
-      personalBotInstructionsForThread(
-        threadId,
-        options?.memoryQuery === undefined
-          ? undefined
-          : { query: options.memoryQuery, record: false },
-      ).pipe(
+      personalBotInstructions(threadId).pipe(
         Effect.flatMap((systemInstructions) =>
           providerService
             .startSession(threadId, {
@@ -918,17 +907,16 @@ const make = Effect.gen(function* () {
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,
-      memoryQuery: input.messageText,
     });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
-    const systemInstructions = yield* personalBotInstructionsForThread(input.threadId, {
-      query: input.messageText,
-      record: true,
-    });
+    const systemInstructions = yield* personalBotInstructions(input.threadId);
+    const turnContext = normalizedInput
+      ? yield* personalMemoryForTurn(input.threadId, input.messageText)
+      : undefined;
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
@@ -964,6 +952,7 @@ const make = Effect.gen(function* () {
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
       ...(systemInstructions !== undefined ? { systemInstructions } : {}),
+      ...(turnContext !== undefined ? { turnContext } : {}),
     };
   });
 

@@ -89,11 +89,14 @@ const KIND_LABEL: Record<PersonalMemoryKind, string> = {
   task_summary: "task summary",
 };
 
-/** The block appended to a bot's system instructions. */
+/**
+ * The block put in front of a bot's turn: it travels with the user's message,
+ * so it says who wrote it.
+ */
 export function formatMemoryBlock(entries: ReadonlyArray<PersonalMemoryEntry>): string | null {
   if (entries.length === 0) return null;
   return [
-    "Known facts (from memory). Use them when relevant; they may be out of date. Task summaries record past work and are not user preferences.",
+    "Known facts (from memory), added by the app for this message; the user did not type them. Use them when relevant; they may be out of date. Task summaries record past work and are not user preferences.",
     ...entries.map((entry) => {
       const content =
         entry.content.length > BLOCK_ENTRY_MAX_CHARS
@@ -168,7 +171,7 @@ export class PersonalMemoryService extends Context.Service<
     readonly botForThread: (threadId: ThreadId) => Effect.Effect<Option.Option<PersonalBotId>>;
     /**
      * Relevant entries for a turn on a personal-bot thread (shared + that
-     * bot, + the project when given), formatted for system instructions.
+     * bot, + the project when given), formatted as context for that turn.
      * `record` logs the ids against the thread's active task attempt.
      */
     readonly contextForThread: (input: {

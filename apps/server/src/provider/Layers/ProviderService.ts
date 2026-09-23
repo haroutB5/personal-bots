@@ -1323,8 +1323,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const prepared = yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
       const personalBot = prepared.personalBot;
       const personalBotId = prepared.personalBotId;
-      // The reactor's turn instructions carry the memory block for this
-      // message; the bot-only ones are the fallback (e.g. a continuation).
+      // The reactor's turn instructions win; the bot's own, looked up here,
+      // are the fallback (e.g. a continuation). Both are the same persona.
       const systemInstructions = input.systemInstructions ?? prepared.systemInstructions;
       const resumed = yield* adapter
         .startSession({
@@ -1742,6 +1742,23 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
     }
 
+    // Turn context (a bot's memory for this message) goes in front of the
+    // prompt, where it stays in the transcript with its turn. Carrying it in
+    // the system prompt instead would change that prompt on every session
+    // start of the same conversation, and a Claude session reads it only once.
+    // In front rather than behind, because Claude Code dispatches a skill from
+    // the last text block and would take trailing context as the skill's
+    // arguments. It is optional: when it does not fit, the turn goes without.
+    const { turnContext, ...parsedWithoutTurnContext } = parsed;
+    if (
+      turnContext !== undefined &&
+      inputTextWithAttachmentContext !== undefined &&
+      turnContext.length + 2 + inputTextWithAttachmentContext.length <=
+        PROVIDER_SEND_TURN_MAX_INPUT_CHARS
+    ) {
+      inputTextWithAttachmentContext = `${turnContext}\n\n${inputTextWithAttachmentContext}`;
+    }
+
     // The reactor always sends a bot's instructions; turns sent from elsewhere
     // (the post-restart continuation) do not, and Codex reads them per turn.
     const fallbackInstructions =
@@ -1749,7 +1766,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ? yield* personalSessions.value.instructionsForThread(parsed.threadId)
         : null;
     const input = {
-      ...parsed,
+      ...parsedWithoutTurnContext,
       ...(inputTextWithAttachmentContext !== undefined
         ? { input: inputTextWithAttachmentContext }
         : {}),
