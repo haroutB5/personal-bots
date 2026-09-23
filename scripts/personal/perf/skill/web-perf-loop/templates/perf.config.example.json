@@ -1,0 +1,23 @@
+{
+  "baseUrl": "http://localhost:3000",
+  "storageState": null,
+  "cpuThrottle": 4,
+  "runs": 7,
+  "settleMs": 2000,
+  "flagsKey": "perf-off",
+  "journeys": [
+    { "name": "home-cold", "type": "load", "path": "/", "until": "main [data-list-row]" },
+    { "name": "home-warm", "type": "load", "path": "/", "until": "main [data-list-row]" },
+    {
+      "name": "open-item",
+      "type": "tap",
+      "tap": "main [data-list-row] a",
+      "until": "[data-detail-ready] textarea:not([disabled])"
+    },
+    {
+      "name": "item-relaunch",
+      "type": "reload",
+      "until": "[data-detail-ready] textarea:not([disabled])"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "about": "p50 ceilings per journey. Only ever lowered (check.mjs --ratchet), committed with the change that earned them.",
+  "runs": 5,
+  "journeys": {
+    "home-warm": {
+      "wall": { "max": 1200, "headroom": 0.35 },
+      "longTaskMs": { "max": 900, "headroom": 0.4 },
+      "requests": { "max": 200, "headroom": 0.03, "slack": 4 },
+      "jsKB": { "max": 3600, "headroom": 0.03, "slack": 40 }
+    },
+    "open-item": {
+      "wall": { "max": 800, "headroom": 0.4 },
+      "requests": { "max": 50, "headroom": 0.05, "slack": 2 }
+    }
+  }
+}
