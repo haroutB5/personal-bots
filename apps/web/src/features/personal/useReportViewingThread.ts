@@ -6,10 +6,10 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { personalPushReportViewing } from "./usePersonalAutomation";
 
 /**
- * Refresh cadence. Shorter than the server's 45 s lease so one dropped
- * report does not make the chat look closed.
+ * Refresh cadence. Half the server's 20 s lease so one dropped report does
+ * not make the chat look closed.
  */
-export const VIEWING_HEARTBEAT_MS = 20_000;
+export const VIEWING_HEARTBEAT_MS = 10_000;
 
 /**
  * Tells the server which chat this connection has open and visible, so it
@@ -45,6 +45,8 @@ export function useReportViewingThread(
     const onPageHide = () => send(false);
     document.addEventListener("visibilitychange", sendCurrent);
     window.addEventListener("pagehide", onPageHide);
+    // Page Lifecycle: a frozen page reports nothing more, so say so first.
+    document.addEventListener("freeze", onPageHide);
     return () => {
       // Leaving the chat: say so before tearing down, or this connection
       // would keep the chat "open" until its lease expires.
@@ -52,6 +54,7 @@ export function useReportViewingThread(
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", sendCurrent);
       window.removeEventListener("pagehide", onPageHide);
+      document.removeEventListener("freeze", onPageHide);
     };
   }, [environmentId, threadId, connected, report]);
 }

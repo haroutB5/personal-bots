@@ -22,7 +22,8 @@ export interface InAppPlan {
  * (`seen` is updated in place). A hidden page acknowledges nothing, so the
  * server falls back to web push for it. A visible page acknowledges each new
  * notification, and shows the newest one unless it points at the screen
- * already open.
+ * already open (its own url, or its `quietPath`: the chat it is about). That
+ * acknowledgement is also what confirms a "viewing" report to the server.
  */
 export function planInAppNotifications(
   seen: Set<string>,
@@ -32,6 +33,9 @@ export function planInAppNotifications(
   const fresh = feed.filter((notification) => !seen.has(notification.id));
   for (const notification of fresh) seen.add(notification.id);
   if (!page.visible || fresh.length === 0) return { ack: [], show: null };
-  const shown = fresh.filter((notification) => notification.url !== page.currentPath);
+  const shown = fresh.filter(
+    (notification) =>
+      notification.url !== page.currentPath && notification.quietPath !== page.currentPath,
+  );
   return { ack: fresh.map((notification) => notification.id), show: shown.at(-1) ?? null };
 }

@@ -49,11 +49,13 @@ function useForegroundPresence(environmentId: EnvironmentId | null, connected: b
     const onPageHide = () => send(false);
     document.addEventListener("visibilitychange", sendCurrent);
     window.addEventListener("pagehide", onPageHide);
+    document.addEventListener("freeze", onPageHide);
     return () => {
       send(false);
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", sendCurrent);
       window.removeEventListener("pagehide", onPageHide);
+      document.removeEventListener("freeze", onPageHide);
     };
   }, [environmentId, connected, report]);
 }

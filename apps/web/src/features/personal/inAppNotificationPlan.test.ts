@@ -42,6 +42,19 @@ describe("planInAppNotifications", () => {
     ).toEqual({ ack: ["a"], show: null });
   });
 
+  it("reading the chat a notification is about confirms it without a banner", () => {
+    // A task finished in the chat on screen: its url is the task, its quiet
+    // path the chat. The ack is what tells the server the user saw it.
+    const seen = new Set<string>();
+    expect(
+      planInAppNotifications(
+        seen,
+        [{ ...note("a", "/tasks/task-1"), quietPath: "/bots/bot-1/thread-1" }],
+        { visible: true, currentPath: "/bots/bot-1/thread-1" },
+      ),
+    ).toEqual({ ack: ["a"], show: null });
+  });
+
   it("a hidden page takes nothing, so the server sends a push instead", () => {
     const seen = new Set<string>();
     expect(
