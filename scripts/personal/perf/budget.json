@@ -9,21 +9,62 @@
   },
   "journeys": {
     "J1-warm": {
-      "wall": { "max": 1200, "headroom": 0.35 },
-      "longTaskMs": { "max": 960, "headroom": 0.4 },
-      "requests": { "max": 202, "headroom": 0.03 },
-      "jsKB": { "max": 3632, "headroom": 0.03 }
+      "wall": {
+        "max": 1138,
+        "headroom": 0.35
+      },
+      "longTaskMs": {
+        "max": 960,
+        "headroom": 0.4
+      },
+      "requests": {
+        "max": 196,
+        "headroom": 0.03,
+        "slack": 4
+      },
+      "jsKB": {
+        "max": 3632,
+        "headroom": 0.03,
+        "slack": 40
+      }
     },
     "J2": {
-      "chatShell": { "max": 840, "headroom": 0.4 },
-      "requests": { "max": 50, "headroom": 0.05 },
-      "jsKB": { "max": 1340, "headroom": 0.05 }
+      "chatShell": {
+        "max": 228,
+        "headroom": 0.4
+      },
+      "requests": {
+        "max": 4,
+        "headroom": 0.05,
+        "slack": 2
+      },
+      "jsKB": {
+        "max": 20,
+        "headroom": 0.05,
+        "slack": 20
+      }
     },
     "J1-deep": {
-      "wall": { "max": 1800, "headroom": 0.4 },
-      "longTaskMs": { "max": 1510, "headroom": 0.4 },
-      "requests": { "max": 247, "headroom": 0.03 },
-      "jsKB": { "max": 4935, "headroom": 0.03 }
+      "wall": {
+        "max": 1478,
+        "headroom": 0.4
+      },
+      "longTaskMs": {
+        "max": 1130,
+        "headroom": 0.4
+      },
+      "requests": {
+        "max": 246,
+        "headroom": 0.03,
+        "slack": 4
+      },
+      "jsKB": {
+        "max": 4321,
+        "headroom": 0.03,
+        "slack": 40
+      }
     }
-  }
+  },
+  "ratchetedAt": "2026-09-23T23:13:31.780Z",
+  "ratchetedFrom": "version=1.30.1\r release=ee9c19c10b1e\r"
 }

@@ -58,7 +58,12 @@ for (const [journey, metrics] of Object.entries(budget.journeys)) {
     if (!ok) failed += 1;
     // Ratchet: a budget beaten by more than its headroom moves down to the
     // observed value plus headroom. Never up.
-    const candidate = round(observed * (1 + (rule.headroom ?? 0)), 0);
+    // `slack` is an absolute floor for small deterministic counters (0 KB
+    // must not become a budget of 0).
+    const candidate = round(
+      Math.max(observed * (1 + (rule.headroom ?? 0)), observed + (rule.slack ?? 0)),
+      0,
+    );
     if (ratchet && ok && candidate < rule.max) {
       rule.max = candidate;
       lowered += 1;
