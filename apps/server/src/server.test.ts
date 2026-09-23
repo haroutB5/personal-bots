@@ -177,6 +177,7 @@ import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolve
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 // personal browser
 import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
+import * as PersonalDesktop from "./personal/desktop/PersonalDesktop.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -985,6 +986,11 @@ const buildAppUnderTest = (options?: {
           // personal browser: never launches Chrome in server tests
           Layer.mock(PersonalBrowser.PersonalBrowser)({
             handleAutomationRequest: () => Effect.die("PersonalBrowser not stubbed in this test"),
+          }),
+          // personal desktop: never touches the real PC in server tests
+          Layer.mock(PersonalDesktop.PersonalDesktop)({
+            available: false,
+            act: () => Effect.die("PersonalDesktop not stubbed in this test"),
           }),
           Layer.mock(PreviewManager.PreviewManager)({
             open: () => Effect.die("PreviewManager not stubbed in this test"),

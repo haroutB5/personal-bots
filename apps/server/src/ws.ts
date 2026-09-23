@@ -196,6 +196,7 @@ import * as PersonalConnectionApprovalService from "./personal/connections/appro
 import * as PersonalConnectionService from "./personal/connections/service.ts";
 // personal browser
 import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
+import * as PersonalDesktop from "./personal/desktop/PersonalDesktop.ts";
 import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
@@ -748,6 +749,7 @@ const makeWsRpcLayer = (
         yield* PersonalConnectionApprovalService.PersonalConnectionApprovalService;
       // personal browser
       const personalBrowser = yield* PersonalBrowser.PersonalBrowser;
+      const personalDesktop = yield* PersonalDesktop.PersonalDesktop;
       const personalRoutines = yield* PersonalRoutineService.PersonalRoutineService;
       const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
       const personalPush = yield* PersonalPushService.PersonalPushService;
@@ -3421,6 +3423,17 @@ const makeWsRpcLayer = (
             personalBrowser.activity(currentSessionId),
             { "rpc.aggregate": "personal-browser" },
           ),
+        // The user's real PC: who holds it, who waits, and the app's Stop.
+        [WS_METHODS.personalDesktopStatus]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.personalDesktopStatus,
+            Stream.concat(Stream.fromEffect(personalDesktop.status), personalDesktop.changes),
+            { "rpc.aggregate": "personal-desktop" },
+          ),
+        [WS_METHODS.personalDesktopStop]: (_input) =>
+          observeRpcEffect(WS_METHODS.personalDesktopStop, personalDesktop.stop("app"), {
+            "rpc.aggregate": "personal-desktop",
+          }),
         [WS_METHODS.personalRoutinesList]: (_input) =>
           observeRpcEffect(WS_METHODS.personalRoutinesList, personalRoutines.list(), {
             "rpc.aggregate": "server",

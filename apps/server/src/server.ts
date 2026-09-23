@@ -96,6 +96,7 @@ import * as PersonalSessionAccess from "./personal/secrets/PersonalSessionAccess
 // personal browser
 import * as PersonalBrowserLease from "./personal/browser/BrowserLease.ts";
 import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
+import * as PersonalDesktop from "./personal/desktop/PersonalDesktop.ts";
 import * as PersonalBrowserLeaseRepository from "./personal/browser/PersonalBrowserLeaseRepository.ts";
 import * as PersonalBrowserProtectionRepository from "./personal/browser/PersonalBrowserProtectionRepository.ts";
 import * as PersonalBrowserHost from "./personal/browser/ServerBrowserHost.ts";
@@ -609,7 +610,9 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // personal browser: the service needs the lease (-> its repository ->
   // SqlClient), PreviewManager and PersonalBotRepository, all provided by
   // later steps below.
-  Layer.provideMerge(PersonalBrowser.layer),
+  // The user's real PC sits beside the browser (one step: the pipe is full).
+  // It needs the orchestration engine (turn ends free it) from later steps.
+  Layer.provideMerge(Layer.mergeAll(PersonalBrowser.layer, PersonalDesktop.layer)),
   Layer.provideMerge(PersonalBrowserLease.layer),
   Layer.provideMerge(PersonalBrowserLeaseRepository.layer),
   Layer.provideMerge(PersonalBrowserProtectionRepository.layer),

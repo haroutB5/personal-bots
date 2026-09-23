@@ -50,6 +50,16 @@ import {
   DeviceStandardToolkitHandlersLive,
 } from "./toolkits/device/handlers.ts";
 import {
+  DesktopImageToolkitHandlersLive,
+  DesktopStandardToolkitHandlersLive,
+} from "./toolkits/desktop/handlers.ts";
+import {
+  DESKTOP_IMAGE_TOOLS,
+  type DesktopToolFailureType,
+  DesktopImageToolkit,
+  DesktopStandardToolkit,
+} from "./toolkits/desktop/tools.ts";
+import {
   DeviceScreenshotTool,
   DeviceScreenshotToolkit,
   DeviceStandardToolkit,
@@ -615,6 +625,133 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
   );
 });
 
+/** The reason a desktop tool refused, for the model; any other failure keeps only its tag. */
+const desktopFailureText = (error: unknown): string | null =>
+  typeof error === "object" &&
+  error !== null &&
+  "reason" in error &&
+  typeof (error as { readonly reason: unknown }).reason === "string"
+    ? (error as { readonly reason: string }).reason
+    : null;
+
+/**
+ * Desktop tools answer with an optional screenshot, sent as image content so
+ * the model sees the screen, and everything else as JSON beside it. Their
+ * refusals keep the service's own sentence ("the user took back control"),
+ * because that is what tells the bot to stop rather than retry.
+ */
+const registerDesktopImageTools = Effect.fn("McpHttpServer.registerDesktopImageTools")(
+  function* () {
+    const server = yield* McpServer.McpServer;
+    const built = yield* DesktopImageToolkit;
+    // One loop registers every tool, so the per-name handler typing collapses
+    // to its common shape here; each tool still decodes its own parameters.
+    const handle = built.handle as unknown as (
+      name: string,
+      params: unknown,
+    ) => Effect.Effect<
+      Stream.Stream<{ readonly encodedResult: unknown }, DesktopToolFailureType>,
+      DesktopToolFailureType,
+      McpInvocationContext.McpInvocationContext
+    >;
+    for (const tool of DESKTOP_IMAGE_TOOLS) {
+      yield* server.addTool({
+        tool: new McpSchema.Tool({
+          name: tool.name,
+          description: Tool.getDescription(tool),
+          inputSchema: Tool.getJsonSchema(tool),
+          annotations: {
+            ...Context.getOption(tool.annotations, Tool.Title).pipe(
+              Option.map((title) => ({ title })),
+              Option.getOrUndefined,
+            ),
+            readOnlyHint: Context.get(tool.annotations, Tool.Readonly),
+            destructiveHint: Context.get(tool.annotations, Tool.Destructive),
+            idempotentHint: Context.get(tool.annotations, Tool.Idempotent),
+            openWorldHint: Context.get(tool.annotations, Tool.OpenWorld),
+          },
+        }),
+        annotations: tool.annotations,
+        handle: (payload) =>
+          Effect.withFiber((fiber) => {
+            const invocation = Context.getUnsafe(
+              fiber.context,
+              McpInvocationContext.McpInvocationContext,
+            );
+            return handle(tool.name, payload).pipe(
+              Stream.unwrap,
+              Stream.run(Sink.last()),
+              Effect.flatMap(Effect.fromOption),
+              Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+              Effect.matchCauseEffect({
+                onFailure: (cause) => {
+                  if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
+                    return Effect.failCause(cause).pipe(Effect.orDie);
+                  }
+                  const failure = cause.reasons.find(Cause.isFailReason)?.error;
+                  const reason = desktopFailureText(failure);
+                  const text =
+                    reason ??
+                    (typeof failure === "object" && failure !== null && "_tag" in failure
+                      ? `The desktop action failed: ${String((failure as { readonly _tag: unknown })._tag)}.`
+                      : "The desktop action failed.");
+                  return Effect.logWarning(`${tool.name} refused`, { reason: text }).pipe(
+                    Effect.as(
+                      new McpSchema.CallToolResult({
+                        isError: true,
+                        content: [{ type: "text", text }],
+                      }),
+                    ),
+                  );
+                },
+                onSuccess: ({ encodedResult }) => {
+                  const { screenshot, ...rest } = encodedResult as {
+                    readonly screenshot?: {
+                      readonly mimeType: string;
+                      readonly data: string;
+                      readonly width: number;
+                      readonly height: number;
+                    };
+                    readonly [key: string]: unknown;
+                  };
+                  return Effect.succeed(
+                    new McpSchema.CallToolResult({
+                      isError: false,
+                      structuredContent: rest,
+                      content: [
+                        { type: "text", text: JSON.stringify(rest) },
+                        ...(screenshot === undefined
+                          ? []
+                          : [
+                              {
+                                type: "image" as const,
+                                data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
+                                mimeType: screenshot.mimeType,
+                              },
+                            ]),
+                      ],
+                    }),
+                  );
+                },
+              }),
+            );
+          }),
+      });
+    }
+  },
+);
+
+/**
+ * The user's real PC. Gated on the "bots" capability inside the handlers:
+ * every personal bot may use it, one at a time (see PersonalDesktop).
+ */
+export const DesktopToolkitRegistrationLive = Layer.mergeAll(
+  McpServer.toolkit(DesktopStandardToolkit).pipe(Layer.provide(DesktopStandardToolkitHandlersLive)),
+  Layer.effectDiscard(registerDesktopImageTools()).pipe(
+    Layer.provide(DesktopImageToolkitHandlersLive),
+  ),
+).pipe(Layer.provide(PersonalBotRepository.layer));
+
 const PreviewStandardToolkitRegistrationLive = McpServer.toolkit(PreviewStandardToolkit).pipe(
   Layer.provide(PreviewStandardToolkitHandlersLive),
 );
@@ -720,4 +857,5 @@ export const layer = Layer.mergeAll(
   ConnectionsToolkitRegistrationLive,
   CreateAppResumeLive,
   DeviceToolkitRegistrationLive,
+  DesktopToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));
