@@ -71,7 +71,11 @@ function openNavChannel(): BroadcastChannel | null {
   }
 }
 
-/** One line in the server log per delivered tap. Never throws, never retries. */
+/**
+ * One line in the server log per tap step. Never throws, never retries. Every
+ * line says whether a worker controls this page: an uncontrolled page gets no
+ * client.postMessage, only the BroadcastChannel and the saved copy.
+ */
 function reportTap(record: Record<string, unknown>): void {
   try {
     void fetch(DIAG_URL, {
@@ -79,11 +83,31 @@ function reportTap(record: Record<string, unknown>): void {
       credentials: "same-origin",
       keepalive: true,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...record, page: runningClientEntry(document) }),
+      body: JSON.stringify({
+        ...record,
+        page: runningClientEntry(document),
+        controlled: navigator.serviceWorker?.controller != null,
+        visibility: document.visibilityState,
+      }),
     }).catch(() => undefined);
   } catch {
     // Diagnostics are best-effort.
   }
+}
+
+/** Worker messages worth a diag line: the tap itself and the push-shown nudge. */
+export function workerMessageDiag(
+  data: unknown,
+  via: "message" | "broadcast",
+): Record<string, unknown> | null {
+  if (typeof data !== "object" || data === null) return null;
+  const message = data as { type?: unknown; id?: unknown };
+  if (message.type !== "bots:navigate" && message.type !== "bots:push-shown") return null;
+  return {
+    event: via === "message" ? "sw-message-received" : "broadcast-received",
+    type: message.type,
+    id: typeof message.id === "string" ? message.id : null,
+  };
 }
 
 /**
@@ -131,8 +155,13 @@ export function registerPersonalServiceWorker(navigate: (path: string) => void):
     },
     report: reportTap,
   });
+  const onWorkerMessage = (data: unknown, via: "message" | "broadcast") => {
+    const diag = workerMessageDiag(data, via);
+    if (diag !== null) reportTap(diag);
+    taps.onMessage(data, via);
+  };
   container.addEventListener("message", (event: MessageEvent) =>
-    taps.onMessage(event.data, "message"),
+    onWorkerMessage(event.data, "message"),
   );
   // Messages from the worker queue until the page opts in; do so explicitly
   // rather than rely on the browser doing it at DOMContentLoaded.
@@ -142,8 +171,11 @@ export function registerPersonalServiceWorker(navigate: (path: string) => void):
     // Older engines deliver without it.
   }
   channel?.addEventListener("message", (event: MessageEvent) =>
-    taps.onMessage(event.data, "broadcast"),
+    onWorkerMessage(event.data, "broadcast"),
   );
+  // The installed app only: one line per launch saying whether a worker
+  // controls the page, which decides which tap routes can reach it.
+  if (isStandaloneDisplay()) reportTap({ event: "page-boot", standalone: true });
 
   let lastUpdateCheck = 0;
   const checkForNewWorker = () => {

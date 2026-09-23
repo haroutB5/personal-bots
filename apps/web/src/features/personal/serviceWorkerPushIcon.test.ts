@@ -184,11 +184,15 @@ describe("service worker notification icon", () => {
     );
   });
 
+  // Each push also posts one diag line; only the geometry requests count here.
+  const geometryFetches = (app: { fetch: { mock: { calls: unknown[][] } } }) =>
+    app.fetch.mock.calls.filter((call) => String(call[0]).includes("bot-avatar-shapes")).length;
+
   it("fetches the geometry once across notifications", async () => {
     const app = worker();
     await push(app, BOT_PAYLOAD);
     await push(app, { ...BOT_PAYLOAD, tag: "chat-thread-2" });
-    expect(app.fetch).toHaveBeenCalledOnce();
+    expect(geometryFetches(app)).toBe(1);
     expect(app.showNotification).toHaveBeenCalledTimes(2);
   });
 
@@ -245,7 +249,7 @@ describe("service worker notification icon", () => {
       "Planner replied",
       expect.objectContaining({ icon: BLOB_URL }),
     );
-    expect(app.fetch).toHaveBeenCalledTimes(2);
+    expect(geometryFetches(app)).toBe(2);
   });
 
   it("does not wait forever on a stalled geometry fetch", async () => {

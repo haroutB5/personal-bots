@@ -211,6 +211,25 @@ describe("personal service worker", () => {
         .map((call) => JSON.parse((call as unknown as [string, { body: string }])[1].body));
     }
 
+    function clickRecord(app: ReturnType<typeof worker>) {
+      return diagRecords(app).find((record) => record.event === "notificationclick");
+    }
+
+    it("posts a start line before anything else, without keepalive", () => {
+      // No timers advanced and no await: the line must already be on its way,
+      // so a missing line on the phone means the handler never ran.
+      const app = worker(false, false, false, { matchAll: async () => [], openWindow: vi.fn() });
+      void tap(app);
+      const [start] = diagRecords(app);
+      expect(start).toMatchObject({
+        event: "notificationclick-start",
+        url: "/bots/bot-1/thread-1",
+        id: expect.any(String),
+      });
+      const init = (app.fetch.mock.calls[0] as unknown as [string, RequestInit])[1];
+      expect(init.keepalive).toBeUndefined();
+    });
+
     it("hands the deep link to the open app even when focus is refused", async () => {
       vi.useFakeTimers();
       // iOS brings the installed app forward itself and can reject focus();
@@ -268,7 +287,7 @@ describe("personal service worker", () => {
       await vi.advanceTimersByTimeAsync(10_000);
       await done;
       expect(client.navigate).not.toHaveBeenCalled();
-      const [record] = diagRecords(app);
+      const record = clickRecord(app);
       expect(record).toMatchObject({
         event: "notificationclick",
         url: "/bots/bot-1/thread-1",
@@ -297,7 +316,7 @@ describe("personal service worker", () => {
       expect(client.navigate).toHaveBeenCalledExactlyOnceWith(
         "https://bots.example/bots/bot-1/thread-1",
       );
-      expect(diagRecords(app)[0]).toMatchObject({ route: "client.navigate", ack: null });
+      expect(clickRecord(app)).toMatchObject({ route: "client.navigate", ack: null });
     });
 
     it("opens a window when none is found, and still broadcasts the link", async () => {
@@ -320,7 +339,7 @@ describe("personal service worker", () => {
       expect(open[0]?.sent).toContainEqual(
         expect.objectContaining({ type: "bots:navigate", url: "/bots/bot-1/thread-1" }),
       );
-      expect(diagRecords(app)[0]).toMatchObject({ route: "openWindow", clients: [] });
+      expect(clickRecord(app)).toMatchObject({ route: "openWindow", clients: [] });
     });
 
     it("tells open windows a notification was shown", async () => {
@@ -346,6 +365,17 @@ describe("personal service worker", () => {
         expect.objectContaining({ type: "bots:push-shown" }),
       );
       expect(open[0]?.sent).toContainEqual(expect.objectContaining({ type: "bots:push-shown" }));
+      // One diag line per push: proves the worker reaches the server, and
+      // records whether the app was in front when the banner appeared.
+      expect(diagRecords(app)).toEqual([
+        {
+          event: "push-shown",
+          sw: "test",
+          url: "/bots/bot-1/thread-1",
+          broadcast: true,
+          clients: [{ path: "/bots", visibility: "visible", focused: true }],
+        },
+      ]);
     });
   });
 });

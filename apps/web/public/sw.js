@@ -287,7 +287,16 @@ self.addEventListener("push", (event) => {
       // An open app watches for the tap for a while after this (see
       // serviceWorker.ts): iOS gives a foreground app no event when the
       // banner is tapped, so the page polls the saved deep link instead.
-      await announce({ type: "bots:push-shown", at: Date.now() });
+      const { broadcast, windows } = await announce({ type: "bots:push-shown", at: Date.now() });
+      // One line per push: proves this worker can reach the server at all, and
+      // shows which windows it can see (and whether the app was in front).
+      await sendDiag({
+        event: "push-shown",
+        sw: VERSION,
+        url: pathOf(new URL(url, self.location.origin).href),
+        broadcast,
+        clients: describeWindows(windows),
+      });
     })(),
   );
 });
@@ -408,19 +417,31 @@ function newTapId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** Fire-and-forget: one line in the server log, never a failed tap. */
+/**
+ * Fire-and-forget: one line in the server log, never a failed tap. No
+ * `keepalive`: the caller's waitUntil already keeps the worker alive, and
+ * WebKit has refused keepalive requests from workers. The route accepts
+ * anonymous posts (allowlisted), because this fetch may carry no credential.
+ */
 async function sendDiag(record) {
   try {
     await fetch(DIAG_URL, {
       method: "POST",
       credentials: "same-origin",
-      keepalive: true,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(record),
     });
   } catch {
     // Diagnostics are best-effort.
   }
+}
+
+function describeWindows(windows) {
+  return windows.slice(0, 5).map((client) => ({
+    path: pathOf(client.url),
+    visibility: typeof client.visibilityState === "string" ? client.visibilityState : null,
+    focused: typeof client.focused === "boolean" ? client.focused : null,
+  }));
 }
 
 /** A foreground app answers in well under a second; a waking one takes longer. */
@@ -443,11 +464,21 @@ self.addEventListener("notificationclick", (event) => {
     target.origin === self.location.origin
       ? target.href
       : new URL("/bots", self.location.origin).href;
+  const started = Date.now();
+  const url = new URL(href).pathname + new URL(href).search;
+  const id = newTapId();
+  // First thing, before any await: if this line is missing for a tap, the
+  // platform never ran the handler (or killed the worker before it could post).
+  const startDiag = sendDiag({
+    event: "notificationclick-start",
+    sw: VERSION,
+    id,
+    url,
+    at: started,
+  });
+  event.waitUntil(startDiag);
   event.waitUntil(
     (async () => {
-      const started = Date.now();
-      const url = new URL(href).pathname + new URL(href).search;
-      const id = newTapId();
       const diag = { event: "notificationclick", sw: VERSION, id, url, cache: false };
       // Listen before anything is sent, so a fast page cannot answer too early.
       const ack = waitForAck(id, NAV_ACK_TIMEOUT_WAKING_MS);
@@ -462,11 +493,7 @@ self.addEventListener("notificationclick", (event) => {
       }
       const { broadcast, windows } = await announce({ type: "bots:navigate", url, id });
       diag.broadcast = broadcast;
-      diag.clients = windows.slice(0, 5).map((client) => ({
-        path: pathOf(client.url),
-        visibility: typeof client.visibilityState === "string" ? client.visibilityState : null,
-        focused: typeof client.focused === "boolean" ? client.focused : null,
-      }));
+      diag.clients = describeWindows(windows);
       const front =
         windows.find((client) => client.focused === true) ??
         windows.find((client) => client.visibilityState === "visible") ??

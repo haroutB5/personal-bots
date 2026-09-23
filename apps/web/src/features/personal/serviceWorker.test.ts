@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { takePendingNavigation } from "./serviceWorker";
+import { takePendingNavigation, workerMessageDiag } from "./serviceWorker";
 
 const NOW = 1_800_000_000_000;
 
@@ -43,5 +43,24 @@ describe("takePendingNavigation", () => {
     vi.unstubAllGlobals();
     vi.stubGlobal("caches", undefined);
     expect(await takePendingNavigation(NOW)).toBeNull();
+  });
+});
+
+describe("workerMessageDiag", () => {
+  it("names the route a tap or push-shown message arrived by", () => {
+    expect(
+      workerMessageDiag({ type: "bots:navigate", url: "/bots/a/b", id: "t1" }, "message"),
+    ).toEqual({ event: "sw-message-received", type: "bots:navigate", id: "t1" });
+    expect(workerMessageDiag({ type: "bots:push-shown", at: 1 }, "broadcast")).toEqual({
+      event: "broadcast-received",
+      type: "bots:push-shown",
+      id: null,
+    });
+  });
+
+  it("ignores anything else, including the page acks", () => {
+    expect(workerMessageDiag({ type: "bots:navigate-ack", id: "t1" }, "broadcast")).toBeNull();
+    expect(workerMessageDiag("hello", "message")).toBeNull();
+    expect(workerMessageDiag(null, "message")).toBeNull();
   });
 });
