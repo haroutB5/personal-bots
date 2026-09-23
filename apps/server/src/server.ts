@@ -111,6 +111,7 @@ import {
 } from "./personal/routines/hookRoutes.ts";
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
+import { personalClientDiagRouteLayer } from "./personal/push/clientDiagRoute.ts";
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import * as PersonalTurnRetry from "./personal/PersonalTurnRetryService.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
@@ -747,6 +748,8 @@ export const makeRoutesLayer = Layer.mergeAll(
     // shares the single PreviewAutomationBroker provided below)
     personalBrowserStreamRouteLayer,
     personalBrowserFilesRouteLayer,
+    // Signed-in only: one log line per notification tap (see clientDiagRoute.ts).
+    personalClientDiagRouteLayer,
     // Unauthenticated by necessity; the URL token is the whole credential.
     personalRoutineHookRouteLayer,
     personalRoutineHookMethodRouteLayer,
