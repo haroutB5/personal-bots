@@ -298,7 +298,7 @@ function BotForm({
       team: DEFAULT_PERSONAL_BOT_TEAM,
       lead: false,
       pinned: false,
-      memoryAutoSave: false,
+      memoryAutoSave: true,
     };
   });
 

@@ -388,7 +388,7 @@ export const make = Effect.gen(function* () {
           ${input.team},
           ${input.lead ? 1 : 0},
           ${input.pinned ? 1 : 0},
-          ${input.memoryAutoSave === true ? 1 : 0},
+          ${input.memoryAutoSave === false ? 0 : 1},
           ${input.createdAt},
           ${input.updatedAt},
           NULL

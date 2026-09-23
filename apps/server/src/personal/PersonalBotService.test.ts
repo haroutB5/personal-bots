@@ -172,15 +172,18 @@ it.effect("update changes name and avatar; delete hides the bot from list", () =
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
 
-// The standing permission to save memories is off unless the owner turns it
-// on, and an edit that does not mention it leaves it as it was.
+// The standing permission to save memories is on for a new bot unless the
+// owner turns it off, and an edit that does not mention it leaves it as it was.
 it.effect("stores the save-memories-without-asking setting per bot", () => {
   const context = makeContext();
   return Effect.gen(function* () {
     const service = yield* PersonalBotService.PersonalBotService;
 
-    const plain = yield* service.create(botInput("bot-plain"));
+    const plain = yield* service.create({ ...botInput("bot-plain"), memoryAutoSave: false });
     expect(plain.memoryAutoSave).toBe(false);
+
+    const byDefault = yield* service.create(botInput("bot-default"));
+    expect(byDefault.memoryAutoSave).toBe(true);
 
     const cfo = yield* service.create({ ...botInput("bot-cfo"), memoryAutoSave: true });
     expect(cfo.memoryAutoSave).toBe(true);
