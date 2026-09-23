@@ -19,7 +19,7 @@ import { useStartBotChat } from "./startBotChat";
  * the header's edge while the selected fill gets room either side of it.
  */
 export const ROW_CLASS =
-  "flex w-full min-w-0 items-center gap-[18px] py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)] md:px-3";
+  "flex w-full min-w-0 items-center gap-[18px] py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)] personal-row-hover md:rounded-[var(--personal-radius-button)] md:px-3";
 
 /**
  * The row of the chat open in the desktop pane: a muted fill between the

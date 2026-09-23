@@ -63,7 +63,7 @@ const MOVE_TOLERANCE_PX = 10;
 
 const TILE_CLASS = cn(
   "flex w-full flex-col items-center gap-1.5 rounded-[var(--personal-radius-card)] py-1",
-  "text-center outline-none select-none [-webkit-touch-callout:none]",
+  "personal-row-hover text-center outline-none select-none [-webkit-touch-callout:none]",
   "focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
 );
 

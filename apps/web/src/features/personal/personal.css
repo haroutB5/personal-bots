@@ -252,3 +252,41 @@
     display: none;
   }
 }
+
+/* Pointer feedback. Tailwind's preflight leaves buttons on the default arrow,
+ * so nothing clickable looked clickable under a mouse. In `@layer base` so any
+ * explicit `cursor-*` utility (resize handles, text fields) still wins. */
+@layer base {
+  :where(
+    a[href],
+    button,
+    summary,
+    select,
+    label[for],
+    input[type="checkbox"],
+    input[type="radio"],
+    input[type="range"],
+    [role="button"],
+    [role="tab"],
+    [role="switch"],
+    [role="option"],
+    [role="menuitem"],
+    [role="menuitemradio"],
+    [role="menuitemcheckbox"]
+  ) {
+    cursor: pointer;
+  }
+
+  :where(button:disabled, [aria-disabled="true"], [data-disabled]) {
+    cursor: not-allowed;
+  }
+}
+
+/* Hover fill for the desktop bot list's rows and pinned tiles: a lighter
+ * version of the selected fill, mouse-only (touch never gets a sticky hover),
+ * and never on the selected row, which already carries the full fill. */
+@media (hover: hover) and (min-width: 768px) {
+  .personal-row-hover:not([aria-current]):hover {
+    background: color-mix(in srgb, var(--personal-fill-muted) 55%, transparent);
+  }
+}
