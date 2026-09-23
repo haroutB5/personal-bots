@@ -107,12 +107,12 @@ export const StopTaskInput = Schema.Struct({
   taskId: PersonalTaskId.annotate({ description: "A task id from delegate_task or list_tasks." }),
   reason: Schema.String.annotate({
     description:
-      "Why you are stopping it, in one line. The bot sees this as the reason its work ended.",
+      "Why you are stopping it, in one line. It shows on this tool call in the chat; the stopped bot is not told.",
   }),
   redirectObjective: Schema.optional(
     Schema.String.annotate({
       description:
-        "New objective for the same bot. Given this, the stopped task is replaced by a fresh one in the same step, so the work never sits cancelled and forgotten.",
+        "New objective for the same bot. Given this, the stopped task is replaced by a fresh one in the same step, so the work never sits cancelled and forgotten. The new task carries only this text, with no context or constraints, so make it self-contained.",
     }),
   ),
 });
@@ -246,7 +246,7 @@ export type CastVoteResult = typeof CastVoteResult.Type;
 
 const ListBotsTool = Tool.make("list_bots", {
   description:
-    "List the personal bots you can delegate work to, with what each one is for. The roster changes at any time (the user creates, renames and deletes bots), so call this fresh before every delegate_task and never rely on a roster from earlier in the conversation.",
+    "List the personal bots on your team, the ones you can delegate work to: each one's name, what it is for, the provider and model it runs on, and which entry is you. Bots on the other team are left out; delegate_task accepts one of them only once the user's own latest message names it. The roster changes at any time (the user creates, renames and deletes bots), so call this fresh before every delegate_task and never rely on a roster from earlier in the conversation.",
   success: ListBotsResult,
   failure: BotsToolFailure,
   dependencies,
@@ -259,7 +259,7 @@ const ListBotsTool = Tool.make("list_bots", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Hand a self-contained piece of work to another bot. It runs in the background; you receive its result in a follow-up message, so end your turn after delegating instead of waiting. Calling again with the same bot and objective in the same turn returns the same task. Delegation depth and the number of delegated tasks per request are limited.",
+    "Hand a self-contained piece of work to another bot on your team. The other bot starts from nothing but what you pass here, so put what it needs in objective, context, constraints, acceptanceCriteria and expectedOutput. It runs in the background; you receive its result in a follow-up message, so end your turn after delegating instead of waiting. Calling again with the same bot and objective in the same turn returns the same task. Refused for: a bot on the other team, unless the user's own latest message names it; a bot already working above you on this request (handing work back to the bot that took the original request is allowed); and past the request's limits, by default two levels of delegation and four delegated tasks per request.",
   parameters: DelegateTaskInput,
   success: DelegateTaskResult,
   failure: BotsToolFailure,
@@ -273,7 +273,7 @@ const DelegateTaskTool = Tool.make("delegate_task", {
 
 const GetTaskTool = Tool.make("get_task", {
   description:
-    "Read one task in your current request's task tree: its status, result summary or error, and its delegated children.",
+    "Read one task in your current request's task tree (the request you are working on and everything delegated from it): its status, result summary or error, and its direct children. An id from outside that tree reads as not found. You do not need this to collect results: a delegated task's result arrives on its own as a follow-up message.",
   parameters: GetTaskInput,
   success: GetTaskResult,
   failure: BotsToolFailure,
@@ -287,7 +287,7 @@ const GetTaskTool = Tool.make("get_task", {
 
 const ListTasksTool = Tool.make("list_tasks", {
   description:
-    "List the tasks in your current request's task tree (the root request and everything delegated from it), newest first.",
+    "List the tasks in your current request's task tree (the root request and everything delegated from it), newest first, optionally only those in one status. Empty when you are not working on a task. Useful before stop_task, to see what is still running; results of delegated tasks arrive on their own, so there is no need to poll.",
   parameters: ListTasksInput,
   success: ListTasksResult,
   failure: BotsToolFailure,
@@ -301,7 +301,7 @@ const ListTasksTool = Tool.make("list_tasks", {
 
 const StopTaskTool = Tool.make("stop_task", {
   description:
-    "Stop a task you delegated that is still running, and optionally hand the same bot a new objective in its place. Use this when the work has been overtaken by events instead of letting it finish. Only tasks in your own request's task tree can be stopped.",
+    "Stop a task you delegated that is still running, and optionally hand the same bot a new objective in its place. Use this when the work has been overtaken by events instead of letting it finish. Only tasks in your own request's task tree can be stopped, never your own; tasks the stopped one delegated stop with it.",
   parameters: StopTaskInput,
   success: StopTaskResult,
   failure: BotsToolFailure,
@@ -315,7 +315,7 @@ const StopTaskTool = Tool.make("stop_task", {
 
 const RequestSecretTool = Tool.make("request_secret", {
   description:
-    "Ask the user for an API key or token through a secure form. Never use this for website passwords: those are the user's saved logins, filled by use_login. Never ask for secrets in chat and never print one. After calling this, end your turn: you are resumed in a fresh session where the value is the environment variable PB_SECRET_<NAME> for shell commands.",
+    "Ask the user for an API key or token through a secure form. Never use this for website passwords: those are the user's saved logins, filled by use_login. Never ask for secrets in chat and never print one. When the secret is already saved, the result says so and no form is shown. Otherwise end your turn after calling this: you are resumed in a fresh session where the value is the environment variable PB_SECRET_<NAME> for shell commands.",
   parameters: RequestSecretInput,
   success: RequestSecretResult,
   failure: BotsToolFailure,
