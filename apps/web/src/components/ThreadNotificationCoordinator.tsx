@@ -4,6 +4,7 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useRef } from "react";
 
+import { isPersonalPath } from "../features/personal/personalMode";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useEnvironments } from "../state/environments";
 import { environmentShell } from "../state/shell";
@@ -130,7 +131,10 @@ function EnvironmentNotifications({
           : completion !== null && (prior.completion === null || completion > prior.completion)
             ? "completion"
             : null;
-      if (!kind) continue;
+      // The Bots app notifies through its own server push (public/sw.js), and
+      // these alerts open upstream coding routes, not a bot chat. Stay quiet
+      // while the personal shell is on screen; Developer view keeps them.
+      if (!kind || inPersonalShell()) continue;
       const title =
         kind === "completion"
           ? "Thread completed"
@@ -207,4 +211,9 @@ function EnvironmentNotifications({
   ]);
 
   return null;
+}
+
+function inPersonalShell(): boolean {
+  const pathname = typeof window === "undefined" ? undefined : window.location?.pathname;
+  return typeof pathname === "string" && isPersonalPath(pathname);
 }

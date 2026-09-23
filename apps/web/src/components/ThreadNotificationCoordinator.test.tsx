@@ -239,6 +239,20 @@ describe("thread notifications", () => {
     expect(state.notification).not.toHaveBeenCalled();
   });
 
+  it.each(["/bots", "/bots/bot-1/thread-1", "/tasks"])(
+    "stays quiet in the Bots shell at %s (bot chats notify by server push)",
+    async (pathname) => {
+      vi.stubGlobal("window", Object.assign(new EventTarget(), { location: { pathname } }));
+      state.mode = "notifications";
+      await render();
+      state.focused = false;
+      await complete();
+      expect(state.add).not.toHaveBeenCalled();
+      expect(state.notification).not.toHaveBeenCalled();
+      expect(state.navigate).not.toHaveBeenCalled();
+    },
+  );
+
   it("keeps system alerts when the app is in the background", async () => {
     state.mode = "notifications";
     state.focused = false;
