@@ -1,10 +1,11 @@
 /**
  * How long a "viewing this chat" report holds without a refresh. Clients
- * refresh every 20 s while the chat is open and visible, so one lost
- * heartbeat is tolerated; a phone that locks without saying so stops
- * holding notifications back within this window.
+ * refresh every 10 s while the chat is open and visible, so one lost
+ * heartbeat is tolerated. A report is only a hint: a notification for a
+ * viewed chat is still sent to the viewing page, which must confirm it is on
+ * screen, or it goes out as web push (iOS can lock without telling the page).
  */
-export const PERSONAL_VIEWING_TTL_MS = 45_000;
+export const PERSONAL_VIEWING_TTL_MS = 20_000;
 
 interface ViewingEntry {
   readonly threadId: string;
@@ -36,15 +37,20 @@ export class ViewingPresence {
 
   /** Whether any live connection has `threadId` open and visible. Prunes expired entries. */
   isViewing(threadId: string, nowMs: number): boolean {
-    let viewing = false;
+    return this.viewers(threadId, nowMs).length > 0;
+  }
+
+  /** The connections that say they have `threadId` open and visible. Prunes expired entries. */
+  viewers(threadId: string, nowMs: number): ReadonlyArray<string> {
+    const out: string[] = [];
     for (const [connectionId, entry] of this.#entries) {
       if (nowMs - entry.lastSeenMs >= PERSONAL_VIEWING_TTL_MS) {
         this.#entries.delete(connectionId);
         continue;
       }
-      if (entry.threadId === threadId) viewing = true;
+      if (entry.threadId === threadId) out.push(connectionId);
     }
-    return viewing;
+    return out;
   }
 }
 
@@ -86,6 +92,11 @@ export class ForegroundPresence {
 
   drop(connectionId: string): void {
     this.#visibleAt.delete(connectionId);
+  }
+
+  /** Whether this connection has an in-app listener open. */
+  isListening(connectionId: string): boolean {
+    return (this.#listeners.get(connectionId) ?? 0) > 0;
   }
 
   /** Connections in front and listening right now. Prunes stale reports. */

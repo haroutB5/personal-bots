@@ -147,6 +147,33 @@ const sweep = Effect.gen(function* () {
   yield* push.drain;
 });
 
+/**
+ * A page on screen: it listens for in-app notifications and acknowledges each
+ * one, which is what confirms a "viewing" report. Returns what it received.
+ */
+const visiblePage = (connectionId: string) =>
+  Effect.gen(function* () {
+    const push = yield* PersonalPushService.PersonalPushService;
+    const received: Array<PersonalPushInAppNotification> = [];
+    yield* Effect.forkChild(
+      Stream.runForEach(push.inApp(connectionId), (notification) =>
+        Effect.sync(() => void received.push(notification)).pipe(
+          Effect.andThen(push.ackInApp({ id: notification.id })),
+        ),
+      ),
+    );
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust("1 millis");
+    return received;
+  });
+
+/** Lets every in-app wait run out (acknowledged or not), then drains the outbox. */
+const settle = Effect.gen(function* () {
+  yield* TestClock.adjust(`${PersonalPushService.IN_APP_ACK_TIMEOUT_MS + 1000} millis`);
+  const push = yield* PersonalPushService.PersonalPushService;
+  yield* push.drain;
+});
+
 const seedBot = Effect.gen(function* () {
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const now = yield* DateTime.now;
@@ -253,7 +280,7 @@ it.effect("browser help uses a specific needs-help notification", () => {
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
-it.effect("a chat that is open on some connection holds back only its own notifications", () => {
+it.effect("a chat that is open on some connection is confirmed quietly, and only its own", () => {
   const harness: Harness = { sent: [], status: 201 };
   return Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-09-16T09:00:00Z"));
@@ -262,14 +289,18 @@ it.effect("a chat that is open on some connection holds back only its own notifi
     yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
     const open = ThreadId.make("thread-open");
     const other = ThreadId.make("thread-other");
+    const page = yield* visiblePage("conn-1");
     yield* push.reportViewing({ connectionId: "conn-1", threadId: open });
 
-    // The user is reading this chat: nothing is queued at all.
+    // The user is reading this chat: the page confirms it, so no push.
     yield* push.notifyTask(
       yield* makeTask({ status: "waiting_for_user", threadId: open, title: "Open chat" }),
     );
-    yield* push.drain;
+    yield* settle;
     expect(yield* outbox).toEqual([]);
+    expect(page.map((notification) => notification.quietPath)).toEqual([
+      `/bots/${BOT}/thread-open`,
+    ]);
 
     // Another chat, and a task with no chat of its own, still notify.
     yield* push.notifyTask(
@@ -310,6 +341,7 @@ it.effect("a chat stops holding notifications back when it is closed, hidden or 
     const open = ThreadId.make("thread-open");
     const waiting = (taskId: string) =>
       makeTask({ status: "waiting_for_user", threadId: open, taskId: PersonalTaskId.make(taskId) });
+    yield* visiblePage("conn-1");
 
     // Backgrounded (the client reports no chat): notifications resume.
     yield* push.reportViewing({ connectionId: "conn-1", threadId: open });
@@ -325,15 +357,15 @@ it.effect("a chat stops holding notifications back when it is closed, hidden or 
     yield* push.drain;
     expect((yield* outbox).length).toBe(2);
 
-    // A phone that locks without saying so: the report expires on its own.
+    // A report that is not refreshed expires on its own.
     yield* push.reportViewing({ connectionId: "conn-1", threadId: open });
-    yield* TestClock.adjust("30 seconds");
+    yield* TestClock.adjust("10 seconds");
     yield* push.notifyTask(yield* waiting("task-fresh"));
-    yield* push.drain;
+    yield* settle;
     expect((yield* outbox).length).toBe(2);
-    yield* TestClock.adjust("30 seconds");
+    yield* TestClock.adjust("15 seconds");
     yield* push.notifyTask(yield* waiting("task-stale"));
-    yield* push.drain;
+    yield* settle;
     expect((yield* outbox).length).toBe(3);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
@@ -346,13 +378,14 @@ it.effect("a second device reading the same chat keeps holding it back", () => {
     const push = yield* PersonalPushService.PersonalPushService;
     yield* push.subscribe(subscription("https://web.push.apple.com/phone"));
     const open = ThreadId.make("thread-open");
+    yield* visiblePage("laptop");
     yield* push.reportViewing({ connectionId: "phone", threadId: open });
     yield* push.reportViewing({ connectionId: "laptop", threadId: open });
 
-    // The phone leaves; the laptop still has the chat open.
+    // The phone leaves; the laptop still has the chat open and confirms it.
     yield* push.dropConnection("phone");
     yield* push.notifyTask(yield* makeTask({ status: "waiting_for_user", threadId: open }));
-    yield* push.drain;
+    yield* settle;
     expect(yield* outbox).toEqual([]);
 
     yield* push.dropConnection("laptop");
@@ -466,10 +499,16 @@ it.effect("the chat the user is reading gets no reply notification", () => {
     yield* linkThread(CHAT);
     const push = yield* PersonalPushService.PersonalPushService;
     yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    const page = yield* visiblePage("phone");
     yield* push.reportViewing({ connectionId: "phone", threadId: CHAT });
 
     yield* runTurn(CHAT, "2026-09-18T09:00:00.000Z");
+    yield* settle;
     expect(yield* outbox).toEqual([]);
+    // Delivered to the reading page only to be confirmed, with its chat as the quiet path.
+    expect(page.map((notification) => [notification.url, notification.quietPath])).toEqual([
+      [`/bots/${BOT}/${CHAT}`, `/bots/${BOT}/${CHAT}`],
+    ]);
 
     // They put the phone down; the next turn notifies.
     yield* push.reportViewing({ connectionId: "phone", threadId: null });
@@ -543,8 +582,10 @@ it.effect("a group buzzes once when its round ends, never per member reply", () 
     });
 
     // The user reading the group needs no buzz for its ending.
+    yield* visiblePage("phone");
     yield* push.reportViewing({ connectionId: "phone", threadId: groupThread });
     yield* push.notifyGroupRound(round("paused_budget", 4));
+    yield* settle;
     expect((yield* outbox).length).toBe(1);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
@@ -820,6 +861,7 @@ it.effect("an app in front gets the reply as an in-app banner, not a push", () =
         body: "Open the chat to read it.",
         url: `/bots/${BOT}/${CHAT}`,
         preview: "Done The report is here.",
+        quietPath: `/bots/${BOT}/${CHAT}`,
         avatarShape: "blob",
         avatarColor: "#1A73E8",
       },
@@ -895,4 +937,35 @@ it("inAppPreview folds a reply into one short line", () => {
   const long = PersonalPushService.inAppPreview("word ".repeat(60))!;
   expect(long.length).toBe(140);
   expect(long.endsWith("…")).toBe(true);
+});
+
+it.effect("a chat left open on a phone that locked gets a push after all", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-23T23:31:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    // The page was reading the chat and listening, then iOS locked the phone
+    // without a visibility event: the report is fresh, but nothing answers.
+    const received = yield* listenInApp("phone");
+    yield* push.reportViewing({ connectionId: "phone", threadId: CHAT });
+    yield* push.reportForeground({ connectionId: "phone", foreground: true });
+
+    yield* runTurn(CHAT, "2026-09-23T23:31:10.000Z");
+    yield* TestClock.adjust("1 millis");
+    expect(received.length).toBe(1);
+    expect(yield* outbox).toEqual([]);
+    yield* settle;
+    expect((yield* outbox).map((row) => row.eventId)).toEqual([
+      `chat-reply:${CHAT}:2026-09-23T23:31:10.000Z`,
+    ]);
+
+    // An old page that reports viewing but never listens: pushed straight away.
+    yield* push.dropConnection("phone");
+    yield* push.reportViewing({ connectionId: "old-page", threadId: CHAT });
+    yield* runTurn(CHAT, "2026-09-23T23:32:00.000Z");
+    expect((yield* outbox).length).toBe(2);
+  }).pipe(Effect.provide(makeLayer(harness)));
 });

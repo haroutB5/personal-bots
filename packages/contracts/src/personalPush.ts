@@ -85,8 +85,10 @@ export type PersonalPushTestResult = typeof PersonalPushTestResult.Type;
 
 /**
  * Which chat this connection has open and visible right now; null = none.
- * The server holds back that chat's notifications while it is being viewed.
- * Sent on open, visibility change and as a heartbeat; entries expire.
+ * A notification about that chat goes to this connection first, and only
+ * turns into a web push if the page does not confirm it is on screen (iOS
+ * can lock without telling the page). Sent on open, visibility change and as
+ * a heartbeat; entries expire.
  */
 export const PersonalPushViewingInput = Schema.Struct({
   threadId: Schema.NullOr(ThreadId),
@@ -116,6 +118,11 @@ export const PersonalPushInAppNotification = Schema.Struct({
   body: Schema.String,
   url: Schema.String,
   preview: Schema.optional(Schema.String),
+  /**
+   * The screen that already shows what this is about (the chat it came from).
+   * A page on that screen confirms the notification without a banner.
+   */
+  quietPath: Schema.optional(Schema.String),
   avatarShape: Schema.optional(BotAvatarShape),
   avatarColor: Schema.optional(BotAvatarColor),
 });

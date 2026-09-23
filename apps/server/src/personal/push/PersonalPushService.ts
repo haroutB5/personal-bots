@@ -225,6 +225,10 @@ export function pushPayloadForTask(
  * second reply in the same chat replaces the first on the lock screen instead
  * of stacking.
  */
+/** The deep link of a bot's chat. */
+export const chatPath = (botId: string, threadId: string): string =>
+  `/bots/${encodeURIComponent(botId)}/${encodeURIComponent(threadId)}`;
+
 export function chatReplyPushPayload(input: {
   readonly botId: string;
   readonly bot: PushBotIdentity;
@@ -795,19 +799,37 @@ export const make = Effect.gen(function* () {
    * if no page acknowledges it in time. Otherwise, or with nobody in front,
    * it is queued for web push as before. One log line per notification says
    * which path it took.
+   *
+   * A notification about a chat some connection says it is reading
+   * (`viewing`) goes to those connections only, and the page acknowledges it
+   * without a banner when it is on screen and showing `viewing.quietPath`.
+   * "Viewing" is a report, not a fact: iOS can lock the phone without telling
+   * the page, so an unconfirmed one goes out as web push like any other.
    */
-  const deliver = (eventId: string, payload: PersonalPushPayload, preview?: string) =>
+  const deliver = (
+    eventId: string,
+    payload: PersonalPushPayload,
+    options: {
+      readonly preview?: string | undefined;
+      readonly viewing?: { readonly threadId: string; readonly quietPath: string } | undefined;
+    } = {},
+  ) =>
     Effect.gen(function* () {
       const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-      const targets = foreground.targets(nowMs);
-      const viaPush = (path: "push" | "push-after-in-app") =>
+      const viewers =
+        options.viewing === undefined ? [] : presence.viewers(options.viewing.threadId, nowMs);
+      const confirming = viewers.length > 0;
+      const targets = confirming
+        ? viewers.filter((connectionId) => foreground.isListening(connectionId))
+        : foreground.targets(nowMs);
+      const viaPush = (path: "push" | "push-after-in-app" | "push-after-viewing") =>
         Effect.gen(function* () {
           const queued = yield* enqueue(eventId, payload);
           if (queued === 0) return;
           yield* Effect.logInfo("personal notification path", { eventId, path });
           yield* kick;
         });
-      if (targets.length === 0) return yield* viaPush("push");
+      if (targets.length === 0) return yield* viaPush(confirming ? "push-after-viewing" : "push");
       // A replayed event (same id) never shows a second banner.
       if (inAppRecent.includes(eventId)) return;
       inAppRecent.push(eventId);
@@ -817,7 +839,12 @@ export const make = Effect.gen(function* () {
       const { tag: _tag, ...shown } = payload;
       yield* PubSub.publish(inAppHub, {
         targets,
-        notification: { id: eventId, ...shown, ...(preview === undefined ? {} : { preview }) },
+        notification: {
+          id: eventId,
+          ...shown,
+          ...(options.preview === undefined ? {} : { preview: options.preview }),
+          ...(options.viewing === undefined ? {} : { quietPath: options.viewing.quietPath }),
+        },
       });
       yield* Effect.forkDetach(
         Effect.gen(function* () {
@@ -828,12 +855,12 @@ export const make = Effect.gen(function* () {
           if (Option.isSome(answer)) {
             yield* Effect.logInfo("personal notification path", {
               eventId,
-              path: "in-app",
+              path: confirming ? "viewing-confirmed" : "in-app",
               connections: targets.length,
             });
             return;
           }
-          yield* viaPush("push-after-in-app");
+          yield* viaPush(confirming ? "push-after-viewing" : "push-after-in-app");
         }).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("personal notifications could not fall back to push", {
@@ -861,26 +888,20 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const kind = pushEventForTask(task);
       if (kind === null) return;
-      // The user is reading this chat right now: they can see it happen, so a
-      // notification would only buzz the phone in their hand. Tasks with no
-      // chat of their own (and provider alerts) always notify.
-      if (task.threadId !== null) {
-        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-        if (presence.isViewing(task.threadId, nowMs)) {
-          yield* Effect.logDebug("personal notification held back: the chat is open", {
-            taskId: task.taskId,
-            threadId: task.threadId,
-            kind,
-          });
-          return;
-        }
-      }
       const preferences = yield* readPreferences;
       if (!preferences[PREFERENCE_FOR[kind]]) return;
       const bot = yield* botRepository.getBotById({ botId: task.botId });
       // One event per transition: a replayed or re-published upsert dedupes.
       const eventId = `task:${task.taskId}:${task.status}:${DateTime.formatIso(task.updatedAt)}`;
-      yield* deliver(eventId, pushPayloadForTask(kind, task, botIdentity(bot)));
+      // Someone reading the task's own chat sees it happen: their page
+      // confirms that quietly instead of showing a banner (see deliver).
+      // Tasks with no chat of their own (and provider alerts) always notify.
+      yield* deliver(eventId, pushPayloadForTask(kind, task, botIdentity(bot)), {
+        viewing:
+          task.threadId === null
+            ? undefined
+            : { threadId: task.threadId, quietPath: chatPath(task.botId, task.threadId) },
+      });
     }).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
@@ -915,8 +936,6 @@ export const make = Effect.gen(function* () {
    */
   const notifyChatReply: PersonalPushService["Service"]["notifyChatReply"] = (input) =>
     Effect.gen(function* () {
-      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-      if (presence.isViewing(input.threadId, nowMs)) return;
       // A group member's reply lands in its private provider thread and is
       // mirrored into the group. It never notifies on its own: the group
       // buzzes once, when its whole turn ends (notifyGroupRound).
@@ -954,7 +973,13 @@ export const make = Effect.gen(function* () {
           bot: botIdentity(bot),
           threadId: input.threadId,
         }),
-        yield* latestReplyPreview(input.threadId),
+        {
+          preview: yield* latestReplyPreview(input.threadId),
+          viewing: {
+            threadId: input.threadId,
+            quietPath: chatPath(link.value.botId, input.threadId),
+          },
+        },
       );
     }).pipe(
       Effect.catchCause((cause) =>
@@ -986,22 +1011,20 @@ export const make = Effect.gen(function* () {
       `;
       const group = rows[0];
       if (group === undefined) return;
-      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-      if (presence.isViewing(group.threadId as ThreadId, nowMs)) return;
       const preferences = yield* readPreferences;
       if (!preferences[PREFERENCE_FOR.chat_reply]) return;
       // A round is re-published on later writes; spoken.length separates one
       // Continue cycle's pause from the next while keeping replays silent.
       const eventId = `group-round:${round.roundId}:${round.status}:${String(round.spoken.length)}`;
-      yield* deliver(
-        eventId,
-        groupRoundPushPayload({
-          groupId: round.groupId,
-          groupName: group.name,
-          status: round.status,
-          hasVerdict: Number(group.hasVerdict) === 1,
-        }),
-      );
+      const groupPayload = groupRoundPushPayload({
+        groupId: round.groupId,
+        groupName: group.name,
+        status: round.status,
+        hasVerdict: Number(group.hasVerdict) === 1,
+      });
+      yield* deliver(eventId, groupPayload, {
+        viewing: { threadId: group.threadId, quietPath: groupPayload.url },
+      });
     }).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
