@@ -1,6 +1,13 @@
 import { APP_VERSION } from "~/branding";
 import { isElectron } from "~/env";
 
+import { runningClientEntry } from "./appVersion";
+import {
+  createNotificationTapController,
+  isNavigablePath,
+  type PendingTap,
+} from "./notificationTap";
+
 export interface ServiceWorkerEnvironment {
   readonly production: boolean;
   readonly secureContext: boolean;
@@ -18,47 +25,70 @@ export function shouldRegisterServiceWorker(environment: ServiceWorkerEnvironmen
   );
 }
 
-/** Deep links the worker may ask the page to open: same-origin paths only. */
-export function isNavigablePath(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.startsWith("/") &&
-    !value.startsWith("//") &&
-    !value.includes("\\") &&
-    !Array.from(value).some((character) => character.charCodeAt(0) <= 32)
-  );
-}
+export { isNavigablePath };
 
-/** Must match PENDING_NAV_CACHE / PENDING_NAV_KEY in public/sw.js. */
+/** Must match PENDING_NAV_CACHE / PENDING_NAV_KEY / NAV_CHANNEL / DIAG_URL in public/sw.js. */
 const PENDING_NAV_CACHE = "bots-pending-nav";
 const PENDING_NAV_KEY = "/__bots-pending-nav__";
+const NAV_CHANNEL = "bots-nav";
+const DIAG_URL = "/api/personal/client-diag";
 /** An older tap is not what the user is opening the app for now. */
 const PENDING_NAV_MAX_AGE_MS = 2 * 60_000;
+/** Resuming the app also asks the browser to look for a newer worker, at most this often. */
+const WORKER_UPDATE_MIN_INTERVAL_MS = 5 * 60_000;
 
 /**
  * Takes (and clears) the deep link the worker saved for the last notification
  * tap, or null when there is none, it is stale or it is not a safe path.
  */
-export async function takePendingNavigation(now: number = Date.now()): Promise<string | null> {
+export async function takePendingTap(now: number = Date.now()): Promise<PendingTap | null> {
   if (typeof caches === "undefined") return null;
   try {
     const cache = await caches.open(PENDING_NAV_CACHE);
     const response = await cache.match(PENDING_NAV_KEY);
     if (response === undefined) return null;
     await cache.delete(PENDING_NAV_KEY);
-    const data = (await response.json()) as { url?: unknown; at?: unknown } | null;
+    const data = (await response.json()) as { url?: unknown; at?: unknown; id?: unknown } | null;
     const fresh = typeof data?.at === "number" && now - data.at < PENDING_NAV_MAX_AGE_MS;
-    return fresh && isNavigablePath(data?.url) ? data.url : null;
+    if (!fresh || !isNavigablePath(data?.url)) return null;
+    const id = typeof data?.id === "string" && data.id.length > 0 ? data.id : null;
+    return { url: data.url, id };
   } catch {
     return null;
   }
 }
 
+/** takePendingTap, deep link only. */
+export async function takePendingNavigation(now: number = Date.now()): Promise<string | null> {
+  return (await takePendingTap(now))?.url ?? null;
+}
+
+function openNavChannel(): BroadcastChannel | null {
+  try {
+    return typeof BroadcastChannel === "function" ? new BroadcastChannel(NAV_CHANNEL) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** One line in the server log per delivered tap. Never throws, never retries. */
+function reportTap(record: Record<string, unknown>): void {
+  try {
+    void fetch(DIAG_URL, {
+      method: "POST",
+      credentials: "same-origin",
+      keepalive: true,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...record, page: runningClientEntry(document) }),
+    }).catch(() => undefined);
+  } catch {
+    // Diagnostics are best-effort.
+  }
+}
+
 /**
- * Registers `/sw.js` (versioned by build, so each release gets a fresh shell
- * cache) and routes notification clicks from the worker into the router: by
- * message, and by the saved deep link when the app becomes visible (iOS can
- * drop the message to an app it is still waking).
+ * Registers `/sw.js` and routes notification taps from the worker into the
+ * router (see notificationTap.ts for why there are so many routes).
  */
 export function registerPersonalServiceWorker(navigate: (path: string) => void): void {
   if (
@@ -71,28 +101,80 @@ export function registerPersonalServiceWorker(navigate: (path: string) => void):
   ) {
     return;
   }
-  const go = (path: string) => {
-    if (`${window.location.pathname}${window.location.search}` !== path) navigate(path);
-  };
-  navigator.serviceWorker.addEventListener("message", (event: MessageEvent) => {
-    const data = event.data as { type?: unknown; url?: unknown } | null;
-    if (data?.type !== "bots:navigate" || !isNavigablePath(data.url)) return;
-    // The message won; clear the saved copy so a later resume does not repeat it.
-    void takePendingNavigation();
-    go(data.url);
+  const container = navigator.serviceWorker;
+  const channel = openNavChannel();
+  const taps = createNotificationTapController({
+    navigate,
+    currentPath: () => `${window.location.pathname}${window.location.search}`,
+    takePending: () => takePendingTap(),
+    isVisible: () => document.visibilityState === "visible",
+    visibility: () => document.visibilityState,
+    now: () => Date.now(),
+    setInterval: (callback, ms) => window.setInterval(callback, ms),
+    clearInterval: (handle) => window.clearInterval(handle as number),
+    ack: (ack) => {
+      // Both routes: the worker listens on the channel and for messages.
+      try {
+        // eslint-disable-next-line unicorn/require-post-message-target-origin -- BroadcastChannel has no targetOrigin.
+        channel?.postMessage(ack);
+      } catch {
+        // The message route below still runs.
+      }
+      void container
+        .getRegistration("/")
+        .then((registration) => {
+          const worker = container.controller ?? registration?.active ?? null;
+          // eslint-disable-next-line unicorn/require-post-message-target-origin -- ServiceWorker.postMessage has no targetOrigin.
+          worker?.postMessage(ack);
+        })
+        .catch(() => undefined);
+    },
+    report: reportTap,
   });
-  const onVisible = () => {
-    if (document.visibilityState !== "visible") return;
-    void takePendingNavigation().then((path) => {
-      if (path !== null) go(path);
-    });
+  container.addEventListener("message", (event: MessageEvent) =>
+    taps.onMessage(event.data, "message"),
+  );
+  // Messages from the worker queue until the page opts in; do so explicitly
+  // rather than rely on the browser doing it at DOMContentLoaded.
+  try {
+    container.startMessages();
+  } catch {
+    // Older engines deliver without it.
+  }
+  channel?.addEventListener("message", (event: MessageEvent) =>
+    taps.onMessage(event.data, "broadcast"),
+  );
+
+  let lastUpdateCheck = 0;
+  const checkForNewWorker = () => {
+    const now = Date.now();
+    if (now - lastUpdateCheck < WORKER_UPDATE_MIN_INTERVAL_MS) return;
+    lastUpdateCheck = now;
+    // iOS resumes an installed app without a navigation, so the browser's own
+    // update check never runs; ask for one so a release reaches the phone.
+    void container
+      .getRegistration("/")
+      .then((registration) => registration?.update())
+      .catch(() => undefined);
   };
-  document.addEventListener("visibilitychange", onVisible);
-  window.addEventListener("pageshow", onVisible);
-  onVisible();
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    void taps.check("cache-visible");
+    checkForNewWorker();
+  });
+  window.addEventListener("pageshow", () => {
+    if (document.visibilityState === "visible") void taps.check("cache-pageshow");
+  });
+  window.addEventListener("focus", () => void taps.check("cache-focus"));
+  void taps.check("cache-load");
+
   const register = () => {
-    void navigator.serviceWorker
+    void container
       .register(`/sw.js?v=${encodeURIComponent(APP_VERSION)}`, { scope: "/" })
+      .then(() => {
+        lastUpdateCheck = Date.now();
+      })
       .catch(() => {
         // A failed registration only costs offline shell + push; the app works.
       });

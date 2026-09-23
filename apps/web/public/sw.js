@@ -15,6 +15,11 @@ const SHELL_KEY = "/__bots-shell__";
 // Deep link from the last notification tap; see the notificationclick handler.
 const PENDING_NAV_CACHE = "bots-pending-nav";
 const PENDING_NAV_KEY = "/__bots-pending-nav__";
+// Second delivery route for notification taps that does not depend on
+// clients.matchAll(). Must match NAV_CHANNEL in src/features/personal/serviceWorker.ts.
+const NAV_CHANNEL = "bots-nav";
+// One low-volume line per tap in the server log (see personal/clientDiagRoute.ts).
+const DIAG_URL = "/api/personal/client-diag";
 
 const NEVER_CACHE = [
   /^\/api(\/|$)/,
@@ -279,9 +284,152 @@ self.addEventListener("push", (event) => {
       } finally {
         if (iconUrl !== null) URL.revokeObjectURL(iconUrl);
       }
+      // An open app watches for the tap for a while after this (see
+      // serviceWorker.ts): iOS gives a foreground app no event when the
+      // banner is tapped, so the page polls the saved deep link instead.
+      await announce({ type: "bots:push-shown", at: Date.now() });
     })(),
   );
 });
+
+/*
+ * Notification taps.
+ *
+ * The deep link travels by every route at once, because on iOS each one alone
+ * has been seen to fail: the saved copy in PENDING_NAV_CACHE (read by the page
+ * when it becomes visible, gains focus, or polls after a push), a
+ * BroadcastChannel, and a postMessage to every open window. The page answers
+ * with "bots:navigate-ack"; if nobody does, the worker navigates the window
+ * itself. Each tap carries an id so the page acts on it once.
+ */
+
+let navChannelInstance = null;
+
+function navChannel() {
+  if (navChannelInstance !== null) return navChannelInstance;
+  try {
+    if (typeof BroadcastChannel !== "function") return null;
+    navChannelInstance = new BroadcastChannel(NAV_CHANNEL);
+    navChannelInstance.addEventListener("message", (event) => settleAck(event.data));
+  } catch {
+    navChannelInstance = null;
+  }
+  return navChannelInstance;
+}
+
+/** Tap id -> resolver waiting for the page's acknowledgement. */
+const ackWaiters = new Map();
+
+function settleAck(data) {
+  if (!data || data.type !== "bots:navigate-ack" || typeof data.id !== "string") return;
+  const resolve = ackWaiters.get(data.id);
+  if (resolve === undefined) return;
+  ackWaiters.delete(data.id);
+  resolve({
+    via: typeof data.via === "string" ? data.via.slice(0, 32) : "unknown",
+    visibility: typeof data.visibility === "string" ? data.visibility.slice(0, 16) : null,
+  });
+}
+
+self.addEventListener("message", (event) => settleAck(event.data));
+
+function waitForAck(id, ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      ackWaiters.delete(id);
+      resolve(null);
+    }, ms);
+    ackWaiters.set(id, (ack) => {
+      clearTimeout(timer);
+      resolve(ack);
+    });
+  });
+}
+
+function sameOriginWindows(windows) {
+  return windows.filter((client) => {
+    try {
+      return new URL(client.url).origin === self.location.origin;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** Tells every open window, by both routes. Returns how far it got. */
+async function announce(message) {
+  let broadcast = false;
+  const channel = navChannel();
+  if (channel !== null) {
+    try {
+      // eslint-disable-next-line unicorn/require-post-message-target-origin -- BroadcastChannel has no targetOrigin.
+      channel.postMessage(message);
+      broadcast = true;
+    } catch {
+      // The postMessage route below still runs.
+    }
+  }
+  let windows = [];
+  try {
+    windows = sameOriginWindows(
+      await self.clients.matchAll({ type: "window", includeUncontrolled: true }),
+    );
+  } catch {
+    windows = [];
+  }
+  for (const client of windows) {
+    try {
+      // Client.postMessage has no targetOrigin; the client is same-origin (checked above).
+      // eslint-disable-next-line unicorn/require-post-message-target-origin
+      client.postMessage(message);
+    } catch {
+      // One refused window must not stop the others.
+    }
+  }
+  return { broadcast, windows };
+}
+
+function pathOf(href) {
+  try {
+    const url = new URL(href);
+    return (url.pathname + url.search).slice(0, 200);
+  } catch {
+    return null;
+  }
+}
+
+function newTapId() {
+  try {
+    if (self.crypto && typeof self.crypto.randomUUID === "function")
+      return self.crypto.randomUUID();
+  } catch {
+    // Fall through to the time-based id.
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Fire-and-forget: one line in the server log, never a failed tap. */
+async function sendDiag(record) {
+  try {
+    await fetch(DIAG_URL, {
+      method: "POST",
+      credentials: "same-origin",
+      keepalive: true,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(record),
+    });
+  } catch {
+    // Diagnostics are best-effort.
+  }
+}
+
+/** A foreground app answers in well under a second; a waking one takes longer. */
+const NAV_ACK_TIMEOUT_VISIBLE_MS = 2500;
+const NAV_ACK_TIMEOUT_WAKING_MS = 6000;
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(() => resolve(null), ms));
+}
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
@@ -297,33 +445,81 @@ self.addEventListener("notificationclick", (event) => {
       : new URL("/bots", self.location.origin).href;
   event.waitUntil(
     (async () => {
+      const started = Date.now();
       const url = new URL(href).pathname + new URL(href).search;
-      // iOS can drop a message to an app it is still waking, so the page also
-      // reads this when it becomes visible. Its cache name sits outside
-      // CACHE_PREFIX, so activate never deletes it.
+      const id = newTapId();
+      const diag = { event: "notificationclick", sw: VERSION, id, url, cache: false };
+      // Listen before anything is sent, so a fast page cannot answer too early.
+      const ack = waitForAck(id, NAV_ACK_TIMEOUT_WAKING_MS);
+      // The saved copy covers a page that misses both messages. Its cache name
+      // sits outside CACHE_PREFIX, so activate never deletes it.
       try {
         const cache = await caches.open(PENDING_NAV_CACHE);
-        await cache.put(PENDING_NAV_KEY, new Response(JSON.stringify({ url, at: Date.now() })));
+        await cache.put(PENDING_NAV_KEY, new Response(JSON.stringify({ url, id, at: Date.now() })));
+        diag.cache = true;
       } catch {
-        // The message below still carries the link.
+        // The messages still carry the link.
       }
-      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      for (const client of windows) {
-        if (new URL(client.url).origin !== self.location.origin) continue;
-        // Client.postMessage has no targetOrigin; the client is same-origin (checked above).
-        /* eslint-disable unicorn/require-post-message-target-origin */
-        client.postMessage({ type: "bots:navigate", url });
-        /* eslint-enable unicorn/require-post-message-target-origin */
-        // iOS brings the installed app forward itself and can refuse focus();
-        // that must not cost the deep link, so it runs last and never throws.
+      const { broadcast, windows } = await announce({ type: "bots:navigate", url, id });
+      diag.broadcast = broadcast;
+      diag.clients = windows.slice(0, 5).map((client) => ({
+        path: pathOf(client.url),
+        visibility: typeof client.visibilityState === "string" ? client.visibilityState : null,
+        focused: typeof client.focused === "boolean" ? client.focused : null,
+      }));
+      const front =
+        windows.find((client) => client.focused === true) ??
+        windows.find((client) => client.visibilityState === "visible") ??
+        windows[0];
+      if (front === undefined) {
         try {
-          await client.focus();
-        } catch {
-          // Already in front.
+          await self.clients.openWindow(href);
+          diag.route = "openWindow";
+        } catch (error) {
+          diag.route = "openWindow-refused";
+          diag.error = String((error && error.name) || error).slice(0, 80);
         }
-        return;
+      } else {
+        // iOS brings the installed app forward itself and can refuse focus();
+        // that must never cost the deep link.
+        try {
+          await front.focus();
+          diag.focus = "ok";
+        } catch {
+          diag.focus = "refused";
+        }
       }
-      await self.clients.openWindow(href);
+      const answer = await Promise.race([
+        ack,
+        delay(
+          front !== undefined && front.visibilityState === "visible"
+            ? NAV_ACK_TIMEOUT_VISIBLE_MS
+            : NAV_ACK_TIMEOUT_WAKING_MS,
+        ),
+      ]);
+      ackWaiters.delete(id);
+      diag.ack = answer;
+      if (answer === null && front !== undefined) {
+        // No page acted on the link: take the window there directly. A full
+        // load of the deep link is slower than a route change, but it lands.
+        try {
+          if (typeof front.navigate !== "function") throw new Error("navigate unsupported");
+          await front.navigate(href);
+          diag.route = "client.navigate";
+        } catch (error) {
+          diag.error = String((error && error.name) || error).slice(0, 80);
+          try {
+            await self.clients.openWindow(href);
+            diag.route = "openWindow-late";
+          } catch {
+            diag.route = "none";
+          }
+        }
+      } else if (front !== undefined) {
+        diag.route = "page";
+      }
+      diag.ms = Date.now() - started;
+      await sendDiag(diag);
     })(),
   );
 });
