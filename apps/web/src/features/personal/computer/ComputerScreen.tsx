@@ -28,10 +28,12 @@ import {
   Keyboard,
   Lock,
   Maximize2,
+  Monitor,
   MoreHorizontal,
   MousePointer2,
   MousePointerClick,
   Power,
+  PowerOff,
   RotateCw,
 } from "lucide-react";
 import {
@@ -217,7 +219,9 @@ export function ComputerScreen({
         fullScreen
           ? "fixed inset-0 z-50 overflow-hidden bg-[var(--personal-bg)] pb-[env(safe-area-inset-bottom)]"
           : variant === "panel"
-            ? "overflow-y-auto px-4 pb-4"
+            ? // Content height, not the rest of the panel: the routines follow
+              // straight on instead of sitting at the bottom past a gap.
+              "personal-scroll-quiet flex-initial overflow-y-auto px-4 pb-4"
             : "overflow-y-auto px-5 pb-6",
       )}
       style={{ paddingTop: "env(safe-area-inset-top)" }}
@@ -253,7 +257,7 @@ export function ComputerScreen({
         role="tablist"
         aria-label="Computer view"
         className={cn(
-          "mt-3 grid h-9 grid-cols-2 rounded-[10px] bg-[var(--personal-fill-muted)] p-0.5",
+          "mt-3 grid h-11 grid-cols-2 rounded-[10px] bg-[var(--personal-fill-muted)] p-0.5 md:h-9",
           fullScreen && "hidden",
         )}
       >
@@ -437,7 +441,11 @@ export function ComputerBrowserPane(props: {
             onClient={onClient}
           />
         ) : (
-          <ViewportPlaceholder status={status} reachable={props.reachable} />
+          <ViewportPlaceholder
+            status={status}
+            reachable={props.reachable}
+            fill={fullScreen || compact}
+          />
         )}
         {compact ? (
           <>
@@ -566,7 +574,15 @@ function BrowserToolbar(props: {
     if (typeof url === "string" && url.trim().length > 0) props.onNavigate(url.trim());
   };
   return (
-    <div className={cn("flex min-h-14 shrink-0 items-center gap-1 px-1", props.className)}>
+    // Inline, the address field starts on the same edge as the segments and the
+    // preview card; only the edge-to-edge full screen needs the inset.
+    <div
+      className={cn(
+        "flex min-h-14 shrink-0 items-center gap-1",
+        props.showBack && "px-1",
+        props.className,
+      )}
+    >
       {props.showBack && props.onBackToChat !== undefined ? (
         <button
           type="button"
@@ -635,9 +651,17 @@ function BrowserToolbar(props: {
   );
 }
 
+/**
+ * Stands in for the live view while there is no page to show. Inline it is a
+ * short card, not a phone-shaped box: at the preview's 390/560 ratio an idle
+ * browser drew an empty slab most of a screen tall (1,150px in the desktop
+ * pane, two thirds of the chat's side panel) and pushed Take control and the
+ * routines out of sight. Full screen and the compact preview keep their box.
+ */
 function ViewportPlaceholder(props: {
   readonly status: PersonalBrowserStatus | null;
   readonly reachable: boolean;
+  readonly fill: boolean;
 }) {
   const { status } = props;
   const message = !props.reachable
@@ -651,9 +675,25 @@ function ViewportPlaceholder(props: {
           : status.state === "crashed"
             ? `${status.detail ?? "Chrome stopped."} Take control to restart it.`
             : "The browser is not running. It starts when a bot needs it, or when you take control.";
+  if (props.fill) {
+    return (
+      <div className="flex h-full min-h-[200px] items-center justify-center p-6 text-center text-[14px] text-[var(--personal-text-secondary)]">
+        {message}
+      </div>
+    );
+  }
+  const Icon = !props.reachable || status?.state === "crashed" ? PowerOff : Monitor;
   return (
-    <div className="flex aspect-[390/560] items-center justify-center p-6 text-center text-[14px] text-[var(--personal-text-secondary)]">
-      {message}
+    <div className="flex flex-col items-center justify-center gap-2.5 px-6 py-7 text-center">
+      <span
+        aria-hidden="true"
+        className="flex size-10 items-center justify-center rounded-full bg-[var(--personal-fill-muted)] text-[var(--personal-text-secondary)]"
+      >
+        <Icon className="size-5" strokeWidth={ICON_STROKE} />
+      </span>
+      <p className="max-w-[34ch] text-[14px] leading-5 text-[var(--personal-text-secondary)]">
+        {message}
+      </p>
     </div>
   );
 }
