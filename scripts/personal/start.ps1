@@ -76,12 +76,33 @@ function Assert-DataRootFree {
 }
 
 function Write-PbLog([string]$Message) {
-    Add-Content -LiteralPath $script:logFile -Value ('=== {0} {1}' -f (Get-Date).ToString('s'), $Message) -Encoding UTF8
+    try {
+        Add-Content -LiteralPath $script:logFile -Value ('=== {0} {1}' -f (Get-Date).ToString('s'), $Message) -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        # A log line is never worth a server that does not start.
+        Write-Warning ("Could not write to {0}: {1}" -f $script:logFile, $_.Exception.Message)
+    }
+}
+
+# Today's log, or a fresh one beside it when another process holds today's
+# file (Git Bash 'tail -F' on Windows locks it against appends, and the
+# server's own output is appended to it). A monitor must never be able to keep
+# the server down.
+function Resolve-PbWritableLog([string]$Path) {
+    try {
+        $stream = [System.IO.File]::Open($Path, 'Append', 'Write', 'ReadWrite')
+        $stream.Dispose()
+        return $Path
+    } catch {
+        $fallback = [System.IO.Path]::ChangeExtension($Path, $null).TrimEnd('.') + '-' + (Get-Date -Format 'HHmmss') + '.log'
+        Write-Warning ("{0} is locked by another process; logging to {1}." -f $Path, $fallback)
+        return $fallback
+    }
 }
 
 function Start-PbServerOnce {
     Assert-DataRootFree
-    $script:logFile = Join-Path $paths.LogsDir ('server-{0}.log' -f (Get-Date -Format 'yyyyMMdd'))
+    $script:logFile = Resolve-PbWritableLog (Join-Path $paths.LogsDir ('server-{0}.log' -f (Get-Date -Format 'yyyyMMdd')))
     Write-PbLog ("start release {0} root {1} base {2}" -f $releaseInfo.Name, $Root, $paths.BaseDir)
     Remove-PbOldFiles -Directory $paths.LogsDir -Filter 'server-*.log' -Keep 7
     if (Test-Path -LiteralPath $paths.StopMarker) { Remove-Item -LiteralPath $paths.StopMarker -Force }
