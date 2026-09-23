@@ -75,6 +75,7 @@ import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
+import { reportChatsListPainted } from "./perfRum";
 import { formatRelativeTime } from "./relativeTime";
 import { botSelectionKey, groupSelectionKey, type SidebarSelectionKey } from "./personalMode";
 import { revealInSidebar } from "./sidebarReveal";
@@ -315,6 +316,10 @@ export function ChatsScreen({
   const loaded = list.data !== null;
   const showingSnapshot = !loaded && snapshot !== null && snapshot.rows.length > 0;
   const firstPaintReady = loaded || showingSnapshot || list.error !== null;
+  const rowsPainted = showingSnapshot || (list.data !== null && list.data.bots.length > 0);
+  useEffect(() => {
+    if (rowsPainted) reportChatsListPainted(!loaded);
+  }, [rowsPainted, loaded]);
   const [tasksArmed, setTasksArmed] = useState(false);
   useEffect(() => {
     if (tasksArmed || !firstPaintReady) return;

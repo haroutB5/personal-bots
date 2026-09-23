@@ -15,6 +15,7 @@ import {
   useChatSidePanel,
 } from "./desktopColumns";
 import { InAppNotifications } from "./InAppNotifications";
+import { installPerfRum } from "./perfRum";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
 import {
   activeTabFor,
@@ -50,6 +51,9 @@ const PANE_CONTENT_CLASS: Record<DesktopPaneLayout, string> = {
  * its row in the list is marked. The list's inner edge drags to resize it
  * (`desktopColumns` has the limits).
  */
+// Watches visibility and chat-row taps for the real-user timings (perfRum.ts).
+installPerfRum();
+
 export function PersonalShell(): JSX.Element {
   const pathname = useLocation({ select: (location) => location.pathname });
   const isWide = useMediaQuery("md");

@@ -101,6 +101,7 @@ import { setPersonalPreference, usePersonalPreference } from "./personalPreferen
 import { diagnosticsEnabled, DiagnosticsOverlay } from "./DiagnosticsOverlay";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { useReportViewingThread } from "./useReportViewingThread";
+import { markMessageSent, observeChatMessages, reportChatUsable } from "./perfRum";
 import { PersonalComposer } from "./PersonalComposer";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { useStartBotChat } from "./startBotChat";
@@ -272,6 +273,20 @@ export function ConversationScreen({
   const children = useMemo(() => delegatedChildren(threadId, tasks), [threadId, tasks]);
 
   const messages = (thread?.messages as ReadonlyArray<ChatMessage> | undefined) ?? EMPTY_MESSAGES;
+  // Real-user timings (perfRum.ts): chat usable, then send -> echo -> first reply text.
+  const usableThreadId = thread !== null ? threadId : null;
+  useEffect(() => {
+    if (usableThreadId !== null) reportChatUsable(window.location.pathname);
+  }, [usableThreadId]);
+  useEffect(() => {
+    observeChatMessages(threadId, messages);
+  }, [threadId, messages]);
+  const pendingCount = useRef(0);
+  useEffect(() => {
+    if (pending.length > pendingCount.current) markMessageSent(threadId, messages);
+    pendingCount.current = pending.length;
+    // Only a new pending message starts a send; the messages it saw are a snapshot.
+  }, [pending.length, threadId, messages]);
   const activities = thread?.activities ?? EMPTY_ACTIVITIES;
   const proposedPlans = thread?.proposedPlans ?? EMPTY_PLANS;
   const workEntries = useMemo(() => deriveWorkLogEntries(activities), [activities]);
