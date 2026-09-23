@@ -19,9 +19,10 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { Check, ChevronLeft } from "lucide-react";
 
+import { requestConfirmDialog } from "~/confirmDialog";
 import { randomUUID } from "~/lib/utils";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -52,7 +53,7 @@ import {
 } from "./usePersonalBots";
 
 const FIELD_CLASS =
-  "w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
+  "w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-tertiary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] aria-invalid:border-[var(--personal-error)]";
 const LABEL_CLASS = "mb-1.5 block text-sm font-medium text-[var(--personal-text)]";
 const NAME_MAX = 60;
 const TITLE_MAX = 60;
@@ -187,6 +188,11 @@ interface BotDraft {
   memoryAutoSave: boolean;
 }
 
+/** Field-by-field: has the owner changed anything since the form opened? */
+function botDraftsEqual(left: BotDraft, right: BotDraft): boolean {
+  return (Object.keys(left) as Array<keyof BotDraft>).every((key) => left[key] === right[key]);
+}
+
 function draftFromBot(bot: PersonalBot): BotDraft {
   return {
     name: bot.name,
@@ -296,6 +302,26 @@ function BotForm({
     };
   });
 
+  // Unsaved edits. The editor is a long form (instructions run to pages), and
+  // Back or a swipe-back used to drop them without a word. The baseline is the
+  // draft the form opened with; leaving after a save or a delete never asks.
+  const [baseline] = useState(() => rawDraft);
+  const dirty = !botDraftsEqual(rawDraft, baseline);
+  const leavingRef = useRef(false);
+  useBlocker({
+    shouldBlockFn: async () => {
+      if (!dirty || leavingRef.current) return false;
+      const message = "Discard your changes?\nYou haven't saved your edits to this bot.";
+      const discard =
+        (await requestConfirmDialog(message, {
+          variant: "destructive",
+          confirmLabel: "Discard",
+        })) ?? window.confirm(message);
+      return !discard;
+    },
+    enableBeforeUnload: () => dirty && !leavingRef.current,
+  });
+
   // A cold open of /bots/new renders before providers load; pick the first
   // ready one when it arrives so "Create bot" is not stuck disabled.
   // The owner runs bots on Claude Code first, so it is the default when ready.
@@ -384,6 +410,19 @@ function BotForm({
       input?.scrollIntoView({ block: "center" });
       return;
     }
+    // Two bots with one name are two identical rows everywhere a bot is picked
+    // (the list, the strip, groups, @mentions, delegation), with no way to tell
+    // them apart.
+    const clash = botList.data?.bots.find(
+      (other) => other.botId !== botId && other.name.trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (clash !== undefined) {
+      setNameError(`You already have a bot called ${clash.name}.`);
+      const input = nameInputRef.current;
+      input?.focus();
+      input?.scrollIntoView({ block: "center" });
+      return;
+    }
     if (!canSave) return;
     setNameError(null);
     setSubmitError(null);
@@ -407,6 +446,7 @@ function BotForm({
         : await updateBot({ environmentId, input: { botId, ...fields } });
     setBusy(false);
     if (result._tag === "Success") {
+      leavingRef.current = true;
       await navigate({ to: "/bots" });
       return;
     }
@@ -421,6 +461,7 @@ function BotForm({
     if (outcome.status === "cancelled") return;
     setSubmitError(outcome.status === "failed" ? outcome.message : null);
     if (outcome.status === "done") {
+      leavingRef.current = true;
       await navigate({ to: "/bots" });
     }
   };
@@ -441,7 +482,7 @@ function BotForm({
           value={draft.name}
           maxLength={NAME_MAX}
           onChange={(event) => update({ name: event.target.value })}
-          placeholder="Assistant"
+          placeholder="e.g. Researcher"
           autoComplete="off"
           aria-invalid={nameError !== null}
           aria-describedby={nameError !== null ? "bot-name-error" : undefined}
@@ -468,7 +509,7 @@ function BotForm({
           value={draft.title}
           maxLength={TITLE_MAX}
           onChange={(event) => update({ title: event.target.value })}
-          placeholder="Personal assistant"
+          placeholder="e.g. Research analyst"
           autoComplete="off"
           className={`${FIELD_CLASS} h-11`}
         />
@@ -783,7 +824,43 @@ export function EditBotScreen({ botId }: { botId: string }): JSX.Element {
             Back to Bots
           </Link>
         </p>
-      ) : null}
+      ) : environmentId === null ? (
+        <p className="mt-4 text-[15px] text-[var(--personal-text-secondary)]">
+          Connect to your computer to edit this bot.
+        </p>
+      ) : (
+        <BotFormSkeleton />
+      )}
+    </div>
+  );
+}
+
+/**
+ * A cold open of the editor, before the bot list lands: the form's own field
+ * shapes, static (no shimmer, like the Chats skeleton), instead of a header
+ * over an empty page.
+ */
+const BOT_FORM_SKELETON_FIELDS: ReadonlyArray<readonly [string, number]> = [
+  ["name", 44],
+  ["title", 44],
+  ["description", 44],
+  ["instructions", 120],
+  ["provider", 44],
+];
+
+function BotFormSkeleton(): JSX.Element {
+  return (
+    <div role="status" aria-busy="true" className="mt-2 flex flex-col gap-5">
+      {BOT_FORM_SKELETON_FIELDS.map(([field, height]) => (
+        <div key={field} aria-hidden="true">
+          <div className="mb-2 h-3.5 w-24 rounded-full bg-[var(--personal-fill-muted)]" />
+          <div
+            className="rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)]"
+            style={{ height }}
+          />
+        </div>
+      ))}
+      <span className="sr-only">Loading bot…</span>
     </div>
   );
 }

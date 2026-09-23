@@ -1,5 +1,5 @@
 import type { FormEvent, JSX } from "react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
   PersonalBotId,
@@ -12,7 +12,7 @@ import {
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 
-import { randomUUID } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
@@ -30,7 +30,38 @@ import { personalRoutineCreate, personalRoutineUpdate } from "./usePersonalAutom
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 
 const FIELD =
-  "w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
+  "w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-tertiary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] aria-invalid:border-[var(--personal-error)]";
+
+type RoutineField = "title" | "prompt" | "eventLabel";
+type RoutineFieldErrors = Partial<Record<RoutineField, string>>;
+const ROUTINE_FIELD_ORDER: ReadonlyArray<RoutineField> = ["title", "prompt", "eventLabel"];
+const ROUTINE_FIELD_IDS: Record<RoutineField, string> = {
+  title: "routine-title",
+  prompt: "routine-prompt",
+  eventLabel: "routine-event-label",
+};
+
+/** `aria-invalid` + the message's id for a field, nothing while it is valid. */
+function invalidProps(errors: RoutineFieldErrors, field: RoutineField) {
+  return errors[field] === undefined
+    ? {}
+    : { "aria-invalid": true, "aria-errormessage": `${ROUTINE_FIELD_IDS[field]}-error` };
+}
+
+function FieldError({ errors, field }: { errors: RoutineFieldErrors; field: RoutineField }) {
+  const message = errors[field];
+  if (message === undefined) return null;
+  return (
+    <p
+      id={`${ROUTINE_FIELD_IDS[field]}-error`}
+      role="alert"
+      className="mt-1.5 text-[13px] text-[var(--personal-error)]"
+    >
+      {message}
+    </p>
+  );
+}
+
 const LABEL = "mb-1.5 block text-sm font-medium text-[var(--personal-text)]";
 
 const KINDS: ReadonlyArray<{ readonly kind: RoutineScheduleKind; readonly label: string }> = [
@@ -77,6 +108,14 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<RoutineFieldErrors>({});
+  const fieldRefs = useRef<Partial<Record<RoutineField, HTMLElement | null>>>({});
+  const clearFieldError = (field: RoutineField) =>
+    setFieldErrors((current) => {
+      if (current[field] === undefined) return current;
+      const { [field]: _cleared, ...rest } = current;
+      return rest;
+    });
   const botId = draft.botId || bots[0]?.botId || "";
   const set = <K extends keyof RoutineDraft>(key: K, value: RoutineDraft[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
@@ -86,6 +125,25 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (environmentId === null || busy) return;
+    // Each missing field says so under itself and the first one takes focus:
+    // one generic line at the very bottom left the fields a screen and a half
+    // above with nothing marking which was wrong.
+    const missing: RoutineFieldErrors = {
+      ...(draft.title.trim().length === 0 ? { title: "Give the routine a name." } : {}),
+      ...(draft.prompt.trim().length === 0 ? { prompt: "Say what the bot should do." } : {}),
+      ...(isEvent && draft.eventLabel.trim().length === 0
+        ? { eventLabel: "Name the event, for example 'PR merged'." }
+        : {}),
+    };
+    setFieldErrors(missing);
+    const firstMissing = ROUTINE_FIELD_ORDER.find((field) => missing[field] !== undefined);
+    if (firstMissing !== undefined) {
+      setError(null);
+      const input = fieldRefs.current[firstMissing];
+      input?.focus({ preventScroll: true });
+      input?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+      return;
+    }
     // An event routine has no schedule to validate, and validating the hidden
     // schedule inputs would reject a perfectly valid event routine.
     let schedule: PersonalRoutineSchedule | null = null;
@@ -96,14 +154,6 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
         return;
       }
       schedule = built.schedule;
-    }
-    if (draft.title.trim().length === 0 || draft.prompt.trim().length === 0) {
-      setError("Give the routine a name and a task.");
-      return;
-    }
-    if (isEvent && draft.eventLabel.trim().length === 0) {
-      setError("Name the event, for example 'PR merged'.");
-      return;
     }
     if (botId.length === 0) {
       setError("Create a bot first.");
@@ -192,12 +242,20 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
           </label>
           <input
             id="routine-title"
+            ref={(element) => {
+              fieldRefs.current.title = element;
+            }}
             className={`${FIELD} h-11`}
             value={draft.title}
             maxLength={80}
-            placeholder="Morning briefing"
-            onChange={(event) => set("title", event.target.value)}
+            placeholder="e.g. Morning briefing"
+            {...invalidProps(fieldErrors, "title")}
+            onChange={(event) => {
+              set("title", event.target.value);
+              clearFieldError("title");
+            }}
           />
+          <FieldError errors={fieldErrors} field="title" />
         </div>
 
         <div>
@@ -224,12 +282,20 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
           </label>
           <textarea
             id="routine-prompt"
+            ref={(element) => {
+              fieldRefs.current.prompt = element;
+            }}
             className={`${FIELD} min-h-28 py-2.5 leading-snug`}
             value={draft.prompt}
             maxLength={4_000}
-            placeholder="Summarise my calendar and anything waiting on me."
-            onChange={(event) => set("prompt", event.target.value)}
+            placeholder="e.g. Summarise my calendar and anything waiting on me."
+            {...invalidProps(fieldErrors, "prompt")}
+            onChange={(event) => {
+              set("prompt", event.target.value);
+              clearFieldError("prompt");
+            }}
           />
+          <FieldError errors={fieldErrors} field="prompt" />
         </div>
 
         {routine === null ? (
@@ -258,13 +324,21 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
             </label>
             <input
               id="routine-event-label"
+              ref={(element) => {
+                fieldRefs.current.eventLabel = element;
+              }}
               className={`${FIELD} h-11`}
               value={draft.eventLabel}
               maxLength={60}
-              placeholder="PR merged"
+              placeholder="e.g. PR merged"
               aria-describedby="routine-event-hint"
-              onChange={(event) => set("eventLabel", event.target.value)}
+              {...invalidProps(fieldErrors, "eventLabel")}
+              onChange={(event) => {
+                set("eventLabel", event.target.value);
+                clearFieldError("eventLabel");
+              }}
             />
+            <FieldError errors={fieldErrors} field="eventLabel" />
             <p
               id="routine-event-hint"
               className="mt-1.5 text-[13px] text-[var(--personal-text-secondary)]"
@@ -427,7 +501,9 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
 
         <button
           type="submit"
-          className={PRIMARY_BUTTON}
+          // flex-none: PRIMARY_BUTTON is flex-1 for side-by-side rows, and in
+          // this column form a zero flex-basis squashed it to a 23px strip.
+          className={cn(PRIMARY_BUTTON, "flex-none")}
           disabled={busy || environmentId === null}
           aria-busy={busy}
         >

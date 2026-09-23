@@ -40,16 +40,23 @@ export function NewGroupScreen(): JSX.Element {
   const [picked, setPicked] = useState<ReadonlyArray<string>>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Checked on submit, like the bot editor: a disabled "Create group" with no
+  // word about why left the owner hunting for the Name field a screen above.
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [pickError, setPickError] = useState<string | null>(null);
+  const nameRef = useRef<HTMLInputElement | null>(null);
+  const botsRef = useRef<HTMLFieldSetElement | null>(null);
   // Minted once per form, not per submit: a retried create returns the first
   // group instead of making a second one, exactly as `personalBots.create` does.
   const ids = useRef({ groupId: randomUUID(), threadId: randomUUID() });
 
   const bots = useMemo(() => (list.data?.bots ?? []).filter((bot) => bot.enabled), [list.data]);
   const full = picked.length >= PERSONAL_GROUP_MAX_MEMBERS;
-  const canSave = name.trim().length > 0 && picked.length >= 2 && !busy && environmentId !== null;
+  const canSubmit = !busy && environmentId !== null;
 
   const toggle = (bot: PersonalBot) => {
     setError(null);
+    setPickError(null);
     setPicked((current) =>
       current.includes(bot.botId)
         ? current.filter((id) => id !== bot.botId)
@@ -61,7 +68,23 @@ export function NewGroupScreen(): JSX.Element {
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canSave || environmentId === null) return;
+    if (!canSubmit || environmentId === null) return;
+    const missingName = name.trim().length === 0;
+    const missingBots = picked.length < 2;
+    setNameError(missingName ? "Give the group a name." : null);
+    setPickError(missingBots ? "Pick at least two bots. A group of one is a chat." : null);
+    if (missingName) {
+      nameRef.current?.focus();
+      nameRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+      return;
+    }
+    if (missingBots) {
+      botsRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      botsRef.current?.querySelector<HTMLInputElement>("input:not(:disabled)")?.focus({
+        preventScroll: true,
+      });
+      return;
+    }
     setBusy(true);
     const groupId = PersonalGroupId.make(ids.current.groupId);
     const result = await createGroup({
@@ -85,7 +108,7 @@ export function NewGroupScreen(): JSX.Element {
   };
 
   return (
-    <div className="px-5 pb-6">
+    <div className="px-5">
       <PersonalPageHeader title="New group" />
       {environmentId === null ? (
         <p className="mt-4 text-[15px] text-[var(--personal-text-secondary)]">
@@ -98,14 +121,37 @@ export function NewGroupScreen(): JSX.Element {
               Name
             </span>
             <input
+              ref={nameRef}
               value={name}
-              onChange={(event) => setName(event.target.value.slice(0, NAME_MAX))}
-              placeholder="Launch crew"
-              className="h-11 w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+              onChange={(event) => {
+                setName(event.target.value.slice(0, NAME_MAX));
+                if (event.target.value.trim().length > 0) setNameError(null);
+              }}
+              placeholder="e.g. Launch crew"
+              aria-invalid={nameError !== null || undefined}
+              aria-describedby={nameError !== null ? "new-group-name-error" : undefined}
+              className={cn(
+                "h-11 w-full rounded-[var(--personal-radius-button)] border bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-tertiary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+                nameError !== null
+                  ? "border-[var(--personal-error)]"
+                  : "border-[var(--personal-border-strong)]",
+              )}
             />
+            {nameError !== null ? (
+              <span
+                id="new-group-name-error"
+                className="mt-1.5 block text-[13px] text-[var(--personal-error)]"
+              >
+                {nameError}
+              </span>
+            ) : null}
           </label>
 
-          <fieldset className="min-w-0">
+          <fieldset
+            ref={botsRef}
+            className="min-w-0 scroll-mt-4"
+            aria-describedby={pickError !== null ? "new-group-pick-error" : undefined}
+          >
             <legend className="flex w-full items-baseline justify-between gap-2 pb-1.5">
               <span className="text-sm font-medium text-[var(--personal-text)]">Bots</span>
               <span
@@ -167,6 +213,14 @@ export function NewGroupScreen(): JSX.Element {
                 })}
               </ul>
             )}
+            {pickError !== null ? (
+              <p
+                id="new-group-pick-error"
+                className="mt-1.5 text-[13px] text-[var(--personal-error)]"
+              >
+                {pickError}
+              </p>
+            ) : null}
           </fieldset>
 
           {error !== null ? (
@@ -175,19 +229,23 @@ export function NewGroupScreen(): JSX.Element {
             </p>
           ) : null}
 
-          <button
-            type="submit"
-            disabled={!canSave}
-            aria-busy={busy}
-            className="h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
-          >
-            Create group
-          </button>
-          {picked.length < 2 ? (
-            <p className="-mt-3 text-center text-[13px] text-[var(--personal-text-secondary)]">
-              Pick at least two bots — a group of one is a chat.
-            </p>
-          ) : null}
+          {/* Sticky: the roster runs to 20+ rows, and the action and the count
+              it depends on stayed a long scroll below the fold. */}
+          <div className="sticky bottom-0 -mx-5 flex flex-col gap-1.5 border-t border-[var(--personal-border)] bg-[var(--personal-bg)] px-5 pt-3 pb-[max(env(safe-area-inset-bottom),12px)]">
+            <button
+              type="submit"
+              disabled={!canSubmit}
+              aria-busy={busy}
+              className="h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
+            >
+              {busy ? "Creating…" : "Create group"}
+            </button>
+            {picked.length < 2 && pickError === null ? (
+              <p className="text-center text-[13px] text-[var(--personal-text-secondary)]">
+                Pick at least two bots. A group of one is a chat.
+              </p>
+            ) : null}
+          </div>
         </form>
       )}
     </div>
