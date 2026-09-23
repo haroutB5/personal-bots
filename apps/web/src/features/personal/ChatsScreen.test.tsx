@@ -133,6 +133,10 @@ vi.mock("./computer/computerState", () => ({
     loading: false,
   }),
 }));
+vi.mock("./computer/desktopState", () => ({
+  useDesktopStatus: () => null,
+  useDesktopSummaryInput: () => null,
+}));
 vi.mock("./useSecretRequests", () => ({
   usePendingSecretRequests: () => ({ data: null, error: null, refresh: () => {} }),
 }));

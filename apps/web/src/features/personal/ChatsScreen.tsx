@@ -36,6 +36,7 @@ import {
 } from "./botSummaries";
 import { useTogglePinBot } from "./usePinBot";
 import { useComputerFeed } from "./computer/computerState";
+import { useDesktopStatus, useDesktopSummaryInput } from "./computer/desktopState";
 import {
   buildChatsSnapshot,
   partitionPinnedSnapshotRows,
@@ -275,6 +276,7 @@ export function ChatsScreen({
   const allShells = useThreadShells();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const { feed: computerFeed } = useComputerFeed(environmentId);
+  const desktopSummary = useDesktopSummaryInput(useDesktopStatus(environmentId));
   const routinesQuery = usePersonalRoutines(environmentId);
   const now = useMinuteClock();
   const deleteBot = useDeleteBot(environmentId);
@@ -386,9 +388,11 @@ export function ChatsScreen({
             browserHelpThreadId: computerFeed.status?.helpRequest?.threadId ?? null,
             secretRequestThreadIds,
             routines: routinesQuery.data?.routines ?? [],
+            desktop: desktopSummary,
           }),
     [
       computerFeed.status?.helpRequest?.threadId,
+      desktopSummary,
       list.data,
       memberThreadIds,
       providers,

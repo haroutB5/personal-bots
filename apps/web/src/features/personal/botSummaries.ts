@@ -57,6 +57,10 @@ export interface BotSummary {
   readonly needsSecret: boolean;
   /** "Waiting for Developer": a linked thread's task is parked on delegated work. */
   readonly waitingFor: string | null;
+  /** A linked chat holds the user's real PC right now. */
+  readonly usingPc?: boolean;
+  /** A linked chat is in line for the PC while another bot has it. */
+  readonly waitingForPc?: boolean;
   readonly nextRoutine: PersonalRoutine | null;
   readonly lastActivityMs: number | null;
 }
@@ -178,6 +182,9 @@ export function botStatus(
   if (summary.provider.broken) {
     return { label: `Update broke ${summary.provider.label}`, tone: "review" };
   }
+  // Above Working: a bot in line for the PC is live but not getting anywhere.
+  if (summary.waitingForPc === true) return { label: "Waiting for the computer", tone: "normal" };
+  if (summary.usingPc === true) return { label: "Using your PC", tone: "normal" };
   if (summary.live) return { label: "Working", tone: "normal" };
   if (summary.rateLimitedThread !== null) {
     return {
@@ -227,6 +234,11 @@ export function buildBotSummaries(input: {
   /** From `threadIdsAwaitingSecret`: chats with a pending secret request. */
   readonly secretRequestThreadIds?: ReadonlySet<string>;
   readonly routines?: ReadonlyArray<PersonalRoutine>;
+  /** From `personalDesktop.status`: who holds the PC and who waits for it. */
+  readonly desktop?: {
+    readonly holderThreadId: string | null;
+    readonly waitingThreadIds: ReadonlySet<string>;
+  } | null;
 }): BotSummary[] {
   const shellsById = new Map(input.shells.map((shell) => [shell.id as string, shell] as const));
   const shellsByBot = new Map<string, EnvironmentThreadShell[]>();
@@ -295,6 +307,18 @@ export function buildBotSummaries(input: {
         shells
           .map((shell) => input.waitingByThread?.get(shell.id) ?? null)
           .find((label) => label !== null) ?? null,
+      usingPc: input.links.some(
+        (link) =>
+          link.botId === bot.botId &&
+          link.archivedAt === null &&
+          link.threadId === input.desktop?.holderThreadId,
+      ),
+      waitingForPc: input.links.some(
+        (link) =>
+          link.botId === bot.botId &&
+          link.archivedAt === null &&
+          (input.desktop?.waitingThreadIds.has(link.threadId) ?? false),
+      ),
       nextRoutine,
       lastActivityMs: newestThread === null ? null : updatedMs(newestThread),
     };

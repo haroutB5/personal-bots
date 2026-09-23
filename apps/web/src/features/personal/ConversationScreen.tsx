@@ -53,6 +53,8 @@ import {
 } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerLink } from "./ConversationComputerLink";
+import { ConversationDesktopLine } from "./ConversationDesktopLine";
+import { useDesktopStatus } from "./computer/desktopState";
 import { useComputerFeed } from "./computer/computerState";
 import { ConversationRoutinesPanel } from "./ConversationRoutinesPanel";
 import { CONVERSATION_SIDE_PANEL_ID, ConversationSidePanel } from "./ConversationSidePanel";
@@ -255,6 +257,7 @@ export function ConversationScreen({
   // phone; every other chat still notifies.
   useReportViewingThread(environmentId, threadId, connectionPhase === "connected");
   const { feed: computerFeed } = useComputerFeed(environmentId);
+  const desktopStatus = useDesktopStatus(environmentId);
 
   // Delegation state comes from the live task feed (personalTasks.subscribe).
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
@@ -848,6 +851,11 @@ export function ConversationScreen({
             now={now}
             describeTurn={describeTurn}
             renderDelegation={renderDelegation}
+          />
+          <ConversationDesktopLine
+            environmentId={environmentId}
+            status={desktopStatus}
+            threadId={threadId}
           />
           {sidePanelOpen ? null : (
             <ConversationComputerLink
