@@ -184,6 +184,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalPushSetPreferences]: AuthOrchestrationOperateScope,
   // Presence, like server.reportClientActivity: any reader may say what it is looking at.
   [WS_METHODS.personalPushReportViewing]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalPushReportForeground]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalPushInApp]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalPushAckInApp]: AuthOrchestrationReadScope,
   [WS_METHODS.projectCloneStart]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectCloneCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectCloneRetry]: AuthOrchestrationOperateScope,

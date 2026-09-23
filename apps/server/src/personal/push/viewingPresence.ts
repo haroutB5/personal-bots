@@ -47,3 +47,57 @@ export class ViewingPresence {
     return viewing;
   }
 }
+
+/**
+ * How recent a "the app is in front" report must be to count. Clients
+ * heartbeat every 10 s while visible, so one lost report is tolerated. A
+ * phone that locks without saying so is still covered: an in-app
+ * notification nobody acknowledges falls back to web push.
+ */
+export const PERSONAL_FOREGROUND_FRESH_MS = 20_000;
+
+/**
+ * Which connections have the app on screen and are listening for in-app
+ * notifications. Both halves are needed: a visible page without the stream
+ * cannot show a banner, and a listening page in the background cannot be
+ * seen. In memory only, like ViewingPresence.
+ */
+export class ForegroundPresence {
+  readonly #visibleAt = new Map<string, number>();
+  readonly #listeners = new Map<string, number>();
+
+  report(connectionId: string, foreground: boolean, nowMs: number): void {
+    if (foreground) this.#visibleAt.set(connectionId, nowMs);
+    else this.#visibleAt.delete(connectionId);
+  }
+
+  /** A listener opened on this connection; call the returned function when it closes. */
+  listen(connectionId: string): () => void {
+    this.#listeners.set(connectionId, (this.#listeners.get(connectionId) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (this.#listeners.get(connectionId) ?? 1) - 1;
+      if (left <= 0) this.#listeners.delete(connectionId);
+      else this.#listeners.set(connectionId, left);
+    };
+  }
+
+  drop(connectionId: string): void {
+    this.#visibleAt.delete(connectionId);
+  }
+
+  /** Connections in front and listening right now. Prunes stale reports. */
+  targets(nowMs: number): ReadonlyArray<string> {
+    const out: string[] = [];
+    for (const [connectionId, seenMs] of this.#visibleAt) {
+      if (nowMs - seenMs >= PERSONAL_FOREGROUND_FRESH_MS) {
+        this.#visibleAt.delete(connectionId);
+        continue;
+      }
+      if ((this.#listeners.get(connectionId) ?? 0) > 0) out.push(connectionId);
+    }
+    return out;
+  }
+}

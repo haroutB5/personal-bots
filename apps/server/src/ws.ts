@@ -3542,6 +3542,32 @@ const makeWsRpcLayer = (
             }).pipe(Effect.as({})),
             { "rpc.aggregate": "server" },
           ),
+        // Foreground presence + in-app notifications: while this connection
+        // is in front and listening, notifications arrive here as banners
+        // instead of web push (iOS gives a foreground home-screen app no
+        // usable notification tap). Unacknowledged ones fall back to push.
+        [WS_METHODS.personalPushReportForeground]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalPushReportForeground,
+            Effect.suspend(() => {
+              viewing.reported = true;
+              return personalPush.reportForeground({
+                connectionId: viewing.connectionId,
+                foreground: input.foreground,
+              });
+            }).pipe(Effect.as({})),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalPushInApp]: (_input) =>
+          observeRpcStream(WS_METHODS.personalPushInApp, personalPush.inApp(viewing.connectionId), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalPushAckInApp]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalPushAckInApp,
+            personalPush.ackInApp({ id: input.id }).pipe(Effect.as({})),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,

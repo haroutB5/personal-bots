@@ -8,6 +8,7 @@ import {
   ThreadId,
   type OrchestrationEvent,
   type PersonalGroupRound,
+  type PersonalPushInAppNotification,
   type PersonalTask,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -15,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -765,4 +767,132 @@ it.effect("a notification with no bot behind it carries no avatar at all", () =>
       "Claude Code 2.1.264 is failing for your bots",
     ]);
   }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+/** Collects what the in-app stream hands one connection. */
+const listenInApp = (connectionId: string) =>
+  Effect.gen(function* () {
+    const push = yield* PersonalPushService.PersonalPushService;
+    const received: Array<PersonalPushInAppNotification> = [];
+    yield* Effect.forkChild(
+      Stream.runForEach(push.inApp(connectionId), (notification) =>
+        Effect.sync(() => void received.push(notification)),
+      ),
+    );
+    // Let the subscription register before anything is published.
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust("1 millis");
+    return received;
+  });
+
+const seedReply = (threadId: ThreadId, text: string, at: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO projection_thread_messages
+        (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
+      VALUES (${`m-${at}`}, ${threadId}, NULL, 'assistant', ${text}, 0, ${at}, ${at})
+    `;
+  });
+
+it.effect("an app in front gets the reply as an in-app banner, not a push", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-23T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    const received = yield* listenInApp("phone");
+    yield* push.reportForeground({ connectionId: "phone", foreground: true });
+    yield* seedReply(
+      CHAT,
+      "## Done\nThe **report** is [here](https://x.test).",
+      "2026-09-23T09:00:00.000Z",
+    );
+
+    yield* runTurn(CHAT, "2026-09-23T09:00:00.000Z");
+    yield* TestClock.adjust("1 millis");
+    expect(received).toEqual([
+      {
+        id: `chat-reply:${CHAT}:2026-09-23T09:00:00.000Z`,
+        title: "Assistant replied",
+        body: "Open the chat to read it.",
+        url: `/bots/${BOT}/${CHAT}`,
+        preview: "Done The report is here.",
+        avatarShape: "blob",
+        avatarColor: "#1A73E8",
+      },
+    ]);
+    yield* push.ackInApp({ id: received[0]!.id });
+    yield* TestClock.adjust(`${PersonalPushService.IN_APP_ACK_TIMEOUT_MS + 1000} millis`);
+    expect(yield* outbox).toEqual([]);
+
+    // Replayed, it is neither a second banner nor a push.
+    yield* runTurn(CHAT, "2026-09-23T09:00:00.000Z");
+    yield* TestClock.adjust(`${PersonalPushService.IN_APP_ACK_TIMEOUT_MS + 1000} millis`);
+    expect(received.length).toBe(1);
+    expect(yield* outbox).toEqual([]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("an in-app banner nobody acknowledges goes out as a push after all", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-23T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    const received = yield* listenInApp("phone");
+    yield* push.reportForeground({ connectionId: "phone", foreground: true });
+
+    yield* runTurn(CHAT, "2026-09-23T09:00:00.000Z");
+    yield* TestClock.adjust("1 millis");
+    expect(received.length).toBe(1);
+    expect(yield* outbox).toEqual([]);
+    // The phone locked without a visibility event: no ack comes back.
+    yield* TestClock.adjust(`${PersonalPushService.IN_APP_ACK_TIMEOUT_MS} millis`);
+    yield* push.drain;
+    expect((yield* outbox).map((row) => row.eventId)).toEqual([
+      `chat-reply:${CHAT}:2026-09-23T09:00:00.000Z`,
+    ]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("in the background, stale or not listening, it is a web push as before", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-23T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+
+    // In front but not listening (an old page without the stream).
+    yield* push.reportForeground({ connectionId: "phone", foreground: true });
+    yield* runTurn(CHAT, "2026-09-23T09:00:00.000Z");
+    expect((yield* outbox).length).toBe(1);
+
+    // Listening but sent to the background.
+    const received = yield* listenInApp("phone");
+    yield* push.reportForeground({ connectionId: "phone", foreground: false });
+    yield* runTurn(CHAT, "2026-09-23T09:01:00.000Z");
+    expect((yield* outbox).length).toBe(2);
+
+    // Listening, but its last "in front" report is too old.
+    yield* push.reportForeground({ connectionId: "phone", foreground: true });
+    yield* TestClock.adjust("25 seconds");
+    yield* runTurn(CHAT, "2026-09-23T09:02:00.000Z");
+    expect((yield* outbox).length).toBe(3);
+    expect(received).toEqual([]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it("inAppPreview folds a reply into one short line", () => {
+  expect(PersonalPushService.inAppPreview("```ts\nconst x = 1;\n```\nAll *set*.")).toBe("All set.");
+  expect(PersonalPushService.inAppPreview("   \n ")).toBeUndefined();
+  const long = PersonalPushService.inAppPreview("word ".repeat(60))!;
+  expect(long.length).toBe(140);
+  expect(long.endsWith("…")).toBe(true);
 });

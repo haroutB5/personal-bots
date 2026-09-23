@@ -4,9 +4,11 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
@@ -22,6 +24,7 @@ import {
   type BotAvatarShape,
   type PersonalBot,
   type PersonalPushDevice,
+  type PersonalPushInAppNotification,
   type PersonalPushSettings,
   type PersonalPushSubscribeInput,
   type OrchestrationEvent,
@@ -47,7 +50,30 @@ import {
   type VapidKeyPair,
   type WebPushRequest,
 } from "./webPushCrypto.ts";
-import { ViewingPresence } from "./viewingPresence.ts";
+import { ForegroundPresence, ViewingPresence } from "./viewingPresence.ts";
+
+/**
+ * How long a page in front has to acknowledge an in-app notification before
+ * it goes out as web push after all (a phone that locked without a
+ * visibility event, or a socket that died quietly).
+ */
+export const IN_APP_ACK_TIMEOUT_MS = 5_000;
+/** In-app ids remembered so a replayed event does not show a second banner. */
+const IN_APP_RECENT_IDS = 200;
+const IN_APP_PREVIEW_CHARS = 140;
+
+/** One line of a reply for the in-app banner: markdown marks and runs of space folded away. */
+export function inAppPreview(text: string): string | undefined {
+  const line = text
+    .replace(/```[\s\S]*?(```|$)/g, " ")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[*`~]+/g, "")
+    .replace(/[#>|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (line.length === 0) return undefined;
+  return line.length > IN_APP_PREVIEW_CHARS ? `${line.slice(0, IN_APP_PREVIEW_CHARS - 1)}…` : line;
+}
 
 export const PERSONAL_PUSH_VAPID_SECRET = "personal-push-vapid";
 const PREFERENCES_META_KEY = "pushPreferences";
@@ -365,6 +391,20 @@ export class PersonalPushService extends Context.Service<
     }) => Effect.Effect<void>;
     /** The connection went away: it views nothing. */
     readonly dropConnection: (connectionId: string) => Effect.Effect<void>;
+    /** One connection says whether its app is on screen (heartbeat while it is). */
+    readonly reportForeground: (input: {
+      readonly connectionId: string;
+      readonly foreground: boolean;
+    }) => Effect.Effect<void>;
+    /**
+     * In-app notifications for one connection. While the stream is open and
+     * the connection reports itself in front, notifications come here instead
+     * of web push; one the page does not acknowledge within
+     * IN_APP_ACK_TIMEOUT_MS goes out as web push after all.
+     */
+    readonly inApp: (connectionId: string) => Stream.Stream<PersonalPushInAppNotification>;
+    /** The page showed (or deliberately skipped) an in-app notification. */
+    readonly ackInApp: (input: { readonly id: string }) => Effect.Effect<void>;
     /** Queues the one "provider is failing for your bots" alert for this version. */
     readonly notifyProviderBroken: (input: {
       readonly instanceId: string;
@@ -707,7 +747,115 @@ export const make = Effect.gen(function* () {
     });
 
   const dropConnection: PersonalPushService["Service"]["dropConnection"] = (connectionId) =>
-    Effect.sync(() => presence.drop(connectionId));
+    Effect.sync(() => {
+      presence.drop(connectionId);
+      foreground.drop(connectionId);
+    });
+
+  // In-app delivery (see PersonalPushService.inApp). One hub for every
+  // listening connection; each envelope names the connections it is for.
+  const foreground = new ForegroundPresence();
+  const inAppHub = yield* PubSub.unbounded<{
+    readonly targets: ReadonlyArray<string>;
+    readonly notification: PersonalPushInAppNotification;
+  }>();
+  const inAppAcks = new Map<string, Deferred.Deferred<void>>();
+  const inAppRecent: string[] = [];
+
+  const reportForeground: PersonalPushService["Service"]["reportForeground"] = (input) =>
+    Effect.gen(function* () {
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      foreground.report(input.connectionId, input.foreground, nowMs);
+    });
+
+  const inApp: PersonalPushService["Service"]["inApp"] = (connectionId) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const subscription = yield* PubSub.subscribe(inAppHub);
+        yield* Effect.acquireRelease(
+          Effect.sync(() => foreground.listen(connectionId)),
+          (release) => Effect.sync(release),
+        );
+        return Stream.fromSubscription(subscription).pipe(
+          Stream.filter((envelope) => envelope.targets.includes(connectionId)),
+          Stream.map((envelope) => envelope.notification),
+        );
+      }),
+    );
+
+  const ackInApp: PersonalPushService["Service"]["ackInApp"] = (input) =>
+    Effect.suspend(() => {
+      const waiting = inAppAcks.get(input.id);
+      return waiting === undefined ? Effect.void : Deferred.succeed(waiting, undefined);
+    }).pipe(Effect.asVoid);
+
+  /**
+   * Sends one notification by the right path. With a connection in front and
+   * listening, it goes over the socket as an in-app banner, and web push only
+   * if no page acknowledges it in time. Otherwise, or with nobody in front,
+   * it is queued for web push as before. One log line per notification says
+   * which path it took.
+   */
+  const deliver = (eventId: string, payload: PersonalPushPayload, preview?: string) =>
+    Effect.gen(function* () {
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      const targets = foreground.targets(nowMs);
+      const viaPush = (path: "push" | "push-after-in-app") =>
+        Effect.gen(function* () {
+          const queued = yield* enqueue(eventId, payload);
+          if (queued === 0) return;
+          yield* Effect.logInfo("personal notification path", { eventId, path });
+          yield* kick;
+        });
+      if (targets.length === 0) return yield* viaPush("push");
+      // A replayed event (same id) never shows a second banner.
+      if (inAppRecent.includes(eventId)) return;
+      inAppRecent.push(eventId);
+      if (inAppRecent.length > IN_APP_RECENT_IDS) inAppRecent.shift();
+      const acked = yield* Deferred.make<void>();
+      inAppAcks.set(eventId, acked);
+      const { tag: _tag, ...shown } = payload;
+      yield* PubSub.publish(inAppHub, {
+        targets,
+        notification: { id: eventId, ...shown, ...(preview === undefined ? {} : { preview }) },
+      });
+      yield* Effect.forkDetach(
+        Effect.gen(function* () {
+          const answer = yield* Deferred.await(acked).pipe(
+            Effect.timeoutOption(IN_APP_ACK_TIMEOUT_MS),
+          );
+          inAppAcks.delete(eventId);
+          if (Option.isSome(answer)) {
+            yield* Effect.logInfo("personal notification path", {
+              eventId,
+              path: "in-app",
+              connections: targets.length,
+            });
+            return;
+          }
+          yield* viaPush("push-after-in-app");
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("personal notifications could not fall back to push", {
+              eventId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        ),
+      );
+    });
+
+  /** The newest assistant text in a chat, for the in-app banner only. */
+  const latestReplyPreview = (threadId: string) =>
+    sql<{ readonly text: string }>`
+      SELECT text FROM projection_thread_messages
+      WHERE thread_id = ${threadId} AND role = 'assistant'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `.pipe(
+      Effect.map((rows) => (rows[0] === undefined ? undefined : inAppPreview(rows[0].text))),
+      Effect.orElseSucceed(() => undefined),
+    );
 
   const notifyTask: PersonalPushService["Service"]["notifyTask"] = (task) =>
     Effect.gen(function* () {
@@ -732,8 +880,7 @@ export const make = Effect.gen(function* () {
       const bot = yield* botRepository.getBotById({ botId: task.botId });
       // One event per transition: a replayed or re-published upsert dedupes.
       const eventId = `task:${task.taskId}:${task.status}:${DateTime.formatIso(task.updatedAt)}`;
-      const queued = yield* enqueue(eventId, pushPayloadForTask(kind, task, botIdentity(bot)));
-      if (queued > 0) yield* kick;
+      yield* deliver(eventId, pushPayloadForTask(kind, task, botIdentity(bot)));
     }).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
@@ -800,15 +947,15 @@ export const make = Effect.gen(function* () {
       if (!preferences[PREFERENCE_FOR.chat_reply]) return;
       const bot = yield* botRepository.getBotById({ botId: link.value.botId });
       const eventId = `chat-reply:${input.threadId}:${input.turnEndedAt}`;
-      const queued = yield* enqueue(
+      yield* deliver(
         eventId,
         chatReplyPushPayload({
           botId: link.value.botId,
           bot: botIdentity(bot),
           threadId: input.threadId,
         }),
+        yield* latestReplyPreview(input.threadId),
       );
-      if (queued > 0) yield* kick;
     }).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
@@ -846,7 +993,7 @@ export const make = Effect.gen(function* () {
       // A round is re-published on later writes; spoken.length separates one
       // Continue cycle's pause from the next while keeping replays silent.
       const eventId = `group-round:${round.roundId}:${round.status}:${String(round.spoken.length)}`;
-      const queued = yield* enqueue(
+      yield* deliver(
         eventId,
         groupRoundPushPayload({
           groupId: round.groupId,
@@ -855,7 +1002,6 @@ export const make = Effect.gen(function* () {
           hasVerdict: Number(group.hasVerdict) === 1,
         }),
       );
-      if (queued > 0) yield* kick;
     }).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
@@ -902,8 +1048,7 @@ export const make = Effect.gen(function* () {
       const preferences = yield* readPreferences;
       if (!preferences.taskFailed) return;
       const eventId = `provider-broken:${input.instanceId}:${input.version}`;
-      const queued = yield* enqueue(eventId, providerBrokenPushPayload(input));
-      if (queued > 0) yield* kick;
+      yield* deliver(eventId, providerBrokenPushPayload(input));
     }).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
@@ -952,6 +1097,9 @@ export const make = Effect.gen(function* () {
     ingestDomainEvent,
     reportViewing,
     dropConnection,
+    reportForeground,
+    inApp,
+    ackInApp,
     notifyProviderBroken,
     sweep: kick,
     drain: worker.drain,

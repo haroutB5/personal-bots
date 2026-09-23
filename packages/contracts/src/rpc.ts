@@ -385,6 +385,9 @@ import {
   PersonalPushTestInput,
   PersonalPushTestResult,
   PersonalPushViewingInput,
+  PersonalPushForegroundInput,
+  PersonalPushInAppAckInput,
+  PersonalPushInAppNotification,
 } from "./personalPush.ts";
 import { VcsError } from "./vcs.ts";
 
@@ -643,6 +646,9 @@ export const WS_METHODS = {
   personalPushTest: "personalPush.test",
   personalPushSetPreferences: "personalPush.setPreferences",
   personalPushReportViewing: "personalPush.reportViewing",
+  personalPushReportForeground: "personalPush.reportForeground",
+  personalPushInApp: "personalPush.inApp",
+  personalPushAckInApp: "personalPush.ackInApp",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -1669,6 +1675,26 @@ const WsPersonalPushReportViewingRpc = Rpc.make(WS_METHODS.personalPushReportVie
   error: EnvironmentAuthorizationError,
 });
 
+const WsPersonalPushReportForegroundRpc = Rpc.make(WS_METHODS.personalPushReportForeground, {
+  payload: PersonalPushForegroundInput,
+  success: Schema.Struct({}),
+  error: EnvironmentAuthorizationError,
+});
+
+/** In-app notifications for this connection while it is in front (see PersonalPushForegroundInput). */
+const WsPersonalPushInAppRpc = Rpc.make(WS_METHODS.personalPushInApp, {
+  payload: Schema.Struct({}),
+  success: PersonalPushInAppNotification,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsPersonalPushAckInAppRpc = Rpc.make(WS_METHODS.personalPushAckInApp, {
+  payload: PersonalPushInAppAckInput,
+  success: Schema.Struct({}),
+  error: EnvironmentAuthorizationError,
+});
+
 const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   payload: ProjectSearchEntriesInput,
   success: ProjectSearchEntriesResult,
@@ -2327,6 +2353,9 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalPushTestRpc,
   WsPersonalPushSetPreferencesRpc,
   WsPersonalPushReportViewingRpc,
+  WsPersonalPushReportForegroundRpc,
+  WsPersonalPushInAppRpc,
+  WsPersonalPushAckInAppRpc,
 );
 
 /**

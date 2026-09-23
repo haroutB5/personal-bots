@@ -93,6 +93,38 @@ export const PersonalPushViewingInput = Schema.Struct({
 });
 export type PersonalPushViewingInput = typeof PersonalPushViewingInput.Type;
 
+/**
+ * Whether this connection's app is on screen right now. Sent on visibility
+ * changes and as a heartbeat while visible. While a connection is in front
+ * and listening (personalPush.inApp), notifications arrive over the socket as
+ * in-app banners instead of web push: on iOS a home-screen app in the
+ * foreground gets no usable notification tap.
+ */
+export const PersonalPushForegroundInput = Schema.Struct({
+  foreground: Schema.Boolean,
+});
+export type PersonalPushForegroundInput = typeof PersonalPushForegroundInput.Type;
+
+/**
+ * One in-app notification: the web push payload plus an id to acknowledge it
+ * by, and (chat replies only) a short preview. The preview travels only over
+ * the app's own socket, never to a push service.
+ */
+export const PersonalPushInAppNotification = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  body: Schema.String,
+  url: Schema.String,
+  preview: Schema.optional(Schema.String),
+  avatarShape: Schema.optional(BotAvatarShape),
+  avatarColor: Schema.optional(BotAvatarColor),
+});
+export type PersonalPushInAppNotification = typeof PersonalPushInAppNotification.Type;
+
+/** The page showed (or deliberately skipped) an in-app notification. */
+export const PersonalPushInAppAckInput = Schema.Struct({ id: Schema.String });
+export type PersonalPushInAppAckInput = typeof PersonalPushInAppAckInput.Type;
+
 /** What a notification carries: never message text, only a title and a deep link. */
 export const PersonalPushPayload = Schema.Struct({
   title: Schema.String,
