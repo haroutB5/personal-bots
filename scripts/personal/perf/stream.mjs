@@ -19,7 +19,10 @@ const args = Object.fromEntries(
 const origin = resolveOrigin(args.origin ?? "local");
 const cpu = Number(args.cpu ?? 4);
 const botPath = args.botPath ?? "/bots/personal-seed-assistant";
-const off = ["rum", ...(typeof args.off === "string" ? args.off.split(",") : [])];
+const off = [
+  ...(args.rum ? [] : ["rum"]),
+  ...(typeof args.off === "string" ? args.off.split(",") : []),
+];
 const probeSource = NodeFS.readFileSync(new URL("./probe.js", import.meta.url), "utf8");
 const PROMPT =
   "Answer without using any tools. Write a markdown reply of about 70 lines: a short intro, " +
