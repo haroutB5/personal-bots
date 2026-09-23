@@ -585,7 +585,7 @@ it.effect("a broadcast gathers contributions then delivers exactly one final ver
     const followUp = turnStarts(harness).at(-1)!.message.text;
     expect(followUp).toContain("Dev: We need another day for testing.");
     expect(followUp).toContain("Planner: Monday gives us time to test.");
-    expect(followUp).toContain("ONE final verdict");
+    expect(followUp).toContain("one final verdict");
     expect(followUp).toContain("what do we do about the release?");
     yield* speak(harness, "Agreed, Monday is safer.");
     expect((yield* currentRound).status).toBe("completed");
