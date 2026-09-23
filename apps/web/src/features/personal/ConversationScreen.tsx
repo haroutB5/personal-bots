@@ -102,6 +102,7 @@ import { diagnosticsEnabled, DiagnosticsOverlay } from "./DiagnosticsOverlay";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { useReportViewingThread } from "./useReportViewingThread";
 import { markMessageSent, observeChatMessages, reportChatUsable } from "./perfRum";
+import { warmHighlighterWhenIdle } from "./highlighterWarmup";
 import { PersonalComposer } from "./PersonalComposer";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { useStartBotChat } from "./startBotChat";
@@ -276,7 +277,10 @@ export function ConversationScreen({
   // Real-user timings (perfRum.ts): chat usable, then send -> echo -> first reply text.
   const usableThreadId = thread !== null ? threadId : null;
   useEffect(() => {
-    if (usableThreadId !== null) reportChatUsable(window.location.pathname);
+    if (usableThreadId === null) return;
+    reportChatUsable(window.location.pathname);
+    // Compile the code-highlighting grammars before a reply needs them.
+    warmHighlighterWhenIdle();
   }, [usableThreadId]);
   useEffect(() => {
     observeChatMessages(threadId, messages);
