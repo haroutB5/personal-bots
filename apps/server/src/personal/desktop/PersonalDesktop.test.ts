@@ -173,15 +173,51 @@ describe("PersonalDesktop", () => {
     }),
   );
 
-  it.live("a bot waiting too long is told who has the PC and leaves the line", () =>
+  it.live("a wait that runs out keeps the bot's place until the grace period lapses", () =>
     Effect.gen(function* () {
+      let clock = 0;
       const driver = new FakeDriver();
-      const { service } = yield* makeDesktopService({ driver, queueWaitMs: 20 });
+      const { service, sweep } = yield* makeDesktopService({
+        driver,
+        now: () => clock,
+        queueWaitMs: 20,
+        lineGraceMs: 1_000,
+      });
       yield* service.act(ada, "click", () => Promise.resolve(null));
       const exit = yield* service.act(bob, "click", () => Promise.resolve(null)).pipe(Effect.exit);
       expect(failureOf(exit)?.kind).toBe("busy");
-      expect(failureOf(exit)?.reason).toContain("Ada is still using the PC");
+      expect(failureOf(exit)?.reason).toContain("Ada is using the PC");
+      expect(failureOf(exit)?.reason).toContain("number 1 in line");
+      // Still in line, so the chat keeps saying it waits for the computer.
+      expect((yield* service.status).waiting.map((entry) => entry.botName)).toEqual(["Bob"]);
+
+      clock = 500;
+      yield* sweep;
+      expect((yield* service.status).waiting.map((entry) => entry.botName)).toEqual(["Bob"]);
+      clock = 1_000;
+      yield* sweep;
       expect((yield* service.status).waiting).toEqual([]);
+    }),
+  );
+
+  it.live("a bot promoted between calls keeps the PC only for the grace period", () =>
+    Effect.gen(function* () {
+      let clock = 0;
+      const driver = new FakeDriver();
+      const { service, sweep } = yield* makeDesktopService({
+        driver,
+        now: () => clock,
+        queueWaitMs: 20,
+        lineGraceMs: 1_000,
+        idleTimeoutMs: 120_000,
+      });
+      yield* service.act(ada, "click", () => Promise.resolve(null));
+      yield* service.act(bob, "click", () => Promise.resolve(null)).pipe(Effect.exit);
+      yield* service.release(ada.threadId);
+      expect((yield* service.status).holder?.botName).toBe("Bob");
+      clock = 1_000;
+      yield* sweep;
+      expect((yield* service.status).holder).toBeNull();
     }),
   );
 

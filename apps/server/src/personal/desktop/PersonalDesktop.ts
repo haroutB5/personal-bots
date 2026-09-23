@@ -43,15 +43,25 @@ import {
 import { DesktopCoordinateError, type ScreenFrame } from "./desktopGeometry.ts";
 import { DesktopKeyError } from "./desktopKeys.ts";
 
-/** How long a bot waits in line inside one tool call before being told to try later. */
-export const DESKTOP_QUEUE_WAIT_MS = 5 * 60_000;
-const IDLE_SWEEP_MS = 10_000;
+/**
+ * How long one tool call waits in line. Claude's MCP client gives up on a
+ * tool call after 60 s ("The operation timed out."), so the wait has to end
+ * well inside that and hand the bot a sentence it can act on.
+ */
+export const DESKTOP_QUEUE_WAIT_MS = 45_000;
+/**
+ * A bot whose wait ran out keeps its place this long, so calling again keeps
+ * it in line (and its status says so) instead of starting at the back.
+ */
+export const DESKTOP_LINE_GRACE_MS = 60_000;
+const IDLE_SWEEP_MS = 5_000;
 
 export type DesktopActionErrorKind =
   | "unavailable"
   | "stopped"
   | "busy"
   | "user_active"
+  | "locked"
   | "invalid"
   | "failed";
 
@@ -116,6 +126,7 @@ export interface DesktopServiceOptions {
   readonly now?: () => number;
   readonly idleTimeoutMs?: number;
   readonly queueWaitMs?: number;
+  readonly lineGraceMs?: number;
   /** Overlay left visible to screenshots, for evidence captures. */
   readonly overlayCapturable?: boolean;
 }
@@ -135,6 +146,11 @@ function helperFailure(error: unknown): PersonalDesktopActionError {
         return new PersonalDesktopActionError({
           kind: "user_active",
           reason: `${error.message} Nothing more was done. Wait a few seconds, take a fresh screenshot and try again; if the user keeps using the PC, ask them whether you should continue.`,
+        });
+      case "locked":
+        return new PersonalDesktopActionError({
+          kind: "locked",
+          reason: `${error.message} Nothing was clicked or typed. Never try to unlock it or type a password: ask the user to unlock their PC, then try again.`,
         });
       case "unavailable":
         return new PersonalDesktopActionError({ kind: "unavailable", reason: error.message });
@@ -157,7 +173,14 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
     const now = options.now ?? Date.now;
     const driver = options.driver;
     const lock = new DesktopLockCore(options.idleTimeoutMs ?? DESKTOP_IDLE_TIMEOUT_MS);
+
     const queueWaitMs = options.queueWaitMs ?? DESKTOP_QUEUE_WAIT_MS;
+    const lineGraceMs = options.lineGraceMs ?? DESKTOP_LINE_GRACE_MS;
+    const idleTimeoutMs = options.idleTimeoutMs ?? DESKTOP_IDLE_TIMEOUT_MS;
+    /** When a bot whose call stopped waiting loses its place in line. */
+    const lineDeadlines = new Map<string, number>();
+    /** Tool calls currently waiting in line, per chat. */
+    const activeWaits = new Map<string, number>();
     const waiters = new Map<string, Waiter>();
     const frames = new Map<string, ScreenFrame>();
     /** Chats the user stopped, refused until their turn ends. */
@@ -215,9 +238,17 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
     const applyHandOver = (handOver: HandOver) => {
       if (handOver.previous !== null) frames.delete(handOver.previous.threadId);
       if (handOver.promoted !== null) {
-        const waiter = waiters.get(handOver.promoted.threadId);
-        waiters.delete(handOver.promoted.threadId);
+        const promoted = handOver.promoted.threadId;
+        const waiter = waiters.get(promoted);
+        waiters.delete(promoted);
+        lineDeadlines.delete(promoted);
         waiter?.resolve();
+        // Promoted between two of its calls: nobody is there to use the PC
+        // yet, so it only keeps it for the grace period, not the full idle
+        // timeout, before the next bot gets a turn.
+        if ((activeWaits.get(promoted) ?? 0) === 0) {
+          lock.touch(promoted, now() - idleTimeoutMs + lineGraceMs);
+        }
       }
       if (handOver.previous !== null || handOver.promoted !== null) {
         syncOverlay();
@@ -240,6 +271,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
 
     const stopAllNow = (by: PersonalDesktopStopReason) => {
       const { stopped: holder, turnedAway } = lock.stopAll();
+      lineDeadlines.clear();
       const error = new PersonalDesktopActionError({ kind: "stopped", reason: STOPPED_REASON });
       if (holder !== null) {
         stopped.add(holder.threadId);
@@ -279,6 +311,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
     const leaveLine = (threadId: string) => {
       const waiter = waiters.get(threadId);
       waiters.delete(threadId);
+      lineDeadlines.delete(threadId);
       if (lock.leaveLine(threadId)) publish();
       return waiter;
     };
@@ -298,31 +331,53 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
           publish();
           return Effect.void;
         }
+        lineDeadlines.delete(claimant.threadId);
         publish();
-        const holderName = claim.holder.botName;
+        const threadId = claimant.threadId;
+        // Stops waiting without giving up the place in line.
+        const keepPlace = () => {
+          activeWaits.set(threadId, Math.max(0, (activeWaits.get(threadId) ?? 1) - 1));
+          if (lock.waiting.some((entry) => entry.threadId === threadId)) {
+            lineDeadlines.set(threadId, now() + lineGraceMs);
+          }
+        };
+        activeWaits.set(threadId, (activeWaits.get(threadId) ?? 0) + 1);
         return Effect.tryPromise({
           try: (signal) =>
             new Promise<void>((resolve, reject) => {
+              let settled = false;
               const timer = setTimeout(() => {
-                leaveLine(claimant.threadId);
+                if (settled) return;
+                settled = true;
+                keepPlace();
+                const position = lock.waiting.findIndex((entry) => entry.threadId === threadId) + 1;
+                const holderName = lock.holder?.botName ?? claim.holder.botName;
                 reject(
                   new PersonalDesktopActionError({
                     kind: "busy",
-                    reason: `${holderName} is still using the PC after ${Math.round(queueWaitMs / 60_000)} minutes of waiting. Nothing was done. Carry on with other work or try again later; tell the user if you need the PC urgently.`,
+                    reason: `${holderName} is using the PC. Nothing was done. You are number ${Math.max(1, position)} in line and keep that place for the next minute: call the same tool again now to keep waiting, or carry on with other work and tell the user you are waiting for the PC.`,
                   }),
                 );
               }, queueWaitMs);
               signal.addEventListener("abort", () => {
+                if (settled) return;
+                settled = true;
                 clearTimeout(timer);
-                leaveLine(claimant.threadId);
+                keepPlace();
               });
               waitForTurn(claimant).then(
                 () => {
+                  if (settled) return;
+                  settled = true;
                   clearTimeout(timer);
+                  activeWaits.set(threadId, Math.max(0, (activeWaits.get(threadId) ?? 1) - 1));
                   resolve();
                 },
                 (error: unknown) => {
+                  if (settled) return;
+                  settled = true;
                   clearTimeout(timer);
+                  activeWaits.set(threadId, Math.max(0, (activeWaits.get(threadId) ?? 1) - 1));
                   reject(error);
                 },
               );
@@ -412,8 +467,17 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
         status: Effect.sync(snapshot),
         changes: Stream.fromPubSub(pubsub),
       }),
-      /** Drops a holder idle past the timeout; the layer runs it on a timer. */
-      sweep: Effect.sync(expireIdle),
+      /**
+       * Drops a holder idle past the timeout and bots whose place in line
+       * lapsed; the layer runs it on a timer.
+       */
+      sweep: Effect.sync(() => {
+        const at = now();
+        for (const [threadId, deadline] of lineDeadlines) {
+          if (at >= deadline) leaveLine(threadId);
+        }
+        expireIdle();
+      }),
     };
   });
 

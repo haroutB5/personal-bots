@@ -21,7 +21,8 @@ import { STOPPED_REASON, PersonalDesktopActionError } from "./PersonalDesktop.ts
 
 export const DEFAULT_SETTLE_MS = 250;
 export const MAX_SETTLE_MS = 5_000;
-export const MAX_TYPE_CHARS = 5_000;
+/** Keeps one typing call well inside the MCP client's 60 s tool timeout. */
+export const MAX_TYPE_CHARS = 2_000;
 
 export interface DesktopShot {
   readonly note?: string;
@@ -56,10 +57,12 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 const num = (value: unknown): number => (typeof value === "number" ? value : Number(value));
 
-async function readMonitors(context: DesktopActionContext): Promise<DesktopMonitor[]> {
+async function readScreens(
+  context: DesktopActionContext,
+): Promise<{ monitors: DesktopMonitor[]; locked: boolean }> {
   const info = await context.driver.request("info");
   const raw = Array.isArray(info.monitors) ? info.monitors : [];
-  return raw.map((entry: Record<string, unknown>) => ({
+  const monitors = raw.map((entry: Record<string, unknown>) => ({
     index: num(entry.index),
     primary: entry.primary === true,
     x: num(entry.x),
@@ -69,6 +72,7 @@ async function readMonitors(context: DesktopActionContext): Promise<DesktopMonit
     dpi: num(entry.dpi) || 96,
     name: String(entry.name ?? ""),
   }));
+  return { monitors, locked: info.locked === true };
 }
 
 function requireFrame(context: DesktopActionContext): ScreenFrame {
@@ -85,7 +89,7 @@ export async function captureShot(
   context: DesktopActionContext,
   monitor?: number | "all",
 ): Promise<DesktopShot> {
-  const monitors = await readMonitors(context);
+  const { monitors, locked } = await readScreens(context);
   const target = captureRegion(monitors, monitor ?? context.frame?.monitor);
   const frame = makeFrame(target.region, target.monitor);
   const shot = await context.driver.request("screenshot", {
@@ -98,6 +102,11 @@ export async function captureShot(
   const cursor = await context.driver.request("cursor");
   context.setFrame(frame);
   return {
+    ...(locked
+      ? {
+          note: "The PC is locked (or a secure Windows prompt is showing): clicks and typing are refused until the user unlocks it. Never try to unlock it yourself.",
+        }
+      : {}),
     screenshot: {
       mimeType: String(shot.mimeType ?? "image/png"),
       data: String(shot.data),
@@ -261,7 +270,11 @@ export async function typeText(
       `That is ${input.text.length} characters; type at most ${MAX_TYPE_CHARS} per call.`,
     );
   }
-  await context.driver.request("type", { text: input.text }, 30_000 + input.text.length * 25);
+  await context.driver.request(
+    "type",
+    { text: input.text },
+    Math.min(55_000, 10_000 + input.text.length * 20),
+  );
   return afterAction(context, input);
 }
 
@@ -271,7 +284,11 @@ export async function pressKeys(
 ): Promise<DesktopShot> {
   const combos = parseKeyCombos(input.keys);
   const repeat = Math.max(1, Math.min(50, input.repeat ?? 1));
-  await context.driver.request("keys", { combos, repeat }, 30_000 + repeat * combos.length * 200);
+  await context.driver.request(
+    "keys",
+    { combos, repeat },
+    Math.min(55_000, 10_000 + repeat * combos.length * 200),
+  );
   return afterAction(context, input);
 }
 

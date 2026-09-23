@@ -139,7 +139,7 @@ export const ScrollInput = Schema.Struct({
 export const TypeInput = Schema.Struct({
   text: Schema.String.annotate({
     description:
-      "Text typed at the keyboard focus, as a person would type it. \\n presses Enter. At most 5000 characters.",
+      "Text typed at the keyboard focus, as a person would type it. \\n presses Enter. At most 2000 characters per call.",
   }),
   screenshot: ScreenshotAfter,
   settleMs: SettleMs,
@@ -171,7 +171,7 @@ export const ReleaseResult = Schema.Struct({
 });
 
 const SHARED =
-  "It drives the user's real Windows PC (one bot at a time; you may wait in line while another bot has it). Coordinates are pixels in your latest computer_screenshot.";
+  "It drives the user's real Windows PC, one bot at a time: while another bot has it you wait in line, and if the wait runs out you are told to call again to keep your place. Coordinates are pixels in your latest computer_screenshot.";
 
 export const ComputerScreenshotTool = Tool.make("computer_screenshot", {
   description: `See the user's real Windows desktop: returns an image of one monitor (the primary by default), the monitor list, and where the mouse pointer is. Take one before your first action and whenever you need to look again; every later coordinate refers to the latest one. ${SHARED}`,

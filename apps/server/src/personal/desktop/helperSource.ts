@@ -52,6 +52,11 @@ static class Native {
   [DllImport("user32.dll")] public static extern bool GetIconInfo(IntPtr icon, out ICONINFO info);
   [DllImport("gdi32.dll")] public static extern bool DeleteObject(IntPtr obj);
   [DllImport("user32.dll")] public static extern uint GetDoubleClickTime();
+  [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+  [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr desktop);
+  [DllImport("wtsapi32.dll", SetLastError = true)] public static extern bool WTSQuerySessionInformation(IntPtr server, int session, int infoClass, out IntPtr buffer, out int bytes);
+  [DllImport("wtsapi32.dll")] public static extern void WTSFreeMemory(IntPtr memory);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool GetUserObjectInformation(IntPtr obj, int index, StringBuilder info, int length, out int needed);
 
   public delegate bool MonitorEnumProc(IntPtr monitor, IntPtr hdc, ref RECT rect, IntPtr data);
   public delegate IntPtr HookProc(int code, IntPtr w, IntPtr l);
@@ -294,9 +299,39 @@ public static class PbDesktopHelper {
     }
   }
 
+  // Locked: the session reports it (the lock screen curtain is an app on the
+  // user's own desktop, so only the session knows), or the input desktop is
+  // not "Default" (sign-in box, UAC prompt, Ctrl+Alt+Del run on "Winlogon",
+  // which this process cannot even open).
+  static bool Locked() {
+    IntPtr info;
+    int bytes;
+    if (Native.WTSQuerySessionInformation(IntPtr.Zero, -1, 25, out info, out bytes)) {
+      try {
+        // WTSINFOEX: Level (DWORD), then WTSINFOEX_LEVEL1: SessionId, SessionState, SessionFlags.
+        int flags = Marshal.ReadInt32(info, 12);
+        if (flags == 0) return true;
+      } finally {
+        Native.WTSFreeMemory(info);
+      }
+    }
+    IntPtr desktop = Native.OpenInputDesktop(0, false, 0x0001);
+    if (desktop == IntPtr.Zero) return true;
+    try {
+      StringBuilder name = new StringBuilder(256);
+      int needed;
+      if (!Native.GetUserObjectInformation(desktop, 2, name, name.Capacity * 2, out needed)) return false;
+      return !string.Equals(name.ToString(), "Default", StringComparison.OrdinalIgnoreCase);
+    } finally {
+      Native.CloseDesktop(desktop);
+    }
+  }
+
   // Waits for the user's own mouse and keyboard to go quiet before injecting,
-  // so a bot never fights a person who is using the PC.
+  // so a bot never fights a person who is using the PC. Never injects into
+  // the lock screen or a secure prompt, where keys could land in a password box.
   static void GuardUser(Dictionary<string, object> r) {
+    if (Locked()) throw new HelperError("locked", "The PC is locked, or a secure Windows prompt is showing.");
     int quietMs = IntOr(r, "quietMs", 1200);
     int maxWaitMs = IntOr(r, "maxWaitMs", 8000);
     int gen = abortGeneration;
@@ -344,7 +379,7 @@ public static class PbDesktopHelper {
       monitors.Add(Dict("index", m.Index, "primary", m.Primary, "x", m.Bounds.X, "y", m.Bounds.Y,
         "width", m.Bounds.Width, "height", m.Bounds.Height, "dpi", m.Dpi, "name", m.Name));
     }
-    return Dict("monitors", monitors,
+    return Dict("monitors", monitors, "locked", Locked(),
       "virtual", Dict("x", Native.GetSystemMetrics(76), "y", Native.GetSystemMetrics(77),
         "width", Native.GetSystemMetrics(78), "height", Native.GetSystemMetrics(79)));
   }
