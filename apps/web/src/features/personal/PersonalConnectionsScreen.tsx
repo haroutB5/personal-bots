@@ -185,7 +185,7 @@ function TokenForm({
           disabled={busy}
           className="h-11 flex-1 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-surface)] disabled:opacity-40"
         >
-          {busy ? "Checking..." : "Save and check"}
+          {busy ? "Checking…" : "Save and check"}
         </button>
         <button type="button" onClick={onDone} className={`${ACTION_CLASS} px-5`}>
           Cancel
@@ -242,7 +242,7 @@ function ImportPanel({ onClose }: { onClose: () => void }): JSX.Element {
           disabled={busy !== null}
           className={ACTION_CLASS}
         >
-          {busy === "scan" ? "Checking..." : "Check this computer"}
+          {busy === "scan" ? "Checking…" : "Check this computer"}
         </button>
         <button type="button" onClick={onClose} className={ACTION_CLASS}>
           Close
@@ -274,7 +274,7 @@ function ImportPanel({ onClose }: { onClose: () => void }): JSX.Element {
                 disabled={busy !== null}
                 className={ACTION_CLASS}
               >
-                {busy === candidate.candidateId ? "Checking..." : "Use this"}
+                {busy === candidate.candidateId ? "Checking…" : "Use this"}
               </button>
             </div>
           ))}
@@ -353,7 +353,7 @@ function SendCapField({ connection }: { connection: PersonalConnection }): JSX.E
           disabled={busy}
           className={`${ACTION_CLASS} px-5`}
         >
-          {busy ? "Saving..." : "Save"}
+          {busy ? "Saving…" : "Save"}
         </button>
       </div>
       <p className="mt-1.5 text-[13px] leading-snug text-[var(--personal-text-secondary)]">
@@ -498,7 +498,7 @@ export function PersonalConnectionsScreen(): JSX.Element {
 
       {connectionsQuery.data === null ? (
         <p className="mt-6 text-[15px] text-[var(--personal-text-secondary)]">
-          {connectionsQuery.error ?? "Loading..."}
+          {connectionsQuery.error ?? "Loading…"}
         </p>
       ) : (
         <ul className="mt-4 flex flex-col gap-3">

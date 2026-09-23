@@ -82,7 +82,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: PersonalRoutineI
       <div className="px-5">
         {header}
         <p className="mt-6 text-[15px] text-[var(--personal-text-secondary)]">
-          {routinesQuery.data === null ? "Loading..." : "This routine was not found."}
+          {routinesQuery.data === null ? "Loading…" : "This routine was not found."}
         </p>
       </div>
     );

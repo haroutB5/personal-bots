@@ -126,7 +126,7 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
       <div className="px-5">
         {header}
         <p className="mt-6 text-[15px] text-[var(--personal-text-secondary)]">
-          {tasks === null || detail.isPending ? "Loading..." : "This task was not found."}
+          {tasks === null || detail.isPending ? "Loading…" : "This task was not found."}
         </p>
       </div>
     );

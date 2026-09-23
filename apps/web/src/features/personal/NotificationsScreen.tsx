@@ -198,7 +198,7 @@ export function NotificationsScreen(): JSX.Element {
       <section className={CARD}>
         <h2 className="text-[15px] font-semibold text-[var(--personal-text)]">This device</h2>
         {support === "checking" ? (
-          <p className="mt-1 text-[14px] text-[var(--personal-text-secondary)]">Checking...</p>
+          <p className="mt-1 text-[14px] text-[var(--personal-text-secondary)]">Checking…</p>
         ) : support === "not-installed" ? (
           <p className="mt-1 text-[14px] leading-snug text-[var(--personal-text-secondary)]">
             Add Bots to your Home Screen first. In Safari, tap Share, then Add to Home Screen, and

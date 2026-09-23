@@ -214,7 +214,7 @@ export function FilePreviewSheet({
                 className="flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] px-4 text-[15px] font-semibold text-[var(--personal-error)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50"
               >
                 <Trash2 aria-hidden="true" className="size-[18px]" strokeWidth={1.75} />
-                {deleting ? "Deleting..." : "Delete"}
+                {deleting ? "Deleting…" : "Delete"}
               </button>
             </div>
           </>

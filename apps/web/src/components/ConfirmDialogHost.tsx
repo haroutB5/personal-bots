@@ -123,7 +123,14 @@ export function ConfirmDialogHost() {
           <Button
             variant={confirmVariant}
             onClick={onConfirm}
-            className={cn(personal && "max-sm:h-11 max-sm:text-[15px]")}
+            className={cn(
+              personal && "max-sm:h-11 max-sm:text-[15px]",
+              // The app's own delete red (the swipe-to-delete action), which
+              // keeps 5.8:1 with its label, not the upstream palette's.
+              personal &&
+                confirmVariant === "destructive" &&
+                "border-transparent bg-[var(--personal-destructive)] text-[var(--personal-destructive-text)] hover:bg-[var(--personal-destructive)]/90",
+            )}
           >
             {confirmLabel}
           </Button>

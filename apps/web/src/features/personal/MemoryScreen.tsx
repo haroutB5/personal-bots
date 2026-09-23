@@ -124,7 +124,7 @@ export function MemoryScreen(): JSX.Element {
 
       {memory.data === null ? (
         <p className="mt-6 text-[15px] text-[var(--personal-text-secondary)]">
-          {memory.error ?? "Loading..."}
+          {memory.error ?? "Loading…"}
         </p>
       ) : visible.length === 0 ? (
         <p className="mt-10 text-center text-[15px] text-[var(--personal-text-secondary)]">

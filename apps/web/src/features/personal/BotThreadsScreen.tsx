@@ -245,26 +245,30 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
 
       {bot !== null && environmentId !== null ? (
         <>
-          <button
-            type="button"
-            onClick={() => void start()}
-            disabled={starting}
-            aria-busy={starting}
-            className="mt-3 flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
-          >
-            <Plus aria-hidden="true" className="size-5" strokeWidth={1.75} />
-            New chat
-          </button>
-          <button
-            type="button"
-            onClick={() => void onWrapup()}
-            disabled={wrapupDisabled}
-            aria-busy={wrapupSending}
-            className="mt-3 flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[15px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
-          >
-            <NotebookPen aria-hidden="true" className="size-5" strokeWidth={1.75} />
-            Wrapup
-          </button>
+          {/* Stacked on the phone; side by side on desktop, where two
+              full-width 800px slabs read as banners rather than buttons. */}
+          <div className="mt-3 flex flex-col gap-3 md:flex-row">
+            <button
+              type="button"
+              onClick={() => void start()}
+              disabled={starting}
+              aria-busy={starting}
+              className="flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] md:flex-1 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
+            >
+              <Plus aria-hidden="true" className="size-5" strokeWidth={1.75} />
+              New chat
+            </button>
+            <button
+              type="button"
+              onClick={() => void onWrapup()}
+              disabled={wrapupDisabled}
+              aria-busy={wrapupSending}
+              className="flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] md:flex-1 text-[15px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
+            >
+              <NotebookPen aria-hidden="true" className="size-5" strokeWidth={1.75} />
+              Wrapup
+            </button>
+          </div>
           {wrapupError !== null ? (
             <p role="alert" className="mt-2 text-center text-sm text-[var(--personal-error)]">
               {wrapupError}

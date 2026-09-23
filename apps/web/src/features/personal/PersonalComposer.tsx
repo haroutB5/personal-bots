@@ -703,7 +703,7 @@ export function PersonalComposer({
             // The caret can move without the text changing (tap, arrow keys),
             // and a mention token is defined by where the caret is.
             onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? prompt.length)}
-            placeholder={botName === null ? "Message..." : `Message ${botName}...`}
+            placeholder={botName === null ? "Message…" : `Message ${botName}…`}
             enterKeyHint={isCoarsePointer() ? "enter" : "send"}
             className="block w-full resize-none bg-transparent py-[11px] text-base leading-[22px] text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)]"
           />

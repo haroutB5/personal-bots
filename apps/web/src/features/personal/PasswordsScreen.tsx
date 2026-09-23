@@ -333,12 +333,24 @@ export function PasswordsScreen(): JSX.Element {
 
       {loginsQuery.data === null ? (
         <p className="mt-6 text-[15px] text-[var(--personal-text-secondary)]">
-          {loginsQuery.error ?? "Loading..."}
+          {loginsQuery.error ?? "Loading…"}
         </p>
       ) : logins.length === 0 ? (
-        <p className="mt-10 text-center text-[15px] text-[var(--personal-text-secondary)]">
-          No logins saved yet.
-        </p>
+        // The same empty state as the Chats list (headline, one line, the
+        // action), instead of a lone grey sentence under the header's "+".
+        <div className="mt-10 flex flex-col items-center gap-3 text-center">
+          <p className="text-lg font-semibold text-[var(--personal-text)]">No logins yet</p>
+          <p className="max-w-[300px] text-[15px] leading-snug text-[var(--personal-text-secondary)]">
+            Save a site's login once and any bot can sign in to it for you.
+          </p>
+          <button
+            type="button"
+            onClick={() => setEditing("new")}
+            className="mt-2 flex h-11 items-center rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-5 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]"
+          >
+            Save a login
+          </button>
+        </div>
       ) : (
         <ul className="mt-4 overflow-hidden rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] divide-y divide-[var(--personal-border)]">
           {logins.map((login) => (

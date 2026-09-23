@@ -226,7 +226,7 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
       {loadError !== null ? (
         <p className="mt-6 text-[15px] text-[var(--personal-text-secondary)]">{loadError}</p>
       ) : loading ? (
-        <p className="mt-6 text-[15px] text-[var(--personal-text-secondary)]">Loading...</p>
+        <p className="mt-6 text-[15px] text-[var(--personal-text-secondary)]">Loading…</p>
       ) : view === "scheduled" ? (
         routines.length === 0 ? (
           <EmptyList text={EMPTY_TEXT.scheduled} withNewRoutine />
