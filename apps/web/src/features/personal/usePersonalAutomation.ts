@@ -1,4 +1,9 @@
-import type { EnvironmentId, PersonalTask, PersonalTaskId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PersonalPushInAppNotification,
+  PersonalTask,
+  PersonalTaskId,
+} from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
 import {
   createEnvironmentRpcCommand,
@@ -163,6 +168,39 @@ export const personalPushReportViewing = createEnvironmentRpcCommand(connectionA
   label: "personal-push:report-viewing",
   tag: WS_METHODS.personalPushReportViewing,
 });
+
+/** Presence only: "the app is on screen" (see InAppNotifications). */
+export const personalPushReportForeground = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-push:report-foreground",
+  tag: WS_METHODS.personalPushReportForeground,
+});
+
+export const personalPushAckInApp = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-push:ack-in-app",
+  tag: WS_METHODS.personalPushAckInApp,
+});
+
+/** How many recent in-app notifications the feed keeps; the banner shows the newest. */
+export const IN_APP_FEED_KEEP = 5;
+
+/**
+ * In-app notifications for this connection, newest last. A short list rather
+ * than only the latest, so two arriving in one render are both seen (and
+ * acknowledged) by id.
+ */
+export const personalPushInAppFeed = createEnvironmentRpcSubscriptionAtomFamily(
+  connectionAtomRuntime,
+  {
+    label: "personal-push:in-app",
+    tag: WS_METHODS.personalPushInApp,
+    transform: (stream) =>
+      stream.pipe(
+        Stream.scan([] as ReadonlyArray<PersonalPushInAppNotification>, (recent, notification) =>
+          [...recent, notification].slice(-IN_APP_FEED_KEEP),
+        ),
+      ),
+  },
+);
 
 export function usePersonalTasks(environmentId: EnvironmentId | null) {
   const atom = useMemo(

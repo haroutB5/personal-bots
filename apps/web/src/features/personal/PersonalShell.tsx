@@ -14,6 +14,7 @@ import {
   sidebarWidthCss,
   useChatSidePanel,
 } from "./desktopColumns";
+import { InAppNotifications } from "./InAppNotifications";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
 import {
   activeTabFor,
@@ -71,6 +72,7 @@ export function PersonalShell(): JSX.Element {
           <Outlet />
         </main>
         {activeTab !== null ? <PersonalTabBar active={activeTab} /> : null}
+        <InAppNotifications />
       </div>
     );
   }
@@ -130,6 +132,7 @@ export function PersonalShell(): JSX.Element {
           )}
         </div>
       </main>
+      <InAppNotifications />
     </div>
   );
 }

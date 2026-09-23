@@ -493,3 +493,25 @@
     background: color-mix(in srgb, var(--personal-fill-muted) 55%, transparent);
   }
 }
+
+/* In-app notification banner (InAppNotifications.tsx): slides down on arrival. */
+@keyframes personal-in-app-in {
+  from {
+    transform: translateY(-120%);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.personal-in-app-banner > div {
+  animation: personal-in-app-in 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .personal-in-app-banner > div {
+    animation: none;
+  }
+}
