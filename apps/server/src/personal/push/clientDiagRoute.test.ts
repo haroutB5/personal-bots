@@ -173,6 +173,22 @@ describe("client diagnostics route", () => {
     ).toEqual({ event: "page-boot" });
   });
 
+  it("accepts real-user timing beacons with their few fields", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "j2",
+          ms: 842,
+          warm: true,
+          via: "relay",
+          snapshot: false,
+          stack: "not kept",
+        }),
+      ),
+    ).toEqual({ event: "perf", journey: "j2", ms: 842, warm: true, via: "relay", snapshot: false });
+  });
+
   it("keeps one record on one bounded line", () => {
     const line = clientDiagLine(tap(), "anonymous");
     expect(line).not.toContain(String.fromCharCode(10));

@@ -62,6 +62,8 @@ export const CLIENT_DIAG_EVENTS: ReadonlySet<string> = new Set([
   "sw-message-received",
   "broadcast-received",
   "page-boot",
+  // Real-user timings (web features/personal/perfRum.ts).
+  "perf",
 ]);
 const VISIBILITY = new Set(["visible", "hidden", "prerender", "unknown"]);
 const TOKEN = /^[A-Za-z0-9._:-]+$/;
@@ -117,6 +119,7 @@ const FIELDS: Record<string, Read> = {
   via: token(32),
   route: token(32),
   focus: token(16),
+  journey: token(16),
   watching: nullable(token(32)),
   visibility,
   error: (value) =>
@@ -126,6 +129,8 @@ const FIELDS: Record<string, Read> = {
   navigated: bool,
   controlled: bool,
   standalone: bool,
+  warm: bool,
+  snapshot: bool,
   ms: count,
   at: count,
   clients: (value) =>
