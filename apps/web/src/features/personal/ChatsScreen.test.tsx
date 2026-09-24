@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
   nextTimeoutId: 1,
   reload: vi.fn(),
   togglePin: vi.fn(),
+  setMute: vi.fn(async (_bot: unknown, _mute: unknown) => true),
   navigate: vi.fn(),
   groupsData: null as { groups: unknown[]; rounds: unknown[] } | null,
   groupFeedCalls: [] as Array<string | null>,
@@ -93,7 +94,12 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 // Base UI's menu needs a DOM; the list only cares that the two items exist.
 vi.mock("~/components/ui/menu", () => ({
-  Menu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  Menu: ({ open, children }: { open?: boolean; children: React.ReactNode }) => (
+    <div data-menu-open={String(open === true)}>{children}</div>
+  ),
+  MenuGroup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  MenuGroupLabel: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
+  MenuSeparator: () => <hr />,
   MenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   MenuPopup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   MenuItem: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
@@ -144,6 +150,10 @@ vi.mock("./useSecretRequests", () => ({
 vi.mock("./useRefreshBotsForTaskThreads", () => ({ useRefreshBotsForTaskThreads: () => {} }));
 vi.mock("./useDeleteBot", () => ({ useDeleteBot: () => async () => state.deleteOutcome }));
 vi.mock("./usePinBot", () => ({ useTogglePinBot: () => state.togglePin }));
+vi.mock("./BotMute", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./BotMute")>()),
+  useSetBotMute: () => state.setMute,
+}));
 vi.mock("./startBotChat", () => ({
   useStartBotChat: () => ({ start: vi.fn(), starting: false }),
 }));
@@ -187,7 +197,12 @@ function seedSnapshot(rows = [snapshotRow("bot-cached", "Cached Ada")]) {
 function bot(
   botId: string,
   name: string,
-  team: { team?: "dev" | "assistant"; lead?: boolean; pinned?: boolean } = {},
+  team: {
+    team?: "dev" | "assistant";
+    lead?: boolean;
+    pinned?: boolean;
+    notificationsMutedUntil?: string | null;
+  } = {},
 ) {
   return decodeBot({
     botId,
@@ -511,11 +526,116 @@ describe("ChatsScreen favourites strip", () => {
     await renderBots([bot("bot-scout", "Scout")]);
 
     const scout = renderer!.root.findByProps({ label: "Delete Scout" });
-    expect(scout.props.secondaryAction.text).toBe("Pin");
+    expect(scout.props.secondaryActions[0].text).toBe("Pin");
     await act(async () => {
-      await scout.props.secondaryAction.run();
+      await scout.props.secondaryActions[0].run();
     });
     expect(state.togglePin).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Per-bot mute lives on the gestures and menus the list already has: swipe
+ * right shows Mute beside Pin (as in Messages), and it opens the mute lengths
+ * in a menu on the row. A muted bot carries a bell-slash beside its name.
+ */
+describe("ChatsScreen notification mute", () => {
+  const INDEFINITE = "9999-12-31T23:59:59.000Z";
+
+  async function renderBots(bots: ReturnType<typeof bot>[]) {
+    stubWindow();
+    state.listData = { bots, threads: [], personalProjectId: null };
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+  }
+
+  const bells = () => renderer!.root.findAll((node) => node.props["data-muted-bell"] === "");
+  const buttonNamed = (text: string) =>
+    renderer!.root
+      .findAllByType("button")
+      .find((button) => JSON.stringify(button.props.children ?? "") === JSON.stringify(text));
+
+  afterEach(() => {
+    state.setMute.mockClear();
+  });
+
+  it("swipes to Mute beside Pin, and Mute offers the lengths in the row's menu", async () => {
+    await renderBots([bot("bot-scout", "Scout")]);
+
+    expect(bells()).toEqual([]);
+    const scout = renderer!.root.findByProps({ label: "Delete Scout" });
+    expect(scout.props.secondaryActions.map((action: { text: string }) => action.text)).toEqual([
+      "Pin",
+      "Mute",
+    ]);
+    const openMenus = () => renderer!.root.findAllByProps({ "data-menu-open": "true" });
+    expect(openMenus()).toEqual([]);
+    await act(async () => {
+      await scout.props.secondaryActions[1].run();
+    });
+    expect(openMenus().length).toBe(1);
+    // Nothing is muted until a length is picked.
+    expect(state.setMute).not.toHaveBeenCalled();
+
+    for (const label of ["For 1 hour", "For 8 hours", "Until I turn it back on"]) {
+      expect(buttonNamed(label)).toBeDefined();
+    }
+    await act(async () => {
+      buttonNamed("For 8 hours")!.props.onClick();
+    });
+    expect(state.setMute).toHaveBeenCalledTimes(1);
+    expect(state.setMute.mock.calls[0]![1]).toEqual({ forMinutes: 480 });
+    // The menu is reachable without the gesture too.
+    expect(JSON.stringify(renderer!.toJSON())).toContain('"Notifications for ","Scout"');
+  });
+
+  it("marks a muted bot with the bell-slash and swipes straight to Unmute", async () => {
+    await renderBots([bot("bot-scout", "Scout", { notificationsMutedUntil: INDEFINITE })]);
+
+    expect(bells().length).toBe(1);
+    const scout = renderer!.root.findByProps({ label: "Delete Scout" });
+    expect(scout.props.secondaryActions[1].text).toBe("Unmute");
+    await act(async () => {
+      await scout.props.secondaryActions[1].run();
+    });
+    expect(state.setMute.mock.calls[0]![1]).toBe("on");
+    // The row's menu says how long, and offers Unmute instead of the lengths.
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Muted until you turn it back on");
+    expect(buttonNamed("Unmute notifications")).toBeDefined();
+    expect(buttonNamed("For 1 hour")).toBeUndefined();
+  });
+
+  it("shows no bell once a timed mute has run out", async () => {
+    await renderBots([
+      bot("bot-scout", "Scout", { notificationsMutedUntil: "2026-01-01T00:00:00.000Z" }),
+    ]);
+
+    expect(bells()).toEqual([]);
+    const scout = renderer!.root.findByProps({ label: "Delete Scout" });
+    expect(scout.props.secondaryActions[1].text).toBe("Mute");
+  });
+
+  it("marks a muted pinned face and unmutes from its menu", async () => {
+    await renderBots([
+      bot("bot-cto", "CTO", {
+        team: "dev",
+        lead: true,
+        pinned: true,
+        notificationsMutedUntil: INDEFINITE,
+      }),
+    ]);
+
+    const strip = renderer!.root.findByProps({ "aria-label": "Pinned" });
+    expect(strip.findAll((node) => node.props["data-muted-bell"] === "").length).toBe(1);
+    const tile = strip.findByProps({ to: "/bots/$botId/edit" });
+    expect(tile.props["aria-label"]).toBe(
+      "CTO, notifications muted, Unavailable · tap to fix, edit bot",
+    );
+    await act(async () => {
+      buttonNamed("Unmute notifications")!.props.onClick();
+    });
+    expect(state.setMute.mock.calls[0]![1]).toBe("on");
   });
 });
 

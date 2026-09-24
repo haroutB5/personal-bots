@@ -4,20 +4,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isBotPinned,
+  type EnvironmentId,
   type PersonalBot,
   type PersonalBotId,
+  type PersonalBotNotificationMute,
   type PersonalGroup,
   type ThreadId,
 } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChevronRight, Network, Plus, Search, Settings } from "lucide-react";
+import { BellOff, ChevronRight, Network, Plus, Search, Settings } from "lucide-react";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 import { useThreadShells } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 
-import { capContinuousMotion, motionForSummary } from "./avatarMotion";
+import { capContinuousMotion, motionForSummary, type AvatarMotion } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
 import {
   BotRow,
@@ -68,6 +70,8 @@ import {
 } from "./usePersonalGroups";
 import { reloadLatestApp, useAppVersion } from "./appVersion";
 import { SwipeToDelete } from "./SwipeToDelete";
+import { BotMuteMenuItems, useSetBotMute } from "./BotMute";
+import { botMuteState } from "./botMuteModel";
 import { useDeleteBot } from "./useDeleteBot";
 import { threadIdsAwaitingSecret } from "./secretRequestCards";
 import { usePendingSecretRequests } from "./useSecretRequests";
@@ -501,31 +505,21 @@ export function ChatsScreen({
     [rest, visibleGroups],
   );
   const togglePin = useTogglePinBot(environmentId);
-  const renderRow = (summary: BotSummary) => {
-    const willPin = !isBotPinned(summary.bot);
-    return (
-      <li key={summary.bot.botId}>
-        <SwipeToDelete
-          label={`Delete ${summary.bot.name}`}
-          onDelete={() => onDeleteBot(summary.bot)}
-          secondaryAction={{
-            label: `${willPin ? "Pin" : "Unpin"} ${summary.bot.name}`,
-            text: willPin ? "Pin" : "Unpin",
-            run: () => togglePin(summary.bot),
-          }}
-        >
-          <BotRow
-            environmentId={environmentId!}
-            summary={summary}
-            now={now}
-            describeTurn={describeTurn}
-            motion={motionByBotId.get(summary.bot.botId)}
-            selected={selectedChat === botSelectionKey(summary.bot.botId)}
-          />
-        </SwipeToDelete>
-      </li>
-    );
-  };
+  const setMute = useSetBotMute(environmentId);
+  const renderRow = (summary: BotSummary) => (
+    <ChatsBotListRow
+      key={summary.bot.botId}
+      environmentId={environmentId!}
+      summary={summary}
+      now={now}
+      describeTurn={describeTurn}
+      motion={motionByBotId.get(summary.bot.botId)}
+      selected={selectedChat === botSelectionKey(summary.bot.botId)}
+      onDelete={onDeleteBot}
+      onTogglePin={togglePin}
+      onSetMute={setMute}
+    />
+  );
   const attention = useMemo(() => collectAttentionThreads(summaries), [summaries]);
   const helpRequest = computerFeed.status?.helpRequest ?? null;
   const helpSummary =
@@ -850,5 +844,87 @@ export function ChatsScreen({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** The pinned strip's "Options" button, reused: out of sight until keyboard focus lands on it. */
+const ROW_MENU_TRIGGER_CLASS = cn(
+  "sr-only outline-none",
+  "focus-visible:not-sr-only focus-visible:absolute focus-visible:top-1 focus-visible:right-1 focus-visible:z-10",
+  "focus-visible:flex focus-visible:size-7 focus-visible:items-center focus-visible:justify-center focus-visible:rounded-full",
+  "focus-visible:bg-[var(--personal-surface)] focus-visible:text-[var(--personal-text)] focus-visible:shadow-[var(--personal-shadow-card)]",
+  "focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+);
+
+/**
+ * One bot in the Chats list. Swipe left for Delete; swipe right for Pin and
+ * Mute side by side, as in Messages. Mute opens the mute lengths in a menu
+ * anchored on the row, the same kind of menu a pinned face opens on a long
+ * press; Unmute acts at once. The menu is also behind a quiet "Notifications
+ * for <bot>" button in the tab order, like the strip's "Options" button, so the
+ * keyboard and VoiceOver reach it without the gesture.
+ */
+function ChatsBotListRow({
+  environmentId,
+  summary,
+  now,
+  describeTurn,
+  motion,
+  selected,
+  onDelete,
+  onTogglePin,
+  onSetMute,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly summary: BotSummary;
+  readonly now: number;
+  readonly describeTurn: (turn: ServerTurn) => string;
+  readonly motion: AvatarMotion | undefined;
+  readonly selected: boolean;
+  readonly onDelete: (bot: PersonalBot) => Promise<unknown>;
+  readonly onTogglePin: (bot: PersonalBot) => Promise<void>;
+  readonly onSetMute: (bot: PersonalBot, mute: PersonalBotNotificationMute) => Promise<boolean>;
+}): JSX.Element {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const anchor = useRef<HTMLLIElement | null>(null);
+  const { bot } = summary;
+  const willPin = !isBotPinned(bot);
+  const muted = botMuteState(bot, now).muted;
+  return (
+    <li ref={anchor} className="relative">
+      <SwipeToDelete
+        label={`Delete ${bot.name}`}
+        onDelete={() => onDelete(bot)}
+        secondaryActions={[
+          {
+            label: `${willPin ? "Pin" : "Unpin"} ${bot.name}`,
+            text: willPin ? "Pin" : "Unpin",
+            run: () => onTogglePin(bot),
+          },
+          muted
+            ? { label: `Unmute ${bot.name}`, text: "Unmute", run: () => onSetMute(bot, "on") }
+            : { label: `Mute ${bot.name}`, text: "Mute", run: () => setMenuOpen(true) },
+        ]}
+      >
+        <BotRow
+          environmentId={environmentId}
+          summary={summary}
+          now={now}
+          describeTurn={describeTurn}
+          motion={motion}
+          selected={selected}
+        />
+      </SwipeToDelete>
+      <Menu open={menuOpen} onOpenChange={setMenuOpen}>
+        <MenuTrigger render={<button type="button" className={ROW_MENU_TRIGGER_CLASS} />}>
+          <span className="sr-only">Notifications for {bot.name}</span>
+          <BellOff aria-hidden="true" className="size-4" strokeWidth={2} />
+        </MenuTrigger>
+        {/* Anchored on the row, not on the hidden trigger, so it opens where the owner swiped. */}
+        <MenuPopup align="center" anchor={anchor} className="personal-app personal-menu min-w-52">
+          <BotMuteMenuItems bot={bot} now={now} onChange={(mute) => void onSetMute(bot, mute)} />
+        </MenuPopup>
+      </Menu>
+    </li>
   );
 }

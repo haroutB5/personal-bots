@@ -41,6 +41,14 @@ import {
   searchModels,
   usesModelSearch,
 } from "./botFormModel";
+import {
+  botMuteState,
+  initialNotificationsChoice,
+  MUTE_CHOICES,
+  muteForChoice,
+  mutedUntilLabel,
+  type BotNotificationsChoice,
+} from "./botMuteModel";
 import { resolveBotProvider, providerLine } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
 import { useDeleteBot } from "./useDeleteBot";
@@ -186,6 +194,7 @@ interface BotDraft {
   lead: boolean;
   pinned: boolean;
   memoryAutoSave: boolean;
+  notifications: BotNotificationsChoice;
 }
 
 /** Field-by-field: has the owner changed anything since the form opened? */
@@ -207,6 +216,7 @@ function draftFromBot(bot: PersonalBot): BotDraft {
     lead: isTeamLead(bot),
     pinned: isBotPinned(bot),
     memoryAutoSave: savesMemoryWithoutAsking(bot),
+    notifications: initialNotificationsChoice(bot, Date.now()),
     effort:
       EFFORT_OPTION_IDS.map((id) =>
         getModelSelectionStringOptionValue(bot.modelSelection, id),
@@ -299,6 +309,7 @@ function BotForm({
       lead: false,
       pinned: false,
       memoryAutoSave: true,
+      notifications: "on",
     };
   });
 
@@ -306,6 +317,12 @@ function BotForm({
   // Back or a swipe-back used to drop them without a word. The baseline is the
   // draft the form opened with; leaving after a save or a delete never asks.
   const [baseline] = useState(() => rawDraft);
+  // The mute the bot had when the form opened, named for the select's "keep" option.
+  const [currentMuteLabel] = useState(() => {
+    const nowMs = Date.now();
+    const state = bot === null ? null : botMuteState(bot, nowMs);
+    return state?.muted === true ? mutedUntilLabel(state, nowMs) : null;
+  });
   const dirty = !botDraftsEqual(rawDraft, baseline);
   const leavingRef = useRef(false);
   useBlocker({
@@ -440,10 +457,22 @@ function BotForm({
       pinned: draft.pinned,
       memoryAutoSave: draft.memoryAutoSave,
     };
-    const result =
+    const notificationsMute = muteForChoice(draft.notifications, baseline.notifications);
+    let result =
       bot === null
         ? await createBot({ environmentId, input: { botId, ...fields } })
-        : await updateBot({ environmentId, input: { botId, ...fields } });
+        : await updateBot({
+            environmentId,
+            input: {
+              botId,
+              ...fields,
+              ...(notificationsMute === undefined ? {} : { notificationsMute }),
+            },
+          });
+    // Create takes no mute: a new bot muted from the start gets it right after.
+    if (bot === null && notificationsMute !== undefined && result._tag === "Success") {
+      result = await updateBot({ environmentId, input: { botId, notificationsMute } });
+    }
     setBusy(false);
     if (result._tag === "Success") {
       leavingRef.current = true;
@@ -746,6 +775,31 @@ function BotForm({
           </span>
         </span>
       </label>
+
+      <div>
+        <label htmlFor="bot-notifications" className={LABEL_CLASS}>
+          Notifications
+        </label>
+        <select
+          id="bot-notifications"
+          value={draft.notifications}
+          onChange={(event) =>
+            update({ notifications: event.target.value as BotNotificationsChoice })
+          }
+          className={`${FIELD_CLASS} h-11`}
+        >
+          {currentMuteLabel !== null ? <option value="keep">{currentMuteLabel}</option> : null}
+          <option value="on">On</option>
+          {MUTE_CHOICES.map((choice) => (
+            <option key={choice.key} value={choice.key}>
+              {`Mute ${choice.label.charAt(0).toLowerCase()}${choice.label.slice(1)}`}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
+          A muted bot sends no notifications or banners. Its replies still show in Bots.
+        </p>
+      </div>
 
       <fieldset className="rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-4">
         <legend className="px-1 text-sm font-medium text-[var(--personal-text)]">Avatar</legend>

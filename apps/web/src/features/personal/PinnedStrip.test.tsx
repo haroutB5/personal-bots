@@ -19,6 +19,9 @@ vi.mock("~/components/ui/menu", () => ({
     <div data-menu-open={String(open === true)}>{children}</div>
   ),
   MenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  MenuGroup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  MenuGroupLabel: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
+  MenuSeparator: () => <hr />,
   MenuPopup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   MenuItem: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
     <button type="button" onClick={onClick}>

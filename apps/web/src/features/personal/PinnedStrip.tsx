@@ -13,11 +13,13 @@ import type {
 import { Link } from "@tanstack/react-router";
 import { Ellipsis } from "lucide-react";
 
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 
 import type { AvatarMotion } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
+import { BotMuteMenuItems, MutedBell, useSetBotMute } from "./BotMute";
+import { botMuteState } from "./botMuteModel";
 import { selectedChatProps } from "./BotRow";
 import { botStatus, type BotSummary } from "./botSummaries";
 import type { ChatsSnapshotRow } from "./chatsSnapshot";
@@ -174,6 +176,8 @@ export function PinnedTile({
   target,
   onUnpin,
   selected = false,
+  muted = false,
+  menuExtra = null,
 }: {
   readonly name: string;
   readonly avatar: ReactNode;
@@ -185,6 +189,10 @@ export function PinnedTile({
   readonly onUnpin: (() => void) | null;
   /** This chat is open in the desktop pane. */
   readonly selected?: boolean | undefined;
+  /** The bot's notifications are muted: a bell-slash beside the caption. */
+  readonly muted?: boolean | undefined;
+  /** More items for the tile's menu, under Unpin (the bot's mute choices). */
+  readonly menuExtra?: ReactNode;
 }): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const anchor = useRef<HTMLLIElement | null>(null);
@@ -261,14 +269,23 @@ export function PinnedTile({
           />
         ) : null}
       </span>
-      <span className={TILE_NAME_CLASS}>{name}</span>
+      {muted ? (
+        <span className="flex w-full min-w-0 items-center justify-center gap-0.5">
+          <span className={cn(TILE_NAME_CLASS, "w-auto min-w-0")}>{name}</span>
+          <MutedBell size={11} />
+        </span>
+      ) : (
+        <span className={TILE_NAME_CLASS}>{name}</span>
+      )}
     </>
   );
 
   // The avatar is an <img> with the bot's name, and the caption repeats it, so
   // the tile states its own name once — plus the status the strip would
   // otherwise have dropped with the preview line.
-  const label = statusLabel === null ? name : `${name}, ${statusLabel}`;
+  const label = [name, ...(muted ? ["notifications muted"] : []), statusLabel]
+    .filter((part) => part !== null)
+    .join(", ");
   const tileClass = cn(TILE_CLASS, selected && SELECTED_TILE_CLASS);
   const selectedProps = selectedChatProps(selected);
 
@@ -357,6 +374,12 @@ export function PinnedTile({
               under the face the owner actually pressed. */}
           <MenuPopup align="center" anchor={anchor} className="personal-app personal-menu min-w-44">
             <MenuItem onClick={onUnpin}>Unpin {name}</MenuItem>
+            {menuExtra === null ? null : (
+              <>
+                <MenuSeparator />
+                {menuExtra}
+              </>
+            )}
           </MenuPopup>
         </Menu>
       )}
@@ -385,6 +408,7 @@ export function PinnedBotTile({
   const { start, starting } = useStartBotChat(environmentId, bot.botId);
   const status = botStatus(summary, now);
   const badge = pinnedBotBadge(summary, now);
+  const setMute = useSetBotMute(environmentId);
   const target: PinnedTileTarget = !provider.available
     ? { kind: "botEdit", botId: bot.botId }
     : newestThread !== null
@@ -408,6 +432,10 @@ export function PinnedBotTile({
       target={target}
       onUnpin={onUnpin}
       selected={selected}
+      muted={botMuteState(bot, now).muted}
+      menuExtra={
+        <BotMuteMenuItems bot={bot} now={now} onChange={(mute) => void setMute(bot, mute)} />
+      }
     />
   );
 }

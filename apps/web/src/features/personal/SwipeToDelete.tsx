@@ -17,33 +17,40 @@ interface Drag {
   axis: "x" | "y" | null;
 }
 
-/** A second action revealed by swiping the other way, e.g. pin/unpin. */
+/** An action revealed by swiping the other way, e.g. pin/unpin or mute. */
 export interface SwipeSecondaryAction {
   readonly label: string;
   /** What the revealed button says. */
   readonly text: string;
   readonly run: () => Promise<unknown> | unknown;
+  /** Button fill; the first action uses the primary fill, later ones a quieter one. */
+  readonly tone?: "primary" | "quiet" | undefined;
 }
+
+const NO_SECONDARY_ACTIONS: ReadonlyArray<SwipeSecondaryAction> = [];
 
 /**
  * iOS-style swipe action: swipe a row left to reveal Delete; tap it to run
- * `onDelete`, tap the row to close it. With a `secondaryAction`, swiping the
- * other way reveals that instead of a second Delete. Vertical drags scroll the
- * list as usual. Both actions stay reachable from the bot editor, so keyboard
- * and screen reader users never need the gesture.
+ * `onDelete`, tap the row to close it. With `secondaryActions`, swiping the
+ * other way reveals those (side by side, like Pin and Mute in Messages)
+ * instead of a second Delete. Vertical drags scroll the list as usual. Every
+ * action stays reachable from the bot editor, so keyboard and screen reader
+ * users never need the gesture.
  */
 export function SwipeToDelete({
   label,
   onDelete,
-  secondaryAction,
+  secondaryActions = NO_SECONDARY_ACTIONS,
   children,
 }: {
   label: string;
   /** Resolves once the user confirmed or cancelled; the row closes either way. */
   onDelete: () => Promise<unknown>;
-  secondaryAction?: SwipeSecondaryAction | undefined;
+  secondaryActions?: ReadonlyArray<SwipeSecondaryAction> | undefined;
   children: ReactNode;
 }): JSX.Element {
+  // Swiping right opens as wide as its buttons; left is always one Delete.
+  const secondaryWidth = ACTION_WIDTH * secondaryActions.length;
   const [offset, setOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
   const drag = useRef<Drag | null>(null);
@@ -71,8 +78,8 @@ export function SwipeToDelete({
     }
     if (current.axis !== "x") return;
     swallowClick.current = true;
-    const limit = ACTION_WIDTH * 1.25;
-    setOffset(Math.max(-limit, Math.min(limit, current.start + dx)));
+    const rightLimit = (secondaryWidth > 0 ? secondaryWidth : ACTION_WIDTH) * 1.25;
+    setOffset(Math.max(-ACTION_WIDTH * 1.25, Math.min(rightLimit, current.start + dx)));
   };
 
   const endDrag = () => {
@@ -80,8 +87,9 @@ export function SwipeToDelete({
     drag.current = null;
     if (current?.axis !== "x") return;
     setDragging(false);
+    const openRight = secondaryWidth > 0 ? secondaryWidth : ACTION_WIDTH;
     setOffset((value) =>
-      value <= -ACTION_WIDTH / 2 ? -ACTION_WIDTH : value >= ACTION_WIDTH / 2 ? ACTION_WIDTH : 0,
+      value <= -ACTION_WIDTH / 2 ? -ACTION_WIDTH : value >= ACTION_WIDTH / 2 ? openRight : 0,
     );
   };
 
@@ -102,25 +110,35 @@ export function SwipeToDelete({
     }
   };
 
-  // Swiping right reveals the secondary action when there is one; swiping
+  // Swiping right reveals the secondary actions when there are any; swiping
   // left is always Delete, so the destructive side never moves.
-  const revealed =
-    offset > 0 && secondaryAction !== undefined
-      ? { label: secondaryAction.label, text: secondaryAction.text, action: secondaryAction.run }
-      : { label, text: "Delete", action: onDelete };
-  const destructive = revealed.text === "Delete";
+  const showSecondary = offset > 0 && secondaryActions.length > 0;
 
   return (
     <div className="relative overflow-hidden">
-      {offset !== 0 ? (
+      {showSecondary ? (
+        <div className="absolute inset-y-0 left-0 flex" data-swipe-actions="">
+          {secondaryActions.map((action, index) => (
+            <button
+              key={action.text}
+              type="button"
+              onClick={() => void run(action.run)}
+              aria-label={action.label}
+              className={`flex h-full w-[88px] items-center justify-center text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-primary-text)] ${(action.tone ?? (index === 0 ? "primary" : "quiet")) === "primary" ? "bg-[var(--personal-primary)]" : "bg-[var(--personal-text-secondary)]"}`}
+            >
+              {action.text}
+            </button>
+          ))}
+        </div>
+      ) : offset !== 0 ? (
         <button
           type="button"
-          onClick={() => void run(revealed.action)}
-          aria-label={revealed.label}
-          className={`absolute inset-y-0 flex w-[88px] items-center justify-center text-[15px] font-semibold text-[var(--personal-destructive-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-destructive-text)] ${destructive ? "bg-[var(--personal-destructive)]" : "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"}`}
+          onClick={() => void run(onDelete)}
+          aria-label={label}
+          className="absolute inset-y-0 flex w-[88px] items-center justify-center bg-[var(--personal-destructive)] text-[15px] font-semibold text-[var(--personal-destructive-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-destructive-text)]"
           style={offset < 0 ? { right: 0 } : { left: 0 }}
         >
-          {revealed.text}
+          Delete
         </button>
       ) : null}
       <div

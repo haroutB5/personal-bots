@@ -100,6 +100,10 @@ const PAIRS: ReadonlyArray<readonly [string, string, number, string]> = [
   ["--personal-section-label", "--personal-surface", 4.5, "uppercase section label in a card"],
   ["--personal-primary-text", "--personal-primary", 4.5, "primary button label"],
   ["--personal-destructive-text", "--personal-destructive", 4.5, "destructive button label"],
+  // The quieter swipe action beside Pin ("Mute"/"Unmute" on a Chats row).
+  ["--personal-primary-text", "--personal-text-secondary", 4.5, "Mute swipe action label"],
+  // The bell-slash beside a muted bot's name, on the page and on the selected row.
+  ["--personal-text-secondary", "--personal-fill-muted", 3, "muted bell on the selected row"],
   // Non-text indicators: the status dots and the team diagram's lines.
   ["--personal-live", "--personal-bg", 3, "live status dot"],
   ["--personal-live", "--personal-surface", 3, "live status dot on a card"],

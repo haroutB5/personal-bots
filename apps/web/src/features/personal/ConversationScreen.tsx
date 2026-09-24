@@ -46,6 +46,8 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { motionForConversationState } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
+import { BotMuteMenuItems, MutedBell, useSetBotMute } from "./BotMute";
+import { botMuteState } from "./botMuteModel";
 import {
   type ConversationHeaderParts,
   conversationHeaderParts,
@@ -252,6 +254,7 @@ export function ConversationScreen({
   const shellRef = useRef<HTMLDivElement | null>(null);
   const keyboardInset = useKeyboardInset(shellRef);
   const now = useMinuteNow();
+  const setBotMute = useSetBotMute(environmentId);
   const [pending, setPending] = useState<ReadonlyArray<PendingOutgoingMessage>>([]);
   const [respondingIds, setRespondingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [actionError, setActionError] = useState<string | null>(null);
@@ -700,6 +703,8 @@ export function ConversationScreen({
     if (error !== null) setActionError(error);
   };
 
+  const botMuted = bot !== null && botMuteState(bot, now.getTime()).muted;
+
   const chat = (
     <div
       ref={shellRef}
@@ -718,7 +723,7 @@ export function ConversationScreen({
           <Link
             to="/bots/$botId/edit"
             params={{ botId: bot.botId }}
-            aria-label={`Edit ${bot.name}`}
+            aria-label={`Edit ${bot.name}${botMuted ? ", notifications muted" : ""}`}
             className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-[var(--personal-radius-button)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
           >
             <BotAvatar
@@ -734,6 +739,7 @@ export function ConversationScreen({
                 <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
                   {bot.name}
                 </h1>
+                {botMuted ? <MutedBell size={16} className="-ml-0.5" /> : null}
                 {contextBadge !== null ? (
                   // The chat's context size, at every size. A quiet outlined
                   // chip, so it reads as a measure of the chat and not as a
@@ -834,6 +840,16 @@ export function ConversationScreen({
             >
               Wrapup chat
             </MenuItem>
+            {bot !== null ? (
+              <>
+                <MenuSeparator />
+                <BotMuteMenuItems
+                  bot={bot}
+                  now={now.getTime()}
+                  onChange={(mute) => void setBotMute(bot, mute)}
+                />
+              </>
+            ) : null}
             <MenuSeparator />
             <MenuItem onClick={() => void onArchive()}>Archive chat</MenuItem>
             <MenuItem variant="destructive" onClick={() => void onDeleteChat()}>

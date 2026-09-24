@@ -8,6 +8,8 @@ import { cn } from "~/lib/utils";
 
 import type { AvatarMotion } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
+import { MutedBell } from "./BotMute";
+import { botMuteState } from "./botMuteModel";
 import { botStatus, type BotSummary } from "./botSummaries";
 import { readServerTurn, type ServerTurn } from "./delegationModel";
 import { formatRelativeTime } from "./relativeTime";
@@ -165,6 +167,7 @@ export const BotRow = memo(function BotRow({
           <span className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
             {bot.name}
           </span>
+          {botMuteState(bot, now).muted ? <MutedBell className="ml-1.5" /> : null}
           {live ? (
             <span className="ml-2 flex shrink-0 items-center">
               <span aria-hidden="true" className="size-2 rounded-full bg-[var(--personal-live)]" />
