@@ -16,8 +16,8 @@ import { formatRelativeTime } from "./relativeTime";
 import { routineTriggerStatusLabel } from "./routineHook";
 import {
   TASK_LIST_FILTERS,
+  taskListCountNeedsAttention,
   taskListFor,
-  taskListShowsCount,
   taskStatusLabel,
   taskStatusTone,
   type TaskListFilter,
@@ -200,24 +200,25 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
               search={{ view: filter.id }}
               replace
               aria-current={active ? "page" : undefined}
-              className={`flex min-w-0 items-center justify-center gap-1 rounded-lg text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] ${
+              className={`flex min-w-0 items-center justify-center gap-[3px] rounded-lg text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] ${
                 active
                   ? "bg-[var(--personal-surface)] font-semibold text-[var(--personal-text)] shadow-[var(--personal-shadow-card)]"
                   : "text-[var(--personal-text-secondary)]"
               }`}
             >
               <span className="truncate">{filter.label}</span>
-              {taskListShowsCount(filter.id) && counts[filter.id] > 0 ? (
-                <span
-                  className={`min-w-[18px] shrink-0 rounded-full px-1 text-center text-[12px] leading-[18px] font-semibold tabular-nums ${
-                    active
-                      ? "bg-[var(--personal-fill-muted)] text-[var(--personal-text)]"
-                      : "bg-[var(--personal-surface)] text-[var(--personal-text)]"
-                  }`}
-                >
-                  {counts[filter.id]}
-                </span>
-              ) : null}
+              {/* Every list shows its count, zero included, so the row reads at a glance. */}
+              <span
+                className={`min-w-[18px] shrink-0 rounded-full px-[5px] text-center text-[11px] leading-[18px] font-semibold tabular-nums ${
+                  active ? "bg-[var(--personal-fill-muted)]" : "bg-[var(--personal-surface)]"
+                } ${
+                  counts[filter.id] > 0 && taskListCountNeedsAttention(filter.id)
+                    ? "text-[var(--personal-text)]"
+                    : "text-[var(--personal-text-secondary)]"
+                }`}
+              >
+                {counts[filter.id]}
+              </span>
             </Link>
           );
         })}

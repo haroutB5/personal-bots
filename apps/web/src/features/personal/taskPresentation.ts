@@ -23,12 +23,12 @@ export const TASK_LIST_FILTERS: ReadonlyArray<{
 ];
 
 /**
- * Tabs whose count is worth a number: work in flight and work waiting on
- * someone. A count on Done (105) or Scheduled read as more things needing
- * attention, and was the only figure on screen while the tabs that did need
- * it were blank at zero.
+ * Every tab shows its count (owner's call: the row should read at a glance,
+ * zero included). Only work in flight and work waiting on someone is drawn
+ * at full strength when non-zero; Done (100+) and Scheduled stay muted so a
+ * big number there doesn't read as something needing attention.
  */
-export function taskListShowsCount(filter: TaskListFilter): boolean {
+export function taskListCountNeedsAttention(filter: TaskListFilter): boolean {
   return filter === "active" || filter === "waiting";
 }
 

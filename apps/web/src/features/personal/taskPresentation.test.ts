@@ -11,7 +11,7 @@ import {
   stopTaskConfirmMessage,
   TASK_LIST_FILTERS,
   taskListFor,
-  taskListShowsCount,
+  taskListCountNeedsAttention,
   taskStatusTone,
 } from "./taskPresentation";
 
@@ -25,11 +25,11 @@ describe("task list tabs", () => {
     ]);
   });
 
-  it("count only the lists that need attention", () => {
-    expect(taskListShowsCount("active")).toBe(true);
-    expect(taskListShowsCount("waiting")).toBe(true);
-    expect(taskListShowsCount("scheduled")).toBe(false);
-    expect(taskListShowsCount("completed")).toBe(false);
+  it("emphasise only the counts that need attention", () => {
+    expect(taskListCountNeedsAttention("active")).toBe(true);
+    expect(taskListCountNeedsAttention("waiting")).toBe(true);
+    expect(taskListCountNeedsAttention("scheduled")).toBe(false);
+    expect(taskListCountNeedsAttention("completed")).toBe(false);
   });
 });
 
