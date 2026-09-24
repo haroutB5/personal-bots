@@ -129,7 +129,8 @@ it.effect(
       expect(listed.bots[0]?.avatarColor).toBe("#1A73E8");
       expect(listed.bots[0]?.modelSelection.instanceId).toBe("codex");
       expect(listed.bots[0]?.modelSelection.model).toBe("gpt-6-astra");
-      expect(listed.bots[0]).toEqual(created);
+      // The list adds what it derives (group presence) on top of the stored bot.
+      expect(listed.bots[0]).toEqual({ ...created, groupIds: [], groupOnly: false });
 
       const again = yield* service.create(botInput("bot-1"));
       expect(again.botId).toBe(created.botId);
