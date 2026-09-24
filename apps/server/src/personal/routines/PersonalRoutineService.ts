@@ -139,6 +139,34 @@ export interface PersonalRoutineFireEventInput {
   readonly body: string;
 }
 
+/**
+ * What a routine's preparer decided for one run: start it with this objective
+ * (the routine's prompt plus whatever run data the owner adds), or skip the
+ * slot with a reason. `onStarted` runs once the task exists, for state that
+ * must only be recorded when a run really started.
+ */
+export type PersonalRoutinePrepared =
+  | {
+      readonly _tag: "Run";
+      readonly objective: string;
+      readonly onStarted?: (task: PersonalTask) => Effect.Effect<void>;
+    }
+  | { readonly _tag: "Skip"; readonly reason: string };
+
+/**
+ * A server module that owns a routine can prepare each of its model runs just
+ * before the task starts: decide whether there is anything to do at all, and
+ * add run data to the objective. Preparers are registered in memory at start-up
+ * (see `registerPreparer`); a routine without one runs its prompt as written.
+ * A preparer runs under the routine lock, so it must not call this service.
+ */
+export type PersonalRoutinePreparer = (input: {
+  readonly routine: PersonalRoutine;
+  readonly localOccurrence: string;
+  /** Run now from the app, as opposed to a scheduled slot. */
+  readonly manual: boolean;
+}) => Effect.Effect<PersonalRoutinePrepared>;
+
 export type PersonalRoutineFireEventResult =
   | { readonly _tag: "NotFound" }
   | { readonly _tag: "RateLimited"; readonly retryAfterSeconds: number }
@@ -182,6 +210,11 @@ export class PersonalRoutineService extends Context.Service<
     readonly regenerateHook: (input: {
       readonly routineId: PersonalRoutineId;
     }) => Effect.Effect<PersonalRoutine, PersonalRoutinesError>;
+    /** Sets (or replaces) the preparer of one routine's model runs. */
+    readonly registerPreparer: (
+      routineId: PersonalRoutineId,
+      preparer: PersonalRoutinePreparer,
+    ) => Effect.Effect<void>;
     /** One catch-up pass over every enabled routine that is due. */
     readonly tick: Effect.Effect<void>;
     /** Runs `tick` now (startup catch-up) and then every 30 seconds. */
@@ -196,6 +229,7 @@ export const make = Effect.gen(function* () {
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   // Serialises ticks with mutations so an edit never races a firing.
   const lock = yield* Semaphore.make(1);
+  const preparers = new Map<string, PersonalRoutinePreparer>();
 
   const fail = (message: string, cause?: unknown) =>
     new PersonalRoutinesError({ message, ...(cause === undefined ? {} : { cause }) });
@@ -320,12 +354,51 @@ export const make = Effect.gen(function* () {
     const idempotencyKey = routineTaskIdempotencyKey(routine.routineId, slot.localKey);
     const relay = routine.delivery === "relay";
     const text = relayText === undefined ? routine.prompt : relayText;
+    const preparer = relay ? undefined : preparers.get(routine.routineId);
+    let objective = routine.prompt;
+    let onStarted: ((task: PersonalTask) => Effect.Effect<void>) | undefined;
+    if (preparer !== undefined) {
+      const prepared = yield* Effect.suspend(() =>
+        preparer({
+          routine,
+          localOccurrence: slot.localKey,
+          manual: slot.localKey.startsWith("manual:"),
+        }),
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.succeed({
+            _tag: "Failed" as const,
+            message: `The routine could not prepare its run: ${Cause.pretty(cause).split("\n")[0] ?? "unknown error"}`,
+          }),
+        ),
+      );
+      if (prepared._tag === "Failed") {
+        yield* sql`
+          UPDATE personal_routine_occurrences
+          SET status = 'failed', error_message = ${prepared.message}
+          WHERE routine_id = ${routine.routineId} AND local_occurrence = ${slot.localKey}
+        `;
+        return yield* fail(prepared.message);
+      }
+      if (prepared._tag === "Skip") {
+        // Nothing to do this time: the slot is used up quietly, with the
+        // reason on record for the Scheduled list.
+        yield* sql`
+          UPDATE personal_routine_occurrences
+          SET status = 'skipped', error_message = ${prepared.reason}
+          WHERE routine_id = ${routine.routineId} AND local_occurrence = ${slot.localKey}
+        `;
+        return null;
+      }
+      objective = prepared.objective;
+      onStarted = prepared.onStarted;
+    }
     const start: Effect.Effect<PersonalTask, PersonalRoutinesError | PersonalTasksError> = !relay
       ? tasks.createTask({
           idempotencyKey,
           botId: routine.botId,
           title: routine.title,
-          objective: routine.prompt,
+          objective,
           source: "routine",
         })
       : text === null
@@ -355,6 +428,16 @@ export const make = Effect.gen(function* () {
       SET task_id = ${created.success.taskId}
       WHERE routine_id = ${routine.routineId} AND local_occurrence = ${slot.localKey}
     `;
+    if (onStarted !== undefined) {
+      yield* onStarted(created.success).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("personal routine preparer could not record its started run", {
+            routineId: routine.routineId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+    }
     return created.success;
   });
 
@@ -717,6 +800,12 @@ export const make = Effect.gen(function* () {
                 ),
               ));
           if (settled === undefined) {
+            const occurrence = yield* readOccurrence(routine.routineId, localKey);
+            if (Option.isSome(occurrence) && occurrence.value.status === "skipped") {
+              return yield* fail(
+                `Nothing to run: ${occurrence.value.errorMessage ?? "the routine skipped this run"}.`,
+              );
+            }
             return yield* fail("The routine run could not be started.");
           }
           return { routine, task: settled } satisfies PersonalRoutineRunNowResult;
@@ -834,6 +923,11 @@ export const make = Effect.gen(function* () {
       )
       .pipe(storageFailure("regenerate hook"));
 
+  const registerPreparer: PersonalRoutineService["Service"]["registerPreparer"] = (
+    routineId,
+    preparer,
+  ) => Effect.sync(() => void preparers.set(routineId, preparer));
+
   const start: PersonalRoutineService["Service"]["start"] = () =>
     forkParked(tick.pipe(Effect.repeat(Schedule.spaced(TICK_INTERVAL)), Effect.asVoid)).pipe(
       Effect.asVoid,
@@ -850,6 +944,7 @@ export const make = Effect.gen(function* () {
     runNow,
     fireEvent,
     regenerateHook,
+    registerPreparer,
     tick,
     start,
   } satisfies PersonalRoutineService["Service"];

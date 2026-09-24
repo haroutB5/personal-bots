@@ -905,3 +905,118 @@ it.effect("a scheduled relay posts its prompt, and an edit keeps the delivery", 
     expect(turnStarts(dispatched)).toEqual([]);
   }).pipe(Effect.provide(makeLayer(undefined, dispatched)));
 });
+
+// ── Preparers (the nightly Claude Code update run) ─────────────────────
+
+const errorMessages = (routineId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    return yield* sql<{ readonly status: string; readonly errorMessage: string | null }>`
+      SELECT status AS "status", error_message AS "errorMessage"
+      FROM personal_routine_occurrences WHERE routine_id = ${routineId}
+      ORDER BY local_occurrence ASC
+    `;
+  });
+
+it.effect(
+  "a preparer adds run data to the objective and records the start once the task exists",
+  () =>
+    Effect.gen(function* () {
+      yield* setNow("2026-09-24T12:00:00Z");
+      yield* seedBot;
+      const routines = yield* PersonalRoutineService.PersonalRoutineService;
+      const routineId = PersonalRoutineId.make("nightly");
+      yield* routines.create({
+        routineId,
+        botId: BOT,
+        title: "Nightly",
+        prompt: "Steps.",
+        schedule: { kind: "daily", time: "04:00" },
+      });
+      const seen: Array<{ localOccurrence: string; manual: boolean }> = [];
+      const started: Array<string> = [];
+      yield* routines.registerPreparer(routineId, (input) =>
+        Effect.sync(() => {
+          seen.push({ localOccurrence: input.localOccurrence, manual: input.manual });
+          return {
+            _tag: "Run" as const,
+            objective: `${input.routine.prompt}\n\nRun data: ${input.localOccurrence}`,
+            onStarted: (task) => Effect.sync(() => void started.push(task.taskId)),
+          };
+        }),
+      );
+
+      // 04:00 BST the next morning.
+      yield* setNow("2026-09-25T03:00:05Z");
+      yield* tickAndDrain;
+
+      const [task] = yield* routineTasks("nightly");
+      expect(task?.objective).toBe("Steps.\n\nRun data: 2026-09-25T04:00");
+      expect(seen).toEqual([{ localOccurrence: "2026-09-25T04:00", manual: false }]);
+      expect(started).toEqual([task!.taskId]);
+      expect(yield* nextDueIso("nightly")).toBe("2026-09-26T03:00:00.000Z");
+
+      // Run now tells the preparer it is manual.
+      yield* routines.runNow({ routineId, requestId: "rehearsal" });
+      expect(seen.at(-1)).toEqual({ localOccurrence: "manual:rehearsal", manual: true });
+    }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect(
+  "a preparer that finds nothing to do skips the slot quietly, with the reason on record",
+  () =>
+    Effect.gen(function* () {
+      yield* setNow("2026-09-24T12:00:00Z");
+      yield* seedBot;
+      const routines = yield* PersonalRoutineService.PersonalRoutineService;
+      const routineId = PersonalRoutineId.make("nightly");
+      yield* routines.create({
+        routineId,
+        botId: BOT,
+        title: "Nightly",
+        prompt: "Steps.",
+        schedule: { kind: "daily", time: "04:00" },
+      });
+      yield* routines.registerPreparer(routineId, () =>
+        Effect.succeed({ _tag: "Skip" as const, reason: "nothing new" }),
+      );
+
+      yield* setNow("2026-09-25T03:00:05Z");
+      yield* tickAndDrain;
+
+      expect(yield* routineTasks("nightly")).toEqual([]);
+      expect(yield* errorMessages("nightly")).toEqual([
+        { status: "skipped", errorMessage: "nothing new" },
+      ]);
+      // The schedule still moves on to tomorrow.
+      expect(yield* nextDueIso("nightly")).toBe("2026-09-26T03:00:00.000Z");
+      // Run now says why instead of a generic failure.
+      const manual = yield* Effect.flip(routines.runNow({ routineId, requestId: "r1" }));
+      expect(manual.message).toBe("Nothing to run: nothing new.");
+    }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("a preparer that crashes fails the occurrence instead of starting a bare run", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-09-24T12:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const routineId = PersonalRoutineId.make("nightly");
+    yield* routines.create({
+      routineId,
+      botId: BOT,
+      title: "Nightly",
+      prompt: "Steps.",
+      schedule: { kind: "daily", time: "04:00" },
+    });
+    yield* routines.registerPreparer(routineId, () => Effect.die(new Error("ledger is corrupt")));
+
+    yield* setNow("2026-09-25T03:00:05Z");
+    yield* tickAndDrain;
+
+    expect(yield* routineTasks("nightly")).toEqual([]);
+    const [row] = yield* errorMessages("nightly");
+    expect(row?.status).toBe("failed");
+    expect(row?.errorMessage).toContain("ledger is corrupt");
+  }).pipe(Effect.provide(makeLayer())),
+);
