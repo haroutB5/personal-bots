@@ -49,6 +49,8 @@ function setup(decode: (jpeg: Uint8Array) => Promise<ImageBitmap>) {
     onFrame: vi.fn(),
     onState: vi.fn(),
     onClosed: vi.fn(),
+    onControl: vi.fn(),
+    onInputRefused: vi.fn(),
   };
   const client = connectDesktopView("wss://pc.example/api/personal/desktop/stream", callbacks, {
     createSocket: () => socket as unknown as WebSocket,
@@ -131,5 +133,36 @@ describe("desktop live view client", () => {
     const { socket, callbacks } = setup(() => Promise.resolve(bitmap()));
     socket.emit("close");
     expect(callbacks.onClosed).toHaveBeenCalledWith(false);
+  });
+
+  it("sends control and input once open, and passes control state and refusals on", () => {
+    const { socket, callbacks, client } = setup(() => Promise.resolve(bitmap()));
+    client.send({ _tag: "Control", on: true });
+    // Not open yet: dropped rather than queued (the pane re-sends on open).
+    expect(socket.sent).toEqual([]);
+    socket.open();
+    client.send({ _tag: "Control", on: true });
+    client.send({ _tag: "Keys", keys: "ctrl+c" });
+    expect(socket.sent.map((text) => JSON.parse(text)._tag)).toEqual(["Control", "Keys"]);
+    socket.emit("message", JSON.stringify({ _tag: "Control", on: true }));
+    socket.emit(
+      "message",
+      JSON.stringify({ _tag: "Control", on: false, detail: "Remote control ended." }),
+    );
+    socket.emit(
+      "message",
+      JSON.stringify({
+        _tag: "InputRefused",
+        detail: "PC is locked; it can't be unlocked remotely.",
+      }),
+    );
+    expect(callbacks.onControl.mock.calls).toEqual([
+      [true, null],
+      [false, "Remote control ended."],
+    ]);
+    expect(callbacks.onInputRefused).toHaveBeenCalledWith(
+      "PC is locked; it can't be unlocked remotely.",
+    );
+    expect(callbacks.onState).not.toHaveBeenCalled();
   });
 });

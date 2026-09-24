@@ -8,7 +8,7 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
 vi.mock("~/connection/runtime", () => ({ connectionAtomRuntime: {} }));
 vi.mock("~/state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
 
-import { desktopHolderLine, desktopStreamUrl } from "./desktopState";
+import { desktopHolderLine, desktopLineFor, desktopStreamUrl } from "./desktopState";
 
 const STATUS: PersonalDesktopStatus = {
   available: true,
@@ -63,5 +63,29 @@ describe("desktop live view helpers", () => {
       }),
     ).toEqual({ text: "Assistant is using your PC · 1 waiting", busy: true });
     expect(desktopHolderLine({ ...STATUS, available: false }).busy).toBe(false);
+  });
+
+  it("says so when the owner is controlling the PC, and what waiting bots are waiting for", () => {
+    const user = {
+      ...STATUS,
+      holder: {
+        threadId: "remote-user",
+        botId: "",
+        botName: "You",
+        since: "2026-09-24T07:00:00.000Z",
+        lastActionAt: "2026-09-24T07:00:05.000Z",
+        kind: "user" as const,
+      },
+      waiting: [{ threadId: "t2", botId: "b2", botName: "IT" }],
+    };
+    expect(desktopHolderLine(user)).toEqual({
+      text: "You are controlling your PC · 1 waiting",
+      busy: true,
+    });
+    expect(desktopLineFor(user, "t2")).toEqual({
+      kind: "waiting",
+      text: "Waiting for the computer · you are using it",
+    });
+    expect(desktopLineFor(user, "t9")).toBeNull();
   });
 });

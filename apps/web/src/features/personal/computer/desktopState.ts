@@ -73,7 +73,9 @@ export function desktopLineFor(
       text:
         status.holder === null
           ? "Waiting for the computer"
-          : `Waiting for the computer · ${status.holder.botName} is using it`,
+          : status.holder.kind === "user"
+            ? "Waiting for the computer · you are using it"
+            : `Waiting for the computer · ${status.holder.botName} is using it`,
     };
   }
   return null;
@@ -101,6 +103,9 @@ export function desktopHolderLine(status: PersonalDesktopStatus | null): {
     return { text: "The live view needs the bots server on Windows", busy: false };
   const waiting = status.waiting.length;
   const queue = waiting === 0 ? "" : ` · ${waiting} waiting`;
+  if (status.holder?.kind === "user") {
+    return { text: `You are controlling your PC${queue}`, busy: true };
+  }
   if (status.holder !== null) {
     return { text: `${status.holder.botName} is using your PC${queue}`, busy: true };
   }

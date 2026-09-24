@@ -210,7 +210,8 @@ export function ComputerScreen({
     const restoreBackground = inertOutside(screenRef.current);
     screenRef.current?.focus({ preventScroll: true });
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      // An Esc the page already used (the PC under remote control) is not ours.
+      if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
       setFullScreen(false);
     };

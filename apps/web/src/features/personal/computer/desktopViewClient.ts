@@ -17,11 +17,17 @@ export interface DesktopViewCallbacks {
   readonly onState: (state: PersonalDesktopViewState, detail: string | null) => void;
   /** `opened=false` means the upgrade was refused (usually an expired ticket). */
   readonly onClosed: (opened: boolean) => void;
+  /** Whether this socket controls the PC, and why not when the server ended it. */
+  readonly onControl?: (on: boolean, detail: string | null) => void;
+  /** One input was refused; nothing was done on the PC. */
+  readonly onInputRefused?: (detail: string) => void;
 }
 
 export interface DesktopViewClient {
   /** The box frames are shown in, in device pixels. */
   readonly setViewport: (width: number, height: number) => void;
+  /** Control and input messages; dropped while the socket is not open. */
+  readonly send: (message: PersonalDesktopViewInput) => void;
   readonly close: () => void;
 }
 
@@ -65,9 +71,20 @@ export function connectDesktopView(
   });
   socket.addEventListener("message", (event: MessageEvent<unknown>) => {
     if (typeof event.data === "string") {
-      const message = decodeMessage(event.data);
-      if (Option.isNone(message)) return;
-      callbacks.onState(message.value.state, message.value.detail ?? null);
+      const decoded = decodeMessage(event.data);
+      if (Option.isNone(decoded)) return;
+      const message = decoded.value;
+      switch (message._tag) {
+        case "ViewState":
+          callbacks.onState(message.state, message.detail ?? null);
+          return;
+        case "Control":
+          callbacks.onControl?.(message.on, message.detail ?? null);
+          return;
+        case "InputRefused":
+          callbacks.onInputRefused?.(message.detail);
+          return;
+      }
       return;
     }
     if (!(event.data instanceof ArrayBuffer)) return;
@@ -100,6 +117,7 @@ export function connectDesktopView(
       pendingViewport = box;
       send({ _tag: "Viewport", ...box });
     },
+    send,
     close: () => {
       closed = true;
       socket.close();

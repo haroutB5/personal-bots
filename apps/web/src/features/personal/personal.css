@@ -515,3 +515,54 @@
     animation: none;
   }
 }
+
+/* Computer > Desktop in control: where a tap, click or long press landed on
+ * the PC. It sits on the PC's own picture, not the app's surface, so it is a
+ * white ring with a dark edge that reads on any content in either theme. */
+.personal-desktop-tap {
+  position: absolute;
+  z-index: 2;
+  width: 36px;
+  height: 36px;
+  margin: -18px 0 0 -18px;
+  border: 2px solid rgb(255 255 255 / 0.95);
+  border-radius: 9999px;
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.45),
+    inset 0 0 0 1px rgb(0 0 0 / 0.35);
+  pointer-events: none;
+  animation: personal-desktop-tap 450ms ease-out forwards;
+}
+
+.personal-desktop-tap-long {
+  width: 52px;
+  height: 52px;
+  margin: -26px 0 0 -26px;
+  animation-duration: 650ms;
+}
+
+@keyframes personal-desktop-tap {
+  from {
+    transform: scale(0.45);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+}
+
+@keyframes personal-desktop-tap-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .personal-desktop-tap {
+    animation-name: personal-desktop-tap-fade;
+  }
+}
