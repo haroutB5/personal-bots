@@ -114,6 +114,7 @@ import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
 import { personalClientDiagRouteLayer } from "./personal/push/clientDiagRoute.ts";
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
+import * as PersonalClaudeCodeReview from "./personal/claudeCodeReview/PersonalClaudeCodeReview.ts";
 import * as PersonalTurnRetry from "./personal/PersonalTurnRetryService.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
@@ -539,6 +540,8 @@ const PersonalReactorsLive = Layer.effectDiscard(
     yield* (yield* PersonalMemoryService.PersonalMemoryService).start();
     yield* (yield* PersonalPushService.PersonalPushService).start();
     yield* (yield* PersonalProviderUpdates.PersonalProviderUpdates).start();
+    // Daily check for a new Claude Code / Agent SDK; fires the Updates bot's review routine.
+    yield* (yield* PersonalClaudeCodeReview.PersonalClaudeCodeReview).start();
     // Re-runs a bot reply that died on a transient provider fault. Subscribes
     // here so it never misses the turn-start it has to track.
     yield* (yield* PersonalTurnRetry.PersonalTurnRetry).start();
@@ -551,6 +554,8 @@ const PersonalReactorsLive = Layer.effectDiscard(
 const PersonalLayerLive = PersonalReactorsLive.pipe(
   // Consumes the push service below and the provider/orchestration runtime.
   Layer.provideMerge(PersonalProviderUpdates.layer),
+  // Consumes the routine service and the bot service/repository below.
+  Layer.provideMerge(PersonalClaudeCodeReview.layer),
   Layer.provideMerge(PersonalTurnRetry.layer),
   Layer.provideMerge(
     PersonalPushService.layer.pipe(
