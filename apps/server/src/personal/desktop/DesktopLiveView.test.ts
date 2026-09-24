@@ -265,4 +265,89 @@ describe("desktop live view", () => {
     viewer.detach();
     hub.dispose();
   });
+
+  it("captures faster while the viewer controls the PC, and back to normal after", async () => {
+    const { hub, drivers, logs } = setup(
+      {
+        ...FAST,
+        frameIntervalMs: 200,
+        idleIntervalMs: 200,
+        controlFrameIntervalMs: 10,
+        controlIdleIntervalMs: 10,
+        controlMaxCaptureDuty: 1,
+        nudgeDelayMs: 0,
+      },
+      "still",
+    );
+    const sink = new RecordingSink();
+    const viewer = hub.attach(sink);
+    await until(() => sink.frames.length === 1, "the first frame");
+    viewer.ack();
+    await sleep(150);
+    const watching = drivers[0]!.requests.length;
+    expect(watching).toBeLessThanOrEqual(2);
+
+    viewer.setControl(true);
+    await sleep(150);
+    const controlling = drivers[0]!.requests.length - watching;
+    expect(controlling).toBeGreaterThanOrEqual(5);
+    // Still one frame and no more bytes: the screen did not change.
+    expect(sink.frames).toHaveLength(1);
+
+    viewer.setControl(false);
+    await sleep(20);
+    const before = drivers[0]!.requests.length;
+    await sleep(150);
+    expect(drivers[0]!.requests.length - before).toBeLessThanOrEqual(1);
+    expect(logs.some((line) => line.endsWith("took remote control"))).toBe(true);
+    expect(logs.some((line) => line.endsWith("left remote control"))).toBe(true);
+    viewer.detach();
+    hub.dispose();
+  });
+
+  it("captures soon after an input even while backed off on a still screen", async () => {
+    const { hub, drivers } = setup(
+      {
+        ...FAST,
+        frameIntervalMs: 1_000,
+        idleIntervalMs: 1_000,
+        controlFrameIntervalMs: 1_000,
+        controlIdleIntervalMs: 1_000,
+        nudgeDelayMs: 5,
+      },
+      "still",
+    );
+    const sink = new RecordingSink();
+    const viewer = hub.attach(sink);
+    await until(() => sink.frames.length === 1, "the first frame");
+    viewer.ack();
+    await sleep(30);
+    const count = drivers[0]!.requests.length;
+    viewer.nudge();
+    // Half the control spacing after the last capture at the earliest, not a whole second.
+    await until(() => drivers[0]!.requests.length > count, "a capture after the input", 900);
+    viewer.detach();
+    hub.dispose();
+  });
+
+  it("an input while a frame is in flight waits for its ack before the next capture", async () => {
+    const { hub, drivers } = setup({
+      ...FAST,
+      frameIntervalMs: 1_000,
+      controlFrameIntervalMs: 1_000,
+      ackTimeoutMs: 5_000,
+      nudgeDelayMs: 0,
+    });
+    const sink = new RecordingSink();
+    const viewer = hub.attach(sink);
+    await until(() => sink.frames.length === 1, "the first frame");
+    viewer.nudge();
+    await sleep(40);
+    // Still one frame in flight: the nudge did not break backpressure.
+    expect(drivers[0]!.requests).toHaveLength(1);
+    viewer.ack();
+    await until(() => sink.frames.length === 2, "the frame after the ack", 900);
+    viewer.detach();
+    hub.dispose();
+  });
 });

@@ -12,6 +12,8 @@ export interface DesktopClaimant {
   readonly threadId: string;
   readonly botId: string;
   readonly botName: string;
+  /** `user`: the owner, controlling the PC remotely from the app. Absent: a bot. */
+  readonly kind?: "bot" | "user";
 }
 
 export interface DesktopHolderState extends DesktopClaimant {
@@ -107,6 +109,19 @@ export class DesktopLockCore {
     const before = this.line.length;
     this.line = this.line.filter((entry) => entry.threadId !== threadId);
     return this.line.length !== before;
+  }
+
+  /**
+   * The user takes the PC from whoever holds it, ahead of everyone in line.
+   * The line keeps its order and now waits behind the user; the caller stops
+   * the bot that lost it. Returns that bot (null when the PC was free or the
+   * user already held it).
+   */
+  takeOver(claimant: DesktopClaimant, now: number): DesktopHolderState | null {
+    const previous = this.holderState;
+    this.line = this.line.filter((entry) => entry.threadId !== claimant.threadId);
+    this.holderState = { ...claimant, since: now, lastActionAt: now };
+    return previous === null || previous.threadId === claimant.threadId ? null : previous;
   }
 
   /** Takes the PC off a holder idle past the timeout. */

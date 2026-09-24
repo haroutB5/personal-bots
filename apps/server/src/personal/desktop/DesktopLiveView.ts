@@ -16,6 +16,9 @@
  * - **Cheap when still.** The helper hashes the scaled pixels; an unchanged
  *   frame costs a capture but no encode and no bytes, and the rate backs off.
  * - **Locked PC.** Nothing is captured; the viewer is told `locked`.
+ * - **Remote control.** While a viewer controls the PC it gets a faster rate
+ *   ({@link LiveViewTiming.controlFrameIntervalMs}) and a capture right after
+ *   each input (`nudge`), still one frame in flight.
  */
 // @effect-diagnostics globalTimers:off - capture pacing on a callback-based child process.
 // @effect-diagnostics globalDate:off - pacing uses a plain millisecond clock.
@@ -60,6 +63,10 @@ export interface LiveViewer {
   readonly setViewport: (width: number, height: number) => void;
   readonly detach: () => void;
   readonly stats: () => LiveViewStats;
+  /** This viewer controls the PC (faster frames) or went back to watching. */
+  readonly setControl: (on: boolean) => void;
+  /** An input just went to the PC: capture again soon, even on a still screen. */
+  readonly nudge: () => void;
 }
 
 export interface LiveViewTiming {
@@ -76,6 +83,14 @@ export interface LiveViewTiming {
   /** Captures may use at most this share of wall time, whatever the target rate. */
   readonly maxCaptureDuty: number;
   readonly captureTimeoutMs: number;
+  /** Spacing while the viewer controls the PC (about 6 fps). */
+  readonly controlFrameIntervalMs: number;
+  /** Still-screen spacing while in control. */
+  readonly controlIdleIntervalMs: number;
+  /** Capture duty cap while in control. */
+  readonly controlMaxCaptureDuty: number;
+  /** How soon after an input the next capture starts (the screen reacts first). */
+  readonly nudgeDelayMs: number;
 }
 
 export const DEFAULT_LIVE_VIEW_TIMING: LiveViewTiming = {
@@ -87,6 +102,10 @@ export const DEFAULT_LIVE_VIEW_TIMING: LiveViewTiming = {
   lingerMs: 20_000,
   maxCaptureDuty: 0.35,
   captureTimeoutMs: 10_000,
+  controlFrameIntervalMs: 150,
+  controlIdleIntervalMs: 300,
+  controlMaxCaptureDuty: 0.6,
+  nudgeDelayMs: 90,
 };
 
 /** Unchanged captures in a row before the rate backs off to the idle spacing. */
@@ -156,6 +175,11 @@ export class DesktopLiveViewHub {
       ack: () => loop.ack(),
       setViewport: (width, height) => loop.setViewport(width, height),
       stats: () => loop.stats(),
+      setControl: (on) => {
+        loop.setControl(on);
+        this.log(`desktop live view: viewer ${id} ${on ? "took" : "left"} remote control`);
+      },
+      nudge: () => loop.nudge(),
       detach: () => {
         if (!this.viewers.delete(loop)) return;
         loop.close();
@@ -222,6 +246,9 @@ class ViewerLoop {
   private fastAcks = 0;
   private still = 0;
   private lastState: string | null = null;
+  private control = false;
+  private nudgeAt: number | null = null;
+  private lastStartedAt = Number.NEGATIVE_INFINITY;
   private wakeTimer: ReturnType<typeof setTimeout> | null = null;
   private wakeResolve: (() => void) | null = null;
   private frames = 0;
@@ -285,6 +312,18 @@ class ViewerLoop {
     this.wake();
   }
 
+  setControl(on: boolean): void {
+    this.control = on;
+    this.still = 0;
+    if (on) this.nudge();
+  }
+
+  nudge(): void {
+    this.still = 0;
+    this.nudgeAt = this.now() + this.timing.nudgeDelayMs;
+    this.wake();
+  }
+
   private stepDown(): void {
     this.fastAcks = 0;
     this.level = Math.min(LIVE_VIEW_LEVELS.length - 1, this.level + 1);
@@ -325,12 +364,21 @@ class ViewerLoop {
         this.inFlight = false;
         this.stepDown();
       }
+      if (this.nudgeAt !== null) {
+        // Inputs never pull captures closer than half the control spacing.
+        nextAt = Math.min(
+          nextAt,
+          Math.max(this.nudgeAt, this.lastStartedAt + this.timing.controlFrameIntervalMs / 2),
+        );
+        this.nudgeAt = null;
+      }
       const wait = nextAt - this.now();
       if (wait > 0) {
         await this.sleep(wait);
         continue;
       }
       const started = this.now();
+      this.lastStartedAt = started;
       const level = LIVE_VIEW_LEVELS[this.level]!;
       let reply: Record<string, unknown>;
       try {
@@ -361,13 +409,16 @@ class ViewerLoop {
       this.captureMsTotal += captureMs;
       this.setState("live");
       // Whatever the target rate, a slow capture spaces the next one out.
-      const spacing = Math.max(this.timing.frameIntervalMs, elapsed / this.timing.maxCaptureDuty);
+      const interval = this.control
+        ? this.timing.controlFrameIntervalMs
+        : this.timing.frameIntervalMs;
+      const duty = this.control ? this.timing.controlMaxCaptureDuty : this.timing.maxCaptureDuty;
+      const spacing = Math.max(interval, elapsed / duty);
       if (reply.unchanged === true) {
         this.unchanged += 1;
         this.still += 1;
-        nextAt =
-          started +
-          (this.still >= STILL_AFTER ? Math.max(spacing, this.timing.idleIntervalMs) : spacing);
+        const idle = this.control ? this.timing.controlIdleIntervalMs : this.timing.idleIntervalMs;
+        nextAt = started + (this.still >= STILL_AFTER ? Math.max(spacing, idle) : spacing);
         continue;
       }
       this.still = 0;

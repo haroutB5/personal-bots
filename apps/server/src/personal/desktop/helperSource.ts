@@ -10,6 +10,15 @@
  * Protocol: one JSON object per line on stdin (`{"id":1,"cmd":"..."}`), one
  * JSON object per line on stdout: `{"id":1,"ok":true,...}` replies, and
  * unsolicited `{"event":"kill"}` when the user presses the stop hotkey.
+ * Commands run one at a time on a worker thread, except `abort`, which the
+ * reader answers at once: it ends whatever action is running.
+ *
+ * Every injected event carries a tag in `dwExtraInfo` so the hooks can tell
+ * who sent it: 0x50420001 for a bot's input, 0x50420002 for the owner's
+ * remote control from the app (commands with `"remote": true`). Anything
+ * untagged is the person at the PC: it pauses bots and its Esc is the stop
+ * key. Remote input never waits for the PC's user to go quiet (the owner is
+ * the user) and never trips the stop key.
  *
  * The helper is per-monitor DPI aware (v2), so every coordinate it reads or
  * takes is a physical pixel on the virtual screen, whose origin can be
@@ -18,6 +27,7 @@
 export const DESKTOP_HELPER_SOURCE = String.raw`
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -141,12 +151,29 @@ public static class PbDesktopHelper {
   static Native.HookProc keyboardProc, mouseProc;
   static volatile int abortGeneration = 0;
   static long lastPhysicalInput = 0;
+  // The owner's remote input from the app: user activity as far as bots are
+  // concerned, but never the person at the PC.
+  static long lastRemoteInput = 0;
   static bool physCtrl = false, physAlt = false, swallowEscUp = false;
   /** True while the overlay is up, i.e. while a bot holds the PC. */
   static volatile bool armed = false;
   // Stamped on every event this helper injects, so the hooks can tell the
   // bot's own input from the user's (hardware, or any other program).
   static readonly IntPtr SelfTag = new IntPtr(0x50420001);
+  // Stamped on the owner's remote-control input (see the header comment).
+  static readonly IntPtr RemoteTag = new IntPtr(0x50420002);
+  // The tag the command being run injects with, and whether it is remote.
+  static IntPtr injectTag = SelfTag;
+  static bool remoteCmd = false;
+  static readonly BlockingCollection<string> work = new BlockingCollection<string>();
+
+  // 0: the person at the PC (hardware, or another program); 1: a bot, through
+  // this helper; 2: the owner's remote control, through this helper.
+  static int Classify(IntPtr extra) {
+    if (extra == SelfTag) return 1;
+    if (extra == RemoteTag) return 2;
+    return 0;
+  }
 
   static TextReader input;
   static TextWriter output;
@@ -209,7 +236,7 @@ public static class PbDesktopHelper {
   static IntPtr KeyboardHook(int code, IntPtr w, IntPtr l) {
     if (code >= 0) {
       Native.KBDLLHOOKSTRUCT k = (Native.KBDLLHOOKSTRUCT)Marshal.PtrToStructure(l, typeof(Native.KBDLLHOOKSTRUCT));
-      if (k.extra != SelfTag) {
+      if (Classify(k.extra) == 0) {
         int msg = w.ToInt32();
         bool down = msg == 0x0100 || msg == 0x0104;
         uint vk = k.vkCode;
@@ -239,22 +266,56 @@ public static class PbDesktopHelper {
   static IntPtr MouseHook(int code, IntPtr w, IntPtr l) {
     if (code >= 0) {
       Native.MSLLHOOKSTRUCT m = (Native.MSLLHOOKSTRUCT)Marshal.PtrToStructure(l, typeof(Native.MSLLHOOKSTRUCT));
-      if (m.extra != SelfTag) Interlocked.Exchange(ref lastPhysicalInput, DateTime.UtcNow.Ticks);
+      if (Classify(m.extra) == 0) Interlocked.Exchange(ref lastPhysicalInput, DateTime.UtcNow.Ticks);
     }
     return Native.CallNextHookEx(mouseHook, code, w, l);
   }
 
-  static double MsSincePhysicalInput() {
-    long last = Interlocked.Read(ref lastPhysicalInput);
+  static double MsSince(long last) {
     if (last == 0) return double.MaxValue;
     return (DateTime.UtcNow.Ticks - last) / 10000.0;
   }
 
+  // Anyone using the PC as far as a bot is concerned: the person at it, or
+  // the owner controlling it remotely.
+  static double MsSinceUserInput() {
+    return Math.Min(MsSince(Interlocked.Read(ref lastPhysicalInput)), MsSince(Interlocked.Read(ref lastRemoteInput)));
+  }
+
+  // Reads commands. "abort" is answered here at once, so a stop can end the
+  // action the worker is in the middle of; everything else runs in order on
+  // the worker.
   static void ReadLoop() {
-    Native.SetThreadDpiAwarenessContext(new IntPtr(-4));
+    Thread worker = new Thread(WorkLoop);
+    worker.IsBackground = true;
+    worker.Start();
     string line;
     while ((line = input.ReadLine()) != null) {
       if (line.Trim().Length == 0) continue;
+      if (line.IndexOf("\"abort\"", StringComparison.Ordinal) >= 0) {
+        object id = null;
+        try {
+          Dictionary<string, object> req = json.Deserialize<Dictionary<string, object>>(line);
+          if (Str(req, "cmd") == "abort") {
+            id = req.ContainsKey("id") ? req["id"] : null;
+            Interlocked.Increment(ref abortGeneration);
+            Emit(Dict("id", id, "ok", true));
+            continue;
+          }
+        } catch (Exception) { }
+      }
+      work.Add(line);
+    }
+    work.CompleteAdding();
+    worker.Join(5000);
+    try { ui.BeginInvoke((MethodInvoker)delegate { Application.ExitThread(); }); } catch (Exception) { }
+    Thread.Sleep(500);
+    Environment.Exit(0);
+  }
+
+  static void WorkLoop() {
+    Native.SetThreadDpiAwarenessContext(new IntPtr(-4));
+    foreach (string line in work.GetConsumingEnumerable()) {
       object id = null;
       try {
         Dictionary<string, object> req = json.Deserialize<Dictionary<string, object>>(line);
@@ -269,9 +330,6 @@ public static class PbDesktopHelper {
         Emit(Dict("id", id, "ok", false, "code", "internal", "error", e.GetType().Name + ": " + e.Message));
       }
     }
-    try { ui.BeginInvoke((MethodInvoker)delegate { Application.ExitThread(); }); } catch (Exception) { }
-    Thread.Sleep(500);
-    Environment.Exit(0);
   }
 
   class HelperError : Exception {
@@ -286,22 +344,38 @@ public static class PbDesktopHelper {
 
   static Dictionary<string, object> Handle(Dictionary<string, object> r) {
     string cmd = Str(r, "cmd");
+    remoteCmd = BoolOr(r, "remote", false);
+    injectTag = remoteCmd ? RemoteTag : SelfTag;
     switch (cmd) {
       case "ping": return Dict("pong", true);
-      case "inputState": return Dict("msSinceUserInput", Math.Min(MsSincePhysicalInput(), 1e9));
+      case "abort": Interlocked.Increment(ref abortGeneration); return Dict();
+      case "inputState": return Dict("msSinceUserInput", Math.Min(MsSinceUserInput(), 1e9),
+        "msSincePhysicalInput", Math.Min(MsSince(Interlocked.Read(ref lastPhysicalInput)), 1e9));
       case "info": return Info();
       case "screenshot": return Screenshot(r);
       case "cursor": { Native.POINT p; Native.GetCursorPos(out p); return Dict("x", p.X, "y", p.Y); }
       case "overlay": return OverlayCmd(r);
-      case "move": GuardUser(r); MoveTo(Int(r, "x"), Int(r, "y")); return Dict();
-      case "click": GuardUser(r); return Click(r);
-      case "button": GuardUser(r); return ButtonCmd(r);
-      case "drag": GuardUser(r); return Drag(r);
-      case "scroll": GuardUser(r); return Scroll(r);
-      case "type": GuardUser(r); return TypeText(r);
-      case "keys": GuardUser(r); return Keys(r);
+      case "move": Guard(r); MoveTo(Int(r, "x"), Int(r, "y")); return Dict();
+      case "click": Guard(r); return Click(r);
+      case "button": Guard(r); return ButtonCmd(r);
+      case "drag": Guard(r); return Drag(r);
+      case "scroll": Guard(r); return Scroll(r);
+      case "wheel": Guard(r); return Wheel(r);
+      case "type": Guard(r); return TypeText(r);
+      case "keys": Guard(r); return Keys(r);
       default: throw new HelperError("bad_command", "Unknown command " + cmd);
     }
+  }
+
+  static void Guard(Dictionary<string, object> r) {
+    if (remoteCmd) GuardRemote(); else GuardUser(r);
+  }
+
+  // The owner's own input from the app: never into the lock screen or a
+  // secure prompt, and no waiting for the person at the PC to go quiet.
+  static void GuardRemote() {
+    if (Locked()) throw new HelperError("locked", "The PC is locked, or a secure Windows prompt is showing.");
+    Interlocked.Exchange(ref lastRemoteInput, DateTime.UtcNow.Ticks);
   }
 
   // Locked: the session reports it (the lock screen curtain is an app on the
@@ -343,7 +417,7 @@ public static class PbDesktopHelper {
     int maxWaitMs = IntOr(r, "maxWaitMs", 8000);
     int gen = abortGeneration;
     DateTime until = DateTime.UtcNow.AddMilliseconds(maxWaitMs);
-    while (MsSincePhysicalInput() < quietMs) {
+    while (MsSinceUserInput() < quietMs) {
       if (abortGeneration != gen) throw new HelperError("aborted", "Stopped by the user.");
       if (DateTime.UtcNow > until) throw new HelperError("user_active", "The user is using the mouse or keyboard right now.");
       Thread.Sleep(50);
@@ -352,7 +426,10 @@ public static class PbDesktopHelper {
 
   static void CheckInterrupted(int gen, long startTicks) {
     if (abortGeneration != gen) throw new HelperError("aborted", "Stopped by the user.");
-    if (Interlocked.Read(ref lastPhysicalInput) > startTicks) throw new HelperError("user_active", "The user started using the mouse or keyboard, so the action stopped part way.");
+    // The owner's remote input is theirs to interleave with; a bot's stops
+    // part way when anyone else touches the PC.
+    if (remoteCmd) return;
+    if (Interlocked.Read(ref lastPhysicalInput) > startTicks || Interlocked.Read(ref lastRemoteInput) > startTicks) throw new HelperError("user_active", "The user started using the mouse or keyboard, so the action stopped part way.");
   }
 
   static List<Monitor> Monitors() {
@@ -633,7 +710,7 @@ public static class PbDesktopHelper {
     input[0].type = 0;
     input[0].u.mi.dwFlags = flags;
     input[0].u.mi.mouseData = data;
-    input[0].u.mi.extra = SelfTag;
+    input[0].u.mi.extra = injectTag;
     Native.SendInput(1, input, Marshal.SizeOf(typeof(Native.INPUT)));
   }
 
@@ -647,7 +724,7 @@ public static class PbDesktopHelper {
     input[0].u.mi.dx = (int)Math.Round((x - vx) * 65535.0 / Math.Max(1, vw - 1));
     input[0].u.mi.dy = (int)Math.Round((y - vy) * 65535.0 / Math.Max(1, vh - 1));
     input[0].u.mi.dwFlags = 0x0001 | 0x8000 | 0x4000;
-    input[0].u.mi.extra = SelfTag;
+    input[0].u.mi.extra = injectTag;
     Native.SendInput(1, input, Marshal.SizeOf(typeof(Native.INPUT)));
     Native.POINT p;
     Native.GetCursorPos(out p);
@@ -683,6 +760,7 @@ public static class PbDesktopHelper {
   static Dictionary<string, object> ButtonCmd(Dictionary<string, object> r) {
     string button = Str(r, "button") ?? "left";
     bool down = BoolOr(r, "down", true);
+    if (r.ContainsKey("x") && r["x"] != null) MoveTo(Int(r, "x"), Int(r, "y"));
     SendMouse(down ? DownFlag(button) : UpFlag(button), 0);
     return Dict();
   }
@@ -719,13 +797,24 @@ public static class PbDesktopHelper {
     return Dict();
   }
 
+  // Raw wheel deltas (120 = one notch) for the owner's smooth scrolling.
+  // Browser convention in: dy > 0 scrolls down, dx > 0 scrolls right.
+  static Dictionary<string, object> Wheel(Dictionary<string, object> r) {
+    if (r.ContainsKey("x") && r["x"] != null) MoveTo(Int(r, "x"), Int(r, "y"));
+    int dy = Math.Max(-2400, Math.Min(2400, IntOr(r, "dy", 0)));
+    int dx = Math.Max(-2400, Math.Min(2400, IntOr(r, "dx", 0)));
+    if (dy != 0) SendMouse(0x0800, -dy);
+    if (dx != 0) SendMouse(0x1000, dx);
+    return Dict();
+  }
+
   static void SendKey(ushort vk, ushort scan, uint flags) {
     Native.INPUT[] input = new Native.INPUT[1];
     input[0].type = 1;
     input[0].u.ki.wVk = vk;
     input[0].u.ki.wScan = scan;
     input[0].u.ki.dwFlags = flags;
-    input[0].u.ki.extra = SelfTag;
+    input[0].u.ki.extra = injectTag;
     Native.SendInput(1, input, Marshal.SizeOf(typeof(Native.INPUT)));
   }
 

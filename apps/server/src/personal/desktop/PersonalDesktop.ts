@@ -42,8 +42,9 @@ import {
   type HandOver,
 } from "./DesktopLock.ts";
 import { DesktopLiveViewHub, type LiveViewer, type LiveViewSink } from "./DesktopLiveView.ts";
-import { DesktopCoordinateError, type ScreenFrame } from "./desktopGeometry.ts";
+import { DesktopCoordinateError, type DesktopRect, type ScreenFrame } from "./desktopGeometry.ts";
 import { DesktopKeyError } from "./desktopKeys.ts";
+import { planRemoteInput, type RemoteDesktopInput } from "./desktopRemote.ts";
 
 /**
  * How long one tool call waits in line. Claude's MCP client gives up on a
@@ -79,6 +80,60 @@ export class PersonalDesktopActionError extends Data.TaggedError("PersonalDeskto
 
 export const STOPPED_REASON = `The user took back control of the PC (they pressed ${PERSONAL_DESKTOP_STOP_HOTKEY} or Stop in the app). Stop using the desktop now: do not retry. Tell the user what you had done so far and ask whether they want you to continue.`;
 
+/** What a bot hears when the owner takes the PC over from the app. */
+export const TAKEN_OVER_REASON =
+  "The user took control of the PC remotely from the app. Stop using the desktop now: do not retry. Tell the user what you had done so far and ask whether they want you to continue.";
+
+/** The owner, as the PC's holder while they control it remotely. */
+export const REMOTE_USER: DesktopClaimant = {
+  threadId: "remote-user",
+  botId: "",
+  botName: "You",
+  kind: "user",
+};
+
+/** Why remote control ended. */
+export type RemoteControlEnd =
+  | "released"
+  | "closed"
+  | "idle"
+  | "esc"
+  | "replaced"
+  | "locked"
+  | "stopped";
+
+export const REMOTE_LOCKED_DETAIL = "PC is locked; it can't be unlocked remotely.";
+
+/** What the app shows when control ends by itself; nothing when the user ended it. */
+export const REMOTE_CONTROL_END_DETAIL: Readonly<Record<RemoteControlEnd, string | undefined>> = {
+  released: undefined,
+  closed: undefined,
+  idle: "Remote control ended after 2 minutes without input.",
+  esc: "Someone at the PC pressed Esc, so remote control ended.",
+  replaced: "Another of your devices took control of the PC.",
+  locked: REMOTE_LOCKED_DETAIL,
+  stopped: "Remote control was stopped from the app.",
+};
+
+/**
+ * One remote-control session: the owner holds the PC and drives it from the
+ * app. Inputs run one at a time, in the order they were sent.
+ */
+export interface RemoteControlSession {
+  /** Rejects with a user-facing PersonalDesktopActionError; nothing was done. */
+  readonly input: (input: RemoteDesktopInput) => Promise<void>;
+  /** Hands the PC back (toggle off, or the socket closed). */
+  readonly end: (reason: "released" | "closed") => void;
+  readonly active: () => boolean;
+  /** Inputs queued or running (the socket drops plain moves past a backlog). */
+  readonly pending: () => number;
+}
+
+export interface RemoteControlOptions {
+  /** Control ended on the server's side (idle, Esc at the PC, another device, locked). */
+  readonly onEnded: (reason: RemoteControlEnd, detail: string | undefined) => void;
+}
+
 export interface DesktopActionContext {
   readonly driver: DesktopDriver;
   /** The last screenshot this chat took, which its coordinates refer to. */
@@ -111,6 +166,15 @@ export interface PersonalDesktopShape {
   readonly status: Effect.Effect<PersonalDesktopStatus>;
   readonly changes: Stream.Stream<PersonalDesktopStatus>;
   /**
+   * The owner takes the PC for remote control from the app: a bot holding it
+   * is stopped (and told the user took over), bots in line keep waiting
+   * behind the owner, and no bot gets it until the session ends. Refused on
+   * a locked PC. Only one session at a time: a second device takes over.
+   */
+  readonly takeControl: (
+    options: RemoteControlOptions,
+  ) => Effect.Effect<RemoteControlSession, PersonalDesktopActionError>;
+  /**
    * A live view for one viewer socket (the app's Desktop view): frames go to
    * `sink` until the scope closes. Null where there is no desktop to show.
    * Watching never touches the bots' action queue (see DesktopLiveView.ts).
@@ -139,12 +203,73 @@ export interface DesktopServiceOptions {
   readonly overlayCapturable?: boolean;
   /** The app's live view; null or absent where there is no desktop. */
   readonly liveView?: DesktopLiveViewHub | null;
+  /** One line per remote-control session (never its keystrokes). */
+  readonly log?: (line: string) => void;
 }
 
 const iso = (millis: number) => new Date(millis).toISOString();
 
+const REMOTE_MONITOR_TTL_MS = 10_000;
+
+/** The primary monitor's physical rect from the helper's `info` reply. */
+function primaryMonitor(info: Record<string, unknown>): DesktopRect {
+  const monitors = Array.isArray(info.monitors)
+    ? (info.monitors as Array<Record<string, unknown>>)
+    : [];
+  const primary = monitors.find((entry) => entry.primary === true) ?? monitors[0];
+  if (primary === undefined) {
+    throw new PersonalDesktopActionError({ kind: "unavailable", reason: "No monitor was found." });
+  }
+  return {
+    x: Number(primary.x),
+    y: Number(primary.y),
+    width: Number(primary.width),
+    height: Number(primary.height),
+  };
+}
+
 export const overlayText = (botName: string) =>
   `${botName} is using your PC  ·  press ${PERSONAL_DESKTOP_STOP_HOTKEY} to take it back`;
+
+export const REMOTE_OVERLAY_TEXT = `You are controlling this PC remotely  ·  press ${PERSONAL_DESKTOP_STOP_HOTKEY} here to end it`;
+
+const isUser = (holder: DesktopClaimant | null | undefined) => holder?.kind === "user";
+
+/** What the owner sees when one remote input fails; nothing was done. */
+function remoteFailure(error: unknown): PersonalDesktopActionError {
+  if (error instanceof PersonalDesktopActionError) return error;
+  if (error instanceof DesktopHelperError) {
+    switch (error.code) {
+      case "locked":
+        return new PersonalDesktopActionError({ kind: "locked", reason: REMOTE_LOCKED_DETAIL });
+      case "aborted":
+        return new PersonalDesktopActionError({
+          kind: "stopped",
+          reason: "Stopped: Esc was pressed at the PC.",
+        });
+      case "unavailable":
+        return new PersonalDesktopActionError({ kind: "unavailable", reason: error.message });
+      default:
+        return new PersonalDesktopActionError({
+          kind: "failed",
+          reason: `The PC didn't take that input: ${error.message}`,
+        });
+    }
+  }
+  if (error instanceof DesktopCoordinateError) {
+    return new PersonalDesktopActionError({
+      kind: "invalid",
+      reason: "That point is outside the picture of your PC.",
+    });
+  }
+  if (error instanceof DesktopKeyError) {
+    return new PersonalDesktopActionError({ kind: "invalid", reason: error.message });
+  }
+  return new PersonalDesktopActionError({
+    kind: "failed",
+    reason: `The PC didn't take that input: ${error instanceof Error ? error.message : String(error)}`,
+  });
+}
 
 function helperFailure(error: unknown): PersonalDesktopActionError {
   if (error instanceof PersonalDesktopActionError) return error;
@@ -193,8 +318,21 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
     const activeWaits = new Map<string, number>();
     const waiters = new Map<string, Waiter>();
     const frames = new Map<string, ScreenFrame>();
-    /** Chats the user stopped, refused until their turn ends. */
-    const stopped = new Set<string>();
+    /** Chats the user stopped, refused until their turn ends, with what they are told. */
+    const stopped = new Map<string, string>();
+    const stoppedReason = (threadId: string) => stopped.get(threadId) ?? STOPPED_REASON;
+    const log = options.log ?? (() => undefined);
+    interface RemoteState {
+      readonly options: RemoteControlOptions;
+      readonly since: number;
+      inputs: number;
+      pending: number;
+      readonly buttonsDown: Set<string>;
+      monitor: DesktopRect | null;
+      monitorAt: number;
+    }
+    /** The owner's remote-control session, while they hold the PC. */
+    let remote: RemoteState | null = null;
     let lastStop: PersonalDesktopStop | null = null;
     let overlayShownFor: string | null = null;
     /** One action at a time, whoever holds the PC. */
@@ -214,6 +352,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
                 botName: holder.botName,
                 since: iso(holder.since),
                 lastActionAt: iso(holder.lastActionAt),
+                kind: holder.kind ?? "bot",
               },
         waiting: lock.waiting.map((entry) => ({ ...entry })),
         lastStop,
@@ -229,13 +368,14 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
     const syncOverlay = () => {
       if (driver === null) return;
       const holder = lock.holder;
-      const wanted = holder === null ? null : holder.botName;
+      const wanted =
+        holder === null ? null : isUser(holder) ? REMOTE_OVERLAY_TEXT : overlayText(holder.botName);
       if (wanted === overlayShownFor) return;
       overlayShownFor = wanted;
       driver
         .request("overlay", {
           show: wanted !== null,
-          text: wanted === null ? "" : overlayText(wanted),
+          text: wanted ?? "",
           capturable: options.overlayCapturable === true,
         })
         .catch(() => {
@@ -245,8 +385,44 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
         });
     };
 
-    const applyHandOver = (handOver: HandOver) => {
+    /** One action at a time on the helper, whoever sends it. */
+    const runExclusive = <A>(task: () => Promise<A>): Promise<A> => {
+      const result = actionChain.then(task, task);
+      actionChain = result.catch(() => undefined);
+      return result;
+    };
+
+    /**
+     * The owner's session is over: it forgets its state and, when the owner
+     * did not end it themselves, tells their app why. Buttons still held by a
+     * drag are let go. The lock itself is the caller's business.
+     */
+    const finishRemote = (reason: RemoteControlEnd) => {
+      const session = remote;
+      if (session === null) return;
+      remote = null;
+      if (driver !== null) {
+        for (const button of session.buttonsDown) {
+          void runExclusive(() =>
+            driver.request("button", { button, down: false, remote: true }),
+          ).catch(() => undefined);
+        }
+      }
+      const seconds = ((now() - session.since) / 1000).toFixed(1);
+      log(`desktop remote control: ended (${reason}) after ${seconds} s, ${session.inputs} inputs`);
+      if (reason !== "released" && reason !== "closed") {
+        session.options.onEnded(reason, REMOTE_CONTROL_END_DETAIL[reason]);
+      }
+    };
+
+    /** Asks the helper to abandon the action it is running (a stopped bot's). */
+    const abortHelper = () => {
+      driver?.request("abort").catch(() => undefined);
+    };
+
+    const applyHandOver = (handOver: HandOver, userEnd: RemoteControlEnd = "idle") => {
       if (handOver.previous !== null) frames.delete(handOver.previous.threadId);
+      if (isUser(handOver.previous)) finishRemote(userEnd);
       if (handOver.promoted !== null) {
         const promoted = handOver.promoted.threadId;
         const waiter = waiters.get(promoted);
@@ -268,7 +444,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
 
     const expireIdle = () => {
       const handOver = lock.expireIdle(now());
-      if (handOver.previous !== null) {
+      if (handOver.previous !== null && !isUser(handOver.previous)) {
         lastStop = {
           threadId: handOver.previous.threadId,
           botName: handOver.previous.botName,
@@ -283,13 +459,18 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
       const { stopped: holder, turnedAway } = lock.stopAll();
       lineDeadlines.clear();
       const error = new PersonalDesktopActionError({ kind: "stopped", reason: STOPPED_REASON });
-      if (holder !== null) {
-        stopped.add(holder.threadId);
+      if (holder !== null && isUser(holder)) {
+        finishRemote(by === "hotkey" ? "esc" : "stopped");
+      } else if (holder !== null) {
+        stopped.set(holder.threadId, STOPPED_REASON);
         frames.delete(holder.threadId);
         lastStop = { threadId: holder.threadId, botName: holder.botName, by, at: iso(now()) };
+        // The stop key already aborted the helper's action from inside it;
+        // the app's Stop has to ask.
+        if (by !== "hotkey") abortHelper();
       }
       for (const entry of turnedAway) {
-        stopped.add(entry.threadId);
+        stopped.set(entry.threadId, STOPPED_REASON);
         const waiter = waiters.get(entry.threadId);
         waiters.delete(entry.threadId);
         waiter?.reject(error);
@@ -331,7 +512,10 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
       Effect.suspend(() => {
         if (stopped.has(claimant.threadId)) {
           return Effect.fail(
-            new PersonalDesktopActionError({ kind: "stopped", reason: STOPPED_REASON }),
+            new PersonalDesktopActionError({
+              kind: "stopped",
+              reason: stoppedReason(claimant.threadId),
+            }),
           );
         }
         expireIdle();
@@ -361,11 +545,11 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
                 settled = true;
                 keepPlace();
                 const position = lock.waiting.findIndex((entry) => entry.threadId === threadId) + 1;
-                const holderName = lock.holder?.botName ?? claim.holder.botName;
+                const holder = lock.holder ?? claim.holder;
                 reject(
                   new PersonalDesktopActionError({
                     kind: "busy",
-                    reason: `${holderName} is using the PC. Nothing was done. You are number ${Math.max(1, position)} in line and keep that place for the next minute: call the same tool again now to keep waiting, or carry on with other work and tell the user you are waiting for the PC.`,
+                    reason: `${isUser(holder) ? "The user is controlling the PC remotely right now" : `${holder.botName} is using the PC`}. Nothing was done. You are number ${Math.max(1, position)} in line and keep that place for the next minute: call the same tool again now to keep waiting, or carry on with other work and tell the user you are waiting for the PC.`,
                   }),
                 );
               }, queueWaitMs);
@@ -396,12 +580,6 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
         });
       });
 
-    const runExclusive = <A>(task: () => Promise<A>): Promise<A> => {
-      const result = actionChain.then(task, task);
-      actionChain = result.catch(() => undefined);
-      return result;
-    };
-
     const act: PersonalDesktopShape["act"] = (claimant, operation, run) =>
       Effect.gen(function* () {
         if (driver === null) {
@@ -418,7 +596,10 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
               // action waited behind another one of the same bot.
               if (!lock.isHolder(claimant.threadId)) {
                 throw stopped.has(claimant.threadId)
-                  ? new PersonalDesktopActionError({ kind: "stopped", reason: STOPPED_REASON })
+                  ? new PersonalDesktopActionError({
+                      kind: "stopped",
+                      reason: stoppedReason(claimant.threadId),
+                    })
                   : new PersonalDesktopActionError({
                       kind: "busy",
                       reason:
@@ -439,7 +620,16 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
                 lock.touch(claimant.threadId, now());
               }
             }),
-          catch: helperFailure,
+          catch: (error) => {
+            const failure = helperFailure(error);
+            // An abort from a takeover reads as the takeover, not the stop key.
+            return failure.kind === "stopped" && stopped.has(claimant.threadId)
+              ? new PersonalDesktopActionError({
+                  kind: "stopped",
+                  reason: stoppedReason(claimant.threadId),
+                })
+              : failure;
+          },
         }).pipe(Effect.withSpan(`PersonalDesktop.${operation}`));
         return result;
       });
@@ -455,6 +645,102 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
       Effect.sync(() => {
         stopAllNow(by);
         return snapshot();
+      });
+
+    /** The primary monitor's physical rect, re-read every few seconds while controlling. */
+    const remoteMonitor = async (session: RemoteState): Promise<DesktopRect> => {
+      if (session.monitor !== null && now() - session.monitorAt < REMOTE_MONITOR_TTL_MS) {
+        return session.monitor;
+      }
+      const info = await driver!.request("info");
+      session.monitor = primaryMonitor(info);
+      session.monitorAt = now();
+      return session.monitor;
+    };
+
+    const ended = () =>
+      new PersonalDesktopActionError({ kind: "stopped", reason: "Remote control has ended." });
+
+    const takeControl: PersonalDesktopShape["takeControl"] = (controlOptions) =>
+      Effect.tryPromise({
+        try: async () => {
+          if (driver === null) {
+            throw new PersonalDesktopActionError({
+              kind: "unavailable",
+              reason: "Remote control only works when the bots server runs on Windows.",
+            });
+          }
+          const info = await driver.request("info");
+          if (info.locked === true) {
+            throw new PersonalDesktopActionError({ kind: "locked", reason: REMOTE_LOCKED_DETAIL });
+          }
+          const monitor = primaryMonitor(info);
+          // Another device of the owner's had it: that session ends, the PC stays theirs.
+          if (remote !== null) finishRemote("replaced");
+          const previous = lock.takeOver(REMOTE_USER, now());
+          if (previous !== null) {
+            stopped.set(previous.threadId, TAKEN_OVER_REASON);
+            frames.delete(previous.threadId);
+            lastStop = {
+              threadId: previous.threadId,
+              botName: previous.botName,
+              by: "app",
+              at: iso(now()),
+            };
+            abortHelper();
+          }
+          const session: RemoteState = {
+            options: controlOptions,
+            since: now(),
+            inputs: 0,
+            pending: 0,
+            buttonsDown: new Set(),
+            monitor,
+            monitorAt: now(),
+          };
+          remote = session;
+          log(
+            `desktop remote control: started${previous === null ? "" : ` (took the PC from ${previous.botName})`}, ${lock.waiting.length} waiting`,
+          );
+          syncOverlay();
+          publish();
+          const handle: RemoteControlSession = {
+            active: () => remote === session,
+            pending: () => session.pending,
+            end: (reason) => {
+              if (remote !== session) return;
+              applyHandOver(lock.release(REMOTE_USER.threadId, now()), reason);
+            },
+            input: async (input) => {
+              if (remote !== session) throw ended();
+              session.pending += 1;
+              try {
+                lock.touch(REMOTE_USER.threadId, now());
+                const command = planRemoteInput(input, await remoteMonitor(session));
+                await runExclusive(async () => {
+                  if (remote !== session) throw ended();
+                  await driver.request(command.cmd, command.params, command.timeoutMs);
+                });
+                session.inputs += 1;
+                const button = command.params.button;
+                if (command.cmd === "button" && typeof button === "string") {
+                  if (command.params.down === true) session.buttonsDown.add(button);
+                  else session.buttonsDown.delete(button);
+                }
+              } catch (error) {
+                const failure = remoteFailure(error);
+                if (failure.kind === "locked" && remote === session) {
+                  applyHandOver(lock.release(REMOTE_USER.threadId, now()), "locked");
+                }
+                throw failure;
+              } finally {
+                session.pending -= 1;
+              }
+            },
+          };
+          return handle;
+        },
+        catch: remoteFailure,
       });
 
     const threadTurnEnded: PersonalDesktopShape["threadTurnEnded"] = (threadId) =>
@@ -474,6 +760,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
         release,
         stop,
         threadTurnEnded,
+        takeControl,
         status: Effect.sync(snapshot),
         changes: Stream.fromPubSub(pubsub),
         watch: (sink) =>
@@ -529,6 +816,9 @@ export const layer = Layer.effect(
       driver,
       overlayCapturable: process.env.PB_DESKTOP_OVERLAY_CAPTURABLE === "1",
       liveView,
+      log: (line) => {
+        runFork(Effect.logInfo(line));
+      },
     });
     // A turn that ends lets go of the PC: nobody should hold the user's
     // desktop across a finished reply, and a stopped chat may try again on
