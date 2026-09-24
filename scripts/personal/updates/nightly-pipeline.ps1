@@ -83,6 +83,7 @@ $script:previous = $null
 $script:urgent = $false
 $script:pushed = $false
 $script:deployStarted = $false
+$script:noUndo = $false
 
 function Add-Step([string]$Text) { $steps.Add($Text) | Out-Null; & $log "STEP $Text" }
 
@@ -223,6 +224,20 @@ function Invoke-Pipeline {
         $script:result = 'nothing-applied'
         $script:summary = 'Nothing was applied this time, so nothing was built or restarted.'
         Add-Step 'no commits: no gates, build or restart needed'
+        return
+    }
+    $recorded = @()
+    $appliedNow = Invoke-Ledger @('run-commits')
+    if ($appliedNow.Code -eq 0) {
+        try { $recorded = @(($appliedNow.Out | ConvertFrom-Json) | ForEach-Object { $_.commits }) } catch { $recorded = @() }
+    }
+    $foreign = Get-UpdatesForeignCommits -RangeCommits $commits -RecordedCommits $recorded
+    if ($foreign.Count -gt 0) {
+        # Never gate, ship or revert work that is not provably this run's.
+        $script:result = 'error'
+        $script:summary = "$($foreign.Count) commit(s) since the run started are not recorded by any of its proposals ($((($foreign | ForEach-Object { $_.Substring(0, 10) }) -join ', '))): someone else committed in the checkout, or the bot did not record them. Nothing was gated, pushed, reverted or restarted; the checkout needs a look."
+        Add-Step ("unrecorded commits: " + (($foreign | ForEach-Object { $_.Substring(0, 10) }) -join ', '))
+        $script:noUndo = $true
         return
     }
     Add-Step ("{0} commit(s) from the bot: {1}" -f $commits.Count, (($commits | ForEach-Object { $_.Substring(0, 10) }) -join ', '))
@@ -418,7 +433,7 @@ try {
     Add-Step "stopped on an error: $detail"
     $script:result = 'error'
     $recovery = ''
-    if ($isLive) {
+    if ($isLive -and -not $script:noUndo) {
         # Leave the checkout matching what is live, so tonight's error does not
         # block tomorrow's preflight: back onto the previous release if the
         # deploy had started, then revert the run's commits (new commits, pushed).

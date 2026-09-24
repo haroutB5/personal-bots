@@ -99,6 +99,12 @@ Assert-Equal 'forbidden paths' '.env,apps/server/.env.local,secrets/key,scripts/
     (Get-UpdatesForbiddenPaths -ChangedPaths @('.env', 'apps/server/.env.local', 'secrets/key', 'scripts/personal/app-version.txt', 'apps/server/src/x.ts', 'docs/environment.md'))
 Assert-Equal 'normal changes pass' 0 (Get-UpdatesForbiddenPaths -ChangedPaths @('apps/server/package.json', 'pnpm-lock.yaml')).Count
 
+Write-Host 'Only the run''s own commits'
+$range = @('8b0c8b587a11111111111111111111111111111a', 'ff6be2c33c22222222222222222222222222222b', '1f3435bf2833333333333333333333333333333c')
+Assert-Equal 'a commit no proposal recorded is foreign' '1f3435bf2833333333333333333333333333333c' (Get-UpdatesForeignCommits -RangeCommits $range -RecordedCommits @('8b0c8b587a', 'FF6BE2C33C'))
+Assert-Equal 'all recorded: none foreign' 0 (Get-UpdatesForeignCommits -RangeCommits $range[0..1] -RecordedCommits @('8b0c8b5', 'ff6be2c33c22222222222222222222222222222b')).Count
+Assert-Equal 'a too-short id matches nothing' 1 (Get-UpdatesForeignCommits -RangeCommits $range[0..0] -RecordedCommits @('8b0c')).Count
+
 Write-Host 'Gate output'
 $esc = [char]27
 $vitest = "$esc[31m FAIL $esc[0m src/personal/a.test.ts > case one`n + ok`n FAIL  src/personal/b.test.ts > case two`n FAIL  src/personal/a.test.ts > case one"

@@ -317,6 +317,24 @@ function Get-UpdatesForbiddenPaths([string[]]$ChangedPaths) {
 
 <#
 .SYNOPSIS
+Commits in the run's range that no proposal of this run recorded (ledger
+"applied ... --commits"). Pure. Someone else committing in the checkout while
+the bot worked would otherwise be gated, shipped or reverted as the bot's.
+Recorded ids may be abbreviated (7+ characters).
+#>
+function Get-UpdatesForeignCommits {
+    param([string[]]$RangeCommits, [string[]]$RecordedCommits)
+    $recorded = @($RecordedCommits | Where-Object { $_ -and $_.Trim().Length -ge 7 } | ForEach-Object { $_.Trim().ToLowerInvariant() })
+    $foreign = @()
+    foreach ($sha in $RangeCommits) {
+        $full = $sha.ToLowerInvariant()
+        if (-not ($recorded | Where-Object { $full.StartsWith($_) })) { $foreign += $sha }
+    }
+    return , $foreign
+}
+
+<#
+.SYNOPSIS
 Reverts a run's commits with new revert commits, newest first. Never resets,
 amends or forces. A revert that does not apply cleanly is aborted and throws;
 the caller reports it and leaves the tree for a human.
