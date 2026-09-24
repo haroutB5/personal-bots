@@ -62,6 +62,7 @@ import {
   roundForGroup,
 } from "./groupModel";
 import { GroupRow } from "./GroupRow";
+import { shownInChats } from "./groupOnlyModel";
 import { PinnedBotTile, PinnedSnapshotTile, PinnedStrip } from "./PinnedStrip";
 import {
   mergePersonalGroups,
@@ -462,7 +463,13 @@ export function ChatsScreen({
     },
     [],
   );
-  const visible = useMemo(() => filterBotSummaries(summaries, query), [query, summaries]);
+  // Group-only bots live inside their groups (their settings reach them), so
+  // the list, its search, the pinned strip and the cold-start snapshot all
+  // leave them out. The preview key and the review row above still see every
+  // bot: a hidden bot's first private message must still refetch the list
+  // (that is what brings it back), and a question it asks must still surface.
+  const listed = useMemo(() => shownInChats(summaries), [summaries]);
+  const visible = useMemo(() => filterBotSummaries(listed, query), [query, listed]);
   const visibleGroups = useMemo(() => filterGroups(groups, query, nameOf), [groups, nameOf, query]);
   const botsById = useMemo(
     () => new Map((list.data?.bots ?? []).map((entry) => [entry.botId as string, entry] as const)),
@@ -559,7 +566,7 @@ export function ChatsScreen({
     // Stored in render order — the pinned box first, then the list under it —
     // so a cold paint can rebuild both sections without knowing team or lead
     // rank, and the rows do not reshuffle when the live list replaces them.
-    const split = partitionPinnedSummaries(summaries);
+    const split = partitionPinnedSummaries(listed);
     return [...split.pinned, ...split.rest].map((summary) => ({
       botId: summary.bot.botId,
       name: summary.bot.name,
@@ -572,7 +579,7 @@ export function ChatsScreen({
       threadTitle: summary.newestThread === null ? null : summary.newestThread.title,
       pinned: isBotPinned(summary.bot),
     }));
-  }, [environmentId, list.data, summaries, describeTurn]);
+  }, [environmentId, list.data, listed, describeTurn]);
   const snapshotKey = snapshotRows === null ? null : JSON.stringify(snapshotRows);
   const lastPersistedKey = useRef<string | null>(null);
   useEffect(() => {
@@ -724,7 +731,7 @@ export function ChatsScreen({
         </p>
       ) : null}
 
-      {loaded && summaries.length === 0 && groups.length === 0 ? (
+      {loaded && listed.length === 0 && groups.length === 0 ? (
         <div className="mt-10 flex flex-col items-center gap-3 text-center">
           <p className="text-lg font-semibold text-[var(--personal-text)]">No bots yet</p>
           <p className="max-w-[280px] text-[15px] leading-snug text-[var(--personal-text-secondary)]">
@@ -739,7 +746,7 @@ export function ChatsScreen({
         </div>
       ) : null}
 
-      {loaded && (summaries.length > 0 || groups.length > 0) ? (
+      {loaded && (listed.length > 0 || groups.length > 0) ? (
         <>
           <div className="relative mt-2.5">
             <Search

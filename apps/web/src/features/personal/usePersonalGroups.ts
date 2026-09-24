@@ -17,6 +17,7 @@ import { useMemo } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { useEnvironmentQuery } from "../../state/query";
+import { personalBotsList } from "./usePersonalBots";
 
 /** Groups and their live rounds for one environment. */
 export const personalGroupsList = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
@@ -93,42 +94,50 @@ export const personalGroupsFeed = createEnvironmentRpcSubscriptionAtomFamily(
   },
 );
 
-const refreshGroupsList = (
+/**
+ * Membership moves a bot in or out of the Chats list (a bot only in groups is
+ * hidden there; see `PersonalBot.groupOnly`), so every change to who is in a
+ * live group refetches the bots list with the groups.
+ */
+const refreshGroupsAndBots = (
   target: { readonly environmentId: EnvironmentId },
-  registry: { refresh: (atom: ReturnType<typeof personalGroupsList>) => void },
+  registry: { refresh: (atom: ReturnType<typeof personalGroupsList>) => void } & {
+    refresh: (atom: ReturnType<typeof personalBotsList>) => void;
+  },
 ) =>
-  Effect.sync(() =>
-    registry.refresh(personalGroupsList({ environmentId: target.environmentId, input: {} })),
-  );
+  Effect.sync(() => {
+    registry.refresh(personalGroupsList({ environmentId: target.environmentId, input: {} }));
+    registry.refresh(personalBotsList({ environmentId: target.environmentId, input: {} }));
+  });
 
 export const personalGroupCreate = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-groups:create",
   tag: WS_METHODS.personalGroupsCreate,
-  onSuccess: refreshGroupsList,
+  onSuccess: refreshGroupsAndBots,
 });
 
 export const personalGroupUpdate = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-groups:update",
   tag: WS_METHODS.personalGroupsUpdate,
-  onSuccess: refreshGroupsList,
+  onSuccess: refreshGroupsAndBots,
 });
 
 export const personalGroupDelete = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-groups:delete",
   tag: WS_METHODS.personalGroupsDelete,
-  onSuccess: refreshGroupsList,
+  onSuccess: refreshGroupsAndBots,
 });
 
 export const personalGroupAddMember = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-groups:add-member",
   tag: WS_METHODS.personalGroupsAddMember,
-  onSuccess: refreshGroupsList,
+  onSuccess: refreshGroupsAndBots,
 });
 
 export const personalGroupRemoveMember = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-groups:remove-member",
   tag: WS_METHODS.personalGroupsRemoveMember,
-  onSuccess: refreshGroupsList,
+  onSuccess: refreshGroupsAndBots,
 });
 
 /**

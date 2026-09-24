@@ -202,6 +202,8 @@ function bot(
     lead?: boolean;
     pinned?: boolean;
     notificationsMutedUntil?: string | null;
+    groupOnly?: boolean;
+    groupIds?: ReadonlyArray<string>;
   } = {},
 ) {
   return decodeBot({
@@ -786,6 +788,76 @@ describe("ChatsScreen groups", () => {
     await render();
 
     expect(JSON.stringify(renderer!.toJSON())).not.toContain("Launch crew");
+  });
+
+  // A bot only in groups lives inside them: out of the list, the strip, the
+  // search results and the cold-start snapshot, and back the moment the
+  // server stops calling it group-only (its first private message).
+  it("hides a group-only bot and shows it again once it has a private chat", async () => {
+    state.listData = {
+      bots: [
+        bot("bot-ada", "Ada", { groupOnly: true, groupIds: ["group-1"], pinned: true }),
+        bot("bot-grace", "Grace"),
+      ],
+      threads: [],
+      personalProjectId: null,
+    };
+    state.groupsData = { groups: [group()], rounds: [] };
+    await render();
+
+    const list = renderer!.root.findByProps({ "aria-label": "Your chats" });
+    expect(list.findAllByProps({ label: "Delete Ada" })).toHaveLength(0);
+    expect(list.findAllByProps({ label: "Delete Grace" })).toHaveLength(1);
+    // Pinned or not, a hidden bot has no face in the strip.
+    expect(renderer!.root.findAllByProps({ "aria-label": "Pinned" })).toHaveLength(0);
+    // The group row still names it, so the owner can see where it went.
+    expect(list.findAllByProps({ "aria-label": "Launch crew, group chat" })).toHaveLength(1);
+    // Nor does it come back into the snapshot a cold start paints from.
+    const saved = JSON.stringify(
+      Object.fromEntries(
+        Array.from({ length: localStorage.length }, (_, index) => {
+          const key = localStorage.key(index)!;
+          return [key, localStorage.getItem(key)];
+        }),
+      ),
+    );
+    expect(saved).toContain("Grace");
+    expect(saved).not.toContain("bot-ada");
+
+    // Searching its name finds the group it lives in, not a bot row.
+    const search = renderer!.root.findByProps({ "aria-label": "Search bots and chats" });
+    await act(async () => search.props.onChange({ target: { value: "Ada" } }));
+    const filtered = renderer!.root.findByProps({ "aria-label": "Your chats" });
+    expect(filtered.findAllByProps({ label: "Delete Ada" })).toHaveLength(0);
+    expect(filtered.findAllByProps({ "aria-label": "Launch crew, group chat" })).toHaveLength(1);
+    await act(async () => search.props.onChange({ target: { value: "" } }));
+
+    // "Message privately", then a first message: the server now says it is not
+    // group-only, and the row is back.
+    state.listData = {
+      bots: [
+        bot("bot-ada", "Ada", { groupOnly: false, groupIds: ["group-1"] }),
+        bot("bot-grace", "Grace"),
+      ],
+      threads: [],
+      personalProjectId: null,
+    };
+    await act(async () => renderer!.update(<ChatsScreen />));
+    const after = renderer!.root.findByProps({ "aria-label": "Your chats" });
+    expect(after.findAllByProps({ label: "Delete Ada" })).toHaveLength(1);
+
+    // Deleting that chat hides it again.
+    state.listData = {
+      bots: [
+        bot("bot-ada", "Ada", { groupOnly: true, groupIds: ["group-1"] }),
+        bot("bot-grace", "Grace"),
+      ],
+      threads: [],
+      personalProjectId: null,
+    };
+    await act(async () => renderer!.update(<ChatsScreen />));
+    const again = renderer!.root.findByProps({ "aria-label": "Your chats" });
+    expect(again.findAllByProps({ label: "Delete Ada" })).toHaveLength(0);
   });
 
   it("offers both New bot and New group behind the one header button", async () => {

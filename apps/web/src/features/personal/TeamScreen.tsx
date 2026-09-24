@@ -20,6 +20,7 @@ import { PersonalPageHeader } from "./BotForm";
 import { isThreadLive } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
 import { friendlyTurnError } from "./conversationModel";
+import { shownInTeamChart } from "./groupOnlyModel";
 import { useLaptopOffline } from "./PersonalOfflineBanner";
 import {
   buildTeamConnectors,
@@ -759,6 +760,9 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
     () => (list.data?.bots ?? []).toSorted((left, right) => left.sortOrder - right.sortOrder),
     [list.data],
   );
+  // Group-only bots stay out of the chart, as they do out of Chats (leads
+  // excepted); team management still counts every bot.
+  const chartBots = useMemo(() => shownInTeamChart(bots), [bots]);
   const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
   const liveBotIds = useMemo(() => {
     if (list.data === null) return new Set<string>();
@@ -844,7 +848,7 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
           {/* One line of help, the diagram's own ("Press and hold a bot…"): a
               second paragraph above it said the same thing in other words. */}
           <TeamDiagram
-            bots={bots}
+            bots={chartBots}
             ownerName={ownerName}
             tasks={tasks}
             liveBotIds={liveBotIds}
