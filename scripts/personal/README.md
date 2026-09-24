@@ -171,6 +171,44 @@ Ship a held decision: `git revert <revertCommit>` from its entry in
 `held-upstream.json` (or undo the pin for `keep_ours`), remove the entry, then
 build and restart as usual.
 
+## Nightly Claude Code update (04:00)
+
+Every day at 04:00 London the "Claude Code nightly update" routine (Tasks >
+Scheduled, on the "Updates" bot) runs, unless there is nothing to do: no new
+Claude Code or Agent SDK release and no open or approved proposal. The server
+prepares each run (`apps/server/src/personal/claudeCodeReview/`): the changelog
+range since the last review, and the proposals carried over from the ledger
+`personal-bots-notes\claude-code-updates\proposals.json` (global ids P1, P2, ...).
+
+1. The bot runs `updates\nightly.ps1 -Step preflight`: the nightly lock, nothing
+   else building (upstream sync, its probe, build.ps1, restart.ps1), a clean
+   `fix/inline-cards` equal to origin and to the live release, `backup.ps1`.
+2. It reviews new releases (report in `claude-code-updates\<version>.md`), rates
+   every open proposal safe or risky, and implements the safe (and approved)
+   ones, one commit per proposal, recording each in the ledger with
+   `updates\ledger.ts`. Risky ones wait for "approve P<n>" in its chat, which
+   queues them for the next night.
+3. It runs `nightly.ps1 -Step ship`, which starts `updates\nightly-pipeline.ps1`
+   detached through WMI (outside the server's process tree, so the restart
+   cannot kill it). The pipeline gates (server `src/personal`, web personal,
+   typecheck, lint), reverts the run's commits on red (new revert commits,
+   pushed; never reset or force), bumps the patch version, pushes, builds with
+   `-NoActivate -CopyExternals`, waits for the bot's turn to end, restarts,
+   checks (smoke, `/version.txt` local and relay, perf:check) and rolls back
+   to the previous release on any failure.
+4. The outcome goes to `%USERPROFILE%\.personal-bots\claude-code-updates\runs\<id>\`
+   (`outcome.json`, `report.md`, logs) and `last-outcome.json`, and the report
+   is posted by the "Morning report" relay routine. Between 00:00 and 07:00 the
+   Updates bot's pushes wait until 07:00, unless the report starts with
+   "Needs attention" (Bots may not be on a good release) or a task failed.
+
+"Run now" on the routine is a dry run: the same steps in a throwaway worktree
+with a copy of the ledger, stopping before push and restart; the build and the
+rollback target are booted on backup copies instead (`restore-test.ps1`), and
+the run's commits are reverted for real in the worktree. A scheduled slot the
+laptop slept through is skipped after 06:00. Tests:
+`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1`.
+
 ## Start at logon
 
 ```powershell
