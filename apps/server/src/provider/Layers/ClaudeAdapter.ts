@@ -5017,6 +5017,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             buildRuntimeInstructions({ harness: "Claude Code" }),
             input.systemInstructions,
           ),
+          // Claude Code records the prompt once per conversation by default,
+          // so an edited bot would keep its old instructions in existing
+          // chats until compaction. Bots render it fresh on every request.
+          ...(personalBot ? { snapshot: false } : {}),
         },
         settingSources,
         // `ultracode` is a Claude Code setting, not an API effort level. It is

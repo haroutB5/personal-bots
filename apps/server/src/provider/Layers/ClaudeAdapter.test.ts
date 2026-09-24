@@ -740,6 +740,8 @@ describe("ClaudeAdapterLive", () => {
         personalBotId: `../bot-plugins/${BOT_ID}`,
       });
       assert.equal(options?.plugins, undefined);
+      // Edited bot instructions must reach resumed chats, not a recorded prompt.
+      assert.equal((options?.systemPrompt as { snapshot?: boolean } | undefined)?.snapshot, false);
     });
   });
 
