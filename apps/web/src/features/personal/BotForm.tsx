@@ -318,10 +318,12 @@ function BotForm({
   // draft the form opened with; leaving after a save or a delete never asks.
   const [baseline] = useState(() => rawDraft);
   // The mute the bot had when the form opened, named for the select's "keep" option.
+  // A bot muted until turned back on reads plain "Off" here (owner's wording).
   const [currentMuteLabel] = useState(() => {
     const nowMs = Date.now();
     const state = bot === null ? null : botMuteState(bot, nowMs);
-    return state?.muted === true ? mutedUntilLabel(state, nowMs) : null;
+    if (state?.muted !== true) return null;
+    return state.indefinite ? "Off" : mutedUntilLabel(state, nowMs);
   });
   const dirty = !botDraftsEqual(rawDraft, baseline);
   const leavingRef = useRef(false);
@@ -790,9 +792,14 @@ function BotForm({
         >
           {currentMuteLabel !== null ? <option value="keep">{currentMuteLabel}</option> : null}
           <option value="on">On</option>
-          {MUTE_CHOICES.map((choice) => (
+          {MUTE_CHOICES.filter(
+            // Already off: the "keep" option above is the one "Off".
+            (choice) => !(choice.key === "indefinitely" && currentMuteLabel === "Off"),
+          ).map((choice) => (
             <option key={choice.key} value={choice.key}>
-              {`Mute ${choice.label.charAt(0).toLowerCase()}${choice.label.slice(1)}`}
+              {choice.key === "indefinitely"
+                ? "Off"
+                : `Mute ${choice.label.charAt(0).toLowerCase()}${choice.label.slice(1)}`}
             </option>
           ))}
         </select>
