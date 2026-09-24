@@ -2,11 +2,13 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  PERSONAL_BOT_MUTED_INDEFINITELY_ISO,
   PersonalBotId,
   PersonalTaskId,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationEvent,
+  type PersonalBot,
   type PersonalGroupRound,
   type PersonalPushInAppNotification,
   type PersonalTask,
@@ -967,5 +969,118 @@ it.effect("a chat left open on a phone that locked gets a push after all", () =>
     yield* push.reportViewing({ connectionId: "old-page", threadId: CHAT });
     yield* runTurn(CHAT, "2026-09-23T23:32:00.000Z");
     expect((yield* outbox).length).toBe(2);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+/** Stores a mute on the test bot the way PersonalBotService.update does (null = on). */
+const muteBotUntil = (until: string | null) =>
+  Effect.gen(function* () {
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const updated = yield* bots.updateBot({
+      botId: BOT,
+      notificationsMutedUntil: until === null ? null : DateTime.makeUnsafe(until),
+      updatedAt: yield* DateTime.now,
+    });
+    expect(Option.isSome(updated)).toBe(true);
+  });
+
+it("the mute decision: on, timed, indefinite, expired, and a bot that is gone", () => {
+  const now = Date.parse("2026-09-24T12:00:00Z");
+  const bot = (until: string | null) =>
+    Option.some({
+      botId: BOT,
+      notificationsMutedUntil: until === null ? null : DateTime.makeUnsafe(until),
+    } as unknown as PersonalBot);
+  // On: never muted, or an older row with no field at all.
+  expect(PersonalPushService.isBotNotificationMuted(bot(null), now)).toBe(false);
+  expect(
+    PersonalPushService.isBotNotificationMuted(
+      Option.some({ botId: BOT } as unknown as PersonalBot),
+      now,
+    ),
+  ).toBe(false);
+  // Timed: muted while the time is ahead.
+  expect(PersonalPushService.isBotNotificationMuted(bot("2026-09-24T13:00:00Z"), now)).toBe(true);
+  // Indefinite: the far-future time.
+  expect(
+    PersonalPushService.isBotNotificationMuted(bot(PERSONAL_BOT_MUTED_INDEFINITELY_ISO), now),
+  ).toBe(true);
+  // Expired: a mute that ran out is on, with nothing left to clear it.
+  expect(PersonalPushService.isBotNotificationMuted(bot("2026-09-24T11:59:59Z"), now)).toBe(false);
+  expect(PersonalPushService.isBotNotificationMuted(bot("2026-09-24T12:00:00Z"), now)).toBe(false);
+  // A notification whose bot row is gone has no mute to honour.
+  expect(PersonalPushService.isBotNotificationMuted(Option.none(), now)).toBe(false);
+});
+
+it.effect("a muted bot's reply takes neither path, in-app or push, until the mute runs out", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-24T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    const received = yield* listenInApp("phone");
+    yield* push.reportForeground({ connectionId: "phone", foreground: true });
+    yield* muteBotUntil("2026-09-24T10:00:00.000Z");
+
+    // In front: no banner. Nobody in front: no push either.
+    yield* runTurn(CHAT, "2026-09-24T09:00:00.000Z");
+    yield* settle;
+    expect(received).toEqual([]);
+    expect(yield* outbox).toEqual([]);
+    yield* push.reportForeground({ connectionId: "phone", foreground: false });
+    yield* runTurn(CHAT, "2026-09-24T09:01:00.000Z");
+    yield* settle;
+    expect(yield* outbox).toEqual([]);
+
+    // Task transitions and routine runs from the bot are silenced the same way.
+    yield* push.notifyTask(yield* makeTask({}));
+    yield* push.notifyTask(yield* makeTask({ status: "waiting_for_user" }));
+    yield* push.notifyTask(yield* makeTask({ source: "routine" }));
+    yield* settle;
+    expect(yield* outbox).toEqual([]);
+    expect(harness.sent).toEqual([]);
+
+    // The hour is up: the next reply notifies as before.
+    yield* TestClock.setTime(Date.parse("2026-09-24T10:00:01Z"));
+    yield* runTurn(CHAT, "2026-09-24T10:00:01.000Z");
+    yield* settle;
+    expect((yield* outbox).map((row) => row.eventId)).toEqual([
+      `chat-reply:${CHAT}:2026-09-24T10:00:01.000Z`,
+    ]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("an indefinite mute holds until it is turned back on", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-24T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    const received = yield* listenInApp("phone");
+    yield* push.reportForeground({ connectionId: "phone", foreground: true });
+    yield* muteBotUntil(PERSONAL_BOT_MUTED_INDEFINITELY_ISO);
+
+    yield* runTurn(CHAT, "2026-09-24T09:00:00.000Z");
+    yield* settle;
+    // A month later it is still muted.
+    yield* TestClock.setTime(Date.parse("2026-10-24T09:00:00Z"));
+    yield* push.reportForeground({ connectionId: "phone", foreground: true });
+    yield* runTurn(CHAT, "2026-10-24T09:00:00.000Z");
+    yield* settle;
+    expect(received).toEqual([]);
+    expect(yield* outbox).toEqual([]);
+
+    // Turned back on: the in-app banner comes back.
+    yield* muteBotUntil(null);
+    yield* push.reportForeground({ connectionId: "phone", foreground: true });
+    yield* runTurn(CHAT, "2026-10-24T09:05:00.000Z");
+    yield* TestClock.adjust("1 millis");
+    expect(received.map((notification) => notification.id)).toEqual([
+      `chat-reply:${CHAT}:2026-10-24T09:05:00.000Z`,
+    ]);
   }).pipe(Effect.provide(makeLayer(harness)));
 });

@@ -16,6 +16,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
+  botNotificationsMutedUntil,
   PERSONAL_PUSH_DEFAULT_PREFERENCES,
   PersonalPushError,
   PersonalPushPreferences,
@@ -183,6 +184,15 @@ const avatarFields = (
   bot: PushBotIdentity,
 ): Pick<PersonalPushPayload, "avatarShape" | "avatarColor"> =>
   bot.avatar === null ? {} : { avatarShape: bot.avatar.shape, avatarColor: bot.avatar.color };
+
+/**
+ * Whether the bot a notification speaks for has muted it right now: muted with
+ * a time still ahead (timed, or the far-future "until I turn it back on").
+ * A mute that has run out is on, and a bot that is gone cannot be muted.
+ */
+export function isBotNotificationMuted(bot: Option.Option<PersonalBot>, nowMs: number): boolean {
+  return Option.isSome(bot) && botNotificationsMutedUntil(bot.value, nowMs) !== null;
+}
 
 /** The bot as the notification names it when the row has gone. */
 const UNKNOWN_BOT: PushBotIdentity = { name: "Your bot", avatar: null };
@@ -805,6 +815,10 @@ export const make = Effect.gen(function* () {
    * without a banner when it is on screen and showing `viewing.quietPath`.
    * "Viewing" is a report, not a fact: iOS can lock the phone without telling
    * the page, so an unconfirmed one goes out as web push like any other.
+   *
+   * A notification from a bot the owner muted takes neither path: it is
+   * logged as `path: muted` and dropped. Unread and attention counts in the
+   * app come from thread state, not from here, so they still update.
    */
   const deliver = (
     eventId: string,
@@ -812,10 +826,25 @@ export const make = Effect.gen(function* () {
     options: {
       readonly preview?: string | undefined;
       readonly viewing?: { readonly threadId: string; readonly quietPath: string } | undefined;
+      /** The bot this notification is from; its mute silences it. Groups and provider alerts have none. */
+      readonly bot?: Option.Option<PersonalBot> | undefined;
     } = {},
   ) =>
     Effect.gen(function* () {
       const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      if (options.bot !== undefined && isBotNotificationMuted(options.bot, nowMs)) {
+        const bot = Option.getOrThrow(options.bot);
+        yield* Effect.logInfo("personal notification path", {
+          eventId,
+          path: "muted",
+          botId: bot.botId,
+          mutedUntil:
+            bot.notificationsMutedUntil == null
+              ? null
+              : DateTime.formatIso(bot.notificationsMutedUntil),
+        });
+        return;
+      }
       const viewers =
         options.viewing === undefined ? [] : presence.viewers(options.viewing.threadId, nowMs);
       const confirming = viewers.length > 0;
@@ -897,6 +926,7 @@ export const make = Effect.gen(function* () {
       // confirms that quietly instead of showing a banner (see deliver).
       // Tasks with no chat of their own (and provider alerts) always notify.
       yield* deliver(eventId, pushPayloadForTask(kind, task, botIdentity(bot)), {
+        bot,
         viewing:
           task.threadId === null
             ? undefined
@@ -974,6 +1004,7 @@ export const make = Effect.gen(function* () {
           threadId: input.threadId,
         }),
         {
+          bot,
           preview: yield* latestReplyPreview(input.threadId),
           viewing: {
             threadId: input.threadId,
