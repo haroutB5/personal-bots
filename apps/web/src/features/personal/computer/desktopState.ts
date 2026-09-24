@@ -3,10 +3,19 @@ import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
-import { WS_METHODS, type EnvironmentId, type PersonalDesktopStatus } from "@t3tools/contracts";
+import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
+import { withDeviceHubQuery } from "@t3tools/client-runtime/state/deviceHubAccess";
+import {
+  PERSONAL_DESKTOP_STREAM_PATH,
+  WS_METHODS,
+  type EnvironmentId,
+  type PersonalDesktopStatus,
+} from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "~/connection/runtime";
 import { useEnvironmentQuery } from "~/state/query";
+
+import { PERSONAL_BROWSER_ROUTE_BASE } from "./computerModel";
 
 /** The user's real PC: who holds it, who waits, and the app's Stop. */
 export const desktopEnvironment = {
@@ -68,4 +77,32 @@ export function desktopLineFor(
     };
   }
   return null;
+}
+
+/**
+ * The live view socket's URL, from the Computer tab's own access (same
+ * cookie or `wsTicket`, so no second ticket). The access base ends in the
+ * browser's route base; the desktop path swaps just that suffix, which keeps
+ * any path prefix a relay adds in front.
+ */
+export function desktopStreamUrl(access: DeviceHubAccess): string | null {
+  if (!access.wsBase.endsWith(PERSONAL_BROWSER_ROUTE_BASE)) return null;
+  const origin = access.wsBase.slice(0, -PERSONAL_BROWSER_ROUTE_BASE.length);
+  return withDeviceHubQuery(`${origin}${PERSONAL_DESKTOP_STREAM_PATH}`, access);
+}
+
+/** Who has the PC, for the Desktop view's status line. */
+export function desktopHolderLine(status: PersonalDesktopStatus | null): {
+  readonly text: string;
+  readonly busy: boolean;
+} {
+  if (status === null) return { text: "Checking the PC", busy: false };
+  if (!status.available)
+    return { text: "The live view needs the bots server on Windows", busy: false };
+  const waiting = status.waiting.length;
+  const queue = waiting === 0 ? "" : ` · ${waiting} waiting`;
+  if (status.holder !== null) {
+    return { text: `${status.holder.botName} is using your PC${queue}`, busy: true };
+  }
+  return { text: `No bot is using your PC${queue}`, busy: false };
 }

@@ -79,6 +79,26 @@ describe("personal service worker", () => {
     expect(app.fetch).toHaveBeenCalledOnce();
   });
 
+  it.each(["/api/personal/desktop/stream", "/api/personal/browser/stream"])(
+    "never answers or caches the live view path %s",
+    (path) => {
+      const app = worker(false);
+      const respondWith = vi.fn();
+      app.handlers.get("fetch")!({
+        request: {
+          method: "GET",
+          mode: "cors",
+          headers: new Headers(),
+          url: `https://bots.example${path}`,
+        },
+        respondWith,
+        waitUntil: vi.fn(),
+      });
+      expect(respondWith).not.toHaveBeenCalled();
+      expect(app.cache.put).not.toHaveBeenCalled();
+    },
+  );
+
   it("uses the cached shell when the laptop is unreachable", async () => {
     const app = worker(false, true);
     let result: Promise<unknown> | undefined;

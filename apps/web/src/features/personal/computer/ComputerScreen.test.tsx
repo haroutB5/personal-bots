@@ -56,6 +56,29 @@ vi.mock("../usePersonalBots", () => ({
   usePersonalEnvironmentId: () => EnvironmentId.make("env-1"),
 }));
 vi.mock("./viewportClient", () => ({ connectViewport: vi.fn() }));
+const desktopState = vi.hoisted(() => ({ available: true as boolean | null }));
+vi.mock("./desktopState", () => ({
+  useDesktopStatus: () =>
+    desktopState.available === null
+      ? null
+      : {
+          available: desktopState.available,
+          holder: null,
+          waiting: [],
+          lastStop: null,
+          stopHotkey: "Esc",
+        },
+}));
+vi.mock("./DesktopPane", () => ({
+  DesktopPane: (props: { fullScreen: boolean; onOpenFullScreen: () => void }) => (
+    <button
+      type="button"
+      aria-label="Desktop pane"
+      data-full-screen={props.fullScreen}
+      onClick={props.onOpenFullScreen}
+    />
+  ),
+}));
 vi.mock("~/components/ui/menu", () => ({
   Menu: ({ children }: { children: ReactNode }) => <>{children}</>,
   MenuTrigger: ({ children, ...props }: { children: ReactNode }) => (
@@ -96,6 +119,7 @@ afterEach(async () => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
   feedState.status = null;
+  desktopState.available = true;
 });
 
 describe("ComputerBrowserPane compact preview", () => {
@@ -397,5 +421,61 @@ describe("ComputerScreen full screen", () => {
     await act(async () => exit!.props.onClick());
     expect(onBackToChat).not.toHaveBeenCalled();
     expect(document.body.style.overflow).toBe("");
+  });
+});
+
+describe("ComputerScreen Desktop segment", () => {
+  const stubDocument = () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("document", {
+      visibilityState: "visible",
+      body: { style: { overflow: "" } },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+  };
+  const tabs = () =>
+    renderer!.root.findAllByProps({ role: "tab" }).map((tab) => String(tab.props.children));
+
+  it("offers Browser, Desktop and Files, and shows the PC's live view on Desktop", async () => {
+    stubDocument();
+    feedState.status = STATUS;
+    await act(async () => {
+      renderer = create(<ComputerScreen onBackToChat={vi.fn()} />, {
+        createNodeMock: () => ({ focus: vi.fn(), parentElement: null }),
+      });
+    });
+    expect(tabs()).toEqual(["Browser", "Desktop", "Files"]);
+    expect(renderer!.root.findAllByProps({ "aria-label": "Desktop pane" })).toHaveLength(0);
+    const desktopTab = renderer!.root
+      .findAllByProps({ role: "tab" })
+      .find((tab) => tab.props.children === "Desktop");
+    await act(async () => desktopTab!.props.onClick());
+    const pane = renderer!.root.findByProps({ "aria-label": "Desktop pane" });
+    expect(pane.props["data-full-screen"]).toBe(false);
+    // The browser's socket is gone: only one live view runs at a time.
+    expect(
+      renderer!.root.findAllByProps({ "aria-label": "Open browser full screen" }),
+    ).toHaveLength(0);
+
+    // Full screen follows the browser's takeover: the same dialog.
+    await act(async () => pane.props.onClick());
+    expect(renderer!.root.findByProps({ "aria-label": "Computer full screen" }).props.role).toBe(
+      "dialog",
+    );
+    expect(
+      renderer!.root.findByProps({ "aria-label": "Desktop pane" }).props["data-full-screen"],
+    ).toBe(true);
+  });
+
+  it("leaves Desktop out where the server has no desktop to show", async () => {
+    stubDocument();
+    desktopState.available = false;
+    feedState.status = STATUS;
+    await act(async () => {
+      renderer = create(<ComputerScreen onBackToChat={vi.fn()} />);
+    });
+    expect(tabs()).toEqual(["Browser", "Files"]);
   });
 });

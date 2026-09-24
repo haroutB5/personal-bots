@@ -5,7 +5,8 @@
  *
  * The viewport socket is open only while the Browser segment is showing, the
  * document is visible and the browser is running; unmounting closes it, and
- * the server stops its screencast when no viewer is left.
+ * the server stops its screencast when no viewer is left. The Desktop segment
+ * (the user's real PC, view only) follows the same rule for its own socket.
  */
 import type {
   EnvironmentId,
@@ -83,6 +84,8 @@ import {
   useComputerFeed,
   viewportStreamUrl,
 } from "./computerState";
+import { DesktopPane } from "./DesktopPane";
+import { useDesktopStatus } from "./desktopState";
 import { connectViewport, type ViewportClient } from "./viewportClient";
 
 export interface ComputerScreenProps {
@@ -102,6 +105,13 @@ export interface ComputerScreenProps {
 }
 
 const ICON_STROKE = 1.75;
+
+type ComputerSegment = "browser" | "desktop" | "files";
+const SEGMENT_LABELS: Record<ComputerSegment, string> = {
+  browser: "Browser",
+  desktop: "Desktop",
+  files: "Files",
+};
 const MAX_RECONNECTS = 5;
 const SCROLL_SLOP_PX = 8;
 /** Rotation and the keyboard resize the box in steps; the page relays out once. */
@@ -178,7 +188,12 @@ export function ComputerScreen({
 }: ComputerScreenProps) {
   const environmentId = usePersonalEnvironmentId();
   const { feed, error, loading } = useComputerFeed(environmentId);
-  const [segment, setSegment] = useState<"browser" | "files">("browser");
+  const [segment, setSegment] = useState<ComputerSegment>("browser");
+  const desktopStatus = useDesktopStatus(environmentId);
+  // The PC's live view where there is a PC to show (the server runs on Windows).
+  const segments: ReadonlyArray<ComputerSegment> =
+    desktopStatus?.available === false ? ["browser", "files"] : ["browser", "desktop", "files"];
+  const shownSegment = segments.includes(segment) ? segment : "browser";
   const [fullScreen, setFullScreen] = useState(false);
   const screenRef = useRef<HTMLDivElement | null>(null);
   const state = describeComputerState({
@@ -257,29 +272,30 @@ export function ComputerScreen({
         role="tablist"
         aria-label="Computer view"
         className={cn(
-          "mt-3 grid h-11 grid-cols-2 rounded-[10px] bg-[var(--personal-fill-muted)] p-0.5 md:h-9",
+          "mt-3 grid h-11 rounded-[10px] bg-[var(--personal-fill-muted)] p-0.5 md:h-9",
+          segments.length === 3 ? "grid-cols-3" : "grid-cols-2",
           fullScreen && "hidden",
         )}
       >
-        {(["browser", "files"] as const).map((value) => (
+        {segments.map((value) => (
           <button
             key={value}
             type="button"
             role="tab"
-            aria-selected={segment === value}
+            aria-selected={shownSegment === value}
             onClick={() => setSegment(value)}
             className={
-              segment === value
+              shownSegment === value
                 ? "rounded-[8px] bg-[var(--personal-surface)] text-[14px] font-semibold shadow-[var(--personal-shadow-card)]"
                 : "rounded-[8px] text-[14px] text-[var(--personal-text-secondary)]"
             }
           >
-            {value === "browser" ? "Browser" : "Files"}
+            {SEGMENT_LABELS[value]}
           </button>
         ))}
       </div>
 
-      {segment === "browser" ? (
+      {shownSegment === "browser" ? (
         <ComputerBrowserPane
           environmentId={environmentId}
           status={feed.status}
@@ -288,6 +304,13 @@ export function ComputerScreen({
           fullScreen={fullScreen}
           onOpenFullScreen={() => setFullScreen(true)}
           onBackToChat={fullScreen ? () => setFullScreen(false) : goBackToChat}
+        />
+      ) : shownSegment === "desktop" ? (
+        <DesktopPane
+          environmentId={environmentId}
+          fullScreen={fullScreen}
+          onOpenFullScreen={() => setFullScreen(true)}
+          onExitFullScreen={() => setFullScreen(false)}
         />
       ) : (
         <FilesPane environmentId={environmentId} />
