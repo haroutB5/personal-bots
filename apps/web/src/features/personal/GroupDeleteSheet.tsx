@@ -14,11 +14,10 @@ import { groupDeleteSummary, type GroupDeleteCandidate } from "./groupModel";
  * optionally the member bots with every chat they have ever had.
  *
  * It names what is going before the destructive tap - each bot by name, and the
- * fact that its chats go with it - because nothing here can be undone. The
- * default ticks come from {@link groupDeleteCandidates}: a bot this group alone
- * holds starts ticked, and a team lead, a pinned bot or a bot that is in a
- * second group starts unticked **with the reason on its row**. Untick
- * everything and this is the plain "delete the group only" it has always been.
+ * fact that its chats go with it - because nothing here can be undone. Every
+ * row starts unticked ({@link groupDeleteCandidates}): the default keeps the
+ * bots, and one this group alone held moves back to the Bots list. A team
+ * lead, a pinned bot or a bot in a second group shows **the reason on its row**.
  *
  * Mounted only while it is open, so the default ticks are the initial state of
  * a fresh component rather than an effect. The group list refreshes on its own
@@ -67,8 +66,9 @@ export function GroupDeleteSheet({
             Delete {groupName}?
           </SheetTitle>
           <SheetDescription className="mt-1 text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
-            The group conversation goes for good. Tick any bot you want deleted with it — its own
-            chats, files and memories go too, and none of it comes back.
+            The group conversation goes for good. Its bots are kept and move back to your Bots list.
+            Tick any bot you want deleted with it: its own chats, files and memories go too, and
+            none of it comes back.
           </SheetDescription>
         </div>
 

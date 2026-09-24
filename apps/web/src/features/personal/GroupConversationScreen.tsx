@@ -8,7 +8,6 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import {
   MessageId,
-  PERSONAL_GROUP_MAX_MEMBERS,
   PersonalGroupId,
   PersonalGroupVoteId,
   ThreadId,
@@ -19,9 +18,9 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, Ellipsis } from "lucide-react";
 
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { deriveTimelineEntriesWithState, type TimelineEntriesProjection } from "~/session-logic";
-import { useThreadDetail, useThreadStatus } from "~/state/entities";
+import { useThreadDetail, useThreadShells, useThreadStatus } from "~/state/entities";
 import { useEnvironmentThread } from "~/state/threads";
 import type { ChatMessage } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -30,11 +29,14 @@ import { buildConversationItems } from "./conversationModel";
 import { commandFailureMessage } from "./commandFeedback";
 import { GroupAvatarCluster } from "./GroupAvatarCluster";
 import { GroupDeleteSheet } from "./GroupDeleteSheet";
+import { GroupSettingsSheet, type GroupMembersActions } from "./GroupSettingsSheet";
+import { reusablePrivateChat } from "./groupOnlyModel";
 import { GroupRoundCard } from "./GroupRoundCard";
 import { GroupVoteCard } from "./GroupVoteCard";
 import {
   activeGroupMembers,
   groupDeleteCandidates,
+  groupMemberThreadIds,
   groupRoundCard,
   groupVoteCard,
   groupStatusLine,
@@ -51,7 +53,11 @@ import { PersonalComposer } from "./PersonalComposer";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { useReportViewingThread } from "./useReportViewingThread";
-import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
+import {
+  personalBotCreateThread,
+  usePersonalBotsList,
+  usePersonalEnvironmentId,
+} from "./usePersonalBots";
 import {
   mergePersonalGroups,
   personalGroupAddMember,
@@ -103,7 +109,14 @@ function useMinuteNow(): Date {
    them. The manual memos stay because they ARE required for semantics: a fresh
    `threadRef` object every render would make `useThreadDetail` resubscribe on
    every keystroke. */
-export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.Element {
+export function GroupConversationScreen({
+  groupId,
+  openSettings = false,
+}: {
+  groupId: string;
+  /** From `?settings=members`: land with the settings open (Back from a member's editor). */
+  openSettings?: boolean;
+}): JSX.Element {
   const navigate = useNavigate();
   const environmentId = usePersonalEnvironmentId();
   const groupsQuery = usePersonalGroupsList(environmentId);
@@ -131,7 +144,7 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
   const now = useMinuteNow();
   const [pending, setPending] = useState<ReadonlyArray<PendingOutgoingMessage>>([]);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [showMembers, setShowMembers] = useState(false);
+  const [showSettings, setShowSettings] = useState(openSettings);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -150,6 +163,8 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
   const deleteGroup = useAtomCommand(personalGroupDelete, { reportFailure: false });
   const addMember = useAtomCommand(personalGroupAddMember, { reportFailure: false });
   const removeMember = useAtomCommand(personalGroupRemoveMember, { reportFailure: false });
+  const createThread = useAtomCommand(personalBotCreateThread, { reportFailure: false });
+  const allShells = useThreadShells();
 
   const botsById = useMemo(
     () =>
@@ -353,22 +368,62 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
     await navigate({ to: "/bots", replace: true });
   };
 
-  const onRemoveMember = async (botId: string) => {
-    if (environmentId === null) return;
-    const result = await removeMember({
-      environmentId,
-      input: { groupId: PersonalGroupId.make(groupId), botId: botId as PersonalBotId },
-    });
-    setActionError(commandFailureMessage(result, "Couldn't remove that bot. Try again."));
-  };
-
-  const onAddMember = async (botId: string) => {
-    if (environmentId === null) return;
-    const result = await addMember({
-      environmentId,
-      input: { groupId: PersonalGroupId.make(groupId), botId: botId as PersonalBotId },
-    });
-    setActionError(commandFailureMessage(result, "Couldn't add that bot. Try again."));
+  const offlineMessage = "Not connected to your computer.";
+  const memberActions: GroupMembersActions = {
+    onEditBot: (botId) =>
+      void navigate({
+        to: "/bots/$botId/edit",
+        params: { botId: botId as PersonalBotId },
+        search: { group: groupId },
+      }),
+    onNewBot: () => void navigate({ to: "/bots/new", search: { group: groupId } }),
+    onAddMember: async (botId) => {
+      if (environmentId === null) return offlineMessage;
+      const result = await addMember({
+        environmentId,
+        input: { groupId: PersonalGroupId.make(groupId), botId: botId as PersonalBotId },
+      });
+      return commandFailureMessage(result, "Couldn't add that bot. Try again.");
+    },
+    onRemoveMember: async (botId) => {
+      if (environmentId === null) return offlineMessage;
+      const result = await removeMember({
+        environmentId,
+        input: { groupId: PersonalGroupId.make(groupId), botId: botId as PersonalBotId },
+      });
+      return commandFailureMessage(result, "Couldn't remove that bot. Try again.");
+    },
+    /**
+     * Opens the bot's private chat: an empty one it already has (an earlier
+     * tap never written in), else a new one. The bot joins the Bots list once
+     * that chat has a message in it.
+     */
+    onMessagePrivately: async (botId) => {
+      if (environmentId === null) return offlineMessage;
+      const reuse = reusablePrivateChat({
+        botId,
+        links: botsList.data?.threads ?? [],
+        shells: allShells.filter((shell) => shell.environmentId === environmentId),
+        relayThreadIds: groupMemberThreadIds(groups),
+      });
+      let threadId = reuse === null ? null : ThreadId.make(reuse);
+      if (threadId === null) {
+        const fresh = ThreadId.make(randomUUID());
+        const result = await createThread({
+          environmentId,
+          input: { botId: botId as PersonalBotId, threadId: fresh },
+        });
+        const failure = commandFailureMessage(result, "Couldn't start a private chat. Try again.");
+        if (failure !== null) return failure;
+        threadId = fresh;
+      }
+      setShowSettings(false);
+      await navigate({
+        to: "/bots/$botId/$threadId",
+        params: { botId: botId as PersonalBotId, threadId },
+      });
+      return null;
+    },
   };
 
   const loadEarlier =
@@ -386,12 +441,8 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
       ? "Your laptop is offline. This draft is saved on this device and has not been sent."
       : "Connecting to your laptop. Your draft is saved on this device."
     : members.length === 0
-      ? "This group has no bots in it yet. Add one from the group menu."
+      ? "This group has no bots in it yet. Add one in Group settings."
       : null;
-
-  const addable = (botsList.data?.bots ?? []).filter(
-    (bot) => bot.enabled && !members.some((member) => member.botId === bot.botId),
-  );
 
   return (
     <div
@@ -408,8 +459,9 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
         </Link>
         <button
           type="button"
-          onClick={() => setShowMembers((open) => !open)}
-          aria-expanded={showMembers}
+          onClick={() => setShowSettings(true)}
+          aria-haspopup="dialog"
+          aria-label={group === null ? undefined : `${group.name} settings`}
           className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-[var(--personal-radius-button)] text-left outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >
           <GroupAvatarCluster bots={memberBots} memberCount={members.length} size={40} />
@@ -445,7 +497,7 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
             <Ellipsis aria-hidden="true" className="size-6" strokeWidth={1.75} />
           </MenuTrigger>
           <MenuPopup align="end" className="personal-app personal-menu min-w-48">
-            <MenuItem onClick={() => setShowMembers(true)}>Members…</MenuItem>
+            <MenuItem onClick={() => setShowSettings(true)}>Group settings…</MenuItem>
             {live ? (
               <MenuItem
                 onClick={() => {
@@ -469,59 +521,6 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
           </MenuPopup>
         </Menu>
       </header>
-
-      {showMembers && group !== null ? (
-        <section
-          aria-label="Members"
-          className="mx-4 mb-2 shrink-0 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] md:mx-0 md:w-[min(calc(100%-2rem),var(--personal-reading-column))] md:self-center"
-        >
-          <ul className="divide-y divide-[var(--personal-border)]">
-            {members.map((member) => {
-              const bot = botsById.get(member.botId) ?? null;
-              return (
-                <li key={member.botId} className="flex min-h-11 items-center gap-2 px-3 py-1.5">
-                  <span className="min-w-0 flex-1 truncate text-[15px] text-[var(--personal-text)]">
-                    {bot?.name ?? member.botId}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => void onRemoveMember(member.botId)}
-                    className="h-11 shrink-0 px-2 text-[13px] font-semibold text-[var(--personal-danger)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-                  >
-                    Remove
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          {members.length < PERSONAL_GROUP_MAX_MEMBERS && addable.length > 0 ? (
-            <label className="flex min-h-11 items-center gap-2 border-t border-[var(--personal-border)] px-3">
-              <span className="shrink-0 text-[13px] text-[var(--personal-text-secondary)]">
-                Add
-              </span>
-              <select
-                value=""
-                onChange={(event) => {
-                  const botId = event.target.value;
-                  if (botId !== "") void onAddMember(botId);
-                }}
-                className="h-11 min-w-0 flex-1 bg-transparent text-[15px] text-[var(--personal-text)] outline-none"
-              >
-                <option value="">Choose a bot</option>
-                {addable.map((bot) => (
-                  <option key={bot.botId} value={bot.botId}>
-                    {bot.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          <p className="border-t border-[var(--personal-border)] px-3 py-2 text-[13px] text-[var(--personal-text-secondary)]">
-            {members.length} of {PERSONAL_GROUP_MAX_MEMBERS}. Each member keeps its own chat and
-            memory; tap a name in the conversation to open it.
-          </p>
-        </section>
-      ) : null}
 
       {group !== null && thread !== null && environmentId !== null && threadRef !== null ? (
         <>
@@ -619,6 +618,27 @@ export function GroupConversationScreen({ groupId }: { groupId: string }): JSX.E
           )}
         </div>
       )}
+
+      {showSettings && group !== null ? (
+        <GroupSettingsSheet
+          group={group}
+          groups={groups}
+          bots={botsList.data?.bots ?? []}
+          actions={memberActions}
+          onClose={() => {
+            setShowSettings(false);
+            // Drop `?settings=members` so a reload lands on the conversation.
+            if (openSettings) {
+              void navigate({
+                to: "/bots/groups/$groupId",
+                params: { groupId },
+                search: {},
+                replace: true,
+              });
+            }
+          }}
+        />
+      ) : null}
 
       {deleteOpen ? (
         <GroupDeleteSheet

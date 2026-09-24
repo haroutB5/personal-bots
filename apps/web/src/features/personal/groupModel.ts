@@ -327,20 +327,21 @@ export interface GroupDeleteCandidate {
   readonly botId: string;
   readonly name: string;
   /**
-   * Ticked by default. True only when this group is the only thing holding the
-   * bot: deleting it takes nothing the owner has not already decided to scrap.
+   * Ticked by default. Always false: deleting a group keeps its bots unless the
+   * owner ticks them, and a bot this group alone held moves back to the Bots
+   * list rather than going with it.
    */
   readonly checked: boolean;
-  /** Why it starts unticked, shown on the row. Null when it starts ticked. */
+  /** Why this bot matters outside the group, shown on the row. Null when nothing does. */
   readonly reason: string | null;
 }
 
 /**
- * The Delete group sheet's rows, with the default ticks already decided.
+ * The Delete group sheet's rows. Nothing starts ticked: the default keeps
+ * every bot (a group-only bot moves back to the Bots list).
  *
- * A member is ticked only when losing it costs nothing outside this group.
- * Three things un-tick it, and each one is named on the row so the owner can
- * see why the app is protecting it rather than guessing:
+ * Three things are named on a row, so the owner sees what ticking it would
+ * cost outside this group:
  *
  * 1. **It leads a team.** Assistant leads the assistant team, CTO the dev team.
  *    Scrapping a group must never quietly take the lead of a team with it.
@@ -348,9 +349,7 @@ export interface GroupDeleteCandidate {
  * 3. **It is in another group too.** Deleting it would rewrite a conversation
  *    the owner is not looking at.
  *
- * An unticked default is never a refusal: every row can still be ticked by
- * hand. The rule only decides what a tap-through destroys, and a tap-through
- * destroys nothing that is load-bearing elsewhere.
+ * Every row can still be ticked by hand. A tap-through destroys no bot.
  */
 export function groupDeleteCandidates(input: {
   readonly group: PersonalGroup;
@@ -382,7 +381,7 @@ export function groupDeleteCandidates(input: {
               : alsoIn.length > 1
                 ? `Also in ${String(alsoIn.length)} other groups`
                 : null;
-    return { botId: member.botId, name: bot.name, checked: reason === null, reason };
+    return { botId: member.botId, name: bot.name, checked: false, reason };
   });
 }
 
@@ -392,7 +391,7 @@ export function groupDeleteCandidates(input: {
  */
 export function groupDeleteSummary(ticked: number): string {
   if (ticked === 0) {
-    return "Deletes the group and its conversation. Every bot keeps its own chats.";
+    return "Deletes the group and its conversation. Its bots are kept and move back to your Bots list.";
   }
   return ticked === 1
     ? "Deletes the group and 1 bot with its chats."

@@ -15,6 +15,7 @@ import {
   type PersonalBot,
   PersonalBotId,
   type PersonalBotTeam,
+  PersonalGroupId,
   savesMemoryWithoutAsking,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -59,6 +60,7 @@ import {
   usePersonalEnvironmentId,
   usePersonalProfile,
 } from "./usePersonalBots";
+import { personalGroupAddMember } from "./usePersonalGroups";
 
 const FIELD_CLASS =
   "w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-tertiary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] aria-invalid:border-[var(--personal-error)]";
@@ -230,15 +232,28 @@ function PersonalPageHeader({
   title,
   children,
   showBack = true,
+  backToGroupId = null,
 }: {
   title: string;
   children?: ReactNode;
   /** False where the screen already is the Bots home (the desktop pane). */
   showBack?: boolean;
+  /** Back returns to this group's settings instead of the Bots list. */
+  backToGroupId?: string | null;
 }) {
   return (
     <header className="flex h-14 items-center gap-1">
-      {showBack ? (
+      {showBack && backToGroupId !== null ? (
+        <Link
+          to="/bots/groups/$groupId"
+          params={{ groupId: backToGroupId }}
+          search={{ settings: "members" }}
+          aria-label="Back to group settings"
+          className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+        >
+          <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
+        </Link>
+      ) : showBack ? (
         <Link
           to="/bots"
           aria-label="Back to Bots"
@@ -266,11 +281,26 @@ export { PersonalPageHeader };
 function BotForm({
   environmentId,
   bot,
+  groupId = null,
 }: {
   environmentId: EnvironmentId;
   bot: PersonalBot | null;
+  /**
+   * Opened from this group's settings: saving, deleting and Back return there,
+   * and a new bot is created straight into the group.
+   */
+  groupId?: string | null;
 }): JSX.Element {
   const navigate = useNavigate();
+  const addToGroup = useAtomCommand(personalGroupAddMember, { reportFailure: false });
+  const leave = () =>
+    groupId === null
+      ? navigate({ to: "/bots" })
+      : navigate({
+          to: "/bots/groups/$groupId",
+          params: { groupId },
+          search: { settings: "members" },
+        });
   const providers = useAtomValue(primaryServerProvidersAtom);
   const createBot = useAtomCommand(personalBotCreate);
   const updateBot = useAtomCommand(personalBotUpdate);
@@ -475,10 +505,28 @@ function BotForm({
     if (bot === null && notificationsMute !== undefined && result._tag === "Success") {
       result = await updateBot({ environmentId, input: { botId, notificationsMute } });
     }
+    // Created from a group's settings: it goes straight into that group. A
+    // failed add keeps the form open; submitting again retries both steps
+    // (the create is idempotent on the botId).
+    if (bot === null && groupId !== null && result._tag === "Success") {
+      const added = await addToGroup({
+        environmentId,
+        input: { groupId: PersonalGroupId.make(groupId), botId },
+      });
+      const failure = commandFailureMessage(
+        added,
+        `${name} was created but couldn't join the group. Try again.`,
+      );
+      if (failure !== null) {
+        setBusy(false);
+        setSubmitError(failure);
+        return;
+      }
+    }
     setBusy(false);
     if (result._tag === "Success") {
       leavingRef.current = true;
-      await navigate({ to: "/bots" });
+      await leave();
       return;
     }
     setSubmitError(commandFailureMessage(result, "The bot could not be saved."));
@@ -493,7 +541,7 @@ function BotForm({
     setSubmitError(outcome.status === "failed" ? outcome.message : null);
     if (outcome.status === "done") {
       leavingRef.current = true;
-      await navigate({ to: "/bots" });
+      await leave();
     }
   };
 
@@ -847,36 +895,47 @@ function BotForm({
   );
 }
 
-/** /bots/new */
-export function NewBotScreen(): JSX.Element {
+/** /bots/new, or /bots/new?group=<id> from a group's settings. */
+export function NewBotScreen({
+  intoGroupId = null,
+}: { readonly intoGroupId?: string | null } = {}): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   return (
     <div className="px-5">
-      <PersonalPageHeader title="New bot" />
+      <PersonalPageHeader title="New bot" backToGroupId={intoGroupId} />
       {environmentId === null ? (
         <p className="mt-4 text-[15px] text-[var(--personal-text-secondary)]">
           Connect to your computer to create a bot.
         </p>
       ) : (
         <div className="mt-2">
-          <BotForm environmentId={environmentId} bot={null} />
+          <BotForm environmentId={environmentId} bot={null} groupId={intoGroupId} />
         </div>
       )}
     </div>
   );
 }
 
-/** /bots/$botId/edit */
-export function EditBotScreen({ botId }: { botId: string }): JSX.Element {
+/** /bots/$botId/edit, or ?group=<id> when opened from that group's settings. */
+export function EditBotScreen({
+  botId,
+  fromGroupId = null,
+}: {
+  botId: string;
+  fromGroupId?: string | null;
+}): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const list = usePersonalBotsList(environmentId);
   const bot = list.data?.bots.find((candidate) => candidate.botId === botId) ?? null;
   return (
     <div className="px-5">
-      <PersonalPageHeader title={bot === null ? "Edit bot" : `Edit ${bot.name}`} />
+      <PersonalPageHeader
+        title={bot === null ? "Edit bot" : `Edit ${bot.name}`}
+        backToGroupId={fromGroupId}
+      />
       {environmentId !== null && bot !== null ? (
         <div className="mt-2">
-          <BotForm key={bot.botId} environmentId={environmentId} bot={bot} />
+          <BotForm key={bot.botId} environmentId={environmentId} bot={bot} groupId={fromGroupId} />
         </div>
       ) : list.data !== null ? (
         <p className="mt-4 text-[15px] text-[var(--personal-text-secondary)]">

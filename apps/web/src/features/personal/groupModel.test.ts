@@ -429,11 +429,13 @@ describe("groupDeleteCandidates", () => {
 
   const plain = [bot("bot-ada", "Ada"), bot("bot-grace", "Grace")];
 
-  it("ticks a bot this group alone holds", () => {
+  // Deleting a group keeps its bots unless the owner ticks them: a bot this
+  // group alone holds just moves back to the Bots list.
+  it("starts every bot unticked, even one this group alone holds", () => {
     const rows = groupDeleteCandidates({ group: group(), groups: [group()], bots: plain });
     // Member order, i.e. sortOrder: Ada then Grace.
     expect(rows.map((row) => row.name)).toEqual(["Ada", "Grace"]);
-    expect(rows.every((row) => row.checked)).toBe(true);
+    expect(rows.every((row) => !row.checked)).toBe(true);
     expect(rows.every((row) => row.reason === null)).toBe(true);
   });
 
@@ -448,8 +450,8 @@ describe("groupDeleteCandidates", () => {
       checked: false,
       reason: "Leads the Assistant's team",
     });
-    // Only the lead is protected; the other member is still ticked.
-    expect(rows[1]).toMatchObject({ name: "Grace", checked: true, reason: null });
+    // The reason is only on the lead's row.
+    expect(rows[1]).toMatchObject({ name: "Grace", checked: false, reason: null });
   });
 
   it("unticks a pinned bot", () => {
@@ -469,7 +471,7 @@ describe("groupDeleteCandidates", () => {
       members: [member("bot-grace", 0, { groupId: "group-2" })],
     });
     const rows = groupDeleteCandidates({ group: group(), groups: [group(), other], bots: plain });
-    expect(rows[0]).toMatchObject({ name: "Ada", checked: true, reason: null });
+    expect(rows[0]).toMatchObject({ name: "Ada", checked: false, reason: null });
     expect(rows[1]).toMatchObject({
       name: "Grace",
       checked: false,
@@ -501,7 +503,7 @@ describe("groupDeleteCandidates", () => {
       members: [member("bot-grace", 0, { groupId: "group-2", leftAt: "2026-09-19T09:05:00.000Z" })],
     });
     const rows = groupDeleteCandidates({ group: group(), groups: [group(), other], bots: plain });
-    expect(rows[1]).toMatchObject({ name: "Grace", checked: true, reason: null });
+    expect(rows[1]).toMatchObject({ name: "Grace", checked: false, reason: null });
   });
 
   it("never ticks a member whose bot has not loaded", () => {
@@ -519,7 +521,7 @@ describe("groupDeleteSummary", () => {
 
   it("says the bots are kept when nothing is ticked", () => {
     expect(groupDeleteSummary(0)).toBe(
-      "Deletes the group and its conversation. Every bot keeps its own chats.",
+      "Deletes the group and its conversation. Its bots are kept and move back to your Bots list.",
     );
   });
 });
