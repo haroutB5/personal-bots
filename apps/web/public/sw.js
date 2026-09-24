@@ -241,6 +241,24 @@ function withTimeout(promise, ms) {
   ]).finally(() => clearTimeout(timer));
 }
 
+/**
+ * One notification per chat: anything that opens a bot's chat (a reply, a task
+ * that needs the browser there) is tagged by its thread, so a newer one
+ * replaces the older instead of stacking in Notification Center. Other
+ * destinations keep the server's tag.
+ */
+function notificationTag(data, url) {
+  const chat = /^\/bots\/([^/?#]+)\/([^/?#]+)\/?(?:[?#]|$)/.exec(url);
+  if (chat !== null && chat[1] !== "groups") {
+    try {
+      return `chat-${decodeURIComponent(chat[2])}`;
+    } catch {
+      return `chat-${chat[2]}`;
+    }
+  }
+  return typeof data.tag === "string" && data.tag.length > 0 ? data.tag : undefined;
+}
+
 self.addEventListener("push", (event) => {
   let data = {};
   try {
@@ -250,9 +268,12 @@ self.addEventListener("push", (event) => {
   }
   const title = typeof data.title === "string" && data.title.length > 0 ? data.title : "Bots";
   const url = typeof data.url === "string" && data.url.startsWith("/") ? data.url : "/bots";
+  const tag = notificationTag(data, url);
   const options = {
     body: typeof data.body === "string" ? data.body : "",
-    tag: typeof data.tag === "string" ? data.tag : undefined,
+    tag,
+    // A replaced notification still alerts: it is news, just not a new row.
+    renotify: tag !== undefined,
     data: { url },
     icon: NOTIFICATION_FALLBACK_ICON,
   };

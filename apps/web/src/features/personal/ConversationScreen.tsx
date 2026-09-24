@@ -54,6 +54,7 @@ import {
 import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerLink } from "./ConversationComputerLink";
 import { ConversationDesktopLine } from "./ConversationDesktopLine";
+import { useCloseChatNotifications } from "./staleNotifications";
 import { useDesktopStatus } from "./computer/desktopState";
 import { useComputerFeed } from "./computer/computerState";
 import { ConversationRoutinesPanel } from "./ConversationRoutinesPanel";
@@ -205,6 +206,7 @@ export function ConversationScreen({
   });
   const thread = useThreadDetail(threadRef);
   const status = useThreadStatus(threadRef);
+  useCloseChatNotifications(botId, threadIdParam);
 
   // A cold deep link (notification tap, PWA relaunch) makes this the first
   // screen: nothing else has loaded the bots list, and a query that failed

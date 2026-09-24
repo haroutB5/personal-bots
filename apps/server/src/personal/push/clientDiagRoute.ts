@@ -64,6 +64,8 @@ export const CLIENT_DIAG_EVENTS: ReadonlySet<string> = new Set([
   "page-boot",
   // Real-user timings (web features/personal/perfRum.ts).
   "perf",
+  // Stale notifications the page closed (web features/personal/staleNotifications.ts).
+  "notifications-cleared",
 ]);
 const VISIBILITY = new Set(["visible", "hidden", "prerender", "unknown"]);
 const TOKEN = /^[A-Za-z0-9._:-]+$/;
@@ -133,6 +135,8 @@ const FIELDS: Record<string, Read> = {
   snapshot: bool,
   ms: count,
   at: count,
+  closed: count,
+  reason: token(32),
   clients: (value) =>
     Array.isArray(value)
       ? value

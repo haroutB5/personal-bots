@@ -189,6 +189,25 @@ describe("client diagnostics route", () => {
     ).toEqual({ event: "perf", journey: "j2", ms: 842, warm: true, via: "relay", snapshot: false });
   });
 
+  it("accepts the stale-notification cleanup line: how many, and why", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "notifications-cleared",
+          closed: 3,
+          reason: "visible",
+          visibility: "visible",
+          titles: ["not kept"],
+        }),
+      ),
+    ).toEqual({
+      event: "notifications-cleared",
+      closed: 3,
+      reason: "visible",
+      visibility: "visible",
+    });
+  });
+
   it("keeps one record on one bounded line", () => {
     const line = clientDiagLine(tap(), "anonymous");
     expect(line).not.toContain(String.fromCharCode(10));

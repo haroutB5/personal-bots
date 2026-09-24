@@ -274,3 +274,33 @@ describe("service worker notification icon", () => {
     }
   });
 });
+
+/**
+ * One notification per chat in Notification Center: anything opening a chat is
+ * tagged by its thread (so a task that needs the browser there and the chat's
+ * reply replace each other), and a replacement still alerts.
+ */
+describe("service worker notification tag", () => {
+  const optionsOf = (app: ReturnType<typeof worker>) =>
+    app.showNotification.mock.calls.at(-1)![1] as { tag?: string; renotify?: boolean };
+
+  it("tags a chat link by its thread, whatever tag the server sent", async () => {
+    const app = worker();
+    await push(app, { title: "Planner needs your help", url: "/bots/b1/t%3A1", tag: "task-77" });
+    expect(optionsOf(app)).toMatchObject({ tag: "chat-t:1", renotify: true });
+  });
+
+  it("keeps the server's tag for other destinations, and groups are not chats", async () => {
+    const app = worker();
+    await push(app, { title: "Sync reports finished", url: "/tasks/77", tag: "task-77" });
+    expect(optionsOf(app)).toMatchObject({ tag: "task-77", renotify: true });
+    await push(app, { title: "Team", url: "/bots/groups/g1", tag: "group-g1" });
+    expect(optionsOf(app)).toMatchObject({ tag: "group-g1" });
+  });
+
+  it("leaves an untagged, non-chat notification untagged", async () => {
+    const app = worker();
+    await push(app, { title: "Bots", url: "/bots/settings" });
+    expect(optionsOf(app)).toMatchObject({ tag: undefined, renotify: false });
+  });
+});
