@@ -55,10 +55,10 @@ $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 $runDir = Get-UpdatesRunDir $RunId
 New-Item -ItemType Directory -Force -Path $runDir | Out-Null
-$logFile = Join-Path $runDir 'pipeline.log'
+$script:RunLogPath = Join-Path $runDir 'pipeline.log'
 $log = {
     param([string]$Text)
-    Add-Content -LiteralPath $logFile -Value ('{0} {1}' -f (Get-Date -Format 'HH:mm:ss'), $Text) -Encoding UTF8
+    Add-Content -LiteralPath $script:RunLogPath -Value ('{0} {1}' -f (Get-Date -Format 'HH:mm:ss'), $Text) -Encoding UTF8
 }
 $paths = Get-PbPaths -Root dev
 $nodeExe = Resolve-NodeExe
@@ -82,6 +82,7 @@ $script:release = $null
 $script:previous = $null
 $script:urgent = $false
 $script:pushed = $false
+$script:deployStarted = $false
 
 function Add-Step([string]$Text) { $steps.Add($Text) | Out-Null; & $log "STEP $Text" }
 
@@ -296,6 +297,7 @@ function Invoke-Pipeline {
     $logPath = Join-Path $paths.LogsDir ('server-{0}.log' -f (Get-Date -Format 'yyyyMMdd'))
     $offset = 0
     if (Test-Path -LiteralPath $logPath) { $offset = (Get-Item -LiteralPath $logPath).Length }
+    $script:deployStarted = $true
     $restart = Invoke-PbScript -Name 'restart.ps1' -ScriptArgs @('-Release', $script:release) -TimeoutSeconds 300
     $ok = $restart.Code -eq 0
     if ($ok) {
@@ -415,9 +417,29 @@ try {
     & $log "ERROR: $detail"
     Add-Step "stopped on an error: $detail"
     $script:result = 'error'
+    $recovery = ''
+    if ($isLive) {
+        # Leave the checkout matching what is live, so tonight's error does not
+        # block tomorrow's preflight: back onto the previous release if the
+        # deploy had started, then revert the run's commits (new commits, pushed).
+        try {
+            if ($script:deployStarted -and $script:previous) {
+                $back = Invoke-PbScript -Name 'restart.ps1' -ScriptArgs @('-Release', $script:previous) -TimeoutSeconds 300
+                Add-Step "after the error: restart.ps1 -Release $($script:previous) exited $($back.Code)"
+                $recovery = " Bots was put back on $($script:previous)."
+            }
+            if ((Get-RunCommits).Count -gt 0) {
+                Undo-Run "the pipeline stopped on an error: $detail"
+                $recovery += " The run's commits were reverted."
+            }
+        } catch {
+            Add-Step "recovery after the error failed: $($_.Exception.Message)"
+            $recovery += ' Recovery failed: the checkout needs a look.'
+        }
+    }
     $healthy = Test-LocalHealth
     $script:urgent = $isLive -and -not $healthy
-    $script:summary = "The pipeline stopped on an error: $detail. Bots is $(if ($healthy) { 'up' } else { 'NOT answering' }). Log: $logFile"
+    $script:summary = "The pipeline stopped on an error: $detail.$recovery Bots is $(if ($healthy) { 'up' } else { 'NOT answering' }). Log: $($script:RunLogPath)"
 } finally {
     try {
         $outcome = New-UpdatesOutcome -RunId $RunId -Mode $Mode -Result $script:result -Summary $script:summary `

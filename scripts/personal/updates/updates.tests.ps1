@@ -106,6 +106,24 @@ Assert-Equal 'vitest FAIL lines, deduped, colours stripped' 'src/personal/a.test
 $gates = Get-UpdatesGateList -Root 'C:\x'
 Assert-Equal 'the gate set' 'test-server,test-web,typecheck-contracts,typecheck-shared,typecheck-client-runtime,typecheck-server,typecheck-web,lint' ($gates | ForEach-Object { $_.Name })
 Assert-Equal 'never a bare vp test run in apps\server' 'test,run,src/personal' ($gates | Where-Object { $_.Name -eq 'test-server' }).Args
+# Regression (dry run 2026-09-24): a relative tsc.cmd could not be started.
+Assert-Equal 'every gate program is an absolute path' 0 @($gates | Where-Object { -not [System.IO.Path]::IsPathRooted($_.File) }).Count
+
+Write-Host 'Gate runner (real processes)'
+$gateDir = Join-Path $tempRoot 'gates'
+New-Item -ItemType Directory -Force -Path $gateDir | Out-Null
+# Regression (dry run 2026-09-24): the runner's own `$logFile` shadowed the
+# caller's, so progress lines went into the gate logs. Use the caller's name.
+$logFile = Join-Path $tempRoot 'caller.log'
+$callerLog = { param([string]$Text) Add-Content -LiteralPath $logFile -Value $Text }
+$fakeGates = @(
+    @{ Name = 'green'; Dir = '.'; File = $env:ComSpec; Args = @('/c', 'exit', '0'); Kind = 'exit' },
+    @{ Name = 'red'; Dir = '.'; File = $env:ComSpec; Args = @('/c', 'exit', '3'); Kind = 'exit' },
+    @{ Name = 'missing'; Dir = '.'; File = (Join-Path $tempRoot 'no-such-program.exe'); Args = @(); Kind = 'exit' }
+)
+$gateRed = Invoke-UpdatesGates -Gates $fakeGates -Root $tempRoot -LogDir $gateDir -Log $callerLog
+Assert-Equal 'red and unstartable gates are red, green is not' 'red,missing' (@($gateRed | ForEach-Object { ($_ -split ' ')[0] }))
+Assert-Equal 'progress reaches the caller''s log' 'gate green ...,gate red ...,gate missing ...' (Get-Content -LiteralPath $logFile)
 
 Write-Host 'The urgent marker matches the push service'
 $ledgerSource = Get-Content -LiteralPath (Join-Path $PbRepoRoot 'apps\server\src\personal\claudeCodeReview\proposalLedger.ts') -Raw

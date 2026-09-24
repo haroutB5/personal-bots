@@ -39,11 +39,11 @@ $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 $runDir = Get-UpdatesRunDir $RunId
 New-Item -ItemType Directory -Force -Path $runDir | Out-Null
-$logFile = Join-Path $runDir "$Step.log"
+$script:RunLogPath = Join-Path $runDir "$Step.log"
 $log = {
     param([string]$Text)
     $line = '{0} {1}' -f (Get-Date -Format 'HH:mm:ss'), $Text
-    Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
+    Add-Content -LiteralPath $script:RunLogPath -Value $line -Encoding UTF8
     [Console]::Error.WriteLine($line)
 }
 $paths = Get-PbPaths -Root dev

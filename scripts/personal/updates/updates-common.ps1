@@ -362,7 +362,9 @@ function Get-UpdatesVitestFailures([string]$Output) {
 # typecheck, lint. perf:check needs the live server, so it runs after the
 # restart (nightly-pipeline.ps1). Never an unfiltered `vp test run` in apps\server.
 function Get-UpdatesGateList([string]$Root) {
-    $tsc = '..\..\node_modules\.bin\tsc.cmd'
+    # Absolute: Process.Start resolves a relative FileName against this process's
+    # directory, not the gate's WorkingDirectory (the 2026-09-24 dry run hit that).
+    $tsc = Join-Path $Root 'node_modules\.bin\tsc.cmd'
     $vp = Join-Path $Root 'node_modules\.bin\vp.cmd'
     return @(
         @{ Name = 'test-server'; Dir = 'apps\server'; File = $vp; Args = @('test', 'run', 'src/personal'); Kind = 'vitest' },
@@ -388,18 +390,25 @@ function Invoke-UpdatesGates {
     $red = New-Object System.Collections.Generic.List[string]
     foreach ($gate in $Gates) {
         $dir = Join-Path $Root $gate.Dir
-        $logFile = Join-Path $LogDir ('gate-{0}.log' -f $gate.Name)
+        # Not $logFile: callers' log scriptblocks resolve variable names dynamically.
+        $gateLog = Join-Path $LogDir ('gate-{0}.log' -f $gate.Name)
         & $Log "gate $($gate.Name) ..."
-        $res = Invoke-UpdatesProc -FilePath $gate.File -ArgList $gate.Args -WorkingDirectory $dir -TimeoutSeconds 2400 -LogPath $logFile
+        try {
+            $res = Invoke-UpdatesProc -FilePath $gate.File -ArgList $gate.Args -WorkingDirectory $dir -TimeoutSeconds 2400 -LogPath $gateLog
+        } catch {
+            # A gate that cannot even start is red, not a pipeline crash.
+            $red.Add("$($gate.Name) could not start: $($_.Exception.Message)") | Out-Null
+            continue
+        }
         if ($gate.Kind -eq 'exit') {
-            if ($res.Code -ne 0) { $red.Add("$($gate.Name) exited $($res.Code) (log $logFile)") | Out-Null }
+            if ($res.Code -ne 0) { $red.Add("$($gate.Name) exited $($res.Code) (log $gateLog)") | Out-Null }
             continue
         }
         if ($res.Code -eq 0) { continue }
         $failures = @(Get-UpdatesVitestFailures -Output ($res.Out + "`n" + $res.Err))
         $unknown = @($failures | Where-Object { $line = $_; -not ($known | Where-Object { $line.Contains($_) }) })
         if ($failures.Count -eq 0) {
-            $red.Add("$($gate.Name) exited $($res.Code) with no FAIL lines (crash or timeout; log $logFile)") | Out-Null
+            $red.Add("$($gate.Name) exited $($res.Code) with no FAIL lines (crash or timeout; log $gateLog)") | Out-Null
             continue
         }
         if ($unknown.Count -eq 0) { & $Log "gate $($gate.Name): only known pre-existing failures"; continue }
