@@ -552,9 +552,11 @@ describe("ChatsScreen notification mute", () => {
 
   const bells = () => renderer!.root.findAll((node) => node.props["data-muted-bell"] === "");
   const buttonNamed = (text: string) =>
-    renderer!.root
-      .findAllByType("button")
-      .find((button) => JSON.stringify(button.props.children ?? "") === JSON.stringify(text));
+    renderer!.root.findAllByType("button").find((button) => {
+      // Text children only, so an item with an icon ("Mute" + bell-slash) matches by its words.
+      const children = [button.props.children ?? ""].flat();
+      return children.filter((child) => typeof child === "string").join("") === text;
+    });
 
   afterEach(() => {
     state.setMute.mockClear();
@@ -578,7 +580,7 @@ describe("ChatsScreen notification mute", () => {
     // Nothing is muted until a length is picked.
     expect(state.setMute).not.toHaveBeenCalled();
 
-    for (const label of ["For 1 hour", "For 8 hours", "Until I turn it back on"]) {
+    for (const label of ["For 1 hour", "For 8 hours", "Mute"]) {
       expect(buttonNamed(label)).toBeDefined();
     }
     await act(async () => {

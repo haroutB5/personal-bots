@@ -75,11 +75,19 @@ export function BotMuteMenuItems({
       {state.muted ? (
         <MenuItem onClick={() => onChange("on")}>Unmute notifications</MenuItem>
       ) : (
-        MUTE_CHOICES.map((choice) => (
-          <MenuItem key={choice.key} onClick={() => onChange(choice.mute)}>
-            {choice.label}
-          </MenuItem>
-        ))
+        MUTE_CHOICES.map((choice) =>
+          // Owner's wording: the open-ended mute is just "Mute" with a bell-slash.
+          choice.key === "indefinitely" ? (
+            <MenuItem key={choice.key} onClick={() => onChange(choice.mute)}>
+              <BellOff aria-hidden="true" className="size-4" strokeWidth={2} />
+              Mute
+            </MenuItem>
+          ) : (
+            <MenuItem key={choice.key} onClick={() => onChange(choice.mute)}>
+              {choice.label}
+            </MenuItem>
+          ),
+        )
       )}
     </MenuGroup>
   );
