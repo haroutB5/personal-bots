@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  PERSONAL_BOT_MUTED_INDEFINITELY_ISO,
   PersonalBotId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -196,6 +197,51 @@ it.effect("stores the save-memories-without-asking setting per bot", () => {
     const turnedOff = yield* service.update({ botId: plain.botId, memoryAutoSave: false });
     expect(turnedOff.memoryAutoSave).toBe(false);
   }).pipe(Effect.provide(makeTestLayer(context)));
+});
+
+// Notifications are on for every bot until the owner mutes one. The server
+// turns the request into a time from its own clock, and an edit that does not
+// mention the mute leaves it as it was.
+it.effect("stores a per-bot notification mute: timed, indefinite, back on", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+    const bot = yield* service.create(botInput("bot-mute"));
+    expect(bot.notificationsMutedUntil).toBeNull();
+
+    const now = yield* DateTime.now;
+    const hour = yield* service.update({ botId: bot.botId, notificationsMute: { forMinutes: 60 } });
+    expect(DateTime.formatIso(hour.notificationsMutedUntil!)).toBe(
+      DateTime.formatIso(DateTime.add(now, { minutes: 60 })),
+    );
+    const renamed = yield* service.update({ botId: bot.botId, name: "Quiet" });
+    expect(renamed.notificationsMutedUntil).toEqual(hour.notificationsMutedUntil);
+
+    const forever = yield* service.update({
+      botId: bot.botId,
+      notificationsMute: "indefinitely",
+    });
+    expect(DateTime.formatIso(forever.notificationsMutedUntil!)).toBe(
+      PERSONAL_BOT_MUTED_INDEFINITELY_ISO,
+    );
+    expect((yield* service.list()).bots[0]?.notificationsMutedUntil).toEqual(
+      forever.notificationsMutedUntil,
+    );
+
+    const on = yield* service.update({ botId: bot.botId, notificationsMute: "on" });
+    expect(on.notificationsMutedUntil).toBeNull();
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});
+
+it("turns a mute request into the stored time", () => {
+  const now = DateTime.makeUnsafe("2026-09-24T12:00:00.000Z");
+  expect(PersonalBotService.notificationsMutedUntilFor("on", now)).toBeNull();
+  expect(
+    DateTime.formatIso(PersonalBotService.notificationsMutedUntilFor({ forMinutes: 480 }, now)!),
+  ).toBe("2026-09-24T20:00:00.000Z");
+  expect(
+    DateTime.formatIso(PersonalBotService.notificationsMutedUntilFor("indefinitely", now)!),
+  ).toBe(PERSONAL_BOT_MUTED_INDEFINITELY_ISO);
 });
 
 // Each team has exactly one lead, so promoting a bot has to demote whoever

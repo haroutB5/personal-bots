@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
 import {
@@ -118,6 +119,13 @@ export const PersonalBot = Schema.Struct({
    * {@link savesMemoryWithoutAsking}.
    */
   memoryAutoSave: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Notifications from this bot are silenced until this time: no web push and
+   * no in-app banner. Null (or absent, from an older server) means on; a time
+   * in the year 9999 means "until I turn it back on". Read it through
+   * {@link botNotificationsMutedUntil}, which also treats a past time as on.
+   */
+  notificationsMutedUntil: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtcFromString)),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
 });
@@ -149,6 +157,49 @@ export const isBotPinned = (bot: { readonly pinned?: boolean }): boolean => bot.
 
 export const savesMemoryWithoutAsking = (bot: { readonly memoryAutoSave?: boolean }): boolean =>
   bot.memoryAutoSave === true;
+
+/** What "until I turn it back on" is stored as: a time no timed mute reaches. */
+export const PERSONAL_BOT_MUTED_INDEFINITELY_ISO = "9999-12-31T23:59:59.000Z";
+/** Any mute ending at or after this is shown as indefinite. */
+const INDEFINITE_MUTE_FROM_MS = Date.UTC(9000, 0, 1);
+/** The longest timed mute a caller may ask for: one week. */
+export const PERSONAL_BOT_MUTE_MAX_MINUTES = 7 * 24 * 60;
+
+/**
+ * How a caller changes a bot's notifications. The server turns it into an
+ * absolute time from its own clock, so a phone with a skewed clock still gets
+ * the hour it asked for:
+ *  - "on": notifications on again;
+ *  - "indefinitely": muted until turned back on;
+ *  - `{ forMinutes }`: muted for that long, then on again by itself.
+ */
+export const PersonalBotNotificationMute = Schema.Union([
+  Schema.Literals(["on", "indefinitely"]),
+  Schema.Struct({
+    forMinutes: Schema.Int.check(
+      Schema.isBetween({ minimum: 1, maximum: PERSONAL_BOT_MUTE_MAX_MINUTES }),
+    ),
+  }),
+]);
+export type PersonalBotNotificationMute = typeof PersonalBotNotificationMute.Type;
+
+/**
+ * When this bot's notifications come back on, in epoch millis, or null when
+ * they are on now. A mute that has run out is on: nothing has to clear it.
+ * Accepts the decoded DateTime or an ISO string (the stored form).
+ */
+export const botNotificationsMutedUntil = (
+  bot: { readonly notificationsMutedUntil?: DateTime.Utc | string | null | undefined },
+  nowMs: number,
+): number | null => {
+  const until = bot.notificationsMutedUntil;
+  if (until === undefined || until === null) return null;
+  const ms = typeof until === "string" ? Date.parse(until) : DateTime.toEpochMillis(until);
+  return Number.isFinite(ms) && ms > nowMs ? ms : null;
+};
+
+/** Whether a mute that ends at `untilMs` is the "until I turn it back on" kind. */
+export const isIndefiniteMute = (untilMs: number): boolean => untilMs >= INDEFINITE_MUTE_FROM_MS;
 
 /**
  * The newest user/assistant message of a linked thread, for the chats list
@@ -207,6 +258,7 @@ export const PersonalBotUpdateInput = Schema.Struct({
   lead: Schema.optional(Schema.Boolean),
   pinned: Schema.optional(Schema.Boolean),
   memoryAutoSave: Schema.optional(Schema.Boolean),
+  notificationsMute: Schema.optional(PersonalBotNotificationMute),
 });
 export type PersonalBotUpdateInput = typeof PersonalBotUpdateInput.Type;
 

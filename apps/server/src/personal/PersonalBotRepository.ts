@@ -64,6 +64,8 @@ export const UpdatePersonalBotInput = Schema.Struct({
   lead: Schema.optional(Schema.Boolean),
   pinned: Schema.optional(Schema.Boolean),
   memoryAutoSave: Schema.optional(Schema.Boolean),
+  /** Absent leaves the mute alone; null turns notifications back on. */
+  notificationsMutedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   updatedAt: Schema.DateTimeUtcFromString,
 });
 export type UpdatePersonalBotInput = typeof UpdatePersonalBotInput.Type;
@@ -197,6 +199,7 @@ const PersonalBotDbRow = Schema.Struct({
   lead: Schema.Number,
   pinned: Schema.Number,
   memoryAutoSave: Schema.Number,
+  notificationsMutedUntil: Schema.NullOr(Schema.DateTimeUtcFromString),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -217,6 +220,7 @@ const PersonalBotRawDbRow = Schema.Struct({
   lead: Schema.Unknown,
   pinned: Schema.Unknown,
   memoryAutoSave: Schema.Unknown,
+  notificationsMutedUntil: Schema.Unknown,
   createdAt: Schema.Unknown,
   updatedAt: Schema.Unknown,
   deletedAt: Schema.Unknown,
@@ -303,6 +307,7 @@ function toPersonalBot(row: typeof PersonalBotDbRow.Type): PersonalBot {
     lead: row.lead === 1,
     pinned: row.pinned === 1,
     memoryAutoSave: row.memoryAutoSave === 1,
+    notificationsMutedUntil: row.notificationsMutedUntil,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -416,6 +421,7 @@ export const make = Effect.gen(function* () {
           is_lead AS "lead",
           pinned AS "pinned",
           memory_auto_save AS "memoryAutoSave",
+          notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -444,6 +450,7 @@ export const make = Effect.gen(function* () {
           is_lead AS "lead",
           pinned AS "pinned",
           memory_auto_save AS "memoryAutoSave",
+          notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -478,6 +485,11 @@ export const make = Effect.gen(function* () {
               ${input.memoryAutoSave === undefined ? null : input.memoryAutoSave ? 1 : 0},
               memory_auto_save
             ),
+            notifications_muted_until = CASE
+              WHEN ${input.notificationsMutedUntil === undefined ? 0 : 1} = 1
+                THEN ${input.notificationsMutedUntil ?? null}
+              ELSE notifications_muted_until
+            END,
             updated_at = ${input.updatedAt}
         WHERE bot_id = ${input.botId}
         RETURNING
@@ -495,6 +507,7 @@ export const make = Effect.gen(function* () {
           is_lead AS "lead",
           pinned AS "pinned",
           memory_auto_save AS "memoryAutoSave",
+          notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"

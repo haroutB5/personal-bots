@@ -18,6 +18,7 @@ import {
   isBotOnTeam,
   isProviderAvailable,
   PersonalBotId,
+  PERSONAL_BOT_MUTED_INDEFINITELY_ISO,
   PersonalBotTeam,
   PersonalBotsError,
   PersonalBotThread,
@@ -29,6 +30,7 @@ import {
   ThreadId,
   type PersonalBot,
   type PersonalBotCreateInput,
+  type PersonalBotNotificationMute,
   type PersonalBotsListResult,
   type PersonalBotUpdateInput,
   type PersonalFile,
@@ -59,6 +61,19 @@ const encodeCustomTeams = Schema.encodeEffect(Schema.fromJsonString(Schema.Array
 const PERSONAL_PROFILE_DISPLAY_NAME_MAX_LENGTH = 80;
 const PERSONAL_WORKSPACE_DIRNAME = "personal-workspace";
 const PERSONAL_PROJECT_TITLE = "Personal";
+
+/**
+ * The stored mute time a mute request stands for, from the server's clock:
+ * null is on, the far-future time is "until I turn it back on".
+ */
+export function notificationsMutedUntilFor(
+  mute: PersonalBotNotificationMute,
+  now: DateTime.Utc,
+): DateTime.Utc | null {
+  if (mute === "on") return null;
+  if (mute === "indefinitely") return DateTime.makeUnsafe(PERSONAL_BOT_MUTED_INDEFINITELY_ISO);
+  return DateTime.add(now, { minutes: mute.forMinutes });
+}
 
 const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
@@ -468,9 +483,13 @@ export const make = Effect.gen(function* () {
       // Same rule as create, so the drag-and-drop path on the team diagram and
       // any API caller land on a team that exists.
       const team = input.team === undefined ? undefined : yield* requireKnownTeam(input.team);
+      const { notificationsMute, ...fields } = input;
       const updated = yield* repository
         .updateBot({
-          ...input,
+          ...fields,
+          ...(notificationsMute === undefined
+            ? {}
+            : { notificationsMutedUntil: notificationsMutedUntilFor(notificationsMute, now) }),
           ...(team === undefined ? {} : { team }),
           ...(input.title === undefined ? {} : { title: input.title.trim() }),
           updatedAt: now,
