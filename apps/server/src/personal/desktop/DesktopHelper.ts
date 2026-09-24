@@ -35,7 +35,8 @@ const HOST_SCRIPT = `$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing, System.Windows.Forms, System.Web.Extensions
 $bytes = [System.IO.File]::ReadAllBytes($env:PB_DESKTOP_HELPER_DLL)
 $assembly = [System.Reflection.Assembly]::Load($bytes)
-$assembly.GetType('PbDesktopHelper').GetMethod('Run').Invoke($null, @())
+$entry = if ($env:PB_DESKTOP_HELPER_ENTRY) { $env:PB_DESKTOP_HELPER_ENTRY } else { 'Run' }
+$assembly.GetType('PbDesktopHelper').GetMethod($entry).Invoke($null, @())
 `;
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -98,6 +99,8 @@ export function ensureHelperCompiled(dir: string): { dllPath: string; hostPath: 
   return { dllPath, hostPath };
 }
 
+export type DesktopHelperEntry = "Run" | "RunCapture";
+
 interface Pending {
   readonly resolve: (value: Record<string, unknown>) => void;
   readonly reject: (error: Error) => void;
@@ -117,9 +120,15 @@ export class WindowsDesktopDriver implements DesktopDriver {
   private disposed = false;
 
   private readonly helperDir: string;
+  private readonly entry: DesktopHelperEntry;
 
-  constructor(helperDir: string) {
+  /**
+   * `entry` picks the assembly's entry point: `Run` is the full helper (input,
+   * hooks, overlay); `RunCapture` is the live view's capture-only process.
+   */
+  constructor(helperDir: string, entry: DesktopHelperEntry = "Run") {
     this.helperDir = helperDir;
+    this.entry = entry;
   }
 
   onKill(listener: () => void): void {
@@ -150,7 +159,11 @@ export class WindowsDesktopDriver implements DesktopDriver {
         {
           stdio: ["pipe", "pipe", "pipe"],
           windowsHide: true,
-          env: { ...process.env, PB_DESKTOP_HELPER_DLL: paths.dllPath },
+          env: {
+            ...process.env,
+            PB_DESKTOP_HELPER_DLL: paths.dllPath,
+            PB_DESKTOP_HELPER_ENTRY: this.entry,
+          },
         },
       );
       this.child = child;

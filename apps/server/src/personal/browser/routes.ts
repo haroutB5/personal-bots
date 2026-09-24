@@ -29,7 +29,12 @@ import {
 } from "../../auth/http.ts";
 import { PersonalBrowser } from "./PersonalBrowser.ts";
 
-const authenticate = (requiredScope: AuthEnvironmentScope) =>
+/**
+ * Authenticates a personal HTTP route the way the `/ws` upgrade does (session
+ * cookie or `wsTicket`) and requires `requiredScope`. Shared with the desktop
+ * live view.
+ */
+export const authenticatePersonalRoute = (requiredScope: AuthEnvironmentScope) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -50,7 +55,7 @@ const authenticate = (requiredScope: AuthEnvironmentScope) =>
     return session;
   });
 
-const toAuthResponse = {
+export const personalRouteAuthResponses = {
   EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
   EnvironmentInternalError: HttpServerRespondable.toResponse,
   EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
@@ -65,7 +70,7 @@ export const personalBrowserStreamRouteLayer = HttpRouter.add(
   PERSONAL_BROWSER_STREAM_PATH,
   Effect.gen(function* () {
     // Authenticate before anything else so an anonymous probe learns nothing.
-    const session = yield* authenticate(AuthOrchestrationReadScope);
+    const session = yield* authenticatePersonalRoute(AuthOrchestrationReadScope);
     const request = yield* HttpServerRequest.HttpServerRequest;
     if (request.headers.upgrade?.toLowerCase() !== "websocket") {
       return HttpServerResponse.text("Upgrade Required", { status: 426 });
@@ -88,7 +93,7 @@ export const personalBrowserStreamRouteLayer = HttpRouter.add(
       }),
     ).pipe(Effect.catchCause(() => Effect.void));
     return HttpServerResponse.empty();
-  }).pipe(Effect.catchTags(toAuthResponse)),
+  }).pipe(Effect.catchTags(personalRouteAuthResponses)),
 );
 
 /** `GET <prefix>/<fileId>`: ids come from `personalBrowser.listFiles`, never paths. */
@@ -96,7 +101,7 @@ export const personalBrowserFilesRouteLayer = HttpRouter.add(
   "GET",
   `${PERSONAL_BROWSER_FILES_ROUTE_PREFIX}/*`,
   Effect.gen(function* () {
-    yield* authenticate(AuthOrchestrationReadScope);
+    yield* authenticatePersonalRoute(AuthOrchestrationReadScope);
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
     if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
@@ -115,5 +120,5 @@ export const personalBrowserFilesRouteLayer = HttpRouter.add(
     }).pipe(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
     );
-  }).pipe(Effect.catchTags(toAuthResponse)),
+  }).pipe(Effect.catchTags(personalRouteAuthResponses)),
 );

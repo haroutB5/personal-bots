@@ -28,6 +28,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
@@ -40,6 +41,7 @@ import {
   DesktopLockCore,
   type HandOver,
 } from "./DesktopLock.ts";
+import { DesktopLiveViewHub, type LiveViewer, type LiveViewSink } from "./DesktopLiveView.ts";
 import { DesktopCoordinateError, type ScreenFrame } from "./desktopGeometry.ts";
 import { DesktopKeyError } from "./desktopKeys.ts";
 
@@ -108,6 +110,12 @@ export interface PersonalDesktopShape {
   readonly threadTurnEnded: (threadId: string) => Effect.Effect<void>;
   readonly status: Effect.Effect<PersonalDesktopStatus>;
   readonly changes: Stream.Stream<PersonalDesktopStatus>;
+  /**
+   * A live view for one viewer socket (the app's Desktop view): frames go to
+   * `sink` until the scope closes. Null where there is no desktop to show.
+   * Watching never touches the bots' action queue (see DesktopLiveView.ts).
+   */
+  readonly watch: (sink: LiveViewSink) => Effect.Effect<LiveViewer | null, never, Scope.Scope>;
 }
 
 export class PersonalDesktop extends Context.Service<PersonalDesktop, PersonalDesktopShape>()(
@@ -129,6 +137,8 @@ export interface DesktopServiceOptions {
   readonly lineGraceMs?: number;
   /** Overlay left visible to screenshots, for evidence captures. */
   readonly overlayCapturable?: boolean;
+  /** The app's live view; null or absent where there is no desktop. */
+  readonly liveView?: DesktopLiveViewHub | null;
 }
 
 const iso = (millis: number) => new Date(millis).toISOString();
@@ -466,6 +476,11 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
         threadTurnEnded,
         status: Effect.sync(snapshot),
         changes: Stream.fromPubSub(pubsub),
+        watch: (sink) =>
+          Effect.acquireRelease(
+            Effect.sync(() => options.liveView?.attach(sink) ?? null),
+            (viewer) => Effect.sync(() => viewer?.detach()),
+          ),
       }),
       /**
        * Drops a holder idle past the timeout and bots whose place in line
@@ -494,9 +509,26 @@ export const layer = Layer.effect(
         ? new WindowsDesktopDriver(NodePath.join(config.stateDir, "desktop-helper"))
         : null;
     yield* Effect.addFinalizer(() => Effect.sync(() => driver?.dispose()));
+    const runFork = Effect.runForkWith(yield* Effect.context<never>());
+    // The live view captures through its own process, never the bots' helper.
+    const liveView =
+      platform === "win32"
+        ? new DesktopLiveViewHub({
+            createDriver: () =>
+              new WindowsDesktopDriver(
+                NodePath.join(config.stateDir, "desktop-helper"),
+                "RunCapture",
+              ),
+            log: (line) => {
+              runFork(Effect.logInfo(line));
+            },
+          })
+        : null;
+    yield* Effect.addFinalizer(() => Effect.sync(() => liveView?.dispose()));
     const { service, sweep } = yield* makeDesktopService({
       driver,
       overlayCapturable: process.env.PB_DESKTOP_OVERLAY_CAPTURABLE === "1",
+      liveView,
     });
     // A turn that ends lets go of the PC: nobody should hold the user's
     // desktop across a finished reply, and a stopped chat may try again on

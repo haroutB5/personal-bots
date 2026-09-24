@@ -7,6 +7,7 @@ import * as Fiber from "effect/Fiber";
 
 import type { DesktopDriver } from "./DesktopHelper.ts";
 import { DesktopHelperError } from "./DesktopHelper.ts";
+import { DesktopLiveViewHub } from "./DesktopLiveView.ts";
 import {
   makeDesktopService,
   PersonalDesktopActionError,
@@ -227,6 +228,59 @@ describe("PersonalDesktop", () => {
       const exit = yield* service.act(ada, "click", () => Promise.resolve(null)).pipe(Effect.exit);
       expect(failureOf(exit)?.kind).toBe("unavailable");
       expect((yield* service.status).available).toBe(false);
+    }),
+  );
+
+  it.live("a live view lasts exactly as long as its socket's scope", () =>
+    Effect.gen(function* () {
+      const captured: Array<Readonly<Record<string, unknown>>> = [];
+      let disposed = 0;
+      const liveView = new DesktopLiveViewHub({
+        createDriver: () => ({
+          request: (_cmd, params = {}) => {
+            captured.push(params);
+            return Promise.resolve({ locked: true });
+          },
+          dispose: () => {
+            disposed += 1;
+          },
+        }),
+        timing: { lockedIntervalMs: 5, lingerMs: 10 },
+      });
+      const driver = new FakeDriver();
+      const { service } = yield* makeDesktopService({ driver, liveView });
+      const states: string[] = [];
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const viewer = yield* service.watch({
+            frame: () => undefined,
+            state: (state) => states.push(state),
+          });
+          expect(viewer).not.toBeNull();
+          expect(liveView.viewerCount).toBe(1);
+          yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 30)));
+        }),
+      );
+      // The socket closed: the viewer is gone and captures stop.
+      expect(liveView.viewerCount).toBe(0);
+      expect(states).toEqual(["locked"]);
+      const count = captured.length;
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 40)));
+      expect(captured.length).toBeLessThanOrEqual(count + 1);
+      expect(disposed).toBe(1);
+      // Watching never went near the bots' helper.
+      expect(driver.calls).toEqual([]);
+      liveView.dispose();
+    }),
+  );
+
+  it.live("has no live view where there is no desktop", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeDesktopService({ driver: null });
+      const viewer = yield* Effect.scoped(
+        service.watch({ frame: () => undefined, state: () => undefined }),
+      );
+      expect(viewer).toBeNull();
     }),
   );
 });

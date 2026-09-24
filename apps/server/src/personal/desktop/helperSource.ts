@@ -57,6 +57,11 @@ static class Native {
   [DllImport("wtsapi32.dll", SetLastError = true)] public static extern bool WTSQuerySessionInformation(IntPtr server, int session, int infoClass, out IntPtr buffer, out int bytes);
   [DllImport("wtsapi32.dll")] public static extern void WTSFreeMemory(IntPtr memory);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool GetUserObjectInformation(IntPtr obj, int index, StringBuilder info, int length, out int needed);
+  [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+  [DllImport("gdi32.dll")] public static extern bool StretchBlt(IntPtr dst, int dx, int dy, int dw, int dh, IntPtr src, int sx, int sy, int sw, int sh, uint rop);
+  [DllImport("gdi32.dll")] public static extern int SetStretchBltMode(IntPtr hdc, int mode);
+  [DllImport("gdi32.dll")] public static extern bool SetBrushOrgEx(IntPtr hdc, int x, int y, IntPtr previous);
 
   public delegate bool MonitorEnumProc(IntPtr monitor, IntPtr hdc, ref RECT rect, IntPtr data);
   public delegate IntPtr HookProc(int code, IntPtr w, IntPtr l);
@@ -424,6 +429,145 @@ public static class PbDesktopHelper {
         if (scaled) output.Dispose();
       }
     }
+  }
+
+  // ---- Live view: a second, capture-only process -------------------------
+  //
+  // The app's live view runs this entry in its own powershell.exe, so a frame
+  // grab can never queue behind (or reorder) a bot's clicks and typing in the
+  // main helper, and watching never installs the input hooks or the overlay.
+  // One GDI StretchBlt (HALFTONE) copies and scales the screen in a single
+  // step, which is far cheaper than CopyFromScreen at full size plus a bicubic
+  // pass. Windows the overlay excludes from capture stay excluded here too.
+  public static void RunCapture() {
+    json.MaxJsonLength = int.MaxValue;
+    UTF8Encoding utf8 = new UTF8Encoding(false);
+    input = new StreamReader(Console.OpenStandardInput(), utf8);
+    StreamWriter writer = new StreamWriter(Console.OpenStandardOutput(), utf8);
+    writer.AutoFlush = true;
+    output = writer;
+    Native.SetProcessDpiAwarenessContext(new IntPtr(-4));
+    Native.SetThreadDpiAwarenessContext(new IntPtr(-4));
+    Emit(Dict("event", "ready", "mode", "capture"));
+    string line;
+    while ((line = input.ReadLine()) != null) {
+      if (line.Trim().Length == 0) continue;
+      object id = null;
+      try {
+        Dictionary<string, object> req = json.Deserialize<Dictionary<string, object>>(line);
+        id = req.ContainsKey("id") ? req["id"] : null;
+        string cmd = Str(req, "cmd");
+        Dictionary<string, object> result;
+        if (cmd == "ping") result = Dict("pong", true);
+        else if (cmd == "frame") result = LiveFrame(req);
+        else throw new HelperError("bad_command", "Unknown capture command " + cmd);
+        result["id"] = id;
+        result["ok"] = true;
+        Emit(result);
+      } catch (HelperError e) {
+        Emit(Dict("id", id, "ok", false, "code", e.Code, "error", e.Message));
+      } catch (Exception e) {
+        Emit(Dict("id", id, "ok", false, "code", "internal", "error", e.GetType().Name + ": " + e.Message));
+      }
+    }
+    Environment.Exit(0);
+  }
+
+  static ImageCodecInfo jpegCodec;
+
+  // One frame of the live view: the chosen monitor scaled to fit the box, the
+  // cursor drawn in, JPEG. "unchanged" (nothing encoded) when the pixels hash
+  // the same as the frame the viewer already has; "locked" (nothing captured)
+  // while the PC is locked or a secure prompt is up.
+  static Dictionary<string, object> LiveFrame(Dictionary<string, object> r) {
+    if (Locked()) return Dict("locked", true);
+    int maxW = Math.Max(64, IntOr(r, "maxWidth", 1280));
+    int maxH = Math.Max(64, IntOr(r, "maxHeight", 1280));
+    int quality = Math.Max(30, Math.Min(95, IntOr(r, "quality", 70)));
+    string lastHash = Str(r, "lastHash");
+    List<Monitor> monitors = Monitors();
+    if (monitors.Count == 0) throw new HelperError("capture_failed", "No monitor is attached.");
+    Monitor m = monitors[Math.Max(0, Math.Min(monitors.Count - 1, IntOr(r, "monitor", 0)))];
+    Rectangle b = m.Bounds;
+    double scale = Math.Min(1.0, Math.Min((double)maxW / b.Width, (double)maxH / b.Height));
+    int ow = Math.Max(1, (int)Math.Round(b.Width * scale));
+    int oh = Math.Max(1, (int)Math.Round(b.Height * scale));
+    System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+    using (Bitmap frame = new Bitmap(ow, oh, PixelFormat.Format24bppRgb)) {
+      using (Graphics g = Graphics.FromImage(frame)) {
+        IntPtr dst = g.GetHdc();
+        IntPtr screen = Native.GetDC(IntPtr.Zero);
+        bool copied;
+        try {
+          Native.SetStretchBltMode(dst, 4);
+          Native.SetBrushOrgEx(dst, 0, 0, IntPtr.Zero);
+          copied = Native.StretchBlt(dst, 0, 0, ow, oh, screen, b.X, b.Y, b.Width, b.Height, 0x00CC0020);
+        } finally {
+          Native.ReleaseDC(IntPtr.Zero, screen);
+          g.ReleaseHdc(dst);
+        }
+        if (!copied) throw new HelperError("capture_failed", "The screen could not be captured.");
+        DrawCursorScaled(g, b.X, b.Y, scale, m.Dpi);
+      }
+      long captureMs = watch.ElapsedMilliseconds;
+      string hash = HashPixels(frame);
+      if (lastHash != null && hash == lastHash) {
+        return Dict("unchanged", true, "hash", hash, "width", ow, "height", oh, "captureMs", captureMs);
+      }
+      watch.Reset();
+      watch.Start();
+      if (jpegCodec == null) {
+        foreach (ImageCodecInfo candidate in ImageCodecInfo.GetImageEncoders()) if (candidate.MimeType == "image/jpeg") jpegCodec = candidate;
+      }
+      byte[] jpeg;
+      using (MemoryStream ms = new MemoryStream()) {
+        EncoderParameters parameters = new EncoderParameters(1);
+        parameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, (long)quality);
+        frame.Save(ms, jpegCodec, parameters);
+        jpeg = ms.ToArray();
+      }
+      return Dict("data", Convert.ToBase64String(jpeg), "width", ow, "height", oh, "hash", hash,
+        "captureMs", captureMs, "encodeMs", watch.ElapsedMilliseconds,
+        "screenWidth", b.Width, "screenHeight", b.Height, "monitors", monitors.Count);
+    }
+  }
+
+  // FNV-1a over the scaled pixels: a few ms for a phone-sized frame, and it
+  // lets an idle screen cost a capture but no encode and no bytes on the wire.
+  static string HashPixels(Bitmap frame) {
+    BitmapData data = frame.LockBits(new Rectangle(0, 0, frame.Width, frame.Height), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+    try {
+      int length = Math.Abs(data.Stride) * data.Height;
+      byte[] bytes = new byte[length];
+      Marshal.Copy(data.Scan0, bytes, 0, length);
+      ulong h = 14695981039346656037UL;
+      for (int i = 0; i < length; i++) { h ^= bytes[i]; h *= 1099511628211UL; }
+      return h.ToString("x16");
+    } finally {
+      frame.UnlockBits(data);
+    }
+  }
+
+  static void DrawCursorScaled(Graphics g, int originX, int originY, double scale, int dpi) {
+    Native.CURSORINFO ci = new Native.CURSORINFO();
+    ci.cbSize = Marshal.SizeOf(typeof(Native.CURSORINFO));
+    if (!Native.GetCursorInfo(ref ci) || (ci.flags & 1) == 0 || ci.hCursor == IntPtr.Zero) return;
+    Native.ICONINFO info;
+    int hx = 0, hy = 0;
+    if (Native.GetIconInfo(ci.hCursor, out info)) {
+      hx = info.xHotspot; hy = info.yHotspot;
+      if (info.hbmMask != IntPtr.Zero) Native.DeleteObject(info.hbmMask);
+      if (info.hbmColor != IntPtr.Zero) Native.DeleteObject(info.hbmColor);
+    }
+    // The cursor's physical size, scaled with the frame; never so small it vanishes.
+    double physical = 32.0 * dpi / 96.0;
+    int size = Math.Max(12, (int)Math.Round(physical * scale));
+    double k = size / physical;
+    int x = (int)Math.Round((ci.pt.X - originX) * scale - hx * k);
+    int y = (int)Math.Round((ci.pt.Y - originY) * scale - hy * k);
+    IntPtr hdc = g.GetHdc();
+    try { Native.DrawIconEx(hdc, x, y, ci.hCursor, size, size, 0, IntPtr.Zero, 3); }
+    finally { g.ReleaseHdc(hdc); }
   }
 
   static byte[] Encode(Bitmap image, string mime, int quality) {

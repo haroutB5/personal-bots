@@ -97,6 +97,7 @@ import * as PersonalSessionAccess from "./personal/secrets/PersonalSessionAccess
 import * as PersonalBrowserLease from "./personal/browser/BrowserLease.ts";
 import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
 import * as PersonalDesktop from "./personal/desktop/PersonalDesktop.ts";
+import { personalDesktopStreamRouteLayer } from "./personal/desktop/routes.ts";
 import * as PersonalBrowserLeaseRepository from "./personal/browser/PersonalBrowserLeaseRepository.ts";
 import * as PersonalBrowserProtectionRepository from "./personal/browser/PersonalBrowserProtectionRepository.ts";
 import * as PersonalBrowserHost from "./personal/browser/ServerBrowserHost.ts";
@@ -748,6 +749,8 @@ export const makeRoutesLayer = Layer.mergeAll(
     // shares the single PreviewAutomationBroker provided below)
     personalBrowserStreamRouteLayer,
     personalBrowserFilesRouteLayer,
+    // The PC's live view (Computer > Desktop): view only, frames while watched.
+    personalDesktopStreamRouteLayer,
     // Open, allowlisted and rate limited: notification-tap diagnostics (see clientDiagRoute.ts).
     personalClientDiagRouteLayer,
     // Unauthenticated by necessity; the URL token is the whole credential.
