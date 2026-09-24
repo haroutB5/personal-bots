@@ -47,6 +47,7 @@ static class Native {
   [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
   [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
   [DllImport("user32.dll")] public static extern short VkKeyScan(char ch);
+  [DllImport("user32.dll")] public static extern short GetKeyState(int vk);
   [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint mapType);
   [DllImport("user32.dll")] public static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip, MonitorEnumProc proc, IntPtr data);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFOEX info);
@@ -832,6 +833,28 @@ public static class PbDesktopHelper {
     SendKey((ushort)vk, (ushort)Native.MapVirtualKey((uint)vk, 0), flags);
   }
 
+  // Types one character as real key presses (virtual key + scan code) when the
+  // active layout has a key for it with at most Shift. VirtualBox and other
+  // apps that read scan codes ignore KEYEVENTF_UNICODE (VK_PACKET) input, so a
+  // VM never saw typed text. Anything else (Ctrl/AltGr combos, emoji, other
+  // scripts) returns false and falls back to Unicode input.
+  static bool TypeCharAsKeys(char c) {
+    short mapped = Native.VkKeyScan(c);
+    if (mapped == -1) return false;
+    int vk = mapped & 0xFF;
+    int shiftState = (mapped >> 8) & 0xFF;
+    if ((shiftState & ~1) != 0) return false;
+    bool shift = (shiftState & 1) != 0;
+    // Caps Lock flips letters; undo it so the character typed is the one asked for.
+    bool letter = vk >= 0x41 && vk <= 0x5A;
+    if (letter && (Native.GetKeyState(0x14) & 1) != 0) shift = !shift;
+    if (shift) KeyVk(0x10, true);
+    KeyVk(vk, true);
+    KeyVk(vk, false);
+    if (shift) KeyVk(0x10, false);
+    return true;
+  }
+
   static Dictionary<string, object> TypeText(Dictionary<string, object> r) {
     string text = Str(r, "text") ?? "";
     int delay = Math.Max(0, IntOr(r, "delayMs", 6));
@@ -844,7 +867,7 @@ public static class PbDesktopHelper {
       if (c == '\r') { typed++; continue; }
       if (c == '\n') { KeyVk(0x0D, true); KeyVk(0x0D, false); }
       else if (c == '\t') { KeyVk(0x09, true); KeyVk(0x09, false); }
-      else {
+      else if (!TypeCharAsKeys(c)) {
         SendKey(0, c, 0x0004);
         SendKey(0, c, 0x0004 | 0x0002);
       }
