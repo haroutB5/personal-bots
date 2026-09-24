@@ -49,6 +49,7 @@ import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEng
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
+import { withGroupPresence } from "./groupOnlyBots.ts";
 import { PERSONAL_THREAD_TITLE } from "./personalThreadTitles.ts";
 
 const PERSONAL_META_SEEDED = "seeded";
@@ -388,15 +389,23 @@ export const make = Effect.gen(function* () {
           }),
         ),
       );
-      const [bots, threads, storedProjectId] = yield* Effect.all([
+      const [bots, threads, storedProjectId, groupPresence] = yield* Effect.all([
         repository.listBots().pipe(Effect.mapError(repositoryError("list"))),
         repository.listThreadLinks().pipe(Effect.mapError(repositoryError("list"))),
         repository
           .getMeta({ key: PERSONAL_META_PROJECT_ID })
           .pipe(Effect.mapError(repositoryError("list"))),
+        // Hiding is a nicety; a failure here must show every bot, never hide one.
+        repository.listGroupPresence().pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Personal bots group presence failed; listing every bot.", {
+              cause,
+            }).pipe(Effect.as([])),
+          ),
+        ),
       ]);
       return {
-        bots: [...bots],
+        bots: withGroupPresence(bots, groupPresence),
         threads: [...threads],
         personalProjectId: Option.isSome(storedProjectId)
           ? ProjectId.make(storedProjectId.value)

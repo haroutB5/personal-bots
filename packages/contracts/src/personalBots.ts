@@ -126,10 +126,28 @@ export const PersonalBot = Schema.Struct({
    * {@link botNotificationsMutedUntil}, which also treats a past time as on.
    */
   notificationsMutedUntil: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  /**
+   * The live groups (not archived, not deleted) this bot is a member of.
+   * Derived by `personalBots.list` on every call, never stored, so it cannot
+   * drift; absent from every other payload.
+   */
+  groupIds: Schema.optionalKey(Schema.Array(Schema.String)),
+  /**
+   * In at least one live group and no private chat of its own (a group's
+   * relay thread and an empty, never-written chat do not count). The Chats
+   * list, the pinned strip and the Team chart leave such a bot out; its
+   * groups' settings are where the owner reaches it. Derived like `groupIds`;
+   * read it through {@link isGroupOnlyBot}.
+   */
+  groupOnly: Schema.optionalKey(Schema.Boolean),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
 });
 export type PersonalBot = typeof PersonalBot.Type;
+
+/** Lives only inside groups: hidden from the main lists (see `PersonalBot.groupOnly`). */
+export const isGroupOnlyBot = (bot: { readonly groupOnly?: boolean }): boolean =>
+  bot.groupOnly === true;
 
 /** The bot's team; a bot from a server too old to have teams reads as a member of the assistant's. */
 export const botTeam = (bot: { readonly team?: PersonalBotTeam }): PersonalBotTeam =>

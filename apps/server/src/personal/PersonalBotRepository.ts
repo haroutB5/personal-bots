@@ -158,6 +158,14 @@ export class PersonalBotRepository extends Context.Service<
       ReadonlyArray<PersonalBotThread>,
       PersonalBotRepositoryError
     >;
+    /**
+     * Per live bot: the live groups it sits in, and whether it has a private
+     * chat of its own. What `personalBots.list` derives `groupOnly` from.
+     */
+    readonly listGroupPresence: () => Effect.Effect<
+      ReadonlyArray<PersonalBotGroupPresence>,
+      PersonalBotRepositoryError
+    >;
     readonly getMeta: (
       input: GetPersonalMetaInput,
     ) => Effect.Effect<Option.Option<string>, PersonalBotRepositoryError>;
@@ -261,6 +269,38 @@ const PersonalBotThreadListRawDbRow = Schema.Struct({
 const PersonalMetaDbRow = Schema.Struct({
   value: Schema.String,
 });
+
+/**
+ * One live bot's standing towards groups.
+ *
+ * - `groupIds`: the groups (not archived, not deleted) it is a current member of.
+ * - `hasPrivateChat`: it has at least one chat of its own that the owner can
+ *   see and that has something in it. A group's relay thread (the member's
+ *   private provider thread a group talks through, past or present) is never
+ *   one; neither is an archived or deleted chat, nor an empty "New chat" that
+ *   was opened and never written in.
+ */
+export interface PersonalBotGroupPresence {
+  readonly botId: PersonalBotId;
+  readonly groupIds: ReadonlyArray<string>;
+  readonly hasPrivateChat: boolean;
+}
+
+const PersonalBotGroupPresenceDbRow = Schema.Struct({
+  botId: PersonalBotId,
+  groupIds: Schema.fromJsonString(Schema.Array(Schema.String)),
+  hasPrivateChat: Schema.Number,
+});
+
+const PersonalBotGroupPresenceRawDbRow = Schema.Struct({
+  botId: Schema.Unknown,
+  groupIds: Schema.Unknown,
+  hasPrivateChat: Schema.Unknown,
+});
+
+const decodePersonalBotGroupPresenceDbRow = Schema.decodeUnknownEffect(
+  PersonalBotGroupPresenceDbRow,
+);
 
 export interface PersonalThreadAttachments {
   readonly botId: PersonalBotId;
@@ -665,6 +705,45 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const listGroupPresenceRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: PersonalBotGroupPresenceRawDbRow,
+    execute: () =>
+      sql`
+        SELECT
+          b.bot_id AS "botId",
+          (
+            SELECT json_group_array(gm.group_id)
+            FROM personal_group_members gm
+            JOIN personal_groups g ON g.group_id = gm.group_id
+            WHERE gm.bot_id = b.bot_id
+              AND gm.left_at IS NULL
+              AND g.archived_at IS NULL
+              AND g.deleted_at IS NULL
+          ) AS "groupIds",
+          EXISTS (
+            SELECT 1
+            FROM personal_bot_threads t
+            JOIN projection_threads p ON p.thread_id = t.thread_id
+            WHERE t.bot_id = b.bot_id
+              AND t.archived_at IS NULL
+              AND p.archived_at IS NULL
+              AND p.deleted_at IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM personal_group_members relay WHERE relay.thread_id = t.thread_id
+              )
+              AND EXISTS (
+                SELECT 1
+                FROM projection_thread_messages m
+                WHERE m.thread_id = t.thread_id AND m.role IN ('user', 'assistant')
+              )
+          ) AS "hasPrivateChat"
+        FROM personal_bots b
+        WHERE b.deleted_at IS NULL
+        ORDER BY b.bot_id ASC
+      `,
+  });
+
   const getMetaRow = SqlSchema.findOneOption({
     Request: GetPersonalMetaInput,
     Result: PersonalMetaDbRow,
@@ -907,6 +986,33 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const listGroupPresence: PersonalBotRepository["Service"]["listGroupPresence"] = () =>
+    listGroupPresenceRows().pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "PersonalBotRepository.listGroupPresence:query",
+          "PersonalBotRepository.listGroupPresence:decodeRows",
+        ),
+      ),
+      Effect.flatMap((rows) =>
+        Effect.forEach(rows, (row) =>
+          decodePersonalBotGroupPresenceDbRow(row).pipe(
+            Effect.mapError((cause) =>
+              PersistenceDecodeError.fromSchemaError(
+                "PersonalBotRepository.listGroupPresence:decodeRows",
+                cause,
+              ),
+            ),
+            Effect.map((decoded): PersonalBotGroupPresence => ({
+              botId: decoded.botId,
+              groupIds: decoded.groupIds,
+              hasPrivateChat: decoded.hasPrivateChat === 1,
+            })),
+          ),
+        ),
+      ),
+    );
+
   const getMeta: PersonalBotRepository["Service"]["getMeta"] = (input) =>
     getMetaRow(input).pipe(
       Effect.mapError(
@@ -982,6 +1088,7 @@ export const make = Effect.gen(function* () {
     setThreadArchived,
     deleteThreadLink,
     listThreadLinks,
+    listGroupPresence,
     getMeta,
     setMeta,
     getInstructionsForThread,
