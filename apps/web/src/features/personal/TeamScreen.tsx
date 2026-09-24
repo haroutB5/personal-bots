@@ -20,7 +20,7 @@ import { PersonalPageHeader } from "./BotForm";
 import { isThreadLive } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
 import { friendlyTurnError } from "./conversationModel";
-import { shownInTeamChart } from "./groupOnlyModel";
+import { shownInTeamChart } from "./groupModel";
 import { useLaptopOffline } from "./PersonalOfflineBanner";
 import {
   buildTeamConnectors,

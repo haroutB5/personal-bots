@@ -9,7 +9,7 @@ import {
   reusablePrivateChat,
   shownInChats,
   shownInTeamChart,
-} from "./groupOnlyModel";
+} from "./groupModel";
 
 const decodeBot = Schema.decodeUnknownSync(PersonalBot);
 const decodeGroup = Schema.decodeUnknownSync(PersonalGroup);

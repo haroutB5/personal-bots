@@ -15,8 +15,7 @@ import { Sheet, SheetDescription, SheetPopup, SheetTitle } from "~/components/ui
 import { cn } from "~/lib/utils";
 
 import { BotAvatar } from "./BotAvatar";
-import { activeGroupMembers } from "./groupModel";
-import { addableBots, memberRemovalMessage } from "./groupOnlyModel";
+import { activeGroupMembers, addableBots, memberRemovalMessage } from "./groupModel";
 
 /** Each action reports a failure in the owner's words, or null when it worked. */
 export interface GroupMembersActions {

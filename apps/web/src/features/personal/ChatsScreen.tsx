@@ -60,9 +60,9 @@ import {
   filterGroups,
   groupMemberThreadIds,
   roundForGroup,
+  shownInChats,
 } from "./groupModel";
 import { GroupRow } from "./GroupRow";
-import { shownInChats } from "./groupOnlyModel";
 import { PinnedBotTile, PinnedSnapshotTile, PinnedStrip } from "./PinnedStrip";
 import {
   mergePersonalGroups,

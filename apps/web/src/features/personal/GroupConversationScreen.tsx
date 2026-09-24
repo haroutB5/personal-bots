@@ -30,7 +30,6 @@ import { commandFailureMessage } from "./commandFeedback";
 import { GroupAvatarCluster } from "./GroupAvatarCluster";
 import { GroupDeleteSheet } from "./GroupDeleteSheet";
 import { GroupSettingsSheet, type GroupMembersActions } from "./GroupSettingsSheet";
-import { reusablePrivateChat } from "./groupOnlyModel";
 import { GroupRoundCard } from "./GroupRoundCard";
 import { GroupVoteCard } from "./GroupVoteCard";
 import {
@@ -42,6 +41,7 @@ import {
   groupStatusLine,
   groupSubtitle,
   isGroupRoundLive,
+  reusablePrivateChat,
   roundForGroup,
 } from "./groupModel";
 import {

@@ -134,12 +134,3 @@ export function botContextWindowDescriptor(
   const descriptor = botSelectDescriptor(provider, model, [CONTEXT_WINDOW_OPTION_ID]);
   return descriptor !== null && descriptor.options.length > 1 ? descriptor : null;
 }
-
-/** `?group=<id>`: the editor was opened from that group's settings and returns there. */
-export interface BotFormSearch {
-  readonly group?: string;
-}
-
-export function parseBotFormSearch(raw: Record<string, unknown>): BotFormSearch {
-  return typeof raw.group === "string" && raw.group.trim().length > 0 ? { group: raw.group } : {};
-}
