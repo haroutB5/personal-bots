@@ -220,7 +220,9 @@ function LiveDesktop(props: {
   // Read at connect time, not a dependency: going full screen re-fits the
   // frame (the resize effect sends the new box) without reopening the socket.
   const fitRef = useRef(fit);
-  fitRef.current = fit;
+  useEffect(() => {
+    fitRef.current = fit;
+  }, [fit]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
