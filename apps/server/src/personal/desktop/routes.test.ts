@@ -90,6 +90,7 @@ describe("personal desktop live view route", () => {
         bytes: 0,
         captures: 0,
         unchanged: 0,
+        locked: 0,
         captureMsTotal: 0,
         startedAt: 0,
       }),

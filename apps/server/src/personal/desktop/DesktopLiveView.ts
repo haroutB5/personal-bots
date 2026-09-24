@@ -48,6 +48,7 @@ export interface LiveViewStats {
   readonly bytes: number;
   readonly captures: number;
   readonly unchanged: number;
+  readonly locked: number;
   readonly captureMsTotal: number;
   readonly startedAt: number;
 }
@@ -164,7 +165,7 @@ export class DesktopLiveViewHub {
           `desktop live view: viewer ${id} left after ${seconds.toFixed(1)} s: ` +
             `${stats.frames} frames, ${Math.round(stats.bytes / 1024)} KB ` +
             `(${Math.round(stats.bytes / 1024 / seconds)} KB/s), ${stats.captures} captures ` +
-            `(${stats.unchanged} unchanged), capture avg ${
+            `(${stats.unchanged} unchanged), ${stats.locked} locked checks, capture avg ${
               stats.captures === 0 ? 0 : Math.round(stats.captureMsTotal / stats.captures)
             } ms`,
         );
@@ -227,6 +228,7 @@ class ViewerLoop {
   private bytes = 0;
   private captures = 0;
   private unchanged = 0;
+  private locked = 0;
   private captureMsTotal = 0;
   private readonly startedAt: number;
   private readonly hub: DesktopLiveViewHub;
@@ -253,6 +255,7 @@ class ViewerLoop {
       bytes: this.bytes,
       captures: this.captures,
       unchanged: this.unchanged,
+      locked: this.locked,
       captureMsTotal: this.captureMsTotal,
       startedAt: this.startedAt,
     };
@@ -347,6 +350,7 @@ class ViewerLoop {
       const elapsed = Math.max(0, this.now() - started);
       const captureMs = typeof reply.captureMs === "number" ? reply.captureMs : elapsed;
       if (reply.locked === true) {
+        this.locked += 1;
         this.lastHash = null;
         this.still = 0;
         this.setState("locked");

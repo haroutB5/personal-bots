@@ -58,7 +58,7 @@ export function DesktopPane(props: {
 
   return (
     <div className={cn(fullScreen && "flex h-full min-h-0 flex-col")}>
-      <div className={cn("flex min-h-14 shrink-0 items-center gap-1", fullScreen && "px-1")}>
+      <div className={cn("flex min-h-14 shrink-0 items-center gap-1", fullScreen && "pr-3 pl-1")}>
         {fullScreen ? (
           <button
             type="button"
@@ -217,6 +217,10 @@ function LiveDesktop(props: {
   const [attempt, setAttempt] = useState(0);
   const [gaveUp, setGaveUp] = useState(false);
   const failuresRef = useRef(0);
+  // Read at connect time, not a dependency: going full screen re-fits the
+  // frame (the resize effect sends the new box) without reopening the socket.
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -251,7 +255,7 @@ function LiveDesktop(props: {
         },
       });
       clientRef.current = client;
-      const measured = measureBox(containerRef.current, fit);
+      const measured = measureBox(containerRef.current, fitRef.current);
       if (measured !== null) client.setViewport(measured.width, measured.height);
     };
     // First connect is immediate; reconnects back off so a down PC is not hammered.
@@ -261,7 +265,7 @@ function LiveDesktop(props: {
       client?.close();
       clientRef.current = null;
     };
-  }, [active, attempt, environmentId, fit, gaveUp, url]);
+  }, [active, attempt, environmentId, gaveUp, url]);
 
   // The box the frame is shown in, so the server sends no more pixels than fit.
   useEffect(() => {

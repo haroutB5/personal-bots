@@ -232,6 +232,24 @@ describe("DesktopPane live view", () => {
     expect(text()).toContain("No live view here");
   });
 
+  it("going full screen and back keeps the same socket (no reconnect)", async () => {
+    state.status = IDLE;
+    await render();
+    const pane = (fullScreen: boolean) => (
+      <DesktopPane
+        environmentId={EnvironmentId.make("env-1")}
+        fullScreen={fullScreen}
+        onOpenFullScreen={vi.fn()}
+        onExitFullScreen={vi.fn()}
+      />
+    );
+    await act(async () => renderer!.update(pane(true)));
+    await act(async () => renderer!.update(pane(false)));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 5)));
+    expect(state.sockets).toHaveLength(1);
+    expect(state.sockets[0]!.closed).toBe(false);
+  });
+
   it("full screen: a way back and the frame box measured for the whole screen", async () => {
     state.status = IDLE;
     await render(true);
