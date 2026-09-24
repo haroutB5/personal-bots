@@ -48,6 +48,9 @@ static class Native {
   [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
   [DllImport("user32.dll")] public static extern short VkKeyScan(char ch);
   [DllImport("user32.dll")] public static extern short GetKeyState(int vk);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int max);
   [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint mapType);
   [DllImport("user32.dll")] public static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip, MonitorEnumProc proc, IntPtr data);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFOEX info);
@@ -855,8 +858,87 @@ public static class PbDesktopHelper {
     return true;
   }
 
+  // VirtualBox VMs ignore keyboard input injected with SendInput while their
+  // window has focus, so keys aimed at a VM go through VirtualBox's own API
+  // (VBoxManage controlvm <vm> keyboardputstring / keyboardputscancode).
+  static readonly string VBoxManagePath = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"Oracle\VirtualBox\VBoxManage.exe");
+
+  // The VM name when a VirtualBox VM window is in front ("<name> [Running] - Oracle VirtualBox"), else null.
+  static string ForegroundVm() {
+    if (!File.Exists(VBoxManagePath)) return null;
+    IntPtr hwnd = Native.GetForegroundWindow();
+    if (hwnd == IntPtr.Zero) return null;
+    uint pid;
+    Native.GetWindowThreadProcessId(hwnd, out pid);
+    try {
+      string name = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName;
+      if (!string.Equals(name, "VirtualBoxVM", StringComparison.OrdinalIgnoreCase)) return null;
+    } catch { return null; }
+    StringBuilder title = new StringBuilder(512);
+    Native.GetWindowText(hwnd, title, title.Capacity);
+    string t = title.ToString();
+    int cut = t.IndexOf(" [");
+    return cut > 0 ? t.Substring(0, cut) : null;
+  }
+
+  static string Quote(string value) { return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""; }
+
+  static void VBox(string vm, string verb, string args) {
+    System.Diagnostics.ProcessStartInfo info = new System.Diagnostics.ProcessStartInfo(
+      VBoxManagePath, "controlvm " + Quote(vm) + " " + verb + " " + args);
+    info.UseShellExecute = false;
+    info.CreateNoWindow = true;
+    info.RedirectStandardError = true;
+    using (System.Diagnostics.Process p = System.Diagnostics.Process.Start(info)) {
+      string err = p.StandardError.ReadToEnd();
+      if (!p.WaitForExit(8000)) { try { p.Kill(); } catch { } throw new HelperError("vm_input", "The VM did not take the keys in time."); }
+      if (p.ExitCode != 0) throw new HelperError("vm_input", "The VM refused the keys: " + err.Trim());
+    }
+  }
+
+  static string ScanHex(int code) { return code.ToString("x2"); }
+
+  // Press then release a list of virtual keys as PC/AT scan codes, e.g. win+r -> "e0 5b 13 93 e0 db".
+  static string ScanCodesFor(List<int> vks) {
+    List<string> codes = new List<string>();
+    foreach (int vk in vks) {
+      int sc = (int)Native.MapVirtualKey((uint)vk, 0);
+      if (IsExtended(vk)) codes.Add("e0");
+      codes.Add(ScanHex(sc));
+    }
+    for (int i = vks.Count - 1; i >= 0; i--) {
+      int sc = (int)Native.MapVirtualKey((uint)vks[i], 0);
+      if (IsExtended(vks[i])) codes.Add("e0");
+      codes.Add(ScanHex(sc | 0x80));
+    }
+    return string.Join(" ", codes.ToArray());
+  }
+
+  static Dictionary<string, object> TypeTextInVm(string vm, string text) {
+    int typed = 0;
+    StringBuilder run = new StringBuilder();
+    Action flush = delegate {
+      if (run.Length > 0) { VBox(vm, "keyboardputstring", Quote(run.ToString())); run.Length = 0; }
+    };
+    foreach (char c in text) {
+      if (c == '\r') { typed++; continue; }
+      if (c == '\n' || c == '\t') {
+        flush();
+        VBox(vm, "keyboardputscancode", c == '\n' ? "1c 9c" : "0f 8f");
+      } else {
+        run.Append(c);
+      }
+      typed++;
+    }
+    flush();
+    return Dict("typed", typed, "via", "vm");
+  }
+
   static Dictionary<string, object> TypeText(Dictionary<string, object> r) {
     string text = Str(r, "text") ?? "";
+    string vm = ForegroundVm();
+    if (vm != null) return TypeTextInVm(vm, text);
     int delay = Math.Max(0, IntOr(r, "delayMs", 6));
     int gen = abortGeneration;
     long start = DateTime.UtcNow.Ticks;
@@ -902,8 +984,13 @@ public static class PbDesktopHelper {
             vks.Add(Convert.ToInt32(entry));
           }
         }
-        foreach (int vk in vks) { KeyVk(vk, true); Thread.Sleep(15); }
-        for (int i = vks.Count - 1; i >= 0; i--) { KeyVk(vks[i], false); Thread.Sleep(10); }
+        string vm = ForegroundVm();
+        if (vm != null) {
+          VBox(vm, "keyboardputscancode", ScanCodesFor(vks));
+        } else {
+          foreach (int vk in vks) { KeyVk(vk, true); Thread.Sleep(15); }
+          for (int i = vks.Count - 1; i >= 0; i--) { KeyVk(vks[i], false); Thread.Sleep(10); }
+        }
         Thread.Sleep(40);
       }
     }
