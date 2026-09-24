@@ -358,6 +358,18 @@ function Get-UpdatesVitestFailures([string]$Output) {
             ForEach-Object { ($_ -replace '^\s*FAIL\s+', '').Trim() } | Sort-Object -Unique)
 }
 
+<#
+.SYNOPSIS
+The real type errors in tsc output. tsc here also prints the Effect language
+service's suggestions and warnings, and exits 1 on a warning alone (a
+pre-existing one in connections/service.test.ts made every run red in the
+second dry run), so the typecheck gates judge by `error TS` lines, not the exit code.
+#>
+function Get-UpdatesTscErrors([string]$Output) {
+    $clean = $Output -replace "\x1b\[[0-9;]*m", ''
+    return , @($clean -split "`r?`n" | Where-Object { $_ -match '\): error TS\d+:' } | ForEach-Object { $_.Trim() })
+}
+
 # The gates the brief names: server personal tests, web personal tests,
 # typecheck, lint. perf:check needs the live server, so it runs after the
 # restart (nightly-pipeline.ps1). Never an unfiltered `vp test run` in apps\server.
@@ -369,11 +381,11 @@ function Get-UpdatesGateList([string]$Root) {
     return @(
         @{ Name = 'test-server'; Dir = 'apps\server'; File = $vp; Args = @('test', 'run', 'src/personal'); Kind = 'vitest' },
         @{ Name = 'test-web'; Dir = 'apps\web'; File = $vp; Args = @('test', 'run', '--project', 'unit', 'src/features/personal'); Kind = 'vitest' },
-        @{ Name = 'typecheck-contracts'; Dir = 'packages\contracts'; File = $tsc; Args = @('--noEmit'); Kind = 'exit' },
-        @{ Name = 'typecheck-shared'; Dir = 'packages\shared'; File = $tsc; Args = @('--noEmit'); Kind = 'exit' },
-        @{ Name = 'typecheck-client-runtime'; Dir = 'packages\client-runtime'; File = $tsc; Args = @('--noEmit'); Kind = 'exit' },
-        @{ Name = 'typecheck-server'; Dir = 'apps\server'; File = $tsc; Args = @('--noEmit'); Kind = 'exit' },
-        @{ Name = 'typecheck-web'; Dir = 'apps\web'; File = $tsc; Args = @('--noEmit'); Kind = 'exit' },
+        @{ Name = 'typecheck-contracts'; Dir = 'packages\contracts'; File = $tsc; Args = @('--noEmit'); Kind = 'tsc' },
+        @{ Name = 'typecheck-shared'; Dir = 'packages\shared'; File = $tsc; Args = @('--noEmit'); Kind = 'tsc' },
+        @{ Name = 'typecheck-client-runtime'; Dir = 'packages\client-runtime'; File = $tsc; Args = @('--noEmit'); Kind = 'tsc' },
+        @{ Name = 'typecheck-server'; Dir = 'apps\server'; File = $tsc; Args = @('--noEmit'); Kind = 'tsc' },
+        @{ Name = 'typecheck-web'; Dir = 'apps\web'; File = $tsc; Args = @('--noEmit'); Kind = 'tsc' },
         @{ Name = 'lint'; Dir = '.'; File = $vp; Args = @('lint', '--report-unused-disable-directives'); Kind = 'exit' }
     )
 }
@@ -402,6 +414,15 @@ function Invoke-UpdatesGates {
         }
         if ($gate.Kind -eq 'exit') {
             if ($res.Code -ne 0) { $red.Add("$($gate.Name) exited $($res.Code) (log $gateLog)") | Out-Null }
+            continue
+        }
+        if ($gate.Kind -eq 'tsc') {
+            $errors = Get-UpdatesTscErrors -Output ($res.Out + "`n" + $res.Err)
+            if ($errors.Count -gt 0) {
+                $red.Add("$($gate.Name): $($errors.Count) type error(s), first: $($errors[0]) (log $gateLog)") | Out-Null
+            } elseif ($res.Code -ne 0 -and $res.TimedOut) {
+                $red.Add("$($gate.Name) timed out (log $gateLog)") | Out-Null
+            }
             continue
         }
         if ($res.Code -eq 0) { continue }

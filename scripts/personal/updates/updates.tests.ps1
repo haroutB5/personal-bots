@@ -106,6 +106,11 @@ Assert-Equal 'vitest FAIL lines, deduped, colours stripped' 'src/personal/a.test
 $gates = Get-UpdatesGateList -Root 'C:\x'
 Assert-Equal 'the gate set' 'test-server,test-web,typecheck-contracts,typecheck-shared,typecheck-client-runtime,typecheck-server,typecheck-web,lint' ($gates | ForEach-Object { $_.Name })
 Assert-Equal 'never a bare vp test run in apps\server' 'test,run,src/personal' ($gates | Where-Object { $_.Name -eq 'test-server' }).Args
+# Regression (second dry run 2026-09-24): tsc exits 1 on an Effect warning alone.
+$tscOut = "src/a.ts(1,2): suggestion TS377098: prefer x. effect(schemaNumber)`nsrc/personal/connections/service.test.ts(256,7): warning TS377033: chains provide. effect(multipleEffectProvide)"
+Assert-Equal 'tsc warnings and suggestions are not errors' 0 (Get-UpdatesTscErrors -Output $tscOut).Count
+Assert-Equal 'tsc errors are' 'src/b.ts(3,4): error TS2322: Type string is not number.' (Get-UpdatesTscErrors -Output ($tscOut + "`nsrc/b.ts(3,4): error TS2322: Type string is not number.`n"))
+Assert-Equal 'the typecheck gates judge by error lines' 'tsc,tsc,tsc,tsc,tsc' ($gates | Where-Object { $_.Name -like 'typecheck-*' } | ForEach-Object { $_.Kind })
 # Regression (dry run 2026-09-24): a relative tsc.cmd could not be started.
 Assert-Equal 'every gate program is an absolute path' 0 @($gates | Where-Object { -not [System.IO.Path]::IsPathRooted($_.File) }).Count
 
