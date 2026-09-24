@@ -24,6 +24,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { UPDATES_BOT_ID } from "../claudeCodeReview/reviewPrompts.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalPushService from "./PersonalPushService.ts";
@@ -1084,3 +1085,77 @@ it.effect("an indefinite mute holds until it is turned back on", () => {
     ]);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+it.effect(
+  "quiet hours: the Updates bot's night run pushes nothing until 07:00 unless it is broken",
+  () => {
+    const harness: Harness = { sent: [], status: 201 };
+    return Effect.gen(function* () {
+      // 04:40 BST.
+      yield* TestClock.setTime(Date.parse("2026-09-25T03:40:00Z"));
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const now = yield* DateTime.now;
+      yield* bots.createBot({
+        botId: UPDATES_BOT_ID,
+        name: "Updates",
+        title: "",
+        description: "",
+        instructions: "",
+        avatarShape: "roundedHexagon",
+        avatarColor: "#EAB308",
+        modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "m" },
+        team: "dev",
+        lead: false,
+        pinned: false,
+        sortOrder: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const push = yield* PersonalPushService.PersonalPushService;
+      yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+      const routineTask = (taskId: string, idempotencyKey: string, summary: string) =>
+        makeTask({
+          taskId: PersonalTaskId.make(taskId),
+          botId: UPDATES_BOT_ID,
+          source: "routine",
+          idempotencyKey,
+          result: { summary },
+        });
+
+      // The run's own "finished": dropped, the report follows.
+      yield* push.notifyTask(
+        yield* routineTask("run", "routine:routine-claude-code-nightly:2026-09-25T04:00", "done"),
+      );
+      // The morning report: held until 07:00.
+      yield* push.notifyTask(
+        yield* routineTask(
+          "report",
+          "routine:routine-claude-code-report:event:2026-09-25T03:40:00.000Z",
+          "Nightly update 2026-09-25: shipped 1.35.1",
+        ),
+      );
+      yield* sweep;
+      expect(harness.sent).toEqual([]);
+      expect((yield* outbox).map((row) => [row.eventId.split(":")[1], row.status])).toEqual([
+        ["report", "pending"],
+      ]);
+
+      // Broken: out at once.
+      yield* push.notifyTask(
+        yield* routineTask(
+          "urgent",
+          "routine:routine-claude-code-report:event:2026-09-25T03:41:00.000Z",
+          "Needs attention: Nightly update 2026-09-25: Bots may be down",
+        ),
+      );
+      yield* sweep;
+      expect(harness.sent.length).toBe(1);
+
+      // 07:00 BST: the held report goes.
+      yield* TestClock.setTime(Date.parse("2026-09-25T06:00:01Z"));
+      yield* sweep;
+      expect(harness.sent.length).toBe(2);
+      expect((yield* outbox).every((row) => row.status === "sent")).toBe(true);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);

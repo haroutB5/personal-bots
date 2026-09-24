@@ -38,6 +38,7 @@ import {
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { updatesQuietHoursVerdict } from "../claudeCodeReview/quietHours.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalGroupService from "../groups/PersonalGroupService.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
@@ -515,8 +516,17 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  /** Queues `payload` for each subscription; returns how many rows were new. */
-  const enqueue = (eventId: string, payload: PersonalPushPayload, endpoint?: string) =>
+  /**
+   * Queues `payload` for each subscription; returns how many rows were new.
+   * `notBeforeIso` holds it in the outbox until then (quiet hours); the sweep
+   * only sends rows that are due.
+   */
+  const enqueue = (
+    eventId: string,
+    payload: PersonalPushPayload,
+    endpoint?: string,
+    notBeforeIso?: string,
+  ) =>
     Effect.gen(function* () {
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       const inserted = yield* sql<{ readonly subscriptionId: string }>`
@@ -525,7 +535,7 @@ export const make = Effect.gen(function* () {
           last_error, created_at, updated_at
         )
         SELECT ${eventId}, subscription_id, ${encodePayload(payload)}, 0, 'pending',
-               ${nowIso}, NULL, ${nowIso}, ${nowIso}
+               ${notBeforeIso ?? nowIso}, NULL, ${nowIso}, ${nowIso}
         FROM personal_push_subscriptions
         -- SQLite needs a WHERE on INSERT ... SELECT ... ON CONFLICT to parse it.
         WHERE ${endpoint === undefined ? sql`1 = 1` : sql`endpoint = ${endpoint}`}
@@ -828,6 +838,8 @@ export const make = Effect.gen(function* () {
       readonly viewing?: { readonly threadId: string; readonly quietPath: string } | undefined;
       /** The bot this notification is from; its mute silences it. Groups and provider alerts have none. */
       readonly bot?: Option.Option<PersonalBot> | undefined;
+      /** Quiet hours (see claudeCodeReview/quietHours.ts): no in-app, and web push held until then. */
+      readonly deferPushUntilMs?: number | undefined;
     } = {},
   ) =>
     Effect.gen(function* () {
@@ -843,6 +855,18 @@ export const make = Effect.gen(function* () {
               ? null
               : DateTime.formatIso(bot.notificationsMutedUntil),
         });
+        return;
+      }
+      if (options.deferPushUntilMs !== undefined && options.deferPushUntilMs > nowMs) {
+        const notBefore = DateTime.formatIso(DateTime.makeUnsafe(options.deferPushUntilMs));
+        const queued = yield* enqueue(eventId, payload, undefined, notBefore);
+        if (queued > 0) {
+          yield* Effect.logInfo("personal notification path", {
+            eventId,
+            path: "push-deferred",
+            notBefore,
+          });
+        }
         return;
       }
       const viewers =
@@ -922,11 +946,21 @@ export const make = Effect.gen(function* () {
       const bot = yield* botRepository.getBotById({ botId: task.botId });
       // One event per transition: a replayed or re-published upsert dedupes.
       const eventId = `task:${task.taskId}:${task.status}:${DateTime.formatIso(task.updatedAt)}`;
+      const quiet = updatesQuietHoursVerdict(
+        task,
+        kind === "chat_reply" ? "task_completed" : kind,
+        DateTime.toEpochMillis(yield* DateTime.now),
+      );
+      if (quiet._tag === "Drop") {
+        yield* Effect.logInfo("personal notification path", { eventId, path: "quiet-hours" });
+        return;
+      }
       // Someone reading the task's own chat sees it happen: their page
       // confirms that quietly instead of showing a banner (see deliver).
       // Tasks with no chat of their own (and provider alerts) always notify.
       yield* deliver(eventId, pushPayloadForTask(kind, task, botIdentity(bot)), {
         bot,
+        deferPushUntilMs: quiet._tag === "DeferUntil" ? quiet.atMs : undefined,
         viewing:
           task.threadId === null
             ? undefined

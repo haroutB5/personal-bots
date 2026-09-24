@@ -540,7 +540,7 @@ const PersonalReactorsLive = Layer.effectDiscard(
     yield* (yield* PersonalMemoryService.PersonalMemoryService).start();
     yield* (yield* PersonalPushService.PersonalPushService).start();
     yield* (yield* PersonalProviderUpdates.PersonalProviderUpdates).start();
-    // Daily check for a new Claude Code / Agent SDK; fires the Updates bot's review routine.
+    // Sets up the Updates bot and its nightly 04:00 update run (the routine service runs it).
     yield* (yield* PersonalClaudeCodeReview.PersonalClaudeCodeReview).start();
     // Re-runs a bot reply that died on a transient provider fault. Subscribes
     // here so it never misses the turn-start it has to track.
