@@ -20,6 +20,7 @@ import {
   CLAUDE_CODE_CHANGELOG,
   CLAUDE_CODE_REVIEW_SETUP_KEY,
   claudeCodeReviewEnabled,
+  installedVersionWithFallback,
   makeWith,
   nightlyRunId,
   NPM_AGENT_SDK_LATEST,
@@ -206,6 +207,27 @@ it("runs only on the live Bots server unless forced by env", () => {
     false,
   );
 });
+
+it.effect("asks the CLI for the installed version only when the provider snapshot has none", () =>
+  Effect.gen(function* () {
+    let cliCalls = 0;
+    const cli = Effect.sync(() => {
+      cliCalls += 1;
+      return "2.1.281";
+    });
+    assert.strictEqual(
+      yield* installedVersionWithFallback(Effect.succeed("2.1.280"), cli),
+      "2.1.280",
+    );
+    assert.strictEqual(cliCalls, 0);
+    assert.strictEqual(yield* installedVersionWithFallback(Effect.succeed(null), cli), "2.1.281");
+    assert.strictEqual(cliCalls, 1);
+    assert.strictEqual(
+      yield* installedVersionWithFallback(Effect.succeed(null), Effect.succeed(null)),
+      null,
+    );
+  }),
+);
 
 it("names a scheduled run after its London slot and a manual one after now, marked dry", () => {
   assert.strictEqual(nightlyRunId(AT_0400, "2026-09-25T04:00", false), "20260925-0400");

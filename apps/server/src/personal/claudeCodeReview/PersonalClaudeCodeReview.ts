@@ -43,6 +43,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -51,7 +52,10 @@ import * as NodeOS from "node:os";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
+import { runClaudeCommand } from "../../provider/Layers/ClaudeProvider.ts";
+import { parseGenericCliVersion } from "../../provider/providerSnapshot.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
@@ -561,6 +565,18 @@ const fetchText = (url: string) =>
     catch: (cause) => ({ message: cause instanceof Error ? cause.message : String(cause) }),
   });
 
+/**
+ * The provider snapshot has no version when its boot probe timed out; the
+ * review then asks the CLI itself rather than reporting "unknown".
+ */
+export const installedVersionWithFallback = (
+  snapshot: Effect.Effect<string | null>,
+  cli: Effect.Effect<string | null>,
+): Effect.Effect<string | null> =>
+  snapshot.pipe(Effect.flatMap((version) => (version === null ? cli : Effect.succeed(version))));
+
+const CLI_VERSION_TIMEOUT_MS = 30_000;
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
@@ -570,6 +586,8 @@ export const make = Effect.gen(function* () {
   const repository = yield* PersonalBotRepository.PersonalBotRepository;
   const bots = yield* PersonalBotService.PersonalBotService;
   const routines = yield* PersonalRoutineService.PersonalRoutineService;
+  const serverSettings = yield* ServerSettingsService;
+  const cliContext = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner | Path.Path>();
   const paths = DEFAULT_REVIEW_PATHS;
   const updatesHome = (
     process.env.PB_UPDATES_HOME ??
@@ -582,11 +600,30 @@ export const make = Effect.gen(function* () {
     updatesHome,
     pinnedSdk: normalizeVersion(packageJson.dependencies["@anthropic-ai/claude-agent-sdk"]),
     fetchText,
-    installedClaudeCode: providers.getProviders.pipe(
-      Effect.map(
-        (list) => list.find((provider) => provider.driver === "claudeAgent")?.version ?? null,
+    installedClaudeCode: installedVersionWithFallback(
+      providers.getProviders.pipe(
+        Effect.map(
+          (list) => list.find((provider) => provider.driver === "claudeAgent")?.version ?? null,
+        ),
+        Effect.catchCause(() => Effect.succeed(null)),
       ),
-      Effect.catchCause(() => Effect.succeed(null)),
+      serverSettings.getSettings.pipe(
+        Effect.flatMap((settings) =>
+          runClaudeCommand(settings.providers.claudeAgent, ["--version"]),
+        ),
+        Effect.timeoutOption(CLI_VERSION_TIMEOUT_MS),
+        Effect.map(
+          Option.match({
+            onNone: () => null,
+            onSome: (result) =>
+              result.code === 0
+                ? parseGenericCliVersion(`${result.stdout}\n${result.stderr}`)
+                : null,
+          }),
+        ),
+        Effect.provide(cliContext),
+        Effect.catchCause(() => Effect.succeed(null)),
+      ),
     ),
     getMeta: (key) => repository.getMeta({ key }),
     setMeta: (key, value) => repository.setMeta({ key, value }),
