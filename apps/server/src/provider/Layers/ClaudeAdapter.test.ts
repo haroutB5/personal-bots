@@ -574,6 +574,7 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "1");
       assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
       assert.equal(options?.env?.PATH, "/usr/bin");
+      assert.equal(options?.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS, undefined);
       // Built-in tools are not narrowed.
       assert.equal(options?.tools, undefined);
       assert.equal(options?.allowedTools, undefined);
@@ -785,6 +786,8 @@ describe("ClaudeAdapterLive", () => {
       }
       assert.equal(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY, undefined);
       assert.equal(options?.env?.ENABLE_CLAUDEAI_MCP_SERVERS, undefined);
+      // Newer models get the todo tools back so the plan panel fills.
+      assert.equal(options?.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS, "1");
     }).pipe(
       Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

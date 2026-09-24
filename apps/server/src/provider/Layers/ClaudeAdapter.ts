@@ -1576,6 +1576,14 @@ export const PERSONAL_BOT_CLAUDE_ENVIRONMENT = {
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
   ENABLE_CLAUDEAI_MCP_SERVERS: "false",
 } as const;
+/**
+ * Defaults for normal (non-bot) threads; the user's own environment wins.
+ * Since CLI 2.1.268 TodoWrite is offered only on older models, which leaves
+ * the plan panel empty on newer ones; this turns it back on.
+ */
+export const CLAUDE_THREAD_DEFAULT_ENVIRONMENT = {
+  CLAUDE_CODE_ENABLE_TODO_TOOLS: "1",
+} as const;
 
 function buildPromptText(
   input: ProviderSendTurnInput,
@@ -5051,7 +5059,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         supportedDialogKinds: ["resume_return"],
         env: personalBot
           ? { ...sessionEnvironment, ...PERSONAL_BOT_CLAUDE_ENVIRONMENT }
-          : sessionEnvironment,
+          : { ...CLAUDE_THREAD_DEFAULT_ENVIRONMENT, ...sessionEnvironment },
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpServers ? { mcpServers } : {}),
