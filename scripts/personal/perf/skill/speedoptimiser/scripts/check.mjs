@@ -1,4 +1,4 @@
-// Budget gate and ratchet (web-perf-loop skill).
+// Budget gate and ratchet (speedoptimiser skill).
 //
 //   node check.mjs --config perf.config.json [--budget budget.json] [--ratchet]
 //

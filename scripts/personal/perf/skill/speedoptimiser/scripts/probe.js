@@ -1,4 +1,4 @@
-// In-page probe (web-perf-loop skill). Injected before any page script, so it
+// In-page probe (speedoptimiser skill). Injected before any page script, so it
 // sees every long task, layout shift and React commit from the first byte.
 // Marks: for each selector in window.__perfSelectors, the paint time of the
 // first frame in which it exists with a box.

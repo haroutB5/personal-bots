@@ -1,5 +1,5 @@
 /**
- * Real-user timings, one small beacon per journey (web-perf-loop skill).
+ * Real-user timings, one small beacon per journey (speedoptimiser skill).
  *
  * The lab bench says where the time goes; this says what real users wait.
  * Send to an endpoint that ALLOWLISTS fields (journey name, ms, a few

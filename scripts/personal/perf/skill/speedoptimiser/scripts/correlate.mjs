@@ -1,4 +1,4 @@
-// Which counters track wall-clock? (web-perf-loop skill)
+// Which counters track wall-clock? (speedoptimiser skill)
 //
 //   node correlate.mjs bench-1.json [bench-2.json ...]
 //

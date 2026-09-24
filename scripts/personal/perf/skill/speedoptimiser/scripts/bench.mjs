@@ -1,4 +1,4 @@
-// Generic phone-sized journey bench (web-perf-loop skill).
+// Generic phone-sized journey bench (speedoptimiser skill).
 //
 //   node bench.mjs --config perf.config.json [--runs 7] [--cpu 4] [--out file.json]
 //                  [--off flag1,flag2] [--ab flag] [--profile <journey>]

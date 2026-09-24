@@ -2,7 +2,7 @@
 
 Measure first, change one thing, prove it with numbers, lock the win in.
 This is the loop from Anthropic's "How we made claude.ai faster", applied to the
-Bots PWA. The generic version of this loop is the `web-perf-loop` skill
+Bots PWA. The generic version of this loop is the `speedoptimiser` skill
 (`scripts/personal/perf/skill/`, installed for every bot).
 
 ## One-time setup: a signed-in browser state

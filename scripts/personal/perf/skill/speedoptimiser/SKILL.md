@@ -1,9 +1,9 @@
 ---
-name: web-perf-loop
-description: Make a web app measurably faster with a measure, optimize and ratchet loop, based on how claude.ai was made faster. Use when asked to speed up a web app or PWA, find what makes it slow, set performance budgets, or add real-user timing. You define user journeys, take a baseline with a phone-sized headless Chrome harness, check which metrics track wall-clock, fix the biggest measured offender one change per commit with before/after numbers and a kill switch, then lock each win into a budget that can only go down.
+name: speedoptimiser
+description: Optimise and enhance the performance of an app: make a web app measurably faster with a measure, optimize and ratchet loop, based on how claude.ai was made faster. Use when asked to speed up a web app or PWA, find what makes it slow, set performance budgets, or add real-user timing. You define user journeys, take a baseline with a phone-sized headless Chrome harness, check which metrics track wall-clock, fix the biggest measured offender one change per commit with before/after numbers and a kill switch, then lock each win into a budget that can only go down.
 ---
 
-# Web perf loop: measure, optimize, ratchet
+# Speed optimiser: measure, optimize, ratchet
 
 This skill is the process behind Anthropic's "How we made claude.ai faster".
 The core lesson is that once there is a number to beat, the work becomes

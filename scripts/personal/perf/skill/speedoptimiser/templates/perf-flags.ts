@@ -1,5 +1,5 @@
 /**
- * Kill switches for performance changes (web-perf-loop skill).
+ * Kill switches for performance changes (speedoptimiser skill).
  *
  * Every optimization that changes when or how work happens is on by default
  * and can be turned off on one device without a release:
