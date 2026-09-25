@@ -50,12 +50,24 @@ function renderForm(initialTitle: string) {
     act(() => {
       input().props.onChange({ target: { value } });
     });
+  // The field as the page has it: focused while the keyboard is up.
+  const field = { blur: vi.fn() };
+  const formElement = {
+    ownerDocument: { activeElement: field as unknown },
+    contains: (node: unknown) => node === field,
+  };
   const submit = async () => {
     await act(async () => {
-      root.findByType("form").props.onSubmit({ preventDefault: () => {} });
+      root
+        .findByType("form")
+        .props.onSubmit({ preventDefault: () => {}, currentTarget: formElement });
     });
   };
-  return { renderer, input, save, type, submit, onSave, onCancel };
+  const cancel = () =>
+    root.find(
+      (node: ReactTestInstance) => node.props.children === "Cancel" && node.type !== "button",
+    );
+  return { renderer, input, save, cancel, type, submit, field, formElement, onSave, onCancel };
 }
 
 describe("rename chat draft", () => {
@@ -99,6 +111,61 @@ describe("RenameChatForm", () => {
     await form.submit();
     expect(form.onSave).toHaveBeenCalledWith("Paris trip");
     expect(form.onCancel).not.toHaveBeenCalled();
+  });
+
+  it("keeps the field focused through a press on Save or Cancel", () => {
+    // Refusing the press's default is what stops iOS blurring the field (and
+    // dropping the keyboard and the sheet on it) before the click lands.
+    const form = renderForm("Trip plans");
+    form.type("Paris");
+    for (const button of [form.save(), form.cancel()]) {
+      for (const handler of ["onPointerDown", "onMouseDown"]) {
+        const preventDefault = vi.fn();
+        button.props[handler]({ preventDefault });
+        expect(preventDefault, `${String(button.props.children)} ${handler}`).toHaveBeenCalled();
+      }
+    }
+    expect(form.save().props.type).toBe("submit");
+  });
+
+  it("saves with one tap on Save while the keyboard is up, then drops the keyboard", async () => {
+    const form = renderForm("Trip plans");
+    form.type("Tennis");
+    form.save().props.onPointerDown({ preventDefault: () => {} });
+    form.save().props.onMouseDown({ preventDefault: () => {} });
+    expect(form.field.blur).not.toHaveBeenCalled();
+    // The click on a submit button submits the form: one tap, one save.
+    await form.submit();
+    expect(form.onSave).toHaveBeenCalledTimes(1);
+    expect(form.onSave).toHaveBeenCalledWith("Tennis");
+    expect(form.field.blur).toHaveBeenCalledTimes(1);
+  });
+
+  it("saves from the keyboard's return key (Done)", async () => {
+    const form = renderForm("");
+    expect(form.input().props.enterKeyHint).toBe("done");
+    form.type("Tennis");
+    // Return in a single-field form submits it.
+    await form.submit();
+    expect(form.onSave).toHaveBeenCalledWith("Tennis");
+  });
+
+  it("keeps the typed title when the keyboard's accessory check only closes it", () => {
+    const form = renderForm("Trip plans");
+    form.type("Tennis");
+    // The accessory bar's check blurs the field and nothing else.
+    expect(form.input().props.onBlur).toBeUndefined();
+    expect(form.input().props.value).toBe("Tennis");
+    expect(form.save().props.disabled).toBe(false);
+    expect(form.onSave).not.toHaveBeenCalled();
+  });
+
+  it("keeps focus in the field when the save is refused", async () => {
+    const form = renderForm("Trip plans");
+    form.onSave.mockResolvedValueOnce("Thread not found.");
+    form.type("Paris");
+    await form.submit();
+    expect(form.field.blur).not.toHaveBeenCalled();
   });
 
   it("does not save an unchanged title on Enter", async () => {
