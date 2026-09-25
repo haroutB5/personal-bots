@@ -33,6 +33,7 @@ import {
   collectAttentionThreads,
   filterBotSummaries,
   partitionPinnedSummaries,
+  previewKeyAdvanced,
   previewRefreshKey,
   type BotSummary,
 } from "./botSummaries";
@@ -443,7 +444,9 @@ export function ChatsScreen({
       return;
     }
     if (previewKeyRef.current === previewKey) return;
+    const advanced = previewKeyAdvanced(previewKeyRef.current, previewKey);
     previewKeyRef.current = previewKey;
+    if (!advanced) return;
     // Trailing, so the owner's message and the turn it starts (two key moves
     // tens of ms apart) cost one refetch, not two. The pending timer lives in a
     // ref, not in this effect's cleanup: `list` can change identity before it

@@ -352,18 +352,61 @@ export function previewRefreshKey(summaries: ReadonlyArray<BotSummary>): string 
   return summaries
     .map((summary) => {
       const thread = summary.newestThread;
-      if (thread === null) return "";
+      if (thread === null) return `${summary.bot.botId}=`;
       const turn = thread.latestTurn;
-      return [
+      return `${summary.bot.botId}=${[
         thread.id,
         thread.latestUserMessageAt ?? "",
         turn?.turnId ?? "",
         turn?.state ?? "",
         turn?.assistantMessageId ?? "",
         turn?.completedAt ?? "",
-      ].join(",");
+      ].join(",")}`;
     })
     .join("|");
+}
+
+function parsePreviewKey(key: string): Map<string, ReadonlyArray<string>> {
+  const byBot = new Map<string, ReadonlyArray<string>>();
+  for (const segment of key.split("|")) {
+    const separator = segment.indexOf("=");
+    if (separator <= 0) continue;
+    const fields = segment.slice(separator + 1);
+    byBot.set(segment.slice(0, separator), fields.length === 0 ? [] : fields.split(","));
+  }
+  return byBot;
+}
+
+/** Newest message boundary a key segment records (ISO strings compare in order). */
+function newestBoundary(fields: ReadonlyArray<string>): string {
+  const userAt = fields[1] ?? "";
+  const completedAt = fields[5] ?? "";
+  return userAt > completedAt ? userAt : completedAt;
+}
+
+/**
+ * Whether the move from `previous` to `next` (two `previewRefreshKey`s) is a
+ * message boundary worth refetching `personalBots.list` for. A boundary moved
+ * on a bot's newest thread counts. A bot's newest thread changing to another
+ * thread counts only when that thread has a newer message: on an app open the
+ * newest thread also changes while group relays, tasks and thread shells are
+ * still landing, and that cost a second and third list request per open.
+ * Bots appearing or leaving come from the list itself, so they never count.
+ */
+export function previewKeyAdvanced(previous: string, next: string): boolean {
+  if (previous === next) return false;
+  const before = parsePreviewKey(previous);
+  for (const [botId, fields] of parsePreviewKey(next)) {
+    const old = before.get(botId);
+    if (old === undefined || fields.length === 0) continue;
+    if (old.length > 0 && old[0] === fields[0]) {
+      if (old.join(",") !== fields.join(",")) return true;
+      continue;
+    }
+    const boundary = newestBoundary(fields);
+    if (boundary !== "" && boundary > newestBoundary(old)) return true;
+  }
+  return false;
 }
 
 export function filterBotSummaries(
