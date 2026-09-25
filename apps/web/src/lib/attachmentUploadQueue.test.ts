@@ -223,28 +223,26 @@ describe("attachmentUploadQueue", () => {
     async (lateFailure) => {
       const image = makeFile("reconnect");
       startAttachmentUpload({ environmentId: firstEnvironment, image });
-      await Promise.resolve();
+      await flushUploadStart();
       const firstSettled = awaitAttachmentUploads([image.id]);
       setConnected(firstEnvironment, false);
       if (lateFailure) setConnected(firstEnvironment, true);
       TestXmlHttpRequest.requests[0]!.complete(503);
       await firstSettled;
       if (!lateFailure) setConnected(firstEnvironment, true);
-      await Promise.resolve();
-      await Promise.resolve();
+      await flushUploadStart();
       expect(TestXmlHttpRequest.requests).toHaveLength(2);
       const retrySettled = awaitAttachmentUploads([image.id]);
       TestXmlHttpRequest.requests[1]!.complete(503);
       await retrySettled;
       setConnected(firstEnvironment, true);
-      await Promise.resolve();
+      await flushUploadStart();
       expect(TestXmlHttpRequest.requests).toHaveLength(2);
       expect(readAttachmentUpload(image.id)?.status).toBe("failed");
 
       setConnected(firstEnvironment, false);
       setConnected(firstEnvironment, true);
-      await Promise.resolve();
-      await Promise.resolve();
+      await flushUploadStart();
       const finalSettled = awaitAttachmentUploads([image.id]);
       TestXmlHttpRequest.requests[2]!.complete();
       await finalSettled;
@@ -253,7 +251,7 @@ describe("attachmentUploadQueue", () => {
       ).not.toBeNull();
       setConnected(firstEnvironment, false);
       setConnected(firstEnvironment, true);
-      await Promise.resolve();
+      await flushUploadStart();
       expect(TestXmlHttpRequest.requests).toHaveLength(3);
     },
   );
@@ -261,18 +259,18 @@ describe("attachmentUploadQueue", () => {
   it("does not retry for another environment or after the attachment is removed", async () => {
     const image = makeFile("removed");
     startAttachmentUpload({ environmentId: firstEnvironment, image });
-    await Promise.resolve();
+    await flushUploadStart();
     const settled = awaitAttachmentUploads([image.id]);
     TestXmlHttpRequest.requests[0]!.complete(503);
     await settled;
     setConnected(secondEnvironment, false);
     setConnected(secondEnvironment, true);
-    await Promise.resolve();
+    await flushUploadStart();
     expect(TestXmlHttpRequest.requests).toHaveLength(1);
     setConnected(firstEnvironment, false);
     setConnected(firstEnvironment, true);
     releaseAttachmentUpload(image.id);
-    await Promise.resolve();
+    await flushUploadStart();
     expect(TestXmlHttpRequest.requests).toHaveLength(1);
     expect(readAttachmentUpload(image.id)).toBeUndefined();
   });
