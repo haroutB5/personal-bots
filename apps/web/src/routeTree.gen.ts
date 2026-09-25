@@ -49,6 +49,7 @@ import { Route as PersonalBotsSettingsPasswordsRouteImport } from './routes/_per
 import { Route as PersonalBotsSettingsNotificationsRouteImport } from './routes/_personal.bots_.settings_.notifications'
 import { Route as PersonalBotsSettingsMemoryRouteImport } from './routes/_personal.bots_.settings_.memory'
 import { Route as PersonalBotsSettingsConnectionsRouteImport } from './routes/_personal.bots_.settings_.connections'
+import { Route as PersonalBotsSettingsApiKeysRouteImport } from './routes/_personal.bots_.settings_.api-keys'
 import { Route as PersonalBotsGroupsNewRouteImport } from './routes/_personal.bots_.groups.new'
 import { Route as PersonalBotsGroupsGroupIdRouteImport } from './routes/_personal.bots_.groups.$groupId'
 import { Route as PersonalBotsBotIdEditRouteImport } from './routes/_personal.bots_.$botId.edit'
@@ -261,6 +262,12 @@ const PersonalBotsSettingsConnectionsRoute =
     path: '/bots/settings/connections',
     getParentRoute: () => PersonalRoute,
   } as any)
+const PersonalBotsSettingsApiKeysRoute =
+  PersonalBotsSettingsApiKeysRouteImport.update({
+    id: '/bots_/settings_/api-keys',
+    path: '/bots/settings/api-keys',
+    getParentRoute: () => PersonalRoute,
+  } as any)
 const PersonalBotsGroupsNewRoute = PersonalBotsGroupsNewRouteImport.update({
   id: '/bots_/groups/new',
   path: '/bots/groups/new',
@@ -326,6 +333,7 @@ export interface FileRoutesByFullPath {
   '/bots/$botId/edit': typeof PersonalBotsBotIdEditRoute
   '/bots/groups/$groupId': typeof PersonalBotsGroupsGroupIdRoute
   '/bots/groups/new': typeof PersonalBotsGroupsNewRoute
+  '/bots/settings/api-keys': typeof PersonalBotsSettingsApiKeysRoute
   '/bots/settings/connections': typeof PersonalBotsSettingsConnectionsRoute
   '/bots/settings/memory': typeof PersonalBotsSettingsMemoryRoute
   '/bots/settings/notifications': typeof PersonalBotsSettingsNotificationsRoute
@@ -371,6 +379,7 @@ export interface FileRoutesByTo {
   '/bots/$botId/edit': typeof PersonalBotsBotIdEditRoute
   '/bots/groups/$groupId': typeof PersonalBotsGroupsGroupIdRoute
   '/bots/groups/new': typeof PersonalBotsGroupsNewRoute
+  '/bots/settings/api-keys': typeof PersonalBotsSettingsApiKeysRoute
   '/bots/settings/connections': typeof PersonalBotsSettingsConnectionsRoute
   '/bots/settings/memory': typeof PersonalBotsSettingsMemoryRoute
   '/bots/settings/notifications': typeof PersonalBotsSettingsNotificationsRoute
@@ -419,6 +428,7 @@ export interface FileRoutesById {
   '/_personal/bots_/$botId/edit': typeof PersonalBotsBotIdEditRoute
   '/_personal/bots_/groups/$groupId': typeof PersonalBotsGroupsGroupIdRoute
   '/_personal/bots_/groups/new': typeof PersonalBotsGroupsNewRoute
+  '/_personal/bots_/settings_/api-keys': typeof PersonalBotsSettingsApiKeysRoute
   '/_personal/bots_/settings_/connections': typeof PersonalBotsSettingsConnectionsRoute
   '/_personal/bots_/settings_/memory': typeof PersonalBotsSettingsMemoryRoute
   '/_personal/bots_/settings_/notifications': typeof PersonalBotsSettingsNotificationsRoute
@@ -466,6 +476,7 @@ export interface FileRouteTypes {
     | '/bots/$botId/edit'
     | '/bots/groups/$groupId'
     | '/bots/groups/new'
+    | '/bots/settings/api-keys'
     | '/bots/settings/connections'
     | '/bots/settings/memory'
     | '/bots/settings/notifications'
@@ -511,6 +522,7 @@ export interface FileRouteTypes {
     | '/bots/$botId/edit'
     | '/bots/groups/$groupId'
     | '/bots/groups/new'
+    | '/bots/settings/api-keys'
     | '/bots/settings/connections'
     | '/bots/settings/memory'
     | '/bots/settings/notifications'
@@ -558,6 +570,7 @@ export interface FileRouteTypes {
     | '/_personal/bots_/$botId/edit'
     | '/_personal/bots_/groups/$groupId'
     | '/_personal/bots_/groups/new'
+    | '/_personal/bots_/settings_/api-keys'
     | '/_personal/bots_/settings_/connections'
     | '/_personal/bots_/settings_/memory'
     | '/_personal/bots_/settings_/notifications'
@@ -861,6 +874,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PersonalBotsSettingsConnectionsRouteImport
       parentRoute: typeof PersonalRoute
     }
+    '/_personal/bots_/settings_/api-keys': {
+      id: '/_personal/bots_/settings_/api-keys'
+      path: '/bots/settings/api-keys'
+      fullPath: '/bots/settings/api-keys'
+      preLoaderRoute: typeof PersonalBotsSettingsApiKeysRouteImport
+      parentRoute: typeof PersonalRoute
+    }
     '/_personal/bots_/groups/new': {
       id: '/_personal/bots_/groups/new'
       path: '/bots/groups/new'
@@ -928,6 +948,7 @@ interface PersonalRouteChildren {
   PersonalBotsBotIdEditRoute: typeof PersonalBotsBotIdEditRoute
   PersonalBotsGroupsGroupIdRoute: typeof PersonalBotsGroupsGroupIdRoute
   PersonalBotsGroupsNewRoute: typeof PersonalBotsGroupsNewRoute
+  PersonalBotsSettingsApiKeysRoute: typeof PersonalBotsSettingsApiKeysRoute
   PersonalBotsSettingsConnectionsRoute: typeof PersonalBotsSettingsConnectionsRoute
   PersonalBotsSettingsMemoryRoute: typeof PersonalBotsSettingsMemoryRoute
   PersonalBotsSettingsNotificationsRoute: typeof PersonalBotsSettingsNotificationsRoute
@@ -951,6 +972,7 @@ const PersonalRouteChildren: PersonalRouteChildren = {
   PersonalBotsBotIdEditRoute: PersonalBotsBotIdEditRoute,
   PersonalBotsGroupsGroupIdRoute: PersonalBotsGroupsGroupIdRoute,
   PersonalBotsGroupsNewRoute: PersonalBotsGroupsNewRoute,
+  PersonalBotsSettingsApiKeysRoute: PersonalBotsSettingsApiKeysRoute,
   PersonalBotsSettingsConnectionsRoute: PersonalBotsSettingsConnectionsRoute,
   PersonalBotsSettingsMemoryRoute: PersonalBotsSettingsMemoryRoute,
   PersonalBotsSettingsNotificationsRoute:

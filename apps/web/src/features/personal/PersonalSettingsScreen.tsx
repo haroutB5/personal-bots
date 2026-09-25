@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Info,
   KeyRound,
+  KeySquare,
   Plug,
   Network,
   Plus,
@@ -44,7 +45,6 @@ import { useAppVersion } from "./appVersion";
 import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { PersonalProviderRows } from "./PersonalProviderRows";
 import { buildProviderUpdateRows } from "./providerUpdateRows";
-import { SecretAccessSettings } from "./SecretAccessSettings";
 
 const SECTION_TITLE =
   "mb-2 px-1 text-[13px] font-semibold tracking-wide text-[var(--personal-section-label)] uppercase";
@@ -403,10 +403,30 @@ export function PersonalSettingsScreen(): JSX.Element {
               />
             </Link>
           </li>
+          <li>
+            <Link to="/bots/settings/api-keys" className={SETTINGS_ROW}>
+              <KeySquare
+                aria-hidden="true"
+                className="size-5 shrink-0 text-[var(--personal-text)]"
+                strokeWidth={1.75}
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-[15px] font-semibold text-[var(--personal-text)]">
+                  API keys
+                </span>
+                <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
+                  Keys bots can use, like Tavily and SerpApi
+                </span>
+              </span>
+              <ChevronRight
+                aria-hidden="true"
+                className="size-5 shrink-0 text-[var(--personal-text-secondary)]"
+                strokeWidth={1.75}
+              />
+            </Link>
+          </li>
         </ul>
       </section>
-
-      <SecretAccessSettings environmentId={environmentId} />
 
       <section aria-labelledby="settings-automation">
         <h2 id="settings-automation" className={SECTION_TITLE}>
