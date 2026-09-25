@@ -107,9 +107,10 @@ Server-side optimizations are switched off in the server's environment, then a
 restart: `PB_PERF_OFF=session-prewarm` (comma-separated, names in
 `apps/server/src/personal/perfFlags.ts`).
 
-| Server flag       | What it does                                                                                                                                                                                                                                                                               |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `session-prewarm` | Opening a bot chat (or bringing it back to the foreground) starts its Claude session in the background, with no prompt and no turn, so the next send skips the session start. At most 3 prewarmed sessions sit unused at once (~240 MB each); the reaper stops idle ones after 30 minutes. |
+| Server flag       | What it does                                                                                                                                                                                                                                                                                                            |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session-prewarm` | Opening a bot chat (or bringing it back to the foreground) starts its Claude session in the background, with no prompt and no turn, so the next send skips the session start. At most 3 prewarmed sessions sit unused at once (~240 MB each); the reaper stops idle ones after 30 minutes.                              |
+| `task-summaries`  | `personalTasks.subscribe` replays unfinished tasks plus the newest 20 finished ones as summaries (no objective or acceptance/expected-output text, a 600-character result preview). Off: the old replay of up to 200 finished tasks with full text. Older tasks come from `personalTasks.history`/`related` either way. |
 
 ## Send prep (session prewarm)
 

@@ -113,6 +113,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalTasksList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalTasksGet]: AuthOrchestrationReadScope,
   [WS_METHODS.personalTasksSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalTasksHistory]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalTasksRelated]: AuthOrchestrationReadScope,
   [WS_METHODS.personalTasksCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalTasksCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalTasksRetry]: AuthOrchestrationOperateScope,

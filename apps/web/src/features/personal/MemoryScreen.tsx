@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { useMemo, useState } from "react";
 
-import type { PersonalBot, PersonalMemoryEntry } from "@t3tools/contracts";
+import { type PersonalBot, type PersonalMemoryEntry, PersonalTaskId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import { ChevronLeft, Search, Trash2 } from "lucide-react";
@@ -11,7 +11,13 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
 import { formatRelativeTime } from "./relativeTime";
-import { personalMemoryDelete, usePersonalMemory, usePersonalTasks } from "./usePersonalAutomation";
+import { mergeTaskLists } from "./taskPresentation";
+import {
+  personalMemoryDelete,
+  usePersonalMemory,
+  usePersonalRelatedTasks,
+  usePersonalTasks,
+} from "./usePersonalAutomation";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 import { useMinuteNow } from "./useMinuteNow";
 
@@ -49,7 +55,7 @@ export function MemoryScreen(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const memory = usePersonalMemory(environmentId);
   const botsQuery = usePersonalBotsList(environmentId);
-  const { tasks } = usePersonalTasks(environmentId);
+  const { tasks: taskFeed } = usePersonalTasks(environmentId);
   const deleteEntry = useAtomCommand(personalMemoryDelete);
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -59,6 +65,23 @@ export function MemoryScreen(): JSX.Element {
     [botsQuery.data],
   );
   const entries = memory.data?.entries ?? [];
+  // A memory can come from a task older than the feed carries: fetch the
+  // titles the feed does not have.
+  const missingTaskIds = useMemo(() => {
+    if (taskFeed === null) return [];
+    const ids = new Set<PersonalTaskId>();
+    for (const entry of memory.data?.entries ?? []) {
+      if (!entry.source.startsWith("task:")) continue;
+      const taskId = PersonalTaskId.make(entry.source.slice(5));
+      if (!taskFeed.has(taskId)) ids.add(taskId);
+    }
+    return [...ids].toSorted();
+  }, [memory.data, taskFeed]);
+  const sourceTasks = usePersonalRelatedTasks(
+    environmentId,
+    missingTaskIds.length === 0 ? null : { taskIds: missingTaskIds },
+  );
+  const tasks = useMemo(() => mergeTaskLists(taskFeed, sourceTasks), [taskFeed, sourceTasks]);
   const needle = query.trim().toLowerCase();
   const visible =
     needle.length === 0

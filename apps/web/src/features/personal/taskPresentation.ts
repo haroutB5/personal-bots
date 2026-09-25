@@ -2,6 +2,7 @@ import {
   PERSONAL_TASK_RETRYABLE_STATUSES,
   PERSONAL_TASK_TERMINAL_STATUSES,
   type PersonalRoutine,
+  type PersonalTask,
   type PersonalTaskStatus,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -131,4 +132,26 @@ export function routineNextRunLabel(
   if (!routine.enabled) return "Paused";
   if (routine.nextDueAt === null) return "No more runs";
   return `Next: ${formatLocalDateTime(DateTime.toEpochMillis(routine.nextDueAt))}`;
+}
+
+/**
+ * The feed with `extra` tasks folded in; for a task in both, the newer copy
+ * wins (the feed is live, a query result can be older or newer than it).
+ */
+export function mergeTaskLists(
+  feed: ReadonlyMap<string, PersonalTask> | null,
+  extra: ReadonlyArray<PersonalTask> | null | undefined,
+): ReadonlyMap<string, PersonalTask> | null {
+  if (feed === null || extra === null || extra === undefined || extra.length === 0) return feed;
+  const merged = new Map(feed);
+  for (const task of extra) {
+    const current = merged.get(task.taskId);
+    if (
+      current === undefined ||
+      DateTime.toEpochMillis(task.updatedAt) > DateTime.toEpochMillis(current.updatedAt)
+    ) {
+      merged.set(task.taskId, task);
+    }
+  }
+  return merged;
 }

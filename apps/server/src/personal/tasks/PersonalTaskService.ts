@@ -33,9 +33,12 @@ import {
   type PersonalTaskAttempt,
   type PersonalTaskCreateInput,
   type PersonalTaskDetail,
+  type PersonalTaskHistoryInput,
+  type PersonalTaskHistoryResult,
   type PersonalTaskListInput,
   type PersonalTaskListResult,
   type PersonalTaskMessageMarker,
+  type PersonalTaskRelatedInput,
   type PersonalTaskSource,
   type PersonalTaskStatus,
   type PersonalTaskStreamEvent,
@@ -55,6 +58,7 @@ import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { personalTaskMessageId } from "../personalThreadTitles.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
+import { serverPerfOptimizationOn } from "../perfFlags.ts";
 
 /** Global cap on active provider turns started by the dispatcher. */
 export const PERSONAL_TASKS_CONCURRENCY = 2;
@@ -163,8 +167,19 @@ export class PersonalTaskService extends Context.Service<
     readonly list: (
       filter: PersonalTaskListInput,
     ) => Effect.Effect<PersonalTaskListResult, PersonalTasksError>;
-    /** Every current task as an upsert, then live upserts. */
+    /**
+     * Unfinished tasks and the newest finished ones as upserts, then live
+     * upserts; all as summaries (see `toTaskSummary`).
+     */
     readonly subscribe: Stream.Stream<PersonalTaskStreamEvent, PersonalTasksError>;
+    /** Finished tasks older than the ones the feed replays, as summaries. */
+    readonly history: (
+      input: PersonalTaskHistoryInput,
+    ) => Effect.Effect<PersonalTaskHistoryResult, PersonalTasksError>;
+    /** A thread's tasks, named tasks, and their children, as summaries. */
+    readonly related: (
+      input: PersonalTaskRelatedInput,
+    ) => Effect.Effect<PersonalTaskListResult, PersonalTasksError>;
     /** Live task changes only, no replay (reactors: memory summaries, push). */
     readonly changes: Stream.Stream<PersonalTask>;
     /** Starts the dispatcher: domain-event watch plus the lease/backoff sweep. */
@@ -259,8 +274,42 @@ const sessionIsAlive = (session: OrchestrationSession | null | undefined) =>
 
 const isTerminal = (status: PersonalTaskStatus) => PERSONAL_TASK_TERMINAL_STATUSES.includes(status);
 
-/** Finished tasks replayed to a new subscriber; older ones stay in `list`. */
-const TASK_REPLAY_TERMINAL_LIMIT = 200;
+/**
+ * Finished tasks replayed to a new subscriber; older ones come from
+ * `history` and `related`. 200 with the task-summaries kill switch on,
+ * which is what every client got before summaries.
+ */
+export const TASK_REPLAY_TERMINAL_LIMIT = 20;
+const TASK_REPLAY_TERMINAL_LIMIT_FULL = 200;
+
+/** Longest result preview a summary carries; the delegation card shows 4 lines. */
+export const TASK_SUMMARY_RESULT_PREVIEW_CHARS = 600;
+
+const TASK_HISTORY_DEFAULT_LIMIT = 20;
+const TASK_HISTORY_MAX_LIMIT = 100;
+const TASK_RELATED_MAX_IDS = 100;
+
+/**
+ * What lists and the live feed send: the task without its long text. The
+ * objective and acceptance/expected-output bodies are blank and the result is
+ * a preview; `personalTasks.get` has everything. Opening the app used to
+ * download every task's full text (641 KB for 150 tasks).
+ */
+export const toTaskSummary = (task: PersonalTask): PersonalTask => {
+  const summary = task.result?.summary;
+  const preview =
+    summary === undefined || summary.length <= TASK_SUMMARY_RESULT_PREVIEW_CHARS
+      ? summary
+      : `${summary.slice(0, TASK_SUMMARY_RESULT_PREVIEW_CHARS).trimEnd()}…`;
+  return {
+    ...task,
+    objective: "",
+    acceptanceCriteria: "",
+    expectedOutput: "",
+    result: preview === undefined ? null : { summary: preview },
+    detailOmitted: true,
+  };
+};
 
 const minutesFrom = (now: DateTime.Utc, minutes: number) => DateTime.add(now, { minutes });
 
@@ -1525,18 +1574,50 @@ export const make = Effect.gen(function* () {
   // task changed in that window is sent twice, which upserts absorb.
   const subscribe: PersonalTaskService["Service"]["subscribe"] = Stream.unwrap(
     Effect.gen(function* () {
+      const summaries = serverPerfOptimizationOn("task-summaries");
       const subscription = yield* PubSub.subscribe(upserts);
       // A phone PWA reconnects constantly; replaying every task ever would
       // grow without bound, so finished history is capped here.
       const current = yield* repository
-        .listForReplay(TASK_REPLAY_TERMINAL_LIMIT)
+        .listForReplay(summaries ? TASK_REPLAY_TERMINAL_LIMIT : TASK_REPLAY_TERMINAL_LIMIT_FULL)
         .pipe(toPublic("subscribe"));
       return Stream.concat(
         Stream.fromIterable(current),
         Stream.fromSubscription(subscription),
-      ).pipe(Stream.map((task) => ({ type: "upsert" as const, task })));
+      ).pipe(
+        Stream.map((task) => ({
+          type: "upsert" as const,
+          task: summaries ? toTaskSummary(task) : task,
+        })),
+      );
     }),
   );
+
+  const history: PersonalTaskService["Service"]["history"] = (input) => {
+    const limit = Math.min(
+      TASK_HISTORY_MAX_LIMIT,
+      Math.max(1, Math.floor(input.limit ?? TASK_HISTORY_DEFAULT_LIMIT)),
+    );
+    // One extra row says whether another page exists.
+    return repository.listTerminalPage({ before: input.before ?? null, limit: limit + 1 }).pipe(
+      Effect.map((tasks) => ({
+        tasks: tasks.slice(0, limit).map(toTaskSummary),
+        hasMore: tasks.length > limit,
+      })),
+      toPublic("history"),
+    );
+  };
+
+  const related: PersonalTaskService["Service"]["related"] = (input) =>
+    repository
+      .listRelated({
+        threadId: input.threadId ?? null,
+        taskIds: (input.taskIds ?? []).slice(0, TASK_RELATED_MAX_IDS),
+      })
+      .pipe(
+        Effect.map((tasks) => ({ tasks: tasks.map(toTaskSummary) })),
+        toPublic("related"),
+      );
 
   const resolveCallerTask: PersonalTaskService["Service"]["resolveCallerTask"] = (input) =>
     lock
@@ -1797,6 +1878,8 @@ export const make = Effect.gen(function* () {
     get,
     list,
     subscribe,
+    history,
+    related,
     changes,
     start,
     ingestDomainEvent,

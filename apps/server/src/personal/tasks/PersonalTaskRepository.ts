@@ -167,6 +167,22 @@ export class PersonalTaskRepository extends Context.Service<
     readonly listForReplay: (
       terminalLimit: number,
     ) => Effect.Effect<ReadonlyArray<PersonalTask>, PersonalTaskRepositoryError>;
+    /**
+     * Finished tasks created before `before` (the replay order: created_at,
+     * then insertion), newest first; from the newest when `before` is null.
+     */
+    readonly listTerminalPage: (input: {
+      readonly before: PersonalTaskId | null;
+      readonly limit: number;
+    }) => Effect.Effect<ReadonlyArray<PersonalTask>, PersonalTaskRepositoryError>;
+    /**
+     * The tasks named in `taskIds`, the tasks run in `threadId`, and the
+     * direct children of all of them, newest first.
+     */
+    readonly listRelated: (input: {
+      readonly threadId: ThreadId | null;
+      readonly taskIds: ReadonlyArray<PersonalTaskId>;
+    }) => Effect.Effect<ReadonlyArray<PersonalTask>, PersonalTaskRepositoryError>;
     /** Every task below `taskId`, following parent links by task id. */
     readonly listDescendants: (
       taskId: PersonalTaskId,
@@ -378,6 +394,42 @@ export const make = Effect.gen(function* () {
         ORDER BY created_at DESC, row_order DESC
       `,
     ).pipe(Effect.flatMap((rows) => decodeTasks("listForReplay", rows)));
+
+  const listTerminalPage: PersonalTaskRepository["Service"]["listTerminalPage"] = (input) =>
+    query(
+      "listTerminalPage",
+      sql`
+        SELECT ${sql.literal(TASK_COLUMNS)} FROM personal_tasks
+        WHERE ${sql.in("status", PERSONAL_TASK_TERMINAL_STATUSES)}
+        ${
+          input.before === null
+            ? sql``
+            : sql`AND (created_at, rowid) < (
+                SELECT created_at, rowid FROM personal_tasks WHERE task_id = ${input.before}
+              )`
+        }
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT ${input.limit}
+      `,
+    ).pipe(Effect.flatMap((rows) => decodeTasks("listTerminalPage", rows)));
+
+  const listRelated: PersonalTaskRepository["Service"]["listRelated"] = (input) => {
+    const anchors = [
+      input.threadId !== null ? sql`thread_id = ${input.threadId}` : undefined,
+      input.taskIds.length > 0 ? sql.in("task_id", input.taskIds) : undefined,
+    ].filter((condition) => condition !== undefined);
+    if (anchors.length === 0) return Effect.succeed([]);
+    return query(
+      "listRelated",
+      sql`
+        WITH anchor AS (SELECT task_id FROM personal_tasks WHERE ${sql.or(anchors)})
+        SELECT ${sql.literal(TASK_COLUMNS)} FROM personal_tasks
+        WHERE task_id IN (SELECT task_id FROM anchor)
+          OR parent_task_id IN (SELECT task_id FROM anchor)
+        ORDER BY created_at DESC, rowid DESC
+      `,
+    ).pipe(Effect.flatMap((rows) => decodeTasks("listRelated", rows)));
+  };
 
   const listDescendants: PersonalTaskRepository["Service"]["listDescendants"] = (taskId) =>
     query(
@@ -650,6 +702,8 @@ export const make = Effect.gen(function* () {
     getTaskByIdempotencyKey,
     listTasks,
     listForReplay,
+    listTerminalPage,
+    listRelated,
     listDescendants,
     countTasksInRoot,
     writeTask,

@@ -3,6 +3,7 @@ import type {
   PersonalPushInAppNotification,
   PersonalTask,
   PersonalTaskId,
+  ThreadId,
 } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
 import {
@@ -18,8 +19,12 @@ import { connectionAtomRuntime } from "../../connection/runtime";
 import { useEnvironmentQuery } from "../../state/query";
 
 /**
- * Every personal task, kept current by `personalTasks.subscribe` (replay of
- * all tasks as upserts, then live upserts). Emits the whole map each time.
+ * Unfinished tasks and the newest finished ones, kept current by
+ * `personalTasks.subscribe` (replay as upserts, then live upserts). Emits the
+ * whole map each time. Entries are summaries (`detailOmitted`): no objective
+ * and only a result preview. Older finished tasks come from
+ * `usePersonalRelatedTasks` and `personalTaskHistory`; full text from
+ * `usePersonalTaskDetail`.
  */
 export const personalTasksFeed = createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
   label: "personal-tasks:feed",
@@ -46,6 +51,19 @@ export const personalTaskDetail = createEnvironmentRpcQueryAtomFamily(connection
   label: "personal-tasks:get",
   tag: WS_METHODS.personalTasksGet,
   staleTimeMs: 2_000,
+});
+
+/** A thread's tasks, named tasks and their children, beyond what the feed replays. */
+export const personalTaskRelated = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "personal-tasks:related",
+  tag: WS_METHODS.personalTasksRelated,
+  staleTimeMs: 30_000,
+});
+
+/** Pages of finished tasks, newest first, for "Show older tasks". */
+export const personalTaskHistory = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-tasks:history",
+  tag: WS_METHODS.personalTasksHistory,
 });
 
 export const personalRoutinesList = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
@@ -215,6 +233,22 @@ export function usePersonalTasks(environmentId: EnvironmentId | null) {
   );
   const query = useEnvironmentQuery(atom);
   return { tasks: query.data, error: query.error };
+}
+
+/** Summaries of a chat's tasks or of named tasks, with their children. Null input: nothing. */
+export function usePersonalRelatedTasks(
+  environmentId: EnvironmentId | null,
+  input: { readonly threadId?: ThreadId; readonly taskIds?: ReadonlyArray<PersonalTaskId> } | null,
+): ReadonlyArray<PersonalTask> | null {
+  const key = input === null ? null : JSON.stringify(input);
+  const atom = useMemo(
+    () =>
+      environmentId === null || key === null
+        ? null
+        : personalTaskRelated({ environmentId, input: JSON.parse(key) as typeof input & {} }),
+    [environmentId, key],
+  );
+  return useEnvironmentQuery(atom).data?.tasks ?? null;
 }
 
 export function usePersonalTaskDetail(environmentId: EnvironmentId | null, taskId: PersonalTaskId) {

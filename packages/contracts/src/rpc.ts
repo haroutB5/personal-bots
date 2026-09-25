@@ -288,6 +288,9 @@ import {
   PersonalTask,
   PersonalTaskCreateInput,
   PersonalTaskDetail,
+  PersonalTaskHistoryInput,
+  PersonalTaskHistoryResult,
+  PersonalTaskRelatedInput,
   PersonalTaskIdInput,
   PersonalTaskListInput,
   PersonalTaskListResult,
@@ -565,6 +568,8 @@ export const WS_METHODS = {
   personalTasksCancel: "personalTasks.cancel",
   personalTasksRetry: "personalTasks.retry",
   personalTasksSubscribe: "personalTasks.subscribe",
+  personalTasksHistory: "personalTasks.history",
+  personalTasksRelated: "personalTasks.related",
 
   // Personal group chats. `subscribe` streams group and round STATE only; the
   // transcript arrives on the group thread's ordinary thread-detail
@@ -1233,6 +1238,18 @@ const WsPersonalTasksCancelRpc = Rpc.make(WS_METHODS.personalTasksCancel, {
 const WsPersonalTasksRetryRpc = Rpc.make(WS_METHODS.personalTasksRetry, {
   payload: PersonalTaskIdInput,
   success: PersonalTask,
+  error: PersonalTasksRpcError,
+});
+
+const WsPersonalTasksHistoryRpc = Rpc.make(WS_METHODS.personalTasksHistory, {
+  payload: PersonalTaskHistoryInput,
+  success: PersonalTaskHistoryResult,
+  error: PersonalTasksRpcError,
+});
+
+const WsPersonalTasksRelatedRpc = Rpc.make(WS_METHODS.personalTasksRelated, {
+  payload: PersonalTaskRelatedInput,
+  success: PersonalTaskListResult,
   error: PersonalTasksRpcError,
 });
 
@@ -2298,6 +2315,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalTasksCancelRpc,
   WsPersonalTasksRetryRpc,
   WsPersonalTasksSubscribeRpc,
+  WsPersonalTasksHistoryRpc,
+  WsPersonalTasksRelatedRpc,
   WsPersonalGroupsListRpc,
   WsPersonalGroupsCreateRpc,
   WsPersonalGroupsUpdateRpc,

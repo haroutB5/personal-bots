@@ -3186,6 +3186,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalTasksRetry, personalTasks.retry(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalTasksHistory]: (input) =>
+          observeRpcEffect(WS_METHODS.personalTasksHistory, personalTasks.history(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalTasksRelated]: (input) =>
+          observeRpcEffect(WS_METHODS.personalTasksRelated, personalTasks.related(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.personalTasksSubscribe]: (_input) =>
           observeRpcStream(WS_METHODS.personalTasksSubscribe, personalTasks.subscribe, {
             "rpc.aggregate": "server",
