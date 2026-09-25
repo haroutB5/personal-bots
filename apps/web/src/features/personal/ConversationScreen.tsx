@@ -19,6 +19,8 @@ import {
 import {
   PersonalSecretRequestId,
   type ApprovalRequestId,
+  type EnvironmentId,
+  type PersonalBotThread,
   type PersonalSecretRequest,
   type PersonalTask,
   type ProviderApprovalDecision,
@@ -38,7 +40,7 @@ import {
   deriveWorkLogEntries,
   type TimelineEntriesProjection,
 } from "~/session-logic";
-import { useProject, useThreadDetail, useThreadStatus } from "~/state/entities";
+import { useProject, useThreadDetail, useThreadShells, useThreadStatus } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { threadEnvironment, useEnvironmentThread } from "~/state/threads";
 import type { ChatMessage } from "~/types";
@@ -46,6 +48,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { motionForConversationState } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
+import { botThreadRows, chatCountsLabel } from "./botThreadRows";
 import { BotMuteMenuItems, MutedBell, useSetBotMute } from "./BotMute";
 import { botMuteState } from "./botMuteModel";
 import {
@@ -172,6 +175,37 @@ const EMPTY_MESSAGES: ReadonlyArray<ChatMessage> = [];
 const EMPTY_SECRET_REQUESTS: ReadonlyArray<PersonalSecretRequest> = [];
 const EMPTY_ACTIVITIES: ReadonlyArray<never> = [];
 const EMPTY_PLANS: ReadonlyArray<never> = [];
+
+/**
+ * "8 open · 1 archived" beside "All chats", counted like the rows of the bot's
+ * chat list. Rendered inside the menu popup, so the thread shells are only
+ * watched while the menu is open; the bots list refreshes after every
+ * archive and delete, which keeps the numbers current.
+ */
+function AllChatsCount({
+  environmentId,
+  botId,
+  links,
+}: {
+  environmentId: EnvironmentId;
+  botId: string;
+  links: ReadonlyArray<PersonalBotThread>;
+}): JSX.Element {
+  const shells = useThreadShells();
+  const counts = useMemo(() => {
+    const rows = botThreadRows(
+      botId,
+      links,
+      shells.filter((shell) => shell.environmentId === environmentId),
+    );
+    return { open: rows.active.length, archived: rows.archived.length };
+  }, [botId, environmentId, links, shells]);
+  return (
+    <span className="ml-auto pl-4 text-[13px] text-[var(--personal-text-tertiary)] tabular-nums">
+      {chatCountsLabel(counts)}
+    </span>
+  );
+}
 
 /** Minute clock for "Today, 21:38" dividers. */
 function useMinuteNow(): Date {
@@ -842,6 +876,13 @@ export function ConversationScreen({
             ) : null}
             <MenuItem onClick={() => void navigate({ to: "/bots/$botId", params: { botId } })}>
               All chats
+              {environmentId !== null && list.data !== null ? (
+                <AllChatsCount
+                  environmentId={environmentId}
+                  botId={botId}
+                  links={list.data.threads}
+                />
+              ) : null}
             </MenuItem>
             <MenuItem
               disabled={disabledReason !== null || turnBusy || wrapupSending || thread === null}
