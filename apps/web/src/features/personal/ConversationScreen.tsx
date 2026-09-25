@@ -40,7 +40,13 @@ import {
   deriveWorkLogEntries,
   type TimelineEntriesProjection,
 } from "~/session-logic";
-import { useProject, useThreadDetail, useThreadShells, useThreadStatus } from "~/state/entities";
+import {
+  useProject,
+  useThreadDetail,
+  useThreadShell,
+  useThreadShells,
+  useThreadStatus,
+} from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { threadEnvironment, useEnvironmentThread } from "~/state/threads";
 import type { ChatMessage } from "~/types";
@@ -49,7 +55,8 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { motionForConversationState } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
 import { botThreadRows, chatCountsLabel } from "./botThreadRows";
-import { BotMuteMenuItems, MutedBell, useSetBotMute } from "./BotMute";
+import { BotMuteMenuItems, useSetBotMute } from "./BotMute";
+import { ConversationHeaderName } from "./ConversationHeaderName";
 import { botMuteState } from "./botMuteModel";
 import {
   type ConversationHeaderParts,
@@ -243,6 +250,9 @@ export function ConversationScreen({
     botsLoaded: list.data !== null,
   });
   const thread = useThreadDetail(threadRef);
+  // The header title reads the shell: renames and auto-titles reach it live,
+  // while the loaded detail keeps the title it was fetched with.
+  const threadShell = useThreadShell(threadRef);
   const status = useThreadStatus(threadRef);
   useCloseChatNotifications(botId, threadIdParam);
 
@@ -778,24 +788,12 @@ export function ConversationScreen({
               comet
             />
             <div className="min-w-0 flex-1">
-              <span className="flex min-w-0 items-center gap-2">
-                <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
-                  {bot.name}
-                </h1>
-                {botMuted ? <MutedBell size={16} className="-ml-0.5" /> : null}
-                {contextBadge !== null ? (
-                  // The chat's context size, at every size. A quiet outlined
-                  // chip, so it reads as a measure of the chat and not as a
-                  // second, smaller word of the name.
-                  <span
-                    role="img"
-                    aria-label={`Chat context ${contextBadge} tokens`}
-                    className="shrink-0 rounded-full border border-[var(--personal-border-strong)] px-1.5 text-[11px] leading-[18px] font-medium tabular-nums text-[var(--personal-text-secondary)]"
-                  >
-                    {contextBadge}
-                  </span>
-                ) : null}
-              </span>
+              <ConversationHeaderName
+                name={bot.name}
+                chatTitle={threadShell?.title ?? thread?.title}
+                muted={botMuted}
+                contextBadge={contextBadge}
+              />
               {provider !== null || conversationState !== "idle" ? (
                 <ConversationSubtitle
                   state={conversationState}
