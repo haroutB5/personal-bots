@@ -16,6 +16,14 @@ import { useKeyboardInset } from "./useKeyboardInset";
 const PHONE_BUTTON = "max-sm:h-11 max-sm:text-[15px]";
 
 /**
+ * Save and Cancel keep the keyboard up until their click has landed. iOS blurs
+ * the field partway through a tap on a button, before the click: the keyboard
+ * starts down, the sheet sitting on it drops out from under the finger and the
+ * tap only closes the keyboard, so Save needed a second tap.
+ */
+const keepFieldFocus = (event: React.SyntheticEvent) => event.preventDefault();
+
+/**
  * The field and its two buttons. Enter saves through the form, Escape
  * cancels; Save stays disabled while the trimmed draft is empty or unchanged.
  * A refusal keeps the dialog open with the server's message under the field.
@@ -34,20 +42,26 @@ export function RenameChatForm(props: {
   const errorId = useId();
   const title = renameChatDraftTitle(draft, initialTitle);
 
-  const submit = async () => {
+  const submit = async (form: HTMLFormElement) => {
     if (title === null || saving) return;
     setSaving(true);
     setError(null);
     const failure = await onSave(title);
     setSaving(false);
-    if (failure !== null) setError(failure);
+    if (failure !== null) {
+      setError(failure);
+      return;
+    }
+    // Saved: take the keyboard down with the sheet rather than after it.
+    const focused = form.ownerDocument.activeElement as HTMLElement | null;
+    if (focused !== null && form.contains(focused)) focused.blur();
   };
 
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void submit();
+        void submit(event.currentTarget);
       }}
     >
       <div className="px-6 pb-4">
@@ -91,10 +105,23 @@ export function RenameChatForm(props: {
         ) : null}
       </div>
       <AlertDialogFooter className="border-[var(--personal-border)] bg-transparent">
-        <Button type="button" variant="outline" className={PHONE_BUTTON} onClick={onCancel}>
+        <Button
+          type="button"
+          variant="outline"
+          className={PHONE_BUTTON}
+          onPointerDown={keepFieldFocus}
+          onMouseDown={keepFieldFocus}
+          onClick={onCancel}
+        >
           Cancel
         </Button>
-        <Button type="submit" disabled={title === null || saving} className={PHONE_BUTTON}>
+        <Button
+          type="submit"
+          disabled={title === null || saving}
+          className={PHONE_BUTTON}
+          onPointerDown={keepFieldFocus}
+          onMouseDown={keepFieldFocus}
+        >
           {saving ? "Saving…" : "Save"}
         </Button>
       </AlertDialogFooter>

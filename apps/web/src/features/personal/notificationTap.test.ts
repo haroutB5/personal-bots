@@ -142,3 +142,29 @@ describe("notification tap delivery", () => {
     expect(app.acks).toHaveLength(1);
   });
 });
+
+describe("notification tap to another chat of the same bot", () => {
+  // 25 Sep: in the CTO's "Hbots" chat, a tap on its "Tennis" reply. Only the
+  // thread differs from the open path, and every route must still move there.
+  const HBOTS = "/bots/969c2998-6725-4bf1-8c48-df9a6c75d46c/fd16ef6f-50dd-4230-bc62-2095fddc1f5a";
+  const TENNIS = "/bots/969c2998-6725-4bf1-8c48-df9a6c75d46c/1537d615-648e-41bf-8022-1c71dc46a858";
+
+  for (const via of ["message", "broadcast"] as const) {
+    it(`opens the notified chat by ${via}`, () => {
+      const app = page({ path: HBOTS });
+      app.controller.onMessage({ type: "bots:navigate", url: TENNIS, id: `tap-${via}` }, via);
+      expect(app.navigate).toHaveBeenCalledExactlyOnceWith(TENNIS);
+      expect(app.reports[0]).toMatchObject({ event: "tap-received", navigated: true, via });
+    });
+  }
+
+  for (const via of ["cache-load", "cache-focus", "cache-visible"] as const) {
+    it(`opens the notified chat from the saved copy (${via})`, async () => {
+      const app = page({ path: HBOTS });
+      app.state.pending = { url: TENNIS, id: `tap-${via}` };
+      await app.controller.check(via);
+      expect(app.navigate).toHaveBeenCalledExactlyOnceWith(TENNIS);
+      app.controller.dispose();
+    });
+  }
+});
