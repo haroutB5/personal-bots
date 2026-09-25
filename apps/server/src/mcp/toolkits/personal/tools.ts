@@ -79,6 +79,12 @@ export const CreateRoutineInput = Schema.Struct({
         "Which bot runs the routine: its exact name, in any letter case. Defaults to you (the bot in this chat).",
     }),
   ),
+  newChatEachRun: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "false (default): each run is posted into this chat as a new turn, after any turn running here finishes, so the result stays with this conversation. true: each run opens a new chat instead. A run also opens a new chat when this chat has been archived or deleted, or the routine now belongs to another bot.",
+    }),
+  ),
 });
 export type CreateRoutineInput = typeof CreateRoutineInput.Type;
 
@@ -129,6 +135,12 @@ export const UpdateRoutineInput = Schema.Struct({
   enabled: Schema.optional(
     Schema.Boolean.annotate({
       description: "false pauses the routine, true resumes it, as set_routine_enabled does.",
+    }),
+  ),
+  newChatEachRun: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "true: each run opens a new chat. false: each run goes back into the chat the routine was created in (only for a routine created from a chat).",
     }),
   ),
 });
@@ -184,6 +196,13 @@ export const ListRoutinesResult = Schema.Struct({
       schedule: Schema.String,
       enabled: Schema.Boolean,
       nextRunLocal: Schema.NullOr(Schema.String),
+      newChatEachRun: Schema.Boolean.annotate({
+        description:
+          "true: each run opens a new chat. false: each run is posted into the chat the routine was created in.",
+      }),
+      runsInThisChat: Schema.Boolean.annotate({
+        description: "Whether its runs are posted into this chat, the one calling list_routines.",
+      }),
       prompt: Schema.String.annotate({ description: "The task text the bot gets at each run." }),
     }),
   ),
@@ -239,7 +258,7 @@ export const SaveMemoryResult = Schema.Struct({
 
 const CreateRoutineTool = Tool.make("create_routine", {
   description:
-    "Schedule a recurring or one-off routine: at each run the chosen bot gets the prompt as a task, starting from nothing but that prompt, so write it self-contained. Times are local wall-clock times in the routine's time zone (default Europe/London). Calling again with identical arguments in this chat returns the same routine rather than a second one. To change, pause or delete one later, use update_routine, set_routine_enabled or delete_routine with its routineId. Show the returned summary, including the time zone and next run, to the user.",
+    "Schedule a recurring or one-off routine: at each run the chosen bot gets the prompt as a task, starting from nothing but that prompt, so write it self-contained. By default each run is posted into this chat as a new turn (waiting for any running turn here to finish), so its result and any delegated work stay in this conversation; pass newChatEachRun true for a new chat per run. Times are local wall-clock times in the routine's time zone (default Europe/London). Calling again with identical arguments in this chat returns the same routine rather than a second one. To change, pause or delete one later, use update_routine, set_routine_enabled or delete_routine with its routineId. Show the returned summary, including the time zone and next run, to the user.",
   parameters: CreateRoutineInput,
   success: CreateRoutineResult,
   failure: PersonalToolFailure,
@@ -253,7 +272,7 @@ const CreateRoutineTool = Tool.make("create_routine", {
 
 const ListRoutinesTool = Tool.make("list_routines", {
   description:
-    "List every routine the user has, for all bots and not only yours: its routineId, title, the bot that runs it, its schedule in words ('On event: ...' for one a webhook starts), whether it is enabled, its next run in the routine's own time zone (null when it is disabled or will not run again) and its prompt. The routineId is what update_routine, set_routine_enabled and delete_routine take.",
+    "List every routine the user has, for all bots and not only yours: its routineId, title, the bot that runs it, its schedule in words ('On event: ...' for one a webhook starts), whether it is enabled, its next run in the routine's own time zone (null when it is disabled or will not run again), whether each run opens a new chat or goes into the chat it was created in (and whether that is this chat), and its prompt. The routineId is what update_routine, set_routine_enabled and delete_routine take.",
   success: ListRoutinesResult,
   failure: PersonalToolFailure,
   dependencies,
@@ -266,7 +285,7 @@ const ListRoutinesTool = Tool.make("list_routines", {
 
 const UpdateRoutineTool = Tool.make("update_routine", {
   description:
-    "Change an existing routine, any bot's, by its routineId from list_routines: its title, prompt, schedule, time zone, missed-run rule, the bot that runs it, or whether it is enabled. Fields you leave out keep their current value. A new prompt replaces the old one entirely. A schedule change needs the whole new schedule (frequency plus its time, days, everyHours or date), and the next run is then worked out from now. A routine a webhook event starts has no schedule, so schedule fields are refused for it. Show the returned summary to the user.",
+    "Change an existing routine, any bot's, by its routineId from list_routines: its title, prompt, schedule, time zone, missed-run rule, the bot that runs it, whether each run opens a new chat (newChatEachRun), or whether it is enabled. Fields you leave out keep their current value. A new prompt replaces the old one entirely. A schedule change needs the whole new schedule (frequency plus its time, days, everyHours or date), and the next run is then worked out from now. A routine a webhook event starts has no schedule, so schedule fields are refused for it. Show the returned summary to the user.",
   parameters: UpdateRoutineInput,
   success: RoutineChangeResult,
   failure: PersonalToolFailure,

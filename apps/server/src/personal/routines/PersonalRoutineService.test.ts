@@ -37,8 +37,19 @@ import * as PersonalTaskRepository from "../tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalRoutineService from "./PersonalRoutineService.ts";
 
+/**
+ * Live chats the projection knows, by thread id, with their session status.
+ * A thread missing here reads as deleted or archived, as the real
+ * `getThreadShellById` returns nothing for either.
+ */
+type ShellSessions = Map<string, { readonly status: string; readonly activeTurnId?: string }>;
+
 /** Orchestration is a recorder: routines only need tasks to be created. */
-const makeLayer = (dbPath?: string, dispatched: Array<OrchestrationCommand> = []) => {
+const makeLayer = (
+  dbPath?: string,
+  dispatched: Array<OrchestrationCommand> = [],
+  shells: ShellSessions = new Map(),
+) => {
   return PersonalRoutineService.layer.pipe(
     Layer.provideMerge(PersonalTaskService.layer),
     Layer.provideMerge(PersonalTaskRepository.layer),
@@ -66,7 +77,23 @@ const makeLayer = (dbPath?: string, dispatched: Array<OrchestrationCommand> = []
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         getProjectShellById: () => Effect.succeed(Option.none()),
         getProjectShells: () => Effect.succeed([]),
-        getThreadShellById: (_threadId: ThreadId) => Effect.succeed(Option.none()),
+        getThreadShellById: (threadId: ThreadId) =>
+          Effect.sync(() => {
+            const session = shells.get(threadId);
+            return session === undefined
+              ? Option.none()
+              : Option.some({
+                  id: threadId,
+                  session: {
+                    threadId,
+                    status: session.status,
+                    activeTurnId: session.activeTurnId ?? null,
+                    lastError: null,
+                    providerName: null,
+                    updatedAt: "2026-09-25T00:00:00.000Z",
+                  },
+                });
+          }),
       } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
     ),
     Layer.provideMerge(
@@ -1020,3 +1047,258 @@ it.effect("a preparer that crashes fails the occurrence instead of starting a ba
     expect(row?.errorMessage).toContain("ledger is corrupt");
   }).pipe(Effect.provide(makeLayer())),
 );
+
+// --- Runs in the chat the routine was created from -------------------------
+
+const CHAT = "chat-source" as ThreadId;
+const OTHER_BOT = PersonalBotId.make("bot-other");
+
+const seedChat = (threadId: ThreadId = CHAT, botId: PersonalBotId = BOT) =>
+  Effect.gen(function* () {
+    const bots = yield* PersonalBotService.PersonalBotService;
+    yield* bots.createThread({ botId, threadId });
+  });
+
+const chatTurnStarts = (dispatched: ReadonlyArray<OrchestrationCommand>) =>
+  dispatched.flatMap((command) =>
+    command.type === "thread.turn.start"
+      ? [{ threadId: command.threadId as string, text: command.message.text }]
+      : [],
+  );
+
+const createInChat = (
+  routineId: string,
+  extra: { readonly newChatEachRun?: boolean; readonly threadId?: ThreadId | null } = {},
+) =>
+  Effect.gen(function* () {
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    return yield* routines.create({
+      routineId: PersonalRoutineId.make(routineId),
+      botId: BOT,
+      title: "Confirm release",
+      prompt: "Check the release.",
+      schedule: { kind: "once", at: "2026-09-25T16:20" },
+      ...(extra.threadId === null ? {} : { threadId: extra.threadId ?? CHAT }),
+      ...(extra.newChatEachRun === undefined ? {} : { newChatEachRun: extra.newChatEachRun }),
+    });
+  });
+
+// 16:20 BST is 15:20Z.
+const FIRE_AT = "2026-09-25T15:20:05Z";
+
+it.effect("a routine made from a chat stores it and posts its run into that chat", () => {
+  const dispatched: Array<OrchestrationCommand> = [];
+  const shells: ShellSessions = new Map([[CHAT, { status: "ready" }]]);
+  return Effect.gen(function* () {
+    yield* setNow("2026-09-25T15:00:00Z");
+    yield* seedBot;
+    yield* seedChat();
+    const created = yield* createInChat("in-chat");
+    expect(created.threadId).toBe(CHAT);
+    expect(created.newChatEachRun).toBe(false);
+    dispatched.length = 0;
+
+    yield* setNow(FIRE_AT);
+    yield* tickAndDrain;
+
+    const [task] = yield* routineTasks("in-chat");
+    expect(task?.threadId).toBe(CHAT);
+    expect(task?.status).toBe("running");
+    expect(chatTurnStarts(dispatched)).toEqual([
+      { threadId: CHAT, text: expect.stringContaining("[Routine task]") },
+    ]);
+    // The existing chat is reused, never created again.
+    expect(dispatched.some((command) => command.type === "thread.create")).toBe(false);
+    const start = dispatched.find((command) => command.type === "thread.turn.start");
+    // The task-turn marker the UI renders as "Routine: <title>".
+    const record = start?.type === "thread.turn.start" ? start.message.context?.records[0] : null;
+    expect(
+      record !== null && record !== undefined && "payload" in record ? record.payload : null,
+    ).toEqual(expect.objectContaining({ source: "routine", title: "Confirm release" }));
+  }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+});
+
+it.effect("a busy chat holds the run queued until it is idle, then runs it once", () => {
+  const dispatched: Array<OrchestrationCommand> = [];
+  const shells: ShellSessions = new Map([[CHAT, { status: "running", activeTurnId: "user-turn" }]]);
+  return Effect.gen(function* () {
+    const tasks = yield* PersonalTaskService.PersonalTaskService;
+    yield* setNow("2026-09-25T15:00:00Z");
+    yield* seedBot;
+    yield* seedChat();
+    yield* createInChat("busy");
+
+    yield* setNow(FIRE_AT);
+    yield* tickAndDrain;
+    // Queued, not running: unfinished work for the idle-restart check.
+    const [waiting] = yield* routineTasks("busy");
+    expect(waiting?.status).toBe("queued");
+    expect(waiting?.threadId).toBe(CHAT);
+    expect(chatTurnStarts(dispatched)).toEqual([]);
+
+    // Still busy on the next sweep: still waiting.
+    yield* tasks.sweep;
+    yield* tasks.drain;
+    expect(chatTurnStarts(dispatched)).toEqual([]);
+
+    shells.set(CHAT, { status: "ready" });
+    yield* tasks.sweep;
+    yield* tasks.drain;
+    yield* tasks.sweep;
+    yield* tasks.drain;
+    expect(chatTurnStarts(dispatched).map((start) => start.threadId)).toEqual([CHAT]);
+    expect((yield* routineTasks("busy"))[0]?.status).toBe("running");
+  }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+});
+
+it.effect(
+  "falls back to a new chat when the source chat is archived, deleted or another bot's",
+  () => {
+    const dispatched: Array<OrchestrationCommand> = [];
+    const archived = "chat-archived" as ThreadId;
+    const deleted = "chat-deleted" as ThreadId;
+    const shells: ShellSessions = new Map([
+      [CHAT, { status: "ready" }],
+      [archived, { status: "ready" }],
+    ]);
+    return Effect.gen(function* () {
+      const bots = yield* PersonalBotService.PersonalBotService;
+      const routines = yield* PersonalRoutineService.PersonalRoutineService;
+      yield* setNow("2026-09-25T15:00:00Z");
+      yield* seedBot;
+      yield* bots.create({
+        botId: OTHER_BOT,
+        name: "Other",
+        description: "",
+        instructions: "",
+        avatarShape: "roundedSquare",
+        avatarColor: "#E5323B",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-test" },
+      });
+      yield* seedChat();
+      yield* seedChat(archived);
+      yield* seedChat(deleted);
+      yield* bots.archiveThread({ threadId: archived, archived: true });
+      yield* createInChat("archived", { threadId: archived });
+      // Deleted: even if a link row lingers, the projection has no live thread.
+      yield* createInChat("deleted", { threadId: deleted });
+      yield* createInChat("handed-over");
+      yield* routines.update({
+        routineId: PersonalRoutineId.make("handed-over"),
+        botId: OTHER_BOT,
+      });
+
+      yield* setNow(FIRE_AT);
+      yield* tickAndDrain;
+
+      for (const routineId of ["archived", "deleted", "handed-over"]) {
+        const [task] = yield* routineTasks(routineId);
+        // Null until claimed (a new chat is minted then); never one of these.
+        expect([CHAT, archived, deleted]).not.toContain(task?.threadId);
+      }
+      expect(chatTurnStarts(dispatched).map((start) => start.threadId)).not.toContain(CHAT);
+    }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+  },
+);
+
+it.effect("newChatEachRun opts out, and an edit can turn it back off", () => {
+  const dispatched: Array<OrchestrationCommand> = [];
+  const shells: ShellSessions = new Map([[CHAT, { status: "ready" }]]);
+  return Effect.gen(function* () {
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    yield* setNow("2026-09-25T15:00:00Z");
+    yield* seedBot;
+    yield* seedChat();
+    const optedOut = yield* createInChat("opted-out", { newChatEachRun: true });
+    expect(optedOut.threadId).toBe(CHAT);
+    expect(optedOut.newChatEachRun).toBe(true);
+    const flipped = yield* createInChat("flipped", { newChatEachRun: true });
+    const edited = yield* routines.update({
+      routineId: flipped.routineId,
+      newChatEachRun: false,
+    });
+    expect(edited.newChatEachRun).toBe(false);
+    // An edit that leaves the flag out keeps it.
+    const renamed = yield* routines.update({ routineId: optedOut.routineId, title: "Renamed" });
+    expect(renamed.newChatEachRun).toBe(true);
+
+    yield* setNow(FIRE_AT);
+    yield* tickAndDrain;
+
+    expect((yield* routineTasks("opted-out"))[0]?.threadId).not.toBe(CHAT);
+    expect((yield* routineTasks("flipped"))[0]?.threadId).toBe(CHAT);
+  }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+});
+
+it.effect("a routine with no source chat (legacy or Scheduled screen) opens a new chat", () => {
+  const dispatched: Array<OrchestrationCommand> = [];
+  const shells: ShellSessions = new Map([[CHAT, { status: "ready" }]]);
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* setNow("2026-09-25T15:00:00Z");
+    yield* seedBot;
+    yield* seedChat();
+    const created = yield* createInChat("no-chat", { threadId: null });
+    expect(created.threadId).toBeNull();
+    expect(created.newChatEachRun).toBe(false);
+    const rows = yield* sql<{ readonly threadId: string | null; readonly flag: number }>`
+      SELECT thread_id AS "threadId", new_chat_each_run AS "flag"
+      FROM personal_routines WHERE routine_id = 'no-chat'
+    `;
+    expect(rows).toEqual([{ threadId: null, flag: 0 }]);
+    dispatched.length = 0;
+
+    yield* setNow(FIRE_AT);
+    yield* tickAndDrain;
+
+    const [task] = yield* routineTasks("no-chat");
+    expect(task?.threadId).toBeTruthy();
+    expect(task?.threadId).not.toBe(CHAT);
+    expect(dispatched.some((command) => command.type === "thread.create")).toBe(true);
+  }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+});
+
+it.effect("a retried slot or Run now posts into the chat once, one run at a time", () => {
+  const dispatched: Array<OrchestrationCommand> = [];
+  const shells: ShellSessions = new Map([[CHAT, { status: "running", activeTurnId: "user-turn" }]]);
+  return Effect.gen(function* () {
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const tasks = yield* PersonalTaskService.PersonalTaskService;
+    yield* setNow("2026-09-25T15:00:00Z");
+    yield* seedBot;
+    yield* seedChat();
+    const routine = yield* routines.create({
+      routineId: PersonalRoutineId.make("daily-in-chat"),
+      botId: BOT,
+      title: "Daily",
+      prompt: "Daily check.",
+      schedule: { kind: "daily", time: "16:20" },
+      threadId: CHAT,
+    });
+
+    yield* setNow(FIRE_AT);
+    yield* tickAndDrain;
+    // Ticking again inside the slot, and the same Run now twice, add nothing.
+    yield* tickAndDrain;
+    yield* routines.runNow({ routineId: routine.routineId, requestId: "again" });
+    yield* routines.runNow({ routineId: routine.routineId, requestId: "again" });
+    const queued = yield* routineTasks("daily-in-chat");
+    expect(queued.map((task) => [task.status, task.threadId])).toEqual([
+      ["queued", CHAT],
+      ["queued", CHAT],
+    ]);
+
+    // Idle: the two runs go one after the other, never together.
+    shells.set(CHAT, { status: "ready" });
+    yield* tasks.sweep;
+    yield* tasks.drain;
+    expect(chatTurnStarts(dispatched).length).toBe(1);
+    yield* tasks.sweep;
+    yield* tasks.drain;
+    expect(chatTurnStarts(dispatched).length).toBe(1);
+    expect(yield* occurrences("daily-in-chat")).toEqual([
+      expect.objectContaining({ localOccurrence: "2026-09-25T16:20", status: "created" }),
+      expect.objectContaining({ localOccurrence: "manual:again", status: "created" }),
+    ]);
+  }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
+});

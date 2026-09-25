@@ -1080,3 +1080,37 @@ it.effect("related returns a thread's tasks and their delegated children", () =>
     expect((yield* service.related({})).tasks).toEqual([]);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+it.effect("a task placed in a chat waits out the user's turn and starts when it ends", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const bots = yield* PersonalBotService.PersonalBotService;
+    const chat = "chat-user" as ThreadId;
+    yield* bots.createThread({ botId: botId("assistant"), threadId: chat });
+    // The user is mid-turn in the chat; no task owns that turn.
+    const userTurn = yield* beginTurn(harness, chat);
+    const before = turnStarts(harness).length;
+
+    const task = yield* service.createTask({
+      idempotencyKey: "routine:in-chat:1",
+      botId: botId("assistant"),
+      title: "Routine in chat",
+      objective: "Report.",
+      source: "routine",
+      threadId: chat,
+    });
+    yield* service.drain;
+    expect((yield* reload(task.taskId)).status).toBe("queued");
+    expect(turnStarts(harness).length).toBe(before);
+
+    // The user's turn ends: the session event alone starts the run, no sweep.
+    yield* endTurn(harness, chat, userTurn, "Done.");
+    const started = turnStarts(harness).slice(before);
+    expect(started.map((command) => command.threadId)).toEqual([chat]);
+    const running = yield* reload(task.taskId);
+    expect(running.status).toBe("running");
+    expect(running.threadId).toBe(chat);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});

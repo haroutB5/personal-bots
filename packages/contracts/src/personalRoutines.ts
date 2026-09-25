@@ -1,7 +1,7 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { PersonalBotId } from "./personalBots.ts";
 import { PersonalTask, PersonalTaskId } from "./personalTasks.ts";
 
@@ -131,6 +131,16 @@ export const PersonalRoutine = Schema.Struct({
    * decodes an older list; the server always sends it. Absent means `model`.
    */
   delivery: Schema.optionalKey(PersonalRoutineDelivery),
+  /**
+   * The chat the routine was created from (a bot's create_routine call). Each
+   * model run is posted into it as a new turn, waiting for the chat to be idle,
+   * unless `newChatEachRun` is set or the chat is gone, archived or no longer
+   * the routine's bot's; then the run opens a new chat. Null for routines made
+   * on the Scheduled screen. Optional on the wire like `delivery`.
+   */
+  threadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
+  /** True: every run opens a new chat even though the routine has a source chat. */
+  newChatEachRun: Schema.optionalKey(Schema.Boolean),
   /** Null once a one-off has run, and always null for event routines. */
   nextDueAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   lastOccurrenceLocal: Schema.NullOr(Schema.String),
@@ -170,6 +180,10 @@ export const PersonalRoutineCreateInput = Schema.Struct({
   missedPolicy: Schema.optional(PersonalRoutineMissedPolicy),
   /** Omitted means `model`. */
   delivery: Schema.optional(PersonalRoutineDelivery),
+  /** The chat to run in; see `PersonalRoutine.threadId`. Omitted: a new chat per run. */
+  threadId: Schema.optional(ThreadId),
+  /** Omitted means false. */
+  newChatEachRun: Schema.optional(Schema.Boolean),
 });
 export type PersonalRoutineCreateInput = typeof PersonalRoutineCreateInput.Type;
 
@@ -185,6 +199,7 @@ export const PersonalRoutineUpdateInput = Schema.Struct({
   timeZone: Schema.optional(TrimmedNonEmptyString),
   missedPolicy: Schema.optional(PersonalRoutineMissedPolicy),
   delivery: Schema.optional(PersonalRoutineDelivery),
+  newChatEachRun: Schema.optional(Schema.Boolean),
 });
 export type PersonalRoutineUpdateInput = typeof PersonalRoutineUpdateInput.Type;
 
