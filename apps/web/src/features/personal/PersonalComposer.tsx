@@ -411,6 +411,7 @@ export function PersonalComposer({
         ...pending,
         {
           id: messageId,
+          threadId,
           text,
           createdAt,
           attachments: snapshot.map((attachment) => ({ id: attachment.id, name: attachment.name })),

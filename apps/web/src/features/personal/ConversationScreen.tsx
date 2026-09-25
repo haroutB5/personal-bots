@@ -130,6 +130,7 @@ import {
 import { useWrapupChat } from "./wrapupChat";
 import { useDeleteChat } from "./useDeleteChat";
 import { RenameChatDialog } from "./RenameChatDialog";
+import { pendingForThread } from "./pendingOutgoing";
 import { renameChatInitialTitle, useRenameChat } from "./renameChat";
 
 const ICON_BUTTON =
@@ -531,12 +532,10 @@ export function ConversationScreen({
     bot === null ? null : resolveBotProvider(bot.modelSelection.instanceId, providers);
   const headerParts = conversationHeaderParts(conversationState, stateLabel, provider);
 
-  // Optimistic rows hide once the server echoes the same client message id.
-  const visiblePending = useMemo(() => {
-    if (pending.length === 0) return pending;
-    const echoed = new Set(messages.map((message) => message.id as string));
-    return pending.filter((message) => !echoed.has(message.id));
-  }, [messages, pending]);
+  const visiblePending = useMemo(
+    () => pendingForThread(pending, threadId, messages),
+    [messages, pending, threadId],
+  );
 
   const onInterrupt = useCallback(async (): Promise<string | null> => {
     if (environmentId === null || interruptInput === null) return null;
@@ -976,6 +975,9 @@ export function ConversationScreen({
             />
           ) : null}
           <PersonalComposer
+            // One composer per chat: its in-flight send, error and queued
+            // state belong to the chat it was sent from.
+            key={threadId}
             environmentId={environmentId}
             threadId={threadId}
             thread={thread}
