@@ -110,6 +110,7 @@ import { PersonalComposer } from "./PersonalComposer";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { useStartBotChat } from "./startBotChat";
 import { usePersonalTasks } from "./usePersonalAutomation";
+import { usePrewarmChatSession } from "./usePrewarmChatSession";
 import {
   personalBotArchiveThread,
   usePersonalBotsList,
@@ -263,6 +264,7 @@ export function ConversationScreen({
   // Reading this chat right now means its own notifications stay off the
   // phone; every other chat still notifies.
   useReportViewingThread(environmentId, threadId, connectionPhase === "connected");
+  usePrewarmChatSession(environmentId, threadId, connectionPhase === "connected");
   const { feed: computerFeed } = useComputerFeed(environmentId);
   const desktopStatus = useDesktopStatus(environmentId);
 

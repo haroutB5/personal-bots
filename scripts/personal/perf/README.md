@@ -103,6 +103,30 @@ turned off on one device, with no release:
 in `apps/web/src/features/personal/perfFlags.ts`. The bench's `--off` and `--ab`
 set the same key.
 
+Server-side optimizations are switched off in the server's environment, then a
+restart: `PB_PERF_OFF=session-prewarm` (comma-separated, names in
+`apps/server/src/personal/perfFlags.ts`).
+
+| Server flag       | What it does                                                                                                                                                                                                                                                                               |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `session-prewarm` | Opening a bot chat (or bringing it back to the foreground) starts its Claude session in the background, with no prompt and no turn, so the next send skips the session start. At most 3 prewarmed sessions sit unused at once (~240 MB each); the reaper stops idle ones after 30 minutes. |
+
+## Send prep (session prewarm)
+
+`prewarm.mjs` measures the server's prep for a send: `thread.turn-start-requested`
+to the first `thread.session-set` with status `running`, read from the event log
+of a throwaway server (never the live one; each run costs one tiny model turn).
+
+```powershell
+node <build>\dist\bin.mjs serve --base-dir %TEMP%\pb-prewarm --no-browser --port 38591
+node <build>\dist\bin.mjs pair --ttl 10m --label perf-bench --base-dir %TEMP%\pb-prewarm
+node scripts/personal/perf/login.mjs "http://localhost:38591/pair#token=..."
+# a first turn in a new chat:
+node scripts/personal/perf/prewarm.mjs --origin http://localhost:38591 --db %TEMP%\pb-prewarm\userdata\state.sqlite
+# a chat whose session is gone: restart the throwaway server, then
+node scripts/personal/perf/prewarm.mjs ... --chat /bots/<bot>/<thread>
+```
+
 ## RUM
 
 `apps/web/src/features/personal/perfRum.ts` sends one beacon per journey from the

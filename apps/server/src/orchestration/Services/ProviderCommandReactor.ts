@@ -6,6 +6,7 @@
  *
  * @module ProviderCommandReactor
  */
+import type { ModelSelection, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
@@ -31,7 +32,29 @@ export interface ProviderCommandReactorShape {
    * Intended for test use to replace timing-sensitive sleeps.
    */
   readonly drain: Effect.Effect<void>;
+
+  /**
+   * Starts, or resumes, a thread's provider session ahead of its next send,
+   * without a turn and without a prompt, so that send skips the session start.
+   * Serialised with the thread's other session starts. Does nothing when a
+   * session is already live or the thread cannot take one (missing, archived,
+   * compacting, in a worktree, or not a Claude thread).
+   */
+  readonly prewarmSession: (input: {
+    readonly threadId: ThreadId;
+    /** What the next send will ask for, so that send reuses the session. */
+    readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<ProviderSessionPrewarmOutcome>;
 }
+
+export type ProviderSessionPrewarmOutcome =
+  | "started"
+  | "live"
+  | "missing"
+  | "archived"
+  | "busy"
+  | "unsupported"
+  | "failed";
 
 /**
  * ProviderCommandReactor - Service tag for provider command reaction workers.

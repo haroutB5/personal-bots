@@ -164,6 +164,12 @@ export const personalPushSetPreferences = createEnvironmentRpcCommand(connection
 });
 
 /** Presence only: it changes nothing the UI reads, so it refreshes nothing. */
+/** Opening a bot chat starts its session on the server ahead of the first send. */
+export const personalBotsPrewarmThread = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-bots:prewarm-thread",
+  tag: WS_METHODS.personalBotsPrewarmThread,
+});
+
 export const personalPushReportViewing = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-push:report-viewing",
   tag: WS_METHODS.personalPushReportViewing,

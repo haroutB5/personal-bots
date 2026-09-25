@@ -32,6 +32,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
@@ -622,7 +623,7 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const ensureSessionForThread = Effect.fn("ensureSessionForThread")(function* (
+  const ensureSessionForThreadUnlocked = Effect.fn("ensureSessionForThread")(function* (
     threadId: ThreadId,
     createdAt: string,
     options?: {
@@ -889,6 +890,73 @@ const make = Effect.gen(function* () {
     yield* bindSessionToThread(startedSession);
     return startedSession.threadId;
   });
+
+  // One session start per thread at a time: a prewarm runs outside the worker,
+  // so a send arriving mid-prewarm waits for it and then reuses its session
+  // instead of starting a second one.
+  const threadSessionLocks = new Map<ThreadId, Semaphore.Semaphore>();
+  const withThreadSessionLock = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) => {
+    let lock = threadSessionLocks.get(threadId);
+    if (lock === undefined) {
+      lock = Semaphore.makeUnsafe(1);
+      threadSessionLocks.set(threadId, lock);
+    }
+    return lock.withPermit(effect);
+  };
+  const ensureSessionForThread = (
+    threadId: ThreadId,
+    createdAt: string,
+    options?: Parameters<typeof ensureSessionForThreadUnlocked>[2],
+  ) =>
+    withThreadSessionLock(threadId, ensureSessionForThreadUnlocked(threadId, createdAt, options));
+
+  const prewarmSession: ProviderCommandReactorShape["prewarmSession"] = (input) =>
+    withThreadSessionLock(
+      input.threadId,
+      Effect.gen(function* () {
+        const thread = yield* resolveThreadShell(input.threadId);
+        if (!thread) return "missing" as const;
+        if (thread.archivedAt !== null) return "archived" as const;
+        if (
+          thread.worktreePath !== null ||
+          compactingThreadIds.has(input.threadId) ||
+          turnsAfterCompaction.has(input.threadId) ||
+          stoppingThreadIds.has(input.threadId)
+        ) {
+          return "busy" as const;
+        }
+        const activeSession = (yield* providerService.listSessions()).find(
+          (session) => session.threadId === input.threadId,
+        );
+        if (
+          activeSession !== undefined &&
+          thread.session !== null &&
+          thread.session.status !== "stopped"
+        ) {
+          return "live" as const;
+        }
+        const info = yield* providerService.getInstanceInfo(input.modelSelection.instanceId);
+        if (info.driverKind !== "claudeAgent") return "unsupported" as const;
+        yield* ensureSessionForThreadUnlocked(
+          input.threadId,
+          DateTime.formatIso(yield* DateTime.now),
+          { modelSelection: input.modelSelection },
+        );
+        // The next send compares its selection with this one; a match reuses
+        // the session instead of restarting it.
+        threadModelSelections.set(input.threadId, input.modelSelection);
+        return "started" as const;
+      }),
+    ).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("provider command reactor session prewarm failed", {
+              threadId: input.threadId,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as("failed" as const)),
+      ),
+    );
 
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
@@ -2069,6 +2137,7 @@ const make = Effect.gen(function* () {
       yield* worker.drain;
       yield* threadTitleRegenerationWorker.drain;
     }),
+    prewarmSession,
   } satisfies ProviderCommandReactorShape;
 });
 

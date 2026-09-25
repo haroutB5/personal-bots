@@ -303,6 +303,15 @@ export const PersonalBotDeleteThreadInput = Schema.Struct({
 });
 export type PersonalBotDeleteThreadInput = typeof PersonalBotDeleteThreadInput.Type;
 
+/**
+ * The user opened this chat: start its provider session in the background so
+ * the next message does not wait for it. Fire and forget; no turn starts.
+ */
+export const PersonalBotPrewarmThreadInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type PersonalBotPrewarmThreadInput = typeof PersonalBotPrewarmThreadInput.Type;
+
 export const PersonalBotsListResult = Schema.Struct({
   bots: Schema.Array(PersonalBot),
   threads: Schema.Array(PersonalBotThread),
