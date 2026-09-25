@@ -2,7 +2,11 @@ import { APP_VERSION } from "~/branding";
 import { isElectron } from "~/env";
 
 import { runningClientEntry } from "./appVersion";
-import { closeNotifications, notificationRegistration } from "./staleNotifications";
+import {
+  closeNotifications,
+  createDeferredNotificationClear,
+  notificationRegistration,
+} from "./staleNotifications";
 import {
   createNotificationTapController,
   isNavigablePath,
@@ -128,6 +132,20 @@ export function registerPersonalServiceWorker(navigate: (path: string) => void):
   }
   const container = navigator.serviceWorker;
   const channel = openNavChannel();
+  // The user is in the app: every notification still in Notification Center
+  // is stale (the chats list shows what is unread), and on iOS one tapped from
+  // inside the app is dead, so close them rather than leave dead rows behind.
+  // Deferred, because the one the user just tapped is still listed when the
+  // app resumes, and closing it cancels its click (see staleNotifications.ts).
+  const staleClear = createDeferredNotificationClear({
+    close: () =>
+      notificationRegistration().then((registration) => closeNotifications(registration)),
+    isVisible: () => document.visibilityState === "visible",
+    now: () => Date.now(),
+    setTimeout: (callback, ms) => window.setTimeout(callback, ms),
+    clearTimeout: (handle) => window.clearTimeout(handle as number),
+    report: reportTap,
+  });
   const taps = createNotificationTapController({
     navigate,
     currentPath: () => `${window.location.pathname}${window.location.search}`,
@@ -155,6 +173,7 @@ export function registerPersonalServiceWorker(navigate: (path: string) => void):
         .catch(() => undefined);
     },
     report: reportTap,
+    onTap: () => staleClear.noteTap(),
   });
   const onWorkerMessage = (data: unknown, via: "message" | "broadcast") => {
     const diag = workerMessageDiag(data, via);
@@ -191,22 +210,13 @@ export function registerPersonalServiceWorker(navigate: (path: string) => void):
       .catch(() => undefined);
   };
 
-  // The user is in the app: every notification still in Notification Center
-  // is stale (the chats list shows what is unread), and on iOS one tapped from
-  // inside the app is dead, so close them rather than leave dead rows behind.
-  const clearStaleNotifications = (reason: "boot" | "visible" | "focus") => {
-    void notificationRegistration()
-      .then((registration) => closeNotifications(registration))
-      .then((closed) => {
-        if (closed > 0) reportTap({ event: "notifications-cleared", reason, closed });
-      })
-      .catch(() => undefined);
-  };
-
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible") return;
+    if (document.visibilityState !== "visible") {
+      staleClear.cancel();
+      return;
+    }
     void taps.check("cache-visible");
-    clearStaleNotifications("visible");
+    staleClear.schedule("visible");
     checkForNewWorker();
   });
   window.addEventListener("pageshow", () => {
@@ -214,10 +224,10 @@ export function registerPersonalServiceWorker(navigate: (path: string) => void):
   });
   window.addEventListener("focus", () => {
     void taps.check("cache-focus");
-    if (document.visibilityState === "visible") clearStaleNotifications("focus");
+    if (document.visibilityState === "visible") staleClear.schedule("focus");
   });
   void taps.check("cache-load");
-  if (document.visibilityState === "visible") clearStaleNotifications("boot");
+  if (document.visibilityState === "visible") staleClear.schedule("boot");
 
   const register = () => {
     void container
