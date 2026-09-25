@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX } from "react";
-import { useRef } from "react";
+import { lazy, Suspense, useRef } from "react";
 
 import { Outlet, useLocation, useParams } from "@tanstack/react-router";
 
@@ -25,8 +25,13 @@ import {
 } from "./personalMode";
 import { setPersonalNumberPreference, usePersonalNumberPreference } from "./personalPreferences";
 import { PersonalTabBar } from "./PersonalTabBar";
-import { TeamScreen } from "./TeamScreen";
 import { useHiddenRootAttribute } from "./useHiddenRootAttribute";
+
+// Desktop home pane only: the phone never shows it, so it stays off the
+// chats list's startup path.
+const TeamScreen = lazy(() =>
+  import("./TeamScreen").then((module) => ({ default: module.TeamScreen })),
+);
 
 /**
  * Width of the routed screen inside the desktop pane. A chat takes the whole
@@ -127,7 +132,9 @@ export function PersonalShell(): JSX.Element {
         <div className="personal-scroll-quiet min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
           {showsHome ? (
             <div className={PANE_CONTENT_CLASS.column}>
-              <TeamScreen showBack={false} />
+              <Suspense fallback={null}>
+                <TeamScreen showBack={false} />
+              </Suspense>
             </div>
           ) : (
             <div className={PANE_CONTENT_CLASS[layout]}>

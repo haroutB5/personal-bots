@@ -38,22 +38,45 @@ self.addEventListener("install", () => {
   self.skipWaiting();
 });
 
+/**
+ * Shell caches to delete on activate: every older version except the newest
+ * one before this worker's. A page booted from that previous shell can still
+ * be loading its chunks while this worker takes over; keeping its cache lets
+ * it finish instead of failing on assets the new release no longer has.
+ * `caches.keys()` lists caches in creation order, so the last one that is not
+ * ours is the previous version.
+ */
+function staleShellCaches(names, current) {
+  const others = names.filter((name) => name.startsWith(CACHE_PREFIX) && name !== current);
+  return others.slice(0, -1);
+}
+
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       const names = await caches.keys();
-      await Promise.all(
-        names
-          .filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
-          .map((name) => caches.delete(name)),
-      );
+      await Promise.all(staleShellCaches(names, CACHE_NAME).map((name) => caches.delete(name)));
       await self.clients.claim();
     })(),
   );
 });
 
-function isCacheableResponse(response) {
+/**
+ * Only real build output is cached under /assets/: a script path must come
+ * back as JavaScript and a stylesheet as CSS, and HTML never is (an SPA
+ * fallback saved under a chunk URL would break that chunk until the cache goes).
+ */
+function isAssetContentType(pathname, contentType) {
+  const type = (contentType || "").toLowerCase();
+  if (type.includes("text/html")) return false;
+  if (/\.m?js$/i.test(pathname)) return type.includes("javascript");
+  if (/\.css$/i.test(pathname)) return type.includes("text/css");
+  return true;
+}
+
+function isCacheableResponse(response, pathname) {
   if (!response || !response.ok || response.type !== "basic" || response.redirected) return false;
+  if (!isAssetContentType(pathname, response.headers.get("Content-Type"))) return false;
   const disposition = response.headers.get("Content-Disposition") || "";
   const cacheControl = response.headers.get("Cache-Control") || "";
   return !/attachment/i.test(disposition) && !/no-store|private/i.test(cacheControl);
@@ -67,6 +90,31 @@ async function cachedResponse(key) {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * A build asset from this version's cache or the previous version's: file
+ * names are content-hashed, so any saved copy is the right bytes. A copy an
+ * older worker saved from an HTML fallback is skipped, never served.
+ */
+async function cachedAsset(request, pathname) {
+  const usable = (cached) =>
+    cached && isAssetContentType(pathname, cached.headers.get("Content-Type")) ? cached : undefined;
+  try {
+    const own = usable(await caches.match(request, { cacheName: CACHE_NAME }));
+    if (own) return own;
+    // Only a miss pays for listing the other caches.
+    const others = (await caches.keys())
+      .filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
+      .reverse();
+    for (const cacheName of others) {
+      const cached = usable(await caches.match(request, { cacheName }));
+      if (cached) return cached;
+    }
+  } catch {
+    // Fall through to the network.
+  }
+  return undefined;
 }
 
 async function cacheResponse(key, response) {
@@ -128,10 +176,10 @@ self.addEventListener("fetch", (event) => {
     // Content-hashed file names: a cached copy is always the right bytes.
     event.respondWith(
       (async () => {
-        const cached = await cachedResponse(request);
+        const cached = await cachedAsset(request, url.pathname);
         if (cached) return cached;
         const response = await fetch(request);
-        if (isCacheableResponse(response)) {
+        if (isCacheableResponse(response, url.pathname)) {
           event.waitUntil(cacheResponse(request, response.clone()));
         }
         return response;

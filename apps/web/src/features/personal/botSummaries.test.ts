@@ -19,6 +19,7 @@ import {
   isBotThinking,
   isThreadLive,
   isThreadRateLimited,
+  previewKeyAdvanced,
   previewRefreshKey,
   providerLine,
   resolveBotProvider,
@@ -380,6 +381,38 @@ describe("previewRefreshKey", () => {
         latestTurn: { ...running, state: "completed", completedAt: "2026-09-01T10:02:00.000Z" },
       }),
     ).not.toBe(base);
+  });
+});
+
+describe("previewKeyAdvanced", () => {
+  const seg = (bot: string, fields: string) => `${bot}=${fields}`;
+  const done = (thread: string, at: string) => `${thread},${at},turn-${thread},completed,msg,${at}`;
+
+  it("counts a boundary moving on the same newest thread", () => {
+    const before = seg("a", done("t1", "2026-09-01T10:00:00.000Z"));
+    const after = seg("a", "t1,2026-09-01T10:05:00.000Z,turn-2,running,,");
+    expect(previewKeyAdvanced(before, after)).toBe(true);
+  });
+
+  it("ignores the newest thread switching to one with no newer message (app open)", () => {
+    const before = [seg("a", done("t1", "2026-09-22T18:50:00.000Z")), seg("b", "")].join("|");
+    const after = [seg("a", "t9,,,,,"), seg("b", "")].join("|");
+    expect(previewKeyAdvanced(before, after)).toBe(false);
+  });
+
+  it("counts a switch to a thread with a newer message", () => {
+    const before = seg("a", done("t1", "2026-09-22T18:50:00.000Z"));
+    const after = seg("a", "t2,2026-09-22T19:00:00.000Z,,,,");
+    expect(previewKeyAdvanced(before, after)).toBe(true);
+    expect(previewKeyAdvanced(seg("a", ""), after)).toBe(true);
+  });
+
+  it("does not depend on row order, and ignores bots appearing or leaving", () => {
+    const a = seg("a", done("t1", "2026-09-22T18:50:00.000Z"));
+    const b = seg("b", done("t2", "2026-09-22T18:40:00.000Z"));
+    expect(previewKeyAdvanced([a, b].join("|"), [b, a].join("|"))).toBe(false);
+    expect(previewKeyAdvanced(a, [a, b].join("|"))).toBe(false);
+    expect(previewKeyAdvanced([a, b].join("|"), a)).toBe(false);
   });
 });
 

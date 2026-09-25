@@ -1948,11 +1948,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(unchanged.headers.vary, "Accept-Encoding");
       assert.equal(yield* unchanged.text, "");
 
-      for (const resource of [
-        "/assets/config.json",
-        "/threads/example",
-        "/assets/old-ZyXw9876.js",
-      ]) {
+      // A missing build asset is a 404, never the SPA shell under a script URL.
+      const missing = yield* HttpClient.get("/assets/old-ZyXw9876.js");
+      assert.equal(missing.status, 404);
+      assert.notInclude(missing.headers["content-type"] ?? "", "text/html");
+
+      for (const resource of ["/assets/config.json", "/threads/example"]) {
         const response = yield* HttpClient.get(resource);
         assert.equal(response.status, 200);
         assert.equal(response.headers["cache-control"], "no-cache");
@@ -1961,6 +1962,44 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           resource.endsWith("config.json") ? "{}" : "<html>app</html>",
         );
       }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves an older retained release's chunk and 404s unknown build assets", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const releases = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-releases-" });
+      const clientDir = (sha: string) => path.join(releases, sha, "dist", "client");
+      for (const sha of ["new111111111", "old000000000"]) {
+        yield* fileSystem.makeDirectory(path.join(clientDir(sha), "assets"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(clientDir(sha), "index.html"), `<html>${sha}`);
+      }
+      yield* fileSystem.writeFileString(
+        path.join(clientDir("old000000000"), "assets", "Chunk-OldHash1.js"),
+        "export const old = true;",
+      );
+      yield* fileSystem.writeFileString(path.join(releases, "current.txt"), "new111111111");
+      yield* buildAppUnderTest({ config: { staticDir: clientDir("new111111111") } });
+
+      const old = yield* HttpClient.get("/assets/Chunk-OldHash1.js");
+      assert.equal(old.status, 200);
+      assert.include(old.headers["content-type"] ?? "", "javascript");
+      assert.equal(old.headers["cache-control"], "public, max-age=31536000, immutable");
+      assert.equal(yield* old.text, "export const old = true;");
+
+      for (const resource of [
+        "/assets/Unknown-Nope1234.js",
+        "/assets/..%2F..%2Findex.html",
+        "/assets/nested/Chunk-OldHash1.js",
+      ]) {
+        const response = yield* HttpClient.get(resource);
+        assert.oneOf(response.status, [400, 404], resource);
+        assert.notInclude(yield* response.text, "<html>", resource);
+      }
+      // Anything outside /assets/ still falls back to the active shell.
+      const route = yield* HttpClient.get("/bots/some-chat");
+      assert.equal(yield* route.text, "<html>new111111111");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

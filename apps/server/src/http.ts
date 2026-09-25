@@ -47,6 +47,7 @@ import {
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
+import { findRetainedReleaseAsset, isBuildAssetPath } from "./personal/retainedReleaseAssets.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -575,6 +576,19 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     }
 
     let opened = yield* openStaticFile(filePath);
+    // Build assets never fall back to the SPA shell: an older client's chunk is
+    // served from a retained release, otherwise 404 (see retainedReleaseAssets.ts).
+    const assetRequestPath = staticRelativePath.replaceAll("\\", "/");
+    let fromRetainedRelease = false;
+    if (!opened && isBuildAssetPath(assetRequestPath)) {
+      const retained = yield* findRetainedReleaseAsset(staticRoot, assetRequestPath);
+      opened = retained === null ? null : yield* openStaticFile(retained);
+      if (!opened || retained === null) {
+        return HttpServerResponse.text("Not Found", { status: 404 });
+      }
+      filePath = retained;
+      fromRetainedRelease = true;
+    }
     if (!opened) {
       filePath = path.resolve(staticRoot, "index.html");
       opened = yield* openStaticFile(filePath);
@@ -587,11 +601,13 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     const isHtml = mimeType === "text/html";
 
     // A hash-like name is not enough: custom static files can use the same naming pattern.
-    const relativePath = path.relative(staticRoot, filePath).replaceAll("\\", "/");
+    const relativePath = fromRetainedRelease
+      ? assetRequestPath
+      : path.relative(staticRoot, filePath).replaceAll("\\", "/");
     const immutable =
       !isHtml &&
       /^assets\/.+-[\w-]{8}\.[^/]+$/.test(relativePath) &&
-      immutableBuildAssets.has(relativePath);
+      (fromRetainedRelease || immutableBuildAssets.has(relativePath));
     const headers: Record<string, string> = {
       "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
     };
