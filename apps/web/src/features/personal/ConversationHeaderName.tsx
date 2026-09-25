@@ -12,11 +12,14 @@ export function conversationChatTitle(title: string | null | undefined): string 
 }
 
 /**
- * Header name block: the bot name with its muted bell and context badge, then
- * the chat's title on a line of its own. Sharing the name's line left the title
- * a few letters on a phone ("Te…" beside "Developer" and a badge at 375 px);
- * under the name it gets the full column and ellipsises only when it is long.
- * An untitled chat shows no title rather than a "New chat" that says nothing.
+ * Header name line: the bot name with its muted bell and context badge, then
+ * the chat's title, muted, in whatever width is left. Name, bell and badge
+ * stay together and give way to the title never (the name ellipsises only when
+ * it cannot fit beside its badge at all); the title ellipsises, and where a
+ * long name leaves it too little
+ * room to say anything (under 40 px, a bare "T…") it wraps onto a second
+ * row that the fixed-height line clips, so it is simply not shown. An
+ * untitled chat shows no title rather than a "New chat" that says nothing.
  */
 export function ConversationHeaderName({
   name,
@@ -31,9 +34,9 @@ export function ConversationHeaderName({
 }): JSX.Element {
   const title = conversationChatTitle(chatTitle);
   return (
-    <>
-      <span className="flex min-w-0 items-center gap-2">
-        <h1 className="max-w-full shrink-0 truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
+    <span className="flex h-6 min-w-0 flex-wrap items-center gap-x-2 overflow-hidden">
+      <span data-name-group="" className="flex max-w-full min-w-0 shrink-0 items-center gap-2">
+        <h1 className="min-w-0 truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
           {name}
           {title !== null ? <span className="sr-only">, chat {title}</span> : null}
         </h1>
@@ -56,11 +59,11 @@ export function ConversationHeaderName({
           aria-hidden="true"
           data-chat-title=""
           title={title}
-          className="block min-w-0 truncate text-[14px] leading-[18px] font-medium text-[var(--personal-text-secondary)]"
+          className="min-w-10 flex-1 basis-0 truncate text-[15px] leading-6 font-medium text-[var(--personal-text-secondary)]"
         >
           {title}
         </span>
       ) : null}
-    </>
+    </span>
   );
 }

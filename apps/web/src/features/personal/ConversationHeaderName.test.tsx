@@ -49,15 +49,59 @@ describe("ConversationHeaderName", () => {
     expect(title).toBeDefined();
     expect(title!.props.title).toBe(LONG_TITLE);
     expect(String(title!.props.className)).toContain("truncate");
-    expect(String(title!.props.className)).toContain("min-w-0");
-    // Name and badge never shrink, so the title is the only thing that gives.
-    expect(String(renderer.root.findByType("h1").props.className)).toContain("shrink-0");
+    expect(String(title!.props.className)).toContain("flex-1");
+    // Name and badge never shrink for the title, so the title is the only thing that gives.
+    const group = renderer.root.find((node) => node.props["data-name-group"] !== undefined);
+    expect(String(group.props.className).split(" ")).toContain("shrink-0");
     expect(className(renderer, (props) => props.role === "img")).toContain("shrink-0");
     // The heading still names the chat for screen readers.
     expect(renderer.root.findByProps({ className: "sr-only" }).props.children).toEqual([
       ", chat ",
       LONG_TITLE,
     ]);
+  });
+
+  it("puts the title on the name line, right after the context badge", () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <ConversationHeaderName name="CTO" chatTitle="Hbots" muted contextBadge="133k" />,
+      );
+    });
+    const group = renderer.root.findByType("h1").parent!;
+    const line = group.parent!;
+    const kind = (child: (typeof line.children)[number]) =>
+      typeof child === "string"
+        ? "text"
+        : child.props["data-name-group"] !== undefined
+          ? "name-group"
+          : child.props["data-chat-title"] !== undefined
+            ? "title"
+            : "other";
+    expect(line.children.map(kind)).toEqual(["name-group", "title"]);
+    const kinds = group.children.map((child) =>
+      typeof child === "string"
+        ? "text"
+        : child.type === "h1"
+          ? "name"
+          : child.props.role === "img"
+            ? "badge"
+            : child.props["data-chat-title"] !== undefined
+              ? "title"
+              : "bell",
+    );
+    expect(kinds).toEqual(["name", "bell", "badge"]);
+    // One line: a title with under 40 px left wraps to a row the line clips.
+    const lineClass = String(line.props.className);
+    for (const token of ["flex", "flex-wrap", "h-6", "overflow-hidden"]) {
+      expect(lineClass.split(" ")).toContain(token);
+    }
+    const titleClass = String(titleSpan(renderer)[0]!.props.className).split(" ");
+    for (const token of ["min-w-10", "flex-1", "basis-0", "truncate"]) {
+      expect(titleClass).toContain(token);
+    }
+    // Nothing else is rendered below the name line.
+    expect(renderer.toJSON()).not.toBeInstanceOf(Array);
   });
 
   it("shows nothing extra for an untitled chat", () => {
