@@ -53,6 +53,7 @@ import { PersonalComposer } from "./PersonalComposer";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { useReportViewingThread } from "./useReportViewingThread";
+import { pendingForThread } from "./pendingOutgoing";
 import {
   personalBotCreateThread,
   usePersonalBotsList,
@@ -77,6 +78,7 @@ const ICON_BUTTON =
 const EMPTY_MESSAGES: ReadonlyArray<ChatMessage> = [];
 const EMPTY_PLANS: ReadonlyArray<never> = [];
 const EMPTY_WORK: ReadonlyArray<never> = [];
+const EMPTY_PENDING: ReadonlyArray<PendingOutgoingMessage> = [];
 const NO_APPROVALS: ReadonlyArray<never> = [];
 const NO_RESPONDING: ReadonlySet<string> = new Set();
 const NO_MEMBERS: ReadonlyArray<never> = [];
@@ -259,11 +261,10 @@ export function GroupConversationScreen({
   // everything else, so exactly one card can ever be in the slot below.
   const vote = groupVoteCard({ round, votes, members, nameOf });
 
-  const visiblePending = useMemo(() => {
-    if (pending.length === 0) return pending;
-    const echoed = new Set(messages.map((message) => message.id as string));
-    return pending.filter((message) => !echoed.has(message.id));
-  }, [messages, pending]);
+  const visiblePending = useMemo(
+    () => (threadId === null ? EMPTY_PENDING : pendingForThread(pending, threadId, messages)),
+    [messages, pending, threadId],
+  );
 
   const send = useCallback(
     async (input: { readonly messageId: string; readonly text: string }) => {
@@ -571,6 +572,7 @@ export function GroupConversationScreen({
             </div>
           ) : null}
           <PersonalComposer
+            key={group.threadId}
             environmentId={environmentId}
             threadId={ThreadId.make(group.threadId)}
             thread={thread}

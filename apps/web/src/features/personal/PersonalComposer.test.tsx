@@ -220,6 +220,36 @@ describe("personal composer sends", () => {
     expect(state.draft.files).toEqual([]);
   });
 
+  it("tags its Sending row with the chat it was sent from, even if the screen moves on", async () => {
+    // The chat route reuses its screen across chats: a send still in flight
+    // when the user lands in another bot's chat must not claim that chat.
+    let land!: (value: { _tag: string }) => void;
+    state.start.mockReturnValue(new Promise((resolve) => (land = resolve)));
+    const rows: Array<{ readonly id: string; readonly threadId?: string }> = [];
+    const onPendingChange = vi.fn((update: (pending: never[]) => typeof rows) => {
+      rows.splice(0, rows.length, ...update(rows as never[]));
+    });
+    await act(async () =>
+      renderer.update(<PersonalComposer {...props} onPendingChange={onPendingChange} />),
+    );
+    await act(async () => {
+      void renderer.root.findByProps({ "aria-label": "Send" }).props.onClick();
+    });
+    await act(async () =>
+      renderer.update(
+        <PersonalComposer
+          {...props}
+          threadId={ThreadId.make("other-bot-thread")}
+          onPendingChange={onPendingChange}
+        />,
+      ),
+    );
+    await act(async () => land({ _tag: "Success" }));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.threadId).toBe("test-thread");
+    expect(state.start.mock.calls[0]?.[0]).toMatchObject({ input: { threadId: "test-thread" } });
+  });
+
   it("names a new chat only through the turn's title seed", async () => {
     // A metadata rename would be a manual title and block the server's AI title.
     const newChat = { ...props.thread, messages: [] } as unknown as Thread;
