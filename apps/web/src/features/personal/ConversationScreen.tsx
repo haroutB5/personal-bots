@@ -129,6 +129,8 @@ import {
 } from "./usePersonalBots";
 import { useWrapupChat } from "./wrapupChat";
 import { useDeleteChat } from "./useDeleteChat";
+import { RenameChatDialog } from "./RenameChatDialog";
+import { renameChatInitialTitle, useRenameChat } from "./renameChat";
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -721,6 +723,10 @@ export function ConversationScreen({
     await navigate({ to: "/bots/$botId", params: { botId }, replace: true });
   };
 
+  const renameChat = useRenameChat(environmentId);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const chatTitle = threadShell?.title ?? thread?.title;
+
   const loadEarlier =
     environmentId !== null && threadHasOlderTurns(threadState)
       ? {
@@ -790,7 +796,7 @@ export function ConversationScreen({
             <div className="min-w-0 flex-1">
               <ConversationHeaderName
                 name={bot.name}
-                chatTitle={threadShell?.title ?? thread?.title}
+                chatTitle={chatTitle}
                 muted={botMuted}
                 contextBadge={contextBadge}
               />
@@ -899,6 +905,9 @@ export function ConversationScreen({
               </>
             ) : null}
             <MenuSeparator />
+            <MenuItem disabled={thread === null} onClick={() => setRenameOpen(true)}>
+              Rename chat
+            </MenuItem>
             <MenuItem onClick={() => void onArchive()}>Archive chat</MenuItem>
             <MenuItem variant="destructive" onClick={() => void onDeleteChat()}>
               Delete chat
@@ -906,6 +915,12 @@ export function ConversationScreen({
           </MenuPopup>
         </Menu>
       </header>
+      <RenameChatDialog
+        open={renameOpen}
+        initialTitle={renameChatInitialTitle(chatTitle)}
+        onOpenChange={setRenameOpen}
+        onSave={(title) => renameChat(threadId, title)}
+      />
 
       {thread !== null && environmentId !== null && threadRef !== null ? (
         <>
