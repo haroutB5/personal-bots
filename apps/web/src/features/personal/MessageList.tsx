@@ -11,7 +11,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ChevronRight, FileText } from "lucide-react";
+import { ArrowDown, ChevronRight, FileText } from "lucide-react";
 
 import { useAssetUrls } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -43,6 +43,10 @@ export interface PendingOutgoingMessage {
 }
 
 const STICK_THRESHOLD_PX = 80;
+/** How long the reader stays away from the bottom before "Jump to latest" shows. */
+export const JUMP_TO_LATEST_DELAY_MS = 150;
+/** Gives up on a smooth jump that never reached the bottom. */
+const JUMP_SETTLE_MS = 1_000;
 
 const APPROVAL_KIND_LABEL: Record<PendingApproval["requestKind"], string> = {
   command: "wants to run a command",
@@ -430,6 +434,20 @@ export function MessageList({
   const scrollerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
+  const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set while a tap's smooth scroll is on its way down: its own scroll events
+  // are still far from the bottom and must not bring the button back.
+  const jumpingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelShow = () => {
+    if (showTimerRef.current !== null) clearTimeout(showTimerRef.current);
+    showTimerRef.current = null;
+  };
+  const endJump = () => {
+    if (jumpingRef.current !== null) clearTimeout(jumpingRef.current);
+    jumpingRef.current = null;
+  };
 
   useEffect(() => {
     const scroller = scrollerRef.current;
@@ -440,10 +458,34 @@ export function MessageList({
     };
     follow();
     const onScroll = () => {
-      stickRef.current =
+      const nearBottom =
         scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < STICK_THRESHOLD_PX;
+      if (nearBottom) {
+        endJump();
+        stickRef.current = true;
+        cancelShow();
+        setShowJump(false);
+        return;
+      }
+      if (jumpingRef.current !== null) return;
+      stickRef.current = false;
+      // Every scroll event restarts the wait, so momentum scrolling does not
+      // make the button flicker; it appears once the list settles.
+      cancelShow();
+      showTimerRef.current = setTimeout(() => {
+        showTimerRef.current = null;
+        setShowJump(true);
+      }, JUMP_TO_LATEST_DELAY_MS);
+    };
+    // A finger or wheel during a jump takes the scroll back from it.
+    const onReaderInput = () => {
+      if (jumpingRef.current === null) return;
+      endJump();
+      onScroll();
     };
     scroller.addEventListener("scroll", onScroll, { passive: true });
+    scroller.addEventListener("touchstart", onReaderInput, { passive: true });
+    scroller.addEventListener("wheel", onReaderInput, { passive: true });
     // Streaming text, late images and the keyboard all change heights without
     // a React update here, so follow size changes rather than renders.
     const observer = new ResizeObserver(follow);
@@ -451,9 +493,38 @@ export function MessageList({
     observer.observe(scroller);
     return () => {
       scroller.removeEventListener("scroll", onScroll);
+      scroller.removeEventListener("touchstart", onReaderInput);
+      scroller.removeEventListener("wheel", onReaderInput);
       observer.disconnect();
+      cancelShow();
+      endJump();
     };
   }, []);
+
+  // The screen stays mounted when the route moves to another chat, so the
+  // next chat opens at its latest message with the button hidden.
+  const threadId = threadRef.threadId;
+  useEffect(() => {
+    cancelShow();
+    endJump();
+    stickRef.current = true;
+    setShowJump(false);
+    const scroller = scrollerRef.current;
+    if (scroller !== null) scroller.scrollTop = scroller.scrollHeight;
+  }, [threadId]);
+
+  const jumpToLatest = () => {
+    const scroller = scrollerRef.current;
+    if (scroller === null) return;
+    cancelShow();
+    setShowJump(false);
+    // Following resumes now, so a reply landing mid-scroll is followed too.
+    stickRef.current = true;
+    endJump();
+    jumpingRef.current = setTimeout(endJump, JUMP_SETTLE_MS);
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: reduceMotion ? "auto" : "smooth" });
+  };
 
   // The work group that is still being written: the last one, while working,
   // with no user message or task turn after it.
@@ -471,243 +542,262 @@ export function MessageList({
   const empty = items.length === 0 && pending.length === 0;
 
   return (
-    <div
-      ref={scrollerRef}
-      className="personal-column personal-scroll-quiet min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4"
-    >
+    // The jump button floats over the transcript's bottom edge, just above the
+    // composer and any strip resting on it, so it never shifts the layout and
+    // rides up with the keyboard.
+    <div className="relative flex min-h-0 flex-1 flex-col">
       <div
-        ref={contentRef}
-        role="log"
-        aria-live="polite"
-        aria-relevant="additions"
-        aria-label={`Chat with ${botName}`}
-        className="flex min-h-full flex-col justify-end gap-3 py-3"
+        ref={scrollerRef}
+        className="personal-column personal-scroll-quiet min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4"
       >
-        {loadEarlier !== null ? (
-          <button
-            type="button"
-            onClick={loadEarlier.onLoad}
-            disabled={loadEarlier.loading}
-            aria-busy={loadEarlier.loading}
-            className="mx-auto h-11 rounded-full px-4 text-sm font-medium text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
-          >
-            {loadEarlier.loading ? "Loading earlier messages" : "Load earlier messages"}
-          </button>
-        ) : null}
+        <div
+          ref={contentRef}
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions"
+          aria-label={`Chat with ${botName}`}
+          className="flex min-h-full flex-col justify-end gap-3 py-3"
+        >
+          {loadEarlier !== null ? (
+            <button
+              type="button"
+              onClick={loadEarlier.onLoad}
+              disabled={loadEarlier.loading}
+              aria-busy={loadEarlier.loading}
+              className="mx-auto h-11 rounded-full px-4 text-sm font-medium text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+            >
+              {loadEarlier.loading ? "Loading earlier messages" : "Load earlier messages"}
+            </button>
+          ) : null}
 
-        {empty ? (
-          <p className="my-auto text-center text-[15px] text-[var(--personal-text-secondary)]">
-            Send {botName} a message to get started.
-          </p>
-        ) : null}
+          {empty ? (
+            <p className="my-auto text-center text-[15px] text-[var(--personal-text-secondary)]">
+              Send {botName} a message to get started.
+            </p>
+          ) : null}
 
-        {items.map((item) => {
-          switch (item.kind) {
-            case "divider":
-              return (
-                <p
-                  key={item.id}
-                  className="my-3 text-center text-xs text-[var(--personal-text-tertiary)]"
-                >
-                  <time dateTime={item.at.toISOString()}>{formatDayDivider(item.at, now)}</time>
-                </p>
-              );
-            case "system-turn":
-              return (
-                <SystemTurnRow
-                  key={item.id}
-                  label={describeTurn(item.turn)}
-                  text={item.message.text}
-                />
-              );
-            case "group-message":
-              if (readGroupMarker(item.message)?.phase === "discussion") {
+          {items.map((item) => {
+            switch (item.kind) {
+              case "divider":
                 return (
-                  <details
+                  <p
                     key={item.id}
-                    className="rounded-xl border border-[var(--personal-border)] px-3 py-2"
+                    className="my-3 text-center text-xs text-[var(--personal-text-tertiary)]"
                   >
-                    <summary className="cursor-pointer text-sm text-[var(--personal-text-secondary)]">
-                      {item.speaker.name} ·{" "}
-                      {item.message.streaming ? "Researching…" : "View contribution"}
-                    </summary>
-                    <GroupMessage
-                      message={item.message}
-                      threadRef={threadRef}
-                      workspaceRoot={workspaceRoot}
-                      speaker={groupSpeaker?.(item.speaker.botId) ?? null}
-                      botId={item.speaker.botId}
-                      showSpeaker={false}
-                    />
-                  </details>
+                    <time dateTime={item.at.toISOString()}>{formatDayDivider(item.at, now)}</time>
+                  </p>
                 );
-              }
-              {
-                // The verdict speaks for the whole group, so it is headed as
-                // the group's answer; its writer is only credited, not shown
-                // as the speaker.
-                const isVerdict = readGroupMarker(item.message)?.phase === "verdict";
+              case "system-turn":
                 return (
-                  <div key={item.id}>
-                    {isVerdict && (
-                      <div className="mb-2">
-                        <p className="text-base font-semibold text-[var(--personal-text)]">
-                          Group verdict
-                        </p>
-                        <p className="text-[13px] text-[var(--personal-text-secondary)]">
-                          From the whole group · written up by {item.speaker.name}
-                        </p>
-                      </div>
-                    )}
-                    <GroupMessage
+                  <SystemTurnRow
+                    key={item.id}
+                    label={describeTurn(item.turn)}
+                    text={item.message.text}
+                  />
+                );
+              case "group-message":
+                if (readGroupMarker(item.message)?.phase === "discussion") {
+                  return (
+                    <details
                       key={item.id}
-                      message={item.message}
+                      className="rounded-xl border border-[var(--personal-border)] px-3 py-2"
+                    >
+                      <summary className="cursor-pointer text-sm text-[var(--personal-text-secondary)]">
+                        {item.speaker.name} ·{" "}
+                        {item.message.streaming ? "Researching…" : "View contribution"}
+                      </summary>
+                      <GroupMessage
+                        message={item.message}
+                        threadRef={threadRef}
+                        workspaceRoot={workspaceRoot}
+                        speaker={groupSpeaker?.(item.speaker.botId) ?? null}
+                        botId={item.speaker.botId}
+                        showSpeaker={false}
+                      />
+                    </details>
+                  );
+                }
+                {
+                  // The verdict speaks for the whole group, so it is headed as
+                  // the group's answer; its writer is only credited, not shown
+                  // as the speaker.
+                  const isVerdict = readGroupMarker(item.message)?.phase === "verdict";
+                  return (
+                    <div key={item.id}>
+                      {isVerdict && (
+                        <div className="mb-2">
+                          <p className="text-base font-semibold text-[var(--personal-text)]">
+                            Group verdict
+                          </p>
+                          <p className="text-[13px] text-[var(--personal-text-secondary)]">
+                            From the whole group · written up by {item.speaker.name}
+                          </p>
+                        </div>
+                      )}
+                      <GroupMessage
+                        key={item.id}
+                        message={item.message}
+                        threadRef={threadRef}
+                        workspaceRoot={workspaceRoot}
+                        speaker={groupSpeaker?.(item.speaker.botId) ?? null}
+                        botId={item.speaker.botId}
+                        showSpeaker={isVerdict ? false : item.showSpeaker}
+                      />
+                    </div>
+                  );
+                }
+              case "group-system":
+                return (
+                  <p
+                    key={item.id}
+                    className="mx-auto max-w-[90%] text-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
+                  >
+                    {groupSystemLabel(item.event, item.message.text)}
+                  </p>
+                );
+              case "delegation":
+                return <div key={item.id}>{renderDelegation(item.task)}</div>;
+              case "question":
+                return (
+                  <QuestionCard
+                    key={item.id}
+                    card={item.card}
+                    botName={botName}
+                    responding={respondingIds.has(item.card.requestId)}
+                    onAnswer={onAnswerQuestion}
+                    onDismiss={onDismissQuestion}
+                  />
+                );
+              case "secret":
+                return (
+                  <SecretRequestCard
+                    key={item.id}
+                    card={item.card}
+                    botName={botName}
+                    responding={respondingIds.has(item.card.requestId)}
+                    onProvide={onProvideSecret}
+                    onDecline={onDeclineSecret}
+                  />
+                );
+              case "connection-approval":
+                return (
+                  <ConnectionApprovalCard
+                    key={item.id}
+                    card={item.card}
+                    botName={botName}
+                    expired={
+                      item.card.kind === "pending" &&
+                      approvalHasExpired(item.card.approval, approvalsNowMs)
+                    }
+                    responding={approvalRespondingIds.has(item.card.approvalId)}
+                    onApprove={(approvalId) => onDecideConnectionApproval(approvalId, "approved")}
+                    onDeny={(approvalId) => onDecideConnectionApproval(approvalId, "denied")}
+                  />
+                );
+              case "message":
+                return item.message.role === "user" ? (
+                  <UserMessage key={item.id} environmentId={environmentId} message={item.message} />
+                ) : (
+                  <AssistantMessage
+                    key={item.id}
+                    message={item.message}
+                    threadRef={threadRef}
+                    workspaceRoot={workspaceRoot}
+                    botName={botName}
+                  />
+                );
+              case "plan":
+                return (
+                  <div
+                    key={item.id}
+                    className="personal-markdown max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-3.5 text-[15px] leading-[1.45] text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]"
+                  >
+                    <p className="mb-1 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
+                      Plan
+                    </p>
+                    <ChatMarkdown
+                      text={item.plan.planMarkdown}
+                      cwd={workspaceRoot}
                       threadRef={threadRef}
-                      workspaceRoot={workspaceRoot}
-                      speaker={groupSpeaker?.(item.speaker.botId) ?? null}
-                      botId={item.speaker.botId}
-                      showSpeaker={isVerdict ? false : item.showSpeaker}
                     />
                   </div>
                 );
-              }
-            case "group-system":
-              return (
-                <p
-                  key={item.id}
-                  className="mx-auto max-w-[90%] text-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
-                >
-                  {groupSystemLabel(item.event, item.message.text)}
-                </p>
-              );
-            case "delegation":
-              return <div key={item.id}>{renderDelegation(item.task)}</div>;
-            case "question":
-              return (
-                <QuestionCard
-                  key={item.id}
-                  card={item.card}
-                  botName={botName}
-                  responding={respondingIds.has(item.card.requestId)}
-                  onAnswer={onAnswerQuestion}
-                  onDismiss={onDismissQuestion}
-                />
-              );
-            case "secret":
-              return (
-                <SecretRequestCard
-                  key={item.id}
-                  card={item.card}
-                  botName={botName}
-                  responding={respondingIds.has(item.card.requestId)}
-                  onProvide={onProvideSecret}
-                  onDecline={onDeclineSecret}
-                />
-              );
-            case "connection-approval":
-              return (
-                <ConnectionApprovalCard
-                  key={item.id}
-                  card={item.card}
-                  botName={botName}
-                  expired={
-                    item.card.kind === "pending" &&
-                    approvalHasExpired(item.card.approval, approvalsNowMs)
-                  }
-                  responding={approvalRespondingIds.has(item.card.approvalId)}
-                  onApprove={(approvalId) => onDecideConnectionApproval(approvalId, "approved")}
-                  onDeny={(approvalId) => onDecideConnectionApproval(approvalId, "denied")}
-                />
-              );
-            case "message":
-              return item.message.role === "user" ? (
-                <UserMessage key={item.id} environmentId={environmentId} message={item.message} />
-              ) : (
-                <AssistantMessage
-                  key={item.id}
-                  message={item.message}
-                  threadRef={threadRef}
-                  workspaceRoot={workspaceRoot}
-                  botName={botName}
-                />
-              );
-            case "plan":
-              return (
-                <div
-                  key={item.id}
-                  className="personal-markdown max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-3.5 text-[15px] leading-[1.45] text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]"
-                >
-                  <p className="mb-1 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
-                    Plan
-                  </p>
-                  <ChatMarkdown
-                    text={item.plan.planMarkdown}
-                    cwd={workspaceRoot}
-                    threadRef={threadRef}
+              case "work":
+                return (
+                  <ToolDetails
+                    key={item.id}
+                    entries={item.entries}
+                    live={item.id === liveWorkId}
+                    workspaceRoot={workspaceRoot}
                   />
-                </div>
-              );
-            case "work":
-              return (
-                <ToolDetails
-                  key={item.id}
-                  entries={item.entries}
-                  live={item.id === liveWorkId}
-                  workspaceRoot={workspaceRoot}
-                />
-              );
-          }
-        })}
+                );
+            }
+          })}
 
-        {pending.map((message) => (
-          <div key={message.id} className="flex flex-col items-end gap-1 opacity-70">
-            {message.attachments.map((attachment) => (
-              <span
-                key={attachment.id}
-                className="flex max-w-[78%] items-center gap-1.5 rounded-xl border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 py-2 text-sm"
-              >
-                <FileText aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} />
-                <span className="truncate">{attachment.name}</span>
-              </span>
-            ))}
-            {message.text.length > 0 ? (
-              <p className="max-w-[78%] rounded-[var(--personal-radius-bubble)] bg-[var(--personal-fill-muted)] px-3.5 py-2.5 text-[15px] leading-[1.4] break-words whitespace-pre-wrap text-[var(--personal-text)] md:text-[16px] md:leading-[1.5]">
-                {message.text}
-              </p>
-            ) : null}
-            <span className="text-xs text-[var(--personal-text-tertiary)]">Sending</span>
-          </div>
-        ))}
-
-        {approvals.map((approval) => (
-          <ApprovalCard
-            key={approval.requestId}
-            approval={approval}
-            botName={botName}
-            responding={respondingIds.has(approval.requestId)}
-            onRespond={onRespondToApproval}
-          />
-        ))}
-
-        {errorText !== null ? (
-          <div
-            role="alert"
-            className="max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] px-3.5 py-2.5 text-sm break-words text-[var(--personal-danger)]"
-          >
-            <p>{errorText}</p>
-            {errorDetail ? (
-              <details className="mt-1.5">
-                <summary className="cursor-pointer text-[12px] font-medium select-none">
-                  Details
-                </summary>
-                <p className="mt-1 text-[12px] leading-snug break-words opacity-80">
-                  {errorDetail}
+          {pending.map((message) => (
+            <div key={message.id} className="flex flex-col items-end gap-1 opacity-70">
+              {message.attachments.map((attachment) => (
+                <span
+                  key={attachment.id}
+                  className="flex max-w-[78%] items-center gap-1.5 rounded-xl border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 py-2 text-sm"
+                >
+                  <FileText aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} />
+                  <span className="truncate">{attachment.name}</span>
+                </span>
+              ))}
+              {message.text.length > 0 ? (
+                <p className="max-w-[78%] rounded-[var(--personal-radius-bubble)] bg-[var(--personal-fill-muted)] px-3.5 py-2.5 text-[15px] leading-[1.4] break-words whitespace-pre-wrap text-[var(--personal-text)] md:text-[16px] md:leading-[1.5]">
+                  {message.text}
                 </p>
-              </details>
-            ) : null}
-          </div>
-        ) : null}
+              ) : null}
+              <span className="text-xs text-[var(--personal-text-tertiary)]">Sending</span>
+            </div>
+          ))}
+
+          {approvals.map((approval) => (
+            <ApprovalCard
+              key={approval.requestId}
+              approval={approval}
+              botName={botName}
+              responding={respondingIds.has(approval.requestId)}
+              onRespond={onRespondToApproval}
+            />
+          ))}
+
+          {errorText !== null ? (
+            <div
+              role="alert"
+              className="max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] px-3.5 py-2.5 text-sm break-words text-[var(--personal-danger)]"
+            >
+              <p>{errorText}</p>
+              {errorDetail ? (
+                <details className="mt-1.5">
+                  <summary className="cursor-pointer text-[12px] font-medium select-none">
+                    Details
+                  </summary>
+                  <p className="mt-1 text-[12px] leading-snug break-words opacity-80">
+                    {errorDetail}
+                  </p>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
+      {showJump ? (
+        <button
+          type="button"
+          aria-label="Jump to latest message"
+          // Keeps the composer focused, so the iPhone keyboard stays up.
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={jumpToLatest}
+          className="group absolute bottom-1 left-1/2 flex size-11 -translate-x-1/2 items-center justify-center rounded-full outline-none"
+        >
+          <span className="flex size-9 items-center justify-center rounded-full border border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)] shadow-[var(--personal-shadow-lift)] group-focus-visible:ring-2 group-focus-visible:ring-[var(--personal-text)] group-active:opacity-70">
+            <ArrowDown aria-hidden="true" className="size-[18px]" strokeWidth={2} />
+          </span>
+        </button>
+      ) : null}
     </div>
   );
 }
