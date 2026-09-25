@@ -26,6 +26,7 @@ import {
   PersonalRoutinesError,
   PersonalRoutineTrigger,
   PersonalTaskId,
+  ThreadId,
   personalRoutineRelayMessage,
   type PersonalRoutine,
   type PersonalRoutineCreateInput,
@@ -39,6 +40,7 @@ import {
 } from "@t3tools/contracts";
 
 import { timingSafeEqualBase64Url } from "../../auth/utils.ts";
+import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
@@ -65,6 +67,8 @@ const RoutineDbRow = Schema.Struct({
   enabled: Schema.Number,
   missedPolicy: PersonalRoutineMissedPolicy,
   delivery: PersonalRoutineDelivery,
+  threadId: Schema.NullOr(ThreadId),
+  newChatEachRun: Schema.Number,
   nextDueAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   lastOccurrenceLocal: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtcFromString,
@@ -98,6 +102,8 @@ const ROUTINE_COLUMNS = `
   enabled AS "enabled",
   missed_policy AS "missedPolicy",
   delivery AS "delivery",
+  thread_id AS "threadId",
+  new_chat_each_run AS "newChatEachRun",
   next_due_utc AS "nextDueAt",
   last_occurrence_local AS "lastOccurrenceLocal",
   created_at AS "createdAt",
@@ -227,6 +233,7 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const tasks = yield* PersonalTaskService.PersonalTaskService;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
+  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   // Serialises ticks with mutations so an edit never races a firing.
   const lock = yield* Semaphore.make(1);
   const preparers = new Map<string, PersonalRoutinePreparer>();
@@ -246,6 +253,7 @@ export const make = Effect.gen(function* () {
   const toRoutine = (row: typeof RoutineDbRow.Type): PersonalRoutine => ({
     ...row,
     enabled: row.enabled === 1,
+    newChatEachRun: row.newChatEachRun === 1,
   });
 
   const readRoutine = (routineId: PersonalRoutineId) =>
@@ -317,6 +325,42 @@ export const make = Effect.gen(function* () {
     isValidTimeZone(timeZone)
       ? Effect.succeed(timeZone)
       : Effect.fail(fail(`'${timeZone}' is not a known IANA time zone.`));
+
+  /**
+   * The chat a model run goes into: the routine's source chat while it is
+   * still a live, unarchived chat of the routine's bot and not a group
+   * member's transcript; otherwise undefined, and the run opens a new chat as
+   * it always did (also for opted-out and Scheduled-screen routines).
+   */
+  const runThreadFor = (routine: PersonalRoutine) =>
+    Effect.gen(function* () {
+      const threadId = routine.threadId ?? null;
+      if (threadId === null || routine.newChatEachRun === true) return undefined;
+      const link = yield* bots.getThreadLink({ threadId });
+      if (
+        Option.isNone(link) ||
+        link.value.botId !== routine.botId ||
+        link.value.archivedAt !== null
+      ) {
+        return undefined;
+      }
+      // Absent for a deleted or archived chat.
+      const shell = yield* snapshots.getThreadShellById(threadId);
+      if (Option.isNone(shell)) return undefined;
+      const members = yield* sql<{ readonly one: number }>`
+        SELECT 1 AS "one" FROM personal_group_members
+        WHERE thread_id = ${threadId} AND left_at IS NULL
+        LIMIT 1
+      `;
+      return members.length === 0 ? threadId : undefined;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("personal routine could not check its chat; opening a new one", {
+          routineId: routine.routineId,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(undefined)),
+      ),
+    );
 
   // Records the slot and, unless skipped, starts its task. Safe to repeat:
   // the occurrence row dedupes the slot and the task idempotency key dedupes
@@ -393,6 +437,9 @@ export const make = Effect.gen(function* () {
       objective = prepared.objective;
       onStarted = prepared.onStarted;
     }
+    // Relays keep their own new chat per run: only model runs go into the
+    // source chat, and create_routine (the only way to get one) never relays.
+    const runThread = relay ? undefined : yield* runThreadFor(routine);
     const start: Effect.Effect<PersonalTask, PersonalRoutinesError | PersonalTasksError> = !relay
       ? tasks.createTask({
           idempotencyKey,
@@ -400,6 +447,7 @@ export const make = Effect.gen(function* () {
           title: routine.title,
           objective,
           source: "routine",
+          ...(runThread === undefined ? {} : { threadId: runThread }),
         })
       : text === null
         ? Effect.fail(
@@ -614,12 +662,14 @@ export const make = Effect.gen(function* () {
               INSERT INTO personal_routines (
                 routine_id, bot_id, title, prompt, trigger_kind, schedule_json, event_label,
                 hook_token, last_fired_utc, time_zone, enabled, missed_policy, delivery,
-                next_due_utc, last_occurrence_local, created_at, updated_at
+                thread_id, new_chat_each_run, next_due_utc, last_occurrence_local, created_at,
+                updated_at
               )
               VALUES (
                 ${input.routineId}, ${input.botId}, ${input.title}, ${input.prompt}, 'event',
                 ${encodeSchedule(null)}, ${eventLabel}, ${makeHookToken()}, NULL, ${timeZone},
-                1, ${input.missedPolicy ?? "coalesce"}, ${input.delivery ?? "model"}, NULL, NULL,
+                1, ${input.missedPolicy ?? "coalesce"}, ${input.delivery ?? "model"},
+                ${input.threadId ?? null}, ${input.newChatEachRun === true ? 1 : 0}, NULL, NULL,
                 ${nowIso}, ${nowIso}
               )
               ON CONFLICT (routine_id) DO NOTHING
@@ -637,12 +687,15 @@ export const make = Effect.gen(function* () {
           yield* sql`
             INSERT INTO personal_routines (
               routine_id, bot_id, title, prompt, trigger_kind, schedule_json, time_zone, enabled,
-              missed_policy, delivery, next_due_utc, last_occurrence_local, created_at, updated_at
+              missed_policy, delivery, thread_id, new_chat_each_run, next_due_utc,
+              last_occurrence_local, created_at, updated_at
             )
             VALUES (
               ${input.routineId}, ${input.botId}, ${input.title}, ${input.prompt}, 'schedule',
               ${encodeSchedule(schedule)}, ${timeZone}, 1, ${input.missedPolicy ?? "coalesce"},
-              ${input.delivery ?? "model"}, ${isoOfMs(next.dueMs)}, NULL, ${nowIso}, ${nowIso}
+              ${input.delivery ?? "model"}, ${input.threadId ?? null},
+              ${input.newChatEachRun === true ? 1 : 0}, ${isoOfMs(next.dueMs)}, NULL, ${nowIso},
+              ${nowIso}
             )
             ON CONFLICT (routine_id) DO NOTHING
           `;
@@ -658,6 +711,7 @@ export const make = Effect.gen(function* () {
           const current = yield* requireRoutine(input.routineId);
           if (input.botId !== undefined) yield* requireLiveBot(input.botId);
           const timeZone = yield* requireTimeZone(input.timeZone ?? current.timeZone);
+          const newChatEachRun = (input.newChatEachRun ?? current.newChatEachRun) === true ? 1 : 0;
           const now = yield* DateTime.now;
           const nowMs = DateTime.toEpochMillis(now);
           // The trigger is fixed at creation, so an edit only ever touches the
@@ -675,6 +729,7 @@ export const make = Effect.gen(function* () {
                   event_label = ${eventLabel},
                   time_zone = ${timeZone},
                   delivery = ${input.delivery ?? current.delivery ?? "model"},
+                  new_chat_each_run = ${newChatEachRun},
                   updated_at = ${DateTime.formatIso(now)}
               WHERE routine_id = ${input.routineId}
             `;
@@ -705,6 +760,7 @@ export const make = Effect.gen(function* () {
                 time_zone = ${timeZone},
                 missed_policy = ${input.missedPolicy ?? current.missedPolicy},
                 delivery = ${input.delivery ?? current.delivery ?? "model"},
+                new_chat_each_run = ${newChatEachRun},
                 next_due_utc = ${nextDueAt},
                 updated_at = ${DateTime.formatIso(now)}
             WHERE routine_id = ${input.routineId}

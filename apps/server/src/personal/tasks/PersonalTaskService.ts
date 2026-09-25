@@ -112,6 +112,12 @@ export const providerWaitPause = (
 
 export interface PersonalTaskCreateOptions extends PersonalTaskCreateInput {
   readonly source?: PersonalTaskSource;
+  /**
+   * Run in this existing chat instead of a new one. The caller vouches that
+   * the chat is the bot's and usable; the dispatcher only waits for it to be
+   * idle (no turn running), so the task never interrupts or overlaps a turn.
+   */
+  readonly threadId?: ThreadId;
   readonly maxDepth?: number;
   readonly maxChildren?: number;
 }
@@ -265,6 +271,10 @@ type WorkItem =
   | { readonly type: "settle"; readonly threadId: ThreadId }
   | { readonly type: "resume"; readonly threadId: ThreadId };
 
+/** A session in the middle of a turn: a queued task for its thread waits. */
+const sessionIsBusy = (session: OrchestrationSession | null | undefined) =>
+  session?.status === "running" || session?.status === "starting";
+
 /** A session that still has a provider process behind it. */
 const sessionIsAlive = (session: OrchestrationSession | null | undefined) =>
   session !== null &&
@@ -379,6 +389,9 @@ export const make = Effect.gen(function* () {
   const activeThreadIds = new Set<string>();
   // Threads whose waiting task queues once their provider session is gone.
   const resumingThreadIds = new Set<string>();
+  // Threads with a queued task held back because a turn (usually the user's
+  // own chat turn) is running there; their next session change re-pumps.
+  const idleWaitThreadIds = new Set<string>();
   /**
    * When a thread's attempt last stopped owning it, in epoch ms. Read together
    * with `activeThreadIds` by `ownsThreadTurn`, so that question is answered
@@ -787,6 +800,21 @@ export const make = Effect.gen(function* () {
     return claimed;
   });
 
+  // Whether a turn the task does not own is running in its thread. The task's
+  // own earlier turn does not count: a turn paused on a provider wait can
+  // still read as running until its interrupt lands, and its retry must go.
+  const heldByOtherTurn = Effect.fn("PersonalTaskService.heldByOtherTurn")(function* (
+    task: PersonalTask,
+    threadId: ThreadId,
+  ) {
+    const session = yield* readSession(threadId).pipe(Effect.orElseSucceed(() => null));
+    if (session === null || !sessionIsBusy(session)) return false;
+    const own = yield* repository.listAttempts(task.taskId);
+    return !own.some(
+      (attempt) => attempt.turnId !== null && attempt.turnId === session.activeTurnId,
+    );
+  });
+
   // Fills free slots. Slots are active attempts, not task statuses: a parent
   // waiting on children has ended its attempt and holds nothing.
   const pump = Effect.fn("PersonalTaskService.pump")(function* () {
@@ -797,9 +825,24 @@ export const make = Effect.gen(function* () {
       }
       const busyThreads = new Set<string>(active.map((attempt) => attempt.providerThreadId));
       const candidates = yield* repository.listClaimable(yield* DateTime.now);
-      const next = candidates.find(
-        (task) => task.threadId === null || !busyThreads.has(task.threadId),
-      );
+      // A task bound to a thread also waits while a turn nobody's task owns
+      // runs there (the user chatting in that chat): starting now would land
+      // in the middle of it. It stays queued, so it still counts as unfinished.
+      let next: PersonalTask | undefined;
+      idleWaitThreadIds.clear();
+      for (const task of candidates) {
+        if (task.threadId === null) {
+          next = task;
+          break;
+        }
+        if (busyThreads.has(task.threadId)) continue;
+        if (yield* heldByOtherTurn(task, task.threadId)) {
+          idleWaitThreadIds.add(task.threadId);
+          continue;
+        }
+        next = task;
+        break;
+      }
       if (next === undefined) {
         return;
       }
@@ -1138,7 +1181,11 @@ export const make = Effect.gen(function* () {
         const resume = resumingThreadIds.has(threadId)
           ? worker.enqueue({ type: "resume", threadId })
           : Effect.void;
-        return Effect.andThen(session, resume);
+        const idle =
+          idleWaitThreadIds.has(threadId) && !sessionIsBusy(event.payload.session)
+            ? worker.enqueue({ type: "pump" })
+            : Effect.void;
+        return Effect.andThen(Effect.andThen(session, resume), idle);
       }
       case "thread.message-sent":
         // Only completed assistant messages: deltas would flood the worker.
@@ -1168,7 +1215,7 @@ export const make = Effect.gen(function* () {
             rootTaskId: taskId,
             parentTaskId: null,
             botId: input.botId,
-            threadId: null,
+            threadId: input.threadId ?? null,
             title: input.title,
             objective: input.objective,
             acceptanceCriteria: input.acceptanceCriteria ?? "",

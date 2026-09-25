@@ -115,15 +115,29 @@ export function formatNextRun(instantIso: string | null, timeZone: string): stri
   }).format(Date.parse(instantIso));
 }
 
+/** Whether a routine's runs open a new chat rather than going into its source chat. */
+export const opensNewChat = (routine: PersonalRoutine) =>
+  (routine.threadId ?? null) === null || routine.newChatEachRun === true;
+
+/** Where the runs go, as a sentence for the confirmation. */
+export const routineRunsIn = (routine: PersonalRoutine, callerThreadId: string) =>
+  opensNewChat(routine)
+    ? "Each run opens a new chat."
+    : routine.threadId === callerThreadId
+      ? "Each run is posted in this chat."
+      : "Each run is posted in the chat it was created in.";
+
 /** The confirmation update_routine and set_routine_enabled hand back. */
-export function routineChangeResult(routine: PersonalRoutine) {
+export function routineChangeResult(routine: PersonalRoutine, callerThreadId?: string) {
   const nextRunUtc =
     routine.enabled && routine.nextDueAt !== null ? DateTime.formatIso(routine.nextDueAt) : null;
   const nextRunLocal = formatNextRun(nextRunUtc, routine.timeZone);
   const state = routine.enabled ? `Next run: ${nextRunLocal ?? "none"}` : "Paused";
   return {
     routineId: routine.routineId,
-    summary: `${routine.title}: ${describePersonalRoutineTrigger(routine)}. ${state}.`,
+    summary: `${routine.title}: ${describePersonalRoutineTrigger(routine)}. ${state}.${
+      callerThreadId === undefined ? "" : ` ${routineRunsIn(routine, callerThreadId)}`
+    }`,
     enabled: routine.enabled,
     timeZone: routine.timeZone,
     nextRunLocal,
@@ -327,6 +341,9 @@ const make = Effect.gen(function* () {
             schedule,
             ...(input.timeZone === undefined ? {} : { timeZone: input.timeZone }),
             missedPolicy: input.missedRuns === "skip" ? "skip" : "coalesce",
+            // The chat that asked for it: each run comes back here unless opted out.
+            threadId: scope.threadId,
+            newChatEachRun: input.newChatEachRun === true,
           })
           .pipe(Effect.mapError((error) => refuse(error.message)));
         const nextRunUtc =
@@ -334,7 +351,7 @@ const make = Effect.gen(function* () {
         const nextRunLocal = formatNextRun(nextRunUtc, routine.timeZone);
         return {
           routineId: routine.routineId,
-          summary: `${routine.title}: ${describePersonalRoutineTrigger(routine)}. Next run: ${nextRunLocal ?? "none"}.`,
+          summary: `${routine.title}: ${describePersonalRoutineTrigger(routine)}. Next run: ${nextRunLocal ?? "none"}. ${routineRunsIn(routine, scope.threadId)}`,
           timeZone: routine.timeZone,
           nextRunLocal,
           nextRunUtc,
@@ -342,7 +359,7 @@ const make = Effect.gen(function* () {
       }),
     list_routines: () =>
       Effect.gen(function* () {
-        yield* requireBotThread;
+        const { scope } = yield* requireBotThread;
         const [all, botList] = yield* Effect.all([
           routines.list().pipe(Effect.mapError((error) => refuse(error.message))),
           liveBots,
@@ -355,6 +372,8 @@ const make = Effect.gen(function* () {
             botName: names.get(routine.botId) ?? "(deleted bot)",
             schedule: describePersonalRoutineTrigger(routine),
             enabled: routine.enabled,
+            newChatEachRun: opensNewChat(routine),
+            runsInThisChat: !opensNewChat(routine) && routine.threadId === scope.threadId,
             prompt: routine.prompt,
             nextRunLocal: routine.enabled
               ? formatNextRun(
@@ -367,7 +386,7 @@ const make = Effect.gen(function* () {
       }),
     update_routine: (input) =>
       Effect.gen(function* () {
-        yield* requireBotThread;
+        const { scope } = yield* requireBotThread;
         const current = yield* requireRoutine(input.routineId);
         let schedule: PersonalRoutineSchedule | undefined;
         if (touchesSchedule(input)) {
@@ -399,7 +418,13 @@ const make = Effect.gen(function* () {
                   input.missedRuns === "skip" ? ("skip" as const) : ("coalesce" as const),
               }),
           ...(botId === undefined ? {} : { botId }),
+          ...(input.newChatEachRun === undefined ? {} : { newChatEachRun: input.newChatEachRun }),
         };
+        if (input.newChatEachRun === false && (current.threadId ?? null) === null) {
+          return yield* refuse(
+            `'${current.title}' was not created from a chat, so each run always opens a new chat.`,
+          );
+        }
         if (Object.keys(edits).length === 0 && input.enabled === undefined) {
           return yield* refuse("Nothing to change: pass at least one field to update.");
         }
@@ -412,7 +437,10 @@ const make = Effect.gen(function* () {
         if (input.enabled !== undefined) {
           routine = yield* setEnabled(routine, input.enabled);
         }
-        return routineChangeResult(routine);
+        return routineChangeResult(
+          routine,
+          input.newChatEachRun === undefined ? undefined : scope.threadId,
+        );
       }),
     set_routine_enabled: (input) =>
       Effect.gen(function* () {

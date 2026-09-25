@@ -84,6 +84,19 @@ function fakeRoutines(initial: ReadonlyArray<PersonalRoutine>) {
     store,
     layer: Layer.mock(PersonalRoutineService)({
       list: () => Effect.succeed({ routines: [...store.values()], occurrences: [] }),
+      create: (input) =>
+        Effect.sync(() =>
+          write(
+            routine({
+              routineId: input.routineId,
+              botId: input.botId,
+              title: input.title,
+              prompt: input.prompt,
+              threadId: input.threadId ?? null,
+              newChatEachRun: input.newChatEachRun === true,
+            }),
+          ),
+        ),
       get: ({ routineId }) => read(routineId),
       update: (input) =>
         read(input.routineId).pipe(
@@ -95,6 +108,9 @@ function fakeRoutines(initial: ReadonlyArray<PersonalRoutine>) {
               ...(input.botId === undefined ? {} : { botId: input.botId }),
               ...(input.schedule === undefined ? {} : { schedule: input.schedule }),
               ...(input.timeZone === undefined ? {} : { timeZone: input.timeZone }),
+              ...(input.newChatEachRun === undefined
+                ? {}
+                : { newChatEachRun: input.newChatEachRun }),
             }),
           ),
         ),
@@ -109,7 +125,12 @@ function fakeRoutines(initial: ReadonlyArray<PersonalRoutine>) {
 
 function call(
   routines: ReturnType<typeof fakeRoutines>,
-  tool: "update_routine" | "set_routine_enabled" | "delete_routine" | "list_routines",
+  tool:
+    | "create_routine"
+    | "update_routine"
+    | "set_routine_enabled"
+    | "delete_routine"
+    | "list_routines",
   params: Record<string, unknown>,
 ) {
   const layer = PersonalToolkitHandlersLive.pipe(
@@ -237,6 +258,87 @@ describe("routine management tools", () => {
       const listed = yield* call(routines, "list_routines", {});
       expect(listed).toContain('"routineId":"r1"');
       expect(listed).toContain('"prompt":"Brief me."');
+    }),
+  );
+});
+
+describe("routines run in the chat they were created from", () => {
+  it.effect("create_routine records the calling chat unless newChatEachRun is set", () =>
+    Effect.gen(function* () {
+      const routines = fakeRoutines([]);
+      const inChat = yield* call(routines, "create_routine", {
+        title: "Confirm release",
+        prompt: "Check it.",
+        frequency: "once",
+        date: "2026-09-25",
+        time: "16:20",
+      });
+      const optedOut = yield* call(routines, "create_routine", {
+        title: "Nightly",
+        prompt: "Report.",
+        frequency: "daily",
+        time: "04:00",
+        newChatEachRun: true,
+      });
+      const [first, second] = [...routines.store.values()];
+      expect([first?.threadId, first?.newChatEachRun]).toEqual(["thread", false]);
+      expect([second?.threadId, second?.newChatEachRun]).toEqual(["thread", true]);
+      expect(inChat).toContain("Each run is posted in this chat.");
+      expect(optedOut).toContain("Each run opens a new chat.");
+    }),
+  );
+
+  it.effect("list_routines says where each routine's runs go", () =>
+    Effect.gen(function* () {
+      const routines = fakeRoutines([
+        routine({ routineId: "here", threadId: ThreadId.make("thread") }),
+        routine({ routineId: "elsewhere", threadId: ThreadId.make("other-chat") }),
+        routine({
+          routineId: "opted-out",
+          threadId: ThreadId.make("thread"),
+          newChatEachRun: true,
+        }),
+        routine({ routineId: "screen" }),
+      ]);
+      // The encoded tool result, fields in schema order.
+      const rows = yield* call(routines, "list_routines", {});
+      for (const [routineId, newChat, here] of [
+        ["here", false, true],
+        ["elsewhere", false, false],
+        ["opted-out", true, false],
+        ["screen", true, false],
+      ] as const) {
+        const pattern = new RegExp(
+          `"routineId":"${routineId}"[^}]*"newChatEachRun":${newChat},"runsInThisChat":${here}`,
+        );
+        expect(rows).toMatch(pattern);
+      }
+    }),
+  );
+
+  it.effect("update_routine flips newChatEachRun, and refuses a chat for a screen-made one", () =>
+    Effect.gen(function* () {
+      const routines = fakeRoutines([
+        routine({ routineId: "r1", threadId: ThreadId.make("thread") }),
+        routine({ routineId: "screen" }),
+      ]);
+      const out = yield* call(routines, "update_routine", {
+        routineId: "r1",
+        newChatEachRun: true,
+      });
+      expect(routines.store.get("r1")?.newChatEachRun).toBe(true);
+      expect(out).toContain("Each run opens a new chat.");
+      const back = yield* call(routines, "update_routine", {
+        routineId: "r1",
+        newChatEachRun: false,
+      });
+      expect(routines.store.get("r1")?.newChatEachRun).toBe(false);
+      expect(back).toContain("Each run is posted in this chat.");
+      const refused = yield* call(routines, "update_routine", {
+        routineId: "screen",
+        newChatEachRun: false,
+      });
+      expect(refused).toContain("was not created from a chat");
     }),
   );
 });
