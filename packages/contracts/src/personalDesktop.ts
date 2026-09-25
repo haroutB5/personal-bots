@@ -75,8 +75,12 @@ export class PersonalDesktopError extends Schema.TaggedError<PersonalDesktopErro
  */
 export const PERSONAL_DESKTOP_STREAM_PATH = "/api/personal/desktop/stream";
 
-/** The longest frame edge the live view ever sends, in pixels. */
-export const PERSONAL_DESKTOP_VIEW_MAX_EDGE = 1280;
+/**
+ * The longest frame edge the live view ever sends, in pixels: a high-DPR
+ * phone in landscape (2796 device px wide) gets most of a 1440p screen, and
+ * slow acks still step frames down from here.
+ */
+export const PERSONAL_DESKTOP_VIEW_MAX_EDGE = 2560;
 /** The shortest box edge the server honours; smaller requests are raised to it. */
 export const PERSONAL_DESKTOP_VIEW_MIN_EDGE = 240;
 
@@ -99,6 +103,25 @@ export const PERSONAL_DESKTOP_WHEEL_NOTCH = 120;
 const WheelDelta = Schema.Finite.check(
   Schema.isGreaterThanOrEqualTo(-20 * PERSONAL_DESKTOP_WHEEL_NOTCH),
 ).check(Schema.isLessThanOrEqualTo(20 * PERSONAL_DESKTOP_WHEEL_NOTCH));
+/** A share of the monitor, 0..1 on each axis. */
+const DesktopViewFraction = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)).check(
+  Schema.isLessThanOrEqualTo(1),
+);
+
+/**
+ * The part of the monitor the viewer shows, as fractions of the monitor
+ * (0,0,1,1 is all of it). A zoomed-in viewer names just what is on its
+ * screen, so the server captures that at up to native resolution instead of
+ * the whole monitor shrunk to the box.
+ */
+export const PersonalDesktopViewRegion = Schema.Struct({
+  x: DesktopViewFraction,
+  y: DesktopViewFraction,
+  width: DesktopViewFraction,
+  height: DesktopViewFraction,
+});
+export type PersonalDesktopViewRegion = typeof PersonalDesktopViewRegion.Type;
+
 const FramePoint = {
   x: DesktopFrameCoordinate,
   y: DesktopFrameCoordinate,
@@ -118,9 +141,17 @@ export const PersonalDesktopViewInput = Schema.Union([
   Schema.TaggedStruct("Ack", {}),
   /**
    * The box the frame is shown in, in device pixels. The server fits the
-   * screen inside it, capped at {@link PERSONAL_DESKTOP_VIEW_MAX_EDGE}.
+   * screen (or `region` of it) inside it, never upscaling, capped at
+   * {@link PERSONAL_DESKTOP_VIEW_MAX_EDGE}. A client that sends `region`
+   * (even the whole monitor) gets region frames
+   * ({@link encodePersonalDesktopFrame}); one that never does gets plain
+   * browser frames of the whole monitor.
    */
-  Schema.TaggedStruct("Viewport", { width: DesktopViewExtent, height: DesktopViewExtent }),
+  Schema.TaggedStruct("Viewport", {
+    width: DesktopViewExtent,
+    height: DesktopViewExtent,
+    region: Schema.optional(PersonalDesktopViewRegion),
+  }),
   /**
    * Take (`on`) or hand back remote control. Taking it makes the user the
    * PC's holder: a bot using it is stopped, bots in line keep waiting behind
@@ -188,9 +219,11 @@ export const PersonalDesktopViewMessage = Schema.Union([
 export type PersonalDesktopViewMessage = typeof PersonalDesktopViewMessage.Type;
 
 /**
- * The box a frame is fitted into: the viewer's box with its long edge capped
- * at {@link PERSONAL_DESKTOP_VIEW_MAX_EDGE} (aspect kept) and each edge at
- * least {@link PERSONAL_DESKTOP_VIEW_MIN_EDGE}.
+ * The box a frame is fitted into: the viewer's box with each edge capped at
+ * {@link PERSONAL_DESKTOP_VIEW_MAX_EDGE} and raised to at least
+ * {@link PERSONAL_DESKTOP_VIEW_MIN_EDGE}. Capping the edges separately (not
+ * shrinking the box whole) still keeps the fitted frame's long edge under
+ * the cap, without costing a wide landscape box its height.
  */
 export function clampPersonalDesktopViewBox(box: {
   readonly width: number;
@@ -200,9 +233,93 @@ export function clampPersonalDesktopViewBox(box: {
     Number.isFinite(box.width) && box.width > 0 ? box.width : PERSONAL_DESKTOP_VIEW_MAX_EDGE;
   const height =
     Number.isFinite(box.height) && box.height > 0 ? box.height : PERSONAL_DESKTOP_VIEW_MAX_EDGE;
-  const scale = Math.min(1, PERSONAL_DESKTOP_VIEW_MAX_EDGE / Math.max(width, height));
-  return {
-    width: Math.max(PERSONAL_DESKTOP_VIEW_MIN_EDGE, Math.round(width * scale)),
-    height: Math.max(PERSONAL_DESKTOP_VIEW_MIN_EDGE, Math.round(height * scale)),
+  const edge = (value: number) =>
+    Math.max(
+      PERSONAL_DESKTOP_VIEW_MIN_EDGE,
+      Math.round(Math.min(PERSONAL_DESKTOP_VIEW_MAX_EDGE, value)),
+    );
+  return { width: edge(width), height: edge(height) };
+}
+
+/**
+ * A live view frame that says which part of the monitor it shows. The first
+ * 8 bytes are a browser frame header (u16 width, u16 height, u16 100, u16
+ * version) with version {@link PERSONAL_DESKTOP_FRAME_VERSION}, so the browser
+ * decoder refuses it rather than misplacing it; then u16 region x, y, width,
+ * height and u16 monitor width, height, all in the monitor's physical pixels
+ * (region relative to the monitor's top-left); then the JPEG.
+ *
+ * Carrying the region on every frame means a frame captured before a zoom
+ * change is still drawn where it belongs, and taps map through the monitor
+ * size rather than whichever frame happens to be on screen.
+ */
+export const PERSONAL_DESKTOP_FRAME_HEADER_BYTES = 20;
+export const PERSONAL_DESKTOP_FRAME_VERSION = 2;
+
+export interface PersonalDesktopFrameMeta {
+  /** The frame's own pixels. */
+  readonly width: number;
+  readonly height: number;
+  /** What it shows, in monitor pixels. */
+  readonly region: {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
   };
+  readonly screenWidth: number;
+  readonly screenHeight: number;
+}
+
+const toU16 = (value: number) => Math.min(65_535, Math.max(0, Math.round(value)));
+
+export function encodePersonalDesktopFrame(
+  jpeg: Uint8Array,
+  meta: PersonalDesktopFrameMeta,
+): Uint8Array {
+  const frame = new Uint8Array(PERSONAL_DESKTOP_FRAME_HEADER_BYTES + jpeg.length);
+  const header = new DataView(frame.buffer, 0, PERSONAL_DESKTOP_FRAME_HEADER_BYTES);
+  const fields = [
+    meta.width,
+    meta.height,
+    100,
+    PERSONAL_DESKTOP_FRAME_VERSION,
+    meta.region.x,
+    meta.region.y,
+    meta.region.width,
+    meta.region.height,
+    meta.screenWidth,
+    meta.screenHeight,
+  ];
+  fields.forEach((value, index) => header.setUint16(index * 2, toU16(value)));
+  frame.set(jpeg, PERSONAL_DESKTOP_FRAME_HEADER_BYTES);
+  return frame;
+}
+
+/** A region frame, or null for anything else (a plain browser frame included). */
+export function decodePersonalDesktopFrame(
+  frame: Uint8Array,
+): { readonly meta: PersonalDesktopFrameMeta; readonly jpeg: Uint8Array } | null {
+  if (frame.length <= PERSONAL_DESKTOP_FRAME_HEADER_BYTES) return null;
+  const header = new DataView(frame.buffer, frame.byteOffset, PERSONAL_DESKTOP_FRAME_HEADER_BYTES);
+  if (header.getUint16(6) !== PERSONAL_DESKTOP_FRAME_VERSION) return null;
+  const at = (index: number) => header.getUint16(index * 2);
+  const meta: PersonalDesktopFrameMeta = {
+    width: at(0),
+    height: at(1),
+    region: { x: at(4), y: at(5), width: at(6), height: at(7) },
+    screenWidth: at(8),
+    screenHeight: at(9),
+  };
+  if (
+    meta.width === 0 ||
+    meta.height === 0 ||
+    meta.region.width === 0 ||
+    meta.region.height === 0 ||
+    meta.region.x + meta.region.width > meta.screenWidth ||
+    meta.region.y + meta.region.height > meta.screenHeight
+  ) {
+    return null;
+  }
+  return { meta, jpeg: frame.subarray(PERSONAL_DESKTOP_FRAME_HEADER_BYTES) };
 }

@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
     callbacks: DesktopViewCallbacks;
     closed: boolean;
     viewports: Array<[number, number]>;
+    regions: unknown[];
     sent: string[];
   }>,
 }));
@@ -47,11 +48,15 @@ vi.mock("./desktopViewClient", () => ({
       callbacks,
       closed: false,
       viewports: [] as Array<[number, number]>,
+      regions: [] as unknown[],
       sent: [] as string[],
     };
     state.sockets.push(socket);
     return {
-      setViewport: (width: number, height: number) => socket.viewports.push([width, height]),
+      setViewport: (width: number, height: number, region?: unknown) => {
+        socket.viewports.push([width, height]);
+        socket.regions.push(region);
+      },
       send: (message: unknown) => socket.sent.push(JSON.stringify(message)),
       close: () => {
         socket.closed = true;
@@ -83,6 +88,9 @@ const HELD: PersonalDesktopStatus = {
 let renderer: ReactTestRenderer | undefined;
 let visibility: "visible" | "hidden" = "visible";
 const visibilityListeners = new Set<() => void>();
+/** Whether the phone is on its side (the compact landscape media query). */
+let landscape = false;
+const mediaListeners = new Set<() => void>();
 const drawImage = vi.fn();
 
 beforeEach(() => {
@@ -96,7 +104,19 @@ beforeEach(() => {
     removeEventListener: (_name: string, listener: () => void) =>
       visibilityListeners.delete(listener),
   });
-  vi.stubGlobal("window", { setTimeout, clearTimeout, devicePixelRatio: 3 });
+  landscape = false;
+  vi.stubGlobal("window", {
+    setTimeout,
+    clearTimeout,
+    devicePixelRatio: 3,
+    matchMedia: (query: string) => ({
+      get matches() {
+        return query.includes("landscape") && landscape;
+      },
+      addEventListener: (_name: string, listener: () => void) => mediaListeners.add(listener),
+      removeEventListener: (_name: string, listener: () => void) => mediaListeners.delete(listener),
+    }),
+  });
 });
 
 afterEach(async () => {
@@ -105,20 +125,43 @@ afterEach(async () => {
   state.sockets.length = 0;
   state.status = null;
   visibilityListeners.clear();
+  mediaListeners.clear();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
 
-const nodeMock = (element: { type: unknown }) =>
+/**
+ * The picture's on-screen rect: 390 x 243.75 CSS px from the top-left corner
+ * of a 390 x 244 box, moved and scaled by whatever zoom it is rendered with.
+ */
+const pictureRect = () => {
+  const transform =
+    renderer?.root.findByProps({ "data-testid": "desktop-picture" }).props.style?.transform ?? "";
+  const match = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/.exec(transform);
+  const [x, y, scale] =
+    match === null ? [0, 0, 1] : [Number(match[1]), Number(match[2]), Number(match[3])];
+  return { left: x, top: y, width: 390 * scale, height: 243.75 * scale };
+};
+
+const nodeMock = (element: { type: unknown; props: unknown }) =>
   element.type === "canvas"
     ? {
         width: 0,
         height: 0,
         getContext: () => ({ drawImage }),
-        // The picture fills 390 x 243.75 CSS px from the top-left corner.
-        getBoundingClientRect: () => ({ left: 0, top: 0, width: 390, height: 243.75 }),
+        getBoundingClientRect: pictureRect,
       }
-    : { getBoundingClientRect: () => ({ left: 0, top: 0, width: 390, height: 244 }) };
+    : (element.props as Record<string, unknown>)["data-testid"] === "desktop-picture"
+      ? { getBoundingClientRect: pictureRect }
+      : {
+          getBoundingClientRect: () => ({ left: 0, top: 0, width: 390, height: 244 }),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+        };
+
+/** The picture's canvas (a second one holds zoomed-in frames). */
+const pictureCanvas = () => renderer!.root.findAllByType("canvas")[0]!;
+const regionCanvas = () => renderer!.root.findAllByType("canvas")[1]!;
 
 async function render(fullScreen = false) {
   await act(async () => {
@@ -151,8 +194,9 @@ describe("DesktopPane live view", () => {
     expect(state.sockets[0]!.url).toBe(
       "wss://pc.example/api/personal/desktop/stream?wsTicket=ticket-1",
     );
-    // 390 CSS px at 3x: the server fits the screen inside 1170 x 1170 device px.
-    expect(state.sockets[0]!.viewports).toEqual([[1170, 1170]]);
+    // The picture's 390 x 243.75 CSS px at 3x, all of the monitor.
+    expect(state.sockets[0]!.viewports).toEqual([[1170, 731]]);
+    expect(state.sockets[0]!.regions).toEqual([{ x: 0, y: 0, width: 1, height: 1 }]);
     expect(text()).toContain("Connecting to your PC");
   });
 
@@ -195,7 +239,7 @@ describe("DesktopPane live view", () => {
     expect(drawImage).toHaveBeenCalledWith(bitmap, 0, 0);
     expect(bitmap.close).toHaveBeenCalled();
     expect(text()).not.toContain("Connecting to your PC");
-    const canvas = renderer!.root.findByType("canvas");
+    const canvas = pictureCanvas();
     expect(canvas.props.className).toContain("pointer-events-none");
     for (const handler of ["onPointerDown", "onPointerUp", "onClick", "onKeyDown", "onWheel"]) {
       expect(canvas.props[handler]).toBeUndefined();
@@ -214,7 +258,7 @@ describe("DesktopPane live view", () => {
       state.sockets[0]!.callbacks.onState("locked", null);
     });
     expect(text()).toContain("PC is locked");
-    const canvas = renderer!.root.findByType("canvas");
+    const canvas = pictureCanvas();
     expect(canvas.props.className).toContain("invisible");
     await act(async () => state.sockets[0]!.callbacks.onState("live", null));
     expect(text()).not.toContain("PC is locked");
@@ -264,15 +308,150 @@ describe("DesktopPane live view", () => {
     expect(state.sockets[0]!.closed).toBe(false);
   });
 
-  it("full screen: a way back and the frame box measured for the whole screen", async () => {
+  it("full screen on its side: controls move to a rail, and rotating keeps the socket", async () => {
+    state.status = HELD;
+    await render(true);
+    const root = () => renderer!.root.findAll((node) => node.props["data-layout"] !== undefined);
+    expect(root()).toHaveLength(0);
+    landscape = true;
+    await act(async () => {
+      for (const listener of mediaListeners) listener();
+    });
+    expect(root()[0]!.props["data-layout"]).toBe("rail");
+    // Still the way back, the switch and Stop, and one socket.
+    expect(renderer!.root.findByProps({ "aria-label": "Exit full screen" })).toBeDefined();
+    expect(renderer!.root.findByProps({ role: "switch" })).toBeDefined();
+    expect(buttonLabels()).toContain("Stop");
+    expect(state.sockets).toHaveLength(1);
+    expect(state.sockets[0]!.closed).toBe(false);
+  });
+
+  it("full screen: a way back and the frame box measured for the picture", async () => {
     state.status = IDLE;
     await render(true);
     expect(renderer!.root.findByProps({ "aria-label": "Exit full screen" })).toBeDefined();
-    expect(state.sockets[0]!.viewports).toEqual([[1170, 732]]);
+    expect(state.sockets[0]!.viewports).toEqual([[1170, 731]]);
   });
 });
 
 const sentOf = (index = 0) => state.sockets[index]!.sent.map((text) => JSON.parse(text));
+
+const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 250)));
+
+const viewSurface = () => renderer!.root.findByProps({ "data-testid": "desktop-view-surface" });
+
+const touch = (id: number, x: number, y: number) => ({
+  pointerType: "touch",
+  pointerId: id,
+  clientX: x,
+  clientY: y,
+  currentTarget: { setPointerCapture: vi.fn() },
+  type: "pointerup",
+});
+
+/** A 3072x1920 monitor, drawn whole into 1170x731. */
+const WHOLE_FRAME = {
+  width: 1170,
+  height: 731,
+  region: { x: 0, y: 0, width: 3072, height: 1920 },
+  screen: { width: 3072, height: 1920 },
+};
+
+async function drawFrame(frame: Parameters<DesktopViewCallbacks["onFrame"]>[1]) {
+  await act(async () => {
+    state.sockets[0]!.callbacks.onFrame(
+      { width: frame.width, height: frame.height, close: vi.fn() } as unknown as ImageBitmap,
+      frame,
+    );
+  });
+}
+
+describe("DesktopPane view-only zoom", () => {
+  it("double tap zooms toward the point, never touching the PC, then asks for that region", async () => {
+    state.status = IDLE;
+    await renderPane(true);
+    await drawFrame(WHOLE_FRAME);
+    const surface = viewSurface();
+    // No input surface for the PC while watching.
+    expect(renderer!.root.findAllByProps({ role: "application" })).toHaveLength(0);
+    await act(async () => {
+      for (let tap = 0; tap < 2; tap += 1) {
+        surface.props.onPointerDown(touch(3, 195, 121.875));
+        surface.props.onPointerUp(touch(3, 195, 121.875));
+      }
+    });
+    expect(pictureRect().width).toBeCloseTo(390 * 2.5);
+    expect(renderer!.root.findByProps({ "aria-label": "Reset zoom" })).toBeDefined();
+    await settle();
+    // Nothing went to the PC: only the view changed.
+    expect(sentOf()).toEqual([]);
+    const region = state.sockets[0]!.regions.at(-1) as Record<string, number>;
+    // The middle 40% of the monitor across, at the box's device pixels.
+    expect(region.x).toBeCloseTo(0.3, 4);
+    expect(region.width).toBeCloseTo(0.4, 4);
+    expect(region.y).toBeCloseTo(0.3, 4);
+    expect(state.sockets[0]!.viewports.at(-1)).toEqual([1170, 732]);
+
+    // A second double tap goes back out, and back to whole frames.
+    await act(async () => {
+      for (let tap = 0; tap < 2; tap += 1) {
+        surface.props.onPointerDown(touch(3, 100, 100));
+        surface.props.onPointerUp(touch(3, 100, 100));
+      }
+    });
+    await settle();
+    expect(pictureRect().width).toBe(390);
+    expect(renderer!.root.findAllByProps({ "aria-label": "Reset zoom" })).toHaveLength(0);
+    expect(state.sockets[0]!.regions.at(-1)).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+    expect(sentOf()).toEqual([]);
+  });
+
+  it("pinch zooms and one finger then pans, still sending the PC nothing", async () => {
+    state.status = IDLE;
+    await renderPane(true);
+    await drawFrame(WHOLE_FRAME);
+    const surface = viewSurface();
+    await act(async () => {
+      surface.props.onPointerDown(touch(1, 150, 120));
+      surface.props.onPointerDown(touch(2, 240, 120));
+      surface.props.onPointerMove(touch(1, 100, 120));
+      surface.props.onPointerMove(touch(2, 290, 120));
+      surface.props.onPointerUp(touch(1, 100, 120));
+      surface.props.onPointerUp(touch(2, 290, 120));
+    });
+    const zoomed = pictureRect();
+    expect(zoomed.width).toBeGreaterThan(390 * 1.5);
+    await act(async () => {
+      surface.props.onPointerDown(touch(4, 200, 120));
+      surface.props.onPointerMove(touch(4, 240, 120));
+      surface.props.onPointerMove(touch(4, 260, 120));
+      surface.props.onPointerUp(touch(4, 260, 120));
+    });
+    expect(pictureRect().left).toBeGreaterThan(zoomed.left);
+    await settle();
+    expect(sentOf()).toEqual([]);
+  });
+
+  it("draws a zoomed-in frame over just its part of the picture", async () => {
+    state.status = IDLE;
+    await renderPane(true);
+    await drawFrame(WHOLE_FRAME);
+    expect(regionCanvas().props.style).toEqual({ display: "none" });
+    await drawFrame({
+      width: 1024,
+      height: 640,
+      region: { x: 1024, y: 640, width: 1024, height: 640 },
+      screen: { width: 3072, height: 1920 },
+    });
+    const style = regionCanvas().props.style as Record<string, string>;
+    expect(parseFloat(style.left!)).toBeCloseTo(100 / 3);
+    expect(parseFloat(style.top!)).toBeCloseTo(100 / 3);
+    expect(parseFloat(style.width!)).toBeCloseTo(100 / 3);
+    // A whole frame again hides it.
+    await drawFrame(WHOLE_FRAME);
+    expect(regionCanvas().props.style).toEqual({ display: "none" });
+  });
+});
 
 async function renderPane(fullScreen: boolean, onOpenFullScreen = vi.fn()) {
   await act(async () => {
@@ -351,7 +530,7 @@ describe("DesktopPane remote control", () => {
     await act(async () => state.sockets[0]!.callbacks.onControl?.(true, null));
     expect(renderer!.root.findAllByProps({ role: "application" })).toHaveLength(1);
     expect(text()).toContain("In control");
-    expect(renderer!.root.findByType("canvas").props["aria-label"]).toContain("in control");
+    expect(pictureCanvas().props["aria-label"]).toContain("in control");
   });
 
   it("a tap clicks the PC at the frame point under the finger", async () => {
@@ -372,6 +551,59 @@ describe("DesktopPane remote control", () => {
         button: "left",
       },
     ]);
+  });
+
+  it("with region frames a tap sends the monitor pixel under the finger, zoomed or not", async () => {
+    const surface = await inControl();
+    await drawFrame(WHOLE_FRAME);
+    await act(async () => {
+      surface.props.onPointerDown(pointer("touch", 195, 121.875));
+      surface.props.onPointerUp(pointer("touch", 195, 121.875));
+    });
+    expect(sentOf().filter((message) => message._tag === "Pointer")).toEqual([
+      {
+        _tag: "Pointer",
+        action: "click",
+        x: 1536,
+        y: 960,
+        frameWidth: 3072,
+        frameHeight: 1920,
+        button: "left",
+      },
+    ]);
+
+    // Pinch to zoom in, then a zoomed-in frame arrives.
+    await act(async () => {
+      surface.props.onPointerDown(pointer("touch", 150, 120, { pointerId: 1 }));
+      surface.props.onPointerDown(pointer("touch", 240, 120, { pointerId: 2 }));
+      surface.props.onPointerMove(pointer("touch", 60, 120, { pointerId: 1 }));
+      surface.props.onPointerMove(pointer("touch", 330, 120, { pointerId: 2 }));
+      surface.props.onPointerUp(pointer("touch", 60, 120, { pointerId: 1 }));
+      surface.props.onPointerUp(pointer("touch", 330, 120, { pointerId: 2 }));
+    });
+    const rect = pictureRect();
+    expect(rect.width).toBeGreaterThan(390 * 2);
+    await drawFrame({
+      width: 1170,
+      height: 731,
+      region: { x: 1000, y: 600, width: 1200, height: 750 },
+      screen: { width: 3072, height: 1920 },
+    });
+    // Much later (no double click), tap a point: it maps through the zoom,
+    // not through whichever frame is on screen.
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 400)));
+    await act(async () => {
+      surface.props.onPointerDown(pointer("touch", 101, 57, { pointerId: 9 }));
+      surface.props.onPointerUp(pointer("touch", 101, 57, { pointerId: 9 }));
+    });
+    const tap = sentOf().findLast((message) => message._tag === "Pointer");
+    expect(tap).toMatchObject({
+      action: "click",
+      x: Math.floor(((101 - rect.left) / rect.width) * 3072),
+      y: Math.floor(((57 - rect.top) / rect.height) * 1920),
+      frameWidth: 3072,
+      frameHeight: 1920,
+    });
   });
 
   it("a mouse presses, moves and releases straight through, and keys go to the PC", async () => {
