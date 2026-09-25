@@ -45,6 +45,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
+import { botModelSelectionForThread } from "./personal/botModelSelection.ts";
 import { continuationSystemInstructions } from "./personal/continuationInstructions.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
@@ -711,8 +712,18 @@ export const reconcileProviderSessions = Effect.gen(function* () {
             const systemInstructions = Option.isSome(personalBots)
               ? yield* continuationSystemInstructions(personalBots.value, thread.id)
               : undefined;
+            // Same for the bot's model options: without them the continued
+            // turn runs at the provider's default reasoning effort.
+            const modelSelection = Option.isSome(personalBots)
+              ? yield* botModelSelectionForThread(
+                  personalBots.value,
+                  thread.id,
+                  thread.modelSelection,
+                )
+              : undefined;
             yield* providerService.sendTurn({
               threadId: thread.id,
+              ...(modelSelection !== undefined ? { modelSelection } : {}),
               ...(capabilities.promptlessTurnContinuation === true
                 ? { continuation: true }
                 : { input: SERVER_UPDATE_CONTINUATION_PROMPT }),

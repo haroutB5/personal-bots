@@ -8,6 +8,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  type ModelSelection,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationSession,
@@ -49,6 +50,8 @@ interface Harness {
   failSend: boolean;
   /** A task attempt drives (or just drove) the thread's turn. */
   taskOwnsTurn: boolean;
+  /** The bot's model selection as it is now (edits land here). */
+  botModelSelection: ModelSelection;
   sequence: number;
 }
 
@@ -59,6 +62,7 @@ const makeHarness = (): Harness => ({
   isBotThread: true,
   failSend: false,
   taskOwnsTurn: false,
+  botModelSelection: { instanceId: INSTANCE, model: "big-pickle" },
   sequence: 0,
 });
 
@@ -99,7 +103,12 @@ const makeLayer = (harness: Harness) =>
         getThreadShellById: (threadId: ThreadId) =>
           Effect.sync(() =>
             threadId === THREAD && harness.session !== null
-              ? Option.some({ id: THREAD, session: harness.session, archivedAt: null })
+              ? Option.some({
+                  id: THREAD,
+                  session: harness.session,
+                  archivedAt: null,
+                  modelSelection: { instanceId: INSTANCE, model: "big-pickle" },
+                })
               : Option.none(),
           ),
       } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
@@ -125,6 +134,8 @@ const makeLayer = (harness: Harness) =>
               ? Option.some({ threadId, botId: PersonalBotId.make("bot-assistant") })
               : Option.none(),
           ),
+        getBotById: ({ botId }: { readonly botId: PersonalBotId }) =>
+          Effect.sync(() => Option.some({ botId, modelSelection: harness.botModelSelection })),
         getInstructionsForThread: () =>
           Effect.succeed(
             Option.some({
@@ -248,6 +259,28 @@ it.effect("retries a transient reply failure and never re-sends the message", ()
         expect(harness.sends[0]).toMatchObject({ threadId: THREAD, continuation: true });
         expect(harness.sends[0]).not.toHaveProperty("input");
         expect(messageCreatingCommands(harness)).toHaveLength(0);
+      }),
+      makeLayer(harness),
+    );
+  }),
+);
+
+it.effect("the retried reply carries the bot's current model selection and effort", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.provide(
+      Effect.gen(function* () {
+        const retry = yield* PersonalTurnRetry.PersonalTurnRetry;
+        yield* failOwnerTurn(retry, harness);
+        // Edited while the retry waits: the continuation uses the new value.
+        harness.botModelSelection = {
+          instanceId: INSTANCE,
+          model: "big-pickle",
+          options: [{ id: "reasoningEffort", value: "max" }],
+        };
+        yield* TestClock.adjust(FIRST_DELAY_MS!);
+        expect(harness.sends).toHaveLength(1);
+        expect(harness.sends[0]!.modelSelection).toEqual(harness.botModelSelection);
       }),
       makeLayer(harness),
     );

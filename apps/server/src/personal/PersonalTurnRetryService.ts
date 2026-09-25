@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type ModelSelection,
   type OrchestrationEvent,
   type OrchestrationSession,
   type ProviderInteractionMode,
@@ -23,6 +24,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
+import { botModelSelectionForThread } from "./botModelSelection.ts";
 import { continuationSystemInstructions } from "./continuationInstructions.ts";
 import { isPersonalGroupMessageId, isPersonalTaskMessageId } from "./personalThreadTitles.ts";
 import * as PersonalTaskService from "./tasks/PersonalTaskService.ts";
@@ -180,6 +182,7 @@ export const make = Effect.gen(function* () {
     threadId: ThreadId,
     session: OrchestrationSession,
     interactionMode: ProviderInteractionMode,
+    threadModelSelection: ModelSelection,
   ) {
     const instanceId = session.providerInstanceId;
     if (instanceId === undefined) {
@@ -188,8 +191,16 @@ export const make = Effect.gen(function* () {
     const capabilities = yield* providerService.getCapabilities(instanceId);
     // Shared with the restart-continuation path so the two cannot drift apart.
     const systemInstructions = yield* continuationSystemInstructions(personalBots, threadId);
+    // Without the bot's selection the retried reply runs at the provider's
+    // default reasoning effort instead of the bot's.
+    const modelSelection = yield* botModelSelectionForThread(
+      personalBots,
+      threadId,
+      threadModelSelection,
+    );
     yield* providerService.sendTurn({
       threadId,
+      ...(modelSelection !== undefined ? { modelSelection } : {}),
       ...(capabilities.promptlessTurnContinuation === true
         ? { continuation: true }
         : { input: CONTINUATION_PROMPT }),
@@ -226,7 +237,7 @@ export const make = Effect.gen(function* () {
       }
       // A task may have adopted the turn while we slept.
       if (yield* taskOwnsTurn(threadId)) return yield* clearMarker(threadId);
-      yield* sendContinuation(threadId, session, entry.interactionMode);
+      yield* sendContinuation(threadId, session, entry.interactionMode, shell.modelSelection);
     }).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterrupts(cause)) return Effect.failCause(cause);

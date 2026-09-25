@@ -63,6 +63,7 @@ import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/
 import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import { botModelSelectionForThread } from "../botModelSelection.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { classifyProviderError, providerWaitPause } from "../tasks/PersonalTaskService.ts";
 import {
@@ -797,11 +798,22 @@ export const make = Effect.gen(function* () {
     });
     activeMemberThreadIds.add(threadId);
 
+    // The member's current model and options (reasoning effort above all); a
+    // turn without them runs at the provider's defaults.
+    const memberThread = yield* snapshots
+      .getThreadShellById(threadId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    const modelSelection = yield* botModelSelectionForThread(
+      botRepository,
+      threadId,
+      Option.isSome(memberThread) ? memberThread.value.modelSelection : undefined,
+    );
     const dispatched = yield* engine
       .dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make(`personal-group:${round.roundId}:${String(turn)}:turn.start`),
         threadId,
+        ...(modelSelection !== undefined ? { modelSelection } : {}),
         message: {
           messageId: briefMessageId(round.roundId, turn),
           role: "user",

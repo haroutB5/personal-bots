@@ -56,6 +56,7 @@ import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
+import { botModelSelectionForThread } from "../botModelSelection.ts";
 import { personalTaskMessageId } from "../personalThreadTitles.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import { serverPerfOptimizationOn } from "../perfFlags.ts";
@@ -728,10 +729,21 @@ export const make = Effect.gen(function* () {
   ) {
     const { text, marker } = yield* buildTurnText(task, attempt.attempt, delivered, notes);
     yield* bots.createThread({ botId: task.botId, threadId: attempt.providerThreadId });
+    // The bot's current model and options (reasoning effort above all); a
+    // turn without them runs at the provider's defaults.
+    const thread = yield* snapshots
+      .getThreadShellById(attempt.providerThreadId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    const modelSelection = yield* botModelSelectionForThread(
+      botRepository,
+      attempt.providerThreadId,
+      Option.isSome(thread) ? thread.value.modelSelection : undefined,
+    );
     yield* engine.dispatch({
       type: "thread.turn.start",
       commandId: CommandId.make(`personal-task:${task.taskId}:${attempt.attempt}:turn.start`),
       threadId: attempt.providerThreadId,
+      ...(modelSelection !== undefined ? { modelSelection } : {}),
       message: {
         messageId: attemptMessageId(attempt),
         role: "user",

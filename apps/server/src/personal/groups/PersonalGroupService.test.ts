@@ -806,6 +806,40 @@ it.effect("two mentions speak one at a time, in mention order", () => {
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+const codexAt = (effort: string) => ({
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-6-luna",
+  options: [{ id: "reasoningEffort", value: effort }],
+});
+
+it.effect("a group turn carries each member's current model selection and effort", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const bots = yield* PersonalBotService.PersonalBotService;
+    yield* bots.update({ botId: botId("planner"), modelSelection: codexAt("max") });
+    yield* makeGroup(["assistant", "dev", "planner"]);
+    yield* send("@Planner then @Dev, thoughts?");
+
+    expect(turnStarts(harness).at(-1)!.modelSelection).toEqual(codexAt("max"));
+    yield* speak(harness, "Planner says go.");
+    expect(turnStarts(harness).at(-1)!.modelSelection).toEqual({
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-test",
+    });
+    yield* speak(harness, "Dev agrees.");
+    expect((yield* currentRound).status).toBe("completed");
+
+    // Edited after its member chat exists: the next round uses the new value.
+    const plannerThread = turnStarts(harness)[0]!.threadId;
+    yield* bots.update({ botId: botId("planner"), modelSelection: codexAt("low") });
+    yield* send("@Planner again?", "msg-again");
+    const again = turnStarts(harness).at(-1)!;
+    expect(again.threadId).toBe(plannerThread);
+    expect(again.modelSelection).toEqual(codexAt("low"));
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 // ---------------------------------------------------------------------------
 // 5. a reply that mentions someone queues them, and the budget falls
 // ---------------------------------------------------------------------------

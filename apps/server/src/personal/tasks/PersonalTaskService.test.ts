@@ -782,6 +782,65 @@ it.effect("retry of a failed task creates attempt 2 on the same thread", () => {
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+const codexAt = (effort: string) => ({
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-6-luna",
+  options: [{ id: "reasoningEffort", value: effort }],
+});
+
+it.effect("a delegated task turn carries the target bot's model selection and effort", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const bots = yield* PersonalBotService.PersonalBotService;
+    yield* bots.update({ botId: botId("developer"), modelSelection: codexAt("max") });
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("effort-delegate");
+    const turnId = yield* beginTurn(harness, threadOf(root));
+    const child = yield* service.delegate({
+      parentTaskId: root.taskId,
+      targetBotId: botId("developer"),
+      brief: brief("Think hard"),
+    });
+    yield* endTurn(harness, threadOf(root), turnId, "Waiting on Developer.");
+    yield* service.drain;
+
+    const childThread = threadOf(yield* reload(child.taskId));
+    const childStart = turnStarts(harness).find((command) => command.threadId === childThread)!;
+    expect(childStart.modelSelection).toEqual(codexAt("max"));
+    // The delegator's own turn keeps the delegator's selection.
+    const rootStart = turnStarts(harness).find((command) => command.threadId === threadOf(root))!;
+    expect(rootStart.modelSelection).toEqual({
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-test",
+    });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
+  "a task turn uses the bot's current effort, not the one its thread was created with",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const bots = yield* PersonalBotService.PersonalBotService;
+      yield* bots.update({ botId: botId("assistant"), modelSelection: codexAt("medium") });
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("effort-edit");
+      const thread = threadOf(root);
+      expect(turnStarts(harness).at(-1)!.modelSelection).toEqual(codexAt("medium"));
+      yield* runTurn(harness, thread, "", { status: "error", lastError: "Tool crashed" });
+
+      yield* bots.update({ botId: botId("assistant"), modelSelection: codexAt("max") });
+      yield* service.retry({ taskId: root.taskId });
+      yield* service.drain;
+      const retryStart = turnStarts(harness).findLast((command) => command.threadId === thread)!;
+      expect(retryStart.message.text).toContain("Retry, attempt 2.");
+      expect(retryStart.modelSelection).toEqual(codexAt("max"));
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
 it.effect("rate limits back off 1m, 5m, 15m and then fail the task", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {

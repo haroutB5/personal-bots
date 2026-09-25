@@ -1,4 +1,4 @@
-import type { ModelSelection, ThreadId } from "@t3tools/contracts";
+import type { ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -10,6 +10,7 @@ import {
   ProviderCommandReactor,
   type ProviderSessionPrewarmOutcome,
 } from "../orchestration/Services/ProviderCommandReactor.ts";
+import { sendModelSelection } from "./botModelSelection.ts";
 import { PersonalGroupService } from "./groups/PersonalGroupService.ts";
 import { PersonalBotRepository } from "./PersonalBotRepository.ts";
 import { serverPerfOptimizationOn } from "./perfFlags.ts";
@@ -32,18 +33,7 @@ export type PersonalSessionPrewarmOutcome =
   | "group-member"
   | "too-many-unused";
 
-/**
- * The model selection the composer sends for a bot chat: the bot's own when
- * it is on the thread's provider instance, else the thread's. The prewarmed
- * session must match it, or the send restarts the session.
- */
-export const sendModelSelection = (
-  botModelSelection: ModelSelection,
-  threadModelSelection: ModelSelection,
-): ModelSelection =>
-  botModelSelection.instanceId === threadModelSelection.instanceId
-    ? botModelSelection
-    : threadModelSelection;
+export { sendModelSelection };
 
 /**
  * Opening a personal bot chat starts its Claude session in the background, so
