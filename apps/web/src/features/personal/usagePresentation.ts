@@ -1,4 +1,9 @@
-import type { ServerProvider, ServerProviderUsageWindow } from "@t3tools/contracts";
+import type {
+  ProviderConsumeResetCreditInput,
+  ServerProvider,
+  ServerProviderResetCredits,
+  ServerProviderUsageWindow,
+} from "@t3tools/contracts";
 import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimits";
 
 /** Drivers surfaced as cards, in display order. */
@@ -45,6 +50,17 @@ export interface UsageCard {
   readonly weeklies: readonly UsageWindowRow[];
   /** Epoch millis the snapshot was checked, or null when unknown. */
   readonly checkedAt: number | null;
+  /**
+   * Banked reset credits and where to redeem them: the native instance the
+   * bars come from, the same target upstream's Limits tab uses. Null when the
+   * card has no bars or the provider reports no credits.
+   */
+  readonly resetCredits: UsageCardResetCredits | null;
+}
+
+export interface UsageCardResetCredits {
+  readonly credits: ServerProviderResetCredits;
+  readonly input: ProviderConsumeResetCreditInput;
 }
 
 /**
@@ -180,6 +196,7 @@ export function selectUsageCards(
         session: null,
         weeklies: [],
         checkedAt: parseCheckedAt(limits?.checkedAt),
+        resetCredits: null,
       });
       continue;
     }
@@ -192,6 +209,9 @@ export function selectUsageCards(
       session: pickSession(limits.windows, now),
       weeklies: pickWeeklies(limits.windows, now),
       checkedAt: parseCheckedAt(limits.checkedAt),
+      resetCredits: limits.resetCredits
+        ? { credits: limits.resetCredits, input: { instanceId: provider.instanceId } }
+        : null,
     });
   }
   return cards;

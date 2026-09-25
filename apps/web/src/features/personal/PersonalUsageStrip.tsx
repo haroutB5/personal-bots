@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useRef, useState, type JSX } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { lazy, Suspense, useEffect, useRef, useState, type JSX } from "react";
 import { RefreshCw, X } from "lucide-react";
 
 import { Sheet, SheetClose, SheetDescription, SheetPopup, SheetTitle } from "~/components/ui/sheet";
@@ -25,6 +26,10 @@ import {
   usageStripAriaLabel,
   type UsageStripCell,
 } from "./usageStrip";
+
+// Upstream's reset-credit module brings the whole Limits tab with it; load it
+// only once a sheet shows a banked credit.
+const PersonalResetCredits = lazy(() => import("./PersonalResetCredits"));
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -126,11 +131,20 @@ function UsageCardView({
   card,
   now,
   checking,
+  environmentId,
+  onRedeemed,
 }: {
   readonly card: UsageCard;
   readonly now: number;
   readonly checking: boolean;
+  readonly environmentId: EnvironmentId | null;
+  readonly onRedeemed: () => void;
 }) {
+  // Once a credit has been shown, keep the redeem block mounted for the life
+  // of the sheet: spending the last one must not take its outcome with it.
+  const [creditsShown, setCreditsShown] = useState(false);
+  if (!creditsShown && (card.resetCredits?.credits.availableCount ?? 0) > 0) setCreditsShown(true);
+  const resetCredits = card.resetCredits;
   return (
     <article
       aria-label={`${card.title} usage`}
@@ -162,6 +176,17 @@ function UsageCardView({
           {usageCardEmptyText(card, { checking })}
         </p>
       )}
+      {environmentId !== null && resetCredits !== null && creditsShown ? (
+        <Suspense fallback={null}>
+          <PersonalResetCredits
+            environmentId={environmentId}
+            title={card.title}
+            resetCredits={resetCredits}
+            now={now}
+            onRedeemed={onRedeemed}
+          />
+        </Suspense>
+      ) : null}
       {card.checkedAt !== null ? (
         <span className="text-[13px] text-[var(--personal-text-secondary)]">
           Updated {formatRelativeTime(card.checkedAt, now)}
@@ -243,7 +268,14 @@ function UsageSheetBody({
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-5 pb-5">
         {cards.map((card) => (
-          <UsageCardView key={card.driver} card={card} now={now} checking={refreshing} />
+          <UsageCardView
+            key={card.driver}
+            card={card}
+            now={now}
+            checking={refreshing}
+            environmentId={environmentId}
+            onRedeemed={() => void onRefresh()}
+          />
         ))}
       </div>
     </>

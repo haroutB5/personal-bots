@@ -51,6 +51,7 @@ function card(overrides: Partial<UsageCard> & { driver: UsageCardDriver }): Usag
     session: null,
     weeklies: [],
     checkedAt: null,
+    resetCredits: null,
     ...overrides,
   };
 }

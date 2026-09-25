@@ -144,6 +144,48 @@ describe("selectUsageCards", () => {
     expect(codex!.session).toMatchObject({ usedPercent: 63, resetLabel: "resets in 45m" });
   });
 
+  it("carries banked reset credits with the instance to redeem them on", () => {
+    const [claude, codex] = selectUsageCards(
+      [
+        provider({
+          driver: "claudeAgent",
+          instanceId: "claude-work",
+          usageLimits: {
+            ...claudeLimits(),
+            resetCredits: { availableCount: 2, nextExpiresAt: "2026-10-01T00:00:00Z" },
+          },
+        }),
+        provider({ driver: "codex", instanceId: "codex", usageLimits: claudeLimits() }),
+      ],
+      NOW,
+    );
+    expect(claude!.resetCredits).toEqual({
+      credits: { availableCount: 2, nextExpiresAt: "2026-10-01T00:00:00Z" },
+      input: { instanceId: "claude-work" },
+    });
+    expect(codex!.resetCredits).toBeNull();
+  });
+
+  it("offers no redeem on a card without bars", () => {
+    const [claude] = selectUsageCards(
+      [
+        provider({
+          driver: "claudeAgent",
+          instanceId: "claudeAgent",
+          usageLimits: {
+            checkedAt: "2026-09-13T11:59:00Z",
+            windows: [],
+            resetCredits: { availableCount: 1 },
+            unavailable: { reason: "probeFailed", message: "401 Incorrect API key provided" },
+          },
+        }),
+      ],
+      NOW,
+    );
+    expect(claude!.status).toBe("not-reported");
+    expect(claude!.resetCredits).toBeNull();
+  });
+
   it("marks API-key accounts unavailable instead of zeroing the bars", () => {
     const cards = selectUsageCards(
       [
@@ -287,6 +329,7 @@ describe("usage refresh on open", () => {
     session: null,
     weeklies: [],
     checkedAt: 1_000_000,
+    resetCredits: null,
     ...overrides,
   });
 

@@ -3,21 +3,42 @@ import type { ReactNode } from "react";
 import type { ServerProvider } from "@t3tools/contracts";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 
 const NOW = Date.parse("2026-09-13T12:00:00Z");
 
-const state = vi.hoisted(() => ({ providers: [] as unknown[] }));
+const state = vi.hoisted(() => ({
+  providers: [] as unknown[],
+  refresh: (() => {}) as (...args: unknown[]) => unknown,
+  consume: (() => {}) as (...args: unknown[]) => unknown,
+}));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.providers }));
 vi.mock("~/state/server", () => ({
   primaryServerProvidersAtom: {},
-  serverEnvironment: { refreshProviders: { label: "refreshProviders" } },
+  serverEnvironment: {
+    refreshProviders: { label: "refreshProviders" },
+    consumeResetCredit: { label: "consumeResetCredit" },
+  },
 }));
+// Never the real RPC: a redeem spends one of the owner's banked resets.
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: () => async () => ({ _tag: "Success", value: undefined }),
+  useAtomCommand: (command: { label: string }) => (value: unknown) =>
+    command.label === "consumeResetCredit" ? state.consume(value) : state.refresh(value),
+}));
+vi.mock("~/components/ui/alert-dialog", () => ({
+  AlertDialog: ({ open, children }: { open: boolean; children: ReactNode }) =>
+    open ? <div data-slot="alert-dialog">{children}</div> : null,
+  AlertDialogPopup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  AlertDialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  AlertDialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  AlertDialogTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
+  AlertDialogDescription: ({ children }: { children: ReactNode }) => <p>{children}</p>,
+  AlertDialogClose: ({ children }: { children: ReactNode }) => (
+    <button type="button">{children}</button>
+  ),
 }));
 vi.mock("./usePersonalBots", () => ({ usePersonalEnvironmentId: () => "env-1" }));
 vi.mock("~/components/ui/sheet", () => ({
@@ -76,6 +97,11 @@ const CODEX = provider("codex", {
 });
 
 let renderer: ReactTestRenderer | undefined;
+
+beforeEach(() => {
+  state.refresh = vi.fn(async () => ({ _tag: "Success", value: undefined }));
+  state.consume = vi.fn(async () => ({ _tag: "Success", value: { outcome: "reset" } }));
+});
 
 afterEach(async () => {
   await act(async () => renderer?.unmount());
@@ -204,5 +230,78 @@ describe("PersonalUsageStrip", () => {
     expect(renderer!.root.findAllByType("button")[0]!.props["aria-label"]).toContain(
       "Session 0 percent used, Weekly 100 percent used",
     );
+  });
+
+  describe("banked reset credits", () => {
+    function withCredits(availableCount: number): ServerProvider {
+      return provider("claudeAgent", {
+        ...(CLAUDE.usageLimits as object),
+        resetCredits: { availableCount, nextExpiresAt: "2026-09-20T12:00:00Z" },
+      });
+    }
+
+    async function openSheet() {
+      await act(async () => {
+        renderer = create(<PersonalUsageStrip now={NOW} />);
+      });
+      await act(async () => {
+        renderer!.root.findAllByType("button")[0]!.props.onClick();
+      });
+      // The redeem block is a lazy chunk: let it resolve.
+      await act(async () => {
+        await import("./PersonalResetCredits");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+
+    function redeemButtons() {
+      return renderer!.root.findAll(
+        (node) =>
+          node.type === "button" &&
+          typeof node.props["aria-label"] === "string" &&
+          node.props["aria-label"].startsWith("Redeem a banked"),
+      );
+    }
+
+    it("shows nothing about resets when none are banked", async () => {
+      state.providers = [withCredits(0), CODEX];
+      await openSheet();
+      expect(redeemButtons()).toHaveLength(0);
+      expect(JSON.stringify(renderer!.toJSON())).not.toContain("banked");
+    });
+
+    it("offers Redeem under the provider that has a banked reset", async () => {
+      state.providers = [withCredits(1), CODEX];
+      await openSheet();
+      expect(redeemButtons().map((node) => node.props["aria-label"])).toEqual([
+        "Redeem a banked Claude reset",
+      ]);
+      expect(JSON.stringify(renderer!.toJSON())).toContain(
+        "1 reset credit banked · next expires in 7d 0h",
+      );
+    });
+
+    it("redeems on confirm, then refreshes usage so the bars update", async () => {
+      state.providers = [withCredits(1), CODEX];
+      await openSheet();
+      vi.mocked(state.refresh).mockClear();
+
+      await act(async () => redeemButtons()[0]!.props.onClick());
+      const dialog = renderer!.root.find((node) => node.props["data-slot"] === "alert-dialog");
+      const confirm = dialog.find(
+        (node) => node.type === "button" && node.props.children === "Redeem",
+      );
+      await act(async () => confirm.props.onClick());
+
+      expect(state.consume).toHaveBeenCalledTimes(1);
+      expect(state.consume).toHaveBeenCalledWith({
+        environmentId: "env-1",
+        input: { instanceId: "claudeAgent" },
+      });
+      expect(state.refresh).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(renderer!.toJSON())).toContain(
+        "Reset applied. Your windows have cleared.",
+      );
+    });
   });
 });
