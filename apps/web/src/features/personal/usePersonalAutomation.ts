@@ -11,12 +11,16 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
+import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { useEnvironmentQuery } from "../../state/query";
+import { relatedTasksInBatches } from "./relatedTaskBatches";
 
 /**
  * Unfinished tasks and the newest finished ones, kept current by
@@ -249,6 +253,30 @@ export function usePersonalRelatedTasks(
     [environmentId, key],
   );
   return useEnvironmentQuery(atom).data?.tasks ?? null;
+}
+
+const NO_TASKS_ATOM = Atom.make<ReadonlyArray<PersonalTask> | null>(null);
+
+/**
+ * `usePersonalRelatedTasks` for a list of task ids of any length: one related
+ * request per 100 ids, since the server drops ids past its cap.
+ */
+export function usePersonalTasksByIds(
+  environmentId: EnvironmentId | null,
+  taskIds: ReadonlyArray<PersonalTaskId>,
+): ReadonlyArray<PersonalTask> | null {
+  const key = JSON.stringify(taskIds);
+  const atom = useMemo(() => {
+    const ids = JSON.parse(key) as ReadonlyArray<PersonalTaskId>;
+    if (environmentId === null || ids.length === 0) return NO_TASKS_ATOM;
+    return Atom.make((get) =>
+      relatedTasksInBatches(ids, (batch) => {
+        const result = get(personalTaskRelated({ environmentId, input: { taskIds: batch } }));
+        return Option.getOrNull(AsyncResult.value(result))?.tasks ?? null;
+      }),
+    );
+  }, [environmentId, key]);
+  return useAtomValue(atom);
 }
 
 export function usePersonalTaskDetail(environmentId: EnvironmentId | null, taskId: PersonalTaskId) {
