@@ -15,3 +15,14 @@ OpenCodeProvider.test.ts > reads Go limits with the instance's XDG credentials a
 # Environment-dependent (known before the fork's first sync).
 connectCliAuth.test.ts
 McpHttpServer.test.ts > saves the snapshot PNG
+# Upstream tests that assume a Linux host (hand merge of upstream d06f0ff10, 2026-09-25).
+# Case-sensitive filesystem / POSIX inode reuse; NTFS is case-insensitive and reuses no inode here.
+AgentSessionScanner.test.ts > AgentSessionScanner > scan > keeps case variants distinct when the filesystem identities differ
+AgentSessionScanner.test.ts > AgentSessionScanner > recentThreads > checks file identity and provider before skipping completed history
+# Fake `claude` is a `#!/usr/bin/env node` script, which Windows cannot execute (the tilde test beside them skips on Windows).
+ProviderInstanceRegistryLive.test.ts > ProviderInstanceRegistryLive — multi-instance codex slice > refreshes Claude usage after redeeming a reset
+ProviderInstanceRegistryLive.test.ts > ProviderInstanceRegistryLive — multi-instance codex slice > reports Claude's answer when a claim changed nothing and the re-probe fails
+# Writes and verifies a systemd unit with POSIX paths and a POSIX runtime launcher.
+bootService.test.ts > boot service install >
+# The fake ACP server fixture does not launch on Windows, so initialize never arrives.
+AntigravityInstallation.test.ts > Antigravity installation > validates
