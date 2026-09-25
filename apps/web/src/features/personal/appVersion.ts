@@ -61,11 +61,16 @@ export function runningClientEntry(doc: Pick<Document, "querySelectorAll">): str
 export async function readAppVersion(
   fetchImpl: typeof fetch,
   doc: Pick<Document, "querySelectorAll">,
+  prefetched: Promise<string | null> | null = null,
 ): Promise<AppVersionInfo | null> {
   try {
-    const response = await fetchImpl("/version.txt", { cache: "no-store" });
-    if (!response.ok) return null;
-    const stamp = parseVersionStamp(await response.text());
+    let text = prefetched === null ? null : await prefetched;
+    if (text === null) {
+      const response = await fetchImpl("/version.txt", { cache: "no-store" });
+      if (!response.ok) return null;
+      text = await response.text();
+    }
+    const stamp = parseVersionStamp(text);
     const running = runningClientEntry(doc);
     return {
       label: stamp.label,
@@ -75,6 +80,28 @@ export async function readAppVersion(
   } catch {
     return null;
   }
+}
+
+// One /version.txt read per launch: the stale-release check (staleRelease.ts)
+// starts it at boot and the version footer reuses it.
+let bootStamp: Promise<string | null> | null = null;
+
+/**
+ * The /version.txt body read once at boot, shared with the version footer so
+ * a launch asks the server for it once. Null when it could not be read.
+ */
+export function bootVersionText(fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  bootStamp ??= fetchImpl("/version.txt", { cache: "no-store" })
+    .then((response) => (response.ok ? response.text() : null))
+    .catch(() => null);
+  return bootStamp;
+}
+
+/** Hands the boot read to the first caller only; later reads go to the network. */
+export function takeBootVersionText(): Promise<string | null> | null {
+  const stamp = bootStamp;
+  bootStamp = null;
+  return stamp;
 }
 
 /**
@@ -118,7 +145,8 @@ export function useAppVersion(): AppVersionInfo {
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
-      void readAppVersion(fetch, document).then((next) => {
+      // The first read reuses the one the boot made (see staleRelease.ts).
+      void readAppVersion(fetch, document, takeBootVersionText()).then((next) => {
         if (!cancelled && next !== null) setInfo(next);
       });
     };
