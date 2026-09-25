@@ -1,4 +1,4 @@
-import { encodePersonalBrowserFrame } from "@t3tools/contracts";
+import { encodePersonalBrowserFrame, encodePersonalDesktopFrame } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { connectDesktopView } from "./desktopViewClient";
@@ -100,6 +100,39 @@ describe("desktop live view client", () => {
     expect(JSON.parse(socket.sent[0]!)).toEqual({ _tag: "Viewport", width: 1170, height: 1170 });
     client.setViewport(2532, 1170);
     expect(JSON.parse(socket.sent[1]!)).toEqual({ _tag: "Viewport", width: 2532, height: 1170 });
+  });
+
+  it("passes a region frame on with what it shows, and sends the zoomed region", async () => {
+    const { socket, callbacks, client } = setup(() => Promise.resolve(bitmap()));
+    socket.open();
+    const meta = {
+      width: 1024,
+      height: 640,
+      region: { x: 1024, y: 640, width: 1024, height: 640 },
+      screenWidth: 3072,
+      screenHeight: 1920,
+    };
+    const bytes = encodePersonalDesktopFrame(new Uint8Array([0xff, 0xd8, 1, 2]), meta);
+    socket.emit(
+      "message",
+      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    );
+    await flush();
+    expect(callbacks.onFrame).toHaveBeenCalledWith(expect.anything(), {
+      width: 1024,
+      height: 640,
+      region: meta.region,
+      screen: { width: 3072, height: 1920 },
+    });
+    expect(socket.sent).toEqual([JSON.stringify({ _tag: "Ack" })]);
+    const region = { x: 0.3, y: 0.3, width: 0.4, height: 0.4 };
+    client.setViewport(1170, 732, region);
+    expect(JSON.parse(socket.sent[1]!)).toEqual({
+      _tag: "Viewport",
+      width: 1170,
+      height: 732,
+      region,
+    });
   });
 
   it("passes the view state on (locked, unavailable) and ignores junk", () => {

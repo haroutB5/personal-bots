@@ -17,6 +17,7 @@ import type {
   EnvironmentId,
   PersonalDesktopModifier,
   PersonalDesktopViewInput,
+  PersonalDesktopViewRegion,
   PersonalDesktopViewState,
 } from "@t3tools/contracts";
 import {
@@ -44,6 +45,7 @@ import {
   useState,
 } from "react";
 
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -71,6 +73,14 @@ import {
   useDesktopStatus,
 } from "./desktopState";
 import { connectDesktopView, type DesktopViewClient } from "./desktopViewClient";
+import {
+  regionPlacement,
+  type ScreenRegion,
+  screenPixel,
+  toggleZoom,
+  visibleRegion,
+  WHOLE_REGION,
+} from "./desktopZoom";
 
 const ICON_STROKE = 1.75;
 const MAX_RECONNECTS = 5;
@@ -78,6 +88,13 @@ const MAX_RECONNECTS = 5;
 const DEFAULT_ASPECT = 16 / 10;
 /** Rotation and resizes arrive in steps; the server re-fits once. */
 const VIEWPORT_DEBOUNCE_MS = 250;
+/**
+ * A phone on its side: full screen, the bars above and below the picture move
+ * into a rail on the left so the picture gets the whole height.
+ */
+const COMPACT_LANDSCAPE = "(orientation: landscape) and (max-height: 540px)";
+/** A zoom or pan asks for its sharp region once the fingers have been still this long. */
+const VIEW_SETTLE_MS = 180;
 /** Mouse moves and drags go out at most this often (the newest wins). */
 const MOVE_INTERVAL_MS = 33;
 const HOVER_INTERVAL_MS = 50;
@@ -117,6 +134,9 @@ export function DesktopPane(props: {
   const available = status?.available !== false;
   const rootRef = useRef<HTMLDivElement | null>(null);
   const keyboardInset = useKeyboardInset(rootRef);
+  // The same elements either way (a rotation must not reopen the live view),
+  // laid out as a grid with a left rail when the phone is on its side.
+  const rail = useMediaQuery(COMPACT_LANDSCAPE) && fullScreen;
 
   const [viewState, setViewState] = useState<PersonalDesktopViewState | null>(null);
   const locked = viewState === "locked";
@@ -184,10 +204,30 @@ export function DesktopPane(props: {
   return (
     <div
       ref={rootRef}
-      className={cn(fullScreen && "flex h-full min-h-0 flex-col")}
-      style={fullScreen && keyboardInset > 0 ? { paddingBottom: keyboardInset } : undefined}
+      data-layout={rail ? "rail" : undefined}
+      className={cn(
+        fullScreen && !rail && "flex h-full min-h-0 flex-col",
+        rail && "grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)_auto]",
+      )}
+      style={{
+        ...(fullScreen && keyboardInset > 0 ? { paddingBottom: keyboardInset } : {}),
+        ...(rail
+          ? {
+              gridTemplateColumns: "calc(env(safe-area-inset-left) + 7.5rem) minmax(0, 1fr)",
+              paddingRight: "env(safe-area-inset-right)",
+            }
+          : {}),
+      }}
     >
-      <div className={cn("flex min-h-14 shrink-0 items-center gap-1", fullScreen && "pr-3 pl-1")}>
+      <div
+        className={cn(
+          "flex shrink-0 gap-1",
+          rail
+            ? "col-start-1 row-start-1 flex-col items-start pt-1 pl-[env(safe-area-inset-left)]"
+            : "min-h-14 items-center",
+          fullScreen && !rail && "pr-3 pl-1",
+        )}
+      >
         {fullScreen ? (
           <button
             type="button"
@@ -198,7 +238,12 @@ export function DesktopPane(props: {
             <ChevronLeft className="size-[22px]" strokeWidth={ICON_STROKE} />
           </button>
         ) : null}
-        <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-[10px] bg-[var(--personal-fill-muted)] px-3">
+        <div
+          className={cn(
+            "flex h-10 min-w-0 flex-1 items-center gap-2 rounded-[10px] bg-[var(--personal-fill-muted)] px-3",
+            rail && "hidden",
+          )}
+        >
           <Monitor className="size-4 shrink-0" strokeWidth={ICON_STROKE} aria-hidden />
           <span className="min-w-0 flex-1 truncate text-[14px]">Your PC</span>
           <span className="inline-flex shrink-0 items-center gap-1 text-[12px] text-[var(--personal-text-secondary)]">
@@ -236,6 +281,7 @@ export function DesktopPane(props: {
         className={cn(
           "relative overflow-hidden border border-[var(--personal-border)] bg-[var(--personal-surface)]",
           fullScreen ? "min-h-0 flex-1 rounded-none border-x-0" : "mt-2.5 rounded-[12px]",
+          rail && "col-start-2 row-span-2 row-start-1 border-0",
         )}
       >
         {environmentId !== null && available ? (
@@ -288,14 +334,18 @@ export function DesktopPane(props: {
             })
           }
           takeSticky={takeSticky}
+          rail={rail}
         />
       ) : null}
 
       <div
         className={cn(
-          "mt-2.5 flex min-h-11 items-center gap-2",
-          fullScreen && "shrink-0 px-3 pb-3",
-          inControl && "mt-1",
+          "flex gap-2",
+          rail
+            ? "col-start-1 row-start-2 flex-col items-start pt-2 pr-1 pl-[calc(env(safe-area-inset-left)+0.75rem)]"
+            : "mt-2.5 min-h-11 items-center",
+          fullScreen && !rail && "shrink-0 px-3 pb-3",
+          inControl && !rail && "mt-1",
         )}
       >
         <span
@@ -309,7 +359,8 @@ export function DesktopPane(props: {
         <p
           role={notice === null ? undefined : "status"}
           className={cn(
-            "min-w-0 flex-1 truncate text-[13px]",
+            "min-w-0 text-[13px]",
+            rail ? "line-clamp-5 text-[12px] leading-4" : "flex-1 truncate",
             (holder.busy || inControl) && notice === null
               ? "font-medium text-[var(--personal-review-text)]"
               : "text-[var(--personal-text-secondary)]",
@@ -391,6 +442,8 @@ function ControlBar(props: {
   readonly sticky: ReadonlySet<PersonalDesktopModifier>;
   readonly onToggleSticky: (modifier: PersonalDesktopModifier) => void;
   readonly takeSticky: () => ReadonlySet<PersonalDesktopModifier>;
+  /** Laid out under the picture in the landscape rail layout. */
+  readonly rail?: boolean;
 }) {
   const { send } = props;
   const fieldRef = useRef<HTMLInputElement | null>(null);
@@ -430,7 +483,12 @@ function ControlBar(props: {
   );
 
   return (
-    <div className="shrink-0 border-t border-[var(--personal-border)] bg-[var(--personal-bg)] pt-1.5">
+    <div
+      className={cn(
+        "shrink-0 border-t border-[var(--personal-border)] bg-[var(--personal-bg)] pt-1.5",
+        props.rail === true && "col-start-2 row-start-3",
+      )}
+    >
       <input
         ref={fieldRef}
         type="text"
@@ -610,7 +668,35 @@ interface Ripple {
   readonly long: boolean;
 }
 
-/** The frames themselves: one socket while `active`, drawn onto a canvas. */
+/** What a remote point is measured in: the monitor's pixels, or (older server) the frame's. */
+interface InputSpace {
+  readonly width: number;
+  readonly height: number;
+  readonly screen: boolean;
+}
+
+/** A frame of part of the monitor, and where it sits. */
+interface ShownRegion {
+  readonly region: ScreenRegion;
+  readonly screen: { readonly width: number; readonly height: number };
+}
+
+const sameRegion = (a: ShownRegion | null, b: ShownRegion) =>
+  a !== null &&
+  a.screen.width === b.screen.width &&
+  a.screen.height === b.screen.height &&
+  a.region.x === b.region.x &&
+  a.region.y === b.region.y &&
+  a.region.width === b.region.width &&
+  a.region.height === b.region.height;
+
+/**
+ * The frames themselves: one socket while `active`. Whole-monitor frames go
+ * onto the picture's canvas; while zoomed in, the server sends just the part
+ * on screen at up to the PC's own resolution, drawn onto a second canvas
+ * placed over that part (the last whole frame stays underneath for the edges
+ * a pan reveals before the next frame arrives).
+ */
 function LiveDesktop(props: {
   readonly environmentId: EnvironmentId;
   readonly active: boolean;
@@ -630,12 +716,15 @@ function LiveDesktop(props: {
   const access = useComputerAccess(environmentId);
   const url = access === null ? null : desktopStreamUrl(access);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const pictureRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const regionCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const clientRef = useRef<DesktopViewClient | null>(null);
   const [liveClient, setLiveClient] = useState<DesktopViewClient | null>(null);
   const [aspect, setAspect] = useState<number | null>(null);
   const [box, setBox] = useState<ViewportBox | null>(null);
   const [hasFrame, setHasFrame] = useState(false);
+  const [regionShown, setRegionShown] = useState<ShownRegion | null>(null);
   const [viewState, setViewState] = useState<{
     readonly state: PersonalDesktopViewState;
     readonly detail: string | null;
@@ -645,7 +734,11 @@ function LiveDesktop(props: {
   const [view, setView] = useState<ViewTransform>(IDENTITY_VIEW);
   const [ripples, setRipples] = useState<ReadonlyArray<Ripple>>([]);
   const failuresRef = useRef(0);
-  const frameSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const spaceRef = useRef<InputSpace | null>(null);
+  /** The latest whole-monitor frame's size: wheel units are scaled by it. */
+  const wholeFrameRef = useRef<{ width: number; height: number } | null>(null);
+  /** The last Viewport this socket sent, so an unchanged view sends nothing. */
+  const sentViewportRef = useRef<string | null>(null);
   // Read at connect time, not dependencies: going full screen re-fits the
   // frame (the resize effect sends the new box) without reopening the socket.
   const fitRef = useRef(fit);
@@ -656,10 +749,34 @@ function LiveDesktop(props: {
     callbacksRef.current = props;
   });
 
+  // Going full screen or back re-fits the picture: the zoom starts over.
+  const [viewFit, setViewFit] = useState(fit);
+  if (viewFit !== fit) {
+    setViewFit(fit);
+    setView(IDENTITY_VIEW);
+  }
+
+  /** Tells the server what is on screen now: the box and, zoomed in, the region. */
+  const sendViewport = () => {
+    const client = clientRef.current;
+    const measured = measureView(containerRef.current, pictureRef.current, fitRef.current);
+    if (client === null || measured === null) return;
+    const key = JSON.stringify(measured);
+    if (sentViewportRef.current === key) return;
+    sentViewportRef.current = key;
+    client.setViewport(measured.width, measured.height, measured.region);
+  };
+  const sendViewportRef = useRef(sendViewport);
+  useEffect(() => {
+    sendViewportRef.current = sendViewport;
+  });
+
   useEffect(() => {
     const canvas = canvasRef.current;
+    const regionCanvas = regionCanvasRef.current;
     if (!active || url === null || canvas === null || gaveUp) return;
     const context = canvas.getContext("2d");
+    const regionContext = regionCanvas?.getContext("2d") ?? null;
     let client: DesktopViewClient | null = null;
     const connect = () => {
       client = connectDesktopView(url, {
@@ -668,17 +785,40 @@ function LiveDesktop(props: {
           controlSentRef.current = false;
           setLiveClient(client);
         },
-        onFrame: (bitmap, size) => {
-          if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-            canvas.width = bitmap.width;
-            canvas.height = bitmap.height;
+        onFrame: (bitmap, frame) => {
+          const screen = frame.screen ?? null;
+          const region = frame.region ?? null;
+          const whole =
+            screen === null ||
+            region === null ||
+            (region.x === 0 &&
+              region.y === 0 &&
+              region.width === screen.width &&
+              region.height === screen.height);
+          const target = whole ? canvas : regionCanvas;
+          const targetContext = whole ? context : regionContext;
+          if (target !== null) {
+            if (target.width !== bitmap.width || target.height !== bitmap.height) {
+              target.width = bitmap.width;
+              target.height = bitmap.height;
+            }
+            targetContext?.drawImage(bitmap, 0, 0);
           }
-          context?.drawImage(bitmap, 0, 0);
           bitmap.close();
-          frameSizeRef.current = { width: size.width, height: size.height };
+          if (whole) wholeFrameRef.current = { width: frame.width, height: frame.height };
+          spaceRef.current =
+            screen === null
+              ? { width: frame.width, height: frame.height, screen: false }
+              : { width: screen.width, height: screen.height, screen: true };
           setHasFrame(true);
+          if (whole) setRegionShown(null);
+          else {
+            const next: ShownRegion = { region: region!, screen: screen! };
+            setRegionShown((previous) => (sameRegion(previous, next) ? previous : next));
+          }
           setAspect((previous) => {
-            const next = size.width / size.height;
+            const next =
+              screen === null ? frame.width / frame.height : screen.width / screen.height;
             return previous !== null && Math.abs(previous - next) < 0.001 ? previous : next;
           });
         },
@@ -700,8 +840,8 @@ function LiveDesktop(props: {
         },
       });
       clientRef.current = client;
-      const measured = measureBox(containerRef.current, fitRef.current);
-      if (measured !== null) client.setViewport(measured.width, measured.height);
+      sentViewportRef.current = null;
+      sendViewportRef.current();
     };
     // First connect is immediate; reconnects back off so a down PC is not hammered.
     const timer = window.setTimeout(connect, attempt === 0 ? 0 : 2_000);
@@ -731,36 +871,45 @@ function LiveDesktop(props: {
   }, [props.sendRef]);
 
   // The box the frame is shown in, so the server sends no more pixels than fit.
+  // The picture is watched too: it changes shape when the first frame gives
+  // the monitor's real aspect.
   useEffect(() => {
     const container = containerRef.current;
     if (container === null || typeof ResizeObserver === "undefined") return;
     let timer: number | undefined;
     const observer = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect;
-      if (rect === undefined) return;
-      setBox((previous) =>
-        previous !== null && previous.width === rect.width && previous.height === rect.height
-          ? previous
-          : { width: rect.width, height: rect.height },
-      );
+      const rect = entries.find((entry) => entry.target === container)?.contentRect;
+      if (rect !== undefined) {
+        setBox((previous) =>
+          previous !== null && previous.width === rect.width && previous.height === rect.height
+            ? previous
+            : { width: rect.width, height: rect.height },
+        );
+      }
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        const measured = measureBox(container, fit);
-        if (measured !== null) clientRef.current?.setViewport(measured.width, measured.height);
-      }, VIEWPORT_DEBOUNCE_MS);
+      timer = window.setTimeout(() => sendViewportRef.current(), VIEWPORT_DEBOUNCE_MS);
     });
     observer.observe(container);
+    if (pictureRef.current !== null) observer.observe(pictureRef.current);
     return () => {
       window.clearTimeout(timer);
       observer.disconnect();
     };
-  }, [fit]);
+  }, []);
+
+  // A zoom or pan asks for the new region once the fingers settle; until the
+  // sharp frame arrives the current one is simply scaled with the picture.
+  const settleTimerRef = useRef<number | undefined>(undefined);
+  const updateView = (update: (view: ViewTransform) => ViewTransform) => {
+    setView(update);
+    window.clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = window.setTimeout(() => sendViewportRef.current(), VIEW_SETTLE_MS);
+  };
+  useEffect(() => () => window.clearTimeout(settleTimerRef.current), []);
 
   const fitted = fit && box !== null ? fitFrame(box, aspect ?? DEFAULT_ASPECT) : null;
   const locked = viewState?.state === "locked";
   const unavailable = viewState?.state === "unavailable";
-  // The zoom is the view's own; leaving control resets it.
-  const shownView = interactive ? view : IDENTITY_VIEW;
 
   return (
     <div
@@ -768,13 +917,14 @@ function LiveDesktop(props: {
       className={cn(
         "relative",
         fit && "flex h-full min-h-0 items-center justify-center overflow-hidden",
+        !fit && view.scale > 1 && "overflow-hidden",
       )}
     >
-      <canvas
-        ref={canvasRef}
-        aria-label={interactive ? "Your PC, you are in control" : "Your PC, live view (view only)"}
+      <div
+        ref={pictureRef}
+        data-testid="desktop-picture"
         className={cn(
-          "pointer-events-none block bg-[var(--personal-fill-muted)] select-none",
+          "relative shrink-0 bg-[var(--personal-fill-muted)]",
           fit ? "max-h-full max-w-full" : "w-full",
           // A locked PC shows the notice, never the last frame from before.
           locked && "invisible",
@@ -785,21 +935,39 @@ function LiveDesktop(props: {
               ? {}
               : { width: fitted.width, height: fitted.height }
             : { aspectRatio: `${aspect ?? DEFAULT_ASPECT}` }),
-          ...(shownView.scale === 1
+          ...(view.scale === 1
             ? {}
             : {
-                transform: `translate(${shownView.x}px, ${shownView.y}px) scale(${shownView.scale})`,
+                transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
                 transformOrigin: "0 0",
               }),
         }}
-      />
-      {interactive && !locked ? (
+      >
+        <canvas
+          ref={canvasRef}
+          aria-label={
+            interactive ? "Your PC, you are in control" : "Your PC, live view (view only)"
+          }
+          className={cn("pointer-events-none block size-full select-none", locked && "invisible")}
+        />
+        <canvas
+          ref={regionCanvasRef}
+          aria-hidden
+          className="pointer-events-none absolute block select-none"
+          style={
+            regionShown === null
+              ? { display: "none" }
+              : regionPlacement(regionShown.region, regionShown.screen)
+          }
+        />
+      </div>
+      {locked ? null : interactive ? (
         <ControlSurface
-          canvasRef={canvasRef}
+          pictureRef={pictureRef}
           containerRef={containerRef}
-          frameSizeRef={frameSizeRef}
-          view={view}
-          setView={setView}
+          spaceRef={spaceRef}
+          wholeFrameRef={wholeFrameRef}
+          setView={updateView}
           sticky={props.sticky}
           takeSticky={props.takeSticky}
           send={(message) => clientRef.current?.send(message)}
@@ -811,6 +979,13 @@ function LiveDesktop(props: {
             );
           }}
         />
+      ) : hasFrame ? (
+        <ViewSurface
+          pictureRef={pictureRef}
+          fit={fit}
+          zoomed={view.scale > 1}
+          setView={updateView}
+        />
       ) : null}
       {ripples.map((ripple) => (
         <span
@@ -820,11 +995,11 @@ function LiveDesktop(props: {
           style={{ left: ripple.x, top: ripple.y }}
         />
       ))}
-      {interactive && view.scale > 1 ? (
+      {view.scale > 1 && !locked ? (
         <button
           type="button"
           aria-label="Reset zoom"
-          onClick={() => setView(IDENTITY_VIEW)}
+          onClick={() => updateView(() => IDENTITY_VIEW)}
           className="absolute top-2 right-2 z-10 flex size-11 items-center justify-center rounded-full border border-[var(--personal-border)] bg-[var(--personal-surface)] shadow-[var(--personal-shadow-card)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >
           <ZoomOut className="size-5" strokeWidth={ICON_STROKE} />
@@ -865,6 +1040,229 @@ function LiveDesktop(props: {
   );
 }
 
+/** Pan and pinch-zoom of the picture itself, shared by watching and control. */
+function applyViewGesture(
+  action: Extract<GestureAction, { readonly type: "pan" | "zoom" }>,
+  picture: HTMLElement | null,
+  setView: (update: (view: ViewTransform) => ViewTransform) => void,
+) {
+  if (action.type === "pan") {
+    setView((view) => panView(view, action.dx, action.dy, baseSize(picture, view)));
+    return;
+  }
+  setView((view) => {
+    const rect = picture?.getBoundingClientRect();
+    if (rect === undefined) return view;
+    // The picture's untransformed top-left, from its transformed rect.
+    const originX = rect.left - view.x;
+    const originY = rect.top - view.y;
+    return zoomView(
+      view,
+      action.factor,
+      action.cx - originX,
+      action.cy - originY,
+      baseSize(picture, view),
+    );
+  });
+}
+
+/**
+ * Watching: pinch or double-tap to zoom, drag to pan. Nothing here ever
+ * reaches the PC; it only moves the picture (and so which part of the screen
+ * the server sends). Inline and unzoomed, a one-finger swipe still scrolls
+ * the page.
+ */
+function ViewSurface(props: {
+  readonly pictureRef: { readonly current: HTMLDivElement | null };
+  readonly fit: boolean;
+  readonly zoomed: boolean;
+  readonly setView: (update: (view: ViewTransform) => ViewTransform) => void;
+}) {
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const latest = useRef(props);
+  useEffect(() => {
+    latest.current = props;
+  });
+  /** When a finger last touched: a double tap must not also count as a double click. */
+  const lastTouchRef = useRef(Number.NEGATIVE_INFINITY);
+  /** A mouse (or a held finger's drag) panning: the last point seen. */
+  const dragRef = useRef<{ id: number; x: number; y: number } | null>(null);
+
+  const zoomTowards = (clientX: number, clientY: number) => {
+    const picture = latest.current.pictureRef.current;
+    latest.current.setView((view) => {
+      const rect = picture?.getBoundingClientRect();
+      if (rect === undefined) return view;
+      return toggleZoom(
+        view,
+        clientX - (rect.left - view.x),
+        clientY - (rect.top - view.y),
+        baseSize(picture, view),
+      );
+    });
+  };
+
+  const onGesture = (action: GestureAction) => {
+    const { pictureRef, setView } = latest.current;
+    switch (action.type) {
+      case "pan":
+      case "zoom":
+        applyViewGesture(action, pictureRef.current, setView);
+        return;
+      case "scroll":
+        // Two fingers moving together move the picture with them.
+        applyViewGesture(
+          { type: "pan", dx: -action.dx, dy: -action.dy },
+          pictureRef.current,
+          setView,
+        );
+        return;
+      case "dragStart":
+        dragRef.current = { id: -1, x: action.x, y: action.y };
+        return;
+      case "dragMove": {
+        const last = dragRef.current;
+        dragRef.current = { id: -1, x: action.x, y: action.y };
+        if (last !== null) {
+          applyViewGesture(
+            { type: "pan", dx: action.x - last.x, dy: action.y - last.y },
+            pictureRef.current,
+            setView,
+          );
+        }
+        return;
+      }
+      case "dragEnd":
+        dragRef.current = null;
+        return;
+      case "click":
+        // The second tap of a double tap: zoom in there, or back out.
+        if (action.snapped === true) zoomTowards(action.x, action.y);
+        return;
+      case "press":
+        return;
+    }
+  };
+  const onGestureRef = useRef(onGesture);
+  useEffect(() => {
+    onGestureRef.current = onGesture;
+  });
+  const [recognizer] = useState(
+    // oxlint-disable-next-line react/refs -- the ref is read when a gesture fires, never during render.
+    () =>
+      new TouchGestureRecognizer({
+        emit: (action) => onGestureRef.current(action),
+        now: () => performance.now(),
+        setTimer: (callback, ms) => window.setTimeout(callback, ms),
+        clearTimer: (handle) => window.clearTimeout(handle as number),
+      }),
+  );
+  useEffect(() => () => recognizer.reset(), [recognizer]);
+
+  // iOS: no page pinch-zoom or callout on the picture. The page may still
+  // scroll under one finger while the inline picture is unzoomed.
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (surface === null || typeof surface.addEventListener !== "function") return;
+    const ownsTouch = (event: TouchEvent) =>
+      latest.current.fit || latest.current.zoomed || event.touches.length >= 2;
+    const onTouch = (event: TouchEvent) => {
+      if (event.cancelable && ownsTouch(event)) event.preventDefault();
+    };
+    const stopDefault = (event: Event) => {
+      if (event.cancelable) event.preventDefault();
+    };
+    const onWheel = (event: WheelEvent) => {
+      const { pictureRef, setView, zoomed } = latest.current;
+      if (event.ctrlKey) {
+        // A trackpad pinch (or Ctrl+wheel) zooms around the pointer.
+        event.preventDefault();
+        applyViewGesture(
+          {
+            type: "zoom",
+            factor: Math.exp(-event.deltaY / 100),
+            cx: event.clientX,
+            cy: event.clientY,
+          },
+          pictureRef.current,
+          setView,
+        );
+        return;
+      }
+      if (!zoomed) return;
+      event.preventDefault();
+      applyViewGesture(
+        { type: "pan", dx: -event.deltaX, dy: -event.deltaY },
+        pictureRef.current,
+        setView,
+      );
+    };
+    surface.addEventListener("touchstart", onTouch, { passive: false });
+    surface.addEventListener("touchmove", onTouch, { passive: false });
+    surface.addEventListener("gesturestart", stopDefault);
+    surface.addEventListener("contextmenu", stopDefault);
+    surface.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      surface.removeEventListener("touchstart", onTouch);
+      surface.removeEventListener("touchmove", onTouch);
+      surface.removeEventListener("gesturestart", stopDefault);
+      surface.removeEventListener("contextmenu", stopDefault);
+      surface.removeEventListener("wheel", onWheel);
+    };
+  }, []);
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") {
+      lastTouchRef.current = performance.now();
+      recognizer.down({ id: event.pointerId, x: event.clientX, y: event.clientY });
+      return;
+    }
+    if (!props.zoomed) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    dragRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  };
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") {
+      recognizer.move({ id: event.pointerId, x: event.clientX, y: event.clientY });
+      return;
+    }
+    const last = dragRef.current;
+    if (last === null || last.id !== event.pointerId) return;
+    dragRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    applyViewGesture(
+      { type: "pan", dx: event.clientX - last.x, dy: event.clientY - last.y },
+      props.pictureRef.current,
+      props.setView,
+    );
+  };
+  const onPointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") {
+      if (event.type === "pointercancel") recognizer.cancel(event.pointerId);
+      else recognizer.up({ id: event.pointerId, x: event.clientX, y: event.clientY });
+      return;
+    }
+    if (dragRef.current?.id === event.pointerId) dragRef.current = null;
+  };
+
+  return (
+    <div
+      ref={surfaceRef}
+      aria-hidden
+      data-testid="desktop-view-surface"
+      className="absolute inset-0 z-[1] select-none [-webkit-touch-callout:none]"
+      style={{ touchAction: props.fit || props.zoomed ? "none" : "pan-y" }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerEnd}
+      onPointerCancel={onPointerEnd}
+      onDoubleClick={(event) => {
+        if (performance.now() - lastTouchRef.current < 1_000) return;
+        zoomTowards(event.clientX, event.clientY);
+      }}
+    />
+  );
+}
+
 let rippleSequence = 0;
 
 /**
@@ -873,10 +1271,10 @@ let rippleSequence = 0;
  * release, wheel); a hardware keyboard types while it is focused.
  */
 function ControlSurface(props: {
-  readonly canvasRef: { readonly current: HTMLCanvasElement | null };
+  readonly pictureRef: { readonly current: HTMLDivElement | null };
   readonly containerRef: { readonly current: HTMLDivElement | null };
-  readonly frameSizeRef: { readonly current: { width: number; height: number } | null };
-  readonly view: ViewTransform;
+  readonly spaceRef: { readonly current: InputSpace | null };
+  readonly wholeFrameRef: { readonly current: { width: number; height: number } | null };
   readonly setView: (update: (view: ViewTransform) => ViewTransform) => void;
   readonly sticky: ReadonlySet<PersonalDesktopModifier>;
   readonly takeSticky: () => ReadonlySet<PersonalDesktopModifier>;
@@ -911,13 +1309,20 @@ function ControlSurface(props: {
     y: 0,
   });
 
-  /** A client point on the picture as a frame point for the server, or null off the picture. */
+  /**
+   * A client point on the picture as a point for the server, or null off the
+   * picture: the monitor pixel under it (whatever part of the monitor the
+   * frame on screen shows), or on an older server the frame point.
+   */
   const pointAt = (clientX: number, clientY: number, clamp = false) => {
-    const canvas = props.canvasRef.current;
-    const frame = props.frameSizeRef.current;
-    if (canvas === null || frame === null) return null;
-    const point = framePoint(clientX, clientY, canvas.getBoundingClientRect(), frame, clamp);
-    return point === null ? null : { ...point, frameWidth: frame.width, frameHeight: frame.height };
+    const picture = props.pictureRef.current;
+    const space = props.spaceRef.current;
+    if (picture === null || space === null) return null;
+    const rect = picture.getBoundingClientRect();
+    const point = space.screen
+      ? screenPixel(clientX, clientY, rect, space, clamp)
+      : framePoint(clientX, clientY, rect, space, clamp);
+    return point === null ? null : { ...point, frameWidth: space.width, frameHeight: space.height };
   };
 
   const ripple = (clientX: number, clientY: number, long = false) => {
@@ -957,12 +1362,10 @@ function ControlSurface(props: {
     const state = scrollRef.current;
     if (state.timer !== null) window.clearTimeout(state.timer);
     state.timer = null;
-    const canvas = props.canvasRef.current;
-    const frame = props.frameSizeRef.current;
     const { dx, dy } = state;
     state.dx = 0;
     state.dy = 0;
-    if (canvas === null || frame === null || (dx === 0 && dy === 0)) return;
+    if (dx === 0 && dy === 0) return;
     const point = pointAt(state.x, state.y, true);
     if (point === null) return;
     latest.current.send({
@@ -997,7 +1400,7 @@ function ControlSurface(props: {
   };
 
   const onGesture = (action: GestureAction) => {
-    const canvas = props.canvasRef.current;
+    const picture = props.pictureRef.current;
     switch (action.type) {
       case "click":
         ripple(action.x, action.y);
@@ -1027,9 +1430,11 @@ function ControlSurface(props: {
         return;
       }
       case "scroll": {
-        const frame = props.frameSizeRef.current;
-        if (canvas === null || frame === null) return;
-        const rect = canvas.getBoundingClientRect();
+        // Scaled as before zoom-aware frames: by the whole frame's pixels, so
+        // the page moves about as far as the fingers did.
+        const frame = props.wholeFrameRef.current ?? props.spaceRef.current;
+        if (picture === null || frame === null) return;
+        const rect = picture.getBoundingClientRect();
         queueScroll(
           action.x,
           action.y,
@@ -1039,25 +1444,8 @@ function ControlSurface(props: {
         return;
       }
       case "pan":
-        latest.current.setView((view) =>
-          panView(view, action.dx, action.dy, baseSize(canvas, view)),
-        );
-        return;
       case "zoom":
-        latest.current.setView((view) => {
-          const rect = canvas?.getBoundingClientRect();
-          if (rect === undefined) return view;
-          // The canvas's untransformed top-left, from its transformed rect.
-          const originX = rect.left - view.x;
-          const originY = rect.top - view.y;
-          return zoomView(
-            view,
-            action.factor,
-            action.cx - originX,
-            action.cy - originY,
-            baseSize(canvas, view),
-          );
-        });
+        applyViewGesture(action, picture, latest.current.setView);
         return;
     }
   };
@@ -1223,24 +1611,45 @@ function ControlSurface(props: {
   );
 }
 
-/** The canvas's unzoomed size, from its on-screen rect and the current zoom. */
-function baseSize(canvas: HTMLCanvasElement | null, view: ViewTransform) {
-  const rect = canvas?.getBoundingClientRect();
+/** The picture's unzoomed size, from its on-screen rect and the current zoom. */
+function baseSize(picture: HTMLElement | null, view: ViewTransform) {
+  const rect = picture?.getBoundingClientRect();
   return rect === undefined
     ? { width: 0, height: 0 }
     : { width: rect.width / view.scale, height: rect.height / view.scale };
 }
 
 /**
- * The frame's box in device pixels. Inline the frame takes the full width and
- * its own height, so the width bounds it both ways; full screen it is
- * letterboxed into the whole measured box.
+ * What the viewer shows, for the server: the visible part of the picture in
+ * device pixels and, as fractions of the monitor, which part of it that is
+ * (all of it unless zoomed in). Before the picture has a size, the box it
+ * will get: inline the full width both ways, full screen the whole box.
  */
-function measureBox(container: HTMLElement | null, fit: boolean): ViewportBox | null {
+function measureView(
+  container: HTMLElement | null,
+  picture: HTMLElement | null,
+  fit: boolean,
+): {
+  readonly width: number;
+  readonly height: number;
+  readonly region: PersonalDesktopViewRegion;
+} | null {
   if (container === null) return null;
   const rect = container.getBoundingClientRect();
   if (!(rect.width > 0)) return null;
   const scale = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+  const visible = picture === null ? null : visibleRegion(picture.getBoundingClientRect(), rect);
+  if (visible !== null) {
+    return {
+      width: Math.round(visible.width * scale),
+      height: Math.round(visible.height * scale),
+      region: visible.region,
+    };
+  }
   const height = fit && rect.height > 0 ? rect.height : rect.width;
-  return { width: rect.width * scale, height: height * scale };
+  return {
+    width: Math.round(rect.width * scale),
+    height: Math.round(height * scale),
+    region: WHOLE_REGION,
+  };
 }

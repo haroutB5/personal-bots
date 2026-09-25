@@ -1,7 +1,9 @@
 import {
   decodePersonalBrowserFrame,
+  decodePersonalDesktopFrame,
   PersonalDesktopViewInput,
   PersonalDesktopViewMessage,
+  type PersonalDesktopViewRegion,
   type PersonalDesktopViewState,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -10,10 +12,25 @@ import * as Schema from "effect/Schema";
 const encodeInput = Schema.encodeSync(Schema.fromJsonString(PersonalDesktopViewInput));
 const decodeMessage = Schema.decodeUnknownOption(Schema.fromJsonString(PersonalDesktopViewMessage));
 
+/** What one frame is. A server without region frames sends only the size. */
+export interface DesktopFrameInfo {
+  readonly width: number;
+  readonly height: number;
+  /** The part of the monitor it shows, in monitor pixels. */
+  readonly region?: {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  };
+  /** The monitor's size in its own pixels. */
+  readonly screen?: { readonly width: number; readonly height: number };
+}
+
 export interface DesktopViewCallbacks {
   readonly onOpen: () => void;
   /** A decoded frame; the client acknowledges it once this returns. */
-  readonly onFrame: (bitmap: ImageBitmap, size: { width: number; height: number }) => void;
+  readonly onFrame: (bitmap: ImageBitmap, frame: DesktopFrameInfo) => void;
   readonly onState: (state: PersonalDesktopViewState, detail: string | null) => void;
   /** `opened=false` means the upgrade was refused (usually an expired ticket). */
   readonly onClosed: (opened: boolean) => void;
@@ -24,8 +41,11 @@ export interface DesktopViewCallbacks {
 }
 
 export interface DesktopViewClient {
-  /** The box frames are shown in, in device pixels. */
-  readonly setViewport: (width: number, height: number) => void;
+  /**
+   * The box frames are shown in, in device pixels, and the part of the
+   * monitor shown there (fractions; the whole monitor unless zoomed in).
+   */
+  readonly setViewport: (width: number, height: number, region?: PersonalDesktopViewRegion) => void;
   /** Control and input messages; dropped while the socket is not open. */
   readonly send: (message: PersonalDesktopViewInput) => void;
   readonly close: () => void;
@@ -58,7 +78,11 @@ export function connectDesktopView(
   socket.binaryType = "arraybuffer";
   let opened = false;
   let closed = false;
-  let pendingViewport: { width: number; height: number } | null = null;
+  let pendingViewport: {
+    width: number;
+    height: number;
+    region?: PersonalDesktopViewRegion;
+  } | null = null;
 
   const send = (message: PersonalDesktopViewInput) => {
     if (!closed && socket.readyState === WebSocket.OPEN) socket.send(encodeInput(message));
@@ -88,16 +112,31 @@ export function connectDesktopView(
       return;
     }
     if (!(event.data instanceof ArrayBuffer)) return;
-    const frame = decodePersonalBrowserFrame(new Uint8Array(event.data));
-    if (frame === null) {
+    const bytes = new Uint8Array(event.data);
+    const regionFrame = decodePersonalDesktopFrame(bytes);
+    const plainFrame = regionFrame === null ? decodePersonalBrowserFrame(bytes) : null;
+    const jpeg = regionFrame?.jpeg ?? plainFrame?.jpeg;
+    if (jpeg === undefined) {
       send({ _tag: "Ack" });
       return;
     }
+    const info: DesktopFrameInfo =
+      regionFrame !== null
+        ? {
+            width: regionFrame.meta.width,
+            height: regionFrame.meta.height,
+            region: regionFrame.meta.region,
+            screen: {
+              width: regionFrame.meta.screenWidth,
+              height: regionFrame.meta.screenHeight,
+            },
+          }
+        : { width: plainFrame!.meta.width, height: plainFrame!.meta.height };
     environment
-      .decodeImage(frame.jpeg)
+      .decodeImage(jpeg)
       .then((bitmap) => {
         if (closed) bitmap.close();
-        else callbacks.onFrame(bitmap, { width: frame.meta.width, height: frame.meta.height });
+        else callbacks.onFrame(bitmap, info);
       })
       .catch(() => undefined)
       .finally(() => send({ _tag: "Ack" }));
@@ -109,10 +148,11 @@ export function connectDesktopView(
   });
 
   return {
-    setViewport: (width, height) => {
+    setViewport: (width, height, region) => {
       const box = {
         width: Math.max(1, Math.round(width)),
         height: Math.max(1, Math.round(height)),
+        ...(region === undefined ? {} : { region }),
       };
       pendingViewport = box;
       send({ _tag: "Viewport", ...box });
