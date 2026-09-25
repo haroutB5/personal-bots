@@ -1,8 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
+import { decodePersonalBrowserFrame } from "./personalBrowser.ts";
 import {
   clampPersonalDesktopViewBox,
+  decodePersonalDesktopFrame,
+  encodePersonalDesktopFrame,
   PERSONAL_DESKTOP_REMOTE_TEXT_MAX,
   PERSONAL_DESKTOP_VIEW_MAX_EDGE,
   PersonalDesktopViewInput,
@@ -10,14 +13,24 @@ import {
 } from "./personalDesktop.ts";
 
 describe("personal desktop live view contracts", () => {
-  it("caps the long edge at the maximum and keeps the aspect", () => {
-    expect(clampPersonalDesktopViewBox({ width: 1170, height: 2532 })).toEqual({
-      width: 591,
+  it("caps each edge at the maximum", () => {
+    expect(clampPersonalDesktopViewBox({ width: 1290, height: 2796 })).toEqual({
+      width: 1290,
       height: PERSONAL_DESKTOP_VIEW_MAX_EDGE,
     });
+    // A wide landscape phone keeps its height: a 16:10 screen fits by height.
+    expect(clampPersonalDesktopViewBox({ width: 2796, height: 1290 })).toEqual({
+      width: PERSONAL_DESKTOP_VIEW_MAX_EDGE,
+      height: 1290,
+    });
     expect(clampPersonalDesktopViewBox({ width: 3840, height: 2160 })).toEqual({
-      width: 1280,
-      height: 720,
+      width: 2560,
+      height: 2160,
+    });
+    // A phone-width box is no longer squeezed to 1280.
+    expect(clampPersonalDesktopViewBox({ width: 1290, height: 730 })).toEqual({
+      width: 1290,
+      height: 730,
     });
     expect(clampPersonalDesktopViewBox({ width: 800, height: 600 })).toEqual({
       width: 800,
@@ -31,8 +44,8 @@ describe("personal desktop live view contracts", () => {
       height: 240,
     });
     expect(clampPersonalDesktopViewBox({ width: Number.NaN, height: 0 })).toEqual({
-      width: 1280,
-      height: 1280,
+      width: PERSONAL_DESKTOP_VIEW_MAX_EDGE,
+      height: PERSONAL_DESKTOP_VIEW_MAX_EDGE,
     });
   });
 
@@ -43,6 +56,43 @@ describe("personal desktop live view contracts", () => {
       "Some",
     );
     expect(decode(JSON.stringify({ _tag: "Viewport", width: -5, height: 10 }))._tag).toBe("None");
+    const region = { x: 0.25, y: 0.3, width: 1 / 3, height: 1 / 3 };
+    expect(
+      decode(JSON.stringify({ _tag: "Viewport", width: 1290, height: 730, region }))._tag,
+    ).toBe("Some");
+    expect(
+      decode(
+        JSON.stringify({
+          _tag: "Viewport",
+          width: 1290,
+          height: 730,
+          region: { ...region, x: 1.5 },
+        }),
+      )._tag,
+    ).toBe("None");
+  });
+
+  it("carries the region and monitor size on every region frame", () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 1, 2, 3]);
+    const meta = {
+      width: 1024,
+      height: 640,
+      region: { x: 1024, y: 640, width: 1024, height: 640 },
+      screenWidth: 3072,
+      screenHeight: 1920,
+    };
+    const frame = encodePersonalDesktopFrame(jpeg, meta);
+    const decoded = decodePersonalDesktopFrame(frame);
+    expect(decoded?.meta).toEqual(meta);
+    expect(Array.from(decoded!.jpeg)).toEqual(Array.from(jpeg));
+    // The browser decoder refuses it, so an older app never misplaces it.
+    expect(decodePersonalBrowserFrame(frame)).toBeNull();
+    // A region that runs off the monitor is refused.
+    expect(
+      decodePersonalDesktopFrame(
+        encodePersonalDesktopFrame(jpeg, { ...meta, region: { ...meta.region, x: 2500 } }),
+      ),
+    ).toBeNull();
   });
 
   it("validates remote control input: shapes, ranges, buttons, modifiers and text length", () => {
