@@ -12,11 +12,10 @@ import {
   useRouter,
 } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
-import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
@@ -84,6 +83,13 @@ import { PersonalUnreachableScreen } from "../features/personal/PersonalUnreacha
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { installDesktopPasteAsText } from "../lib/desktopPasteAsText";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
+
+// Personal fork: the Bots routes never show the upstream thread sidebar, so it
+// (and the pull-request and thread code behind it) loads on demand instead of
+// on every Bots launch.
+const AppSidebarLayout = lazy(() =>
+  import("../components/AppSidebarLayout").then((module) => ({ default: module.AppSidebarLayout })),
+);
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -197,9 +203,11 @@ function RootRouteView() {
           <FontAppearanceSync />
           <CustomSnoozeDialogHost />
           <CommandPalette>
-            <AppSidebarLayout>
-              <Outlet />
-            </AppSidebarLayout>
+            <Suspense fallback={null}>
+              <AppSidebarLayout>
+                <Outlet />
+              </AppSidebarLayout>
+            </Suspense>
           </CommandPalette>
         </AnchoredToastProvider>
       </ToastProvider>
@@ -223,9 +231,11 @@ function RootRouteView() {
     </CommandPalette>
   ) : (
     <CommandPalette>
-      <AppSidebarLayout>
-        <Outlet />
-      </AppSidebarLayout>
+      <Suspense fallback={null}>
+        <AppSidebarLayout>
+          <Outlet />
+        </AppSidebarLayout>
+      </Suspense>
     </CommandPalette>
   );
 

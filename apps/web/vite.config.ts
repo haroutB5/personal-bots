@@ -143,6 +143,30 @@ function devCompressionPlugin(): Plugin {
   };
 }
 
+// Personal fork: lucide-react/dynamic (the project icon picker) imports every
+// icon with `import("./icons/<name>.js")`. That made each icon a dynamic entry,
+// so every icon the app also imports statically was forced into its own ~1 KB
+// chunk: 60+ extra requests before the Bots chats list could paint. Giving the
+// picker's imports their own module ids leaves the static icons free to bundle
+// with the code that uses them; the picker still loads one icon per chunk.
+const LUCIDE_DYNAMIC_IMPORTER = /lucide-react[\\/]dist[\\/]esm[\\/]dynamicIconImports\.js$/;
+const LUCIDE_DYNAMIC_QUERY = "?lucide-dynamic";
+const LUCIDE_ICON_MODULE = /lucide-react[\\/]dist[\\/]esm[\\/]icons[\\/][^\\/]+\.js/;
+
+function lucideDynamicIconsPlugin(): Plugin {
+  return {
+    name: "personal:lucide-dynamic-icons",
+    enforce: "pre",
+    apply: "build",
+    async resolveId(source, importer, options) {
+      if (!importer || !LUCIDE_DYNAMIC_IMPORTER.test(importer)) return null;
+      if (!source.startsWith("./icons/")) return null;
+      const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
+      return resolved ? `${resolved.id}${LUCIDE_DYNAMIC_QUERY}` : null;
+    },
+  };
+}
+
 // Vite rejects requests whose Host header isn't localhost, which blocks sharing
 // a dev server over Tailscale/LAN. Tailnet names are safe to allow wholesale:
 // the DNS is controlled by tailscale, so they can't be rebound by an attacker.
@@ -158,6 +182,7 @@ export default defineConfig(() => {
     assetsInclude: ["**/*.wasm"],
     plugins: [
       devCompressionPlugin(),
+      lucideDynamicIconsPlugin(),
       thirdPartyLicensesPlugin({
         bundleName: "web",
         configFile: new URL("../../third-party-licenses.config.json", import.meta.url),
@@ -282,6 +307,21 @@ export default defineConfig(() => {
       emptyOutDir: true,
       manifest: true,
       sourcemap: buildSourcemap,
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            groups: [
+              // Every icon the app imports statically, in one chunk (~57 KB raw)
+              // instead of one request per icon.
+              {
+                name: "icons",
+                test: (id) => LUCIDE_ICON_MODULE.test(id) && !id.includes(LUCIDE_DYNAMIC_QUERY),
+                priority: 2,
+              },
+            ],
+          },
+        },
+      },
     },
     test: {
       projects: [defineProject(unitTestProject)],
