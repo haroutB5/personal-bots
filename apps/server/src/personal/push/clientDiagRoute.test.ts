@@ -197,6 +197,8 @@ describe("client diagnostics route", () => {
           closed: 3,
           reason: "visible",
           visibility: "visible",
+          waitedMs: 8000,
+          afterTap: false,
           titles: ["not kept"],
         }),
       ),
@@ -205,6 +207,8 @@ describe("client diagnostics route", () => {
       closed: 3,
       reason: "visible",
       visibility: "visible",
+      waitedMs: 8000,
+      afterTap: false,
     });
   });
 

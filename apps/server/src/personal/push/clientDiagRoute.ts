@@ -137,6 +137,10 @@ const FIELDS: Record<string, Read> = {
   at: count,
   closed: count,
   reason: token(32),
+  // How long the cleanup waited after the app came back, and whether a tap
+  // arrived in that window: shows a cleanup racing a late notification tap.
+  waitedMs: count,
+  afterTap: bool,
   clients: (value) =>
     Array.isArray(value)
       ? value
