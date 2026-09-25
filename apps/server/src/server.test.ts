@@ -141,6 +141,7 @@ import {
   OrchestrationThreadSettleBlockedError,
 } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProviderCommandReactor } from "./orchestration/Services/ProviderCommandReactor.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
@@ -807,6 +808,8 @@ const buildAppUnderTest = (options?: {
           Layer.mock(PersonalPushService.PersonalPushService)({}),
           Layer.mock(PersonalProviderUpdates.PersonalProviderUpdates)({}),
           Layer.mock(PersonalBotRepository.PersonalBotRepository)({}),
+          // The chat-open session prewarm the WS route builds once.
+          Layer.mock(ProviderCommandReactor)({}),
           Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
             current: Effect.succeed([]),
             streamChanges: Stream.empty,

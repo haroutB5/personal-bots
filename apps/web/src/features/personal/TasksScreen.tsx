@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import {
   describePersonalRoutineTrigger,
@@ -15,6 +15,7 @@ import { BotAvatar } from "./BotAvatar";
 import { formatRelativeTime } from "./relativeTime";
 import { routineTriggerStatusLabel } from "./routineHook";
 import {
+  mergeTaskLists,
   TASK_LIST_FILTERS,
   taskListCountNeedsAttention,
   taskListFor,
@@ -22,7 +23,14 @@ import {
   taskStatusTone,
   type TaskListFilter,
 } from "./taskPresentation";
-import { usePersonalRoutines, usePersonalTasks } from "./usePersonalAutomation";
+import { useAtomCommand } from "~/state/use-atom-command";
+
+import { commandFailureMessage } from "./commandFeedback";
+import {
+  personalTaskHistory,
+  usePersonalRoutines,
+  usePersonalTasks,
+} from "./usePersonalAutomation";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 import { useMinuteNow } from "./useMinuteNow";
 
@@ -130,6 +138,18 @@ function RoutineRow({
   );
 }
 
+/** Finished tasks per "Show older tasks" tap. */
+const OLDER_PAGE_SIZE = 30;
+
+interface OlderTasks {
+  readonly tasks: ReadonlyArray<PersonalTask>;
+  readonly hasMore: boolean;
+  readonly loading: boolean;
+  readonly error: string | null;
+}
+
+const NO_OLDER_TASKS: OlderTasks = { tasks: [], hasMore: true, loading: false, error: null };
+
 const EMPTY_TEXT: Record<TaskListFilter, string> = {
   active: "Nothing is running right now.",
   waiting: "Nothing is waiting on you or another bot.",
@@ -138,10 +158,44 @@ const EMPTY_TEXT: Record<TaskListFilter, string> = {
   completed: "Finished tasks will show up here.",
 };
 
-/** /tasks: live task lists from personalTasks.subscribe, plus routines under Scheduled. */
+/**
+ * /tasks: live task lists from personalTasks.subscribe, plus routines under
+ * Scheduled. The feed carries the newest finished tasks; older ones load a
+ * page at a time from personalTasks.history.
+ */
 export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
-  const { tasks, error } = usePersonalTasks(environmentId);
+  const { tasks: taskFeed, error } = usePersonalTasks(environmentId);
+  const loadHistory = useAtomCommand(personalTaskHistory, {
+    label: "personal-tasks:history",
+    reportFailure: false,
+  });
+  const [older, setOlder] = useState<OlderTasks>(NO_OLDER_TASKS);
+  const tasks = useMemo(() => mergeTaskLists(taskFeed, older.tasks), [taskFeed, older.tasks]);
+  const loadOlder = async () => {
+    if (environmentId === null || older.loading) return;
+    setOlder((current) => ({ ...current, loading: true, error: null }));
+    // History is newest first, so the last task loaded is the page cursor.
+    const last = older.tasks.at(-1);
+    const outcome = await loadHistory({
+      environmentId,
+      input: { limit: OLDER_PAGE_SIZE, ...(last === undefined ? {} : { before: last.taskId }) },
+    });
+    setOlder((current) =>
+      outcome._tag === "Success"
+        ? {
+            tasks: [...current.tasks, ...outcome.value.tasks],
+            hasMore: outcome.value.hasMore,
+            loading: false,
+            error: null,
+          }
+        : {
+            ...current,
+            loading: false,
+            error: commandFailureMessage(outcome, "Could not load older tasks."),
+          },
+    );
+  };
   const routinesQuery = usePersonalRoutines(environmentId);
   const botsQuery = usePersonalBotsList(environmentId);
   const botById = useMemo(
@@ -257,6 +311,25 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
           ))}
         </ul>
       )}
+
+      {view === "completed" && loadError === null && !loading && older.hasMore ? (
+        <div className="flex flex-col items-center gap-2 pt-4">
+          <button
+            type="button"
+            disabled={older.loading}
+            aria-busy={older.loading}
+            onClick={() => void loadOlder()}
+            className="flex h-11 items-center rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-5 text-[15px] font-semibold text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+          >
+            {older.loading ? "Loading…" : "Show older tasks"}
+          </button>
+          {older.error !== null ? (
+            <p role="alert" className="text-[13px] text-[var(--personal-danger)]">
+              {older.error}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

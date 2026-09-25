@@ -109,7 +109,9 @@ import { warmHighlighterWhenIdle } from "./highlighterWarmup";
 import { PersonalComposer } from "./PersonalComposer";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { useStartBotChat } from "./startBotChat";
-import { usePersonalTasks } from "./usePersonalAutomation";
+import { usePersonalRelatedTasks, usePersonalTasks } from "./usePersonalAutomation";
+import { usePrewarmChatSession } from "./usePrewarmChatSession";
+import { mergeTaskLists } from "./taskPresentation";
 import {
   personalBotArchiveThread,
   usePersonalBotsList,
@@ -263,12 +265,19 @@ export function ConversationScreen({
   // Reading this chat right now means its own notifications stay off the
   // phone; every other chat still notifies.
   useReportViewingThread(environmentId, threadId, connectionPhase === "connected");
+  usePrewarmChatSession(environmentId, threadId, connectionPhase === "connected");
   const { feed: computerFeed } = useComputerFeed(environmentId);
   const desktopStatus = useDesktopStatus(environmentId);
 
   // Delegation state comes from the live task feed (personalTasks.subscribe).
+  // The feed carries only recent finished tasks, so an older chat's own tasks
+  // and their delegated children are fetched once for this chat and folded in.
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
-  const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
+  const threadTasks = usePersonalRelatedTasks(environmentId, { threadId });
+  const tasks = useMemo(() => {
+    const merged = mergeTaskLists(taskFeed, threadTasks);
+    return merged === null ? [] : [...merged.values()];
+  }, [taskFeed, threadTasks]);
   const botsById = useMemo(
     () => new Map((list.data?.bots ?? []).map((entry) => [entry.botId as string, entry] as const)),
     [list.data],

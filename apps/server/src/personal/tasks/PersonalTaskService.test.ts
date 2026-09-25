@@ -8,6 +8,7 @@ import {
   PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
   PersonalBotId,
   PersonalTaskId,
+  PersonalTaskResult,
   ProviderInstanceId,
   TurnId,
   type OrchestrationCommand,
@@ -976,5 +977,106 @@ it.effect("the replay keeps every unfinished task and only the newest finished o
     expect(replay.map((task) => task.taskId)).toEqual([newer.taskId, running.taskId]);
     const all = yield* repository.listTasks({});
     expect(all.length).toBe(3);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+const encodeResult = Schema.encodeSync(Schema.fromJsonString(PersonalTaskResult));
+
+/** Marks `task` finished at `createdAt`, with an optional result and thread/parent. */
+const finish = (
+  task: PersonalTask,
+  createdAt: string,
+  extra: { readonly result?: string; readonly parent?: PersonalTask } = {},
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      UPDATE personal_tasks
+      SET status = 'completed', created_at = ${createdAt},
+        result_json = ${extra.result === undefined ? null : encodeResult({ summary: extra.result })},
+        parent_task_id = ${extra.parent?.taskId ?? null}
+      WHERE task_id = ${task.taskId}
+    `;
+  });
+
+it.effect("the feed sends summaries: no bodies, a short result preview", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const done = yield* createRoot("summary-done");
+    const longResult = "x".repeat(PersonalTaskService.TASK_SUMMARY_RESULT_PREVIEW_CHARS + 500);
+    yield* finish(done, "2026-09-01T00:00:00.000Z", { result: longResult });
+
+    const [event] = yield* service.subscribe.pipe(Stream.take(1), Stream.runCollect);
+    expect(event!.task).toMatchObject({
+      taskId: done.taskId,
+      title: done.title,
+      objective: "",
+      acceptanceCriteria: "",
+      expectedOutput: "",
+      detailOmitted: true,
+    });
+    expect(event!.task.result!.summary).toBe(
+      `${"x".repeat(PersonalTaskService.TASK_SUMMARY_RESULT_PREVIEW_CHARS)}…`,
+    );
+    // The detail keeps everything.
+    const full = yield* reload(done.taskId);
+    expect(full.objective).toBe("Do the summary-done thing.");
+    expect(full.result!.summary).toBe(longResult);
+    expect(full.detailOmitted).toBeUndefined();
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("history pages through finished tasks older than the feed, without gaps", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const tasks: Array<PersonalTask> = [];
+    for (let day = 1; day <= 5; day++) {
+      const task = yield* createRoot(`history-${day}`);
+      yield* finish(task, `2026-09-0${day}T00:00:00.000Z`);
+      tasks.push(task);
+    }
+    const open = yield* createRoot("history-open");
+
+    const first = yield* service.history({ limit: 2 });
+    expect(first.tasks.map((task) => task.taskId)).toEqual([tasks[4]!.taskId, tasks[3]!.taskId]);
+    expect(first.hasMore).toBe(true);
+    expect(first.tasks.every((task) => task.detailOmitted === true)).toBe(true);
+    const second = yield* service.history({ before: tasks[3]!.taskId, limit: 2 });
+    expect(second.tasks.map((task) => task.taskId)).toEqual([tasks[2]!.taskId, tasks[1]!.taskId]);
+    const last = yield* service.history({ before: tasks[1]!.taskId, limit: 2 });
+    expect(last.tasks.map((task) => task.taskId)).toEqual([tasks[0]!.taskId]);
+    expect(last.hasMore).toBe(false);
+    // Unfinished tasks are the feed's, never history's.
+    const everything = yield* service.history({ limit: 100 });
+    expect(everything.tasks.map((task) => task.taskId)).not.toContain(open.taskId);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("related returns a thread's tasks and their delegated children", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const parent = yield* createRoot("related-parent");
+    const child = yield* createRoot("related-child", "developer");
+    const unrelated = yield* createRoot("related-other", "researcher");
+    yield* finish(parent, "2026-09-01T00:00:00.000Z");
+    yield* finish(child, "2026-09-02T00:00:00.000Z", { result: "done", parent });
+
+    const byThread = yield* service.related({ threadId: threadOf(parent) });
+    expect(byThread.tasks.map((task) => task.taskId).toSorted()).toEqual(
+      [parent.taskId, child.taskId].toSorted(),
+    );
+    expect(byThread.tasks.every((task) => task.detailOmitted === true)).toBe(true);
+
+    const byId = yield* service.related({ taskIds: [child.taskId, unrelated.taskId] });
+    expect(byId.tasks.map((task) => task.taskId).toSorted()).toEqual(
+      [child.taskId, unrelated.taskId].toSorted(),
+    );
+    expect((yield* service.related({})).tasks).toEqual([]);
   }).pipe(Effect.provide(makeLayer(harness)));
 });

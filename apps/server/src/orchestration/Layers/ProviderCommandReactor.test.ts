@@ -650,6 +650,7 @@ describe("ProviderCommandReactor", () => {
       drain,
       startReactor,
       runEffect,
+      reactor,
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
       },
@@ -4559,4 +4560,139 @@ describe("ProviderCommandReactor", () => {
       expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
     }),
   );
+  describe("session prewarm", () => {
+    const claudeSelection: ModelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet-4-6",
+    };
+    const threadId = ThreadId.make("thread-1");
+
+    it("starts a Claude thread's session once, with no turn and no prompt", async () => {
+      const harness = await createHarness({ threadModelSelection: claudeSelection });
+
+      const first = await harness.runEffect(
+        harness.reactor.prewarmSession({ threadId, modelSelection: claudeSelection }),
+      );
+      const second = await harness.runEffect(
+        harness.reactor.prewarmSession({ threadId, modelSelection: claudeSelection }),
+      );
+
+      expect(first).toBe("started");
+      expect(second).toBe("live");
+      expect(harness.startSession).toHaveBeenCalledTimes(1);
+      expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+        modelSelection: claudeSelection,
+        runtimeMode: "approval-required",
+      });
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+      const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+      expect(thread?.session?.status).toBe("ready");
+      expect(thread?.session?.activeTurnId).toBeNull();
+      expect(thread?.messages).toEqual([]);
+      expect(await harness.readPendingTurnStarts()).toEqual([]);
+    });
+
+    it("lets the next send reuse the prewarmed session", async () => {
+      const harness = await createHarness({ threadModelSelection: claudeSelection });
+      await harness.runEffect(
+        harness.reactor.prewarmSession({ threadId, modelSelection: claudeSelection }),
+      );
+
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-after-prewarm"),
+          threadId,
+          message: {
+            messageId: asMessageId("user-message-after-prewarm"),
+            role: "user",
+            text: "hello",
+            attachments: [],
+          },
+          modelSelection: claudeSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+
+      expect(harness.startSession).toHaveBeenCalledTimes(1);
+      expect(harness.stopSession).not.toHaveBeenCalled();
+    });
+
+    it("makes a send wait for a prewarm in flight instead of starting a second session", async () => {
+      const release = Effect.runSync(Deferred.make<void>());
+      let starts = 0;
+      const harness = await createHarness({
+        threadModelSelection: claudeSelection,
+        startSessionEffect: (session) =>
+          Effect.suspend(() =>
+            ++starts === 1
+              ? Deferred.await(release).pipe(Effect.as(session))
+              : Effect.succeed(session),
+          ),
+      });
+      const prewarm = harness.runEffect(
+        harness.reactor.prewarmSession({ threadId, modelSelection: claudeSelection }),
+      );
+      await waitFor(() => harness.startSession.mock.calls.length === 1);
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-during-prewarm"),
+          threadId,
+          message: {
+            messageId: asMessageId("user-message-during-prewarm"),
+            role: "user",
+            text: "hello",
+            attachments: [],
+          },
+          modelSelection: claudeSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+      await harness.runEffect(Deferred.succeed(release, undefined));
+      expect(await prewarm).toBe("started");
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+      expect(harness.startSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("skips an archived thread", async () => {
+      const harness = await createHarness({ threadModelSelection: claudeSelection });
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("cmd-archive-before-prewarm"),
+          threadId,
+        }),
+      );
+
+      const outcome = await harness.runEffect(
+        harness.reactor.prewarmSession({ threadId, modelSelection: claudeSelection }),
+      );
+
+      // The active-thread read hides an archived thread; either way no session.
+      expect(["archived", "missing"]).toContain(outcome);
+      expect(harness.startSession).not.toHaveBeenCalled();
+    });
+
+    it("skips a thread that is not on Claude", async () => {
+      const harness = await createHarness();
+
+      const outcome = await harness.runEffect(
+        harness.reactor.prewarmSession({
+          threadId,
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        }),
+      );
+
+      expect(outcome).toBe("unsupported");
+      expect(harness.startSession).not.toHaveBeenCalled();
+    });
+  });
 });

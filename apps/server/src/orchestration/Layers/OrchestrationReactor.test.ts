@@ -57,6 +57,7 @@ describe("OrchestrationReactor", () => {
               return Effect.void;
             },
             drain: Effect.void,
+            prewarmSession: () => Effect.succeed("live" as const),
           }),
         ),
         Layer.provideMerge(

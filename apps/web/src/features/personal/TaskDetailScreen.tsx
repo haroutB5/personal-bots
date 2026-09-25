@@ -16,6 +16,7 @@ import {
   canCancelTask,
   canRetryTask,
   formatLocalDateTime,
+  mergeTaskLists,
   stopTaskConfirmMessage,
   taskStatusLabel,
   taskStatusTone,
@@ -24,6 +25,7 @@ import { SmallBotAvatar, StatusDot } from "./TasksScreen";
 import {
   personalTaskCancel,
   personalTaskRetry,
+  usePersonalRelatedTasks,
   usePersonalTaskDetail,
   usePersonalTasks,
 } from "./usePersonalAutomation";
@@ -78,8 +80,15 @@ function RelatedTask({ task, bot }: { task: PersonalTask; bot: PersonalBot | und
 /** /tasks/$taskId: live status, timestamps, delegation tree, result and actions. */
 export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
-  const { tasks } = usePersonalTasks(environmentId);
+  const { tasks: taskFeed } = usePersonalTasks(environmentId);
   const detail = usePersonalTaskDetail(environmentId, taskId);
+  // The feed only carries recent finished tasks: fetch this task, its parent
+  // and its children as summaries too, so an old task shows its whole tree.
+  const parentTaskId = (taskFeed?.get(taskId) ?? detail.data?.task)?.parentTaskId ?? null;
+  const relatedTasks = usePersonalRelatedTasks(environmentId, {
+    taskIds: parentTaskId === null ? [taskId] : [taskId, parentTaskId],
+  });
+  const tasks = useMemo(() => mergeTaskLists(taskFeed, relatedTasks), [taskFeed, relatedTasks]);
   const botsQuery = usePersonalBotsList(environmentId);
   const cancel = useAtomCommand(personalTaskCancel);
   const retry = useAtomCommand(personalTaskRetry);
@@ -90,6 +99,17 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
     [botsQuery.data],
   );
   const task = tasks?.get(taskId) ?? detail.data?.task;
+  // Lists carry a result preview; the full result is the detail's, unless the
+  // live task has moved on since the detail was read (it refetches below).
+  const fullTask = detail.data?.task;
+  const result =
+    task === undefined
+      ? null
+      : fullTask !== undefined &&
+          fullTask.taskId === task.taskId &&
+          DateTime.toEpochMillis(fullTask.updatedAt) >= DateTime.toEpochMillis(task.updatedAt)
+        ? fullTask.result
+        : task.result;
   const updatedAt = task === undefined ? null : DateTime.formatIso(task.updatedAt);
   const refreshDetail = detail.refresh;
   // Attempts come from personalTasks.get; refetch whenever the live task moves.
@@ -202,16 +222,16 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
         </section>
       ) : null}
 
-      {task.result !== null && task.result.summary.trim().length > 0 ? (
+      {result !== null && result.summary.trim().length > 0 ? (
         <section className={DETAIL_CARD}>
           <h3 className="text-[14px] font-semibold text-[var(--personal-text)]">Result</h3>
           {/* A bot writes its result in markdown, the same as a reply: shown
               as plain text it read "**Cause**" and `code` with the marks in. */}
           <div className="personal-markdown mt-1 text-[15px] leading-[1.5] break-words text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]">
             <ChatMarkdown
-              text={task.result.summary}
+              text={result.summary}
               cwd={undefined}
-              lineBreaks={shouldPreserveAssistantLineBreaks(task.result.summary)}
+              lineBreaks={shouldPreserveAssistantLineBreaks(result.summary)}
             />
           </div>
         </section>

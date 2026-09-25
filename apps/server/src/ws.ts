@@ -190,6 +190,10 @@ import { purgePersonalBot } from "./personal/purgePersonalBot.ts";
 import { signPersonalFiles } from "./personal/PersonalFiles.ts";
 import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts";
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
+import {
+  makePersonalSessionPrewarmer,
+  type PersonalSessionPrewarmer,
+} from "./personal/sessionPrewarm.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
 import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
@@ -575,6 +579,7 @@ const makeWsRpcLayer = (
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   viewing: ViewingConnection,
+  sessionPrewarmer: PersonalSessionPrewarmer,
 ) =>
   // `Layer.unwrap` rather than `WsRpcGroup.toLayer` so the generator below runs
   // exactly once - every handler still closes over the same services and the
@@ -3095,6 +3100,29 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        // Fire and forget: the session starts on the server, outliving this
+        // request, so a dropped socket never leaves a half-started session.
+        [WS_METHODS.personalBotsPrewarmThread]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsPrewarmThread,
+            sessionPrewarmer.prewarm(input.threadId).pipe(
+              Effect.timed,
+              Effect.flatMap(([duration, outcome]) =>
+                outcome === "debounced" || outcome === "disabled"
+                  ? Effect.void
+                  : Effect.logInfo("personal session prewarm", {
+                      threadId: input.threadId,
+                      outcome,
+                      durationMs: Duration.toMillis(duration),
+                    }),
+              ),
+              Effect.forkDetach,
+              Effect.as({}),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.personalBotsDeleteThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalBotsDeleteThread,
@@ -3156,6 +3184,14 @@ const makeWsRpcLayer = (
           }),
         [WS_METHODS.personalTasksRetry]: (input) =>
           observeRpcEffect(WS_METHODS.personalTasksRetry, personalTasks.retry(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalTasksHistory]: (input) =>
+          observeRpcEffect(WS_METHODS.personalTasksHistory, personalTasks.history(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalTasksRelated]: (input) =>
+          observeRpcEffect(WS_METHODS.personalTasksRelated, personalTasks.related(input), {
             "rpc.aggregate": "server",
           }),
         [WS_METHODS.personalTasksSubscribe]: (_input) =>
@@ -4366,6 +4402,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
     const personalPush = yield* PersonalPushService.PersonalPushService;
     const sql = yield* SqlClient.SqlClient;
+    // Server-lifetime too: its per-chat debounce must outlive one connection.
+    const sessionPrewarmer = yield* makePersonalSessionPrewarmer();
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -4411,6 +4449,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientAnalyticsProps,
               previewAutomationBroker,
               viewing,
+              sessionPrewarmer,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),

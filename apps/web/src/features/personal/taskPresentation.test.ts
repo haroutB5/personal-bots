@@ -1,11 +1,13 @@
-import type { PersonalRoutine } from "@t3tools/contracts";
+import { type PersonalRoutine, PersonalTask } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   canCancelTask,
   canRetryTask,
   formatLocalDateTime,
+  mergeTaskLists,
   parseTaskListFilter,
   routineNextRunLabel,
   stopTaskConfirmMessage,
@@ -106,5 +108,53 @@ describe("stop task confirm", () => {
     expect(stopTaskConfirmMessage("   ")).toBe(
       "Stop this task?\nThe bot stops now; work in progress is lost.",
     );
+  });
+});
+
+describe("mergeTaskLists", () => {
+  const decodeTask = Schema.decodeUnknownSync(PersonalTask);
+  const task = (taskId: string, updatedAt: string, status = "completed") =>
+    decodeTask({
+      taskId,
+      rootTaskId: taskId,
+      parentTaskId: null,
+      botId: "bot-assistant",
+      threadId: null,
+      title: taskId,
+      objective: "",
+      acceptanceCriteria: "",
+      expectedOutput: "",
+      status,
+      source: "user",
+      idempotencyKey: `key-${taskId}`,
+      depth: 0,
+      maxDepth: 2,
+      maxChildren: 4,
+      result: null,
+      errorCategory: null,
+      errorMessage: null,
+      availableAt: null,
+      createdAt: "2026-09-13T04:00:00.000Z",
+      updatedAt,
+      startedAt: null,
+      completedAt: null,
+      detailOmitted: true,
+    });
+
+  it("adds tasks the feed does not carry and keeps the feed map when nothing is added", () => {
+    const feed = new Map([["recent", task("recent", "2026-09-20T00:00:00.000Z")]]);
+    expect(mergeTaskLists(feed, [])).toBe(feed);
+    expect(mergeTaskLists(feed, null)).toBe(feed);
+    expect(mergeTaskLists(null, [task("old", "2026-09-01T00:00:00.000Z")])).toBeNull();
+    const merged = mergeTaskLists(feed, [task("old", "2026-09-01T00:00:00.000Z")]);
+    expect([...merged!.keys()].toSorted()).toEqual(["old", "recent"]);
+  });
+
+  it("keeps the newer copy of a task both carry", () => {
+    const live = task("t", "2026-09-20T00:00:00.000Z", "running");
+    const stale = task("t", "2026-09-19T00:00:00.000Z", "queued");
+    const newer = task("t", "2026-09-21T00:00:00.000Z", "completed");
+    expect(mergeTaskLists(new Map([["t", live]]), [stale])!.get("t")).toBe(live);
+    expect(mergeTaskLists(new Map([["t", live]]), [newer])!.get("t")).toBe(newer);
   });
 });

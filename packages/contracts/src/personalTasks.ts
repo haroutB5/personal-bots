@@ -69,6 +69,12 @@ export const PersonalTask = Schema.Struct({
   updatedAt: Schema.DateTimeUtcFromString,
   startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  /**
+   * Set on the summaries the task feed, history and related lists send:
+   * objective, acceptanceCriteria and expectedOutput are blank and
+   * result.summary is a short preview. personalTasks.get has the full task.
+   */
+  detailOmitted: Schema.optional(Schema.Boolean),
 });
 export type PersonalTask = typeof PersonalTask.Type;
 
@@ -151,6 +157,32 @@ export const PersonalTaskListResult = Schema.Struct({
 });
 export type PersonalTaskListResult = typeof PersonalTaskListResult.Type;
 
+/** Finished tasks older than `before`, newest first, as summaries. */
+export const PersonalTaskHistoryInput = Schema.Struct({
+  /** The oldest finished task the client already has; omitted for the newest page. */
+  before: Schema.optional(PersonalTaskId),
+  /** 1-100, default 20. */
+  limit: Schema.optional(Schema.Number),
+});
+export type PersonalTaskHistoryInput = typeof PersonalTaskHistoryInput.Type;
+
+export const PersonalTaskHistoryResult = Schema.Struct({
+  tasks: Schema.Array(PersonalTask),
+  hasMore: Schema.Boolean,
+});
+export type PersonalTaskHistoryResult = typeof PersonalTaskHistoryResult.Type;
+
+/**
+ * Summaries of the tasks run in `threadId`, of the tasks named in `taskIds`,
+ * and of the direct children of all of them: what a chat or a task screen
+ * shows beyond the recent tasks the feed carries.
+ */
+export const PersonalTaskRelatedInput = Schema.Struct({
+  threadId: Schema.optional(ThreadId),
+  taskIds: Schema.optional(Schema.Array(PersonalTaskId)),
+});
+export type PersonalTaskRelatedInput = typeof PersonalTaskRelatedInput.Type;
+
 export const PersonalTaskDetail = Schema.Struct({
   task: PersonalTask,
   attempts: Schema.Array(PersonalTaskAttempt),
@@ -161,7 +193,11 @@ export const PersonalTaskDetail = Schema.Struct({
 });
 export type PersonalTaskDetail = typeof PersonalTaskDetail.Type;
 
-/** `personalTasks.subscribe` replays every task as an upsert, then streams changes. */
+/**
+ * `personalTasks.subscribe` replays every unfinished task and the newest
+ * finished ones as upserts, then streams changes. Older finished tasks come
+ * from `personalTasks.history` and `personalTasks.related`.
+ */
 export const PersonalTaskStreamEvent = Schema.Struct({
   type: Schema.Literal("upsert"),
   task: PersonalTask,

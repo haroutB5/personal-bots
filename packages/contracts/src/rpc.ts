@@ -270,6 +270,7 @@ import {
 import {
   PersonalBot,
   PersonalBotArchiveThreadInput,
+  PersonalBotPrewarmThreadInput,
   PersonalBotCreateInput,
   PersonalBotCreateThreadInput,
   PersonalBotDeleteInput,
@@ -287,6 +288,9 @@ import {
   PersonalTask,
   PersonalTaskCreateInput,
   PersonalTaskDetail,
+  PersonalTaskHistoryInput,
+  PersonalTaskHistoryResult,
+  PersonalTaskRelatedInput,
   PersonalTaskIdInput,
   PersonalTaskListInput,
   PersonalTaskListResult,
@@ -550,6 +554,7 @@ export const WS_METHODS = {
   personalBotsCreateThread: "personalBots.createThread",
   personalBotsArchiveThread: "personalBots.archiveThread",
   personalBotsDeleteThread: "personalBots.deleteThread",
+  personalBotsPrewarmThread: "personalBots.prewarmThread",
   personalBotsGetProfile: "personalBots.getProfile",
   personalBotsSetProfile: "personalBots.setProfile",
   personalBotsListFiles: "personalBots.listFiles",
@@ -563,6 +568,8 @@ export const WS_METHODS = {
   personalTasksCancel: "personalTasks.cancel",
   personalTasksRetry: "personalTasks.retry",
   personalTasksSubscribe: "personalTasks.subscribe",
+  personalTasksHistory: "personalTasks.history",
+  personalTasksRelated: "personalTasks.related",
 
   // Personal group chats. `subscribe` streams group and round STATE only; the
   // transcript arrives on the group thread's ordinary thread-detail
@@ -1159,6 +1166,12 @@ const WsPersonalBotsArchiveThreadRpc = Rpc.make(WS_METHODS.personalBotsArchiveTh
   error: PersonalBotsRpcError,
 });
 
+const WsPersonalBotsPrewarmThreadRpc = Rpc.make(WS_METHODS.personalBotsPrewarmThread, {
+  payload: PersonalBotPrewarmThreadInput,
+  success: Schema.Struct({}),
+  error: PersonalBotsRpcError,
+});
+
 const WsPersonalBotsDeleteThreadRpc = Rpc.make(WS_METHODS.personalBotsDeleteThread, {
   payload: PersonalBotDeleteThreadInput,
   success: Schema.Struct({}),
@@ -1225,6 +1238,18 @@ const WsPersonalTasksCancelRpc = Rpc.make(WS_METHODS.personalTasksCancel, {
 const WsPersonalTasksRetryRpc = Rpc.make(WS_METHODS.personalTasksRetry, {
   payload: PersonalTaskIdInput,
   success: PersonalTask,
+  error: PersonalTasksRpcError,
+});
+
+const WsPersonalTasksHistoryRpc = Rpc.make(WS_METHODS.personalTasksHistory, {
+  payload: PersonalTaskHistoryInput,
+  success: PersonalTaskHistoryResult,
+  error: PersonalTasksRpcError,
+});
+
+const WsPersonalTasksRelatedRpc = Rpc.make(WS_METHODS.personalTasksRelated, {
+  payload: PersonalTaskRelatedInput,
+  success: PersonalTaskListResult,
   error: PersonalTasksRpcError,
 });
 
@@ -2278,6 +2303,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalBotsCreateThreadRpc,
   WsPersonalBotsArchiveThreadRpc,
   WsPersonalBotsDeleteThreadRpc,
+  WsPersonalBotsPrewarmThreadRpc,
   WsPersonalBotsGetProfileRpc,
   WsPersonalBotsSetProfileRpc,
   WsPersonalBotsListFilesRpc,
@@ -2289,6 +2315,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalTasksCancelRpc,
   WsPersonalTasksRetryRpc,
   WsPersonalTasksSubscribeRpc,
+  WsPersonalTasksHistoryRpc,
+  WsPersonalTasksRelatedRpc,
   WsPersonalGroupsListRpc,
   WsPersonalGroupsCreateRpc,
   WsPersonalGroupsUpdateRpc,
