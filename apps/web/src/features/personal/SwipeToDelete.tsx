@@ -4,9 +4,9 @@ import type {
   PointerEvent as ReactPointerEvent,
   ReactNode,
 } from "react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-/** Width of the revealed Delete action, and how far a swipe must go to keep it open. */
+/** Width of one revealed action, and half of it is how far a swipe must go to keep it open. */
 const ACTION_WIDTH = 88;
 const AXIS_LOCK_PX = 8;
 
@@ -29,33 +29,90 @@ export interface SwipeSecondaryAction {
 
 const NO_SECONDARY_ACTIONS: ReadonlyArray<SwipeSecondaryAction> = [];
 
+/** Where a released swipe rests: fully open on the side it went past halfway, else closed. */
+export function settleSwipeOffset(value: number, leftWidth: number, rightWidth: number): number {
+  if (value <= -ACTION_WIDTH / 2) return -leftWidth;
+  if (value >= ACTION_WIDTH / 2) return rightWidth;
+  return 0;
+}
+
+// Only one row in the app is open at a time: opening another closes this one.
+let closeOpenRow: (() => void) | null = null;
+
+function claimOpenRow(close: () => void): void {
+  if (closeOpenRow !== null && closeOpenRow !== close) closeOpenRow();
+  closeOpenRow = close;
+}
+
+function releaseOpenRow(close: () => void): void {
+  if (closeOpenRow === close) closeOpenRow = null;
+}
+
+function swallowClickOnce(event: MouseEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+}
+
 /**
- * iOS-style swipe action: swipe a row left to reveal Delete; tap it to run
- * `onDelete`, tap the row to close it. With `secondaryActions`, swiping the
- * other way reveals those (side by side, like Pin and Mute in Messages)
- * instead of a second Delete. Vertical drags scroll the list as usual. Every
- * action stays reachable from the bot editor, so keyboard and screen reader
- * users never need the gesture.
+ * iOS-style swipe action: swipe a row left to reveal Delete (after any
+ * `trailingActions`, e.g. Archive, as in Mail); tap one to run it, tap the row
+ * to close it. With `secondaryActions`, swiping the other way reveals those
+ * (side by side, like Pin and Mute in Messages) instead of a second Delete.
+ * Vertical drags scroll the list as usual. One row is open at a time, and a
+ * tap elsewhere (which does nothing else) or a scroll closes it. Every action stays reachable without
+ * the gesture elsewhere on the screen, so keyboard and screen reader users
+ * never need it.
  */
 export function SwipeToDelete({
   label,
   onDelete,
   secondaryActions = NO_SECONDARY_ACTIONS,
+  trailingActions = NO_SECONDARY_ACTIONS,
   children,
 }: {
   label: string;
   /** Resolves once the user confirmed or cancelled; the row closes either way. */
   onDelete: () => Promise<unknown>;
   secondaryActions?: ReadonlyArray<SwipeSecondaryAction> | undefined;
+  /** Shown left of Delete when swiping left, in the quiet fill. */
+  trailingActions?: ReadonlyArray<SwipeSecondaryAction> | undefined;
   children: ReactNode;
 }): JSX.Element {
-  // Swiping right opens as wide as its buttons; left is always one Delete.
+  // Swiping right opens as wide as its buttons; left is Delete plus any trailing actions.
   const secondaryWidth = ACTION_WIDTH * secondaryActions.length;
+  const leftWidth = ACTION_WIDTH * (1 + trailingActions.length);
+  const rightWidth = secondaryWidth > 0 ? secondaryWidth : ACTION_WIDTH;
   const [offset, setOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
   const drag = useRef<Drag | null>(null);
+  const root = useRef<HTMLDivElement | null>(null);
   // Set when a gesture moved the row, so the click that ends it never navigates.
   const swallowClick = useRef(false);
+  // Stable identity for the open-row registry.
+  const [close] = useState(() => () => setOffset(0));
+
+  const open = offset !== 0 && !dragging;
+  useEffect(() => {
+    if (!open) return;
+    claimOpenRow(close);
+    const onOutsidePointer = (event: PointerEvent) => {
+      if (root.current?.contains(event.target as Node | null)) return;
+      close();
+      // As in Messages, that tap only closes the row: the click it ends must
+      // not also press whatever it landed on (Wrapup, another row, a tab).
+      document.addEventListener("click", swallowClickOnce, { capture: true, once: true });
+      setTimeout(() => document.removeEventListener("click", swallowClickOnce, true), 600);
+    };
+    document.addEventListener("pointerdown", onOutsidePointer, true);
+    // Scroll does not bubble; capture sees the list's scroller and the window.
+    document.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("pointerdown", onOutsidePointer, true);
+      document.removeEventListener("scroll", close, true);
+      releaseOpenRow(close);
+    };
+  }, [open, close]);
+  useEffect(() => () => releaseOpenRow(close), [close]);
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
@@ -78,8 +135,7 @@ export function SwipeToDelete({
     }
     if (current.axis !== "x") return;
     swallowClick.current = true;
-    const rightLimit = (secondaryWidth > 0 ? secondaryWidth : ACTION_WIDTH) * 1.25;
-    setOffset(Math.max(-ACTION_WIDTH * 1.25, Math.min(rightLimit, current.start + dx)));
+    setOffset(Math.max(-leftWidth * 1.25, Math.min(rightWidth * 1.25, current.start + dx)));
   };
 
   const endDrag = () => {
@@ -87,10 +143,7 @@ export function SwipeToDelete({
     drag.current = null;
     if (current?.axis !== "x") return;
     setDragging(false);
-    const openRight = secondaryWidth > 0 ? secondaryWidth : ACTION_WIDTH;
-    setOffset((value) =>
-      value <= -ACTION_WIDTH / 2 ? -ACTION_WIDTH : value >= ACTION_WIDTH / 2 ? openRight : 0,
-    );
+    setOffset((value) => settleSwipeOffset(value, leftWidth, rightWidth));
   };
 
   const onClickCapture = (event: ReactMouseEvent) => {
@@ -102,20 +155,20 @@ export function SwipeToDelete({
     }
   };
 
+  // Closes first: a confirm dialog the action opens is outside the row, and a
+  // tap on it must not count as the tap that closes an open row.
   const run = async (action: () => Promise<unknown> | unknown) => {
-    try {
-      await action();
-    } finally {
-      setOffset(0);
-    }
+    setOffset(0);
+    await action();
   };
 
   // Swiping right reveals the secondary actions when there are any; swiping
   // left is always Delete, so the destructive side never moves.
   const showSecondary = offset > 0 && secondaryActions.length > 0;
+  const showTrailing = offset < 0 && trailingActions.length > 0;
 
   return (
-    <div className="relative overflow-hidden">
+    <div ref={root} className="relative overflow-hidden">
       {showSecondary ? (
         <div className="absolute inset-y-0 left-0 flex" data-swipe-actions="">
           {secondaryActions.map((action, index) => (
@@ -131,15 +184,33 @@ export function SwipeToDelete({
           ))}
         </div>
       ) : offset !== 0 ? (
-        <button
-          type="button"
-          onClick={() => void run(onDelete)}
-          aria-label={label}
-          className="absolute inset-y-0 flex w-[88px] items-center justify-center bg-[var(--personal-destructive)] text-[15px] font-semibold text-[var(--personal-destructive-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-destructive-text)]"
+        <div
+          className="absolute inset-y-0 flex"
+          data-swipe-actions=""
           style={offset < 0 ? { right: 0 } : { left: 0 }}
         >
-          Delete
-        </button>
+          {showTrailing
+            ? trailingActions.map((action) => (
+                <button
+                  key={action.text}
+                  type="button"
+                  onClick={() => void run(action.run)}
+                  aria-label={action.label}
+                  className="flex h-full w-[88px] items-center justify-center bg-[var(--personal-text-secondary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-primary-text)]"
+                >
+                  {action.text}
+                </button>
+              ))
+            : null}
+          <button
+            type="button"
+            onClick={() => void run(onDelete)}
+            aria-label={label}
+            className="flex h-full w-[88px] items-center justify-center bg-[var(--personal-destructive)] text-[15px] font-semibold text-[var(--personal-destructive-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-destructive-text)]"
+          >
+            Delete
+          </button>
+        </div>
       ) : null}
       <div
         onPointerDown={onPointerDown}
