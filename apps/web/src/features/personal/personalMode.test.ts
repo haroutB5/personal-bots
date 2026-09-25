@@ -98,6 +98,7 @@ describe("desktopPaneLayout", () => {
       "/bots/settings",
       "/bots/settings/connections",
       "/bots/settings/passwords",
+      "/bots/settings/api-keys",
       "/tasks/routines/new",
       "/tasks/routines/r1/edit",
     ]) {

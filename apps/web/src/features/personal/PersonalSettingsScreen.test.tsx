@@ -24,7 +24,9 @@ vi.mock("~/state/server", () => ({
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => state.result }));
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
+  Link: ({ children, to }: { children: React.ReactNode; to?: string }) => (
+    <a href={to}>{children}</a>
+  ),
   useNavigate: () => async () => undefined,
 }));
 vi.mock("./usePersonalBots", () => ({
@@ -35,11 +37,6 @@ vi.mock("./usePersonalBots", () => ({
   usePersonalProfile: () => ({ data: { displayName: "Harout" } }),
 }));
 vi.mock("./appVersion", () => ({ useAppVersion: () => state.versionInfo }));
-vi.mock("./useSecretRequests", () => ({
-  personalSecretSetSharing: {},
-  personalSecretCreate: {},
-  useSavedSecrets: () => ({ data: { secrets: [] }, error: null }),
-}));
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -229,5 +226,27 @@ describe("Settings appearance", () => {
 
     expect(store.get("t3code:theme-appearance-mode")).toBe("light");
     expect(checked()).toEqual([false, true, false]);
+  });
+});
+
+describe("Settings plugins", () => {
+  it("lists API keys as a row beside Connections and Passwords, not inline", async () => {
+    stubWindow();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    await act(async () => {
+      renderer = create(<PersonalSettingsScreen />);
+    });
+    const plugins = renderer!.root.findByProps({ "aria-labelledby": "settings-plugins" });
+    const links = plugins.findAllByType("a");
+    expect(links.map((link) => link.props.href)).toEqual([
+      "/bots/settings/connections",
+      "/bots/settings/passwords",
+      "/bots/settings/api-keys",
+    ]);
+    const row = JSON.stringify(renderer!.toJSON());
+    expect(row).toContain("Keys bots can use, like Tavily and SerpApi");
+    // The list and its Add form live on /bots/settings/api-keys now.
+    expect(renderer!.root.findAllByProps({ "aria-labelledby": "settings-api-keys" })).toEqual([]);
+    expect(row).not.toContain("Add API key");
   });
 });
