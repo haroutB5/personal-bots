@@ -1,6 +1,10 @@
 import * as Effect from "effect/Effect";
 
-import { PersonalGroupsError, type PersonalGroupDeleteInput } from "@t3tools/contracts";
+import {
+  PERSONAL_TASK_TERMINAL_STATUSES,
+  PersonalGroupsError,
+  type PersonalGroupDeleteInput,
+} from "@t3tools/contracts";
 
 import { purgePersonalBot, type PersonalBotPurgeServices } from "./purgePersonalBot.ts";
 
@@ -23,11 +27,13 @@ import { purgePersonalBot, type PersonalBotPurgeServices } from "./purgePersonal
  * 2. **Stop the round.** A live round holds a member turn, a queue and a lease
  *    against a thread that is about to be deleted. `stop` is the existing path
  *    and is a no-op when nothing is live.
- * 3. **Purge the ticked bots**, in the order the sheet listed them. Each goes
+ * 3. **Cancel work bound to the member chats.** A task can otherwise resume
+ *    on a thread after the group deletes it.
+ * 4. **Purge the ticked bots**, in the order the sheet listed them. Each goes
  *    through `purgePersonalBot`, so its memberships of OTHER groups are dropped
  *    with a system row in each, and a group the deletion empties is archived,
  *    never deleted.
- * 4. **Delete the group last.**
+ * 5. **Delete the group last.**
  *
  * If one purge fails, the call aborts there and **the group is not deleted**.
  * That is the recoverable end state: the bots before it are gone, the bots
@@ -40,7 +46,7 @@ export const deletePersonalGroup = Effect.fn("deletePersonalGroup")(function* (
   services: PersonalBotPurgeServices,
   input: PersonalGroupDeleteInput,
 ) {
-  const { groups } = services;
+  const { groups, tasks } = services;
   const requested = new Set<string>(input.purgeBotIds ?? []);
 
   const { groups: all } = yield* groups.list();
@@ -68,6 +74,30 @@ export const deletePersonalGroup = Effect.fn("deletePersonalGroup")(function* (
   }
 
   yield* groups.stop({ groupId: input.groupId });
+
+  const memberThreadIds = new Set(group.members.flatMap((member) => member.threadId ?? []));
+  if (memberThreadIds.size > 0) {
+    const { tasks: allTasks } = yield* tasks
+      .list({})
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PersonalGroupsError({ message: "Couldn't check group chat tasks.", cause }),
+        ),
+      );
+    for (const task of allTasks) {
+      if (task.threadId === null || !memberThreadIds.has(task.threadId)) continue;
+      if (PERSONAL_TASK_TERMINAL_STATUSES.includes(task.status)) continue;
+      yield* tasks
+        .cancel({ taskId: task.taskId })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new PersonalGroupsError({ message: "Couldn't stop a group chat task.", cause }),
+          ),
+        );
+    }
+  }
 
   // Member order, not the order the client happened to send, so the system rows
   // and the logs read the way the sheet did.

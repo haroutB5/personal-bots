@@ -137,7 +137,7 @@ export function GroupConversationScreen({
   );
   const thread = useThreadDetail(threadRef);
   const status = useThreadStatus(threadRef);
-  const threadState = useEnvironmentThread(environmentId, threadId ?? ThreadId.make("none"));
+  const threadState = useEnvironmentThread(environmentId, threadId);
 
   const shellRef = useRef<HTMLDivElement | null>(null);
   const keyboardInset = useKeyboardInset(shellRef);

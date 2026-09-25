@@ -1678,11 +1678,25 @@ export const make = Effect.gen(function* () {
             yield* expirePendingVotes(round);
             yield* writeRound(round, { status: "stopped", queue: [], ...clearActive });
           }
+          // These threads contain the members' private copies of this group
+          // conversation. Delete their bot links while the group still exists:
+          // otherwise they become ordinary chats as soon as the group vanishes.
+          // Clear each cursor after deletion so a failed later step leaves a
+          // usable group whose next round can open a fresh member thread.
+          for (const member of yield* repository.listMembers(input.groupId)) {
+            if (member.threadId === null) continue;
+            yield* bots
+              .deleteThread({ threadId: member.threadId })
+              .pipe(
+                Effect.mapError((cause) =>
+                  fail("Personal groups could not delete a member chat.", cause),
+                ),
+              );
+            yield* repository.writeMember({ ...member, threadId: null, deliveredSeq: 0 });
+          }
           const now = yield* DateTime.now;
           yield* repository.softDeleteGroup({ groupId: input.groupId, deletedAt: now });
           groupThreadIds.delete(group.value.threadId);
-          // Only the shared transcript goes. Member threads are the bots' own
-          // chats and keep the history each of them actually lived through.
           yield* dispatchOrLog("delete group thread", {
             type: "thread.delete",
             commandId: CommandId.make(`personal-group:thread.delete:${group.value.threadId}`),

@@ -1485,11 +1485,13 @@ it.effect("deleting a group ends its live round, and a round orphaned anyway nev
     yield* makeGroup(["assistant", "dev"], 6);
     yield* send("Are you there?", "msg-before-delete");
     expect((yield* currentRound).status).toBe("running");
+    const activeThreadId = (yield* currentRound).activeThreadId!;
 
     yield* service.remove({ groupId: GROUP });
     const ended = yield* currentRound;
     expect(ended.status).toBe("stopped");
     expect(ended.activeBotId).toBeNull();
+    expect(harness.liveThreads.has(activeThreadId)).toBe(false);
 
     // A round left running on a deleted group by some other path: the sweep
     // closes it, and another group's round still gets the slot.
@@ -1512,6 +1514,42 @@ it.effect("deleting a group ends its live round, and a round orphaned anyway nev
     expect(Option.getOrThrow(closed).roundId).toBe(orphanRound.roundId);
     expect(Option.getOrThrow(closed).status).toBe("stopped");
     expect((yield* repository.listLiveRounds()).map((round) => round.groupId)).not.toContain(OTHER);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("deleting a group removes its member chats from bot listings", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    const repository = yield* PersonalGroupRepository.PersonalGroupRepository;
+    const bots = yield* PersonalBotService.PersonalBotService;
+    yield* makeGroup(["assistant", "dev"]);
+
+    const privateThread = ThreadId.make("thread-private-assistant");
+    const assistantGroupThread = ThreadId.make("thread-group-assistant");
+    const devGroupThread = ThreadId.make("thread-group-dev");
+    yield* bots.createThread({ botId: botId("assistant"), threadId: privateThread });
+    for (const [memberId, threadId] of [
+      [botId("assistant"), assistantGroupThread],
+      [botId("dev"), devGroupThread],
+    ] as const) {
+      yield* bots.createThread({ botId: memberId, threadId });
+      const member = (yield* repository.listMembers(GROUP)).find(
+        (entry) => entry.botId === memberId,
+      )!;
+      yield* repository.writeMember({ ...member, threadId });
+    }
+    expect((yield* bots.list()).threads.map((link) => link.threadId)).toEqual(
+      expect.arrayContaining([privateThread, assistantGroupThread, devGroupThread]),
+    );
+
+    yield* service.remove({ groupId: GROUP });
+
+    expect((yield* bots.list()).threads.map((link) => link.threadId)).toEqual([privateThread]);
+    expect(harness.liveThreads.has(assistantGroupThread)).toBe(false);
+    expect(harness.liveThreads.has(devGroupThread)).toBe(false);
+    expect(harness.liveThreads.has(GROUP_THREAD)).toBe(false);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 

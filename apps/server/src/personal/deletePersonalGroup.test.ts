@@ -16,7 +16,9 @@ const stranger = PersonalBotId.make("bot-stranger");
  * Fakes that record every destructive call, in order. The group's membership is
  * mutable so `purgeBot` really drops a row, the way the live service does.
  */
-function makeServices(options: { readonly purgeFails?: string } = {}) {
+function makeServices(
+  options: { readonly purgeFails?: string; readonly taskThreadId?: ThreadId } = {},
+) {
   const calls: Array<string> = [];
   const record = (call: string) => Effect.sync(() => void calls.push(call));
   let members: Array<PersonalBotId> = [ada, grace, alan];
@@ -37,7 +39,15 @@ function makeServices(options: { readonly purgeFails?: string } = {}) {
           ? Effect.fail({ _tag: "BotRemoveFailed" as const })
           : record(`bot:${botId}`),
     },
-    tasks: { list: () => Effect.succeed({ tasks: [] }), cancel: () => Effect.void },
+    tasks: {
+      list: () =>
+        Effect.succeed({
+          tasks: options.taskThreadId
+            ? [{ taskId: "task-1", threadId: options.taskThreadId, status: "running" }]
+            : [],
+        }),
+      cancel: ({ taskId }: { taskId: string }) => record(`task:${taskId}`),
+    },
     routines: { list: () => Effect.succeed({ routines: [] }), remove: () => Effect.void },
     memory: { list: () => Effect.succeed([]), remove: () => Effect.void },
     secrets: {
@@ -56,7 +66,11 @@ function makeServices(options: { readonly purgeFails?: string } = {}) {
           groups: [
             {
               groupId: GROUP,
-              members: members.map((botId, index) => ({ botId, sortOrder: index })),
+              members: members.map((botId, index) => ({
+                botId,
+                sortOrder: index,
+                threadId: ThreadId.make(`group-thread-${botId}`),
+              })),
             },
           ],
           rounds: [],
@@ -133,6 +147,18 @@ describe("deletePersonalGroup", () => {
       yield* deletePersonalGroup(services, { groupId: GROUP, purgeBotIds: [] });
 
       assert.deepEqual(calls, [`stop:${GROUP}`, `group:${GROUP}`]);
+    }),
+  );
+
+  it.effect("cancels work on member chats before deleting their group", () =>
+    Effect.gen(function* () {
+      const { calls, services } = makeServices({
+        taskThreadId: ThreadId.make(`group-thread-${grace}`),
+      });
+
+      yield* deletePersonalGroup(services, { groupId: GROUP });
+
+      assert.deepEqual(calls, [`stop:${GROUP}`, "task:task-1", `group:${GROUP}`]);
     }),
   );
 
