@@ -5,12 +5,14 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "../Migrations.ts";
 
-it.layer(NodeSqliteClient.layerMemory())("078_PersonalBotMemoryAutoSave", (it) => {
-  it.effect("adds memory_auto_save at 78, off for bots that already exist", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 77 });
-      yield* sql`
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
+  "078_PersonalBotMemoryAutoSave",
+  (it) => {
+    it.effect("adds memory_auto_save at 78, off for bots that already exist", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toMigrationInclusive: 77 });
+        yield* sql`
         INSERT INTO personal_bots (
           bot_id, name, description, instructions, avatar_shape, avatar_color,
           model_selection_json, enabled, sort_order, created_at, updated_at, deleted_at
@@ -22,11 +24,12 @@ it.layer(NodeSqliteClient.layerMemory())("078_PersonalBotMemoryAutoSave", (it) =
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 78 });
-      const rows = yield* sql<{ readonly memoryAutoSave: number }>`
+        yield* runMigrations({ toMigrationInclusive: 78 });
+        const rows = yield* sql<{ readonly memoryAutoSave: number }>`
         SELECT memory_auto_save AS "memoryAutoSave" FROM personal_bots WHERE bot_id = 'cfo'
       `;
-      assert.deepEqual(rows, [{ memoryAutoSave: 0 }]);
-    }),
-  );
-});
+        assert.deepEqual(rows, [{ memoryAutoSave: 0 }]);
+      }),
+    );
+  },
+);

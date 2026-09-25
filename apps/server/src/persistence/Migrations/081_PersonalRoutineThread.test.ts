@@ -5,7 +5,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "../Migrations.ts";
 
-it.layer(NodeSqliteClient.layerMemory())("081_PersonalRoutineThread", (it) => {
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("081_PersonalRoutineThread", (it) => {
   it.effect("adds the source chat at 81: existing routines keep NULL and a new chat per run", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

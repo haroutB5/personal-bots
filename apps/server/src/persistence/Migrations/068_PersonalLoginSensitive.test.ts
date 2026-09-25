@@ -5,7 +5,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "../Migrations.ts";
 
-it.layer(NodeSqliteClient.layerMemory())("068_PersonalLoginSensitive", (it) => {
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("068_PersonalLoginSensitive", (it) => {
   it.effect("adds an off-by-default sensitive flag and keeps existing logins as they were", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

@@ -5,7 +5,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "../Migrations.ts";
 
-it.layer(NodeSqliteClient.layerMemory())("063_PersonalLogins", (it) => {
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("063_PersonalLogins", (it) => {
   it.effect("creates metadata and grant tables without any password column or default grant", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

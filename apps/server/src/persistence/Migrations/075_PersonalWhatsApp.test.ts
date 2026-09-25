@@ -16,7 +16,7 @@ const refuses = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
  * in-memory database, so a second test cannot get the pre-migration state
  * back.
  */
-it.layer(NodeSqliteClient.layerMemory())("075_PersonalWhatsApp", (it) => {
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("075_PersonalWhatsApp", (it) => {
   it.effect("widens the vendor list and rebuilds the table without losing a connection", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

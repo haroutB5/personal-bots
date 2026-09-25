@@ -209,7 +209,7 @@ export const personalDesktopStreamRouteLayer = HttpRouter.add(
     const socket = yield* request.upgrade;
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const write = yield* socket.writer;
+        const { write } = yield* socket.writer;
         // Sliding: with one frame in flight it holds at most a frame and a
         // few control lines (refusals are spaced out), and a stuck socket
         // drops rather than grows.
@@ -239,14 +239,19 @@ export const personalDesktopStreamRouteLayer = HttpRouter.add(
         // Whatever ends the socket hands back any control it held.
         yield* Effect.addFinalizer(() => Effect.sync(() => handler.close()));
         const outbound = Stream.fromQueue(outbox).pipe(Stream.runForEach(write));
-        const inbound = socket.runRaw((data) =>
-          typeof data === "string" ? Effect.sync(() => handler.handle(data)) : Effect.void,
-        );
+        const inbound = Effect.gen(function* () {
+          const { pull } = yield* socket.reader;
+          while (true) {
+            for (const data of yield* pull) {
+              if (typeof data === "string") handler.handle(data);
+            }
+          }
+        });
         // Whichever side ends first tears the other down; the scope detaches
         // the viewer, which stops its captures.
         yield* Effect.raceFirst(outbound, inbound);
       }),
-    ).pipe(Effect.catchCause(() => Effect.void));
+    ).pipe(Effect.ignoreCause);
     return HttpServerResponse.empty();
   }).pipe(Effect.catchTags(personalRouteAuthResponses)),
 );

@@ -29,7 +29,7 @@ const refuses = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     assert.equal(result._tag, "Failure");
   });
 
-it.layer(NodeSqliteClient.layerMemory())("070_PersonalGroups", (it) => {
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("070_PersonalGroups", (it) => {
   it.effect("creates the group, round and vote tables with their indexes", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

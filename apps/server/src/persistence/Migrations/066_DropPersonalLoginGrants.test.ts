@@ -5,7 +5,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "../Migrations.ts";
 
-it.layer(NodeSqliteClient.layerMemory())("066_DropPersonalLoginGrants", (it) => {
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("066_DropPersonalLoginGrants", (it) => {
   it.effect("drops the grant table and leaves the saved logins themselves untouched", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

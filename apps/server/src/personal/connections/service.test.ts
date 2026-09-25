@@ -253,6 +253,8 @@ describe("PersonalConnectionService", () => {
       expect(JSON.stringify(messages)).not.toContain(TOKEN);
       expect(list.connections[0]).not.toHaveProperty("credentialRef");
     }).pipe(
+      // The logger wraps the harness so the harness's own logs are captured too.
+      // @effect-diagnostics-next-line multipleEffectProvide:off
       Effect.provide(harness.layer),
       Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
     );

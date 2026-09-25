@@ -40,7 +40,9 @@ const pending: PersonalConnectionApproval = {
   executionOutcome: null,
 };
 
-const TestLayer = ApprovalRepository.layer.pipe(Layer.provideMerge(NodeSqliteClient.layerMemory()));
+const TestLayer = ApprovalRepository.layer.pipe(
+  Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+);
 
 describe("PersonalConnectionApprovalRepository", () => {
   it.effect("stores a decision and its receipt, each written once", () =>

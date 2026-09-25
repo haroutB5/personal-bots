@@ -19,7 +19,7 @@ const insertRun = (values: string) => `INSERT INTO personal_create_app_runs (
 const RUN_ONE = `'run-1', 'bot-1', 'thread-1', NULL, '{}', 'digest-1', NULL,
   'awaiting_approval', NULL, '2026-09-21T00:00:00.000Z', '2026-09-21T00:00:00.000Z'`;
 
-it.layer(NodeSqliteClient.layerMemory())("074_PersonalCreateAppRuns", (it) => {
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("074_PersonalCreateAppRuns", (it) => {
   it.effect("creates the run and step tables only at migration 74", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

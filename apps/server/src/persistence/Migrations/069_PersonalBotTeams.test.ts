@@ -23,7 +23,7 @@ const insertBot = (sql: SqlClient.SqlClient, botId: string, name: string) => sql
   )
 `;
 
-it.layer(NodeSqliteClient.layerMemory())("069_PersonalBotTeams", (it) => {
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("069_PersonalBotTeams", (it) => {
   it.effect("splits the existing bots into two teams with one lead each", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

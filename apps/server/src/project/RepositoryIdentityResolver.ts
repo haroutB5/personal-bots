@@ -187,6 +187,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
 ) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
+  const refine = options.refine ?? Effect.succeed;
 
   const repositoryRootCache = yield* Cache.makeWith<string, string | null, GitRootUnavailable>(
     (cwd) =>
@@ -215,10 +216,9 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     (cacheKey) =>
       resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-        Effect.flatMap((identity) =>
-          identity !== null && options.refine
-            ? options.refine(identity).pipe(Effect.catch(() => Effect.succeed(identity)))
-            : Effect.succeed(identity),
+        Effect.filterOrElse(
+          (identity): identity is null => identity === null,
+          (identity) => refine(identity).pipe(Effect.orElseSucceed(() => identity)),
         ),
       ),
     {

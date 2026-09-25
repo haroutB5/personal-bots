@@ -283,7 +283,7 @@ const makeHarness = (script: GatewayScript = {}, healthReplies?: ReadonlyArray<n
         tasks,
       ),
     ),
-    Layer.provideMerge(NodeSqliteClient.layerMemory()),
+    Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
   );
 
   return {

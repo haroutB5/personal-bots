@@ -11,7 +11,7 @@ const refuses = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     assert.equal(result._tag, "Failure");
   });
 
-it.layer(NodeSqliteClient.layerMemory())("072_PersonalConnections", (it) => {
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("072_PersonalConnections", (it) => {
   it.effect("creates the connection table only at migration 72", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

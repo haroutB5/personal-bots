@@ -82,7 +82,9 @@ const newRun = (input: { readonly runId: string; readonly appName: string }): Cr
   };
 };
 
-const layer = RunRepository.layer.pipe(Layer.provideMerge(NodeSqliteClient.layerMemory()));
+const layer = RunRepository.layer.pipe(
+  Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+);
 
 it.layer(layer)("create_app run repository", (it) => {
   it.effect("stores a plan whole and reads it back unchanged", () =>

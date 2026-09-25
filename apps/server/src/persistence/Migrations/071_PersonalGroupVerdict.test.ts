@@ -40,7 +40,7 @@ const roundColumns = (sql: SqlClient.SqlClient) =>
     // "notnull" is an SQLite operator, so the column has to be quoted here.
   }>`SELECT name, type, "notnull", dflt_value FROM pragma_table_info('personal_group_rounds')`;
 
-it.layer(NodeSqliteClient.layerMemory())("071_PersonalGroupVerdict", (it) => {
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("071_PersonalGroupVerdict", (it) => {
   it.effect("adds one nullable verdict_bot_id column to the rounds table and nothing else", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

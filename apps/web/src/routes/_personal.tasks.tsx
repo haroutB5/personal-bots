@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { parseTaskListFilter, type TaskListFilter } from "~/features/personal/taskPresentation";
 import { TasksScreen } from "~/features/personal/TasksScreen";
 
-interface TasksSearch {
+export interface TasksSearch {
   readonly view?: TaskListFilter;
 }
 

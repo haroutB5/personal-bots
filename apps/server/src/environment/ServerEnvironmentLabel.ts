@@ -129,7 +129,7 @@ const runFriendlyLabelCommand = Effect.fn("runFriendlyLabelCommand")(function* (
             cause,
           }),
       ),
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catchTags({
         ServerEnvironmentLabelCommandError: (error) =>
           Effect.logDebug(error.message).pipe(
@@ -185,7 +185,7 @@ export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironment
 ) {
   // An explicit label names the environment in pairing and T3 Connect lists,
   // so it wins over every machine-name probe.
-  const configured = yield* Config.string("T3CODE_ENVIRONMENT_LABEL").pipe(
+  const configured = yield* Config.String("T3CODE_ENVIRONMENT_LABEL").pipe(
     Config.option,
     Effect.map((value) => normalizeLabel(Option.getOrUndefined(value))),
     Effect.orElseSucceed(() => null),

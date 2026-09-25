@@ -79,19 +79,24 @@ export const personalBrowserStreamRouteLayer = HttpRouter.add(
     const socket = yield* request.upgrade;
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const write = yield* socket.writer;
+        const { write } = yield* socket.writer;
         const viewer = yield* browser.attachViewer({
           sessionId: session.sessionId,
           canOperate: session.scopes.includes(AuthOrchestrationOperateScope),
         });
         const outbound = Stream.fromQueue(viewer.outbox).pipe(Stream.runForEach(write));
-        const inbound = socket.runRaw((data) =>
-          typeof data === "string" ? browser.handleViewerMessage(viewer, data) : Effect.void,
-        );
+        const inbound = Effect.gen(function* () {
+          const { pull } = yield* socket.reader;
+          while (true) {
+            for (const data of yield* pull) {
+              if (typeof data === "string") yield* browser.handleViewerMessage(viewer, data);
+            }
+          }
+        });
         // Whichever side ends first tears the other down via scope teardown.
         yield* Effect.raceFirst(outbound, inbound);
       }),
-    ).pipe(Effect.catchCause(() => Effect.void));
+    ).pipe(Effect.ignoreCause);
     return HttpServerResponse.empty();
   }).pipe(Effect.catchTags(personalRouteAuthResponses)),
 );

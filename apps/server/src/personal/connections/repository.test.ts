@@ -25,7 +25,9 @@ const github: Repository.StoredPersonalConnection = {
   updatedAt: at,
 };
 
-const TestLayer = Repository.layer.pipe(Layer.provideMerge(NodeSqliteClient.layerMemory()));
+const TestLayer = Repository.layer.pipe(
+  Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+);
 
 describe("PersonalConnectionRepository", () => {
   it.effect("creates, reads, updates, lists and removes connection rows", () =>

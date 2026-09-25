@@ -5,7 +5,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "../Migrations.ts";
 
-it.layer(NodeSqliteClient.layerMemory())("079_PersonalRoutineDelivery", (it) => {
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("079_PersonalRoutineDelivery", (it) => {
   it.effect("adds delivery at 79: existing routines keep the model, only known modes fit", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

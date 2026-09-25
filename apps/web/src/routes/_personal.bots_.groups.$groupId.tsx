@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { GroupConversationScreen } from "~/features/personal/GroupConversationScreen";
 
-interface GroupSearch {
+export interface GroupSearch {
   /** "members" opens the group's settings on arrival (Back from a member's editor). */
   readonly settings?: "members";
 }

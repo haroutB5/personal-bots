@@ -47,6 +47,7 @@ const APPROVAL_KIND_LABEL: Record<PendingApproval["requestKind"], string> = {
   "file-read": "wants to read files",
   "file-change": "wants to change files",
   "mcp-elicitation": "needs your input for a tool",
+  permission: "wants extra permissions",
 };
 
 const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [

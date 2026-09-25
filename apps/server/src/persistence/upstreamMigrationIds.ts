@@ -11,4 +11,6 @@
  */
 export const UPSTREAM_MIGRATION_IDS: Readonly<Record<string, number>> = {
   "052_ProjectionThreadTitleState": 67,
+  "053_PullRequestFilesViewed": 82,
+  "054_ProjectionThreadsAutoSettleDisabledAt": 83,
 };

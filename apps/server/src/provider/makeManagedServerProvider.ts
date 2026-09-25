@@ -281,6 +281,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         yield* Ref.get(usageFailureStreakRef),
       );
       const enabled = Duration.toMillis(refreshInterval) > 0;
+      // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races the interval against a settings-change signal, not a timeout
       const intervalElapsed = yield* Effect.raceFirst(
         Effect.sleep(enabled ? refreshInterval : "60 seconds").pipe(Effect.as(true)),
         Queue.take(refreshIntervalChanges).pipe(Effect.as(false)),

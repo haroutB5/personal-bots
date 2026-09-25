@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { EditBotScreen } from "~/features/personal/BotForm";
 
-interface BotFormSearch {
+export interface BotFormSearch {
   /** Opened from this group's settings; the editor returns there. */
   readonly group?: string;
 }

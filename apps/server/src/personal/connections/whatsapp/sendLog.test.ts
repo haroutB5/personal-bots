@@ -12,7 +12,9 @@ import * as SendLog from "./sendLog.ts";
 const CONNECTION = ConnectionId.make("connection-1");
 const NOW = DateTime.makeUnsafe("2026-09-21T12:00:00.000Z");
 
-const layer = SendLog.layer.pipe(Layer.provideMerge(NodeSqliteClient.layerMemory()));
+const layer = SendLog.layer.pipe(
+  Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+);
 
 describe("whatsapp send ledger", () => {
   it.effect(

@@ -85,7 +85,6 @@ export function ConfirmDialogHost() {
     >
       <AlertDialogPopup
         className={cn(
-          "max-w-lg",
           personal &&
             "personal-app border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)]",
         )}
