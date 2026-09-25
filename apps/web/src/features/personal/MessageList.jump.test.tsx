@@ -16,25 +16,50 @@ vi.mock("~/session-logic", () => ({ selectMessageImageResources: () => [] }));
 vi.mock("./ToolDetails", () => ({ ToolDetails: () => null }));
 vi.mock("./AttachmentPreview", () => ({ AttachmentPreview: () => null }));
 
+class Listeners {
+  readonly map = new Map<string, Set<(event: unknown) => void>>();
+  add(type: string, listener: (event: unknown) => void) {
+    const set = this.map.get(type) ?? new Set();
+    set.add(listener);
+    this.map.set(type, set);
+  }
+  remove(type: string, listener: (event: unknown) => void) {
+    this.map.get(type)?.delete(listener);
+  }
+  fire(type: string, event: unknown) {
+    for (const listener of this.map.get(type) ?? []) listener(event);
+  }
+}
+
 /** A stand-in for the scroller: 1000px of transcript in a 400px window. */
 class FakeScroller {
   scrollTop = 600;
   scrollHeight = 1000;
   clientHeight = 400;
-  readonly listeners = new Map<string, Set<() => void>>();
+  readonly listeners = new Listeners();
+  /** Where the browser's smooth scroll is still heading, until it lands or is stopped. */
+  smoothTarget: number | null = null;
   readonly scrollTo = vi.fn((options: { top: number; behavior: ScrollBehavior }) => {
-    void options;
+    // Like the browser: any new scroll replaces a smooth one in flight.
+    this.smoothTarget = null;
+    if (options.behavior === "smooth") this.smoothTarget = options.top;
+    else this.scrollTop = Math.min(options.top, this.bottom);
   });
-  addEventListener(type: string, listener: () => void) {
-    const set = this.listeners.get(type) ?? new Set();
-    set.add(listener);
-    this.listeners.set(type, set);
+  addEventListener(type: string, listener: (event: unknown) => void) {
+    this.listeners.add(type, listener);
   }
-  removeEventListener(type: string, listener: () => void) {
-    this.listeners.get(type)?.delete(listener);
+  removeEventListener(type: string, listener: (event: unknown) => void) {
+    this.listeners.remove(type, listener);
   }
-  fire(type: string) {
-    for (const listener of this.listeners.get(type) ?? []) listener();
+  fire(type: string, event: unknown = { target: this }) {
+    this.listeners.fire(type, event);
+  }
+  /** The browser finishes whatever smooth scroll is still running. */
+  settleSmoothScroll() {
+    if (this.smoothTarget === null) return;
+    const target = Math.min(this.smoothTarget, this.bottom);
+    this.smoothTarget = null;
+    this.scrollToTop(target);
   }
   /** The reader drags to `top`; the browser reports it as a scroll event. */
   scrollToTop(top: number) {
@@ -50,6 +75,7 @@ let renderer: ReactTestRenderer | undefined;
 let scroller: FakeScroller;
 let resize: () => void;
 let reduceMotion: boolean;
+let windowListeners: Listeners;
 
 const BASE_PROPS = {
   environmentId: "env-1" as EnvironmentId,
@@ -81,9 +107,14 @@ beforeEach(() => {
   scroller = new FakeScroller();
   resize = () => {};
   reduceMotion = false;
+  windowListeners = new Listeners();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", {
     matchMedia: (query: string) => ({ matches: reduceMotion && query.includes("reduce") }),
+    addEventListener: (type: string, listener: (event: unknown) => void) =>
+      windowListeners.add(type, listener),
+    removeEventListener: (type: string, listener: (event: unknown) => void) =>
+      windowListeners.remove(type, listener),
   });
   vi.stubGlobal(
     "ResizeObserver",
@@ -255,4 +286,119 @@ it("switching chats resets it: the next chat opens at the bottom, button hidden"
   scroller.scrollHeight = 1200;
   await act(async () => resize());
   expect(scroller.scrollTop).toBe(1200);
+});
+
+async function tapJump() {
+  await scrollTo(100);
+  await wait(JUMP_TO_LATEST_DELAY_MS);
+  await act(async () => jumpButtons()[0]!.props.onClick());
+  expect(scroller.smoothTarget).toBe(1000);
+  // The smooth scroll is part way down.
+  await scrollTo(200);
+}
+
+it("a finger during the jump stops it where it is, and the arrow works as usual after", async () => {
+  await render();
+  await tapJump();
+  await act(async () => scroller.fire("touchstart"));
+  expect(scroller.scrollTo).toHaveBeenLastCalledWith({ top: 200, behavior: "instant" });
+  // Nothing is left for the browser to finish: the reader stays put.
+  await act(async () => scroller.settleSmoothScroll());
+  await act(async () => windowListeners.fire("touchend", {}));
+  expect(scroller.scrollTop).toBe(200);
+  await wait(JUMP_TO_LATEST_DELAY_MS);
+  expect(jumpButtons()).toHaveLength(1);
+  // A reply does not pull them down, and scrolling back to the bottom hides it.
+  scroller.scrollHeight = 1300;
+  await act(async () => resize());
+  expect(scroller.scrollTop).toBe(200);
+  await scrollTo(scroller.bottom);
+  expect(jumpButtons()).toHaveLength(0);
+  scroller.scrollHeight = 1500;
+  await act(async () => resize());
+  expect(scroller.scrollTop).toBe(1500);
+});
+
+it("a wheel during the jump stops it too", async () => {
+  await render();
+  await tapJump();
+  await act(async () => scroller.fire("wheel"));
+  await act(async () => scroller.settleSmoothScroll());
+  expect(scroller.scrollTop).toBe(200);
+  await wait(JUMP_TO_LATEST_DELAY_MS);
+  expect(jumpButtons()).toHaveLength(1);
+});
+
+it("a scroll key during the jump stops it, but typing in the composer does not", async () => {
+  await render();
+  await tapJump();
+  await act(async () =>
+    windowListeners.fire("keydown", { key: " ", target: { tagName: "TEXTAREA" } }),
+  );
+  expect(scroller.smoothTarget).toBe(1000);
+  await act(async () => windowListeners.fire("keydown", { key: "PageUp", target: {} }));
+  await act(async () => scroller.settleSmoothScroll());
+  expect(scroller.scrollTop).toBe(200);
+});
+
+it("stays at the latest message when a strip appearing shrinks the list", async () => {
+  await render();
+  scroller.scrollTop = scroller.bottom;
+  // The Routines strip loads late and takes 198px; the browser reports the
+  // scroll before the resize.
+  scroller.clientHeight = 202;
+  await scrollTo(600);
+  expect(scroller.scrollTop).toBeGreaterThanOrEqual(scroller.bottom);
+  await act(async () => resize());
+  await wait(JUMP_TO_LATEST_DELAY_MS * 2);
+  expect(scroller.scrollTop).toBeGreaterThanOrEqual(scroller.bottom);
+  expect(jumpButtons()).toHaveLength(0);
+  // Still following: the next reply is followed.
+  scroller.scrollHeight = 1300;
+  await act(async () => resize());
+  expect(scroller.scrollTop).toBe(1300);
+});
+
+it("stays at the latest message when the list grows and the content reflows", async () => {
+  await render();
+  scroller.scrollTop = scroller.bottom;
+  scroller.clientHeight = 500;
+  scroller.scrollHeight = 1400;
+  await scrollTo(500);
+  await wait(JUMP_TO_LATEST_DELAY_MS * 2);
+  expect(scroller.scrollTop).toBe(1400);
+  expect(jumpButtons()).toHaveLength(0);
+});
+
+it("the reader scrolling up while a reply grows still lets go", async () => {
+  await render();
+  await act(async () => scroller.fire("touchstart"));
+  scroller.scrollHeight = 1300;
+  await scrollTo(300);
+  await act(async () => resize());
+  expect(scroller.scrollTop).toBe(300);
+  await wait(JUMP_TO_LATEST_DELAY_MS);
+  expect(jumpButtons()).toHaveLength(1);
+});
+
+it("a reader scroll-up just after lifting a finger still lets go", async () => {
+  await render();
+  await act(async () => scroller.fire("touchstart"));
+  await act(async () => windowListeners.fire("touchend", {}));
+  scroller.scrollHeight = 1300;
+  await scrollTo(300);
+  await wait(JUMP_TO_LATEST_DELAY_MS);
+  expect(jumpButtons()).toHaveLength(1);
+});
+
+it("a tap on the list just before a strip appears does not let go of the bottom", async () => {
+  await render();
+  await act(async () => scroller.fire("touchstart"));
+  await act(async () => windowListeners.fire("touchend", {}));
+  scroller.clientHeight = 202;
+  await scrollTo(scroller.scrollTop);
+  await act(async () => resize());
+  await wait(JUMP_TO_LATEST_DELAY_MS * 2);
+  expect(scroller.scrollTop).toBeGreaterThanOrEqual(scroller.bottom);
+  expect(jumpButtons()).toHaveLength(0);
 });

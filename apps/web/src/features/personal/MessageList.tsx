@@ -47,6 +47,16 @@ const STICK_THRESHOLD_PX = 80;
 export const JUMP_TO_LATEST_DELAY_MS = 150;
 /** Gives up on a smooth jump that never reached the bottom. */
 const JUMP_SETTLE_MS = 1_000;
+/** How long after a wheel, key or finger lift a scroll still counts as the reader's. */
+const READER_INPUT_MS = 400;
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+
+function isEditable(target: EventTarget | null): boolean {
+  const element = target as Partial<HTMLElement> | null;
+  return (
+    element?.isContentEditable === true || /^(INPUT|TEXTAREA|SELECT)$/.test(element?.tagName ?? "")
+  );
+}
 
 const APPROVAL_KIND_LABEL: Record<PendingApproval["requestKind"], string> = {
   command: "wants to run a command",
@@ -439,6 +449,9 @@ export function MessageList({
   // Set while a tap's smooth scroll is on its way down: its own scroll events
   // are still far from the bottom and must not bring the button back.
   const jumpingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Only the reader's own scrolling lets go of the bottom. A finger, the
+  // mouse on the scrollbar, a wheel or a key marks the scroll as theirs.
+  const readerRef = useRef({ holding: false, at: Number.NEGATIVE_INFINITY });
 
   const cancelShow = () => {
     if (showTimerRef.current !== null) clearTimeout(showTimerRef.current);
@@ -453,13 +466,30 @@ export function MessageList({
     const scroller = scrollerRef.current;
     const content = contentRef.current;
     if (scroller === null || content === null) return;
+    // The sizes the last scroll or resize saw, to tell a layout change (a strip
+    // appearing, the keyboard, a reply growing) from the reader scrolling.
+    let seen = { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
+    const remember = () => {
+      seen = {
+        scrollTop: scroller.scrollTop,
+        scrollHeight: scroller.scrollHeight,
+        clientHeight: scroller.clientHeight,
+      };
+    };
     const follow = () => {
       if (stickRef.current) scroller.scrollTop = scroller.scrollHeight;
+      remember();
     };
     follow();
+    const readerActive = () =>
+      readerRef.current.holding || Date.now() - readerRef.current.at < READER_INPUT_MS;
     const onScroll = () => {
       const nearBottom =
         scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < STICK_THRESHOLD_PX;
+      const movedUp = scroller.scrollTop < seen.scrollTop;
+      const resized =
+        scroller.scrollHeight !== seen.scrollHeight || scroller.clientHeight !== seen.clientHeight;
+      remember();
       if (nearBottom) {
         endJump();
         stickRef.current = true;
@@ -468,6 +498,14 @@ export function MessageList({
         return;
       }
       if (jumpingRef.current !== null) return;
+      // The browser can report a resize's scroll before the resize itself: a
+      // late strip shrinking the list once left a chat opening short of its
+      // latest message. Only the reader moving up lets go of the bottom; a
+      // layout change leaves the list where it was, so stay pinned.
+      if (stickRef.current && (!movedUp || (resized && !readerActive()))) {
+        follow();
+        return;
+      }
       stickRef.current = false;
       // Every scroll event restarts the wait, so momentum scrolling does not
       // make the button flicker; it appears once the list settles.
@@ -477,15 +515,40 @@ export function MessageList({
         setShowJump(true);
       }, JUMP_TO_LATEST_DELAY_MS);
     };
-    // A finger or wheel during a jump takes the scroll back from it.
     const onReaderInput = () => {
+      readerRef.current.at = Date.now();
       if (jumpingRef.current === null) return;
+      // A finger, wheel or key during a jump stops it where it is. The
+      // browser's own smooth scroll carries on to the bottom unless stopped.
       endJump();
+      scroller.scrollTo({ top: scroller.scrollTop, behavior: "instant" });
+      stickRef.current = false;
       onScroll();
     };
+    const onHold = () => {
+      readerRef.current.holding = true;
+      onReaderInput();
+    };
+    const onRelease = () => {
+      if (!readerRef.current.holding) return;
+      readerRef.current.holding = false;
+      readerRef.current.at = Date.now();
+    };
+    // Only the scrollbar itself: a click on a card in the list is not a scroll.
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.pointerType === "mouse" && event.target === scroller) onHold();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (SCROLL_KEYS.has(event.key) && !isEditable(event.target)) onReaderInput();
+    };
     scroller.addEventListener("scroll", onScroll, { passive: true });
-    scroller.addEventListener("touchstart", onReaderInput, { passive: true });
+    scroller.addEventListener("touchstart", onHold, { passive: true });
     scroller.addEventListener("wheel", onReaderInput, { passive: true });
+    scroller.addEventListener("pointerdown", onPointerDown, { passive: true });
+    window.addEventListener("touchend", onRelease, { passive: true });
+    window.addEventListener("touchcancel", onRelease, { passive: true });
+    window.addEventListener("pointerup", onRelease, { passive: true });
+    window.addEventListener("keydown", onKeyDown);
     // Streaming text, late images and the keyboard all change heights without
     // a React update here, so follow size changes rather than renders.
     const observer = new ResizeObserver(follow);
@@ -493,8 +556,13 @@ export function MessageList({
     observer.observe(scroller);
     return () => {
       scroller.removeEventListener("scroll", onScroll);
-      scroller.removeEventListener("touchstart", onReaderInput);
+      scroller.removeEventListener("touchstart", onHold);
       scroller.removeEventListener("wheel", onReaderInput);
+      scroller.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("touchend", onRelease);
+      window.removeEventListener("touchcancel", onRelease);
+      window.removeEventListener("pointerup", onRelease);
+      window.removeEventListener("keydown", onKeyDown);
       observer.disconnect();
       cancelShow();
       endJump();
@@ -508,6 +576,8 @@ export function MessageList({
     cancelShow();
     endJump();
     stickRef.current = true;
+    // A tap that opened this chat from inside the last one is not a scroll here.
+    readerRef.current = { holding: false, at: Number.NEGATIVE_INFINITY };
     setShowJump(false);
     const scroller = scrollerRef.current;
     if (scroller !== null) scroller.scrollTop = scroller.scrollHeight;
