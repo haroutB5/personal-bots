@@ -15,8 +15,8 @@ import { mergeTaskLists } from "./taskPresentation";
 import {
   personalMemoryDelete,
   usePersonalMemory,
-  usePersonalRelatedTasks,
   usePersonalTasks,
+  usePersonalTasksByIds,
 } from "./usePersonalAutomation";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 import { useMinuteNow } from "./useMinuteNow";
@@ -77,10 +77,8 @@ export function MemoryScreen(): JSX.Element {
     }
     return [...ids].toSorted();
   }, [memory.data, taskFeed]);
-  const sourceTasks = usePersonalRelatedTasks(
-    environmentId,
-    missingTaskIds.length === 0 ? null : { taskIds: missingTaskIds },
-  );
+  // Often more than the server's 100 ids per request: batched.
+  const sourceTasks = usePersonalTasksByIds(environmentId, missingTaskIds);
   const tasks = useMemo(() => mergeTaskLists(taskFeed, sourceTasks), [taskFeed, sourceTasks]);
   const needle = query.trim().toLowerCase();
   const visible =

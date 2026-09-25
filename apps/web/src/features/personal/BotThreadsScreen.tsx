@@ -1,8 +1,7 @@
 import type { JSX } from "react";
 import { useMemo, useState } from "react";
 
-import type { EnvironmentId, PersonalBot, PersonalBotThread } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, NotebookPen, Pencil, Plus } from "lucide-react";
@@ -11,6 +10,8 @@ import { useThreadDetail, useThreadShells } from "~/state/entities";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatar } from "./BotAvatar";
+import { botThreadRows, type BotThreadRow } from "./botThreadRows";
+import { commandFailureMessage } from "./commandFeedback";
 import { isThreadLive, isThreadRateLimited, threadNeedsAttention } from "./botSummaries";
 import { formatRelativeTime } from "./relativeTime";
 import { useStartBotChat } from "./startBotChat";
@@ -24,37 +25,10 @@ import {
 } from "./usePersonalBots";
 import { useWrapupChat } from "./wrapupChat";
 import { useDeleteChat } from "./useDeleteChat";
+import { SwipeToDelete } from "./SwipeToDelete";
 
 const ICON_LINK =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
-
-interface BotThreadRow {
-  readonly link: PersonalBotThread;
-  readonly shell: EnvironmentThreadShell;
-  readonly updatedMs: number;
-}
-
-function toRows(
-  bot: PersonalBot,
-  links: ReadonlyArray<PersonalBotThread>,
-  shells: ReadonlyArray<EnvironmentThreadShell>,
-): { active: BotThreadRow[]; archived: BotThreadRow[] } {
-  const shellsById = new Map(shells.map((shell) => [shell.id as string, shell] as const));
-  const rows = links.flatMap((link): BotThreadRow[] => {
-    if (link.botId !== bot.botId) return [];
-    const shell = shellsById.get(link.threadId);
-    if (shell === undefined) return [];
-    const parsed = Date.parse(shell.updatedAt);
-    return [{ link, shell, updatedMs: Number.isNaN(parsed) ? 0 : parsed }];
-  });
-  const newestFirst = (left: BotThreadRow, right: BotThreadRow) => right.updatedMs - left.updatedMs;
-  return {
-    active: rows
-      .filter((row) => row.link.archivedAt === null && row.shell.archivedAt === null)
-      .toSorted(newestFirst),
-    archived: rows.filter((row) => row.link.archivedAt !== null).toSorted(newestFirst),
-  };
-}
 
 function ThreadRowContent({ row, now }: { row: BotThreadRow; now: number }) {
   const live = isThreadLive(row.shell);
@@ -90,48 +64,97 @@ function ThreadRowContent({ row, now }: { row: BotThreadRow; now: number }) {
   );
 }
 
-function ArchivedRow({
+/**
+ * One chat in the bot's list. Swipe left for Archive (Unarchive once
+ * archived) and Delete; a tap opens the chat, or closes the row while it is
+ * swiped open. Archived rows keep their buttons for mouse, keyboard and
+ * VoiceOver; open chats have the same actions in the chat's own "..." menu.
+ */
+function ThreadRow({
   environmentId,
+  botId,
   row,
   now,
+  archived,
+  onError,
 }: {
   environmentId: EnvironmentId;
+  botId: string;
   row: BotThreadRow;
   now: number;
+  archived: boolean;
+  onError: (message: string | null) => void;
 }) {
   const archiveThread = useAtomCommand(personalBotArchiveThread);
   const deleteChat = useDeleteChat(environmentId);
   const [busy, setBusy] = useState(false);
+  const setArchived = async (next: boolean) => {
+    setBusy(true);
+    const result = await archiveThread({
+      environmentId,
+      input: { threadId: row.link.threadId, archived: next },
+    });
+    setBusy(false);
+    onError(
+      commandFailureMessage(
+        result,
+        next
+          ? "Couldn't archive this chat. Try again."
+          : "Couldn't unarchive this chat. Try again.",
+      ),
+    );
+  };
+  // The same confirm and delete path as "Delete chat" in the chat's menu.
+  const onDelete = async () => {
+    setBusy(true);
+    const outcome = await deleteChat(row.link.threadId);
+    setBusy(false);
+    if (outcome.status === "failed") onError(outcome.message);
+    else if (outcome.status === "done") onError(null);
+  };
+  const title = row.shell.title;
   return (
-    <li className="flex min-h-12 items-center gap-3 py-1">
-      <ThreadRowContent row={row} now={now} />
-      <button
-        type="button"
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          await archiveThread({
-            environmentId,
-            input: { threadId: row.link.threadId, archived: false },
-          });
-          setBusy(false);
-        }}
-        className="h-11 shrink-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3 text-sm font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+    <li>
+      <SwipeToDelete
+        label={`Delete ${title}`}
+        onDelete={onDelete}
+        trailingActions={[
+          archived
+            ? { label: `Unarchive ${title}`, text: "Unarchive", run: () => setArchived(false) }
+            : { label: `Archive ${title}`, text: "Archive", run: () => setArchived(true) },
+        ]}
       >
-        Restore
-      </button>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          await deleteChat(row.link.threadId);
-          setBusy(false);
-        }}
-        className="h-11 shrink-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3 text-sm font-medium text-[var(--personal-error)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
-      >
-        Delete
-      </button>
+        {archived ? (
+          <div className="flex min-h-12 items-center gap-3 py-1">
+            <ThreadRowContent row={row} now={now} />
+            {/* Out of sight on touch screens, where the swipe carries them. */}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void setArchived(false)}
+              className="h-11 shrink-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3 text-sm font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40 pointer-coarse:sr-only"
+            >
+              Unarchive
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void onDelete()}
+              className="h-11 shrink-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3 text-sm font-medium text-[var(--personal-error)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40 pointer-coarse:sr-only"
+            >
+              Delete
+            </button>
+          </div>
+        ) : (
+          <Link
+            to="/bots/$botId/$threadId"
+            params={{ botId, threadId: row.link.threadId }}
+            className="flex min-h-14 items-center gap-3 py-2 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
+          >
+            <ThreadRowContent row={row} now={now} />
+          </Link>
+        )}
+      </SwipeToDelete>
     </li>
   );
 }
@@ -147,6 +170,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   const { start, starting } = useStartBotChat(environmentId, bot?.botId ?? null);
   const [now] = useState(() => Date.now());
   const [wrapupError, setWrapupError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
   const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
   useRefreshBotsForTaskThreads({
@@ -160,8 +184,8 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
     () =>
       bot === null || list.data === null
         ? { active: [], archived: [] }
-        : toRows(
-            bot,
+        : botThreadRows(
+            bot.botId,
             list.data.threads,
             shells.filter((shell) => shell.environmentId === environmentId),
           ),
@@ -275,6 +299,12 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
             </p>
           ) : null}
 
+          {actionError !== null ? (
+            <p role="alert" className="mt-2 text-center text-sm text-[var(--personal-error)]">
+              {actionError}
+            </p>
+          ) : null}
+
           {rows.active.length === 0 ? (
             <p className="mt-6 text-center text-[15px] text-[var(--personal-text-secondary)]">
               No chats with {bot.name} yet.
@@ -282,15 +312,15 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
           ) : (
             <ul className="mt-4 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)]">
               {rows.active.map((row) => (
-                <li key={row.link.threadId}>
-                  <Link
-                    to="/bots/$botId/$threadId"
-                    params={{ botId: bot.botId, threadId: row.link.threadId }}
-                    className="flex min-h-14 items-center gap-3 py-2 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
-                  >
-                    <ThreadRowContent row={row} now={now} />
-                  </Link>
-                </li>
+                <ThreadRow
+                  key={row.link.threadId}
+                  environmentId={environmentId}
+                  botId={bot.botId}
+                  row={row}
+                  now={now}
+                  archived={false}
+                  onError={setActionError}
+                />
               ))}
             </ul>
           )}
@@ -302,11 +332,14 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
               </summary>
               <ul className="divide-y divide-[var(--personal-border)]">
                 {rows.archived.map((row) => (
-                  <ArchivedRow
+                  <ThreadRow
                     key={row.link.threadId}
                     environmentId={environmentId}
+                    botId={bot.botId}
                     row={row}
                     now={now}
+                    archived
+                    onError={setActionError}
                   />
                 ))}
               </ul>

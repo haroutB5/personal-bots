@@ -19,6 +19,8 @@ import {
 import {
   PersonalSecretRequestId,
   type ApprovalRequestId,
+  type EnvironmentId,
+  type PersonalBotThread,
   type PersonalSecretRequest,
   type PersonalTask,
   type ProviderApprovalDecision,
@@ -38,7 +40,13 @@ import {
   deriveWorkLogEntries,
   type TimelineEntriesProjection,
 } from "~/session-logic";
-import { useProject, useThreadDetail, useThreadStatus } from "~/state/entities";
+import {
+  useProject,
+  useThreadDetail,
+  useThreadShell,
+  useThreadShells,
+  useThreadStatus,
+} from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { threadEnvironment, useEnvironmentThread } from "~/state/threads";
 import type { ChatMessage } from "~/types";
@@ -46,7 +54,9 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { motionForConversationState } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
-import { BotMuteMenuItems, MutedBell, useSetBotMute } from "./BotMute";
+import { botThreadRows, chatCountsLabel } from "./botThreadRows";
+import { BotMuteMenuItems, useSetBotMute } from "./BotMute";
+import { ConversationHeaderName } from "./ConversationHeaderName";
 import { botMuteState } from "./botMuteModel";
 import {
   type ConversationHeaderParts,
@@ -173,6 +183,37 @@ const EMPTY_SECRET_REQUESTS: ReadonlyArray<PersonalSecretRequest> = [];
 const EMPTY_ACTIVITIES: ReadonlyArray<never> = [];
 const EMPTY_PLANS: ReadonlyArray<never> = [];
 
+/**
+ * "8 open · 1 archived" beside "All chats", counted like the rows of the bot's
+ * chat list. Rendered inside the menu popup, so the thread shells are only
+ * watched while the menu is open; the bots list refreshes after every
+ * archive and delete, which keeps the numbers current.
+ */
+function AllChatsCount({
+  environmentId,
+  botId,
+  links,
+}: {
+  environmentId: EnvironmentId;
+  botId: string;
+  links: ReadonlyArray<PersonalBotThread>;
+}): JSX.Element {
+  const shells = useThreadShells();
+  const counts = useMemo(() => {
+    const rows = botThreadRows(
+      botId,
+      links,
+      shells.filter((shell) => shell.environmentId === environmentId),
+    );
+    return { open: rows.active.length, archived: rows.archived.length };
+  }, [botId, environmentId, links, shells]);
+  return (
+    <span className="ml-auto pl-4 text-[13px] text-[var(--personal-text-tertiary)] tabular-nums">
+      {chatCountsLabel(counts)}
+    </span>
+  );
+}
+
 /** Minute clock for "Today, 21:38" dividers. */
 function useMinuteNow(): Date {
   const [now, setNow] = useState(() => new Date());
@@ -209,6 +250,9 @@ export function ConversationScreen({
     botsLoaded: list.data !== null,
   });
   const thread = useThreadDetail(threadRef);
+  // The header title reads the shell: renames and auto-titles reach it live,
+  // while the loaded detail keeps the title it was fetched with.
+  const threadShell = useThreadShell(threadRef);
   const status = useThreadStatus(threadRef);
   useCloseChatNotifications(botId, threadIdParam);
 
@@ -744,24 +788,12 @@ export function ConversationScreen({
               comet
             />
             <div className="min-w-0 flex-1">
-              <span className="flex min-w-0 items-center gap-2">
-                <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
-                  {bot.name}
-                </h1>
-                {botMuted ? <MutedBell size={16} className="-ml-0.5" /> : null}
-                {contextBadge !== null ? (
-                  // The chat's context size, at every size. A quiet outlined
-                  // chip, so it reads as a measure of the chat and not as a
-                  // second, smaller word of the name.
-                  <span
-                    role="img"
-                    aria-label={`Chat context ${contextBadge} tokens`}
-                    className="shrink-0 rounded-full border border-[var(--personal-border-strong)] px-1.5 text-[11px] leading-[18px] font-medium tabular-nums text-[var(--personal-text-secondary)]"
-                  >
-                    {contextBadge}
-                  </span>
-                ) : null}
-              </span>
+              <ConversationHeaderName
+                name={bot.name}
+                chatTitle={threadShell?.title ?? thread?.title}
+                muted={botMuted}
+                contextBadge={contextBadge}
+              />
               {provider !== null || conversationState !== "idle" ? (
                 <ConversationSubtitle
                   state={conversationState}
@@ -842,6 +874,13 @@ export function ConversationScreen({
             ) : null}
             <MenuItem onClick={() => void navigate({ to: "/bots/$botId", params: { botId } })}>
               All chats
+              {environmentId !== null && list.data !== null ? (
+                <AllChatsCount
+                  environmentId={environmentId}
+                  botId={botId}
+                  links={list.data.threads}
+                />
+              ) : null}
             </MenuItem>
             <MenuItem
               disabled={disabledReason !== null || turnBusy || wrapupSending || thread === null}
