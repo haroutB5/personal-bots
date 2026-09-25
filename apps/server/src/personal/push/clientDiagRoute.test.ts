@@ -212,6 +212,24 @@ describe("client diagnostics route", () => {
     });
   });
 
+  it("accepts the skipped cleanup line, which shows a cleanup racing a tap", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "notifications-clear-skipped",
+          reason: "focus",
+          waitedMs: 321,
+          afterTap: true,
+        }),
+      ),
+    ).toEqual({
+      event: "notifications-clear-skipped",
+      reason: "focus",
+      waitedMs: 321,
+      afterTap: true,
+    });
+  });
+
   it("keeps one record on one bounded line", () => {
     const line = clientDiagLine(tap(), "anonymous");
     expect(line).not.toContain(String.fromCharCode(10));
