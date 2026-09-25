@@ -556,10 +556,11 @@ public static class PbDesktopHelper {
 
   static ImageCodecInfo jpegCodec;
 
-  // One frame of the live view: the chosen monitor scaled to fit the box, the
-  // cursor drawn in, JPEG. "unchanged" (nothing encoded) when the pixels hash
-  // the same as the frame the viewer already has; "locked" (nothing captured)
-  // while the PC is locked or a secure prompt is up.
+  // One frame of the live view: the chosen monitor (or the part of it the
+  // viewer has zoomed into) scaled to fit the box, never up, the cursor drawn
+  // in, JPEG. "unchanged" (nothing encoded) when the pixels hash the same as
+  // the frame the viewer already has; "locked" (nothing captured) while the PC
+  // is locked or a secure prompt is up.
   static Dictionary<string, object> LiveFrame(Dictionary<string, object> r) {
     if (Locked()) return Dict("locked", true);
     int maxW = Math.Max(64, IntOr(r, "maxWidth", 1280));
@@ -569,7 +570,14 @@ public static class PbDesktopHelper {
     List<Monitor> monitors = Monitors();
     if (monitors.Count == 0) throw new HelperError("capture_failed", "No monitor is attached.");
     Monitor m = monitors[Math.Max(0, Math.Min(monitors.Count - 1, IntOr(r, "monitor", 0)))];
-    Rectangle b = m.Bounds;
+    Rectangle mb = m.Bounds;
+    // The source rect, relative to the monitor, clamped onto it: the whole
+    // monitor unless the viewer asked for a region.
+    int rw = Math.Max(1, Math.Min(mb.Width, IntOr(r, "regionWidth", mb.Width)));
+    int rh = Math.Max(1, Math.Min(mb.Height, IntOr(r, "regionHeight", mb.Height)));
+    int rx = Math.Max(0, Math.Min(mb.Width - rw, IntOr(r, "regionX", 0)));
+    int ry = Math.Max(0, Math.Min(mb.Height - rh, IntOr(r, "regionY", 0)));
+    Rectangle b = new Rectangle(mb.X + rx, mb.Y + ry, rw, rh);
     double scale = Math.Min(1.0, Math.Min((double)maxW / b.Width, (double)maxH / b.Height));
     int ow = Math.Max(1, (int)Math.Round(b.Width * scale));
     int oh = Math.Max(1, (int)Math.Round(b.Height * scale));
@@ -609,7 +617,8 @@ public static class PbDesktopHelper {
       }
       return Dict("data", Convert.ToBase64String(jpeg), "width", ow, "height", oh, "hash", hash,
         "captureMs", captureMs, "encodeMs", watch.ElapsedMilliseconds,
-        "screenWidth", b.Width, "screenHeight", b.Height, "monitors", monitors.Count);
+        "screenWidth", mb.Width, "screenHeight", mb.Height, "monitors", monitors.Count,
+        "regionX", rx, "regionY", ry, "regionWidth", rw, "regionHeight", rh);
     }
   }
 

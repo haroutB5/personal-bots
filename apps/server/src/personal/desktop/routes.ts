@@ -155,7 +155,7 @@ export function makeDesktopSocketHandler(
           viewer.ack();
           return;
         case "Viewport":
-          viewer.setViewport(message.width, message.height);
+          viewer.setViewport(message.width, message.height, message.region);
           return;
         case "Control":
           if (message.on) takeControl();

@@ -16,6 +16,11 @@
  * - **Cheap when still.** The helper hashes the scaled pixels; an unchanged
  *   frame costs a capture but no encode and no bytes, and the rate backs off.
  * - **Locked PC.** Nothing is captured; the viewer is told `locked`.
+ * - **Zoom.** A viewer that names a region of the monitor (it zoomed in) gets
+ *   just that region, scaled to its box but never up, so zoomed text arrives
+ *   at the PC's own resolution instead of as an enlarged whole-screen frame.
+ *   Such a viewer gets region frames ({@link encodePersonalDesktopFrame}) that
+ *   say what they show; one that never names a region gets plain frames.
  * - **Remote control.** While a viewer controls the PC it gets a faster rate
  *   ({@link LiveViewTiming.controlFrameIntervalMs}) and a capture right after
  *   each input (`nudge`), still one frame in flight.
@@ -25,6 +30,8 @@
 import {
   clampPersonalDesktopViewBox,
   encodePersonalBrowserFrame,
+  encodePersonalDesktopFrame,
+  type PersonalDesktopViewRegion,
   type PersonalDesktopViewState,
 } from "@t3tools/contracts";
 
@@ -59,8 +66,11 @@ export interface LiveViewStats {
 export interface LiveViewer {
   /** The client drew the last frame. */
   readonly ack: () => void;
-  /** The box the client shows frames in, in device pixels. */
-  readonly setViewport: (width: number, height: number) => void;
+  /**
+   * The box the client shows frames in, in device pixels, and the part of the
+   * monitor it shows there (absent: a client that only knows whole frames).
+   */
+  readonly setViewport: (width: number, height: number, region?: PersonalDesktopViewRegion) => void;
   readonly detach: () => void;
   readonly stats: () => LiveViewStats;
   /** This viewer controls the PC (faster frames) or went back to watching. */
@@ -113,10 +123,45 @@ const STILL_AFTER = 3;
 /** Box scale and JPEG quality per adaptation level: full, then two steps down. */
 export const LIVE_VIEW_LEVELS: ReadonlyArray<{ readonly scale: number; readonly quality: number }> =
   [
-    { scale: 1, quality: 70 },
-    { scale: 0.75, quality: 60 },
-    { scale: 0.5, quality: 50 },
+    { scale: 1, quality: 80 },
+    { scale: 0.75, quality: 70 },
+    { scale: 0.5, quality: 55 },
   ];
+/** The smallest region edge ever captured, in monitor pixels. */
+const MIN_REGION_EDGE = 64;
+
+export interface PixelRegion {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * A region given as fractions of the monitor, in monitor pixels: rounded
+ * outwards so the viewer's whole visible area is covered, at least
+ * {@link MIN_REGION_EDGE} a side, and kept on the monitor.
+ */
+export function regionPixels(
+  region: PersonalDesktopViewRegion,
+  screen: { readonly width: number; readonly height: number },
+): PixelRegion {
+  const axis = (start: number, size: number, total: number) => {
+    const from = Math.max(0, Math.floor(start * total));
+    const to = Math.min(total, Math.ceil((start + size) * total));
+    const length = Math.min(total, Math.max(MIN_REGION_EDGE, to - from));
+    return { from: Math.max(0, Math.min(total - length, from)), length };
+  };
+  const x = axis(region.x, region.width, screen.width);
+  const y = axis(region.y, region.height, screen.height);
+  return { x: x.from, y: y.from, width: x.length, height: y.length };
+}
+
+const isWholeMonitor = (region: PersonalDesktopViewRegion) =>
+  region.x <= 0 && region.y <= 0 && region.x + region.width >= 1 && region.y + region.height >= 1;
+
+const numberOr = (value: unknown, fallback: number) =>
+  typeof value === "number" && Number.isFinite(value) ? value : fallback;
 /** An ack slower than this steps the level down (smaller, lower quality frames). */
 export const SLOW_ACK_MS = 1_500;
 /** This many acks in a row faster than {@link FAST_ACK_MS} step it back up. */
@@ -173,7 +218,7 @@ export class DesktopLiveViewHub {
     void loop.run();
     return {
       ack: () => loop.ack(),
-      setViewport: (width, height) => loop.setViewport(width, height),
+      setViewport: (width, height, region) => loop.setViewport(width, height, region),
       stats: () => loop.stats(),
       setControl: (on) => {
         loop.setControl(on);
@@ -239,7 +284,15 @@ export class DesktopLiveViewHub {
 class ViewerLoop {
   private closed = false;
   private box = { width: 1280, height: 1280 };
+  /** The part of the monitor the viewer shows; null is all of it. */
+  private region: PersonalDesktopViewRegion | null = null;
+  /** The viewer named a region at least once: it understands region frames. */
+  private regionFrames = false;
+  /** The monitor's size, from the latest capture. */
+  private screen: { width: number; height: number } | null = null;
   private lastHash: string | null = null;
+  /** What the capture that produced {@link lastHash} asked for. */
+  private lastRequest: string | null = null;
   private inFlight = false;
   private sentAt = 0;
   private level = 0;
@@ -303,8 +356,18 @@ class ViewerLoop {
     this.wake();
   }
 
-  setViewport(width: number, height: number): void {
-    this.box = clampPersonalDesktopViewBox({ width, height });
+  setViewport(width: number, height: number, region?: PersonalDesktopViewRegion): void {
+    const box = clampPersonalDesktopViewBox({ width, height });
+    const next = region === undefined || isWholeMonitor(region) ? null : region;
+    const changed =
+      box.width !== this.box.width ||
+      box.height !== this.box.height ||
+      JSON.stringify(next) !== JSON.stringify(this.region);
+    this.box = box;
+    this.region = next;
+    if (region !== undefined) this.regionFrames = true;
+    // A new zoom or box should look sharp soon, not at the next idle tick.
+    if (changed) this.nudge();
   }
 
   close(): void {
@@ -380,13 +443,33 @@ class ViewerLoop {
       const started = this.now();
       this.lastStartedAt = started;
       const level = LIVE_VIEW_LEVELS[this.level]!;
+      // Until the first capture says how big the monitor is, all of it.
+      const source =
+        this.region === null || this.screen === null
+          ? null
+          : regionPixels(this.region, this.screen);
+      const request = {
+        maxWidth: Math.max(64, Math.round(this.box.width * level.scale)),
+        maxHeight: Math.max(64, Math.round(this.box.height * level.scale)),
+        ...(source === null
+          ? {}
+          : {
+              regionX: source.x,
+              regionY: source.y,
+              regionWidth: source.width,
+              regionHeight: source.height,
+            }),
+      };
+      const requestKey = JSON.stringify(request);
+      // "Unchanged" only means something against a frame of the same request:
+      // after a zoom or a resize the viewer needs the new pixels whatever they hash to.
+      const lastHash = requestKey === this.lastRequest ? this.lastHash : null;
       let reply: Record<string, unknown>;
       try {
         reply = await this.hub.capture({
-          maxWidth: Math.max(64, Math.round(this.box.width * level.scale)),
-          maxHeight: Math.max(64, Math.round(this.box.height * level.scale)),
+          ...request,
           quality: level.quality,
-          ...(this.lastHash === null ? {} : { lastHash: this.lastHash }),
+          ...(lastHash === null ? {} : { lastHash }),
         });
       } catch (error) {
         if (this.closed) break;
@@ -407,6 +490,11 @@ class ViewerLoop {
       }
       this.captures += 1;
       this.captureMsTotal += captureMs;
+      const screenWidth = numberOr(reply.screenWidth, 0);
+      const screenHeight = numberOr(reply.screenHeight, 0);
+      if (screenWidth > 0 && screenHeight > 0) {
+        this.screen = { width: screenWidth, height: screenHeight };
+      }
       this.setState("live");
       // Whatever the target rate, a slow capture spaces the next one out.
       const interval = this.control
@@ -414,7 +502,7 @@ class ViewerLoop {
         : this.timing.frameIntervalMs;
       const duty = this.control ? this.timing.controlMaxCaptureDuty : this.timing.maxCaptureDuty;
       const spacing = Math.max(interval, elapsed / duty);
-      if (reply.unchanged === true) {
+      if (reply.unchanged === true && lastHash !== null) {
         this.unchanged += 1;
         this.still += 1;
         const idle = this.control ? this.timing.controlIdleIntervalMs : this.timing.idleIntervalMs;
@@ -430,11 +518,23 @@ class ViewerLoop {
         continue;
       }
       this.lastHash = typeof reply.hash === "string" ? reply.hash : null;
-      const frame = encodePersonalBrowserFrame(Buffer.from(data, "base64"), {
-        width,
-        height,
-        deviceScaleFactor: 1,
-      });
+      this.lastRequest = requestKey;
+      const jpeg = Buffer.from(data, "base64");
+      const frame = this.regionFrames
+        ? encodePersonalDesktopFrame(jpeg, {
+            width,
+            height,
+            // A helper that does not report them captured the whole monitor.
+            region: {
+              x: numberOr(reply.regionX, 0),
+              y: numberOr(reply.regionY, 0),
+              width: numberOr(reply.regionWidth, screenWidth > 0 ? screenWidth : width),
+              height: numberOr(reply.regionHeight, screenHeight > 0 ? screenHeight : height),
+            },
+            screenWidth: screenWidth > 0 ? screenWidth : width,
+            screenHeight: screenHeight > 0 ? screenHeight : height,
+          })
+        : encodePersonalBrowserFrame(jpeg, { width, height, deviceScaleFactor: 1 });
       this.inFlight = true;
       this.sentAt = this.now();
       this.frames += 1;

@@ -26,6 +26,30 @@ describe("planRemoteInput", () => {
     expect(command.params.remote).toBe(true);
   });
 
+  it("maps a zoomed-in tap given in monitor pixels onto exactly that pixel", () => {
+    // A region-aware app sends the monitor pixel under the finger with the
+    // monitor's own size as the frame, whatever region it has on screen.
+    const screen = { frameWidth: 3072, frameHeight: 1920 };
+    for (const [x, y] of [
+      [1100, 700],
+      [0, 0],
+      [3071, 1919],
+    ] as const) {
+      const command = planRemoteInput(
+        { _tag: "Pointer", action: "click", x, y, ...screen },
+        PRIMARY,
+      );
+      expect(command.params).toMatchObject({ x, y });
+    }
+    const offset = { x: 1920, y: 0, width: 3072, height: 1920 };
+    expect(
+      planRemoteInput(
+        { _tag: "Scroll", x: 1100, y: 700, ...screen, deltaX: 0, deltaY: 120 },
+        offset,
+      ).params,
+    ).toMatchObject({ x: 3020, y: 700 });
+  });
+
   it("maps the frame's corners inside the monitor, including a monitor at a negative origin", () => {
     const left = { x: -1920, y: -200, width: 1920, height: 1080 };
     const topLeft = planRemoteInput(
