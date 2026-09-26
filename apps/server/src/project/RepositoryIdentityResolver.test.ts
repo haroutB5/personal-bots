@@ -128,7 +128,10 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
   });
 
-  it.effect("retries Git root discovery after the negative TTL", () => {
+  // Upstream caches a failed root lookup for the negative TTL. Bots keeps its
+  // own rule (see "retries a root lookup git could not answer"): a lookup git
+  // could not answer is never cached, so the next resolve asks git again.
+  it.effect("retries Git root discovery on the next resolve after a git failure", () => {
     const calls: Array<ReadonlyArray<string>> = [];
     let rootAttempts = 0;
     const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
@@ -161,9 +164,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     return Effect.gen(function* () {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       expect(yield* resolver.resolve("/repo/packages/web")).toBeNull();
-      expect(yield* resolver.resolve("/repo/packages/web")).toBeNull();
 
-      yield* TestClock.adjust(Duration.minutes(1));
       const recovered = yield* resolver.resolve("/repo/packages/web");
       expect(recovered?.rootPath).toBe("/repo");
       expect(calls).toEqual([
@@ -301,8 +302,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       }
       expect(calls).toHaveLength(2);
 
-      // Remote URLs still refresh on their own, one TTL later.
-      yield* TestClock.adjust(Duration.minutes(2));
+      // Remote URLs still refresh on their own, one TTL (15 minutes) later.
+      yield* TestClock.adjust(Duration.minutes(11));
       yield* resolver.resolve("/repo");
       expect(calls).toHaveLength(4);
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
