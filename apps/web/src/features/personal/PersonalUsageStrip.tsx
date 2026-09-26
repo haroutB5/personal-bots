@@ -145,10 +145,13 @@ function UsageCardView({
   const [creditsShown, setCreditsShown] = useState(false);
   if (!creditsShown && (card.resetCredits?.credits.availableCount ?? 0) > 0) setCreditsShown(true);
   const resetCredits = card.resetCredits;
+  // shrink-0: the sheet scroller is a flex column, and an overflow-hidden card
+  // could shrink below its content once both cards no longer fit, cutting off
+  // its bottom padding and "Updated" line.
   return (
     <article
       aria-label={`${card.title} usage`}
-      className="flex flex-col gap-4 overflow-hidden rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-4"
+      className="flex shrink-0 flex-col gap-4 overflow-hidden rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-4"
     >
       <div className="flex min-w-0 flex-col">
         <h3 className="text-[16px] font-semibold text-[var(--personal-text)]">{card.title}</h3>

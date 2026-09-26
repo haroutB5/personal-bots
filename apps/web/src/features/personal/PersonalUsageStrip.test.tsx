@@ -276,9 +276,9 @@ describe("PersonalUsageStrip", () => {
       expect(redeemButtons().map((node) => node.props["aria-label"])).toEqual([
         "Redeem a banked Claude reset",
       ]);
-      expect(JSON.stringify(renderer!.toJSON())).toContain(
-        "1 reset credit banked · next expires in 7d 0h",
-      );
+      const json = JSON.stringify(renderer!.toJSON());
+      expect(json).toContain("1 reset banked");
+      expect(json).toContain("7d 0h");
     });
 
     it("redeems on confirm, then refreshes usage so the bars update", async () => {

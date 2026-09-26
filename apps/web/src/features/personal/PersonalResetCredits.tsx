@@ -11,9 +11,13 @@ import {
   AlertDialogTitle,
 } from "~/components/ui/alert-dialog";
 import { Button } from "~/components/ui/button";
-import { resetCreditsSummary, useResetCredit } from "~/components/usage/UsageLimits";
+import { useResetCredit } from "~/components/usage/UsageLimits";
 
-import type { UsageCardResetCredits } from "./usagePresentation";
+import {
+  resetCreditsExpiresIn,
+  resetCreditsHeadline,
+  type UsageCardResetCredits,
+} from "./usagePresentation";
 
 const PHONE_BUTTON = "max-sm:h-11 max-sm:text-[15px]";
 
@@ -46,6 +50,7 @@ export default function PersonalResetCredits({
   // Two taps inside one frame both see busy=false; the ref makes it one spend.
   const inFlightRef = useRef(false);
   if (credits.availableCount === 0 && status === null) return null;
+  const expiresIn = resetCreditsExpiresIn(credits, now);
 
   const onConfirm = async () => {
     if (inFlightRef.current) return;
@@ -62,17 +67,24 @@ export default function PersonalResetCredits({
     <div className="flex flex-col gap-2 border-t border-[var(--personal-border)] pt-3">
       {credits.availableCount > 0 ? (
         <div className="flex items-center justify-between gap-3">
-          <span className="min-w-0 text-[13px] text-[var(--personal-text-secondary)] tabular-nums">
-            {resetCreditsSummary(credits, now)}
-          </span>
+          <div className="flex min-w-0 flex-col">
+            <span className="text-[15px] leading-5 text-[var(--personal-text)] tabular-nums">
+              {resetCreditsHeadline(credits.availableCount)}
+            </span>
+            {expiresIn !== null ? (
+              <span className="text-[13px] leading-[18px] text-[var(--personal-text-secondary)] tabular-nums">
+                {/* One unit: "26d 15h" must never break across lines. */}
+                Next expires in <span className="whitespace-nowrap">{expiresIn}</span>
+              </span>
+            ) : null}
+          </div>
           <Button
             type="button"
-            size="sm"
             variant="outline"
             disabled={busy}
             aria-busy={busy}
             aria-label={`Redeem a banked ${title} reset`}
-            className="shrink-0"
+            className="h-11 shrink-0 px-4 text-[15px] sm:h-11"
             onClick={() => setConfirming(true)}
           >
             {busy ? "Redeeming…" : "Redeem"}

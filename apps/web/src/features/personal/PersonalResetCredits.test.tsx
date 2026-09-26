@@ -121,9 +121,21 @@ describe("PersonalResetCredits", () => {
     expect(renderer!.toJSON()).toBeNull();
   });
 
+  it("pluralises the count and drops the expiry line when none is reported", async () => {
+    await mount(credits(2));
+    expect(text()).toContain("2 resets banked");
+    expect(text()).not.toContain("Next expires");
+  });
+
   it("shows the banked count, the next expiry and a Redeem button", async () => {
     await mount(credits(1, "2026-09-20T12:00:00Z"));
-    expect(text()).toContain("1 reset credit banked · next expires in 7d 0h");
+    expect(text()).toContain("1 reset banked");
+    expect(text()).toContain("Next expires in ");
+    // The duration is one no-wrap unit, so "7d" and "0h" never split.
+    const duration = renderer!.root.find(
+      (node) => node.type === "span" && node.props.className === "whitespace-nowrap",
+    );
+    expect(duration.props.children).toBe("7d 0h");
     expect(redeemButton().props.disabled).toBe(false);
     expect(
       renderer!.root.findAll((node) => node.props["data-slot"] === "alert-dialog"),

@@ -5,6 +5,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   formatResetCountdown,
   formatResetTime,
+  resetCreditsExpiresIn,
+  resetCreditsHeadline,
   selectUsageCards,
   usageCardEmptyText,
   usageNeedsRefreshOnOpen,
@@ -83,6 +85,20 @@ describe("formatResetCountdown", () => {
     expect(formatResetCountdown("2026-09-13T11:00:00Z", NOW)).toBe("resets now");
     expect(formatResetCountdown(undefined, NOW)).toBeNull();
     expect(formatResetCountdown("not-a-date", NOW)).toBeNull();
+  });
+});
+
+describe("banked reset credits copy", () => {
+  it("names the count with the right plural", () => {
+    expect(resetCreditsHeadline(1)).toBe("1 reset banked");
+    expect(resetCreditsHeadline(2)).toBe("2 resets banked");
+  });
+
+  it("formats the time until the next credit expires, or null", () => {
+    const at = new Date(NOW + (26 * 24 + 15) * 3_600_000 + 1_000).toISOString();
+    expect(resetCreditsExpiresIn({ availableCount: 1, nextExpiresAt: at }, NOW)).toBe("26d 15h");
+    expect(resetCreditsExpiresIn({ availableCount: 1 }, NOW)).toBeNull();
+    expect(resetCreditsExpiresIn({ availableCount: 1, nextExpiresAt: "garbage" }, NOW)).toBeNull();
   });
 });
 
