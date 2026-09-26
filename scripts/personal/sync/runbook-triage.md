@@ -25,4 +25,6 @@ For each decision: `id` (short, stable kebab-case), `shas` (every upstream commi
 
 `summary` is for the owner, plain words: what they will notice, what got faster or fixed, what is held for their decision. `pushText` is 600 characters or fewer. `userChanges` lists visible behaviour changes that DID ship.
 
-Read-only: never edit files, never run anything that writes. Only git log/show/diff/merge-base.
+Read-only: never edit files, never run anything that writes. Only git log/show/diff/merge-base, optionally piped through head, tail, grep or wc.
+
+Reading diffs: your working directory is already the sync worktree, so never `cd`. Run one git command per Bash call (`git show --stat <sha>`, `git show <sha> -- <path>`, `git diff <a> <b> -- <path>`); a `cd` combined with a pipe is refused. Never use `--output` or a shell redirect. Read the diff of every commit you mark `needs_decision` or flag as risky before you judge it; do not triage from titles.

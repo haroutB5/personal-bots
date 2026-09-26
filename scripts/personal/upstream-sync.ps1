@@ -457,6 +457,12 @@ function Invoke-TriageAgent([string]$InputText) {
         '--permission-mode', 'dontAsk', '--permission-prompts', 'none',
         '--tools', 'Read,Grep,Glob,Bash',
         '--allowedTools', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git diff *)', 'Bash(git merge-base *)',
+        # Harmless readers to pipe git through. Claude Code refuses a `cd` plus a
+        # pipe in one call whatever this list says (the 2026-09-26 triage lost
+        # every diff to one), so the runbook also says: no cd, one command per call.
+        'Bash(cd *)', 'Bash(head *)', 'Bash(tail *)', 'Bash(grep *)', 'Bash(wc *)',
+        # `git diff/show/log --output=<file>` writes a file and matches the rules above.
+        '--disallowedTools', 'Bash(git * --output*)',
         '--append-system-prompt', $runbook,
         '--output-format', 'json', '--json-schema', (Get-SchemaArg),
         '--no-session-persistence', '--name', 'upstream-sync-triage')
@@ -499,6 +505,7 @@ function Invoke-ResolveAgent([string]$Task, [string]$Name, [object[]]$Gates) {
             '--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
             '--allowedTools', 'Bash(vp *)', 'Bash(git diff *)', 'Bash(git status *)', 'Bash(git show *)', 'Bash(git log *)',
             'Bash(git add *)', 'Bash(git grep *)', 'Bash(node *)',
+            'Bash(cd *)', 'Bash(head *)', 'Bash(tail *)', 'Bash(grep *)', 'Bash(wc *)',
             '--disallowedTools', 'Bash(git push *)', 'Bash(git commit *)', 'Bash(git reset *)', 'Bash(git checkout *)',
             'Bash(git switch *)', 'Bash(git stash *)', 'Bash(git rebase *)', 'Bash(powershell *)', 'Bash(pwsh *)',
             '--output-format', 'json', '--json-schema', (Get-SchemaArg), '--no-session-persistence', '--name', "upstream-sync-$Name")
@@ -743,7 +750,10 @@ function Invoke-Sync {
     if ($held.Count -gt 0) {
         $heldDoc = Get-Content -LiteralPath $HeldFile -Raw | ConvertFrom-Json
         $all = @($heldDoc.held) + $held
-        $out = [ordered]@{ '$comment' = $heldDoc.'$comment'; held = $all }
+        # Every other key (accepted, $acceptedComment) is kept as it was.
+        $out = [ordered]@{}
+        foreach ($prop in $heldDoc.PSObject.Properties) { $out[$prop.Name] = $prop.Value }
+        $out['held'] = $all
         Set-Content -LiteralPath $HeldFile -Value ($out | ConvertTo-Json -Depth 10) -Encoding UTF8
         [void](Invoke-Git -GitArgs @('add', 'scripts/personal/sync/held-upstream.json'))
         [void](Invoke-Git -GitArgs @('commit', '-m', ("chore(sync): record held upstream decisions (" + (@($held | ForEach-Object { $_.id }) -join ', ') + ")")))

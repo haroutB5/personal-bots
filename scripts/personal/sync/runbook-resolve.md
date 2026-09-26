@@ -3,6 +3,7 @@ You resolve an upstream T3 Code merge in the Bots fork's sync worktree (`C:\Clau
 Rules:
 
 - Never commit, push, switch branches, reset, stash, rebase or run PowerShell. The script commits.
+- Your working directory is already the sync worktree: never `cd`. Run one command per Bash call; a `cd` combined with a pipe is refused. Pipe only through head, tail, grep or wc.
 - `apps/server/src/persistence/Migrations.ts`, `upstreamMigrationIds.ts` and `apps/web/src/routeTree.gen.ts` are handled by the script. Don't touch them.
 - Additive lists and unions (RPC groups in `packages/contracts/src/rpc.ts`, the `RpcAuthorization` map, subscription tag unions in `packages/client-runtime`) keep both sides, ours first. Check closing brackets, and that no line was dropped or duplicated.
 - `apps/server/src/server.ts`: a `Layer.pipe` takes at most 20 steps. Keep our split `.pipe(...).pipe(...)` layout, never take upstream's copy of a block we split (that duplicates it), and port upstream's edits inside the block by name. Grep for every identifier upstream renamed, because typecheck misses a rename when the old name still exists.
