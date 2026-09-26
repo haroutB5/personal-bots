@@ -507,11 +507,16 @@ it.effect(
   },
 );
 
-it.effect("a waiting parent releases its slot so both children run under concurrency 2", () => {
+it.effect("a waiting parent releases its slot so both children run when slots are full", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
     yield* seedBots;
     const service = yield* PersonalTaskService.PersonalTaskService;
+    // Other running roots take every slot but the two the root and its first child need.
+    const fillers = PersonalTaskService.PERSONAL_TASKS_CONCURRENCY - 2;
+    for (let slot = 1; slot <= fillers; slot++) {
+      yield* createRoot(`slots-filler-${slot}`, "planner");
+    }
     const root = yield* createRoot("slots");
     const rootThread = threadOf(root);
     const rootTurn = yield* beginTurn(harness, rootThread);
@@ -527,10 +532,10 @@ it.effect("a waiting parent releases its slot so both children run under concurr
     });
     yield* service.drain;
 
-    // Root's turn is still running: it and the first child fill both slots.
+    // Root's turn is still running: it and the first child fill the last two slots.
     expect((yield* reload(first.taskId)).status).toBe("running");
     expect((yield* reload(second.taskId)).status).toBe("queued");
-    expect(turnStarts(harness).length).toBe(2);
+    expect(turnStarts(harness).length).toBe(fillers + 2);
 
     // Root's turn ends while children are open: it waits and frees its slot.
     yield* endTurn(harness, rootThread, rootTurn, "Delegated.");
@@ -539,8 +544,10 @@ it.effect("a waiting parent releases its slot so both children run under concurr
     const firstRunning = yield* reload(first.taskId);
     const secondRunning = yield* reload(second.taskId);
     expect([firstRunning.status, secondRunning.status]).toEqual(["running", "running"]);
-    expect(turnStarts(harness).length).toBe(3);
-    expect(turnStarts(harness)[2]!.message.text).toContain("[Delegated task from Assistant]");
+    expect(turnStarts(harness).length).toBe(fillers + 3);
+    expect(turnStarts(harness)[fillers + 2]!.message.text).toContain(
+      "[Delegated task from Assistant]",
+    );
 
     yield* runTurn(harness, threadOf(firstRunning), "Built.");
     expect((yield* reload(first.taskId)).status).toBe("completed");
@@ -919,7 +926,9 @@ it.effect(
       yield* seedBots;
       const service = yield* PersonalTaskService.PersonalTaskService;
       const limited = yield* createRoot("wait-limited", "assistant");
-      yield* createRoot("wait-busy", "developer");
+      for (let slot = 2; slot <= PersonalTaskService.PERSONAL_TASKS_CONCURRENCY; slot++) {
+        yield* createRoot(`wait-busy-${slot}`, "developer");
+      }
       const queued = yield* createRoot("wait-queued", "researcher");
       expect(queued.status).toBe("queued");
 
@@ -1318,9 +1327,11 @@ it.effect("steer on a queued task lands in the brief it starts with", () => {
   return Effect.gen(function* () {
     yield* seedBots;
     const service = yield* PersonalTaskService.PersonalTaskService;
-    // Two running roots fill both slots, so the third waits in the queue.
+    // Running roots fill every slot, so the next one waits in the queue.
     const first = yield* createRoot("steer-slot-1");
-    yield* createRoot("steer-slot-2", "developer");
+    for (let slot = 2; slot <= PersonalTaskService.PERSONAL_TASKS_CONCURRENCY; slot++) {
+      yield* createRoot(`steer-slot-${slot}`, "developer");
+    }
     const queued = yield* createRoot("steer-queued", "researcher");
     expect(queued.status).toBe("queued");
 

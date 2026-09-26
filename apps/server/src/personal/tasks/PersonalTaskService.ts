@@ -67,7 +67,7 @@ import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import { serverPerfOptimizationOn } from "../perfFlags.ts";
 
 /** Global cap on active provider turns started by the dispatcher. */
-export const PERSONAL_TASKS_CONCURRENCY = 2;
+export const PERSONAL_TASKS_CONCURRENCY = 5;
 export const PERSONAL_TASKS_DEFAULT_MAX_DEPTH = 2;
 export const PERSONAL_TASKS_DEFAULT_MAX_CHILDREN = 4;
 /** Backoff before each rate-limited re-run; one more rate limit fails the task. */
