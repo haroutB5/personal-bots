@@ -49,6 +49,7 @@ export default function PersonalResetCredits({
   const { confirming, setConfirming, busy, status, redeem } = useResetCredit(environmentId, input);
   // Two taps inside one frame both see busy=false; the ref makes it one spend.
   const inFlightRef = useRef(false);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   if (credits.availableCount === 0 && status === null) return null;
   const expiresIn = resetCreditsExpiresIn(credits, now);
 
@@ -98,7 +99,10 @@ export default function PersonalResetCredits({
         {status}
       </p>
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogPopup className="personal-app max-w-lg border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)] max-sm:pb-[env(safe-area-inset-bottom)]">
+        <AlertDialogPopup
+          initialFocus={cancelRef}
+          className="personal-app max-w-lg border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)] max-sm:pb-[env(safe-area-inset-bottom)]"
+        >
           <AlertDialogHeader className="text-left">
             <AlertDialogTitle className="text-[18px] leading-snug text-[var(--personal-text)]">
               {`Redeem a banked ${title} reset?`}
@@ -107,13 +111,21 @@ export default function PersonalResetCredits({
               {`This uses one of your banked resets and clears the current ${title} limit windows now. It cannot be undone.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {/* Redeeming cannot be undone, so Cancel is the filled, focused default.
+              The footer stacks in reverse on a phone: Cancel sits on top there
+              and on the right on desktop. */}
           <AlertDialogFooter className="border-[var(--personal-border)] bg-transparent">
-            <AlertDialogClose render={<Button variant="outline" className={PHONE_BUTTON} />}>
-              Cancel
-            </AlertDialogClose>
-            <Button className={PHONE_BUTTON} disabled={busy} onClick={() => void onConfirm()}>
+            <Button
+              variant="outline"
+              className={PHONE_BUTTON}
+              disabled={busy}
+              onClick={() => void onConfirm()}
+            >
               Redeem
             </Button>
+            <AlertDialogClose render={<Button ref={cancelRef} className={PHONE_BUTTON} />}>
+              Cancel
+            </AlertDialogClose>
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>

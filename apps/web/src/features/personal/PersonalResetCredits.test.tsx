@@ -1,6 +1,8 @@
 import { createContext, useContext, type ReactElement, type ReactNode } from "react";
 
-import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import { type EnvironmentId, ProviderInstanceId, ProviderSetupError } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -12,6 +14,8 @@ const ENV = "env-1" as EnvironmentId;
 
 const state = vi.hoisted(() => ({
   consume: vi.fn(),
+  popupProps: {} as Record<string, unknown>,
+  closeRef: undefined as unknown,
 }));
 
 // Never the real RPC: a redeem spends one of the owner's banked resets.
@@ -38,15 +42,25 @@ vi.mock("~/components/ui/alert-dialog", () => ({
         <div data-slot="alert-dialog">{children}</div>
       </DialogContext.Provider>
     ) : null,
-  AlertDialogPopup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  AlertDialogPopup: ({ children, ...props }: { children: ReactNode }) => {
+    state.popupProps = props;
+    return <div>{children}</div>;
+  },
   AlertDialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   AlertDialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   AlertDialogTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
   AlertDialogDescription: ({ children }: { children: ReactNode }) => <p>{children}</p>,
-  AlertDialogClose: ({ children }: { children: ReactNode; render?: ReactElement }) => {
+  AlertDialogClose: ({ children, render }: { children: ReactNode; render?: ReactElement }) => {
     const onOpenChange = useContext(DialogContext);
+    const props = (render?.props ?? {}) as { variant?: string; ref?: unknown };
+    state.closeRef = props.ref;
     return (
-      <button type="button" data-close onClick={() => onOpenChange(false)}>
+      <button
+        type="button"
+        data-close
+        data-variant={props.variant ?? "default"}
+        onClick={() => onOpenChange(false)}
+      >
         {children}
       </button>
     );
@@ -158,6 +172,24 @@ describe("PersonalResetCredits", () => {
     expect(onRedeemed).not.toHaveBeenCalled();
   });
 
+  it("makes Cancel the filled, focused default and Redeem the outlined secondary", async () => {
+    await mount(credits(1));
+    await openConfirm();
+    const dialog = renderer!.root.find((node) => node.props["data-slot"] === "alert-dialog");
+    const buttons = dialog.findAll((node) => node.type === "button");
+    // Last in the footer: on top on a phone (reverse stack), right on desktop.
+    expect(buttons.map((node) => node.props.children)).toEqual(["Redeem", "Cancel"]);
+    const cancel = buttons[1]!;
+    expect(cancel.props["data-variant"]).toBe("default");
+    const redeem = dialog.find(
+      (node) => typeof node.type !== "string" && node.props.children === "Redeem",
+    );
+    expect(redeem.props.variant).toBe("outline");
+    // The popup focuses the very ref Cancel's button carries.
+    expect(state.closeRef).toBeDefined();
+    expect(state.popupProps.initialFocus).toBe(state.closeRef);
+  });
+
   it("confirming calls consume once, disables while in flight, then refreshes", async () => {
     let settle: (value: unknown) => void = () => {};
     state.consume.mockImplementation(
@@ -216,11 +248,19 @@ describe("PersonalResetCredits", () => {
     expect(text()).toContain("Reset applied, but the hub cooldown did not clear.");
   });
 
-  it("shows a failure as text and keeps working", async () => {
-    state.consume.mockResolvedValue({
-      _tag: "Failure",
-      cause: { error: new Error("401 Incorrect API key provided") },
-    });
+  it("shows the server's error as text and keeps working", async () => {
+    // The shape the RPC command settles with: the typed error inside a Cause.
+    state.consume.mockResolvedValue(
+      AsyncResult.failure(
+        Cause.fail(
+          new ProviderSetupError({
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            operation: "consume-reset-credit",
+            detail: "401 Incorrect API key provided",
+          }),
+        ),
+      ),
+    );
     await mount(credits(1));
     await openConfirm();
     await act(async () => confirmButton().props.onClick());
@@ -230,7 +270,7 @@ describe("PersonalResetCredits", () => {
   });
 
   it("falls back to a plain sentence for an opaque failure", async () => {
-    state.consume.mockResolvedValue({ _tag: "Failure", cause: { reasons: [] } });
+    state.consume.mockResolvedValue(AsyncResult.failure(Cause.interrupt()));
     await mount(credits(1));
     await openConfirm();
     await act(async () => confirmButton().props.onClick());
