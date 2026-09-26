@@ -6738,6 +6738,95 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     });
   }
 
+  for (const refreshUsage of [true, false] as const) {
+    it.effect(`usage refresh drops cached usage reads before probing (${refreshUsage})`, () => {
+      const driver = ProviderDriverKind.make("claudeAgent");
+      const instanceId = ProviderInstanceId.make("claudeAgent");
+      const invalidated: string[] = [];
+      let probed = false;
+      const instance = {
+        instanceId,
+        driverKind: driver,
+        continuationIdentity: { driverKind: driver, continuationKey: instanceId },
+        displayName: undefined,
+        enabled: true,
+        invalidateUsage: Effect.sync(() => {
+          invalidated.push(instanceId);
+        }),
+        snapshot: {
+          resolveMaintenance: () => Effect.never,
+          getSnapshot: Effect.never,
+          refresh: Effect.never,
+          streamChanges: Stream.empty,
+          applyUsageLimits: () => Effect.void,
+        },
+        adapter: {} as ProviderInstance["adapter"],
+        textGeneration: {} as ProviderInstance["textGeneration"],
+      } satisfies ProviderInstance;
+      const probe = Effect.sync(() => {
+        probed = true;
+        // A cached read served here would come back with a fresh "updated" time.
+        assert.deepEqual(invalidated, refreshUsage ? [instanceId] : []);
+        return [];
+      });
+      return Effect.gen(function* () {
+        yield* buildAppUnderTest({
+          layers: {
+            providerInstanceRegistry: { listInstances: Effect.succeed([instance]) },
+            providerRegistry: { refresh: () => probe, refreshInstance: () => probe },
+          },
+        });
+        const wsUrl = yield* getWsServerUrl("/ws");
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.serverRefreshProviders](refreshUsage ? { refreshUsage } : {}),
+          ),
+        );
+        assert.isTrue(probed);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest));
+    });
+  }
+
+  it.effect("passes a redeem's lag warning through to the client", () => {
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const warning = "Reset applied. The provider's usage figures have not caught up yet.";
+    const instance = {
+      instanceId,
+      driverKind: driver,
+      continuationIdentity: { driverKind: driver, continuationKey: instanceId },
+      displayName: undefined,
+      enabled: true,
+      consumeResetCredit: () => Effect.succeed({ outcome: "reset" as const, warning }),
+      snapshot: {
+        resolveMaintenance: () => Effect.never,
+        getSnapshot: Effect.never,
+        refresh: Effect.never,
+        streamChanges: Stream.empty,
+        applyUsageLimits: () => Effect.void,
+      },
+      adapter: {} as ProviderInstance["adapter"],
+      textGeneration: {} as ProviderInstance["textGeneration"],
+    } satisfies ProviderInstance;
+    return Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          providerInstanceRegistry: {
+            listInstances: Effect.succeed([instance]),
+            getInstance: () => Effect.succeed(instance),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.providerConsumeResetCredit]({ instanceId }),
+        ),
+      );
+      assert.deepEqual(result, { outcome: "reset", warning });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest));
+  });
+
   it.effect("serves config on reconnect without starting provider probes", () =>
     Effect.gen(function* () {
       const refresh = vi.fn(() => Effect.never);

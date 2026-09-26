@@ -2495,6 +2495,19 @@ const makeWsRpcLayer = (
               if (input.instanceId === undefined) {
                 yield* usageLimitSources.refresh;
               }
+              // A usage view's refresh button must re-read limits, not get the
+              // last cached probe back with a new "updated" time.
+              if (input.refreshUsage && !input.refreshModels) {
+                const instances = yield* providerInstances.listInstances;
+                yield* Effect.forEach(
+                  instances.filter(
+                    (instance) =>
+                      input.instanceId === undefined || input.instanceId === instance.instanceId,
+                  ),
+                  (instance) => instance.invalidateUsage ?? Effect.void,
+                  { discard: true },
+                );
+              }
               let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
                 ? providerRegistry.refreshWorkspaceSnapshot({
                     instanceId: input.instanceId,
@@ -2577,7 +2590,7 @@ const makeWsRpcLayer = (
                   detail: "This provider does not bank reset credits.",
                 });
               }
-              const outcome = yield* instance.consumeResetCredit().pipe(
+              const result = yield* instance.consumeResetCredit().pipe(
                 Effect.mapError(
                   (error) =>
                     new ProviderSetupError({
@@ -2588,7 +2601,7 @@ const makeWsRpcLayer = (
                     }),
                 ),
               );
-              return { outcome };
+              return result;
             }),
             { "rpc.aggregate": "provider" },
           ),

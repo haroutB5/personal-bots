@@ -226,7 +226,7 @@ function UsageSheetBody({
     if (environmentId === null || refreshing) return;
     setRefreshing(true);
     try {
-      await refreshProviders({ environmentId, input: {} });
+      await refreshProviders({ environmentId, input: { refreshUsage: true } });
     } finally {
       setRefreshing(false);
     }

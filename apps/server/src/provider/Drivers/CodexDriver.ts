@@ -333,6 +333,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
                 }
               }),
             ),
+            Effect.map((outcome) => ({ outcome })),
           );
 
       // Same binary, home and launch args as the adapter's app-server sessions.

@@ -195,11 +195,18 @@ describe("PersonalUsageStrip", () => {
     expect(json).toContain("resets in 7d 0h");
     expect(json).toContain("26% used");
     expect(json).toContain("Updated");
-    expect(
-      renderer!.root.findAll(
-        (node) => node.type === "button" && node.props["aria-label"] === "Refresh usage",
-      ),
-    ).toHaveLength(1);
+    const refresh = renderer!.root.findAll(
+      (node) => node.type === "button" && node.props["aria-label"] === "Refresh usage",
+    );
+    expect(refresh).toHaveLength(1);
+
+    // Refresh must re-read the limits, not get a cached probe back as "Updated now".
+    vi.mocked(state.refresh).mockClear();
+    await act(async () => refresh[0]!.props.onClick());
+    expect(state.refresh).toHaveBeenCalledWith({
+      environmentId: "env-1",
+      input: { refreshUsage: true },
+    });
   });
 
   /**
@@ -299,9 +306,35 @@ describe("PersonalUsageStrip", () => {
         input: { instanceId: "claudeAgent" },
       });
       expect(state.refresh).toHaveBeenCalledTimes(1);
+      expect(state.refresh).toHaveBeenCalledWith({
+        environmentId: "env-1",
+        input: { refreshUsage: true },
+      });
       expect(JSON.stringify(renderer!.toJSON())).toContain(
         "Reset applied. Your windows have cleared.",
       );
+    });
+
+    it("says so when the provider's figures have not caught up with the reset", async () => {
+      const warning =
+        "Reset applied. The provider's usage figures have not caught up yet; they will update on their own in a few minutes.";
+      state.consume = vi.fn(async () => ({
+        _tag: "Success",
+        value: { outcome: "reset", warning },
+      }));
+      state.providers = [withCredits(1), CODEX];
+      await openSheet();
+
+      await act(async () => redeemButtons()[0]!.props.onClick());
+      const dialog = renderer!.root.find((node) => node.props["data-slot"] === "alert-dialog");
+      const confirm = dialog.find(
+        (node) => node.type === "button" && node.props.children === "Redeem",
+      );
+      await act(async () => confirm.props.onClick());
+
+      const json = JSON.stringify(renderer!.toJSON());
+      expect(json).toContain(warning);
+      expect(json).not.toContain("Your windows have cleared.");
     });
   });
 });

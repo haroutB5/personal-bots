@@ -156,7 +156,7 @@ it.each([0, 1])(
     });
     expect(state.refreshProviders).toHaveBeenCalledWith({
       environmentId: `test-${environmentNumber}`,
-      input: {},
+      input: { refreshUsage: true },
     });
     expect(
       JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value)),

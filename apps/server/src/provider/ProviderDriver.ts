@@ -76,13 +76,16 @@ export interface ProviderInstance {
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   /** Invalidate T3-owned discovery caches before an explicit provider refresh. */
   readonly invalidateCaches?: Effect.Effect<void>;
+  /** Drop any cached usage read so the next refresh asks the provider again. */
+  readonly invalidateUsage?: Effect.Effect<void>;
   /**
    * Redeem one banked rate-limit reset credit on the signed-in account, then
    * re-probe so the snapshot reflects the cleared windows. Account-level,
    * not thread-level, which is why it lives here rather than on the adapter.
+   * `warning` means the redeem succeeded but the limits did not catch up yet.
    */
   readonly consumeResetCredit?: () => Effect.Effect<
-    ProviderConsumeResetCreditOutcome,
+    { readonly outcome: ProviderConsumeResetCreditOutcome; readonly warning?: string },
     ProviderDriverError
   >;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;

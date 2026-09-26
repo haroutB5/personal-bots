@@ -50,6 +50,12 @@ import {
 import { runClaudeSmokeTest } from "../providerSmokeTest.ts";
 import { resolveClaudeSdkExecutablePath } from "./ClaudeExecutable.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import {
+  confirmUsageAfterReset,
+  RESET_FOLLOW_UP_DELAYS,
+  RESET_LAGGING_WARNING,
+  RESET_UNCONFIRMED_WARNING,
+} from "../resetCreditConfirmation.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -344,13 +350,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       // Same rules as Codex: serialised on the config directory that holds the
       // login, one request id kept until Claude answers (a cooldown or rate
       // limit is an answer), then a re-probe.
+      const reprobeUsage = Cache.invalidateAll(capabilitiesProbeCache).pipe(
+        Effect.andThen(snapshot.refresh),
+        Effect.map((refreshed) => refreshed.usageLimits),
+        // The claim already landed; a failed read must not report it as failed.
+        Effect.orElseSucceed(() => undefined),
+      );
+      const driverScope = yield* Effect.scope;
       const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = () =>
         Effect.gen(function* () {
           const current = yield* snapshot.getSnapshot;
           const grantId = current.usageLimits?.resetCredits?.nextCreditId;
-          if (!grantId || !current.version) return "noCredit" as const;
+          if (!grantId || !current.version) return { outcome: "noCredit" as const };
           const version = current.version;
-          return yield* resetCreditCoordinator.redeem(
+          const outcome = yield* resetCreditCoordinator.redeem(
             configDir,
             (requestId) =>
               ClaudeResetCredits.consumeClaudeResetCredit({
@@ -362,6 +375,37 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
               }),
             ClaudeResetCredits.isSettledClaudeResetCreditFailure,
           );
+          if (outcome !== "reset") {
+            // Nothing changed on the account; one re-read picks up the credit count.
+            yield* reprobeUsage;
+            return { outcome };
+          }
+          // Anthropic's usage endpoint can trail the claim by a few seconds.
+          // Re-read until it shows the reset, and never leave a pre-reset read
+          // in the probe cache, or every refresh for the next five minutes
+          // serves it again as "Updated now".
+          const confirmation = yield* confirmUsageAfterReset({
+            before: current.usageLimits,
+            reprobe: reprobeUsage,
+          });
+          if (confirmation === "confirmed") return { outcome };
+          yield* Cache.invalidateAll(capabilitiesProbeCache);
+          yield* confirmUsageAfterReset({
+            before: current.usageLimits,
+            reprobe: reprobeUsage,
+            delays: RESET_FOLLOW_UP_DELAYS,
+          }).pipe(
+            Effect.tap((later) =>
+              Effect.logInfo("Claude usage after a redeemed reset", { confirmation: later }),
+            ),
+            Effect.andThen(Cache.invalidateAll(capabilitiesProbeCache)),
+            Effect.ignoreCause({ log: true }),
+            Effect.forkIn(driverScope),
+          );
+          return {
+            outcome,
+            warning: confirmation === "lagging" ? RESET_LAGGING_WARNING : RESET_UNCONFIRMED_WARNING,
+          };
         }).pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -378,29 +422,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
                 cause,
               }),
           ),
-          // Re-probe after any answer, but only a reset claims the limits
-          // changed, so only a reset reports an unconfirmed refresh.
-          Effect.tap((outcome) =>
-            Effect.gen(function* () {
-              const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
-              yield* Cache.invalidateAll(capabilitiesProbeCache);
-              const refreshed = yield* snapshot.refresh;
-              const after = refreshed.usageLimits?.checkedAt;
-              if (
-                outcome === "reset" &&
-                (after === undefined ||
-                  after === before ||
-                  refreshed.usageLimits?.unavailable?.reason === "probeFailed")
-              ) {
-                return yield* new ProviderDriverError({
-                  driver: DRIVER_KIND,
-                  instanceId,
-                  detail:
-                    "The reset was applied, but Claude could not confirm the new limits. Refresh to check.",
-                });
-              }
-            }),
-          ),
         );
 
       return {
@@ -415,6 +436,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         enabled,
         snapshot,
         invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
+        invalidateUsage: Cache.invalidateAll(capabilitiesProbeCache),
         snapshotForCwd,
         adapter,
         textGeneration,

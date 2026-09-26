@@ -178,7 +178,7 @@ const makeTildeProviderFixtures = Effect.fn(
     claudePath,
     [
       "#!/usr/bin/env node",
-      'import { existsSync } from "node:fs";',
+      'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
       'import * as NodeReadline from "node:readline";',
       'if (process.argv.includes("--version")) {',
       '  process.stdout.write("claude 2.1.219\\n");',
@@ -197,11 +197,22 @@ const makeTildeProviderFixtures = Effect.fn(
       '      }) + "\\n");',
       "      return;",
       "    }",
+      "    // Anthropic's usage endpoint can trail a claim: the first N reads after it",
+      "    // still report the old windows.",
+      "    let claimed = Boolean(marker && existsSync(marker));",
+      "    const lagFile = process.env.T3_CLAUDE_USAGE_LAG_FILE;",
+      "    if (claimed && lagFile && existsSync(lagFile)) {",
+      '      const left = Number(readFileSync(lagFile, "utf8"));',
+      "      if (left > 0) {",
+      "        writeFileSync(lagFile, String(left - 1));",
+      "        claimed = false;",
+      "      }",
+      "    }",
       "    process.stdout.write(JSON.stringify({",
       '      type: "control_response",',
       '      response: { subtype: "success", request_id: message.request_id, response: {',
       '        session: {}, subscription_type: "pro", rate_limits_available: true,',
-      "        rate_limits: { five_hour: { utilization: marker && existsSync(marker) ? 0 : 100, resets_at: null } },",
+      "        rate_limits: { five_hour: { utilization: claimed ? 0 : 100, resets_at: null } },",
       "      } },",
       '    }) + "\\n");',
       "    return;",
@@ -392,7 +403,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(codex).toBeDefined();
       // The usage read fails, so the re-probe cannot confirm new limits.
       yield* codex!.snapshot.refresh;
-      expect(yield* codex!.consumeResetCredit!()).toBe("alreadyRedeemed");
+      expect(yield* codex!.consumeResetCredit!()).toEqual({ outcome: "alreadyRedeemed" });
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -450,12 +461,21 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  const redeemClaudeReset = (claim: { result: string; usageFailsAfterClaim: boolean }) =>
+  const redeemClaudeReset = (claim: {
+    result: string;
+    usageFailsAfterClaim: boolean;
+    /** Reads after the claim that still report the pre-claim windows. */
+    laggingReads?: number;
+  }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const fixtures = yield* makeTildeProviderFixtures();
       const marker = path.join(fixtures.claudeHomePath, "redeemed");
+      const lagFile = path.join(fixtures.claudeHomePath, "lagging-reads");
+      if (claim.laggingReads !== undefined) {
+        yield* fs.writeFileString(lagFile, String(claim.laggingReads));
+      }
       yield* fs.writeFileString(
         path.join(fixtures.claudeHomePath, ".credentials.json"),
         '{"claudeAiOauth":{"accessToken":"fake-token"}}',
@@ -494,6 +514,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
             enabled: true,
             environment: [
               { name: "T3_CLAUDE_RESET_MARKER", value: marker, sensitive: false },
+              { name: "T3_CLAUDE_USAGE_LAG_FILE", value: lagFile, sensitive: false },
               ...(claim.usageFailsAfterClaim
                 ? [{ name: "T3_CLAUDE_USAGE_FAILS_AFTER_CLAIM", value: "1", sensitive: false }]
                 : []),
@@ -512,7 +533,11 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(before.usageLimits?.windows[0]?.usedPercent).toBe(100);
       expect(before.usageLimits?.resetCredits?.nextCreditId).toBe("grant_a");
       const outcome = yield* instance!.consumeResetCredit!().pipe(Effect.result);
-      return { outcome, after: yield* instance!.snapshot.getSnapshot };
+      const after = yield* instance!.snapshot.getSnapshot;
+      // What the usage sheet's refresh button gets back.
+      yield* instance!.invalidateUsage ?? Effect.void;
+      const refreshed = yield* instance!.snapshot.refresh;
+      return { outcome, after, refreshed };
     }).pipe(
       // macOS logins live in the Keychain, where resets are never read.
       Effect.provideService(HostProcessPlatform, "linux"),
@@ -525,8 +550,38 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         result: "reset",
         usageFailsAfterClaim: false,
       });
-      expect(outcome).toMatchObject({ _tag: "Success", success: "reset" });
+      expect(outcome).toMatchObject({ _tag: "Success", success: { outcome: "reset" } });
       expect(after.usageLimits?.windows[0]?.usedPercent).toBe(0);
+    }),
+  );
+
+  it.live("re-reads Claude usage until a lagging provider shows the reset", () =>
+    Effect.gen(function* () {
+      const { outcome, after } = yield* redeemClaudeReset({
+        result: "reset",
+        usageFailsAfterClaim: false,
+        laggingReads: 1,
+      });
+      expect(after.usageLimits?.windows[0]?.usedPercent).toBe(0);
+      expect(outcome).toMatchObject({ _tag: "Success", success: { outcome: "reset" } });
+      expect(outcome).not.toMatchObject({ success: { warning: expect.anything() } });
+    }),
+  );
+
+  it.live("warns and keeps no stale read cached when Claude usage has not caught up", () =>
+    Effect.gen(function* () {
+      const { outcome, after, refreshed } = yield* redeemClaudeReset({
+        result: "reset",
+        usageFailsAfterClaim: false,
+        laggingReads: 3,
+      });
+      expect(after.usageLimits?.windows[0]?.usedPercent).toBe(100);
+      // The refresh button re-reads instead of serving the pinned pre-reset probe.
+      expect(refreshed.usageLimits?.windows[0]?.usedPercent).toBe(0);
+      expect(outcome).toMatchObject({
+        _tag: "Success",
+        success: { outcome: "reset", warning: expect.stringContaining("not caught up") },
+      });
     }),
   );
 
@@ -536,7 +591,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         result: "already_used",
         usageFailsAfterClaim: true,
       });
-      expect(outcome).toMatchObject({ _tag: "Success", success: "alreadyRedeemed" });
+      expect(outcome).toMatchObject({ _tag: "Success", success: { outcome: "alreadyRedeemed" } });
     }),
   );
 
