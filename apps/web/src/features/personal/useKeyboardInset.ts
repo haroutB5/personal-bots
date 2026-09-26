@@ -41,6 +41,26 @@ function keyboardTarget(node: unknown): boolean {
 }
 
 /**
+ * A hidden, zero-size box pinned to the bottom of the fixed-position
+ * containing block: its rect says where a fixed bottom sheet actually ends.
+ * Null where the document cannot host one (then innerHeight stands in).
+ */
+function createFixedEdgeProbe(): HTMLElement | null {
+  try {
+    const body = document.body;
+    if (!body || typeof document.createElement !== "function") return null;
+    const probe = document.createElement("div");
+    probe.setAttribute("aria-hidden", "true");
+    probe.style.cssText =
+      "position:fixed;left:0;bottom:0;width:0;height:0;visibility:hidden;pointer-events:none";
+    body.append(probe);
+    return probe;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * How far the conversation shell's bottom edge sits below the visible
  * viewport's bottom edge - i.e. the padding needed to lift the composer
  * above the on-screen keyboard.
@@ -76,6 +96,12 @@ function keyboardTarget(node: unknown): boolean {
  * Leftover document pan is reset only when the shell is fully visible again
  * (overlap <= 1); resetting while typing drags the composer back under the
  * keyboard.
+ *
+ * Without a shell (a fixed bottom sheet such as Rename chat), the edge that
+ * matters is the one `position: fixed; bottom: 0` lands on, read from a
+ * zero-size probe. `innerHeight` is the wrong edge on that iPhone: it follows
+ * the keyboard while fixed boxes do not, so the overlap read 0 and the sheet,
+ * text field and all, sat behind the keyboard (26 Sep).
  */
 export function useKeyboardInset(shellRef?: RefObject<HTMLElement | null>): number {
   const [inset, setInset] = useState(0);
@@ -83,6 +109,7 @@ export function useKeyboardInset(shellRef?: RefObject<HTMLElement | null>): numb
     const viewport = window.visualViewport;
     if (!viewport) return;
 
+    const probe = shellRef === undefined ? createFixedEdgeProbe() : null;
     let collapseFrame: number | undefined;
 
     const resetPan = () => {
@@ -99,10 +126,11 @@ export function useKeyboardInset(shellRef?: RefObject<HTMLElement | null>): numb
         resetPan();
         return;
       }
-      const shell = shellRef?.current ?? null;
+      const shell = shellRef === undefined ? probe : shellRef.current;
       // The applied padding lifts the composer inside the shell without
       // moving the shell's rect (its height is constrained by the 100dvh
-      // ancestor), so reading the rect each event does not feed back.
+      // ancestor), so reading the rect each event does not feed back. The
+      // probe never moves either: nothing is ever applied to it.
       const shellBottom =
         shell !== null ? shell.getBoundingClientRect().bottom : window.innerHeight;
       const visibleBottom = viewport.offsetTop + viewport.height;
@@ -137,6 +165,7 @@ export function useKeyboardInset(shellRef?: RefObject<HTMLElement | null>): numb
     document.addEventListener("focusout", onFocusOut);
     return () => {
       if (collapseFrame !== undefined) cancelAnimationFrame(collapseFrame);
+      probe?.remove();
       viewport.removeEventListener("resize", update);
       viewport.removeEventListener("scroll", update);
       window.removeEventListener("resize", update);

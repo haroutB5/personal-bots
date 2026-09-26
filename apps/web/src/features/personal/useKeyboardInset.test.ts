@@ -197,6 +197,41 @@ describe("useKeyboardInset", () => {
     expect(lastInset).toBe(373);
   });
 
+  it("lifts a fixed sheet by the fixed edge's overlap when innerHeight follows the keyboard", () => {
+    // 26 Sep, iPhone PWA: the keyboard shrinks innerHeight (873 -> 487) but
+    // not the edge fixed boxes sit on, so Rename chat's sheet read an overlap
+    // of 0 and stayed behind the keyboard with its text field.
+    const probe = {
+      style: { cssText: "" },
+      setAttribute: vi.fn(),
+      getBoundingClientRect: () => ({ bottom: 873 }),
+      remove: vi.fn(),
+    };
+    const append = vi.fn();
+    Object.assign(fakeDocument, { body: { append }, createElement: () => probe });
+    function Probe(): JSX.Element | null {
+      lastInset = useKeyboardInset();
+      return null;
+    }
+    act(() => {
+      renderer = create(createElement(Probe));
+    });
+    expect(append).toHaveBeenCalledWith(probe);
+    expect(probe.style.cssText).toContain("position:fixed");
+    expect(probe.style.cssText).toContain("bottom:0");
+
+    fakeWindow.innerHeight = 487;
+    viewport.height = 487;
+    act(() => {
+      viewport.dispatchEvent(new Event("resize"));
+    });
+    expect(lastInset).toBe(386);
+
+    act(() => renderer?.unmount());
+    renderer = null;
+    expect(probe.remove).toHaveBeenCalledOnce();
+  });
+
   it("clears the inset on blur even when the closing resize was swallowed", () => {
     // The reported bug: iOS delivers one coalesced resize part-way through the
     // dismiss animation and nothing after it, so the geometry never returns to
