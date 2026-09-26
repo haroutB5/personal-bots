@@ -5,6 +5,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -57,7 +58,7 @@ import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
-import { personalTaskMessageId } from "../personalThreadTitles.ts";
+import { personalTaskMessageId, personalTaskSteerMessageId } from "../personalThreadTitles.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import { serverPerfOptimizationOn } from "../perfFlags.ts";
 
@@ -144,6 +145,31 @@ export interface PersonalTaskDelegateInput {
   readonly dependencies?: ReadonlyArray<PersonalTaskId>;
 }
 
+export interface PersonalTaskSteerInput {
+  readonly taskId: PersonalTaskId;
+  /** Who is steering, as the bot reads it: "Update from <fromName>: ...". */
+  readonly fromName: string;
+  readonly message: string;
+}
+
+/**
+ * steered: delivered into the task's running turn, which keeps going.
+ * queued: the task is not in a turn now; the update opens its next turn (for
+ * a queued task, the brief it starts with).
+ */
+export interface PersonalTaskSteerResult {
+  readonly outcome: "steered" | "queued";
+  readonly task: PersonalTask;
+  readonly text: string;
+}
+
+export interface PersonalTaskSteer {
+  readonly text: string;
+  readonly createdAt: DateTime.Utc;
+  /** Null while it waits for the task's next turn. */
+  readonly deliveredAt: DateTime.Utc | null;
+}
+
 export class PersonalTaskService extends Context.Service<
   PersonalTaskService,
   {
@@ -168,6 +194,19 @@ export class PersonalTaskService extends Context.Service<
     readonly retry: (input: {
       readonly taskId: PersonalTaskId;
     }) => Effect.Effect<PersonalTask, PersonalTasksError>;
+    /**
+     * Sends an instruction into an unfinished task without restarting it: a
+     * running turn is steered (the bot keeps its context and progress), any
+     * other unfinished task gets it at the start of its next turn. Recorded
+     * on the task either way; a finished task is refused.
+     */
+    readonly steer: (
+      input: PersonalTaskSteerInput,
+    ) => Effect.Effect<PersonalTaskSteerResult, PersonalTasksError>;
+    /** Updates sent with `steer`, oldest first. */
+    readonly steers: (input: {
+      readonly taskId: PersonalTaskId;
+    }) => Effect.Effect<ReadonlyArray<PersonalTaskSteer>, PersonalTasksError>;
     readonly get: (input: {
       readonly taskId: PersonalTaskId;
     }) => Effect.Effect<PersonalTaskDetail, PersonalTasksError>;
@@ -681,7 +720,9 @@ export const make = Effect.gen(function* () {
         ),
       };
     }
-    if (notes.length > 0) {
+    // Notes before a task's first turn can only be updates sent while it was
+    // queued: it starts with its full brief, updates after it.
+    if (notes.length > 0 && attemptNumber > 1) {
       return {
         text: [
           "[Task continuation]",
@@ -713,6 +754,9 @@ export const make = Effect.gen(function* () {
       text: [
         header,
         ...taskSections(task, Option.isSome(handoff) ? handoff.value.brief : null),
+        ...(notes.length > 0
+          ? [`Updates since this task was handed over:\n\n${notes.join("\n\n")}`]
+          : []),
       ].join("\n\n"),
       marker: marker(attemptNumber > 1 ? "retry" : "start", delegatorBotId, []),
     };
@@ -1607,6 +1651,117 @@ export const make = Effect.gen(function* () {
       )
       .pipe(toPublic("retry"));
 
+  const steerText = (fromName: string, message: string) =>
+    `Update from ${fromName.trim() || "your delegator"}: ${message.trim()}`;
+
+  // Under the service lock, like claim and settle: the task cannot start,
+  // settle or be cancelled between the status read and the delivery.
+  const steer: PersonalTaskService["Service"]["steer"] = (input) =>
+    lock
+      .withPermit(
+        Effect.gen(function* () {
+          const task = yield* requireTask(input.taskId);
+          if (input.message.trim().length === 0) {
+            return yield* fail("The update is empty; say what should change.");
+          }
+          if (isTerminal(task.status)) {
+            return yield* fail(
+              `That task is already ${task.status}, so there is nothing to steer. Delegate a new task if more work is needed.`,
+            );
+          }
+          const now = yield* DateTime.now;
+          const steerId = NodeCrypto.randomUUID().replaceAll("-", "");
+          const noteId = `${PersonalTaskRepository.PERSONAL_TASK_STEER_NOTE_PREFIX}${steerId}`;
+          const text = steerText(input.fromName, input.message);
+          if (task.status !== "running") {
+            // Opens its next turn: for a queued task that is its first, so the
+            // update is part of the brief it starts with.
+            yield* repository.insertResumeNote({
+              noteId,
+              taskId: task.taskId,
+              text,
+              restartSession: false,
+              createdAt: now,
+            });
+            return { outcome: "queued" as const, task, text };
+          }
+          const attempt = (yield* repository.listActiveAttempts()).find(
+            (entry) => entry.taskId === task.taskId,
+          );
+          const shell =
+            attempt === undefined
+              ? Option.none()
+              : yield* snapshots
+                  .getThreadShellById(attempt.providerThreadId)
+                  .pipe(Effect.orElseSucceed(() => Option.none()));
+          const thread = Option.getOrUndefined(shell);
+          if (attempt === undefined || !sessionIsBusy(thread?.session)) {
+            // Its turn is starting or just ended. A turn started now would run
+            // outside the task, and a note could wait for a turn that never
+            // comes, so say so rather than guess.
+            return yield* fail(
+              "That task is between turns (just starting or just finishing). Check it with get_task and try again in a moment.",
+            );
+          }
+          // The selection the task's turn runs with. A different one restarts
+          // a Claude session, which would end the very turn this steers, so a
+          // bot edited mid-task keeps its running selection until its next turn.
+          const botSelection = yield* botModelSelectionForThread(
+            botRepository,
+            attempt.providerThreadId,
+            thread?.modelSelection,
+          );
+          const modelSelection =
+            thread?.modelSelection !== undefined &&
+            botSelection !== undefined &&
+            !Equal.equals(botSelection, thread.modelSelection)
+              ? thread.modelSelection
+              : botSelection;
+          // The normal turn path: a turn start on a thread whose turn is
+          // running steers that turn instead of starting another. The thread's
+          // own modes, since a changed runtime mode restarts the session.
+          yield* engine
+            .dispatch({
+              type: "thread.turn.start",
+              commandId: CommandId.make(`personal-task:${task.taskId}:steer:${steerId}`),
+              threadId: attempt.providerThreadId,
+              ...(modelSelection !== undefined ? { modelSelection } : {}),
+              message: {
+                messageId: personalTaskSteerMessageId(steerId),
+                role: "user",
+                text,
+                attachments: [],
+              },
+              runtimeMode: thread?.runtimeMode ?? "full-access",
+              interactionMode: thread?.interactionMode ?? "default",
+              createdAt: DateTime.formatIso(now),
+            })
+            .pipe(Effect.mapError((cause) => fail("Could not deliver the update.", cause)));
+          yield* repository.insertResumeNote({
+            noteId,
+            taskId: task.taskId,
+            text,
+            restartSession: false,
+            createdAt: now,
+            deliveredAt: now,
+          });
+          return { outcome: "steered" as const, task, text };
+        }),
+      )
+      .pipe(toPublic("steer"));
+
+  const steers: PersonalTaskService["Service"]["steers"] = (input) =>
+    repository.listSteerNotes(input.taskId).pipe(
+      Effect.map((notes) =>
+        notes.map((note) => ({
+          text: note.text,
+          createdAt: note.createdAt,
+          deliveredAt: note.deliveredAt,
+        })),
+      ),
+      toPublic("steers"),
+    );
+
   const get: PersonalTaskService["Service"]["get"] = (input) =>
     Effect.gen(function* () {
       const task = yield* requireTask(input.taskId);
@@ -1934,6 +2089,8 @@ export const make = Effect.gen(function* () {
     delegate,
     cancel,
     retry,
+    steer,
+    steers,
     get,
     list,
     subscribe,

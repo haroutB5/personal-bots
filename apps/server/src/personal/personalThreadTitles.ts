@@ -13,6 +13,14 @@ const PERSONAL_TASK_MESSAGE_ID_PREFIX = "personal-task-";
 export const personalTaskMessageId = (taskId: string, attempt: number) =>
   MessageId.make(`${PERSONAL_TASK_MESSAGE_ID_PREFIX}${taskId}-${attempt}`);
 
+/**
+ * An instruction a delegator or team lead sent into a running task
+ * (`steer_task`). It carries the task prefix, so it never counts as the owner
+ * speaking; `steerId` has no dashes, so it never parses as an attempt's id.
+ */
+export const personalTaskSteerMessageId = (steerId: string) =>
+  MessageId.make(`${PERSONAL_TASK_MESSAGE_ID_PREFIX}steer-${steerId}`);
+
 export const isPersonalTaskMessageId = (messageId: string) =>
   messageId.startsWith(PERSONAL_TASK_MESSAGE_ID_PREFIX);
 

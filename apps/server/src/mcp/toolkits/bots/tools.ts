@@ -97,9 +97,19 @@ export const GetTaskInput = Schema.Struct({
   taskId: PersonalTaskId.annotate({ description: "A task id from delegate_task or list_tasks." }),
 });
 
+export const TaskSteer = Schema.Struct({
+  text: Schema.String,
+  sentAt: Schema.String,
+  /** False while it waits for the task's next turn. */
+  delivered: Schema.Boolean,
+});
+export type TaskSteer = typeof TaskSteer.Type;
+
 export const GetTaskResult = Schema.Struct({
   task: TaskSummary,
   children: Schema.Array(TaskSummary),
+  /** Updates sent into the task with steer_task, oldest first. */
+  steers: Schema.Array(TaskSteer),
 });
 export type GetTaskResult = typeof GetTaskResult.Type;
 
@@ -124,6 +134,26 @@ export const StopTaskResult = Schema.Struct({
 });
 export type StopTaskResult = typeof StopTaskResult.Type;
 
+export const SteerTaskInput = Schema.Struct({
+  taskId: PersonalTaskId.annotate({ description: "A task id from delegate_task or list_tasks." }),
+  message: TrimmedNonEmptyString.annotate({
+    description:
+      "The update, written to the bot doing the task: what to change, narrow, add or drop. It arrives as 'Update from <your name>: <message>', so make it make sense on its own.",
+  }),
+});
+
+export const SteerTaskResult = Schema.Struct({
+  taskId: PersonalTaskId,
+  /**
+   * steered: delivered into the running turn now. queued: the task is not in
+   * a turn; the update opens its next one (a queued task starts with it).
+   */
+  outcome: Schema.Literals(["steered", "queued"]),
+  status: PersonalTaskStatus,
+  note: Schema.String,
+});
+export type SteerTaskResult = typeof SteerTaskResult.Type;
+
 export const ListTasksInput = Schema.Struct({
   status: Schema.optional(
     PersonalTaskStatus.annotate({ description: "Only tasks in this status." }),
@@ -133,6 +163,11 @@ export const ListTasksInput = Schema.Struct({
 export const ListTasksResult = Schema.Struct({
   rootTaskId: Schema.NullOr(Schema.String),
   tasks: Schema.Array(TaskSummary),
+  /**
+   * Team leads only: unfinished tasks of your team's bots from outside your
+   * current request's tree (other chats, routines), newest first.
+   */
+  teamTasks: Schema.Array(TaskSummary),
 });
 export type ListTasksResult = typeof ListTasksResult.Type;
 
@@ -273,7 +308,7 @@ const DelegateTaskTool = Tool.make("delegate_task", {
 
 const GetTaskTool = Tool.make("get_task", {
   description:
-    "Read one task in your current request's task tree (the request you are working on and everything delegated from it): its status, result summary or error, and its direct children. An id from outside that tree reads as not found. You do not need this to collect results: a delegated task's result arrives on its own as a follow-up message.",
+    "Read one task in your current request's task tree (the request you are working on and everything delegated from it): its status, result summary or error, its direct children and the updates sent to it with steer_task. A team lead can also read any unfinished task of a bot on its own team, whoever started it (another chat, a routine). Any other id reads as not found. You do not need this to collect results: a delegated task's result arrives on its own as a follow-up message.",
   parameters: GetTaskInput,
   success: GetTaskResult,
   failure: BotsToolFailure,
@@ -287,7 +322,7 @@ const GetTaskTool = Tool.make("get_task", {
 
 const ListTasksTool = Tool.make("list_tasks", {
   description:
-    "List the tasks in your current request's task tree (the root request and everything delegated from it), newest first, optionally only those in one status. Empty when you are not working on a task. Useful before stop_task, to see what is still running; results of delegated tasks arrive on their own, so there is no need to poll.",
+    "List the tasks in your current request's task tree (the root request and everything delegated from it), newest first, optionally only those in one status. Empty when you are not working on a task. A team lead also gets teamTasks: every unfinished task of a bot on its own team from outside that tree, such as work a routine or another chat started. Useful before steer_task or stop_task, to see what is still running; results of delegated tasks arrive on their own, so there is no need to poll.",
   parameters: ListTasksInput,
   success: ListTasksResult,
   failure: BotsToolFailure,
@@ -301,7 +336,7 @@ const ListTasksTool = Tool.make("list_tasks", {
 
 const StopTaskTool = Tool.make("stop_task", {
   description:
-    "Stop a task you delegated that is still running, and optionally hand the same bot a new objective in its place. Use this when the work has been overtaken by events instead of letting it finish. Only tasks in your own request's task tree can be stopped, never your own; tasks the stopped one delegated stop with it.",
+    "Stop a task you delegated that is still running, and optionally hand the same bot a new objective in its place. The bot loses everything it had done: a redirect starts a fresh task from the new objective alone. To narrow, correct or add to the work while keeping its progress, use steer_task instead; stop only when the work itself has been overtaken by events. You can stop tasks in your own request's task tree, and a team lead any unfinished task of a bot on its own team; never your own. Tasks the stopped one delegated stop with it.",
   parameters: StopTaskInput,
   success: StopTaskResult,
   failure: BotsToolFailure,
@@ -310,6 +345,20 @@ const StopTaskTool = Tool.make("stop_task", {
   .annotate(Tool.Title, "Stop a delegated task")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
+
+const SteerTaskTool = Tool.make("steer_task", {
+  description:
+    "Send an update into a task that is still unfinished, without restarting it: the bot keeps its context and everything it has done so far. A running task gets it in its live turn now; a queued or waiting task gets it at the start of its next turn (a queued task starts with it as part of its brief). Prefer this over stop_task to narrow, correct or add to the work. The update shows in that bot's chat and on the task (get_task). You can steer tasks in your own request's task tree, and a team lead any unfinished task of a bot on its own team, whoever started it; never your own, and never a finished task.",
+  parameters: SteerTaskInput,
+  success: SteerTaskResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Steer a running task")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, false);
 
@@ -404,6 +453,7 @@ export const BotsToolkit = Toolkit.make(
   GetTaskTool,
   ListTasksTool,
   StopTaskTool,
+  SteerTaskTool,
   RequestSecretTool,
   UseLoginTool,
   RequestBrowserHelpTool,

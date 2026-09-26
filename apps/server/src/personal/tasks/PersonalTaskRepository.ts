@@ -247,7 +247,15 @@ export class PersonalTaskRepository extends Context.Service<
       taskId: PersonalTaskId,
       now: DateTime.Utc,
     ) => Effect.Effect<void, PersonalTaskRepositoryError>;
-    /** User- or browser-waiting tasks that have an undelivered resume note. */
+    /** A task's steer notes (see `PERSONAL_TASK_STEER_NOTE_PREFIX`), oldest first. */
+    readonly listSteerNotes: (
+      taskId: PersonalTaskId,
+    ) => Effect.Effect<ReadonlyArray<PersonalTaskSteerNote>, PersonalTaskRepositoryError>;
+    /**
+     * User- or browser-waiting tasks that have an undelivered resume note.
+     * Steer notes do not count: an update from the delegator rides along with
+     * the next turn, it does not answer what the task is waiting for.
+     */
     readonly listTasksAwaitingResume: () => Effect.Effect<
       ReadonlyArray<PersonalTask>,
       PersonalTaskRepositoryError
@@ -262,7 +270,31 @@ export interface PersonalTaskResumeNote {
   readonly text: string;
   readonly restartSession: boolean;
   readonly createdAt: DateTime.Utc;
+  /** Set for a note that already reached the bot (a steer into a live turn). */
+  readonly deliveredAt?: DateTime.Utc | null;
 }
+
+/**
+ * Resume notes whose id starts with this are instructions a delegator or team
+ * lead sent into a task (`steer_task`). They share the resume-notes table, so
+ * an undelivered one opens the task's next turn like any other note.
+ */
+export const PERSONAL_TASK_STEER_NOTE_PREFIX = "steer:";
+
+export interface PersonalTaskSteerNote {
+  readonly noteId: string;
+  readonly text: string;
+  readonly createdAt: DateTime.Utc;
+  readonly deliveredAt: DateTime.Utc | null;
+}
+
+const SteerNoteDbRow = Schema.Struct({
+  noteId: Schema.String,
+  text: Schema.String,
+  createdAt: Schema.DateTimeUtcFromString,
+  deliveredAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+});
+const decodeSteerNoteRow = Schema.decodeUnknownEffect(SteerNoteDbRow);
 
 const ResumeNoteDbRow = Schema.Struct({
   noteId: Schema.String,
@@ -632,7 +664,7 @@ export const make = Effect.gen(function* () {
         )
         VALUES (
           ${note.noteId}, ${note.taskId}, ${note.text}, ${note.restartSession ? 1 : 0},
-          ${iso(note.createdAt)}, NULL
+          ${iso(note.createdAt)}, ${isoOrNull(note.deliveredAt ?? null)}
         )
         ON CONFLICT(note_id) DO NOTHING
       `,
@@ -680,6 +712,28 @@ export const make = Effect.gen(function* () {
       `,
     ).pipe(Effect.asVoid);
 
+  const listSteerNotes: PersonalTaskRepository["Service"]["listSteerNotes"] = (taskId) =>
+    query(
+      "listSteerNotes",
+      sql`
+        SELECT
+          note_id AS "noteId",
+          text AS "text",
+          created_at AS "createdAt",
+          delivered_at AS "deliveredAt"
+        FROM personal_task_resume_notes
+        WHERE task_id = ${taskId}
+          AND note_id LIKE ${`${PERSONAL_TASK_STEER_NOTE_PREFIX}%`}
+        ORDER BY created_at ASC, rowid ASC
+      `,
+    ).pipe(
+      Effect.flatMap((rows) =>
+        Effect.forEach(rows, (row) =>
+          decodeSteerNoteRow(row).pipe(Effect.mapError(decodeError("listSteerNotes"))),
+        ),
+      ),
+    );
+
   const listTasksAwaitingResume: PersonalTaskRepository["Service"]["listTasksAwaitingResume"] =
     () =>
       query(
@@ -689,7 +743,9 @@ export const make = Effect.gen(function* () {
           FROM personal_tasks
           WHERE status IN ('waiting_for_user', 'waiting_for_browser')
             AND task_id IN (
-              SELECT task_id FROM personal_task_resume_notes WHERE delivered_at IS NULL
+              SELECT task_id FROM personal_task_resume_notes
+              WHERE delivered_at IS NULL
+                AND note_id NOT LIKE ${`${PERSONAL_TASK_STEER_NOTE_PREFIX}%`}
             )
           ORDER BY created_at ASC, rowid ASC
         `,
@@ -721,6 +777,7 @@ export const make = Effect.gen(function* () {
     insertResumeNote,
     listUndeliveredNotes,
     markNotesDelivered,
+    listSteerNotes,
     listTasksAwaitingResume,
   } satisfies PersonalTaskRepository["Service"];
 });

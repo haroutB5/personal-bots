@@ -1173,3 +1173,142 @@ it.effect("a task placed in a chat waits out the user's turn and starts when it 
     expect(running.threadId).toBe(chat);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+const claudeOpus = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-opus-5-5",
+  options: [{ id: "effort", value: "medium" }],
+};
+
+it.effect(
+  "steer delivers into the running turn with the bot's selection and keeps the task",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const bots = yield* PersonalBotService.PersonalBotService;
+      yield* bots.update({ botId: botId("assistant"), modelSelection: claudeOpus });
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("steer-running");
+      const thread = threadOf(root);
+      const turnId = yield* beginTurn(harness, thread);
+      const startsBefore = turnStarts(harness).length;
+
+      const steered = yield* service.steer({
+        taskId: root.taskId,
+        fromName: "CTO",
+        message: "Only check the login page.",
+      });
+
+      expect(steered.outcome).toBe("steered");
+      const steer = turnStarts(harness).at(-1)!;
+      expect(turnStarts(harness).length).toBe(startsBefore + 1);
+      expect(steer.threadId).toBe(thread);
+      expect(steer.message.text).toBe("Update from CTO: Only check the login page.");
+      expect(steer.message.messageId.startsWith("personal-task-steer-")).toBe(true);
+      expect(steer.modelSelection).toEqual(claudeOpus);
+      // Not a new attempt: the same task keeps running on the same turn.
+      const detail = yield* service.get({ taskId: root.taskId });
+      expect(detail.task.status).toBe("running");
+      expect(detail.attempts).toHaveLength(1);
+      expect(interrupts(harness)).toHaveLength(0);
+      const recorded = yield* service.steers({ taskId: root.taskId });
+      expect(recorded.map((entry) => [entry.text, entry.deliveredAt !== null])).toEqual([
+        ["Update from CTO: Only check the login page.", true],
+      ]);
+
+      // The turn ends as usual and the task completes once, with no replay.
+      yield* endTurn(harness, thread, turnId, "Login page checked.");
+      const done = yield* reload(root.taskId);
+      expect(done.status).toBe("completed");
+      expect(done.result).toEqual({ summary: "Login page checked." });
+      expect(turnStarts(harness).length).toBe(startsBefore + 1);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("steer on a queued task lands in the brief it starts with", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    // Two running roots fill both slots, so the third waits in the queue.
+    const first = yield* createRoot("steer-slot-1");
+    yield* createRoot("steer-slot-2", "developer");
+    const queued = yield* createRoot("steer-queued", "researcher");
+    expect(queued.status).toBe("queued");
+
+    const steered = yield* service.steer({
+      taskId: queued.taskId,
+      fromName: "CTO",
+      message: "Narrow it to the iPhone layout.",
+    });
+    expect(steered.outcome).toBe("queued");
+    expect((yield* service.steers({ taskId: queued.taskId }))[0]!.deliveredAt).toBeNull();
+
+    yield* runTurn(harness, threadOf(first), "First done.");
+    const started = yield* reload(queued.taskId);
+    expect(started.status).toBe("running");
+    const start = turnStarts(harness).find((command) => command.threadId === started.threadId)!;
+    expect(start.message.text.startsWith("[Task from you]")).toBe(true);
+    expect(start.message.text).toContain("Do the steer-queued thing.");
+    expect(start.message.text).toContain(
+      "Updates since this task was handed over:\n\nUpdate from CTO: Narrow it to the iPhone layout.",
+    );
+    expect((yield* service.steers({ taskId: queued.taskId }))[0]!.deliveredAt).not.toBeNull();
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("steer refuses a finished task", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("steer-finished");
+    yield* runTurn(harness, threadOf(root), "Done.");
+    const before = turnStarts(harness).length;
+
+    const error = yield* service
+      .steer({ taskId: root.taskId, fromName: "CTO", message: "One more thing." })
+      .pipe(Effect.flip);
+
+    expect(error.message).toContain("already completed");
+    expect(turnStarts(harness).length).toBe(before);
+    expect(yield* service.steers({ taskId: root.taskId })).toHaveLength(0);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("steer does not wake a task waiting for the user; it rides the resume", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("steer-waiting");
+    const thread = threadOf(root);
+    const turnId = yield* beginTurn(harness, thread);
+    yield* service.waitForUser({ taskId: root.taskId });
+    yield* endTurn(harness, thread, turnId, "Need a key.");
+
+    const steered = yield* service.steer({
+      taskId: root.taskId,
+      fromName: "CTO",
+      message: "Skip the billing part.",
+    });
+    expect(steered.outcome).toBe("queued");
+    yield* service.sweep;
+    yield* service.drain;
+    expect((yield* reload(root.taskId)).status).toBe("waiting_for_user");
+
+    yield* service.resumeFromUser({
+      taskId: root.taskId,
+      noteId: "secret:1",
+      note: "The key is saved.",
+      restartSession: false,
+    });
+    yield* service.drain;
+    const continuation = turnStarts(harness).at(-1)!;
+    expect(continuation.message.text).toContain("[Task continuation]");
+    expect(continuation.message.text).toContain("Update from CTO: Skip the billing part.");
+    expect(continuation.message.text).toContain("The key is saved.");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});

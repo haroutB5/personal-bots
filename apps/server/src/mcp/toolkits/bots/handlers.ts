@@ -3,6 +3,8 @@ import * as NodeCrypto from "node:crypto";
 import {
   botTeam,
   DEFAULT_PERSONAL_BOT_TEAM,
+  PERSONAL_TASK_TERMINAL_STATUSES,
+  PersonalTaskStatus,
   personalBotTeamLabel,
   personalSecretEnvVar,
   type PersonalBot,
@@ -31,6 +33,11 @@ import {
   type DelegateTaskInput,
   type TaskSummary,
 } from "./tools.ts";
+
+export const STEERED_NOTE =
+  "Delivered into the task's running turn; the bot continues with it and keeps its progress. Its result still arrives on its own.";
+export const STEER_QUEUED_NOTE =
+  "The task is not in a turn right now; the update opens its next one, so for a queued task it is part of the brief it starts with.";
 
 /**
  * A tool call is not a viewer session, so there is no session id to pass.
@@ -67,6 +74,10 @@ export const shortenBrowserHelpReason = (reason: string): string => {
 };
 
 const toolError = (reason: string) => new BotsToolError({ reason });
+
+const PERSONAL_TASK_STATUSES_OPEN = PersonalTaskStatus.literals.filter(
+  (status) => !PERSONAL_TASK_TERMINAL_STATUSES.includes(status),
+);
 
 /** The service errors carry messages written for people; they read fine to a model too. */
 const readable = (error: { readonly message: string }) => toolError(error.message);
@@ -175,6 +186,7 @@ const make = Effect.gen(function* () {
       botId: link.value.botId,
       botName: Option.isSome(bot) ? bot.value.name : "Bot",
       team: Option.isSome(bot) ? botTeam(bot.value) : DEFAULT_PERSONAL_BOT_TEAM,
+      lead: Option.isSome(bot) && bot.value.lead === true,
     };
   });
 
@@ -243,6 +255,46 @@ const make = Effect.gen(function* () {
 
   const notInTree = () => toolError("That task is not in your task tree.");
 
+  /** Unfinished tasks of the caller's team's bots, newest first (team leads). */
+  const teamOpenTasks = Effect.fn("BotsToolkit.teamOpenTasks")(function* (team: string) {
+    const bots = yield* listBots;
+    const teamBotIds = new Set<string>(
+      bots.filter((bot) => botTeam(bot) === team).map((bot) => bot.botId),
+    );
+    const open = yield* tasks
+      .list({ statuses: PERSONAL_TASK_STATUSES_OPEN })
+      .pipe(Effect.mapError(readable));
+    return open.tasks.filter((task) => teamBotIds.has(task.botId));
+  });
+
+  /**
+   * The task a caller may read or act on, with the tasks its children are
+   * read from. Every bot reaches its own request's tree. A team lead also
+   * reaches any unfinished task of a bot on its own team, whatever request
+   * or routine started it; never another team's. Anything else reads as
+   * absent, so an id from elsewhere is not a lever.
+   */
+  const reachableTask = Effect.fn("BotsToolkit.reachableTask")(function* (
+    caller: { readonly threadId: ThreadId; readonly team: string; readonly lead: boolean },
+    taskId: PersonalTask["taskId"],
+  ) {
+    const root = yield* tasks.rootTaskIdForThread(caller.threadId).pipe(Effect.mapError(readable));
+    const tree = Option.isSome(root) ? yield* treeOf(root.value) : [];
+    const inTree = tree.find((entry) => entry.taskId === taskId);
+    if (inTree !== undefined) {
+      return { task: inTree, tree };
+    }
+    if (!caller.lead) {
+      return yield* notInTree();
+    }
+    const team = yield* teamOpenTasks(caller.team);
+    const task = team.find((entry) => entry.taskId === taskId);
+    if (task === undefined) {
+      return yield* notInTree();
+    }
+    return { task, tree: yield* treeOf(task.rootTaskId) };
+  });
+
   return BotsToolkit.of({
     list_bots: () =>
       Effect.gen(function* () {
@@ -310,52 +362,46 @@ const make = Effect.gen(function* () {
       }),
     get_task: (input) =>
       Effect.gen(function* () {
-        const root = yield* callerRoot();
-        if (Option.isNone(root)) {
-          return yield* notInTree();
-        }
-        const tree = yield* treeOf(root.value);
-        const task = tree.find((entry) => entry.taskId === input.taskId);
-        if (task === undefined) {
-          return yield* notInTree();
-        }
+        const caller = yield* callerBot();
+        const { task, tree } = yield* reachableTask(caller, input.taskId);
         const names = yield* botNames;
+        const steers = yield* tasks.steers({ taskId: task.taskId }).pipe(Effect.mapError(readable));
         return {
           task: summarize(task, names),
           children: tree
             .filter((entry) => entry.parentTaskId === task.taskId)
             .map((entry) => summarize(entry, names)),
+          steers: steers.map((steer) => ({
+            text: steer.text,
+            sentAt: DateTime.formatIso(steer.createdAt),
+            delivered: steer.deliveredAt !== null,
+          })),
         };
       }),
     list_tasks: (input) =>
       Effect.gen(function* () {
+        const caller = yield* callerBot();
         const root = yield* callerRoot();
-        if (Option.isNone(root)) {
-          return { rootTaskId: null, tasks: [] };
-        }
-        const tree = yield* treeOf(root.value);
+        const tree = Option.isSome(root) ? yield* treeOf(root.value) : [];
+        const inTree = new Set<string>(tree.map((task) => task.taskId));
+        const team = caller.lead ? yield* teamOpenTasks(caller.team) : [];
         const names = yield* botNames;
+        const wanted = (task: PersonalTask) =>
+          input.status === undefined || task.status === input.status;
         return {
-          rootTaskId: root.value,
-          tasks: tree
-            .filter((task) => input.status === undefined || task.status === input.status)
+          rootTaskId: Option.getOrNull(root),
+          tasks: tree.filter(wanted).map((task) => summarize(task, names)),
+          teamTasks: team
+            .filter((task) => !inTree.has(task.taskId) && wanted(task))
             .map((task) => summarize(task, names)),
         };
       }),
     stop_task: (input) =>
       Effect.gen(function* () {
         const caller = yield* callerTask();
-        const root = yield* callerRoot();
-        if (Option.isNone(root)) {
-          return yield* notInTree();
-        }
-        const tree = yield* treeOf(root.value);
-        const target = tree.find((entry) => entry.taskId === input.taskId);
-        // Scoped exactly like get_task: a bot may only stop work it owns, so a
-        // task id guessed from elsewhere reads as absent rather than as a lever.
-        if (target === undefined) {
-          return yield* notInTree();
-        }
+        // Scoped exactly like get_task: a task id guessed from elsewhere reads
+        // as absent rather than as a lever.
+        const { task: target } = yield* reachableTask(caller, input.taskId);
         if (target.taskId === caller.task.taskId) {
           return yield* toolError("You cannot stop your own task; finish your turn instead.");
         }
@@ -384,6 +430,23 @@ const make = Effect.gen(function* () {
           taskId: stopped.taskId,
           status: stopped.status,
           redirectedTaskId: replacement.taskId,
+        };
+      }),
+    steer_task: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* callerTask();
+        const { task: target } = yield* reachableTask(caller, input.taskId);
+        if (target.taskId === caller.task.taskId) {
+          return yield* toolError("That is your own task; just carry on with the change yourself.");
+        }
+        const steered = yield* tasks
+          .steer({ taskId: target.taskId, fromName: caller.botName, message: input.message })
+          .pipe(Effect.mapError(readable));
+        return {
+          taskId: steered.task.taskId,
+          outcome: steered.outcome,
+          status: steered.task.status,
+          note: steered.outcome === "steered" ? STEERED_NOTE : STEER_QUEUED_NOTE,
         };
       }),
     request_secret: (input) =>

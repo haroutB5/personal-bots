@@ -460,6 +460,169 @@ describe("bots toolkit handlers", () => {
     ),
   );
 
+  /** A task a routine started for `bot`, running on its own thread: another request tree. */
+  const routineTask = (harness: Harness, bot: string, key: string) =>
+    Effect.gen(function* () {
+      const tasks = yield* PersonalTaskService.PersonalTaskService;
+      const created = yield* tasks.createTask({
+        idempotencyKey: `routine:${key}`,
+        botId: botId(bot),
+        title: "Nightly QA pass",
+        objective: "Check every page.",
+        source: "routine",
+      });
+      yield* tasks.drain;
+      const task = (yield* tasks.get({ taskId: created.taskId })).task;
+      expect(task.status).toBe("running");
+      harness.sessions.set(task.threadId!, runningSession(task.threadId!));
+      return task;
+    });
+
+  const makeAssistantLead = Effect.gen(function* () {
+    const bots = yield* PersonalBotService.PersonalBotService;
+    yield* bots.update({ botId: botId("assistant"), lead: true });
+  });
+
+  it.effect("steer_task steers a task the caller delegated and records it on the task", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const tasks = yield* PersonalTaskService.PersonalTaskService;
+        const child = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Fix the build.",
+        });
+        yield* tasks.drain;
+        const childTask = (yield* tasks.get({ taskId: child.childTaskId as never })).task;
+        harness.sessions.set(childTask.threadId!, runningSession(childTask.threadId!));
+
+        const steered = yield* call("steer_task", {
+          taskId: child.childTaskId as never,
+          message: "Only the server package.",
+        });
+
+        expect(steered).toMatchObject({ outcome: "steered", status: "running" });
+        const turn = harness.dispatched.at(-1)!;
+        expect(turn).toMatchObject({
+          type: "thread.turn.start",
+          threadId: childTask.threadId,
+          modelSelection: { instanceId: "codex", model: "gpt-test" },
+          message: { text: "Update from Assistant: Only the server package." },
+        });
+        const after = yield* call("get_task", { taskId: child.childTaskId as never });
+        expect(after.task.status).toBe("running");
+        expect(after.steers).toEqual([
+          expect.objectContaining({
+            text: "Update from Assistant: Only the server package.",
+            delivered: true,
+          }),
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("steer_task refuses a finished task", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const child = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Fix the build.",
+        });
+        yield* (yield* PersonalTaskService.PersonalTaskService).drain;
+        yield* call("stop_task", { taskId: child.childTaskId as never, reason: "Done." });
+        const before = harness.dispatched.length;
+
+        const error = yield* call("steer_task", {
+          taskId: child.childTaskId as never,
+          message: "One more thing.",
+        }).pipe(Effect.flip);
+
+        expect(error.message).toContain("already cancelled");
+        expect(harness.dispatched.length).toBe(before);
+      }),
+    ),
+  );
+
+  it.effect("a team lead can read, steer and stop a team task a routine started", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        yield* makeAssistantLead;
+        const task = yield* routineTask(harness, "researcher", "lead-reach");
+
+        const read = yield* call("get_task", { taskId: task.taskId });
+        expect(read.task).toMatchObject({ taskId: task.taskId, botName: "Researcher" });
+        const listed = yield* call("list_tasks", {});
+        expect(listed.teamTasks.map((entry) => entry.taskId)).toContain(task.taskId);
+        expect(listed.tasks.map((entry) => entry.taskId)).not.toContain(task.taskId);
+
+        const steered = yield* call("steer_task", {
+          taskId: task.taskId,
+          message: "Narrow it to the login page.",
+        });
+        expect(steered.outcome).toBe("steered");
+        expect(harness.dispatched.at(-1)).toMatchObject({
+          type: "thread.turn.start",
+          threadId: task.threadId,
+          message: { text: "Update from Assistant: Narrow it to the login page." },
+        });
+
+        const stopped = yield* call("stop_task", {
+          taskId: task.taskId,
+          reason: "Superseded.",
+        });
+        expect(stopped.status).toBe("cancelled");
+      }),
+    ),
+  );
+
+  it.effect("a bot that is not a lead cannot reach a team task outside its tree", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const task = yield* routineTask(harness, "researcher", "no-lead");
+        const before = harness.dispatched.length;
+
+        for (const refused of [
+          Effect.flip(call("get_task", { taskId: task.taskId })),
+          Effect.flip(call("steer_task", { taskId: task.taskId, message: "Narrow it." })),
+          Effect.flip(call("stop_task", { taskId: task.taskId, reason: "Not mine." })),
+        ]) {
+          const error = yield* refused;
+          expect(error.message).toBe("That task is not in your task tree.");
+        }
+        expect((yield* call("list_tasks", {})).teamTasks).toEqual([]);
+        expect(harness.dispatched.length).toBe(before);
+      }),
+    ),
+  );
+
+  it.effect("a team lead cannot reach another team's task", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        yield* makeAssistantLead;
+        const bots = yield* PersonalBotService.PersonalBotService;
+        yield* bots.update({ botId: botId("developer"), team: "dev", lead: true });
+        const task = yield* routineTask(harness, "developer", "other-team");
+        const before = harness.dispatched.length;
+
+        for (const refused of [
+          Effect.flip(call("get_task", { taskId: task.taskId })),
+          Effect.flip(call("steer_task", { taskId: task.taskId, message: "Narrow it." })),
+          Effect.flip(call("stop_task", { taskId: task.taskId, reason: "Not mine." })),
+        ]) {
+          const error = yield* refused;
+          expect(error.message).toBe("That task is not in your task tree.");
+        }
+        const listed = yield* call("list_tasks", {});
+        expect(listed.teamTasks.map((entry) => entry.taskId)).not.toContain(task.taskId);
+        expect(harness.dispatched.length).toBe(before);
+      }),
+    ),
+  );
+
   it.effect("delegation refusals come back as readable tool errors", () =>
     withHarness((harness) =>
       Effect.gen(function* () {
