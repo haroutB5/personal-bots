@@ -15,7 +15,8 @@ export type PerfOptimization =
   | "snapshot-early"
   | "warm-highlighter"
   | "rum"
-  | "stale-reload";
+  | "stale-reload"
+  | "lean-shell";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

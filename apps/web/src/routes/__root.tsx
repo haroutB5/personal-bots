@@ -16,19 +16,13 @@ import { lazy, Suspense, useEffect, useEffectEvent, useMemo, useRef, useState } 
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
-import { CommandPalette } from "../components/CommandPalette";
-import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
-import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
-import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
-import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
-import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -78,6 +72,7 @@ import {
 } from "../components/KeybindingsUpdateToast.logic";
 
 import { isPersonalPath } from "../features/personal/personalMode";
+import { perfOptimizationOn } from "../features/personal/perfFlags";
 import {
   PROVIDER_WORKSPACE_DATA_OMITTED,
   shouldReloadForProviderWorkspaceData,
@@ -92,6 +87,39 @@ import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 // on every Bots launch.
 const AppSidebarLayout = lazy(() =>
   import("../components/AppSidebarLayout").then((module) => ({ default: module.AppSidebarLayout })),
+);
+// Likewise the command palette, the snooze dialog and the desktop and
+// developer-view coordinators: upstream tools the Bots shell never uses.
+// Static, they put the palette, the snooze date picker (react-day-picker,
+// date-fns), drag and drop and the pull-request code in front of every Bots
+// launch: 27 chunks, 448 KB. Kill switch: "lean-shell" (perfFlags).
+const CommandPalette = lazy(() =>
+  import("../components/CommandPalette").then((module) => ({ default: module.CommandPalette })),
+);
+const CustomSnoozeDialogHost = lazy(() =>
+  import("../components/CustomSnoozeDialog").then((module) => ({
+    default: module.CustomSnoozeDialogHost,
+  })),
+);
+const ThreadNotificationCoordinator = lazy(() =>
+  import("../components/ThreadNotificationCoordinator").then((module) => ({
+    default: module.ThreadNotificationCoordinator,
+  })),
+);
+const ProjectCloneToastCoordinator = lazy(() =>
+  import("../components/ProjectCloneToastCoordinator").then((module) => ({
+    default: module.ProjectCloneToastCoordinator,
+  })),
+);
+const SnapShotCoordinator = lazy(() =>
+  import("../components/desktop/SnapShotCoordinator").then((module) => ({
+    default: module.SnapShotCoordinator,
+  })),
+);
+const DesktopAppActivationCoordinator = lazy(() =>
+  import("../components/desktop/DesktopAppActivationCoordinator").then((module) => ({
+    default: module.DesktopAppActivationCoordinator,
+  })),
 );
 
 export const Route = createRootRoute({
@@ -204,14 +232,14 @@ function RootRouteView() {
           <EnvironmentThemeSync />
           <GlassAppearanceSync />
           <FontAppearanceSync />
-          <CustomSnoozeDialogHost />
-          <CommandPalette>
-            <Suspense fallback={null}>
+          <Suspense fallback={null}>
+            <CustomSnoozeDialogHost />
+            <CommandPalette>
               <AppSidebarLayout>
                 <Outlet />
               </AppSidebarLayout>
-            </Suspense>
-          </CommandPalette>
+            </CommandPalette>
+          </Suspense>
         </AnchoredToastProvider>
       </ToastProvider>
     );
@@ -227,19 +255,26 @@ function RootRouteView() {
   }
 
   // The personal Bots shell brings its own full-screen layout and tab bar, so
-  // it skips the upstream thread sidebar; every other route keeps it.
-  const appShell = isPersonalPath(pathname) ? (
-    <CommandPalette>
-      <Outlet />
-    </CommandPalette>
+  // it skips the upstream thread sidebar, and with "lean-shell" on the command
+  // palette and the snooze dialog too; every other route keeps them all.
+  const personal = isPersonalPath(pathname);
+  const leanShell = personal && perfOptimizationOn("lean-shell");
+  const appShell = leanShell ? (
+    <Outlet />
+  ) : personal ? (
+    <Suspense fallback={null}>
+      <CommandPalette>
+        <Outlet />
+      </CommandPalette>
+    </Suspense>
   ) : (
-    <CommandPalette>
-      <Suspense fallback={null}>
+    <Suspense fallback={null}>
+      <CommandPalette>
         <AppSidebarLayout>
           <Outlet />
         </AppSidebarLayout>
-      </Suspense>
-    </CommandPalette>
+      </CommandPalette>
+    </Suspense>
   );
 
   // FirstRunGate holds back everything below it — including EventRouter,
@@ -259,17 +294,24 @@ function RootRouteView() {
           hostedStatic={authGateState.status === "hosted-static"}
         >
           {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
-          {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
           {isElectron ? <RunningThreadKeepAlive /> : null}
           <RelayClientInstallDialog />
           <ConnectOnboardingDialog />
           <SshPasswordPromptDialog />
-          <SnapShotCoordinator />
-          <ThreadNotificationCoordinator />
           <ConfirmDialogHost />
-          <CustomSnoozeDialogHost />
+          {leanShell ? null : (
+            // Desktop and developer-view tools, quiet in the Bots shell anyway
+            // (thread alerts stay silent there, the desktop bridges are absent
+            // in a browser): loaded only where they can act.
+            <Suspense fallback={null}>
+              {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
+              <SnapShotCoordinator />
+              <ThreadNotificationCoordinator />
+              <CustomSnoozeDialogHost />
+              <ProjectCloneToastCoordinator />
+            </Suspense>
+          )}
           <SlowRpcRequestToastCoordinator />
-          <ProjectCloneToastCoordinator />
           <HostedStaticEnvironmentBootstrap />
           {primaryEnvironmentAuthenticated ? (
             <EventRouter skipInitialBootstrapNavigation={returningFromWelcomeRef.current} />
