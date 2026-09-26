@@ -14,14 +14,15 @@ import * as ProcessRunner from "../processRunner.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 /**
- * Longer than the one-minute settlement / pull-request sweep on purpose. At
- * exactly the sweep period every sweep found the entry just expired and
- * re-spawned `git rev-parse` + `git remote -v` for each repository root: the
- * one recurring idle CPU burst (812 ms per minute on Windows) in the
- * 2026-09-22 audit. A remote URL rarely changes, and `refresh: true` still
- * bypasses the cache.
+ * Background sweeps resolve every project each minute. A long TTL keeps them
+ * from spawning git each time (at a TTL equal to the sweep period every sweep
+ * re-spawned `git rev-parse` + `git remote -v` for each repository root: 812 ms
+ * of idle CPU per minute on Windows in the 2026-09-22 audit). Clone, publish,
+ * and PR discovery (after a turn and before it saves links) resolve with
+ * `refresh: true`.
  */
-const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(5);
+const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(15);
+// Short, so a folder that gains a remote shows up quickly.
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 /**
  * "This directory is not a repository" is the one answer that cannot go stale
@@ -188,6 +189,16 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
+  // Git errors and timeouts resolve to null, so they use the negative TTL like
+  // "no repository" or "no remote". Only interrupts and defects skip the cache.
+  const timeToLive = (exit: Exit.Exit<unknown>) =>
+    Exit.match(exit, {
+      onSuccess: (value) =>
+        value === null
+          ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
+          : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
+      onFailure: () => Duration.zero,
+    });
 
   const repositoryRootCache = yield* Cache.makeWith<string, string | null, GitRootUnavailable>(
     (cwd) =>
@@ -221,30 +232,23 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
           (identity) => refine(identity).pipe(Effect.orElseSucceed(() => identity)),
         ),
       ),
-    {
-      capacity: cacheCapacity,
-      timeToLive: Exit.match({
-        onSuccess: (value) =>
-          value === null
-            ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
-            : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
-        onFailure: () => Duration.zero,
-      }),
-    },
+    { capacity: cacheCapacity, timeToLive },
   );
 
-  const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fn(
-    "RepositoryIdentityResolver.resolve",
-  )(function* (cwd, options) {
-    if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
-    // A lookup git could not answer surfaces as a cache failure, which is never
-    // cached; the caller sees the same `null` it always did.
-    const cacheKeyResult = yield* Cache.get(repositoryRootCache, cwd).pipe(Effect.option);
-    const cacheKey = cacheKeyResult._tag === "Some" ? cacheKeyResult.value : null;
-    if (cacheKey === null) return null;
-    if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
-    return yield* Cache.get(repositoryIdentityCache, cacheKey);
-  });
+  // Untraced because almost every call is a cache hit. The lookups that spawn
+  // git keep their own spans.
+  const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fnUntraced(
+    function* (cwd, options) {
+      if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
+      // A lookup git could not answer surfaces as a cache failure, which is never
+      // cached; the caller sees the same `null` it always did.
+      const cacheKeyResult = yield* Cache.get(repositoryRootCache, cwd).pipe(Effect.option);
+      const cacheKey = cacheKeyResult._tag === "Some" ? cacheKeyResult.value : null;
+      if (cacheKey === null) return null;
+      if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
+      return yield* Cache.get(repositoryIdentityCache, cacheKey);
+    },
+  );
 
   return RepositoryIdentityResolver.of({ resolve });
 });

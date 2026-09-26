@@ -755,7 +755,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         tabIndex={0}
         data-testid="sidebar-draft-row"
         className={cn(
-          "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left text-sidebar-foreground outline-none select-none",
+          "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left text-sidebar-foreground outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           props.isActive ? "bg-sidebar-row-active" : draftSurfaceClassName,
         )}
         onClick={handleActivate}
@@ -1390,7 +1390,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // a useful hierarchy nor a reliable hover cue. Status now lives in the row
   // content; surface is reserved for interaction (hover, multi-select, route).
   const rowSurfaceClassName = cn(
-    "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none",
+    "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
     variantAction === "unsettle" && "[&:not(:hover):not(:focus-within)_*]:text-secondary-label/70",
     props.isActive
       ? "bg-sidebar-row-active text-sidebar-foreground"
@@ -1965,7 +1965,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       showBadge={showInstanceBadge}
                       // Glyph dims, badge stays saturated; offset matches the composer trigger.
                       iconClassName="size-3.5 opacity-60"
-                      badgeClassName="right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-3xs"
+                      badgeClassName="right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-5xs"
                     />
                   </span>
                 ) : null}
