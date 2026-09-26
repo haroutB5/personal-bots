@@ -6,6 +6,7 @@ import {
   buildCodexSmokeTestArgs,
   buildOpenCodeSmokeTestArgs,
   claudeSmokeTestFailure,
+  lastLines,
   openCodeSmokeTestFailure,
   SMOKE_TEST_PROMPT,
   openCodeSmokeTestEnvironment,
@@ -160,5 +161,25 @@ describe("OpenCode smoke test", () => {
         exitCode: 0,
       }),
     ).toBe("OpenCode replied with an empty message.");
+  });
+});
+
+describe("smoke test output tail", () => {
+  it("keeps short output whole", () => {
+    expect(lastLines("  one line  ")).toBe("one line");
+  });
+
+  it("starts a long tail at a line, never mid-word", () => {
+    const tail = lastLines(`${"x".repeat(50)} first line\nsecond line\nthird line`, 30);
+    expect(tail).toBe("…second line\nthird line");
+  });
+
+  it("starts a one-line tail at a word (the Codex alert read 'rect API key provided')", () => {
+    const line = `ERROR: unexpected status 401 Unauthorized: Incorrect API key provided: sk-svcac****fvMA.`;
+    const tail = lastLines(line, 60);
+    expect(tail.startsWith("…")).toBe(true);
+    expect(tail).not.toMatch(/^…\S*rect\b/);
+    expect(line.endsWith(tail.slice(1))).toBe(true);
+    expect(tail.slice(1).split(" ")[0]).toMatch(/^[A-Za-z]/);
   });
 });

@@ -47,9 +47,18 @@ const SMOKE_TEST_TIMEOUT = Duration.minutes(3);
 const SMOKE_TEST_TIMEOUT_LABEL = "3 minutes";
 const OUTPUT_MAX_BYTES = 4_000;
 
-function lastLines(text: string, maxLength = 400): string {
+/**
+ * The end of a process's output, cut at a line or at least a word: a cut
+ * mid-word read "rect API key provided" in the Codex alert (25 Sep).
+ */
+export function lastLines(text: string, maxLength = 400): string {
   const trimmed = text.trim();
-  return trimmed.length <= maxLength ? trimmed : trimmed.slice(-maxLength);
+  if (trimmed.length <= maxLength) return trimmed;
+  const tail = trimmed.slice(-maxLength);
+  const lineStart = tail.indexOf("\n");
+  if (lineStart >= 0) return `…${tail.slice(lineStart + 1)}`;
+  const wordStart = tail.search(/\s/);
+  return wordStart >= 0 ? `…${tail.slice(wordStart + 1)}` : `…${tail}`;
 }
 
 /** SDK options for the Claude smoke turn: a personal-bot session's isolation, no tools, one turn. */
