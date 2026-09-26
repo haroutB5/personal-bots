@@ -39,6 +39,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
@@ -1984,6 +1985,219 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect(
+    "a turn that leaves background work running ends; Claude Code's own follow-up turns report it (7739ab64, 26 Sep)",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.takeUntil((event) => event.type === "session.exited"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        const turn = yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "[Task from CTO] hand-merge upstream and run the gates",
+          attachments: [],
+        });
+        const sessionId = "sdk-session-background";
+        const lifecycle = (state: string, uuid: string) =>
+          ({
+            type: "command_lifecycle",
+            command_uuid: String(turn.turnId),
+            state,
+            session_id: sessionId,
+            uuid,
+          }) as unknown as SDKMessage;
+        const assistant = (uuid: string, text: string) =>
+          ({
+            type: "assistant",
+            session_id: sessionId,
+            uuid,
+            parent_tool_use_id: null,
+            message: { id: `message-${uuid}`, content: [{ type: "text", text }] },
+          }) as unknown as SDKMessage;
+        const result = (uuid: string, numTurns: number) =>
+          ({
+            type: "result",
+            subtype: "success",
+            is_error: false,
+            errors: [],
+            num_turns: numTurns,
+            session_id: sessionId,
+            uuid,
+          }) as unknown as SDKMessage;
+        const init = (uuid: string) =>
+          ({
+            type: "system",
+            subtype: "init",
+            capabilities: ["msg_lifecycle_v1"],
+            session_id: sessionId,
+            uuid,
+          }) as unknown as SDKMessage;
+
+        // The task's turn, with the 1.46.0 case in front of it: a replayed
+        // background notice closed by a num_turns:0 result before the prompt
+        // starts is still held back.
+        harness.query.emit(init("init-1"));
+        harness.query.emit(result("result-replayed-notice", 0));
+        harness.query.emit(lifecycle("started", "lifecycle-started"));
+        // A foreground command runs and finishes inside the turn.
+        harness.query.emit({
+          type: "system",
+          subtype: "task_started",
+          task_id: "bvref5quh",
+          task_type: "local_bash",
+          is_backgrounded: false,
+          description: "Commit changes in logical commits",
+          tool_use_id: "toolu_commit",
+          session_id: sessionId,
+          uuid: "task-started-commit",
+        } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "bvref5quh",
+          tool_use_id: "toolu_commit",
+          status: "completed",
+          output_file: "",
+          summary: "done",
+          session_id: sessionId,
+          uuid: "task-notification-commit",
+        } as unknown as SDKMessage);
+        // The gates start in the background and the turn ends on them.
+        harness.query.emit({
+          type: "system",
+          subtype: "task_started",
+          task_id: "bahddbmzw",
+          task_type: "local_bash",
+          is_backgrounded: true,
+          description: "Run server gates",
+          tool_use_id: "toolu_gates",
+          session_id: sessionId,
+          uuid: "task-started-gates",
+        } as unknown as SDKMessage);
+        harness.query.emit(
+          assistant("assistant-waiting", "Waiting on the server gate notification."),
+        );
+        harness.query.emit(result("result-task-turn", 127));
+        harness.query.emit(lifecycle("completed", "lifecycle-completed"));
+
+        // Claude Code runs a turn of its own: a progress note, gates still running.
+        harness.query.emit(init("init-2"));
+        harness.query.emit(
+          assistant("assistant-progress", "`src/personal` passed. Still waiting on tsc."),
+        );
+        harness.query.emit(result("result-follow-up-1", 1));
+
+        // The gates finish; the next turn it runs writes the real report.
+        harness.query.emit(init("init-3"));
+        harness.query.emit({
+          type: "system",
+          subtype: "task_updated",
+          task_id: "bahddbmzw",
+          patch: { status: "completed", end_time: 1790422166010 },
+          session_id: sessionId,
+          uuid: "task-updated-gates",
+        } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "bahddbmzw",
+          tool_use_id: "toolu_gates",
+          status: "completed",
+          output_file: "",
+          summary: "Run server gates completed",
+          session_id: sessionId,
+          uuid: "task-notification-gates",
+        } as unknown as SDKMessage);
+        harness.query.emit(assistant("assistant-report", "## Branch ready: all gates green."));
+        harness.query.emit(result("result-follow-up-2", 10));
+        harness.query.finish();
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+
+        // Fold task events into the liveness registry the way ingestion does,
+        // and read it at each turn end: what the task service sees there.
+        const liveness = ThreadBackgroundLiveness.make();
+        const liveAtTurnEnd: Array<ReadonlyArray<string>> = [];
+        const turnReplies = new Map<string, Array<string>>();
+        for (const event of runtimeEvents) {
+          switch (event.type) {
+            case "task.started":
+            case "task.progress":
+            case "task.updated":
+            case "task.completed": {
+              const payload = event.payload as {
+                taskId: string;
+                taskType?: string;
+                status?: string;
+                agentId?: string;
+              };
+              liveness.recordTaskLiveness({
+                threadId: String(event.threadId),
+                taskId: payload.taskId,
+                taskType: payload.taskType,
+                status: payload.status,
+                agentId: payload.agentId,
+                kind:
+                  event.type === "task.started"
+                    ? "started"
+                    : event.type === "task.progress"
+                      ? "progress"
+                      : event.type === "task.updated"
+                        ? "updated"
+                        : "completed",
+              });
+              break;
+            }
+            case "item.completed":
+              if (event.payload.itemType === "assistant_message" && event.turnId !== undefined) {
+                const replies = turnReplies.get(String(event.turnId)) ?? [];
+                replies.push(event.payload.detail ?? "");
+                turnReplies.set(String(event.turnId), replies);
+              }
+              break;
+            case "turn.completed":
+              liveAtTurnEnd.push(liveness.getThreadLiveTaskIds(String(event.threadId)));
+              break;
+          }
+        }
+
+        const started = runtimeEvents.filter((event) => event.type === "turn.started");
+        const completions = runtimeEvents.filter((event) => event.type === "turn.completed");
+        // The task's turn plus two follow-ups, each closed by its own result;
+        // the held num_turns:0 result closed nothing.
+        assert.equal(started.length, 3);
+        assert.equal(completions.length, 3);
+        assert.equal(String(completions[0]?.turnId), String(turn.turnId));
+        assert.deepEqual(
+          completions.map((event) => String(event.turnId)),
+          started.map((event) => String(event.turnId)),
+        );
+        // The task's turn and the first follow-up end with the gates still
+        // live; the turn that reports them ends with nothing left.
+        assert.deepEqual(liveAtTurnEnd, [["bahddbmzw"], ["bahddbmzw"], []]);
+        // The report is the last follow-up turn's reply.
+        assert.deepEqual(turnReplies.get(String(completions[2]?.turnId)), [
+          "## Branch ready: all gates green.",
+        ]);
+        assert.deepEqual(turnReplies.get(String(turn.turnId)), [
+          "Waiting on the server gate notification.",
+        ]);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
 
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () => {
     const harness = makeHarness();

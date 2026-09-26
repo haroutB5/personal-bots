@@ -15,7 +15,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationSession,
   type PersonalTask,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -33,6 +33,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as ServerConfig from "../../config.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
 import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
@@ -100,6 +101,7 @@ const makeLayer = (harness: Harness, dbPath?: string) =>
         getProviders: Effect.succeed([]),
       } as unknown as ProviderRegistry.ProviderRegistryShape),
     ),
+    Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provideMerge(
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         getProjectShellById: () => Effect.succeed(Option.none()),
@@ -1398,3 +1400,364 @@ it.effect("steer does not wake a task waiting for the user; it rides the resume"
     expect(continuation.message.text).toContain("The key is saved.");
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+// Background work a Claude turn leaves running (Backend task 7739ab64, 26 Sep:
+// the gates ran with run_in_background, the turn ended on "Waiting on the
+// server gate notification." and that became the result, while the real
+// report came in turns Claude Code ran by itself after the gates finished).
+
+const CLAUDE = "claudeAgent";
+
+const claudeSession = (input: {
+  readonly threadId: ThreadId;
+  readonly status: OrchestrationSession["status"];
+  readonly activeTurnId: TurnId | null;
+  readonly updatedAt: string;
+  readonly providerName?: string;
+}): OrchestrationSession => ({
+  ...makeSession(input),
+  providerName: input.providerName ?? CLAUDE,
+});
+
+const beginClaudeTurn = (harness: Harness, threadId: ThreadId, providerName = CLAUDE) =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const turnId = TurnId.make(`turn-${threadId}-${harness.sequence + 1}`);
+    yield* setSession(
+      harness,
+      claudeSession({
+        threadId,
+        status: "running",
+        activeTurnId: turnId,
+        updatedAt: now,
+        providerName,
+      }),
+    );
+    return turnId;
+  });
+
+const endClaudeTurn = (
+  harness: Harness,
+  threadId: ThreadId,
+  turnId: TurnId,
+  reply: string,
+  providerName = CLAUDE,
+) =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    harness.messages.set(threadId, [
+      ...(harness.messages.get(threadId) ?? []),
+      {
+        messageId: MessageId.make(`msg-${turnId}`),
+        threadId,
+        turnId,
+        role: "assistant",
+        text: reply,
+        isStreaming: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+    yield* setSession(
+      harness,
+      claudeSession({
+        threadId,
+        status: "ready",
+        activeTurnId: null,
+        updatedAt: now,
+        providerName,
+      }),
+    );
+  });
+
+/** What ingestion records for a task_started / task_notification pair. */
+const backgroundStarted = (threadId: ThreadId, taskId: string) =>
+  Effect.gen(function* () {
+    const liveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId,
+      taskType: "local_bash",
+      status: undefined,
+      kind: "started",
+    });
+  });
+
+const backgroundFinished = (threadId: ThreadId, taskId: string) =>
+  Effect.gen(function* () {
+    const liveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId,
+      taskType: "local_bash",
+      status: "completed",
+      kind: "completed",
+    });
+  });
+
+const sweepNow = Effect.gen(function* () {
+  const service = yield* PersonalTaskService.PersonalTaskService;
+  yield* service.sweep;
+  yield* service.drain;
+});
+
+it.effect(
+  "a Claude turn that ends with background work running keeps the task running; the follow-up turn completes it with its reply",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("bg-follow-up");
+      const thread = threadOf(root);
+
+      const first = yield* beginClaudeTurn(harness, thread);
+      // A foreground command starts and ends inside the turn: not waited for.
+      yield* backgroundStarted(thread, "bvref5quh");
+      yield* backgroundFinished(thread, "bvref5quh");
+      yield* backgroundStarted(thread, "bahddbmzw");
+      yield* endClaudeTurn(harness, thread, first, "Waiting on the server gate notification.");
+
+      expect((yield* reload(root.taskId)).status).toBe("running");
+      yield* sweepNow;
+      // Still unfinished, which is what the idle check before a restart reads.
+      expect(yield* reload(root.taskId)).toMatchObject({ status: "running", result: null });
+
+      // Claude Code's own turn: progress, the gates still running.
+      yield* TestClock.adjust("1 minute");
+      const progress = yield* beginClaudeTurn(harness, thread);
+      yield* endClaudeTurn(
+        harness,
+        thread,
+        progress,
+        "`src/personal` passed. Still waiting on tsc.",
+      );
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      // The gates finish and the turn Claude Code runs for them reports.
+      yield* TestClock.adjust("3 minutes");
+      yield* backgroundFinished(thread, "bahddbmzw");
+      const report = yield* beginClaudeTurn(harness, thread);
+      yield* endClaudeTurn(harness, thread, report, "## Branch ready: all gates green.");
+
+      const done = yield* reload(root.taskId);
+      expect(done.status).toBe("completed");
+      expect(done.result).toEqual({ summary: "## Branch ready: all gates green." });
+      const detail = yield* service.get({ taskId: root.taskId });
+      expect(detail.attempts).toHaveLength(1);
+      expect(detail.attempts[0]!.turnId).toBe(report);
+      expect(turnStarts(harness)).toHaveLength(1);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect(
+  "background work that never finishes closes the task after the cap, with its latest reply and a note",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const root = yield* createRoot("bg-cap");
+      const thread = threadOf(root);
+
+      const turnId = yield* beginClaudeTurn(harness, thread);
+      yield* backgroundStarted(thread, "dev-server");
+      yield* endClaudeTurn(harness, thread, turnId, "The dev server is up on :3000.");
+
+      yield* TestClock.adjust(
+        `${PersonalTaskService.PERSONAL_TASK_BACKGROUND_WAIT_MS - 60_000} millis`,
+      );
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      yield* TestClock.adjust("1 minute");
+      yield* sweepNow;
+      const done = yield* reload(root.taskId);
+      expect(done.status).toBe("completed");
+      expect(done.result).toEqual({
+        summary: `The dev server is up on :3000.\n\n${PersonalTaskService.backgroundCapNote(1)}`,
+      });
+      expect(PersonalTaskService.backgroundCapNote(1)).toContain(
+        "a background command the bot started was still running 20 minutes after this reply",
+      );
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("a Claude turn with no background work completes its task exactly as before", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const root = yield* createRoot("bg-none");
+    const thread = threadOf(root);
+    const turnId = yield* beginClaudeTurn(harness, thread);
+    yield* backgroundStarted(thread, "foreground-1");
+    yield* backgroundFinished(thread, "foreground-1");
+    yield* endClaudeTurn(harness, thread, turnId, "Done, gates green.");
+
+    const done = yield* reload(root.taskId);
+    expect(done.status).toBe("completed");
+    expect(done.result).toEqual({ summary: "Done, gates green." });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
+  "when the background work ends and no follow-up turn comes, the latest reply stands after a minute",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const root = yield* createRoot("bg-no-follow-up");
+      const thread = threadOf(root);
+      const turnId = yield* beginClaudeTurn(harness, thread);
+      yield* backgroundStarted(thread, "b-quiet");
+      yield* endClaudeTurn(harness, thread, turnId, "Kicked off the export; it reports when done.");
+
+      yield* TestClock.adjust("2 minutes");
+      yield* backgroundFinished(thread, "b-quiet");
+      yield* sweepNow;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      yield* TestClock.adjust(
+        `${PersonalTaskService.PERSONAL_TASK_BACKGROUND_FOLLOW_UP_MS} millis`,
+      );
+      yield* sweepNow;
+      const done = yield* reload(root.taskId);
+      expect(done.status).toBe("completed");
+      expect(done.result).toEqual({ summary: "Kicked off the export; it reports when done." });
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("a steer reaches a task that is waiting on background work, and its turn reports", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("bg-steer");
+    const thread = threadOf(root);
+    const first = yield* beginClaudeTurn(harness, thread);
+    yield* backgroundStarted(thread, "b-gates");
+    yield* endClaudeTurn(harness, thread, first, "Waiting on the gates.");
+    const startsBefore = turnStarts(harness).length;
+
+    const steered = yield* service.steer({
+      taskId: root.taskId,
+      fromName: "CTO",
+      message: "Skip the web gates.",
+    });
+    expect(steered.outcome).toBe("steered");
+    const delivered = turnStarts(harness);
+    expect(delivered).toHaveLength(startsBefore + 1);
+    expect(delivered.at(-1)).toMatchObject({ threadId: thread });
+    expect(delivered.at(-1)!.message.text).toBe("Update from CTO: Skip the web gates.");
+
+    // The steer's turn runs; the gates finish while it does.
+    yield* TestClock.adjust("1 minute");
+    const steerTurn = yield* beginClaudeTurn(harness, thread);
+    yield* backgroundFinished(thread, "b-gates");
+    yield* endClaudeTurn(harness, thread, steerTurn, "Server gates green; web gates skipped.");
+
+    const done = yield* reload(root.taskId);
+    expect(done.status).toBe("completed");
+    expect(done.result).toEqual({ summary: "Server gates green; web gates skipped." });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a task not waiting on anything still refuses a steer between turns", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("bg-steer-idle");
+    const thread = threadOf(root);
+    yield* setSession(
+      harness,
+      claudeSession({
+        threadId: thread,
+        status: "ready",
+        activeTurnId: null,
+        updatedAt: DateTime.formatIso(yield* DateTime.now),
+      }),
+    );
+    const error = yield* service
+      .steer({ taskId: root.taskId, fromName: "CTO", message: "Hello?" })
+      .pipe(Effect.flip);
+    expect(error.message).toContain("between turns");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("Codex turns do not wait on background tasks", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const root = yield* createRoot("bg-codex");
+    const thread = threadOf(root);
+    const turnId = yield* beginClaudeTurn(harness, thread, "codex");
+    yield* backgroundStarted(thread, "codex-child");
+    yield* endClaudeTurn(harness, thread, turnId, "Codex done.", "codex");
+    const done = yield* reload(root.taskId);
+    expect(done.status).toBe("completed");
+    expect(done.result).toEqual({ summary: "Codex done." });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
+  "background work already running in the chat before the task started is not waited for",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const thread = ThreadId.make("thread-with-dev-server");
+      yield* backgroundStarted(thread, "old-dev-server");
+      const task = yield* service.createTask({
+        idempotencyKey: "bg-baseline",
+        botId: botId("assistant"),
+        title: "Follow-up in the same chat",
+        objective: "Check the page again.",
+        threadId: thread,
+      });
+      yield* service.drain;
+      expect((yield* reload(task.taskId)).status).toBe("running");
+
+      const turnId = yield* beginClaudeTurn(harness, thread);
+      yield* endClaudeTurn(harness, thread, turnId, "Page checked.");
+      const done = yield* reload(task.taskId);
+      expect(done.status).toBe("completed");
+      expect(done.result).toEqual({ summary: "Page checked." });
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect(
+  "a session that stops while the task waits on background work completes it with the reply",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const root = yield* createRoot("bg-stopped");
+      const thread = threadOf(root);
+      const turnId = yield* beginClaudeTurn(harness, thread);
+      yield* backgroundStarted(thread, "b-long");
+      yield* endClaudeTurn(harness, thread, turnId, "Started the long run.");
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      yield* TestClock.adjust("1 minute");
+      yield* setSession(
+        harness,
+        claudeSession({
+          threadId: thread,
+          status: "stopped",
+          activeTurnId: null,
+          updatedAt: DateTime.formatIso(yield* DateTime.now),
+        }),
+      );
+      const done = yield* reload(root.taskId);
+      expect(done.status).toBe("completed");
+      expect(
+        done.result?.summary.startsWith("Started the long run.\n\n(Closed by the task runner:"),
+      ).toBe(true);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);

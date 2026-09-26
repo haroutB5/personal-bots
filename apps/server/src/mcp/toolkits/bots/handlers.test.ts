@@ -23,6 +23,7 @@ import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as OrchestrationEngine from "../../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../../../orchestration/ThreadBackgroundLiveness.ts";
 import { SqlitePersistenceMemory } from "../../../persistence/Layers/Sqlite.ts";
 import {
   ProjectionThreadMessageRepository,
@@ -163,6 +164,7 @@ const makeLayer = (harness: Harness) =>
         getProviders: Effect.succeed([]),
       } as unknown as ProviderRegistry.ProviderRegistryShape),
     ),
+    Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provideMerge(
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         getProjectShellById: () => Effect.succeed(Option.none()),

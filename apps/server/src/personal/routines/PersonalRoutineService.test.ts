@@ -21,6 +21,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as ServerConfig from "../../config.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
 import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
@@ -73,6 +74,7 @@ const makeLayer = (
         getProviders: Effect.succeed([]),
       } as unknown as ProviderRegistry.ProviderRegistryShape),
     ),
+    Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provideMerge(
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         getProjectShellById: () => Effect.succeed(Option.none()),

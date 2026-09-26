@@ -48,6 +48,7 @@ import {
 
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import {
   ProjectionThreadMessageRepository,
@@ -81,6 +82,23 @@ const LEASE_MINUTES = 2;
  */
 export const PERSONAL_TASK_TURN_OWNERSHIP_MS = 30_000;
 const SWEEP_INTERVAL = "30 seconds";
+
+/**
+ * How long a Claude task stays running after its latest turn ends while
+ * background work that turn left (a Bash run with run_in_background, a
+ * background subagent, a Monitor) is still live. Claude Code starts a new
+ * turn in the same session when that work finishes, and that turn's reply is
+ * the task's result. Work that never ends (a dev server) closes the task
+ * with its latest reply and a note once no turn has run for this long.
+ */
+export const PERSONAL_TASK_BACKGROUND_WAIT_MS = 20 * 60_000;
+/**
+ * Once the background work has ended, how long to wait for the turn Claude
+ * Code starts to report it before the latest reply stands as the result.
+ */
+export const PERSONAL_TASK_BACKGROUND_FOLLOW_UP_MS = 60_000;
+/** Only Claude sessions run a new turn of their own when background work ends. */
+const BACKGROUND_WAIT_PROVIDER = "claudeAgent";
 
 const RATE_LIMIT_PATTERN =
   /rate.?limit|too many requests|\b429\b|\b529\b|overloaded|quota|usage limit|provider.{0,40}unavailable|service unavailable|\b503\b/i;
@@ -315,6 +333,32 @@ type WorkItem =
   | { readonly type: "settle"; readonly threadId: ThreadId }
   | { readonly type: "resume"; readonly threadId: ThreadId };
 
+/** What an active attempt knows about the background work in its chat. */
+interface BackgroundWait {
+  readonly attemptKey: string;
+  /** Tasks already live when the attempt started; never waited for. */
+  readonly baseline: ReadonlySet<string>;
+  /** `updatedAt` of the last ended turn that left work running; null = never. */
+  pendingReadyAt: string | null;
+  /** Since when nothing has run while that work stayed live, epoch ms. */
+  idleSinceMs: number;
+  /** When the work was first seen ended with no newer turn after it, epoch ms. */
+  clearedAtMs: number | null;
+}
+
+const backgroundAttemptKey = (attempt: PersonalTaskAttempt) =>
+  `${attempt.taskId}:${attempt.attempt}`;
+
+/** Added to the result of a task closed by the background-work cap. */
+export const backgroundCapNote = (count: number) =>
+  `(Closed by the task runner: ${count === 1 ? "a background command" : `${count} background commands`} the bot started ${count === 1 ? "was" : "were"} still running ${Math.round(PERSONAL_TASK_BACKGROUND_WAIT_MS / 60_000)} minutes after this reply. Anything the bot reports later is in its chat, not here.)`;
+
+const BACKGROUND_SESSION_ENDED_NOTE =
+  "(Closed by the task runner: the bot's session ended while background work it started was still running.)";
+
+const withNote = (summary: string, note: string) =>
+  note.length === 0 ? summary : summary.length === 0 ? note : `${summary}\n\n${note}`;
+
 /** A session in the middle of a turn: a queued task for its thread waits. */
 const sessionIsBusy = (session: OrchestrationSession | null | undefined) =>
   session?.status === "running" || session?.status === "starting";
@@ -421,6 +465,7 @@ export const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const messages = yield* ProjectionThreadMessageRepository;
+  const liveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
 
   // One owner per server process: a lease held by anyone else and past its
   // expiry belongs to a process that died mid-turn.
@@ -443,9 +488,16 @@ export const make = Effect.gen(function* () {
    * same domain event can then decide without racing this one.
    */
   const settledThreadAtMs = new Map<string, number>();
+  /**
+   * Background work per provider thread with an active attempt. Held in
+   * memory like the liveness registry it reads: after a restart that registry
+   * is empty and the attempt is closed by its expired lease anyway.
+   */
+  const backgroundByThread = new Map<string, BackgroundWait>();
 
   const releaseThread = (threadId: string, nowMs: number) => {
     activeThreadIds.delete(threadId);
+    backgroundByThread.delete(threadId);
     settledThreadAtMs.set(threadId, nowMs);
   };
 
@@ -861,7 +913,17 @@ export const make = Effect.gen(function* () {
       }),
     );
     if (claimed !== null) {
-      activeThreadIds.add(claimed.attempt.providerThreadId);
+      const threadId = claimed.attempt.providerThreadId;
+      activeThreadIds.add(threadId);
+      // Work already live in the chat (left by an earlier attempt or by the
+      // user's own turn) is not this attempt's to wait for.
+      backgroundByThread.set(threadId, {
+        attemptKey: backgroundAttemptKey(claimed.attempt),
+        baseline: new Set(liveness.getThreadLiveTaskIds(threadId)),
+        pendingReadyAt: null,
+        idleSinceMs: 0,
+        clearedAtMs: null,
+      });
     }
     yield* publish(changed);
     return claimed;
@@ -992,6 +1054,82 @@ export const make = Effect.gen(function* () {
     yield* publish(changed);
   });
 
+  const backgroundFor = (attempt: PersonalTaskAttempt): BackgroundWait => {
+    const key = backgroundAttemptKey(attempt);
+    const existing = backgroundByThread.get(attempt.providerThreadId);
+    if (existing?.attemptKey === key) return existing;
+    const created: BackgroundWait = {
+      attemptKey: key,
+      baseline: new Set(),
+      pendingReadyAt: null,
+      idleSinceMs: 0,
+      clearedAtMs: null,
+    };
+    backgroundByThread.set(attempt.providerThreadId, created);
+    return created;
+  };
+
+  /** A turn of the attempt ended with background work left; the task still runs. */
+  const waitingOnBackground = (attempt: PersonalTaskAttempt) => {
+    const state = backgroundByThread.get(attempt.providerThreadId);
+    return state?.attemptKey === backgroundAttemptKey(attempt) && state.pendingReadyAt !== null;
+  };
+
+  /**
+   * Whether a Claude turn that just ended cleanly is the task's last. Claude
+   * Code lets a turn end while commands it started in the background run on,
+   * then runs a new turn by itself when they finish; the bot's report is in
+   * that turn. So the attempt stays active while such work is live and takes
+   * the reply of the turn that ends after it. Returns "wait", or the note to
+   * add to the result (empty when there is nothing to say).
+   */
+  const backgroundOutcome = Effect.fn("PersonalTaskService.backgroundOutcome")(function* (
+    attempt: PersonalTaskAttempt,
+    session: OrchestrationSession,
+  ) {
+    const state = backgroundFor(attempt);
+    const pending =
+      session.providerName === BACKGROUND_WAIT_PROVIDER
+        ? liveness
+            .getThreadLiveTaskIds(attempt.providerThreadId)
+            .filter((taskId) => !state.baseline.has(taskId))
+        : [];
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+    if (pending.length > 0) {
+      if (state.pendingReadyAt !== session.updatedAt) {
+        if (state.pendingReadyAt === null) {
+          yield* Effect.logInfo("personal task waiting on background work", {
+            taskId: attempt.taskId,
+            threadId: attempt.providerThreadId,
+            backgroundTasks: pending,
+          });
+        }
+        state.pendingReadyAt = session.updatedAt;
+        const endedMs = Date.parse(session.updatedAt);
+        state.idleSinceMs = Number.isFinite(endedMs) ? Math.min(endedMs, nowMs) : nowMs;
+      }
+      state.clearedAtMs = null;
+      if (nowMs - state.idleSinceMs < PERSONAL_TASK_BACKGROUND_WAIT_MS) {
+        return "wait" as const;
+      }
+      yield* Effect.logWarning("personal task closed with background work still running", {
+        taskId: attempt.taskId,
+        threadId: attempt.providerThreadId,
+        backgroundTasks: pending,
+      });
+      return backgroundCapNote(pending.length);
+    }
+    // Never waited: the turn ends the task exactly as it always has.
+    if (state.pendingReadyAt === null) return "";
+    // A turn ended after the one that left the work: its reply is the result.
+    if (session.updatedAt !== state.pendingReadyAt) return "";
+    // The work ended but the turn that reports it has not run yet.
+    state.clearedAtMs ??= nowMs;
+    return nowMs - state.clearedAtMs < PERSONAL_TASK_BACKGROUND_FOLLOW_UP_MS
+      ? ("wait" as const)
+      : "";
+  });
+
   // Decides whether the attempt's turn has ended, reading the projected
   // session (authoritative) rather than trusting event order. A session state
   // older than the attempt belongs to an earlier turn on the same thread.
@@ -1054,12 +1192,29 @@ export const make = Effect.gen(function* () {
         if ((!observed && last === undefined) || last?.isStreaming === true) {
           return;
         }
-        yield* finishAttempt(attempt, { kind: "completed", summary: last?.text ?? "" });
+        const note = yield* backgroundOutcome(attempt, session);
+        if (note === "wait") {
+          return;
+        }
+        yield* finishAttempt(attempt, {
+          kind: "completed",
+          summary: withNote(last?.text ?? "", note),
+        });
         return;
       }
       case "interrupted":
       case "stopped":
         if (!observed && !fresh) {
+          return;
+        }
+        // The session closed while the task only waited on background work:
+        // the bot had already replied, so that reply is the result.
+        if (session.status === "stopped" && waitingOnBackground(attempt)) {
+          const last = yield* latestReply();
+          yield* finishAttempt(attempt, {
+            kind: "completed",
+            summary: withNote(last?.text ?? "", BACKGROUND_SESSION_ENDED_NOTE),
+          });
           return;
         }
         yield* finishAttempt(attempt, { kind: "interrupted", message: session.lastError });
@@ -1146,7 +1301,15 @@ export const make = Effect.gen(function* () {
   ) {
     if (session.status === "running") {
       let attempt = yield* activeAttemptForThread(threadId);
-      if (attempt !== null && attempt.turnId === null && session.activeTurnId !== null) {
+      // A turn after one that left background work running (Claude Code's
+      // own follow-up, or a steer) is the attempt's turn from then on, so its
+      // reply is the one the task reports.
+      if (
+        attempt !== null &&
+        session.activeTurnId !== null &&
+        attempt.turnId !== session.activeTurnId &&
+        (attempt.turnId === null || waitingOnBackground(attempt))
+      ) {
         attempt = { ...attempt, turnId: session.activeTurnId };
         yield* repository.writeAttempt(attempt);
       }
@@ -1706,7 +1869,12 @@ export const make = Effect.gen(function* () {
                   .getThreadShellById(attempt.providerThreadId)
                   .pipe(Effect.orElseSucceed(() => Option.none()));
           const thread = Option.getOrUndefined(shell);
-          if (attempt === undefined || !sessionIsBusy(thread?.session)) {
+          // A task waiting on background work it left running is between
+          // turns but still running: a turn started now is its turn.
+          if (
+            attempt === undefined ||
+            (!sessionIsBusy(thread?.session) && !waitingOnBackground(attempt))
+          ) {
             // Its turn is starting or just ended. A turn started now would run
             // outside the task, and a note could wait for a turn that never
             // comes, so say so rather than guess.
