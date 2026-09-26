@@ -1,9 +1,10 @@
 /**
  * Notifications the user has already seen in the app.
  *
- * Only one kind is ever closed from the page: the notifications of a chat
- * that is open on screen (see `useCloseChatNotifications`). Reading the chat
- * is reading its news, like Messages clearing a conversation's alerts.
+ * Only one kind is ever closed from the page: the notifications of a chat,
+ * group chat or task that is open on screen (`useCloseChatNotifications` and
+ * its group and task siblings). Reading it is reading its news, like Messages
+ * clearing a conversation's alerts.
  *
  * Nothing else is closed, ever. Until 1.46 the app closed every notification
  * a few seconds after it came to the front, on the theory that the chats list
@@ -67,6 +68,20 @@ export function isChatNotification(
   return samePath(url, `/bots/${encodeURIComponent(botId)}/${encodeURIComponent(threadId)}`);
 }
 
+/** Does this notification open the group chat `groupId`? */
+export function isGroupNotification(notification: ClosableNotification, groupId: string): boolean {
+  if (notification.tag === `group-${groupId}`) return true;
+  const url = notificationUrl(notification);
+  return url !== null && samePath(url, `/bots/groups/${encodeURIComponent(groupId)}`);
+}
+
+/** Does this notification open the task `taskId`? */
+export function isTaskNotification(notification: ClosableNotification, taskId: string): boolean {
+  if (notification.tag === `task-${taskId}`) return true;
+  const url = notificationUrl(notification);
+  return url !== null && samePath(url, `/tasks/${encodeURIComponent(taskId)}`);
+}
+
 /**
  * Closes every notification `match` accepts and returns how many it closed.
  * No worker, no `getNotifications` (older engines) or a failure: closes none.
@@ -106,38 +121,56 @@ export async function notificationRegistration(): Promise<NotificationSource | n
 }
 
 /**
- * Closes this chat's notifications when it opens, and again whenever it comes
- * back to the front while open: once the chat is on screen they say nothing new.
- * The return to the front waits CLEAR_STALE_NOTIFICATIONS_DELAY_MS, so a tap on
- * one of them still lands. Other chats' notifications are never touched.
+ * Closes the notifications of what is on screen (one chat, group or task) when
+ * it opens, and again whenever it comes back to the front while open: once it
+ * is on screen they say nothing new. The return to the front waits
+ * CLEAR_STALE_NOTIFICATIONS_DELAY_MS, so a tap on one of them still lands.
+ * Anything else's notifications are never touched. Returns the cleanup, for
+ * the calling hook's effect.
  */
-export function useCloseChatNotifications(botId: string, threadId: string): void {
-  useEffect(() => {
-    const close = () => {
-      if (document.visibilityState !== "visible") return;
-      void notificationRegistration()
-        .then((registration) =>
-          closeNotifications(registration, (notification) =>
-            isChatNotification(notification, botId, threadId),
-          ),
-        )
-        .catch(() => undefined);
-    };
-    let timer: number | null = null;
-    const onVisibility = () => {
-      if (timer !== null) window.clearTimeout(timer);
+function closeWhileOpen(match: (notification: ClosableNotification) => boolean): () => void {
+  if (typeof document === "undefined") return () => undefined;
+  const close = () => {
+    if (document.visibilityState !== "visible") return;
+    void notificationRegistration()
+      .then((registration) => closeNotifications(registration, match))
+      .catch(() => undefined);
+  };
+  let timer: number | null = null;
+  const onVisibility = () => {
+    if (timer !== null) window.clearTimeout(timer);
+    timer = null;
+    if (document.visibilityState !== "visible") return;
+    timer = window.setTimeout(() => {
       timer = null;
-      if (document.visibilityState !== "visible") return;
-      timer = window.setTimeout(() => {
-        timer = null;
-        close();
-      }, CLEAR_STALE_NOTIFICATIONS_DELAY_MS);
-    };
-    close();
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      if (timer !== null) window.clearTimeout(timer);
-    };
-  }, [botId, threadId]);
+      close();
+    }, CLEAR_STALE_NOTIFICATIONS_DELAY_MS);
+  };
+  close();
+  document.addEventListener("visibilitychange", onVisibility);
+  return () => {
+    document.removeEventListener("visibilitychange", onVisibility);
+    if (timer !== null) window.clearTimeout(timer);
+  };
+}
+
+export function useCloseChatNotifications(botId: string, threadId: string): void {
+  useEffect(
+    () => closeWhileOpen((notification) => isChatNotification(notification, botId, threadId)),
+    [botId, threadId],
+  );
+}
+
+export function useCloseGroupNotifications(groupId: string): void {
+  useEffect(
+    () => closeWhileOpen((notification) => isGroupNotification(notification, groupId)),
+    [groupId],
+  );
+}
+
+export function useCloseTaskNotifications(taskId: string): void {
+  useEffect(
+    () => closeWhileOpen((notification) => isTaskNotification(notification, taskId)),
+    [taskId],
+  );
 }

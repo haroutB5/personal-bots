@@ -30,6 +30,7 @@ import {
   usePersonalTasks,
 } from "./usePersonalAutomation";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
+import { useCloseTaskNotifications } from "./staleNotifications";
 
 export const DETAIL_CARD =
   "rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-4";
@@ -80,6 +81,8 @@ function RelatedTask({ task, bot }: { task: PersonalTask; bot: PersonalBot | und
 /** /tasks/$taskId: live status, timestamps, delegation tree, result and actions. */
 export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
+  // The task is on screen: its "finished" notification is read.
+  useCloseTaskNotifications(taskId);
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
   const detail = usePersonalTaskDetail(environmentId, taskId);
   // The feed only carries recent finished tasks: fetch this task, its parent

@@ -54,6 +54,7 @@ import { useKeyboardInset } from "./useKeyboardInset";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { useReportViewingThread } from "./useReportViewingThread";
 import { pendingForThread } from "./pendingOutgoing";
+import { useCloseGroupNotifications } from "./staleNotifications";
 import {
   personalBotCreateThread,
   usePersonalBotsList,
@@ -121,6 +122,8 @@ export function GroupConversationScreen({
 }): JSX.Element {
   const navigate = useNavigate();
   const environmentId = usePersonalEnvironmentId();
+  // The group is on screen: its "round finished" notification is read.
+  useCloseGroupNotifications(groupId);
   const groupsQuery = usePersonalGroupsList(environmentId);
   const { feed } = usePersonalGroupsFeed(environmentId);
   const { groups, rounds, votes } = useMemo(

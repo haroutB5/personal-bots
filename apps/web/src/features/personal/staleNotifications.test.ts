@@ -8,8 +8,12 @@ import {
   type ClosableNotification,
   closeNotifications,
   isChatNotification,
+  isGroupNotification,
+  isTaskNotification,
   notificationUrl,
   useCloseChatNotifications,
+  useCloseGroupNotifications,
+  useCloseTaskNotifications,
 } from "./staleNotifications";
 
 const note = (fields: { tag?: string; url?: string; closeThrows?: boolean }) => {
@@ -94,6 +98,22 @@ describe("stale notifications", () => {
     expect(isChatNotification(trailing, "b1", "t1")).toBe(true);
     const prefix = note({ url: "/bots/b1/t10" }).notification;
     expect(isChatNotification(prefix, "b1", "t1")).toBe(false);
+  });
+
+  it("matches a group chat and a task by tag or by link, and nothing else", () => {
+    expect(isGroupNotification(note({ tag: "group-g1" }).notification, "g1")).toBe(true);
+    expect(isGroupNotification(note({ url: "/bots/groups/g1" }).notification, "g1")).toBe(true);
+    expect(
+      isGroupNotification(note({ tag: "group-g2", url: "/bots/groups/g2" }).notification, "g1"),
+    ).toBe(false);
+    expect(
+      isGroupNotification(note({ tag: "chat-g1", url: "/bots/b1/g1" }).notification, "g1"),
+    ).toBe(false);
+    expect(isTaskNotification(note({ tag: "task-t9" }).notification, "t9")).toBe(true);
+    expect(isTaskNotification(note({ url: "/tasks/t9" }).notification, "t9")).toBe(true);
+    expect(
+      isTaskNotification(note({ tag: "task-t10", url: "/tasks/t10" }).notification, "t9"),
+    ).toBe(false);
   });
 
   it("reads the deep link the worker stored, and nothing else", () => {
@@ -195,6 +215,14 @@ describe("an open chat's notifications", () => {
     useCloseChatNotifications(botId, threadId);
     return null;
   };
+  const Group = ({ groupId }: { groupId: string }) => {
+    useCloseGroupNotifications(groupId);
+    return null;
+  };
+  const Task = ({ taskId }: { taskId: string }) => {
+    useCloseTaskNotifications(taskId);
+    return null;
+  };
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -274,5 +302,27 @@ describe("an open chat's notifications", () => {
     });
     expect(arrived.close).toHaveBeenCalledOnce();
     expect(elsewhere.close).not.toHaveBeenCalled();
+  });
+
+  it("an open group chat or task closes its own notifications, and no other", async () => {
+    const group = note({ tag: "group-g1", url: "/bots/groups/g1" });
+    const task = note({ tag: "task-t9", url: "/tasks/t9" });
+    const chat = note({ tag: "chat-t1", url: "/bots/b1/t1" });
+    notifications = [group, task, chat];
+    await act(async () => {
+      renderer = create(createElement(Group, { groupId: "g1" }));
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(group.close).toHaveBeenCalledOnce();
+    expect(task.close).not.toHaveBeenCalled();
+    expect(chat.close).not.toHaveBeenCalled();
+    await act(async () => renderer?.update(createElement(Task, { taskId: "t9" })));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(task.close).toHaveBeenCalledOnce();
+    expect(chat.close).not.toHaveBeenCalled();
   });
 });
