@@ -1824,6 +1824,167 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect(
+    "a no-turn result before the prompt starts does not end the turn (resumed session, 26 Sep)",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.takeUntil((event) => event.type === "session.exited"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        const turn = yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "[Routine task] confirm the release",
+          attachments: [],
+        });
+        const sessionId = "sdk-session-replay";
+        const lifecycle = (state: string, uuid: string) =>
+          ({
+            type: "command_lifecycle",
+            command_uuid: String(turn.turnId),
+            state,
+            session_id: sessionId,
+            uuid,
+          }) as unknown as SDKMessage;
+
+        // The resumed CLI replays a background shell's notice from the last
+        // session and closes it with an empty result before our prompt runs.
+        harness.query.emit({
+          type: "system",
+          subtype: "init",
+          capabilities: ["interrupt_receipt_v1", "msg_lifecycle_v1"],
+          session_id: sessionId,
+          uuid: "init-1",
+        } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "b57em7hee",
+          tool_use_id: "toolu_replayed",
+          status: "stopped",
+          output_file: "",
+          summary: "Background shell command didn't finish before the previous session ended",
+          session_id: sessionId,
+          uuid: "notice-1",
+        } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          num_turns: 0,
+          duration_api_ms: 0,
+          usage: { input_tokens: 0, output_tokens: 0 },
+          session_id: sessionId,
+          uuid: "result-replayed-notice",
+        } as unknown as SDKMessage);
+        // Then the prompt itself runs, answers, and ends.
+        harness.query.emit(lifecycle("queued", "lifecycle-queued"));
+        harness.query.emit(lifecycle("started", "lifecycle-started"));
+        harness.query.emit({
+          type: "assistant",
+          session_id: sessionId,
+          uuid: "assistant-replay-1",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-message-replay-1",
+            content: [{ type: "text", text: "Live and smoke passed." }],
+          },
+        } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          num_turns: 2,
+          session_id: sessionId,
+          uuid: "result-prompt",
+        } as unknown as SDKMessage);
+        harness.query.emit(lifecycle("completed", "lifecycle-completed"));
+        harness.query.finish();
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const started = runtimeEvents.filter((event) => event.type === "turn.started");
+        const completions = runtimeEvents.filter((event) => event.type === "turn.completed");
+        // One turn, closed by the prompt's own result, after its reply.
+        assert.equal(started.length, 1);
+        assert.equal(completions.length, 1);
+        assert.equal(String(completions[0]?.turnId), String(turn.turnId));
+        const replyIndex = runtimeEvents.findIndex(
+          (event) =>
+            event.type === "item.completed" && JSON.stringify(event).includes("Live and smoke"),
+        );
+        const completedIndex = runtimeEvents.indexOf(completions[0]!);
+        assert.ok(replyIndex >= 0 && replyIndex < completedIndex);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect("a held result still ends the turn when the prompt ends without its own", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+      harness.query.emit({
+        type: "system",
+        subtype: "init",
+        capabilities: ["msg_lifecycle_v1"],
+        session_id: "sdk-session-held",
+        uuid: "init-held",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["could not start"],
+        num_turns: 0,
+        session_id: "sdk-session-held",
+        uuid: "result-held",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "command_lifecycle",
+        command_uuid: String(turn.turnId),
+        state: "cancelled",
+        session_id: "sdk-session-held",
+        uuid: "lifecycle-cancelled",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const completed = runtimeEvents.at(-1);
+      assert.equal(completed?.type, "turn.completed");
+      assert.equal(String(completed?.turnId), String(turn.turnId));
+      if (completed?.type === "turn.completed") assert.equal(completed.payload.state, "failed");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

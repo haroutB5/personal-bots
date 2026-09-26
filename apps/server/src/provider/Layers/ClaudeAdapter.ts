@@ -268,6 +268,14 @@ interface ClaudeTurnState {
    * steered instead (the queued message continues the same turn).
    */
   readonly synthetic?: boolean;
+  /**
+   * Whether the CLI has started this turn's prompt (stamped with the turn id),
+   * per its command_lifecycle frames. False from the send until then; unset
+   * for synthetic turns, which sent no prompt. See handleResultMessage.
+   */
+  promptStarted?: boolean;
+  /** A result held back because it came before the prompt started. */
+  heldResult?: SDKMessage | undefined;
   readonly items: Array<unknown>;
   readonly assistantTextBlocks: Map<number, AssistantTextBlockState>;
   readonly assistantTextBlockOrder: Array<AssistantTextBlockState>;
@@ -454,6 +462,11 @@ interface ClaudeSessionContext {
   lastThreadStartedId: string | undefined;
   /** Limits already announced for the running turn, keyed `window:resetsAt`. */
   announcedUsageLimits: { turnId: string; keys: Set<string> } | undefined;
+  /**
+   * The CLI reports each prompt's queued/started/completed lifecycle
+   * (`msg_lifecycle_v1` on system/init, or a command_lifecycle frame seen).
+   */
+  messageLifecycle: boolean;
   stopped: boolean;
 }
 
@@ -1988,6 +2001,23 @@ function toRequestError(threadId: ThreadId, method: string, cause: unknown): Pro
     detail: `${method} failed`,
     cause,
   });
+}
+
+/** system/init lists `msg_lifecycle_v1` when the CLI reports each prompt's lifecycle. */
+function sdkAdvertisesMessageLifecycle(message: unknown): boolean {
+  const capabilities = (message as { capabilities?: unknown }).capabilities;
+  return Array.isArray(capabilities) && capabilities.includes("msg_lifecycle_v1");
+}
+
+/** The state a command_lifecycle frame reports for the prompt `uuid`, or null for another command. */
+function commandLifecycleState(message: unknown, uuid: string): string | null {
+  const frame = message as { command_uuid?: unknown; state?: unknown };
+  return frame.command_uuid === uuid && typeof frame.state === "string" ? frame.state : null;
+}
+
+/** A result from a command that never reached the model. */
+function sdkResultRanNoTurns(message: unknown): boolean {
+  return (message as { num_turns?: unknown }).num_turns === 0;
 }
 
 function sdkMessageType(value: unknown): string | undefined {
@@ -3548,6 +3578,26 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const turn = context.turnState;
+    // A result that ran no model turn before this turn's prompt has even
+    // started belongs to another command: Claude Code replays a background
+    // task's notice when a session resumes and closes it with an empty
+    // `num_turns: 0` result. Taken as this turn's end it closed a routine's
+    // task in a second with no result, while the real reply ran on in an
+    // orphan turn (26 Sep, 08:20). The prompt's own result follows its start.
+    if (
+      turn !== undefined &&
+      turn.promptStarted === false &&
+      context.messageLifecycle &&
+      sdkResultRanNoTurns(message)
+    ) {
+      turn.heldResult = message;
+      yield* Effect.logInfo("claude.result.before-prompt-started", {
+        threadId: context.session.threadId,
+        turnId: turn.turnId,
+        subtype: message.subtype,
+      });
+      return;
+    }
     const failureHint =
       turn?.authenticationFailureMessage ??
       (turn && (turn.rejectedRateLimitTypes.size > 0 || turn.latestAssistantRateLimited)
@@ -3677,6 +3727,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     switch (message.subtype) {
       case "init":
+        if (sdkAdvertisesMessageLifecycle(message)) context.messageLifecycle = true;
         yield* offerRuntimeEvent({
           ...base,
           type: "session.configured",
@@ -4221,8 +4272,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     yield* logNativeSdkMessage(context, message);
     yield* ensureThreadId(context, message);
 
-    // Wire-only command bookkeeping has no user-facing T3 lifecycle.
+    // Wire-only command bookkeeping has no user-facing T3 lifecycle; it only
+    // says when the running turn's own prompt has started.
     if (sdkMessageType(message) === "command_lifecycle") {
+      context.messageLifecycle = true;
+      const turn = context.turnState;
+      const state = turn === undefined ? null : commandLifecycleState(message, turn.turnId);
+      if (turn === undefined || state === null) return;
+      if (state === "started") {
+        turn.promptStarted = true;
+      } else if ((state === "completed" || state === "cancelled") && turn.heldResult) {
+        // The prompt ended without a result of its own: the held one closes
+        // the turn rather than leave it running forever.
+        const held = turn.heldResult;
+        turn.heldResult = undefined;
+        turn.promptStarted = true;
+        yield* handleResultMessage(context, held);
+      }
       return;
     }
 
@@ -5161,6 +5227,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
         announcedUsageLimits: undefined,
+        messageLifecycle: false,
         stopped: false,
       };
       yield* Ref.set(contextRef, context);
@@ -5309,6 +5376,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const turnState: ClaudeTurnState = {
         turnId,
         startedAt: yield* nowIso,
+        promptStarted: false,
         items: [],
         assistantTextBlocks: new Map(),
         assistantTextBlockOrder: [],
