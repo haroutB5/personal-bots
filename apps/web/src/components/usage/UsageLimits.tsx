@@ -8,6 +8,7 @@ import {
   UsageProviderKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
 import {
   elapsedShare,
   formatDuration,
@@ -201,6 +202,17 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   alreadyRedeemed: "That credit was already redeemed.",
 };
 
+/**
+ * What to say when a redeem fails. The server's typed error (for example a
+ * `UsageLimitSourceError`) sits inside the command's `Cause`, not on it.
+ */
+export function resetCreditFailureText(cause: Cause.Cause<unknown>): string {
+  const error = Cause.hasInterruptsOnly(cause) ? undefined : Cause.squash(cause);
+  return error instanceof Error && error.message.trim().length > 0
+    ? error.message
+    : "Could not use the reset credit.";
+}
+
 /** Everything a redeem needs: where to send it and what to say afterwards. */
 export function useResetCredit(
   environmentId: EnvironmentId,
@@ -221,11 +233,7 @@ export function useResetCredit(
       setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
       return;
     }
-    setStatus(
-      "error" in result.cause && result.cause.error instanceof Error
-        ? result.cause.error.message
-        : "Could not use the reset credit.",
-    );
+    setStatus(resetCreditFailureText(result.cause));
   };
 
   return { confirming, setConfirming, busy, status, redeem };

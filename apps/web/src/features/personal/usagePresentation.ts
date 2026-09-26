@@ -76,6 +76,21 @@ export function formatResetCountdown(resetsAt: string | undefined, now: number):
   return `resets in ${formatDuration(at - now)}`;
 }
 
+/** "1 reset banked", "2 resets banked". */
+export function resetCreditsHeadline(count: number): string {
+  return `${count} ${count === 1 ? "reset" : "resets"} banked`;
+}
+
+/** "26d 15h" until the next banked credit expires, or null when none is reported. */
+export function resetCreditsExpiresIn(
+  credits: ServerProviderResetCredits,
+  now: number,
+): string | null {
+  if (credits.nextExpiresAt === undefined) return null;
+  const at = Date.parse(credits.nextExpiresAt);
+  return Number.isFinite(at) ? formatDuration(at - now) : null;
+}
+
 /** "Resets 14:30" today, or "Resets Mon 09:00" on another local day. */
 export function formatResetTime(resetsAt: string | undefined, now: number): string | null {
   if (resetsAt === undefined) return null;
