@@ -58,7 +58,11 @@ import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
-import { personalTaskMessageId, personalTaskSteerMessageId } from "../personalThreadTitles.ts";
+import {
+  personalTaskMessageId,
+  personalTaskSteerMessageId,
+  personalTaskThreadTitle,
+} from "../personalThreadTitles.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import { serverPerfOptimizationOn } from "../perfFlags.ts";
 
@@ -772,7 +776,14 @@ export const make = Effect.gen(function* () {
     notes: ReadonlyArray<string>,
   ) {
     const { text, marker } = yield* buildTurnText(task, attempt.attempt, delivered, notes);
-    yield* bots.createThread({ botId: task.botId, threadId: attempt.providerThreadId });
+    // A chat made for this task (or routine run) is named after it. A task
+    // bound to an existing chat (a routine posting into the chat it was made
+    // in, or a retry) finds the thread there and leaves its title alone.
+    yield* bots.createThread({
+      botId: task.botId,
+      threadId: attempt.providerThreadId,
+      title: personalTaskThreadTitle(task.title),
+    });
     // The bot's current model and options (reasoning effort above all); a
     // turn without them runs at the provider's defaults.
     const thread = yield* snapshots

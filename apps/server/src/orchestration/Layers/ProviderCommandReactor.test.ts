@@ -2726,6 +2726,47 @@ describe("ProviderCommandReactor", () => {
       expect((await readThread(harness))?.title).toBe("New chat");
     });
 
+    it("keeps a task chat's task title through the user's later messages", async () => {
+      const harness = await createHarness({
+        initialTitle: "Daily digest",
+        personalBotThread: true,
+      });
+      harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
+
+      await startPersonalFirstTurn(harness, personalTaskMessageId("task-digest", 1));
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+      await startPersonalFirstTurn(harness, asMessageId("user-message-after-task"));
+      await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+      await harness.drain();
+
+      expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+      expect((await readThread(harness))?.title).toBe("Daily digest");
+    });
+
+    it("keeps the user's rename of a task chat", async () => {
+      const harness = await createHarness({
+        initialTitle: "Daily digest",
+        personalBotThread: true,
+      });
+      harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-task-chat-rename"),
+          threadId: ThreadId.make("thread-1"),
+          title: "Morning news",
+        }),
+      );
+
+      await startPersonalFirstTurn(harness, personalTaskMessageId("task-digest", 2));
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+
+      expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+      expect((await readThread(harness))?.title).toBe("Morning news");
+    });
+
     it("keeps a chat the user renamed before the first message", async () => {
       const harness = await createHarness({ initialTitle: "New chat", personalBotThread: true });
       harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));

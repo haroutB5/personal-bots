@@ -1174,6 +1174,92 @@ it.effect("a task placed in a chat waits out the user's turn and starts when it 
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+const threadCreates = (harness: Harness) =>
+  harness.dispatched.flatMap((command) => (command.type === "thread.create" ? [command] : []));
+
+it.effect("a delegated task's new chat is named after the task", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("named-root");
+    const child = yield* service.delegate({
+      parentTaskId: root.taskId,
+      targetBotId: botId("developer"),
+      brief: brief("Fix the login redirect"),
+    });
+    yield* service.drain;
+    const running = yield* reload(child.taskId);
+
+    const creates = threadCreates(harness);
+    expect(creates.find((command) => command.threadId === root.threadId)?.title).toBe(
+      "Root named-root",
+    );
+    expect(creates.find((command) => command.threadId === running.threadId)?.title).toBe(
+      "Fix the login redirect",
+    );
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a routine run in a new chat names the chat after the routine", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const task = yield* service.createTask({
+      idempotencyKey: "routine:digest:1",
+      botId: botId("assistant"),
+      title: "  Morning\n news   digest ",
+      objective: "Summarise the news.",
+      source: "routine",
+    });
+    yield* service.drain;
+    const running = yield* reload(task.taskId);
+
+    const creates = threadCreates(harness).filter(
+      (command) => command.threadId === running.threadId,
+    );
+    expect(creates.map((command) => command.title)).toEqual(["Morning news digest"]);
+    expect(harness.dispatched.some((command) => command.type === "thread.meta.update")).toBe(false);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a routine run into the chat it was made in leaves that chat's title alone", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const bots = yield* PersonalBotService.PersonalBotService;
+    const chat = "chat-routine-home" as ThreadId;
+    yield* bots.createThread({ botId: botId("assistant"), threadId: chat });
+    const createsBefore = threadCreates(harness).length;
+
+    const task = yield* service.createTask({
+      idempotencyKey: "routine:home:1",
+      botId: botId("assistant"),
+      title: "Daily check-in",
+      objective: "Check in.",
+      source: "routine",
+      threadId: chat,
+    });
+    yield* service.drain;
+
+    expect((yield* reload(task.taskId)).threadId).toBe(chat);
+    expect(threadCreates(harness).length).toBe(createsBefore);
+    expect(threadCreates(harness).find((command) => command.threadId === chat)?.title).toBe(
+      "New chat",
+    );
+    expect(
+      harness.dispatched.some(
+        (command) =>
+          (command.type === "thread.meta.update" ||
+            command.type === "thread.title.generate.complete") &&
+          command.threadId === chat,
+      ),
+    ).toBe(false);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 const claudeOpus = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-opus-5-5",

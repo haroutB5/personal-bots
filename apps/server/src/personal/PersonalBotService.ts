@@ -163,9 +163,15 @@ export class PersonalBotService extends Context.Service<
     readonly remove: (input: {
       readonly botId: PersonalBotId;
     }) => Effect.Effect<void, PersonalBotsError>;
+    /**
+     * Creates the bot's thread, or returns its link when it already exists.
+     * `title` names a thread this call creates (a task or routine run's own
+     * chat); an existing thread keeps its title. Default: the placeholder.
+     */
     readonly createThread: (input: {
       readonly botId: PersonalBotId;
       readonly threadId: ThreadId;
+      readonly title?: string;
     }) => Effect.Effect<PersonalBotThread, PersonalBotsError>;
     /**
      * Creates a thread in the Personal project with NO bot-thread link row.
@@ -550,7 +556,7 @@ export const make = Effect.gen(function* () {
           commandId: CommandId.make(`personal-bots:thread.create:${input.threadId}`),
           threadId: input.threadId,
           projectId,
-          title: PERSONAL_THREAD_TITLE,
+          title: input.title?.trim() || PERSONAL_THREAD_TITLE,
           modelSelection: bot.modelSelection,
           runtimeMode: "full-access",
           interactionMode: "default",
