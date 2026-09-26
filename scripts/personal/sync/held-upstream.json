@@ -1,12 +1,33 @@
 {
   "$comment": "Upstream changes held back for the owner's decision by the weekly upstream sync (scripts/personal/upstream-sync.ps1). Each entry was reverted after the merge (holdBy=revert, revertCommit set) or kept on our side (holdBy=keep_ours). To ship one: git revert <revertCommit> (or undo the pin), then remove the entry.",
-  "held": [],
+  "held": [
+    {
+      "id": "node-pty-beta",
+      "shas": ["4923ff417f"],
+      "area": "runtime-external native package (node-pty)",
+      "whatChanged": "Upstream moves node-pty from ^1.1.0 to 1.2.0-beta.15, only to get a linux-arm64 prebuild. Bots runs on Windows x64 and copies node-pty into each release, so it keeps ^1.1.0 (apps/server/package.json and pnpm-lock.yaml, our side of the 1.47.0 hand merge). No code in the batch needs the beta: NodePtyAdapter.ts is unchanged.",
+      "options": [
+        "Keep node-pty ^1.1.0 (Windows x64 needs nothing from the beta)",
+        "Take 1.2.0-beta.15 after checking terminals on a staged release"
+      ],
+      "recommendation": "Keep ^1.1.0 until upstream ships a stable 1.2.x or merged code needs it.",
+      "holdBy": "keep_ours",
+      "revertCommit": "88c72e9727be",
+      "heldAt": "2026-09-26",
+      "upstream": "2679d279c"
+    }
+  ],
   "$acceptedComment": "Decisions the owner has already answered. A key listed here is settled: ship that upstream change like any other improvement, never hold it and never ask again. Remove an entry only if the owner changes his mind.",
   "accepted": [
     {
       "key": "rich-text-composer-default",
       "decidedOn": "2026-09-17",
       "decision": "Take upstream's rich-text composer default (Tiptap, formatting and list continuation on by default). Do not pin composerRichTextEnabled to false."
+    },
+    {
+      "key": "opencode-session-titles",
+      "decidedOn": "2026-09-26",
+      "decision": "Take upstream 2679d279ce (OpenCode generates its own session titles). Its titles reach personal bot threads only through personalProviderTitleAllowed: never over a manual rename, never on task/routine/group chats, and on a user-started chat only in place of the placeholder or first-message seed, once."
     }
   ]
 }
