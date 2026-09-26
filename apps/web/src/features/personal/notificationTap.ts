@@ -46,8 +46,6 @@ export interface NotificationTapDeps {
   readonly ack: (ack: TapAck) => void;
   /** One line per delivered tap for the server log; best-effort. */
   readonly report?: (record: Record<string, unknown>) => void;
-  /** Every delivered tap, before it navigates. */
-  readonly onTap?: () => void;
 }
 
 /** How long the page watches for a tap after a push was shown. */
@@ -93,7 +91,6 @@ export function createNotificationTapController(
       if (handled.length > HANDLED_IDS_MAX) handled.shift();
       deps.ack({ type: "bots:navigate-ack", id, via, visibility: deps.visibility() });
     }
-    deps.onTap?.();
     const from = deps.currentPath();
     if (from !== url) deps.navigate(url);
     deps.report?.({

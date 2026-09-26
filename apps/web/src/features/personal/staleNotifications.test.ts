@@ -1,3 +1,5 @@
+import { createElement } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { createNotificationTapController } from "./notificationTap";
@@ -5,10 +7,9 @@ import {
   CLEAR_STALE_NOTIFICATIONS_DELAY_MS,
   type ClosableNotification,
   closeNotifications,
-  createDeferredNotificationClear,
   isChatNotification,
   notificationUrl,
-  type StaleClearReason,
+  useCloseChatNotifications,
 } from "./staleNotifications";
 
 const note = (fields: { tag?: string; url?: string; closeThrows?: boolean }) => {
@@ -23,37 +24,44 @@ const note = (fields: { tag?: string; url?: string; closeThrows?: boolean }) => 
   return { notification, close };
 };
 
+const everything = () => true;
+
 describe("stale notifications", () => {
-  it("closes every notification when the app comes to the front, and counts them", async () => {
+  it("closes only what the match accepts, and counts them", async () => {
     const a = note({ tag: "task-1", url: "/tasks/1" });
     const b = note({ tag: "chat-t1", url: "/bots/b1/t1" });
-    const closed = await closeNotifications({
-      getNotifications: async () => [a.notification, b.notification],
-    });
-    expect(closed).toBe(2);
-    expect(a.close).toHaveBeenCalledOnce();
+    const closed = await closeNotifications(
+      { getNotifications: async () => [a.notification, b.notification] },
+      (notification) => notification.tag === "chat-t1",
+    );
+    expect(closed).toBe(1);
+    expect(a.close).not.toHaveBeenCalled();
     expect(b.close).toHaveBeenCalledOnce();
   });
 
   it("is a no-op without a worker or without getNotifications (older engines)", async () => {
-    expect(await closeNotifications(null)).toBe(0);
-    expect(await closeNotifications(undefined)).toBe(0);
-    expect(await closeNotifications({})).toBe(0);
+    expect(await closeNotifications(null, everything)).toBe(0);
+    expect(await closeNotifications(undefined, everything)).toBe(0);
+    expect(await closeNotifications({}, everything)).toBe(0);
     expect(
-      await closeNotifications({
-        getNotifications: async () => {
-          throw new Error("not allowed");
+      await closeNotifications(
+        {
+          getNotifications: async () => {
+            throw new Error("not allowed");
+          },
         },
-      }),
+        everything,
+      ),
     ).toBe(0);
   });
 
   it("keeps closing the rest when one refuses", async () => {
     const bad = note({ url: "/bots", closeThrows: true });
     const good = note({ url: "/bots/b1/t1" });
-    const closed = await closeNotifications({
-      getNotifications: async () => [bad.notification, good.notification],
-    });
+    const closed = await closeNotifications(
+      { getNotifications: async () => [bad.notification, good.notification] },
+      everything,
+    );
     expect(closed).toBe(1);
     expect(good.close).toHaveBeenCalledOnce();
   });
@@ -103,7 +111,6 @@ describe("stale notifications", () => {
  */
 function iosTap(options: { clickAfterMs: number }) {
   const navigate = vi.fn();
-  const reports: Record<string, unknown>[] = [];
   const shown: Array<ClosableNotification & { closed: boolean }> = [];
   const show = (url: string) => {
     const notification = {
@@ -131,25 +138,10 @@ function iosTap(options: { clickAfterMs: number }) {
     setInterval: (callback, ms) => setInterval(callback, ms),
     clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
     ack: () => undefined,
-    report: (record) => reports.push(record),
-    onTap: () => deferred.noteTap(),
   });
-  const deferred = createDeferredNotificationClear({
-    close: () => closeNotifications(registration),
-    isVisible: () => visible,
-    now: () => Date.now(),
-    setTimeout: (callback, ms) => setTimeout(callback, ms),
-    clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
-    report: (record) => reports.push(record),
-  });
-  const tap = (
-    notification: ReturnType<typeof show>,
-    onResume: (reason: StaleClearReason) => void,
-  ) => {
+  const tap = (notification: ReturnType<typeof show>, onResume: () => void) => {
     visible = true;
-    onResume("visible");
-    onResume("focus");
-    onResume("focus");
+    onResume();
     setTimeout(() => {
       // WebKit: a closed notification has no click to dispatch.
       if (notification.closed) return;
@@ -160,23 +152,10 @@ function iosTap(options: { clickAfterMs: number }) {
       );
     }, options.clickAfterMs);
   };
-  return {
-    navigate,
-    reports,
-    show,
-    tap,
-    deferred,
-    wake: () => {
-      visible = true;
-    },
-    hide: () => {
-      visible = false;
-    },
-    registration,
-  };
+  return { navigate, show, tap, registration };
 }
 
-describe("stale notifications vs a tap in flight", () => {
+describe("coming back to the app", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -184,71 +163,116 @@ describe("stale notifications vs a tap in flight", () => {
     vi.useRealTimers();
   });
 
-  it("closing on resume, as 1.36.1 did, loses the tap (24 Sep, closed:1)", async () => {
+  it("closing everything on resume, as 1.36.1 did, loses the tap (24 Sep, closed:1)", async () => {
     const ios = iosTap({ clickAfterMs: 20 });
     const reply = ios.show("/bots/b1/t1");
-    ios.tap(reply, () => void closeNotifications(ios.registration));
+    ios.tap(reply, () => void closeNotifications(ios.registration, everything));
     await vi.advanceTimersByTimeAsync(CLEAR_STALE_NOTIFICATIONS_DELAY_MS * 2);
     expect(ios.navigate).not.toHaveBeenCalled();
   });
 
-  it("delivers the tap when the clear waits, then clears the rest once", async () => {
+  it("delivers the tap and leaves the older, untapped notifications alone", async () => {
     const ios = iosTap({ clickAfterMs: 900 });
-    const older = ios.show("/tasks/9");
+    const olderTask = ios.show("/tasks/9");
+    const olderChat = ios.show("/bots/b2/t2");
     const reply = ios.show("/bots/b1/t1");
-    ios.tap(reply, (reason) => ios.deferred.schedule(reason));
-    await vi.advanceTimersByTimeAsync(1_000);
+    // Resuming the app closes nothing (serviceWorker.ts).
+    ios.tap(reply, () => undefined);
+    await vi.advanceTimersByTimeAsync(CLEAR_STALE_NOTIFICATIONS_DELAY_MS * 4);
     expect(ios.navigate).toHaveBeenCalledWith("/bots/b1/t1");
-    expect(older.closed).toBe(false);
+    expect(olderTask.closed).toBe(false);
+    expect(olderChat.closed).toBe(false);
+  });
+});
 
-    await vi.advanceTimersByTimeAsync(CLEAR_STALE_NOTIFICATIONS_DELAY_MS);
-    expect(older.closed).toBe(true);
-    const cleared = ios.reports.filter((record) => record.event === "notifications-cleared");
-    expect(cleared).toEqual([
-      expect.objectContaining({ reason: "visible", closed: 1, afterTap: true }),
-    ]);
+describe("an open chat's notifications", () => {
+  let renderer: ReactTestRenderer | undefined;
+  let visibility: "visible" | "hidden" = "visible";
+  let listeners: Array<() => void> = [];
+  let notifications: Array<ReturnType<typeof note>> = [];
+
+  const Chat = ({ botId, threadId }: { botId: string; threadId: string }) => {
+    useCloseChatNotifications(botId, threadId);
+    return null;
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    visibility = "visible";
+    listeners = [];
+    notifications = [];
+    vi.stubGlobal("document", {
+      get visibilityState() {
+        return visibility;
+      },
+      addEventListener: (type: string, listener: () => void) => {
+        if (type === "visibilitychange") listeners.push(listener);
+      },
+      removeEventListener: (type: string, listener: () => void) => {
+        if (type === "visibilitychange") listeners = listeners.filter((item) => item !== listener);
+      },
+    });
+    vi.stubGlobal("window", {
+      setTimeout: (callback: () => void, ms: number) => setTimeout(callback, ms),
+      clearTimeout: (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle),
+    });
+    vi.stubGlobal("navigator", {
+      serviceWorker: {
+        getRegistration: async () => ({
+          getNotifications: async () =>
+            notifications
+              .filter((item) => item.close.mock.calls.length === 0)
+              .map((item) => item.notification),
+        }),
+      },
+    });
+  });
+  afterEach(async () => {
+    await act(async () => renderer?.unmount());
+    renderer = undefined;
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
-  it("still delivers a slow tap that lands seconds after the resume", async () => {
-    const ios = iosTap({ clickAfterMs: CLEAR_STALE_NOTIFICATIONS_DELAY_MS - 500 });
-    const reply = ios.show("/bots/b1/t1");
-    ios.tap(reply, (reason) => ios.deferred.schedule(reason));
-    await vi.advanceTimersByTimeAsync(CLEAR_STALE_NOTIFICATIONS_DELAY_MS * 2);
-    expect(ios.navigate).toHaveBeenCalledWith("/bots/b1/t1");
+  const setVisibility = (next: "visible" | "hidden") => {
+    visibility = next;
+    for (const listener of listeners) listener();
+  };
+
+  it("closes this chat's notifications when it opens, and no other", async () => {
+    const mine = note({ tag: "chat-t1", url: "/bots/b1/t1" });
+    const otherChat = note({ tag: "chat-t2", url: "/bots/b1/t2" });
+    const task = note({ tag: "task-9", url: "/tasks/9" });
+    notifications = [mine, otherChat, task];
+    await act(async () => {
+      renderer = create(createElement(Chat, { botId: "b1", threadId: "t1" }));
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(mine.close).toHaveBeenCalledOnce();
+    expect(otherChat.close).not.toHaveBeenCalled();
+    expect(task.close).not.toHaveBeenCalled();
   });
 
-  it("clears a stale one when the app was opened without a tap", async () => {
-    const ios = iosTap({ clickAfterMs: 0 });
-    const stale = ios.show("/bots/b1/t1");
-    ios.wake();
-    ios.deferred.schedule("visible");
-    await vi.advanceTimersByTimeAsync(CLEAR_STALE_NOTIFICATIONS_DELAY_MS - 1);
-    expect(stale.closed).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(stale.closed).toBe(true);
-    expect(ios.reports).toEqual([
-      expect.objectContaining({
-        event: "notifications-cleared",
-        reason: "visible",
-        closed: 1,
-        afterTap: false,
-        waitedMs: CLEAR_STALE_NOTIFICATIONS_DELAY_MS,
-      }),
-    ]);
-  });
-
-  it("skips the clear, and says so, when the app goes back to the background first", async () => {
-    const ios = iosTap({ clickAfterMs: 0 });
-    const stale = ios.show("/bots/b1/t1");
-    ios.wake();
-    ios.deferred.schedule("focus");
-    await vi.advanceTimersByTimeAsync(2_000);
-    ios.hide();
-    ios.deferred.cancel();
-    await vi.advanceTimersByTimeAsync(CLEAR_STALE_NOTIFICATIONS_DELAY_MS);
-    expect(stale.closed).toBe(false);
-    expect(ios.reports).toEqual([
-      expect.objectContaining({ event: "notifications-clear-skipped", reason: "focus" }),
-    ]);
+  it("waits after a resume before closing, so a tap on it still lands", async () => {
+    await act(async () => {
+      renderer = create(createElement(Chat, { botId: "b1", threadId: "t1" }));
+    });
+    setVisibility("hidden");
+    const arrived = note({ tag: "chat-t1", url: "/bots/b1/t1" });
+    const elsewhere = note({ tag: "chat-t3", url: "/bots/b2/t3" });
+    notifications = [arrived, elsewhere];
+    setVisibility("visible");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CLEAR_STALE_NOTIFICATIONS_DELAY_MS - 1);
+    });
+    expect(arrived.close).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(arrived.close).toHaveBeenCalledOnce();
+    expect(elsewhere.close).not.toHaveBeenCalled();
   });
 });

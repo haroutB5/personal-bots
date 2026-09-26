@@ -1,27 +1,29 @@
 /**
- * Notifications that are already stale once the user is in the app.
+ * Notifications the user has already seen in the app.
  *
- * iOS gives an app that is in front no event when one of its notifications is
- * tapped in Notification Center (the same limit the in-app banner works
- * around), so an old "X replied" tapped from inside the app does nothing at
- * all. Rather than leave dead rows behind, the page closes them: all of them
- * when it comes to the front (the chats list shows what is unread), and the
- * ones for a chat when that chat opens (desktop and Android, where the app can
- * sit open in a background window while pushes arrive).
+ * Only one kind is ever closed from the page: the notifications of a chat
+ * that is open on screen (see `useCloseChatNotifications`). Reading the chat
+ * is reading its news, like Messages clearing a conversation's alerts.
  *
- * Never at the moment the app comes back, though. Tapping a notification on
- * iOS brings the app to the front first and dispatches notificationclick to
- * the worker afterwards; a notification the page closes in between takes its
- * click with it, and the app just resumes where it was (24 Sep: four taps
- * logged as notifications-cleared {closed:1} with no notificationclick). So
- * the closing waits CLEAR_STALE_NOTIFICATIONS_DELAY_MS after the last resume.
+ * Nothing else is closed, ever. Until 1.46 the app closed every notification
+ * a few seconds after it came to the front, on the theory that the chats list
+ * shows what is unread. In practice that took the notifications Harout had not
+ * tapped yet with it: tap the newest one and the older ones vanished (26 Sep,
+ * closed:2 right after a tap). Closing on resume also cancelled taps outright
+ * in 1.36 (24 Sep: four taps logged as notifications-cleared {closed:1} with no
+ * notificationclick), because iOS brings the app to the front before it
+ * dispatches the click, and a notification the page closes in between takes
+ * its click with it. A notification now leaves Notification Center only when
+ * it is tapped (the worker closes it), when a newer one for the same chat
+ * replaces it (one row per chat, see the worker's tag), when its chat is read
+ * here, or when the user dismisses it.
  */
 import { useEffect } from "react";
 
 /**
- * How long after the app comes back before notifications count as stale. A
- * tap's click reaches the worker within about a second of the resume in the
- * server logs; this leaves room for a slow wake.
+ * How long after the app comes back before an open chat's notifications are
+ * closed. A tap's click reaches the worker within about a second of the resume
+ * in the server logs; this leaves room for a slow wake.
  */
 export const CLEAR_STALE_NOTIFICATIONS_DELAY_MS = 8_000;
 
@@ -71,7 +73,7 @@ export function isChatNotification(
  */
 export async function closeNotifications(
   source: NotificationSource | null | undefined,
-  match: (notification: ClosableNotification) => boolean = () => true,
+  match: (notification: ClosableNotification) => boolean,
 ): Promise<number> {
   if (source == null || typeof source.getNotifications !== "function") return 0;
   let list: ReadonlyArray<ClosableNotification>;
@@ -103,96 +105,11 @@ export async function notificationRegistration(): Promise<NotificationSource | n
   }
 }
 
-export type StaleClearReason = "boot" | "visible" | "focus";
-
-export interface DeferredNotificationClearDeps {
-  /** Closes the stale notifications and resolves how many it closed. */
-  readonly close: () => Promise<number>;
-  readonly isVisible: () => boolean;
-  readonly now: () => number;
-  readonly setTimeout: (callback: () => void, ms: number) => unknown;
-  readonly clearTimeout: (handle: unknown) => void;
-  readonly report?: (record: Record<string, unknown>) => void;
-  readonly delayMs?: number;
-}
-
-export interface DeferredNotificationClear {
-  /** The app came back (or booted visible): clear once it has settled. */
-  readonly schedule: (reason: StaleClearReason) => void;
-  /** The app went to the background before the clear ran. */
-  readonly cancel: () => void;
-  /** A notification tap landed while a clear was waiting. */
-  readonly noteTap: () => void;
-  readonly dispose: () => void;
-}
-
-/**
- * Clears stale notifications a while after the app comes back, never while a
- * tap may still be on its way to the worker. Repeated resume signals (iOS
- * sends visibilitychange and focus twice together) collapse into one clear.
- */
-export function createDeferredNotificationClear(
-  deps: DeferredNotificationClearDeps,
-): DeferredNotificationClear {
-  const delayMs = deps.delayMs ?? CLEAR_STALE_NOTIFICATIONS_DELAY_MS;
-  let timer: unknown = null;
-  let reason: StaleClearReason | null = null;
-  let since = 0;
-  let afterTap = false;
-
-  const reset = () => {
-    if (timer !== null) deps.clearTimeout(timer);
-    timer = null;
-    reason = null;
-    afterTap = false;
-  };
-
-  const run = () => {
-    const record = { reason, waitedMs: deps.now() - since, afterTap };
-    timer = null;
-    reason = null;
-    afterTap = false;
-    if (!deps.isVisible()) return;
-    void deps
-      .close()
-      .then((closed) => {
-        if (closed > 0) deps.report?.({ event: "notifications-cleared", ...record, closed });
-      })
-      .catch(() => undefined);
-  };
-
-  return {
-    schedule: (next) => {
-      if (timer === null) {
-        reason = next;
-        since = deps.now();
-      } else {
-        deps.clearTimeout(timer);
-      }
-      timer = deps.setTimeout(run, delayMs);
-    },
-    cancel: () => {
-      if (timer === null) return;
-      deps.report?.({
-        event: "notifications-clear-skipped",
-        reason,
-        waitedMs: deps.now() - since,
-        afterTap,
-      });
-      reset();
-    },
-    noteTap: () => {
-      if (timer !== null) afterTap = true;
-    },
-    dispose: reset,
-  };
-}
-
 /**
  * Closes this chat's notifications when it opens, and again whenever it comes
  * back to the front while open: once the chat is on screen they say nothing new.
- * The return to the front waits like the app-wide clear, so a tap on one of
- * them is not lost.
+ * The return to the front waits CLEAR_STALE_NOTIFICATIONS_DELAY_MS, so a tap on
+ * one of them still lands. Other chats' notifications are never touched.
  */
 export function useCloseChatNotifications(botId: string, threadId: string): void {
   useEffect(() => {

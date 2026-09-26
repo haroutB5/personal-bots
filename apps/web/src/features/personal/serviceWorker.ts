@@ -3,11 +3,6 @@ import { isElectron } from "~/env";
 
 import { runningClientEntry } from "./appVersion";
 import {
-  closeNotifications,
-  createDeferredNotificationClear,
-  notificationRegistration,
-} from "./staleNotifications";
-import {
   createNotificationTapController,
   isNavigablePath,
   type PendingTap,
@@ -132,20 +127,8 @@ export function registerPersonalServiceWorker(navigate: (path: string) => void):
   }
   const container = navigator.serviceWorker;
   const channel = openNavChannel();
-  // The user is in the app: every notification still in Notification Center
-  // is stale (the chats list shows what is unread), and on iOS one tapped from
-  // inside the app is dead, so close them rather than leave dead rows behind.
-  // Deferred, because the one the user just tapped is still listed when the
-  // app resumes, and closing it cancels its click (see staleNotifications.ts).
-  const staleClear = createDeferredNotificationClear({
-    close: () =>
-      notificationRegistration().then((registration) => closeNotifications(registration)),
-    isVisible: () => document.visibilityState === "visible",
-    now: () => Date.now(),
-    setTimeout: (callback, ms) => window.setTimeout(callback, ms),
-    clearTimeout: (handle) => window.clearTimeout(handle as number),
-    report: reportTap,
-  });
+  // Coming back to the app closes no notifications: the untapped ones stay in
+  // Notification Center until tapped or read (see staleNotifications.ts).
   const taps = createNotificationTapController({
     navigate,
     currentPath: () => `${window.location.pathname}${window.location.search}`,
@@ -173,7 +156,6 @@ export function registerPersonalServiceWorker(navigate: (path: string) => void):
         .catch(() => undefined);
     },
     report: reportTap,
-    onTap: () => staleClear.noteTap(),
   });
   const onWorkerMessage = (data: unknown, via: "message" | "broadcast") => {
     const diag = workerMessageDiag(data, via);
@@ -211,12 +193,8 @@ export function registerPersonalServiceWorker(navigate: (path: string) => void):
   };
 
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible") {
-      staleClear.cancel();
-      return;
-    }
+    if (document.visibilityState !== "visible") return;
     void taps.check("cache-visible");
-    staleClear.schedule("visible");
     checkForNewWorker();
   });
   window.addEventListener("pageshow", () => {
@@ -224,10 +202,8 @@ export function registerPersonalServiceWorker(navigate: (path: string) => void):
   });
   window.addEventListener("focus", () => {
     void taps.check("cache-focus");
-    if (document.visibilityState === "visible") staleClear.schedule("focus");
   });
   void taps.check("cache-load");
-  if (document.visibilityState === "visible") staleClear.schedule("boot");
 
   const register = () => {
     void container
