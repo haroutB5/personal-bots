@@ -43,6 +43,7 @@ import { personalBotSystemInstructions } from "../../personal/personalBotInstruc
 import {
   isPersonalTaskMessageId,
   PERSONAL_THREAD_TITLE,
+  PERSONAL_TITLE_SEED_COMMAND_TAG,
 } from "../../personal/personalThreadTitles.ts";
 import * as PersonalMemoryService from "../../personal/memory/PersonalMemoryService.ts";
 import {
@@ -1205,7 +1206,7 @@ const make = Effect.gen(function* () {
       }
       yield* orchestrationEngine.dispatch({
         type: "thread.title.generate.complete",
-        commandId: yield* serverCommandId("personal-thread-title-seed"),
+        commandId: yield* serverCommandId(PERSONAL_TITLE_SEED_COMMAND_TAG),
         threadId: thread.id,
         title: titleSeed,
         expectedTitle: thread.title,

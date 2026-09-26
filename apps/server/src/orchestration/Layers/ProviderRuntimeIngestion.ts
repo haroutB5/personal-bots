@@ -58,6 +58,8 @@ import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { canReplaceThreadTitle } from "../threadTitles.ts";
+import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
+import { personalProviderTitleAllowed } from "../../personal/personalThreadTitles.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 // Suffixed, not prefixed: `clearTurnStateForSession` sweeps by thread prefix.
@@ -1058,6 +1060,7 @@ const make = Effect.gen(function* () {
   const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
   const serverSettingsService = yield* ServerSettingsService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
+  const personalBots = yield* PersonalBotRepository.PersonalBotRepository;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
@@ -1141,6 +1144,41 @@ const make = Effect.gen(function* () {
       .getThreadRuntimeContext(threadId)
       .pipe(Effect.map(Option.getOrUndefined));
   });
+
+  /**
+   * Whether a provider-reported session title may replace the thread's title.
+   * Personal bot threads follow personalProviderTitleAllowed (never task,
+   * routine or group chats; a user-started chat's placeholder or seed at most
+   * once). Every other thread keeps upstream's rule. A failed lookup leaves
+   * the title alone.
+   */
+  const providerTitleMayRename = Effect.fn("providerTitleMayRename")(
+    function* (
+      threadId: ThreadId,
+      title: string,
+      titleState: Parameters<typeof personalProviderTitleAllowed>[0]["titleState"],
+    ) {
+      const link = yield* personalBots.getThreadLink({ threadId });
+      if (Option.isNone(link)) return canReplaceThreadTitle(title);
+      const messages = yield* projectionThreadMessages.listByThreadId({ threadId });
+      return personalProviderTitleAllowed({
+        title,
+        titleState,
+        userMessageIds: messages
+          .filter((message) => message.role === "user")
+          .map((message) => message.messageId),
+      });
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("provider title guard lookup failed; keeping the thread title", {
+            threadId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(false)),
+        ),
+      ),
+  );
 
   const getThreadMessageById = Effect.fn("getThreadMessageById")(function* (
     threadId: ThreadId,
@@ -2503,7 +2541,10 @@ const make = Effect.gen(function* () {
       }
 
       if (event.type === "thread.metadata.updated" && event.payload.name) {
-        if (thread.titleState?.source !== "manual" && canReplaceThreadTitle(thread.title)) {
+        if (
+          thread.titleState?.source !== "manual" &&
+          (yield* providerTitleMayRename(thread.id, thread.title, thread.titleState))
+        ) {
           yield* orchestrationEngine.dispatch({
             type: "thread.title.generate.complete",
             commandId: yield* providerCommandId(event, "thread-meta-update"),

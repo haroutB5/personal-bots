@@ -18,6 +18,7 @@ import {
   EventId,
   MessageId,
   type OrchestrationCommand,
+  type PersonalBotThread,
   ProjectId,
   ProviderItemId,
   RuntimeRequestId,
@@ -63,6 +64,12 @@ import {
   splitBufferedAssistantText,
 } from "./ProviderRuntimeIngestion.ts";
 import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
+import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
+import {
+  PERSONAL_THREAD_TITLE,
+  PERSONAL_TITLE_SEED_COMMAND_TAG,
+  personalTaskMessageId,
+} from "../../personal/personalThreadTitles.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -271,6 +278,8 @@ describe("ProviderRuntimeIngestion", () => {
   async function createHarness(options?: {
     serverSettings?: Partial<ServerSettings>;
     threadTitle?: string;
+    /** thread-1 is linked to a personal bot (personal_bot_threads). */
+    personalBotThread?: boolean;
     workspaceSubdirectory?: string;
     isGitRepository?: CheckpointStore.CheckpointStore["Service"]["isGitRepository"];
   }) {
@@ -330,6 +339,21 @@ describe("ProviderRuntimeIngestion", () => {
       // engine, and the snapshot query (reader).
       Layer.provideMerge(ThreadBackgroundLiveness.layer),
       Layer.provideMerge(ThreadPlanProgress.layer),
+      Layer.provideMerge(
+        Layer.mock(PersonalBotRepository.PersonalBotRepository)({
+          getThreadLink: ({ threadId }) =>
+            Effect.succeed(
+              options?.personalBotThread === true && threadId === "thread-1"
+                ? Option.some({
+                    botId: "bot-1",
+                    threadId,
+                    createdAt: "2026-01-01T00:00:00.000Z",
+                    archivedAt: null,
+                  } as unknown as PersonalBotThread)
+                : Option.none(),
+            ),
+        }),
+      ),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
@@ -4576,6 +4600,125 @@ describe("ProviderRuntimeIngestion", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("User-set title");
+  });
+
+  describe("provider session titles on personal bot threads", () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const providerTitle = (harness: { emit: (event: never) => void }, id: string, name: string) =>
+      harness.emit({
+        type: "thread.metadata.updated",
+        eventId: asEventId(id),
+        provider: ProviderDriverKind.make("opencode"),
+        createdAt: now,
+        threadId,
+        payload: { name, metadata: { sessionID: "ses-1" } },
+      } as never);
+    const sendUserMessage = (
+      harness: Awaited<ReturnType<typeof createHarness>>,
+      messageId: MessageId,
+      text: string,
+    ) =>
+      harness.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make(`cmd-turn-${messageId}`),
+        threadId,
+        message: { messageId, role: "user", text, attachments: [] },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+    const readTitle = async (harness: Awaited<ReturnType<typeof createHarness>>) => {
+      await harness.drain();
+      const readModel = await harness.readModel();
+      return readModel.threads.find((entry) => entry.id === threadId)?.title;
+    };
+
+    it("replaces a user-started chat's first-message seed once, then never again", async () => {
+      const harness = await createHarness({
+        threadTitle: PERSONAL_THREAD_TITLE,
+        personalBotThread: true,
+      });
+      await sendUserMessage(harness, MessageId.make("user-first"), "plan my week");
+      await harness.dispatch({
+        type: "thread.title.generate.complete",
+        commandId: CommandId.make(`server:${PERSONAL_TITLE_SEED_COMMAND_TAG}:seed-1`),
+        threadId,
+        title: "plan my week",
+        expectedTitle: PERSONAL_THREAD_TITLE,
+        expectedVersion: null,
+        needsRefinement: false,
+      });
+
+      providerTitle(harness, "evt-opencode-title-1", "Weekly plan");
+      await waitForThread(harness.readModel, (entry) => entry.title === "Weekly plan");
+      providerTitle(harness, "evt-opencode-title-2", "Something else");
+
+      expect(await readTitle(harness)).toBe("Weekly plan");
+    });
+
+    it("never renames a task or routine chat", async () => {
+      const harness = await createHarness({
+        threadTitle: "Daily digest",
+        personalBotThread: true,
+      });
+      await sendUserMessage(harness, personalTaskMessageId("task-1", 1), "Run the digest");
+
+      providerTitle(harness, "evt-opencode-title-task", "Digest summary");
+
+      expect(await readTitle(harness)).toBe("Daily digest");
+    });
+
+    it("never renames a task chat still on a placeholder", async () => {
+      const harness = await createHarness({
+        threadTitle: DEFAULT_THREAD_TITLE,
+        personalBotThread: true,
+      });
+      await sendUserMessage(harness, personalTaskMessageId("task-2", 1), "Run the digest");
+
+      providerTitle(harness, "evt-opencode-title-task-placeholder", "Digest summary");
+
+      expect(await readTitle(harness)).toBe(DEFAULT_THREAD_TITLE);
+    });
+
+    it("never overrides a manual rename", async () => {
+      const harness = await createHarness({
+        threadTitle: PERSONAL_THREAD_TITLE,
+        personalBotThread: true,
+      });
+      await sendUserMessage(harness, MessageId.make("user-first"), "hello");
+      await harness.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-manual-rename"),
+        threadId,
+        title: PERSONAL_THREAD_TITLE,
+      });
+
+      providerTitle(harness, "evt-opencode-title-manual", "Greeting");
+
+      expect(await readTitle(harness)).toBe(PERSONAL_THREAD_TITLE);
+    });
+
+    it("leaves a title the AI already replaced the seed with", async () => {
+      const harness = await createHarness({
+        threadTitle: PERSONAL_THREAD_TITLE,
+        personalBotThread: true,
+      });
+      await sendUserMessage(harness, MessageId.make("user-first"), "plan my week");
+      await harness.dispatch({
+        type: "thread.title.generate.complete",
+        commandId: CommandId.make("server:thread-title-rename:ai-1"),
+        threadId,
+        title: "Week planning",
+        expectedTitle: PERSONAL_THREAD_TITLE,
+        expectedVersion: null,
+        needsRefinement: false,
+      });
+
+      providerTitle(harness, "evt-opencode-title-after-ai", "Weekly plan");
+
+      expect(await readTitle(harness)).toBe("Week planning");
+    });
   });
 
   it("projects context window updates into normalized thread activities", async () => {
