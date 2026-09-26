@@ -240,6 +240,10 @@ export function selectUsageCards(
  * "Usage is not reported for this account yet", a claim nobody had checked.
  * Refreshing on open is what made the manual button appear to "fix" it.
  *
+ * Old bars are the same claim: the sheet opened on a Claude reading seven
+ * hours old ("Updated 7h") and showed it as current until the refresh button
+ * was pressed (26 Sep). So any reading past a minute is probed on open.
+ *
  * Fresh data is left alone so that reopening the sheet twice in a minute does
  * not spend a probe each time.
  */
@@ -249,7 +253,7 @@ export function usageNeedsRefreshOnOpen(cards: readonly UsageCard[], now: number
   if (cards.length === 0) return true;
   return cards.some(
     (card) =>
-      card.status === "not-reported" &&
+      card.status !== "unavailable" &&
       (card.checkedAt === null || now - card.checkedAt > USAGE_STALE_AFTER_MS),
   );
 }

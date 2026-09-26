@@ -372,6 +372,20 @@ describe("usage refresh on open", () => {
     ).toBe(false);
   });
 
+  it("probes when the bars on screen are hours old (the 'Updated 7h' sheet)", () => {
+    const checkedAt = 1_000_000;
+    expect(
+      usageNeedsRefreshOnOpen([card({ status: "ready", checkedAt })], checkedAt + 7 * 60 * 60_000),
+    ).toBe(true);
+  });
+
+  it("leaves fresh bars alone", () => {
+    const checkedAt = 1_000_000;
+    expect(usageNeedsRefreshOnOpen([card({ status: "ready", checkedAt })], checkedAt + 1_000)).toBe(
+      false,
+    );
+  });
+
   it("does not probe for an account that can never report", () => {
     expect(usageNeedsRefreshOnOpen([card({ status: "unavailable", checkedAt: null })], 1)).toBe(
       false,
