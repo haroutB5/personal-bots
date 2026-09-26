@@ -2,7 +2,7 @@ import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
-import { JUMP_TO_LATEST_DELAY_MS, MessageList } from "./MessageList";
+import { JUMP_TO_LATEST_DELAY_MS, MessageList, VIEWPORT_SETTLE_MS } from "./MessageList";
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: React.PropsWithChildren) => children,
@@ -401,4 +401,61 @@ it("a tap on the list just before a strip appears does not let go of the bottom"
   await wait(JUMP_TO_LATEST_DELAY_MS * 2);
   expect(scroller.scrollTop).toBeGreaterThanOrEqual(scroller.bottom);
   expect(jumpButtons()).toHaveLength(0);
+});
+
+/** Records every write to the scroller's offset, in order. */
+function recordScrollWrites(): number[] {
+  const writes: number[] = [];
+  let top = scroller.scrollTop;
+  Object.defineProperty(scroller, "scrollTop", {
+    configurable: true,
+    get: () => top,
+    set: (value: number) => {
+      writes.push(value);
+      top = value;
+    },
+  });
+  return writes;
+}
+
+it("re-applies the end when the keyboard goes down, and again once it has settled", async () => {
+  // 26 Sep, iPhone: the keyboard closed, the list grew by its height, and
+  // WebKit kept the old offset, leaving a keyboard-sized blank band under the
+  // latest message. A write to a different offset first makes it a real scroll.
+  await render();
+  await scrollTo(scroller.bottom);
+  const writes = recordScrollWrites();
+  scroller.clientHeight = 745;
+  await act(async () => resize());
+  const end = scroller.scrollHeight - scroller.clientHeight;
+  expect(writes).toEqual([1000, end - 1, 1000]);
+  expect(scroller.scrollTop).toBe(1000);
+
+  await wait(VIEWPORT_SETTLE_MS);
+  expect(writes).toEqual([1000, end - 1, 1000, 1000, end - 1, 1000]);
+  expect(jumpButtons()).toHaveLength(0);
+});
+
+it("leaves a reader who scrolled up alone when the keyboard goes down", async () => {
+  await render();
+  await act(async () => scroller.fire("touchstart"));
+  await scrollTo(100);
+  await act(async () => windowListeners.fire("touchend", {}));
+  await wait(JUMP_TO_LATEST_DELAY_MS);
+  const writes = recordScrollWrites();
+  scroller.clientHeight = 745;
+  await act(async () => resize());
+  await wait(VIEWPORT_SETTLE_MS);
+  expect(writes).toEqual([]);
+  expect(scroller.scrollTop).toBe(100);
+});
+
+it("does not nudge when only the content grows (a reply streaming in)", async () => {
+  await render();
+  await scrollTo(scroller.bottom);
+  const writes = recordScrollWrites();
+  scroller.scrollHeight = 1300;
+  await act(async () => resize());
+  await wait(VIEWPORT_SETTLE_MS);
+  expect(writes).toEqual([1300]);
 });

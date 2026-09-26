@@ -45,6 +45,8 @@ export interface PendingOutgoingMessage {
 const STICK_THRESHOLD_PX = 80;
 /** How long the reader stays away from the bottom before "Jump to latest" shows. */
 export const JUMP_TO_LATEST_DELAY_MS = 150;
+/** Outlasts the iPhone keyboard's slide down (about 250-300ms). */
+export const VIEWPORT_SETTLE_MS = 400;
 /** Gives up on a smooth jump that never reached the bottom. */
 const JUMP_SETTLE_MS = 1_000;
 /** How long after a wheel, key or finger lift a scroll still counts as the reader's. */
@@ -480,6 +482,36 @@ export function MessageList({
       if (stickRef.current) scroller.scrollTop = scroller.scrollHeight;
       remember();
     };
+    // When the list grows taller while it sits at its end (the iPhone keyboard
+    // going down), WebKit can keep drawing the old scroll offset: the latest
+    // message stays where it was and a keyboard-sized blank band fills the
+    // bottom until the next touch (26 Sep screenshot). Writing a different
+    // offset first turns the write into a real scroll, which WebKit applies.
+    const reassertEnd = () => {
+      const end = scroller.scrollHeight - scroller.clientHeight;
+      if (end <= 0 || scroller.scrollTop < end - 1) return;
+      scroller.scrollTop = end - 1;
+      scroller.scrollTop = scroller.scrollHeight;
+      remember();
+    };
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    // Kept apart from `seen`: a scroll event can land before the resize and
+    // record the new height first.
+    let observedHeight = scroller.clientHeight;
+    const onResize = () => {
+      const grew = scroller.clientHeight > observedHeight;
+      observedHeight = scroller.clientHeight;
+      follow();
+      if (!grew) return;
+      reassertEnd();
+      // Once more after the keyboard has finished moving.
+      if (settleTimer !== null) clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => {
+        settleTimer = null;
+        follow();
+        reassertEnd();
+      }, VIEWPORT_SETTLE_MS);
+    };
     follow();
     const readerActive = () =>
       readerRef.current.holding || Date.now() - readerRef.current.at < READER_INPUT_MS;
@@ -551,10 +583,11 @@ export function MessageList({
     window.addEventListener("keydown", onKeyDown);
     // Streaming text, late images and the keyboard all change heights without
     // a React update here, so follow size changes rather than renders.
-    const observer = new ResizeObserver(follow);
+    const observer = new ResizeObserver(onResize);
     observer.observe(content);
     observer.observe(scroller);
     return () => {
+      if (settleTimer !== null) clearTimeout(settleTimer);
       scroller.removeEventListener("scroll", onScroll);
       scroller.removeEventListener("touchstart", onHold);
       scroller.removeEventListener("wheel", onReaderInput);
