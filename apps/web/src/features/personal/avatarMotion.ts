@@ -21,17 +21,10 @@ export const AVATAR_MOTIONS: readonly AvatarMotion[] = [
   "done",
 ];
 
-/** Motions that loop for as long as they last (and so count against the cap). */
+/** Motions that loop for as long as they last (and pause while off screen). */
 export function isContinuousMotion(motion: AvatarMotion): boolean {
   return motion === "thinking" || motion === "working";
 }
-
-/**
- * How many avatars may run a continuous animation at once in one list. Ten
- * bobbing avatars is exactly the kind of permanent repaint that pegs the GPU on
- * a high-refresh display, so the list animates the first busy bot only.
- */
-export const MAX_CONTINUOUS_MOTION = 1;
 
 /** The shape of {@link import("./botSummaries").BotSummary} the mapping reads. */
 export interface BotMotionInput {
@@ -78,19 +71,4 @@ export function motionForConversationState(
     case "idle":
       return "idle";
   }
-}
-
-/**
- * Cap the continuous animation across a list: the first thinking or working
- * avatar keeps moving, later ones fall back to the static idle pose. They are
- * still marked as busy by their green dot, which is the channel that matters.
- */
-export function capContinuousMotion(motions: ReadonlyArray<AvatarMotion>): AvatarMotion[] {
-  let allowed = MAX_CONTINUOUS_MOTION;
-  return motions.map((motion) => {
-    if (!isContinuousMotion(motion)) return motion;
-    if (allowed <= 0) return "idle";
-    allowed -= 1;
-    return motion;
-  });
 }

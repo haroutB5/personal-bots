@@ -303,6 +303,42 @@ export const PersonalBotDeleteThreadInput = Schema.Struct({
 });
 export type PersonalBotDeleteThreadInput = typeof PersonalBotDeleteThreadInput.Type;
 
+/** The most chats one bulk archive or delete takes; a bot's whole list fits. */
+export const PERSONAL_BOT_THREADS_BATCH_MAX = 500;
+
+const PersonalBotThreadIdBatch = Schema.Array(ThreadId).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(PERSONAL_BOT_THREADS_BATCH_MAX),
+);
+
+/** Archives or unarchives several chats, one at a time, each exactly as `archiveThread` would. */
+export const PersonalBotArchiveThreadsInput = Schema.Struct({
+  threadIds: PersonalBotThreadIdBatch,
+  archived: Schema.Boolean,
+});
+export type PersonalBotArchiveThreadsInput = typeof PersonalBotArchiveThreadsInput.Type;
+
+/** Deletes several chats, one at a time, each exactly as `deleteThread` would. */
+export const PersonalBotDeleteThreadsInput = Schema.Struct({
+  threadIds: PersonalBotThreadIdBatch,
+});
+export type PersonalBotDeleteThreadsInput = typeof PersonalBotDeleteThreadsInput.Type;
+
+/**
+ * What a bulk archive or delete did: the chats it changed, and the ones it
+ * could not, each with the reason a single action would have shown.
+ */
+export const PersonalBotThreadsBatchResult = Schema.Struct({
+  done: Schema.Array(ThreadId),
+  failed: Schema.Array(
+    Schema.Struct({
+      threadId: ThreadId,
+      message: Schema.String,
+    }),
+  ),
+});
+export type PersonalBotThreadsBatchResult = typeof PersonalBotThreadsBatchResult.Type;
+
 /**
  * The user opened this chat: start its provider session in the background so
  * the next message does not wait for it. Fire and forget; no turn starts.

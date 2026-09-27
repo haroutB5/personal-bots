@@ -275,14 +275,17 @@ import {
 import {
   PersonalBot,
   PersonalBotArchiveThreadInput,
+  PersonalBotArchiveThreadsInput,
   PersonalBotPrewarmThreadInput,
   PersonalBotCreateInput,
   PersonalBotCreateThreadInput,
   PersonalBotDeleteInput,
   PersonalBotDeleteThreadInput,
+  PersonalBotDeleteThreadsInput,
   PersonalBotsError,
   PersonalBotsListResult,
   PersonalBotThread,
+  PersonalBotThreadsBatchResult,
   PersonalFileDeleteInput,
   PersonalFilesListResult,
   PersonalBotUpdateInput,
@@ -563,6 +566,8 @@ export const WS_METHODS = {
   personalBotsCreateThread: "personalBots.createThread",
   personalBotsArchiveThread: "personalBots.archiveThread",
   personalBotsDeleteThread: "personalBots.deleteThread",
+  personalBotsArchiveThreads: "personalBots.archiveThreads",
+  personalBotsDeleteThreads: "personalBots.deleteThreads",
   personalBotsPrewarmThread: "personalBots.prewarmThread",
   personalBotsGetProfile: "personalBots.getProfile",
   personalBotsSetProfile: "personalBots.setProfile",
@@ -1212,6 +1217,18 @@ const WsPersonalBotsPrewarmThreadRpc = Rpc.make(WS_METHODS.personalBotsPrewarmTh
 const WsPersonalBotsDeleteThreadRpc = Rpc.make(WS_METHODS.personalBotsDeleteThread, {
   payload: PersonalBotDeleteThreadInput,
   success: Schema.Struct({}),
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsArchiveThreadsRpc = Rpc.make(WS_METHODS.personalBotsArchiveThreads, {
+  payload: PersonalBotArchiveThreadsInput,
+  success: PersonalBotThreadsBatchResult,
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsDeleteThreadsRpc = Rpc.make(WS_METHODS.personalBotsDeleteThreads, {
+  payload: PersonalBotDeleteThreadsInput,
+  success: PersonalBotThreadsBatchResult,
   error: PersonalBotsRpcError,
 });
 
@@ -2344,6 +2361,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalBotsCreateThreadRpc,
   WsPersonalBotsArchiveThreadRpc,
   WsPersonalBotsDeleteThreadRpc,
+  WsPersonalBotsArchiveThreadsRpc,
+  WsPersonalBotsDeleteThreadsRpc,
   WsPersonalBotsPrewarmThreadRpc,
   WsPersonalBotsGetProfileRpc,
   WsPersonalBotsSetProfileRpc,

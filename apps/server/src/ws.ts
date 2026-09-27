@@ -188,6 +188,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import { deletePersonalChat } from "./personal/deletePersonalChat.ts";
+import { archivePersonalChats, deletePersonalChats } from "./personal/bulkPersonalChats.ts";
 import { deletePersonalGroup } from "./personal/deletePersonalGroup.ts";
 import { purgePersonalBot } from "./personal/purgePersonalBot.ts";
 import { signPersonalFiles } from "./personal/PersonalFiles.ts";
@@ -3240,6 +3241,25 @@ const makeWsRpcLayer = (
               { bots: personalBots, tasks: personalTasks, groups: personalGroups },
               input.threadId,
             ).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.personalBotsArchiveThreads]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsArchiveThreads,
+            archivePersonalChats(personalBots, input.threadIds, input.archived),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.personalBotsDeleteThreads]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsDeleteThreads,
+            deletePersonalChats(
+              { bots: personalBots, tasks: personalTasks, groups: personalGroups },
+              input.threadIds,
+            ),
             {
               "rpc.aggregate": "server",
             },

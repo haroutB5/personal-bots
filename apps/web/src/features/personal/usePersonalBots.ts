@@ -98,6 +98,20 @@ export const personalBotDeleteThread = createEnvironmentRpcCommand(connectionAto
   onSuccess: refreshBotsList,
 });
 
+// Bulk forms of the two above: one request and one list refresh for the whole
+// selection, each chat going through the same server path as a single one.
+export const personalBotArchiveThreads = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-bots:archive-threads",
+  tag: WS_METHODS.personalBotsArchiveThreads,
+  onSuccess: refreshBotsList,
+});
+
+export const personalBotDeleteThreads = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-bots:delete-threads",
+  tag: WS_METHODS.personalBotsDeleteThreads,
+  onSuccess: refreshBotsList,
+});
+
 export const personalFileDelete = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-files:delete",
   tag: WS_METHODS.personalFilesDelete,

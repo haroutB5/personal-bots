@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  capContinuousMotion,
+  AVATAR_MOTIONS,
+  isContinuousMotion,
   motionForConversationState,
   motionForSummary,
   type BotMotionInput,
@@ -68,47 +69,27 @@ describe("motionForConversationState", () => {
   });
 });
 
-describe("capContinuousMotion", () => {
-  it("animates the first working avatar only", () => {
-    expect(capContinuousMotion(["working", "working", "working"])).toEqual([
-      "working",
-      "idle",
-      "idle",
-    ]);
+describe("continuous motion", () => {
+  it("loops only while thinking or working", () => {
+    expect(AVATAR_MOTIONS.filter(isContinuousMotion)).toEqual(["thinking", "working"]);
   });
 
-  it("leaves one-shot poses alone, whatever their position", () => {
-    expect(capContinuousMotion(["waiting", "working", "blocked", "working", "idle"])).toEqual([
-      "waiting",
-      "working",
-      "blocked",
-      "idle",
-      "idle",
-    ]);
-  });
-
-  it("counts thinking as continuous under the same single slot", () => {
-    expect(capContinuousMotion(["thinking", "working", "thinking"])).toEqual([
+  // Harout, 1.49.0: every busy bot in the Bots list moves, not only the first.
+  it("gives every busy bot in a list its own loop", () => {
+    const busy = { live: true, rateLimited: false, attentionThreads: [], waitingFor: null };
+    const rows = [
+      { ...busy, thinking: true },
+      busy,
+      { ...busy, live: false, rateLimited: true },
+      busy,
+      { ...busy, thinking: true },
+    ];
+    expect(rows.map(motionForSummary)).toEqual([
       "thinking",
-      "idle",
-      "idle",
-    ]);
-    expect(capContinuousMotion(["waiting", "working", "thinking"])).toEqual([
-      "waiting",
       "working",
-      "idle",
-    ]);
-  });
-
-  it("is a no-op when nothing is working", () => {
-    expect(capContinuousMotion(["idle", "waiting", "blocked"])).toEqual([
-      "idle",
-      "waiting",
       "blocked",
+      "working",
+      "thinking",
     ]);
-  });
-
-  it("returns an empty list unchanged", () => {
-    expect(capContinuousMotion([])).toEqual([]);
   });
 });

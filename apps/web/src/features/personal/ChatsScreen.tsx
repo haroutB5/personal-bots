@@ -19,7 +19,7 @@ import { cn } from "~/lib/utils";
 import { useThreadShells } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 
-import { capContinuousMotion, motionForSummary, type AvatarMotion } from "./avatarMotion";
+import { motionForSummary, type AvatarMotion } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
 import {
   BotRow,
@@ -486,16 +486,16 @@ export function ChatsScreen({
       }),
     [botsById],
   );
-  // Avatar poses for the visible rows. The cap is the point: only the first
-  // working bot animates, so the list never runs more than one continuous
-  // animation however many bots are busy.
-  const rowMotions = useMemo(() => capContinuousMotion(visible.map(motionForSummary)), [visible]);
-  // The pinned box and the list below it are one list split in two, so the
-  // motion cap is still decided across every visible row, not per section.
+  // Avatar poses for the visible rows, pinned box included: every thinking or
+  // working bot moves (Harout, 1.49.0; it used to be the first one only).
+  // Transform and opacity loops, paused while a row is scrolled out of view
+  // (BotAvatar, avatarOffscreen.ts) and dropped under reduced motion.
   const motionByBotId = useMemo(
     () =>
-      new Map(visible.map((summary, index) => [summary.bot.botId as string, rowMotions[index]])),
-    [rowMotions, visible],
+      new Map(
+        visible.map((summary) => [summary.bot.botId as string, motionForSummary(summary)] as const),
+      ),
+    [visible],
   );
   const { pinned, rest } = useMemo(() => partitionPinnedSummaries(visible), [visible]);
   // Groups stay together immediately after the pinned strip. Within that

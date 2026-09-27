@@ -138,7 +138,7 @@ export const BotRow = memo(function BotRow({
   summary: BotSummary;
   now: number;
   describeTurn: (turn: ServerTurn) => string;
-  /** Avatar pose for this row; the list decides which row may animate. */
+  /** Avatar pose for this row (`motionForSummary`). */
   motion?: AvatarMotion | undefined;
   /** This bot's chat (or chats list, or editor) is open in the desktop pane. */
   selected?: boolean | undefined;
@@ -158,8 +158,8 @@ export const BotRow = memo(function BotRow({
         size={56}
         label={bot.name}
         motion={motion}
-        // The list's single uncapped working row gets the comet too (the cap in
-        // ChatsScreen keeps it to one per list); the owner found no lag on device.
+        // Every working row gets the comet (1.49.0: no longer one per list);
+        // measured at 4x CPU with five busy bots in hbots 1.49.0's HANDOFF.
         comet
       />
       <span className="flex min-w-0 flex-1 flex-col">

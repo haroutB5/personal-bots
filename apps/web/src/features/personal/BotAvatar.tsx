@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import type { BotAvatarShape } from "@t3tools/contracts";
 
@@ -7,6 +7,7 @@ import { cn } from "~/lib/utils";
 
 import { AvatarCometDefs, AvatarCometLayer } from "./BotAvatarComet";
 import { isContinuousMotion, type AvatarMotion } from "./avatarMotion";
+import { pauseWhileOffscreen } from "./avatarOffscreen";
 import {
   BOT_AVATAR_EYE_COLOR,
   BOT_AVATAR_EYE_HEIGHT,
@@ -57,7 +58,8 @@ export interface BotAvatarProps {
  * a hidden happy arc) that `avatarMotion.generated.css` animates: the poses
  * authored in `avatarRemotion/avatarStates.ts`, sampled into CSS keyframes.
  * Transform and opacity only, so the avatar's box never moves; only `thinking`
- * and `working` repeat (see `personal.css` and `avatarMotion.ts`). Without
+ * and `working` repeat, and pause while scrolled out of view (see
+ * `personal.css`, `avatarMotion.ts` and `avatarOffscreen.ts`). Without
  * `motion` the markup is the flat, unlayered original.
  */
 export function BotAvatar({
@@ -87,9 +89,18 @@ export function BotAvatar({
   // SVG ids are document-global; strip React's punctuation for url(#...).
   const idPrefix = `bot-avatar${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const showComet = comet && pose === "working";
+  // A loop scrolled out of view pauses (every busy bot in a long list moves).
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const looping = pose !== undefined && isContinuousMotion(pose);
+  useEffect(() => {
+    const element = svgRef.current;
+    if (!looping || element === null) return;
+    return pauseWhileOffscreen(element);
+  }, [looping]);
 
   return (
     <svg
+      ref={svgRef}
       role="img"
       aria-label={label}
       width={size}
