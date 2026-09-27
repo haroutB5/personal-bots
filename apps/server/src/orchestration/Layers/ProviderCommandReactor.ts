@@ -258,9 +258,15 @@ const make = Effect.gen(function* () {
    * memory)"), sent as that turn's context rather than in the bot's system
    * instructions: those must read the same on every session start of a
    * conversation, and a Claude session reads them only when it starts. Memory
-   * only applies to personal-bot threads and never fails the turn.
+   * only applies to personal-bot threads and never fails the turn. A task or
+   * routine attempt (and a steer into one) starts with a personal-task-
+   * message; its facts leave out task summaries, which belong to other tasks.
    */
-  const personalMemoryForTurn = (threadId: ThreadId, query: string) =>
+  const personalMemoryForTurn = (
+    threadId: ThreadId,
+    query: string,
+    messageId: MessageId | undefined,
+  ) =>
     Effect.gen(function* () {
       if (Option.isNone(personalMemory)) return undefined;
       const thread = yield* projectionSnapshotQuery
@@ -271,6 +277,7 @@ const make = Effect.gen(function* () {
         query,
         projectId: Option.isSome(thread) ? thread.value.projectId : undefined,
         record: true,
+        excludeTaskSummaries: messageId !== undefined && isPersonalTaskMessageId(messageId),
       });
       const block = context.block?.trim() ?? "";
       return block.length > 0 ? block : undefined;
@@ -1014,7 +1021,7 @@ const make = Effect.gen(function* () {
     const normalizedAttachments = input.attachments ?? [];
     const systemInstructions = yield* personalBotInstructions(input.threadId);
     const turnContext = normalizedInput
-      ? yield* personalMemoryForTurn(input.threadId, input.messageText)
+      ? yield* personalMemoryForTurn(input.threadId, input.messageText, input.messageId)
       : undefined;
     const activeSession = yield* providerService
       .listSessions()

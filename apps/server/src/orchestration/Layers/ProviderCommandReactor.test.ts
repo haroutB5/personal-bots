@@ -77,6 +77,7 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
 import { personalTaskMessageId } from "../../personal/personalThreadTitles.ts";
+import * as PersonalMemoryService from "../../personal/memory/PersonalMemoryService.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -179,6 +180,8 @@ describe("ProviderCommandReactor", () => {
     readonly unreadableHistory?: boolean;
     /** Links thread-1 to a personal bot, as bot chats, tasks and routines are. */
     readonly personalBotThread?: boolean;
+    /** Runs the real personal memory service, so turns carry "Known facts". */
+    readonly personalMemory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
@@ -498,7 +501,11 @@ describe("ProviderCommandReactor", () => {
       ),
       Layer.provideMerge(Layer.mock(TerminalManager)({ closeIdle: closeIdleTerminals })),
       Layer.provideMerge(ServerSettingsService.layerTest()),
-      Layer.provideMerge(PersonalBotRepository.layer),
+      Layer.provideMerge(
+        input?.personalMemory === true
+          ? Layer.merge(PersonalBotRepository.layer, PersonalMemoryService.layer)
+          : PersonalBotRepository.layer,
+      ),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -654,6 +661,8 @@ describe("ProviderCommandReactor", () => {
       drain,
       startReactor,
       runEffect,
+      runSql: <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
+        runtime!.runPromise(effect),
       reactor,
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
@@ -2889,6 +2898,87 @@ describe("ProviderCommandReactor", () => {
         expect(thread?.titleState?.needsRefinement).toBe(true);
       }),
     );
+  });
+
+  describe("personal memory for a turn", () => {
+    // A task or routine attempt starts with a personal-task- message; its
+    // "Known facts" must not carry the bot's summaries of earlier tasks.
+    const seedMemory = (harness: Awaited<ReturnType<typeof createHarness>>) =>
+      harness.runSql(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const now = "2026-01-01T00:00:00.000Z";
+          const rows = [
+            [
+              "memory-summary",
+              "task_summary",
+              'Task "Benchmark batch 1": batch 1 scored 42.',
+              "task:task-batch-1",
+            ],
+            ["memory-preference", "preference", "Benchmark results go in a table.", "user"],
+            ["memory-note", "note", "Benchmark machines are in the lab.", "user"],
+          ] as const;
+          for (const [memoryId, kind, content, source] of rows) {
+            yield* sql`
+              INSERT INTO personal_memory (
+                memory_id, scope, scope_id, kind, content, source, sensitivity,
+                created_at, updated_at, deleted_at, version
+              )
+              VALUES (${memoryId}, 'bot', 'bot-1', ${kind}, ${content}, ${source}, 'normal', ${now}, ${now}, NULL, 1)
+            `;
+          }
+        }),
+      );
+    const startTurn = (harness: Awaited<ReturnType<typeof createHarness>>, messageId: MessageId) =>
+      harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-turn-start-${messageId}`),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId,
+            role: "user",
+            text: "Run benchmark batch 2 and report the results.",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+    const turnContextOf = async (messageId: MessageId) => {
+      const harness = await createHarness({ personalBotThread: true, personalMemory: true });
+      await seedMemory(harness);
+      await startTurn(harness, messageId);
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+      const request = harness.sendTurn.mock.calls[0]?.[0] as { readonly turnContext?: string };
+      return request.turnContext;
+    };
+
+    it("a delegated task turn gets preferences and notes but no task summaries", async () => {
+      const context = await turnContextOf(personalTaskMessageId("task-batch-2", 1));
+      expect(context).toContain("Known facts (from memory)");
+      expect(context).toContain("- [preference] Benchmark results go in a table.");
+      expect(context).toContain("- [note] Benchmark machines are in the lab.");
+      expect(context).not.toContain("[task summary]");
+      expect(context).not.toContain("batch 1 scored 42");
+    });
+
+    it("a routine run turn gets no task summaries either", async () => {
+      // Routine runs start through the task service with the same message id.
+      const context = await turnContextOf(personalTaskMessageId("routine-run-7", 3));
+      expect(context).toContain("- [preference] Benchmark results go in a table.");
+      expect(context).not.toContain("[task summary]");
+    });
+
+    it("a chat turn still gets task summaries", async () => {
+      const context = await turnContextOf(asMessageId("user-message-benchmark"));
+      expect(context).toContain("Known facts (from memory)");
+      expect(context).toContain('- [task summary] Task "Benchmark batch 1": batch 1 scored 42.');
+      expect(context).toContain("- [preference] Benchmark results go in a table.");
+      expect(context).toContain("- [note] Benchmark machines are in the lab.");
+    });
   });
 
   it("generates a worktree branch name for the first turn", async () => {

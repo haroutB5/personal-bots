@@ -147,6 +147,8 @@ export interface PersonalMemorySaveInput {
 export interface PersonalMemoryScopeFilter {
   readonly botId?: PersonalBotId | undefined;
   readonly projectId?: string | undefined;
+  /** Leaves task summaries out before ranking, so the limit fills with other kinds. */
+  readonly excludeTaskSummaries?: boolean | undefined;
 }
 
 export class PersonalMemoryService extends Context.Service<
@@ -173,12 +175,15 @@ export class PersonalMemoryService extends Context.Service<
      * Relevant entries for a turn on a personal-bot thread (shared + that
      * bot, + the project when given), formatted as context for that turn.
      * `record` logs the ids against the thread's active task attempt.
+     * `excludeTaskSummaries` is set for task and routine turns: a task's
+     * objective must not carry the bot's summaries of unrelated past tasks.
      */
     readonly contextForThread: (input: {
       readonly threadId: ThreadId;
       readonly query: string;
       readonly projectId?: string | undefined;
       readonly record: boolean;
+      readonly excludeTaskSummaries?: boolean | undefined;
     }) => Effect.Effect<{
       readonly block: string | null;
       readonly memoryIds: ReadonlyArray<PersonalMemoryId>;
@@ -280,6 +285,7 @@ export const make = Effect.gen(function* () {
       WHERE personal_memory_fts MATCH ${match}
         AND m.deleted_at IS NULL
         AND ${scopeCondition(input)}
+        AND ${input.excludeTaskSummaries === true ? sql`m.kind <> 'task_summary'` : sql`1 = 1`}
       ORDER BY bm25(personal_memory_fts) ASC, m.updated_at DESC
       LIMIT ${input.limit ?? PERSONAL_MEMORY_RETRIEVAL_LIMIT}
     `.pipe(Effect.flatMap(decodeAll), storageFailure("search"));
@@ -377,6 +383,7 @@ export const make = Effect.gen(function* () {
         query: input.query.slice(0, 2_000) || " ",
         botId: botId.value,
         projectId: input.projectId,
+        excludeTaskSummaries: input.excludeTaskSummaries,
         limit: PERSONAL_MEMORY_RETRIEVAL_LIMIT,
       });
       const memoryIds = entries.map((entry) => entry.memoryId);

@@ -216,6 +216,117 @@ it.effect("task summaries are labelled, saved once per task and never resurrecte
   }).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("a task turn gets no task summaries; a chat turn still does", () =>
+  Effect.gen(function* () {
+    yield* linkThread;
+    const memory = yield* PersonalMemoryService;
+    const now = yield* DateTime.now;
+    // More summaries than one turn's limit, all matching better than the
+    // preference and the note: a task turn must still see those two.
+    for (let index = 1; index <= 9; index++) {
+      const taskId = PersonalTaskId.make(`task-batch-${index}`);
+      yield* memory.saveTaskSummary({
+        taskId,
+        rootTaskId: taskId,
+        parentTaskId: null,
+        botId: BOT_A,
+        threadId: THREAD_A,
+        title: `Benchmark batch ${index}`,
+        objective: "Run the benchmark",
+        acceptanceCriteria: "",
+        expectedOutput: "",
+        status: "completed",
+        source: "delegation",
+        idempotencyKey: `k-batch-${index}`,
+        depth: 0,
+        maxDepth: 2,
+        maxChildren: 4,
+        result: { summary: `Benchmark batch ${index} scored ${index * 10} on the benchmark.` },
+        errorCategory: null,
+        errorMessage: null,
+        availableAt: null,
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+        completedAt: now,
+      });
+    }
+    yield* memory.save({
+      scope: "shared",
+      scopeId: null,
+      kind: "preference",
+      content:
+        "The user wants benchmark results reported as a table with the run date and machine name.",
+      source: "user",
+    });
+    yield* memory.save({
+      scope: "bot",
+      scopeId: BOT_A,
+      kind: "note",
+      content: "Benchmark machines live in the lab on the second floor next to the printer room.",
+      source: "user",
+    });
+    const query = "Run benchmark batch 2";
+
+    const taskTurn = yield* memory.contextForThread({
+      threadId: THREAD_A,
+      query,
+      record: false,
+      excludeTaskSummaries: true,
+    });
+    expect(taskTurn.memoryIds.length).toBe(2);
+    expect(taskTurn.block).toContain("Known facts (from memory)");
+    expect(taskTurn.block).toContain("- [preference] The user wants benchmark results");
+    expect(taskTurn.block).toContain("- [note] Benchmark machines live in the lab");
+    expect(taskTurn.block).not.toContain("[task summary]");
+
+    const chatTurn = yield* memory.contextForThread({ threadId: THREAD_A, query, record: false });
+    expect(chatTurn.memoryIds.length).toBe(8);
+    expect(chatTurn.block).toContain('- [task summary] Task "Benchmark batch');
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("a task turn with only task summaries to match gets no memory block", () =>
+  Effect.gen(function* () {
+    yield* linkThread;
+    const memory = yield* PersonalMemoryService;
+    const now = yield* DateTime.now;
+    const taskId = PersonalTaskId.make("task-only");
+    yield* memory.saveTaskSummary({
+      taskId,
+      rootTaskId: taskId,
+      parentTaskId: null,
+      botId: BOT_A,
+      threadId: THREAD_A,
+      title: "Benchmark batch 1",
+      objective: "Run the benchmark",
+      acceptanceCriteria: "",
+      expectedOutput: "",
+      status: "completed",
+      source: "routine",
+      idempotencyKey: "k-only",
+      depth: 0,
+      maxDepth: 2,
+      maxChildren: 4,
+      result: { summary: "Batch 1 scored 42." },
+      errorCategory: null,
+      errorMessage: null,
+      availableAt: null,
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+      completedAt: now,
+    });
+    const taskTurn = yield* memory.contextForThread({
+      threadId: THREAD_A,
+      query: "Run benchmark batch 2",
+      record: true,
+      excludeTaskSummaries: true,
+    });
+    expect(taskTurn).toEqual({ block: null, memoryIds: [] });
+  }).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("a task tree that saw a sensitive site leaves no summary in bot memory", () =>
   Effect.gen(function* () {
     yield* linkThread;
