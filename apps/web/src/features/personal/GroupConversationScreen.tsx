@@ -54,6 +54,7 @@ import { useKeyboardInset } from "./useKeyboardInset";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { useReportViewingThread } from "./useReportViewingThread";
 import { pendingForThread } from "./pendingOutgoing";
+import { useLeaveResumedChatIfGone } from "./resumeLastChat";
 import { useCloseGroupNotifications } from "./staleNotifications";
 import {
   personalBotCreateThread,
@@ -143,6 +144,11 @@ export function GroupConversationScreen({
   const thread = useThreadDetail(threadRef);
   const status = useThreadStatus(threadRef);
   const threadState = useEnvironmentThread(environmentId, threadId);
+  // Reopened by a relaunch but deleted since: back to Bots without a word.
+  useLeaveResumedChatIfGone(
+    `/bots/groups/${groupId}`,
+    (groupsQuery.data !== null && group === null) || status === "deleted",
+  );
 
   const shellRef = useRef<HTMLDivElement | null>(null);
   const keyboardInset = useKeyboardInset(shellRef);

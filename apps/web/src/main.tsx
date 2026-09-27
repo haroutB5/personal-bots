@@ -13,18 +13,43 @@ import {
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
-import { registerPersonalServiceWorker } from "./features/personal/serviceWorker";
+import {
+  isStandaloneDisplay,
+  registerPersonalServiceWorker,
+} from "./features/personal/serviceWorker";
 import { checkStaleReleaseAtBoot } from "./features/personal/staleRelease";
 import { keepBotsBehindChats } from "./features/personal/botsBackStack";
+import {
+  browserLocalStorage,
+  resumeLastChatAtBoot,
+  trackLastChat,
+} from "./features/personal/resumeLastChat";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
+const baseHistory = isElectron ? createHashHistory() : createBrowserHistory();
+// Personal: a relaunch of the installed app at /bots reopens the chat that was
+// open when iOS evicted it, before anything renders.
+const resumedChat = isElectron
+  ? null
+  : resumeLastChatAtBoot(baseHistory, {
+      storage: browserLocalStorage(),
+      now: Date.now(),
+      standalone: isStandaloneDisplay(),
+    });
 // Personal: going back from any bot chat lands on /bots, whatever opened it.
-const history = keepBotsBehindChats(isElectron ? createHashHistory() : createBrowserHistory());
+const history = keepBotsBehindChats(baseHistory);
+if (!isElectron) {
+  trackLastChat(history, { storage: browserLocalStorage(), now: Date.now, document, window });
+}
 
 const router = getRouter(history);
 
 // Production builds on secure origins only: offline app shell + push clicks.
-registerPersonalServiceWorker((path) => router.history.push(path));
+registerPersonalServiceWorker((path) => router.history.push(path), {
+  // Route template only (no ids): where cold boots land.
+  route: router.matchRoutes(router.history.location.pathname, {}).at(-1)?.fullPath ?? null,
+  resumed: resumedChat !== null,
+});
 
 // Set when a reload is on its way, so the boot below skips painting this page.
 let reloadScheduled = false;

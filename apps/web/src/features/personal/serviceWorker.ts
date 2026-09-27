@@ -114,7 +114,13 @@ export function workerMessageDiag(
  * Registers `/sw.js` and routes notification taps from the worker into the
  * router (see notificationTap.ts for why there are so many routes).
  */
-export function registerPersonalServiceWorker(navigate: (path: string) => void): void {
+export function registerPersonalServiceWorker(
+  navigate: (path: string) => void,
+  boot: { readonly route: string | null; readonly resumed: boolean } = {
+    route: null,
+    resumed: false,
+  },
+): void {
   if (
     !shouldRegisterServiceWorker({
       production: import.meta.env.PROD,
@@ -176,8 +182,11 @@ export function registerPersonalServiceWorker(navigate: (path: string) => void):
     onWorkerMessage(event.data, "broadcast"),
   );
   // The installed app only: one line per launch saying whether a worker
-  // controls the page, which decides which tap routes can reach it.
-  if (isStandaloneDisplay()) reportTap({ event: "page-boot", standalone: true });
+  // controls the page, which decides which tap routes can reach it, the route
+  // it landed on and whether that was the chat left open (resumeLastChat.ts).
+  if (isStandaloneDisplay()) {
+    reportTap({ event: "page-boot", standalone: true, landed: boot.route, resumed: boot.resumed });
+  }
 
   let lastUpdateCheck = 0;
   const checkForNewWorker = () => {

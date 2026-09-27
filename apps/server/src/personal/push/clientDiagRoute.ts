@@ -133,6 +133,10 @@ const FIELDS: Record<string, Read> = {
   navigated: bool,
   controlled: bool,
   standalone: bool,
+  // page-boot: the route template the launch landed on (no ids), and whether
+  // it reopened the chat left open (web features/personal/resumeLastChat.ts).
+  landed: path,
+  resumed: bool,
   warm: bool,
   snapshot: bool,
   ms: count,

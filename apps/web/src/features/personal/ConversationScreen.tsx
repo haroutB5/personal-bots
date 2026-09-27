@@ -66,6 +66,7 @@ import {
 import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerLink } from "./ConversationComputerLink";
 import { ConversationDesktopLine } from "./ConversationDesktopLine";
+import { useLeaveResumedChatIfGone } from "./resumeLastChat";
 import { useCloseChatNotifications } from "./staleNotifications";
 import { useDesktopStatus } from "./computer/desktopState";
 import { useComputerFeed } from "./computer/computerState";
@@ -258,6 +259,12 @@ export function ConversationScreen({
   const threadShell = useThreadShell(threadRef);
   const status = useThreadStatus(threadRef);
   useCloseChatNotifications(botId, threadIdParam);
+  // Reopened by a relaunch but deleted or archived since (deleting a bot
+  // deletes its chats): back to Bots without a word.
+  useLeaveResumedChatIfGone(
+    `/bots/${botId}/${threadIdParam}`,
+    status === "deleted" || (threadShell?.archivedAt ?? null) !== null,
+  );
 
   // A cold deep link (notification tap, PWA relaunch) makes this the first
   // screen: nothing else has loaded the bots list, and a query that failed

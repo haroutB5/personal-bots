@@ -173,6 +173,29 @@ describe("client diagnostics route", () => {
     ).toEqual({ event: "page-boot" });
   });
 
+  it("keeps the route a launch landed on and whether it reopened the last chat", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "page-boot",
+          standalone: true,
+          landed: "/bots/$botId/$threadId",
+          resumed: true,
+        }),
+      ),
+    ).toEqual({
+      event: "page-boot",
+      standalone: true,
+      landed: "/bots/$botId/$threadId",
+      resumed: true,
+    });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({ event: "page-boot", landed: "//evil.test/x", resumed: "yes" }),
+      ),
+    ).toEqual({ event: "page-boot" });
+  });
+
   it("accepts real-user timing beacons with their few fields", () => {
     expect(
       sanitizeClientDiag(
