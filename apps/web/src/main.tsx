@@ -15,9 +15,11 @@ import { AppRoot } from "./AppRoot";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 import { registerPersonalServiceWorker } from "./features/personal/serviceWorker";
 import { checkStaleReleaseAtBoot } from "./features/personal/staleRelease";
+import { keepBotsBehindChats } from "./features/personal/botsBackStack";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
-const history = isElectron ? createHashHistory() : createBrowserHistory();
+// Personal: going back from any bot chat lands on /bots, whatever opened it.
+const history = keepBotsBehindChats(isElectron ? createHashHistory() : createBrowserHistory());
 
 const router = getRouter(history);
 
