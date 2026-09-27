@@ -668,9 +668,13 @@ export function MessageList({
     // composer and any strip resting on it, so it never shifts the layout and
     // rides up with the keyboard.
     <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* `relative`: the scroller must be the containing block of the
+          sr-only speaker labels (absolute). Otherwise they escape it, sit at
+          their place deep in a long transcript and make the page column
+          above the chat scrollable, so the whole chat drags up off screen. */}
       <div
         ref={scrollerRef}
-        className="personal-column personal-scroll-quiet min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4"
+        className="personal-column personal-scroll-quiet relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4"
       >
         <div
           ref={contentRef}

@@ -584,3 +584,57 @@ it("renders what the bot said next below the question it answered", async () => 
   expect(card).toBeGreaterThan(-1);
   expect(said).toBeGreaterThan(card);
 });
+
+// The screen-reader "You said:" / "Assistant said:" labels are
+// `position: absolute` (sr-only). If the transcript's scroller is not their
+// containing block they escape it, sit at their place deep in a long
+// transcript and give the page column above the chat that much scroll: on the
+// iPhone the whole chat, composer and all, then drags up off a blank screen.
+it("keeps the transcript's hidden speaker labels inside the scroller", async () => {
+  stubEnvironment();
+  const message = (id: string, role: "user" | "assistant", text: string): ConversationItem => ({
+    kind: "message",
+    id,
+    message: {
+      id: MessageId.make(id),
+      role,
+      text,
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-09-14T10:00:00.000Z",
+      updatedAt: "2026-09-14T10:00:00.000Z",
+    },
+  });
+  await act(async () => {
+    renderer = create(
+      <MessageList
+        {...BASE_PROPS}
+        items={[message("m-1", "user", "Hello"), message("m-2", "assistant", "Hi there")]}
+      />,
+    );
+  });
+
+  const scroller = renderer!.root.findByProps({ role: "log" }).parent!;
+  expect(String(scroller.props.className)).toContain("overflow-y-auto");
+  const labels = renderer!.root.findAll(
+    (node) => typeof node.type === "string" && node.props.className === "sr-only",
+  );
+  expect(labels.length).toBeGreaterThanOrEqual(2);
+  for (const label of labels) {
+    let positioned: ReactTestInstance | null = null;
+    for (let node = label.parent; node !== null; node = node.parent) {
+      if (typeof node.type !== "string") continue;
+      if (/(^|\s)(relative|absolute|fixed|sticky)(\s|$)/.test(String(node.props.className ?? ""))) {
+        positioned = node;
+        break;
+      }
+    }
+    // The nearest positioned ancestor must be the scroller itself (or inside
+    // it), so the label scrolls and clips with the transcript.
+    let inside = false;
+    for (let node: ReactTestInstance | null = positioned; node !== null; node = node.parent) {
+      if (node === scroller) inside = true;
+    }
+    expect(inside).toBe(true);
+  }
+});

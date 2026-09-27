@@ -776,7 +776,9 @@ export function ConversationScreen({
   const chat = (
     <div
       ref={shellRef}
-      className="flex h-full min-h-0 flex-col"
+      // Pinned: nothing inside may overflow into the page column, which
+      // would let the whole chat scroll away (see MessageList).
+      className="relative flex h-full min-h-0 flex-col overflow-clip"
       style={{
         paddingBottom: keyboardInset > 0 ? keyboardInset : "max(env(safe-area-inset-bottom), 8px)",
       }}
