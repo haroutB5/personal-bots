@@ -388,7 +388,7 @@ describe("personal composer in a group", () => {
  */
 describe("personal composer queues while the bot works", () => {
   const working = { ...props, working: true, canInterrupt: true };
-  const sendLabel = "Send, queued until this turn finishes";
+  const sendLabel = "Send, queued until the bot takes it in";
 
   it("sends mid-turn and says the message is waiting its turn", async () => {
     await act(async () => renderer.update(<PersonalComposer {...working} />));
@@ -401,6 +401,13 @@ describe("personal composer queues while the bot works", () => {
     expect(state.draft.prompt).toBe("");
     const status = renderer.root.findAllByProps({ role: "status" });
     expect(status.some((node) => node.children.join("").includes("Queued"))).toBe(true);
+  });
+
+  it("leaves Queued to the status under the message when a bot chat asks it to", async () => {
+    await act(async () => renderer.update(<PersonalComposer {...working} queuedNotice={false} />));
+    await act(async () => renderer.root.findByProps({ "aria-label": sendLabel }).props.onClick());
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(0);
   });
 
   it("says nothing about queueing for a message sent to an idle bot", async () => {

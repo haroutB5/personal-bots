@@ -31,6 +31,7 @@ import { SecretRequestCard } from "./SecretRequestCard";
 import { ConnectionApprovalCard } from "./ConnectionApprovalCard";
 import { approvalHasExpired } from "./connectionApprovalCards";
 import { ToolDetails } from "./ToolDetails";
+import type { LatestMessageReadStatus, MessageReadStatus } from "./messageReadStatus";
 
 /** A message the user sent that the server has not echoed back yet. */
 export interface PendingOutgoingMessage {
@@ -81,12 +82,20 @@ function attachmentName(attachment: unknown): string {
   return "Attachment";
 }
 
+const READ_STATUS_LABEL: Record<MessageReadStatus, string> = {
+  queued: "Queued",
+  read: "Read",
+};
+
 const UserMessage = memo(function UserMessage({
   environmentId,
   message,
+  readStatus = null,
 }: {
   environmentId: EnvironmentId;
   message: ChatMessage;
+  /** Only on the owner's latest message: whether the bot has taken it in yet. */
+  readStatus?: MessageReadStatus | null;
 }) {
   const resources = useMemo(
     () => selectMessageImageResources(message.attachments),
@@ -181,6 +190,13 @@ const UserMessage = memo(function UserMessage({
         <p className="max-w-[78%] rounded-[var(--personal-radius-bubble)] bg-[var(--personal-fill-muted)] px-3.5 py-2.5 text-[15px] leading-[1.4] break-words whitespace-pre-wrap text-[var(--personal-text)] md:text-[16px] md:leading-[1.5]">
           {message.text}
         </p>
+      ) : null}
+      {readStatus !== null ? (
+        // role="status" is a polite live region: "Queued" turning into "Read"
+        // is announced without interrupting.
+        <span role="status" className="text-xs text-[var(--personal-text-tertiary)]">
+          {READ_STATUS_LABEL[readStatus]}
+        </span>
       ) : null}
     </div>
   );
@@ -382,6 +398,7 @@ export function MessageList({
   threadRef,
   items,
   pending,
+  latestMessageStatus = null,
   working,
   botName,
   workspaceRoot,
@@ -417,6 +434,8 @@ export function MessageList({
    */
   groupSpeaker?: (botId: string) => GroupSpeakerPresentation | null;
   pending: ReadonlyArray<PendingOutgoingMessage>;
+  /** "Queued"/"Read" under the owner's latest message; a bot chat passes it, a group does not. */
+  latestMessageStatus?: LatestMessageReadStatus | null;
   working: boolean;
   botName: string;
   workspaceRoot: string | undefined;
@@ -799,7 +818,16 @@ export function MessageList({
                 );
               case "message":
                 return item.message.role === "user" ? (
-                  <UserMessage key={item.id} environmentId={environmentId} message={item.message} />
+                  <UserMessage
+                    key={item.id}
+                    environmentId={environmentId}
+                    message={item.message}
+                    readStatus={
+                      latestMessageStatus?.messageId === String(item.message.id)
+                        ? latestMessageStatus.status
+                        : null
+                    }
+                  />
                 ) : (
                   <AssistantMessage
                     key={item.id}

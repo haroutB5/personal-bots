@@ -55,6 +55,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { appendUserInputAttachmentPaths } from "../userInputAttachments.ts";
+import { UserMessageDeliveryTracker } from "../userMessageDelivery.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as DeviceService from "../../device/DeviceService.ts";
@@ -519,6 +520,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   });
   let turnAnalyticsRequestId = 0;
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+  const nowMillis = Effect.map(DateTime.now, DateTime.toEpochMillis);
 
   const finishTurnAnalytics = (
     state: TurnAnalyticsState,
@@ -1020,6 +1022,27 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
     );
 
+  const userMessageDeliveries = new UserMessageDeliveryTracker();
+  const publishUserMessageDelivered = (input: {
+    readonly provider: ProviderDriverKind;
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+    readonly messageId: MessageId;
+  }) =>
+    Effect.gen(function* () {
+      yield* publishRuntimeEvent({
+        type: "user-message.delivered",
+        eventId: EventId.make(`${input.messageId}:delivered:${yield* nowMillis}`),
+        provider: input.provider,
+        providerInstanceId: input.providerInstanceId,
+        threadId: input.threadId,
+        createdAt: yield* nowIso,
+        turnId: input.turnId,
+        payload: { messageId: input.messageId },
+      });
+    });
+
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(
       Effect.tap((canonicalEvent) =>
@@ -1151,6 +1174,20 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       if (canonicalEvent.type === "turn.started") {
         yield* observeTurnStartedForAnalytics(source, canonicalEvent);
+        if (canonicalEvent.turnId !== undefined) {
+          for (const messageId of userMessageDeliveries.turnStarted(
+            canonicalEvent.threadId,
+            canonicalEvent.turnId,
+          )) {
+            yield* publishUserMessageDelivered({
+              provider: canonicalEvent.provider,
+              providerInstanceId: source.instanceId,
+              threadId: canonicalEvent.threadId,
+              turnId: canonicalEvent.turnId,
+              messageId,
+            });
+          }
+        }
       } else if (canonicalEvent.type === "model.rerouted") {
         yield* observeModelReroutedForAnalytics(source, canonicalEvent);
       } else if (
@@ -1189,6 +1226,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }
       } else if (canonicalEvent.type === "session.exited") {
         yield* clearTurnAnalyticsSession(source.instanceId, canonicalEvent.threadId);
+        userMessageDeliveries.forget(canonicalEvent.threadId);
       }
       if (
         isCompactedEvent(canonicalEvent) &&
@@ -1839,6 +1877,25 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         (turnMetadata) =>
           Effect.gen(function* () {
             const turn = yield* routed.adapter.sendTurn(input);
+            // When the owner's message counts as taken in, per adapter: Claude
+            // only queues it here and reports the drain from its SDK lifecycle;
+            // Codex queues a mid-turn send as its own turn, delivered when that
+            // turn starts; the rest (OpenCode promptAsync) have it on return.
+            const delivery = routed.adapter.capabilities.userMessageDelivery ?? "handover";
+            if (
+              input.messageId !== undefined &&
+              delivery !== "adapter" &&
+              (delivery === "handover" ||
+                userMessageDeliveries.sent(input.threadId, turn.turnId, input.messageId))
+            ) {
+              yield* publishUserMessageDelivered({
+                provider: routed.adapter.provider,
+                providerInstanceId: routed.instanceId,
+                threadId: input.threadId,
+                turnId: turn.turnId,
+                messageId: input.messageId,
+              });
+            }
             yield* associateTurnAnalytics({
               providerInstanceId: routed.instanceId,
               threadId: input.threadId,

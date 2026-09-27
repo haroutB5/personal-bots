@@ -1,8 +1,10 @@
 import {
   EventId,
+  MessageId,
   ProviderDriverKind,
   RuntimeTaskId,
   ThreadId,
+  TurnId,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -196,5 +198,28 @@ describe("runtimeEventToActivities image tool results", () => {
     expect(JSON.stringify(payload).includes(imageBase64.slice(0, 64))).toBe(false);
     // The event's own payload is not mutated.
     expect(readData.result.content[0]!.source.data).toBe(imageBase64);
+  });
+});
+
+describe("runtimeEventToActivities user message delivery", () => {
+  it("records the delivery as an info activity naming the message", () => {
+    const activities = runtimeEventToActivities({
+      ...base,
+      type: "user-message.delivered",
+      eventId: EventId.make("evt-delivered"),
+      turnId: TurnId.make("turn-1"),
+      payload: { messageId: MessageId.make("owner-message-1") },
+    } satisfies ProviderRuntimeEvent);
+    expect(activities).toEqual([
+      {
+        id: "evt-delivered",
+        createdAt: base.createdAt,
+        tone: "info",
+        kind: "user-message.delivered",
+        summary: "Message read",
+        payload: { messageId: "owner-message-1" },
+        turnId: "turn-1",
+      },
+    ]);
   });
 });

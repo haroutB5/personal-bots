@@ -16,6 +16,7 @@ import type {
 import {
   ApprovalRequestId,
   ClaudeSettings,
+  MessageId,
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
@@ -2260,6 +2261,211 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(String(turnStartedEvents[0]?.turnId), String(turn.turnId));
       assert.equal(turnCompletedEvents.length, 1);
       assert.equal(String(turnCompletedEvents[0]?.turnId), String(turn.turnId));
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect(
+    "reports a steered message read only when the CLI drains it, not on the bot's other output",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const runtimeEventsFiber = yield* Stream.takeUntil(
+          adapter.streamEvents,
+          (event) => event.type === "turn.completed",
+        ).pipe(Stream.runCollect, Effect.forkChild);
+
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        const turn = yield* adapter.sendTurn({
+          threadId: session.threadId,
+          messageId: MessageId.make("owner-message-1"),
+          input: "run 5 commands",
+          attachments: [],
+        });
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          messageId: MessageId.make("owner-message-2"),
+          input: "actually run 15",
+          attachments: [],
+        });
+        const [first, steer] = yield* Effect.promise(() =>
+          readPromptMessages(harness.getLastCreateQueryInput(), 2),
+        );
+        assert.equal(first?.uuid, String(turn.turnId));
+        // The steer carries its own uuid so the CLI reports its lifecycle.
+        assert.ok(steer?.uuid);
+        assert.notEqual(steer?.uuid, String(turn.turnId));
+
+        const sessionId = "sdk-session-read";
+        const lifecycle = (uuid: string, state: string, frame: string) =>
+          ({
+            type: "command_lifecycle",
+            command_uuid: uuid,
+            state,
+            session_id: sessionId,
+            uuid: frame,
+          }) as unknown as SDKMessage;
+
+        harness.query.emit(lifecycle(String(turn.turnId), "queued", "lc-1"));
+        harness.query.emit(lifecycle(String(turn.turnId), "started", "lc-2"));
+        harness.query.emit(lifecycle(steer!.uuid!, "queued", "lc-3"));
+        // The step the bot was already on keeps talking: that is not the steer.
+        harness.query.emit({
+          type: "assistant",
+          session_id: sessionId,
+          uuid: "assistant-read-1",
+          parent_tool_use_id: null,
+          user_message_uuid: String(turn.turnId),
+          user_message_uuids: [String(turn.turnId)],
+          message: {
+            id: "assistant-message-read-1",
+            content: [{ type: "text", text: "Running command 3 of 5." }],
+          },
+        } as unknown as SDKMessage);
+        // The fold: the CLI drains the steer into the running turn.
+        harness.query.emit(lifecycle(steer!.uuid!, "started", "lc-4"));
+        harness.query.emit({
+          type: "assistant",
+          session_id: sessionId,
+          uuid: "assistant-read-2",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-message-read-2",
+            content: [{ type: "text", text: "Switching to 15." }],
+          },
+        } as unknown as SDKMessage);
+        harness.query.emit(lifecycle(steer!.uuid!, "completed", "lc-5"));
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          session_id: sessionId,
+          uuid: "result-read-1",
+        } as unknown as SDKMessage);
+
+        const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const delivered = events.flatMap((event, index) =>
+          event.type === "user-message.delivered"
+            ? [{ index, messageId: String(event.payload.messageId) }]
+            : [],
+        );
+        // Each message reported exactly once, the steer only at its drain.
+        assert.deepEqual(
+          delivered.map((entry) => entry.messageId),
+          ["owner-message-1", "owner-message-2"],
+        );
+        const textIndex = (text: string) =>
+          events.findIndex((event) => JSON.stringify(event.payload).includes(text));
+        const unrelatedText = textIndex("Running command 3 of 5.");
+        assert.ok(unrelatedText >= 0, "unrelated output was emitted");
+        // The bot's output from the step it was on came first and did not count.
+        assert.ok(delivered[1]!.index > unrelatedText);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect("reports an idle send read as soon as its turn's prompt starts", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "user-message.delivered",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        messageId: MessageId.make("owner-message-idle"),
+        input: "hello",
+        attachments: [],
+      });
+      harness.query.emit({
+        type: "command_lifecycle",
+        command_uuid: String(turn.turnId),
+        state: "started",
+        session_id: "sdk-session-idle",
+        uuid: "lc-idle",
+      } as unknown as SDKMessage);
+
+      const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const delivered = events.at(-1);
+      assert.equal(delivered?.type, "user-message.delivered");
+      if (delivered?.type !== "user-message.delivered") return;
+      assert.equal(String(delivered.payload.messageId), "owner-message-idle");
+      assert.equal(String(delivered.turnId), String(turn.turnId));
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("never reports a message the CLI cancelled before it ran", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "long job",
+        attachments: [],
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        messageId: MessageId.make("owner-message-cancelled"),
+        input: "never mind",
+        attachments: [],
+      });
+      const [, steer] = yield* Effect.promise(() =>
+        readPromptMessages(harness.getLastCreateQueryInput(), 2),
+      );
+      const frame = (state: string, uuid: string) =>
+        ({
+          type: "command_lifecycle",
+          command_uuid: steer!.uuid!,
+          state,
+          session_id: "sdk-session-cancel",
+          uuid,
+        }) as unknown as SDKMessage;
+      harness.query.emit(frame("queued", "lc-c1"));
+      harness.query.emit(frame("cancelled", "lc-c2"));
+      // A late terminal frame for the same uuid must not resurrect it.
+      harness.query.emit(frame("completed", "lc-c3"));
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-cancel",
+        uuid: "result-cancel-1",
+      } as unknown as SDKMessage);
+
+      const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.equal(events.filter((event) => event.type === "user-message.delivered").length, 0);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

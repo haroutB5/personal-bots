@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import {
   EventId,
   IsoDateTime,
+  MessageId,
   NonNegativeInt,
   ProviderItemId,
   PositiveInt,
@@ -198,6 +199,7 @@ const FilesPersistedType = Schema.Literal("files.persisted");
 const ToolDeniedType = Schema.Literal("tool.denied");
 const RuntimeWarningType = Schema.Literal("runtime.warning");
 const RuntimeErrorType = Schema.Literal("runtime.error");
+const UserMessageDeliveredType = Schema.Literal("user-message.delivered");
 
 const ProviderRuntimeEventBase = Schema.Struct({
   eventId: EventId,
@@ -811,6 +813,16 @@ const RuntimeWarningPayload = Schema.Struct({
 });
 export type RuntimeWarningPayload = typeof RuntimeWarningPayload.Type;
 
+/**
+ * The provider has taken in a user message: it drained into a turn (a new one,
+ * or folded into the running one as a steer) rather than waiting in a queue.
+ * Drives the chat's "Queued" -> "Read" status under the owner's latest message.
+ */
+const UserMessageDeliveredPayload = Schema.Struct({
+  messageId: MessageId,
+});
+export type UserMessageDeliveredPayload = typeof UserMessageDeliveredPayload.Type;
+
 const RuntimeErrorPayload = Schema.Struct({
   message: TrimmedNonEmptyStringSchema,
   class: Schema.optional(RuntimeErrorClass),
@@ -1178,6 +1190,14 @@ const ProviderRuntimeErrorEvent = Schema.Struct({
 });
 export type ProviderRuntimeErrorEvent = typeof ProviderRuntimeErrorEvent.Type;
 
+const ProviderRuntimeUserMessageDeliveredEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: UserMessageDeliveredType,
+  payload: UserMessageDeliveredPayload,
+});
+export type ProviderRuntimeUserMessageDeliveredEvent =
+  typeof ProviderRuntimeUserMessageDeliveredEvent.Type;
+
 export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeSessionStartedEvent,
   ProviderRuntimeSessionConfiguredEvent,
@@ -1228,6 +1248,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeToolDeniedEvent,
   ProviderRuntimeWarningEvent,
   ProviderRuntimeErrorEvent,
+  ProviderRuntimeUserMessageDeliveredEvent,
 ]);
 export type ProviderRuntimeEventV2 = typeof ProviderRuntimeEventV2.Type;
 

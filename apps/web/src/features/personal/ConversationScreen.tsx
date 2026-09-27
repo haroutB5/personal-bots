@@ -72,7 +72,6 @@ import { useComputerFeed } from "./computer/computerState";
 import { ConversationRoutinesPanel } from "./ConversationRoutinesPanel";
 import { CONVERSATION_SIDE_PANEL_ID, ConversationSidePanel } from "./ConversationSidePanel";
 import {
-  botLastSpokeAtMs,
   autoRetryNotice,
   buildConversationItems,
   contextBadgeLabel,
@@ -88,6 +87,7 @@ import {
   placeConnectionApprovalCards,
   resolveConversationHeaderName,
 } from "./conversationModel";
+import { deriveLatestMessageReadStatus } from "./messageReadStatus";
 import { DelegationCard } from "./DelegationCard";
 import { useChatSidePanel } from "./desktopColumns";
 import {
@@ -394,9 +394,6 @@ export function ConversationScreen({
     () => placeDelegationCards(baseItems, children),
     [baseItems, children],
   );
-  // Read off the items the composer's "Queued" notice is shown over, so the
-  // notice retires as soon as the bot answers the steered message.
-  const botSpokeAtMs = useMemo(() => botLastSpokeAtMs(baseItems), [baseItems]);
   const describeTurn = useCallback(
     (turn: ServerTurn) => serverTurnLabel(turn, resolveTurnChildren(turn, tasks), nameOf),
     [tasks, nameOf],
@@ -524,6 +521,12 @@ export function ConversationScreen({
   const providerWait = conversationState === "rate_limited" || conversationState === "retrying";
   const turnBusy =
     working || (providerWait && thread?.session !== null && thread?.session?.status !== "error");
+  const latestTurn = thread?.latestTurn ?? null;
+  const latestMessageStatus = useMemo(
+    () =>
+      deriveLatestMessageReadStatus({ items: baseItems, activities, busy: turnBusy, latestTurn }),
+    [baseItems, activities, turnBusy, latestTurn],
+  );
   const stateLabel =
     conversationState === "delegating"
       ? (waitingLabel ?? CONVERSATION_STATE_LABEL.delegating)
@@ -928,6 +931,7 @@ export function ConversationScreen({
             threadRef={threadRef}
             items={items}
             pending={visiblePending}
+            latestMessageStatus={latestMessageStatus}
             working={working}
             botName={botName ?? "Bot"}
             workspaceRoot={thread.worktreePath ?? project?.workspaceRoot}
@@ -985,7 +989,7 @@ export function ConversationScreen({
             botModelSelection={bot?.modelSelection ?? null}
             disabledReason={disabledReason}
             working={turnBusy}
-            botLastSpokeAtMs={botSpokeAtMs}
+            queuedNotice={false}
             canInterrupt={interruptInput !== null}
             onInterrupt={onInterrupt}
             onPendingChange={(update) => setPending((current) => update(current))}

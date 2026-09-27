@@ -276,7 +276,9 @@ function makeFakeCodexAdapter(
     capabilities: {
       sessionModelSwitch: "in-session",
       ...(supportsConversationRollback !== undefined ? { supportsConversationRollback } : {}),
-      ...(provider === CODEX_DRIVER ? { promptlessTurnContinuation: true } : {}),
+      ...(provider === CODEX_DRIVER
+        ? { promptlessTurnContinuation: true, userMessageDelivery: "turn-started" as const }
+        : {}),
     },
     startSession,
     sendTurn,
@@ -3364,6 +3366,126 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
             entry.type === "turn.completed" && entry.providerInstanceId === codexInstanceId,
         ),
         true,
+      );
+    }),
+  );
+
+  it.effect(
+    "reports a Codex message read when its queued turn starts, not when turn/start returns",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("thread-read-codex");
+        yield* provider.startSession(threadId, {
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const eventsRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+        const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
+          Ref.update(eventsRef, (current) => [...current, event]),
+        ).pipe(Effect.forkChild);
+        yield* advanceTestClock(50);
+        const delivered = () =>
+          Ref.get(eventsRef).pipe(
+            Effect.map((events) =>
+              events.flatMap((event) =>
+                event.type === "user-message.delivered"
+                  ? [`${event.payload.messageId}@${event.turnId}`]
+                  : [],
+              ),
+            ),
+          );
+
+        // Mid-turn: Codex answers turn/start with a queued turn of its own.
+        fanout.codex.sendTurn.mockImplementationOnce((input) =>
+          Effect.succeed({ threadId: input.threadId, turnId: asTurnId("turn-queued") }),
+        );
+        yield* provider.sendTurn({
+          threadId,
+          messageId: MessageId.make("owner-codex-1"),
+          input: "and then this",
+          attachments: [],
+        });
+        yield* advanceTestClock(50);
+        assert.deepEqual(yield* delivered(), []);
+
+        fanout.codex.emit({
+          type: "turn.started",
+          eventId: asEventId("evt-read-codex-start"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          threadId,
+          turnId: asTurnId("turn-queued"),
+          payload: {},
+        });
+        yield* advanceTestClock(50);
+        assert.deepEqual(yield* delivered(), ["owner-codex-1@turn-queued"]);
+
+        // Idle: turn/started can land before the turn/start response.
+        fanout.codex.sendTurn.mockImplementationOnce((input) =>
+          Effect.sync(() => {
+            fanout.codex.emit({
+              type: "turn.started",
+              eventId: asEventId("evt-read-codex-idle"),
+              provider: ProviderDriverKind.make("codex"),
+              createdAt: "2026-01-01T00:00:00.000Z",
+              threadId,
+              turnId: asTurnId("turn-idle"),
+              payload: {},
+            });
+            return { threadId: input.threadId, turnId: asTurnId("turn-idle") };
+          }),
+        );
+        yield* advanceTestClock(50);
+        yield* provider.sendTurn({
+          threadId,
+          messageId: MessageId.make("owner-codex-2"),
+          input: "hello",
+          attachments: [],
+        });
+        yield* advanceTestClock(50);
+        yield* Fiber.interrupt(consumer);
+        assert.deepEqual(yield* delivered(), [
+          "owner-codex-1@turn-queued",
+          "owner-codex-2@turn-idle",
+        ]);
+      }),
+  );
+
+  it.effect("reports a message read on handover for adapters without their own signal", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-read-handover");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("cursor"),
+        providerInstanceId: ProviderInstanceId.make("cursor"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const eventsRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+      const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
+        Ref.update(eventsRef, (current) => [...current, event]),
+      ).pipe(Effect.forkChild);
+      yield* advanceTestClock(50);
+      yield* provider.sendTurn({
+        threadId,
+        messageId: MessageId.make("owner-cursor-1"),
+        input: "hello",
+        attachments: [],
+      });
+      // No message id (a server-started turn): nothing to report.
+      yield* provider.sendTurn({ threadId, input: "continue", attachments: [] });
+      yield* advanceTestClock(50);
+      yield* Fiber.interrupt(consumer);
+      const delivered = (yield* Ref.get(eventsRef)).filter(
+        (event) => event.type === "user-message.delivered",
+      );
+      assert.equal(delivered.length, 1);
+      assert.equal(
+        delivered[0]?.type === "user-message.delivered" && String(delivered[0].payload.messageId),
+        "owner-cursor-1",
       );
     }),
   );

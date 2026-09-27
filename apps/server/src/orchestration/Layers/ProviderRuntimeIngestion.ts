@@ -602,6 +602,22 @@ export function runtimeEventToActivities(
       ];
     }
 
+    case "user-message.delivered": {
+      // One per owner message: the chat's "Read" status under it. Not work.
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "user-message.delivered",
+          summary: "Message read",
+          payload: { messageId: event.payload.messageId },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "runtime.warning": {
       return [
         {

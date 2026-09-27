@@ -110,7 +110,8 @@ export function PersonalComposer({
   botModelSelection = null,
   disabledReason,
   working,
-  botLastSpokeAtMs,
+  botLastSpokeAtMs = null,
+  queuedNotice = true,
   canInterrupt,
   onInterrupt,
   onPendingChange,
@@ -132,7 +133,14 @@ export function PersonalComposer({
   disabledReason: string | null;
   working: boolean;
   /** When the bot last produced output, in epoch ms; null if it has not yet. */
-  botLastSpokeAtMs: number | null;
+  botLastSpokeAtMs?: number | null;
+  /**
+   * Whether the composer says "Queued" itself after a mid-turn send. A bot chat
+   * turns it off: the server's delivery record drives "Queued"/"Read" under the
+   * message instead, so there is one source and the two never disagree. A
+   * group, whose members take the message in through their own chats, keeps it.
+   */
+  queuedNotice?: boolean;
   canInterrupt: boolean;
   onInterrupt: () => Promise<string | null>;
   onPendingChange: (
@@ -221,7 +229,10 @@ export function PersonalComposer({
   // no extra render, and so does the bot replying. Waiting only on the turn
   // used to leave "Queued" on screen under an answer the bot had already given.
   const queued =
-    queuedAtMs !== null && working && (botLastSpokeAtMs === null || botLastSpokeAtMs < queuedAtMs);
+    queuedNotice &&
+    queuedAtMs !== null &&
+    working &&
+    (botLastSpokeAtMs === null || botLastSpokeAtMs < queuedAtMs);
 
   // Grows with the draft (including drafts restored from storage) up to ~5 lines,
   // and puts the caret back where an insertion left it. Both belong to the same
@@ -728,7 +739,7 @@ export function PersonalComposer({
             onClick={() => void send()}
             disabled={!canSend}
             aria-busy={sending}
-            aria-label={working ? "Send, queued until this turn finishes" : "Send"}
+            aria-label={working ? "Send, queued until the bot takes it in" : "Send"}
             className={`${ROUND_BUTTON} bg-[var(--personal-primary)] text-[var(--personal-primary-text)] disabled:opacity-30`}
           >
             <ArrowUp aria-hidden="true" className="size-[22px]" strokeWidth={2} />

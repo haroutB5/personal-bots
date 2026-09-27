@@ -39,6 +39,7 @@ import {
   type ProviderApprovalDecision,
   ProviderDriverKind,
   ProviderInstanceId,
+  type MessageId,
   type ModelSelection,
   ProviderItemId,
   type ProviderRuntimeEvent,
@@ -467,6 +468,13 @@ interface ClaudeSessionContext {
    * (`msg_lifecycle_v1` on system/init, or a command_lifecycle frame seen).
    */
   messageLifecycle: boolean;
+  /**
+   * Owner messages sent but not yet taken in, keyed by the uuid their SDK
+   * user message was stamped with (a turn's own id, or a fresh one for a
+   * steer). Cleared when the CLI reports the prompt started (or a reply names
+   * it), or when it will never run.
+   */
+  readonly undeliveredMessages: Map<string, MessageId>;
   stopped: boolean;
 }
 
@@ -4253,6 +4261,60 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
+  const emitUserMessageDelivered = Effect.fnUntraced(function* (
+    context: ClaudeSessionContext,
+    uuid: string,
+  ) {
+    const messageId = context.undeliveredMessages.get(uuid);
+    if (messageId === undefined) return;
+    context.undeliveredMessages.delete(uuid);
+    const stamp = yield* makeEventStamp();
+    const turnId = context.turnState?.turnId;
+    yield* offerRuntimeEvent({
+      type: "user-message.delivered",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      ...(turnId !== undefined ? { turnId } : {}),
+      payload: { messageId },
+    });
+  });
+
+  /**
+   * An owner message is taken in when the CLI drains it into a turn: a new
+   * turn, or folded into the running one at its next step. `started` says so;
+   * `completed` covers a fold whose `started` never came. A message that will
+   * never run (cancelled, discarded, refused) just stops being tracked.
+   */
+  const settleUndeliveredMessage = Effect.fnUntraced(function* (
+    context: ClaudeSessionContext,
+    frame: unknown,
+  ) {
+    const { command_uuid: uuid, state } = frame as { command_uuid?: unknown; state?: unknown };
+    if (typeof uuid !== "string" || !context.undeliveredMessages.has(uuid)) return;
+    if (state === "started" || state === "completed") {
+      yield* emitUserMessageDelivered(context, uuid);
+    } else if (state === "cancelled" || state === "discarded" || state === "refused") {
+      context.undeliveredMessages.delete(uuid);
+    }
+  });
+
+  /** A reply naming the send it answers proves the model has it (CLIs without lifecycle frames). */
+  const deliverAnsweredMessages = Effect.fnUntraced(function* (
+    context: ClaudeSessionContext,
+    message: unknown,
+  ) {
+    if (context.undeliveredMessages.size === 0) return;
+    const frame = message as { user_message_uuid?: unknown; user_message_uuids?: unknown };
+    const uuids = Array.isArray(frame.user_message_uuids)
+      ? frame.user_message_uuids
+      : [frame.user_message_uuid];
+    for (const uuid of uuids) {
+      if (typeof uuid === "string") yield* emitUserMessageDelivered(context, uuid);
+    }
+  });
+
   const handleSdkMessage = Effect.fn("handleSdkMessage")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
@@ -4264,6 +4326,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // says when the running turn's own prompt has started.
     if (sdkMessageType(message) === "command_lifecycle") {
       context.messageLifecycle = true;
+      yield* settleUndeliveredMessage(context, message);
       const turn = context.turnState;
       const state = turn === undefined ? null : commandLifecycleState(message, turn.turnId);
       if (turn === undefined || state === null) return;
@@ -4278,6 +4341,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         yield* handleResultMessage(context, held);
       }
       return;
+    }
+
+    if (message.type === "assistant" || message.type === "stream_event") {
+      yield* deliverAnsweredMessages(context, message);
     }
 
     switch (message.type) {
@@ -5216,6 +5283,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastThreadStartedId: undefined,
         announcedUsageLimits: undefined,
         messageLifecycle: false,
+        undeliveredMessages: new Map(),
         stopped: false,
       };
       yield* Ref.set(contextRef, context);
@@ -5428,11 +5496,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (steeringTurnState === null) context.turnStartMessageIds.push(turnId);
     yield* updateResumeCursor(context);
+    // Every owner message carries a uuid so the CLI reports when it drains
+    // (command_lifecycle). A turn's own prompt uses the turn id; a steer gets
+    // its own, which never enters turnStartMessageIds.
+    const promptUuid =
+      steeringTurnState === null
+        ? (turnId as string)
+        : input.messageId !== undefined
+          ? yield* randomUUIDv4
+          : undefined;
+    if (promptUuid !== undefined && input.messageId !== undefined) {
+      context.undeliveredMessages.set(promptUuid, input.messageId);
+    }
     yield* Queue.offer(context.promptQueue, {
       type: "message",
       message:
-        steeringTurnState === null
-          ? { ...message, uuid: turnId as NonNullable<SDKUserMessage["uuid"]> }
+        promptUuid !== undefined
+          ? { ...message, uuid: promptUuid as NonNullable<SDKUserMessage["uuid"]> }
           : message,
     }).pipe(Effect.mapError((cause) => toRequestError(input.threadId, "turn/start", cause)));
 
@@ -5729,6 +5809,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      // Reported from the CLI's command_lifecycle "started" for the message.
+      userMessageDelivery: "adapter",
     },
     compaction: { type: "slash-command", command: "/compact" },
     startSession,

@@ -1041,6 +1041,10 @@ describe("ProviderCommandReactor", () => {
       expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
         input: expect.stringContaining('<context kind="terminal" id="terminal-1">'),
       });
+      // The adapter reports delivery against the owner's own message.
+      expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+        messageId: "user-message-with-context",
+      });
     }),
   );
 

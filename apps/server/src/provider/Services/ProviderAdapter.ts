@@ -52,6 +52,14 @@ export interface ProviderAdapterCapabilities {
   readonly promptlessTurnContinuation?: boolean;
   /** False when native conversation history cannot be rewound. */
   readonly supportsConversationRollback?: boolean;
+  /**
+   * When an owner's message counts as taken in (`user-message.delivered`):
+   * "adapter" - the adapter reports it itself, from its provider's own signal;
+   * "turn-started" - when the turn sendTurn returned starts (a provider that
+   * queues a mid-turn send as a turn of its own); "handover" (default) - when
+   * sendTurn returns.
+   */
+  readonly userMessageDelivery?: "adapter" | "turn-started" | "handover";
 }
 
 export interface ProviderThreadTurnSnapshot {

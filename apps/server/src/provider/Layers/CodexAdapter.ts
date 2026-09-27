@@ -2783,6 +2783,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     capabilities: {
       sessionModelSwitch: "in-session",
       promptlessTurnContinuation: true,
+      // turn/start mid-turn queues a turn of its own; the owner's message is
+      // taken in when that turn starts.
+      userMessageDelivery: "turn-started",
     },
     startSession,
     sendTurn,
