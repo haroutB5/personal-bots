@@ -14,7 +14,7 @@ import { PersonalTabBar } from "./PersonalTabBar";
 import { isStandaloneDisplay } from "./serviceWorker";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 
-const BOTS_ROUTE_ID = "/_personal/bots";
+const BOTS_ROUTE_ID = "/_personal/bots" as const;
 const SETTLE_MS = 220;
 /** How far left the list starts, as iOS navigation does (share of the width). */
 const PARALLAX = 0.3;
@@ -85,8 +85,18 @@ export function useChatSwipeBack({ wide }: { readonly wide: boolean }): {
   // chunk warm while a chat that can swipe is open.
   const environmentId = usePersonalEnvironmentId();
   usePersonalBotsList(enabled ? environmentId : null);
+  // Only the route's split component chunk: /_personal/bots has no loader.
+  // `preloadRoute` also built and loaded matches beside the chat's live ones,
+  // and router-core logged a TypeError (`_nonReactive` of undefined) from
+  // inside it on every chat open, so it never warmed anything.
   useEffect(() => {
-    if (enabled) void router.preloadRoute({ to: "/bots" }).catch(() => {});
+    if (!enabled) return;
+    const route = router.routesById[BOTS_ROUTE_ID] as
+      | (typeof router.routesById)[typeof BOTS_ROUTE_ID]
+      | undefined;
+    if (route === undefined) return;
+    // Undefined when the chunk is already loaded.
+    void router.loadRouteChunk(route)?.catch(() => undefined);
   }, [enabled, router]);
 
   // Once the routed Bots page is what the column renders, the list beneath
