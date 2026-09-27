@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   AVATAR_MOTIONS,
+  cometRowIndex,
+  firstContinuousMotionOnly,
   isContinuousMotion,
   motionForConversationState,
   motionForSummary,
@@ -91,5 +93,22 @@ describe("continuous motion", () => {
       "working",
       "thinking",
     ]);
+  });
+});
+
+describe("cometRowIndex", () => {
+  it("gives the comet to the first working row only, never a thinking one", () => {
+    expect(cometRowIndex(["thinking", "idle", "working", "working"])).toBe(2);
+    expect(cometRowIndex(["thinking", "waiting", undefined])).toBe(-1);
+    expect(cometRowIndex([])).toBe(-1);
+  });
+});
+
+describe("firstContinuousMotionOnly (the all-busy-motion kill switch)", () => {
+  it("keeps the first loop and rests later ones, leaving one-shot poses alone", () => {
+    expect(
+      firstContinuousMotionOnly(["waiting", "thinking", "blocked", "working", "idle"]),
+    ).toEqual(["waiting", "thinking", "blocked", "idle", "idle"]);
+    expect(firstContinuousMotionOnly([])).toEqual([]);
   });
 });

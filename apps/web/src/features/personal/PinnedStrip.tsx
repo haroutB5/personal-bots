@@ -393,14 +393,17 @@ export function PinnedBotTile({
   summary,
   now,
   motion,
+  comet = false,
   onUnpin,
   selected = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly summary: BotSummary;
   readonly now: number;
-  /** Pose for this face; the screen caps the continuous one across every row. */
+  /** Pose for this face (`motionForSummary`). */
   readonly motion?: AvatarMotion | undefined;
+  /** Draw the working comet; the screen gives it to one row (`cometRowIndex`). */
+  readonly comet?: boolean | undefined;
   readonly onUnpin: () => void;
   readonly selected?: boolean | undefined;
 }): JSX.Element {
@@ -424,7 +427,7 @@ export function PinnedBotTile({
           size={PINNED_AVATAR_SIZE}
           label={bot.name}
           motion={motion}
-          comet
+          comet={comet}
         />
       }
       badge={badge}

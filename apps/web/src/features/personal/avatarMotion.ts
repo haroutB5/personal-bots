@@ -72,3 +72,29 @@ export function motionForConversationState(
       return "idle";
   }
 }
+
+/**
+ * The pre-1.49.0 list rule, kept behind the `all-busy-motion` kill switch
+ * (`perfFlags.ts`): the first thinking or working avatar keeps moving and
+ * later ones rest; their green dots still say they are busy.
+ */
+export function firstContinuousMotionOnly(motions: ReadonlyArray<AvatarMotion>): AvatarMotion[] {
+  let seen = false;
+  return motions.map((motion) => {
+    if (!isContinuousMotion(motion)) return motion;
+    if (seen) return "idle";
+    seen = true;
+    return motion;
+  });
+}
+
+/**
+ * Which row of a list draws the working comet: the first `working` one, or
+ * -1. Every busy bot moves, but the comet stays on one row: measured on /bots
+ * at 390x844 and 4x CPU, five working bots without comets hold ~56 fps (as
+ * one does), while five comets (their colour drift repaints every frame)
+ * drop the list to ~22 fps. See HANDOFF-bulk-chats.md.
+ */
+export function cometRowIndex(motions: ReadonlyArray<AvatarMotion | undefined>): number {
+  return motions.findIndex((motion) => motion === "working");
+}

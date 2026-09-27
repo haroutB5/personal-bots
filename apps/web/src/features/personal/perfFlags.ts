@@ -16,7 +16,9 @@ export type PerfOptimization =
   | "warm-highlighter"
   | "rum"
   | "stale-reload"
-  | "lean-shell";
+  | "lean-shell"
+  // Every busy bot on the Bots list animates (1.49.0); off: only the first.
+  | "all-busy-motion";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

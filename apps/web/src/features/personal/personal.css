@@ -230,8 +230,10 @@
  * of how easy they are to break:
  *
  * 1. Only `thinking` and `working` repeat. Every busy bot in the Bots list
- *    runs its loop (before 1.49.0 only the first one did); a loop scrolled
- *    out of view is paused (`data-offscreen`, `avatarOffscreen.ts`). Every
+ *    runs its loop (before 1.49.0 only the first one did), but only the
+ *    first working row draws the comet, whose colour drift repaints every
+ *    frame (`cometRowIndex`); a loop scrolled out of view is paused
+ *    (`data-offscreen`, `avatarOffscreen.ts`). Every
  *    other state is a one-shot into a held pose, and idle has no animation,
  *    so an idle screen repaints nothing.
  * 2. Transform and opacity only, on the avatar's inner layers, so no state can

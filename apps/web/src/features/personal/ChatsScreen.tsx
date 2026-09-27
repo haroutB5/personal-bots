@@ -19,7 +19,12 @@ import { cn } from "~/lib/utils";
 import { useThreadShells } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 
-import { motionForSummary, type AvatarMotion } from "./avatarMotion";
+import {
+  cometRowIndex,
+  firstContinuousMotionOnly,
+  motionForSummary,
+  type AvatarMotion,
+} from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
 import {
   BotRow,
@@ -489,15 +494,25 @@ export function ChatsScreen({
   // Avatar poses for the visible rows, pinned box included: every thinking or
   // working bot moves (Harout, 1.49.0; it used to be the first one only).
   // Transform and opacity loops, paused while a row is scrolled out of view
-  // (BotAvatar, avatarOffscreen.ts) and dropped under reduced motion.
-  const motionByBotId = useMemo(
-    () =>
-      new Map(
-        visible.map((summary) => [summary.bot.botId as string, motionForSummary(summary)] as const),
-      ),
-    [visible],
-  );
+  // (BotAvatar, avatarOffscreen.ts) and dropped under reduced motion. The
+  // kill switch bots:perf-off=all-busy-motion brings back the one-row rule.
+  const motionByBotId = useMemo(() => {
+    const motions = visible.map(motionForSummary);
+    const shown = perfOptimizationOn("all-busy-motion")
+      ? motions
+      : firstContinuousMotionOnly(motions);
+    return new Map(
+      visible.map((summary, index) => [summary.bot.botId as string, shown[index]] as const),
+    );
+  }, [visible]);
   const { pinned, rest } = useMemo(() => partitionPinnedSummaries(visible), [visible]);
+  // The comet stays on one row, the first working bot on screen (pinned box
+  // first, then the list): five comets drop the list from ~56 to ~22 fps.
+  const cometBotId = useMemo(() => {
+    const onScreen = [...pinned, ...rest];
+    const index = cometRowIndex(onScreen.map((summary) => motionByBotId.get(summary.bot.botId)));
+    return index < 0 ? null : (onScreen[index]?.bot.botId ?? null);
+  }, [motionByBotId, pinned, rest]);
   // Groups stay together immediately after the pinned strip. Within that
   // block and the bot block, the existing activity order is preserved.
   const restRows = useMemo(
@@ -524,6 +539,7 @@ export function ChatsScreen({
       now={now}
       describeTurn={describeTurn}
       motion={motionByBotId.get(summary.bot.botId)}
+      comet={cometBotId === summary.bot.botId}
       selected={selectedChat === botSelectionKey(summary.bot.botId)}
       onDelete={onDeleteBot}
       onTogglePin={togglePin}
@@ -778,6 +794,7 @@ export function ChatsScreen({
                       summary={summary}
                       now={now}
                       motion={motionByBotId.get(summary.bot.botId)}
+                      comet={cometBotId === summary.bot.botId}
                       onUnpin={() => void togglePin(summary.bot)}
                       selected={selectedChat === botSelectionKey(summary.bot.botId)}
                     />
@@ -880,6 +897,7 @@ function ChatsBotListRow({
   now,
   describeTurn,
   motion,
+  comet,
   selected,
   onDelete,
   onTogglePin,
@@ -890,6 +908,7 @@ function ChatsBotListRow({
   readonly now: number;
   readonly describeTurn: (turn: ServerTurn) => string;
   readonly motion: AvatarMotion | undefined;
+  readonly comet: boolean;
   readonly selected: boolean;
   readonly onDelete: (bot: PersonalBot) => Promise<unknown>;
   readonly onTogglePin: (bot: PersonalBot) => Promise<void>;
@@ -922,6 +941,7 @@ function ChatsBotListRow({
           now={now}
           describeTurn={describeTurn}
           motion={motion}
+          comet={comet}
           selected={selected}
         />
       </SwipeToDelete>

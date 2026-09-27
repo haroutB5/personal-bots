@@ -132,6 +132,7 @@ export const BotRow = memo(function BotRow({
   now,
   describeTurn,
   motion,
+  comet = false,
   selected = false,
 }: {
   environmentId: EnvironmentId;
@@ -140,6 +141,8 @@ export const BotRow = memo(function BotRow({
   describeTurn: (turn: ServerTurn) => string;
   /** Avatar pose for this row (`motionForSummary`). */
   motion?: AvatarMotion | undefined;
+  /** Draw the working comet; the list gives it to one row (`cometRowIndex`). */
+  comet?: boolean | undefined;
   /** This bot's chat (or chats list, or editor) is open in the desktop pane. */
   selected?: boolean | undefined;
 }): JSX.Element {
@@ -158,9 +161,7 @@ export const BotRow = memo(function BotRow({
         size={56}
         label={bot.name}
         motion={motion}
-        // Every working row gets the comet (1.49.0: no longer one per list);
-        // measured at 4x CPU with five busy bots in hbots 1.49.0's HANDOFF.
-        comet
+        comet={comet}
       />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex min-w-0 items-center">
