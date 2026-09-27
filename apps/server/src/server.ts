@@ -120,6 +120,7 @@ import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
 import { personalClientDiagRouteLayer } from "./personal/push/clientDiagRoute.ts";
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import * as PersonalClaudeCodeReview from "./personal/claudeCodeReview/PersonalClaudeCodeReview.ts";
+import * as PersonalTaskTitleBackfill from "./personal/taskTitleBackfill.ts";
 import * as PersonalTurnRetry from "./personal/PersonalTurnRetryService.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
@@ -565,6 +566,9 @@ const PersonalReactorsLive = Layer.effectDiscard(
     // Re-runs a bot reply that died on a transient provider fault. Subscribes
     // here so it never misses the turn-start it has to track.
     yield* (yield* PersonalTurnRetry.PersonalTurnRetry).start();
+    // One-off: names old task/routine chats still on "New chat" after their
+    // task, once the server is up. Marker in personal_meta; never blocks start.
+    yield* forkParked(PersonalTaskTitleBackfill.runTaskTitleBackfillSafely);
   }),
 );
 
