@@ -6,6 +6,7 @@ import { Outlet, useLocation, useParams } from "@tanstack/react-router";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 
 import { ChatsScreen } from "./ChatsScreen";
+import { useChatSwipeBack } from "./useChatSwipeBack";
 import { ColumnResizeHandle } from "./ColumnResizeHandle";
 import {
   SIDEBAR_ID,
@@ -70,19 +71,26 @@ export function PersonalShell(): JSX.Element {
   // The chat open in the pane, marked in the bot list beside it. Straight off
   // the route params, so it follows every navigation and holds no state.
   const selectedChat = useParams({ strict: false, select: sidebarSelectionKey });
+  const swipeBack = useChatSwipeBack({ wide: isWide });
 
   if (!isWide) {
     return (
-      <div className="personal-app flex h-dvh flex-col overflow-hidden pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
-        <div className="pt-[env(safe-area-inset-top)]">
-          <PersonalOfflineBanner />
+      <>
+        <div
+          className="personal-app flex h-dvh flex-col overflow-hidden pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]"
+          style={swipeBack.style}
+        >
+          <div className="pt-[env(safe-area-inset-top)]">
+            <PersonalOfflineBanner />
+          </div>
+          <main className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+            <Outlet />
+          </main>
+          {activeTab !== null ? <PersonalTabBar active={activeTab} /> : null}
+          <InAppNotifications />
         </div>
-        <main className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
-          <Outlet />
-        </main>
-        {activeTab !== null ? <PersonalTabBar active={activeTab} /> : null}
-        <InAppNotifications />
-      </div>
+        {swipeBack.layers}
+      </>
     );
   }
 
