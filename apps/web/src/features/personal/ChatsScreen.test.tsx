@@ -497,7 +497,7 @@ describe("ChatsScreen favourites strip", () => {
     // the review-toned "Unavailable · tap to fix".
     expect(strip().findAllByProps({ "data-pinned-badge": "attention" }).length).toBeGreaterThan(0);
     const tile = strip().findByProps({ to: "/bots/$botId/edit" });
-    expect(tile.props["aria-label"]).toBe("CTO, Unavailable · tap to fix, edit bot");
+    expect(tile.props["aria-label"]).toBe("CTO, some-model, Unavailable · tap to fix, edit bot");
   });
 
   /** Same destination the pinned row opened: a bot that cannot run opens its editor. */
@@ -634,7 +634,7 @@ describe("ChatsScreen notification mute", () => {
     expect(strip.findAll((node) => node.props["data-muted-bell"] === "").length).toBe(1);
     const tile = strip.findByProps({ to: "/bots/$botId/edit" });
     expect(tile.props["aria-label"]).toBe(
-      "CTO, notifications muted, Unavailable · tap to fix, edit bot",
+      "CTO, some-model, notifications muted, Unavailable · tap to fix, edit bot",
     );
     await act(async () => {
       buttonNamed("Unmute notifications")!.props.onClick();

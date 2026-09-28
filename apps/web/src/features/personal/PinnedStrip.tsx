@@ -84,6 +84,16 @@ const TILE_NAME_CLASS =
   "w-full truncate text-[12px] leading-[15px] font-medium text-[var(--personal-text)]";
 
 /**
+ * The model line under a pinned bot's name ("Opus 5.5 medium"), from the same
+ * `botModelLabel` the list rows use. One line, truncated inside the fixed
+ * 72px tile. Every tile reserves the line (blank when there is no label: a
+ * group, the cold-start snapshot), so the live list landing or a model change
+ * never changes the strip's height.
+ */
+const TILE_MODEL_CLASS =
+  "-mt-1 w-full truncate text-[11px] leading-[14px] text-[var(--personal-text-tertiary)]";
+
+/**
  * Where a tile goes when tapped. Deliberately the same destinations the pinned
  * *row* had: newest chat, or the editor when the provider cannot run, or start
  * the bot's first chat. `none` is the cold-start tile for a bot with no stored
@@ -178,6 +188,7 @@ export function PinnedTile({
   selected = false,
   muted = false,
   menuExtra = null,
+  modelLabel = null,
 }: {
   readonly name: string;
   readonly avatar: ReactNode;
@@ -193,6 +204,8 @@ export function PinnedTile({
   readonly muted?: boolean | undefined;
   /** More items for the tile's menu, under Unpin (the bot's mute choices). */
   readonly menuExtra?: ReactNode;
+  /** A bot's model and effort, under the name. Null: the line stays blank. */
+  readonly modelLabel?: string | null | undefined;
 }): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const anchor = useRef<HTMLLIElement | null>(null);
@@ -277,13 +290,27 @@ export function PinnedTile({
       ) : (
         <span className={TILE_NAME_CLASS}>{name}</span>
       )}
+      {modelLabel !== null ? (
+        <span data-testid="pinned-model-label" className={TILE_MODEL_CLASS}>
+          {modelLabel}
+        </span>
+      ) : (
+        <span aria-hidden="true" className={TILE_MODEL_CLASS}>
+          {" "}
+        </span>
+      )}
     </>
   );
 
   // The avatar is an <img> with the bot's name, and the caption repeats it, so
   // the tile states its own name once — plus the status the strip would
   // otherwise have dropped with the preview line.
-  const label = [name, ...(muted ? ["notifications muted"] : []), statusLabel]
+  const label = [
+    name,
+    ...(modelLabel !== null ? [modelLabel] : []),
+    ...(muted ? ["notifications muted"] : []),
+    statusLabel,
+  ]
     .filter((part) => part !== null)
     .join(", ");
   const tileClass = cn(TILE_CLASS, selected && SELECTED_TILE_CLASS);
@@ -439,6 +466,7 @@ export function PinnedBotTile({
       menuExtra={
         <BotMuteMenuItems bot={bot} now={now} onChange={(mute) => void setMute(bot, mute)} />
       }
+      modelLabel={summary.modelLabel}
     />
   );
 }

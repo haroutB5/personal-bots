@@ -1,6 +1,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import * as Cause from "effect/Cause";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -52,6 +53,7 @@ import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import { withGroupPresence } from "./groupOnlyBots.ts";
 import { PERSONAL_THREAD_TITLE } from "./personalThreadTitles.ts";
+import { PERSONAL_SEED_MODEL_ENV, seedModelFor } from "./seedModel.ts";
 import {
   TASK_CHAT_AUTO_ARCHIVE_META_KEY,
   taskChatAutoArchiveEnabled,
@@ -250,13 +252,14 @@ export const make = Effect.gen(function* () {
     return existing;
   });
 
-  // The default model comes from the live provider snapshot, whose `isDefault`
-  // flags are derived from the ModelManifest catalog defaults — never from a
-  // hard-coded model id in this file.
-  const defaultModelForInstance = (instance: ServerProvider): string | undefined =>
-    instance.models.find((model) => model.isDefault === true)?.slug ??
-    instance.models.find((model) => model.isLegacy !== true)?.slug ??
-    instance.models[0]?.slug;
+  // The seed model comes from the live provider snapshot (seedModel.ts): the
+  // PERSONAL_SEED_MODEL override, else Opus 5.5 medium, else the catalog
+  // default or first current model, never Fable or Mythos.
+  const seedModelOverride = yield* Config.String(PERSONAL_SEED_MODEL_ENV).pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+    Effect.orElseSucceed(() => undefined),
+  );
 
   const seedDefaultsIfNeeded: PersonalBotService["Service"]["seedDefaultsIfNeeded"] = Effect.gen(
     function* () {
@@ -296,8 +299,8 @@ export const make = Effect.gen(function* () {
           continue;
         }
         const instance = instanceFor(definition.driver);
-        const model = defaultModelForInstance(instance);
-        if (model === undefined) {
+        const seedModel = seedModelFor(instance, seedModelOverride);
+        if (seedModel === undefined) {
           continue;
         }
         yield* repository
@@ -312,8 +315,8 @@ export const make = Effect.gen(function* () {
             avatarColor: definition.avatarColor,
             modelSelection: {
               instanceId: instance.instanceId,
-              model,
-            },
+              ...seedModel,
+            } as PersonalBot["modelSelection"],
             team: definition.team,
             lead: definition.lead,
             pinned: definition.lead,

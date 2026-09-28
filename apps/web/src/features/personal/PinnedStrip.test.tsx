@@ -215,6 +215,40 @@ describe("PinnedStrip", () => {
     expect(renderer!.root.findByProps({ "aria-label": "CTO, Working" })).toBeDefined();
   });
 
+  it("puts the bot's model under its name, and keeps the line blank without one", async () => {
+    stubWindow();
+    await act(async () => {
+      renderer = create(
+        <PinnedStrip>
+          <PinnedTile
+            name="CFO"
+            avatar={<BotAvatar shape="pill" color="#E8711A" size={56} label="CFO" />}
+            badge={null}
+            statusLabel={null}
+            target={{ kind: "none" }}
+            onUnpin={() => undefined}
+            modelLabel="Muse Spark 1.3 Free xhigh"
+          />
+          <PinnedSnapshotTile row={snapshotRow("bot-cto", "Cached CTO")} />
+        </PinnedStrip>,
+      );
+    });
+
+    const labels = renderer!.root.findAllByProps({ "data-testid": "pinned-model-label" });
+    expect(labels.map((label) => label.props.children)).toEqual(["Muse Spark 1.3 Free xhigh"]);
+    // One line that truncates inside the fixed tile.
+    expect(labels[0]!.props.className).toContain("truncate");
+    expect(
+      renderer!.root.findByProps({ "aria-label": "CFO, Muse Spark 1.3 Free xhigh" }),
+    ).toBeDefined();
+    // The snapshot tile reserves the same line, so the strip keeps its height.
+    const blank = renderer!.root
+      .findAllByProps({ "aria-hidden": "true" })
+      .filter((node) => node.props.children === " ");
+    expect(blank).toHaveLength(1);
+    expect(blank[0]!.props.className).toBe(labels[0]!.props.className);
+  });
+
   /**
    * The gesture that replaces the swiped-away "Unpin": hold a face, get the
    * menu, and do not also open the chat underneath.

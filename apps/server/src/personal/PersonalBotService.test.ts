@@ -26,6 +26,8 @@ const makeProviderSnapshot = (input: {
   readonly instanceId: string;
   readonly driver: "claudeAgent" | "codex" | "grok";
   readonly defaultModel: string;
+  /** Listed after the default, like the catalog does. */
+  readonly otherModels?: ReadonlyArray<string>;
 }): ServerProvider =>
   ({
     instanceId: ProviderInstanceId.make(input.instanceId),
@@ -44,6 +46,24 @@ const makeProviderSnapshot = (input: {
         isDefault: true,
         capabilities: null,
       },
+      ...(input.otherModels ?? []).map((slug) => ({
+        slug,
+        name: slug,
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Effort",
+              type: "select",
+              options: [
+                { id: "low", label: "Low" },
+                { id: "medium", label: "Medium" },
+              ],
+            },
+          ],
+        },
+      })),
     ],
   }) as unknown as ServerProvider;
 
@@ -51,7 +71,9 @@ const claudeSnapshot = () =>
   makeProviderSnapshot({
     instanceId: "claude",
     driver: "claudeAgent",
+    // The catalog's Claude default is Fable, the most expensive model.
     defaultModel: "claude-fable-5-1",
+    otherModels: ["claude-opus-5-5", "claude-sonnet-5-5"],
   });
 
 const codexSnapshot = () =>
@@ -306,11 +328,13 @@ it.effect("seedDefaultsIfNeeded creates the four default bots once, even after a
         bot.modelSelection.model,
       ]),
     ).toEqual([
-      ["Assistant", "blob", "#1A73E8", "claude", "claude-fable-5-1"],
+      ["Assistant", "blob", "#1A73E8", "claude", "claude-opus-5-5"],
       ["Developer", "roundedHexagon", "#F26A1B", "codex", "gpt-6-astra"],
       ["Researcher", "scallopedCloud", "#F0457E", "codex", "gpt-6-astra"],
-      ["Planner", "roundedSquare", "#E5323B", "claude", "claude-fable-5-1"],
+      ["Planner", "roundedSquare", "#E5323B", "claude", "claude-opus-5-5"],
     ]);
+    // Never Fable: Opus 5.5 at medium effort.
+    expect(seeded[0]!.modelSelection.options).toEqual([{ id: "effort", value: "medium" }]);
     expect(seeded.map((bot) => bot.title)).toEqual([
       "Personal assistant",
       "Engineer",
