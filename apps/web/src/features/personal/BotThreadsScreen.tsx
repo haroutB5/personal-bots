@@ -452,7 +452,8 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
               />
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-baseline">
-                  <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
+                  {/* The name keeps its width; the model label gets what is left. */}
+                  <h1 className="max-w-full shrink-0 truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
                     {bot.name}
                   </h1>
                   {modelLabel !== null ? (
