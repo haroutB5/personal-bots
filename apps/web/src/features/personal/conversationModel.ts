@@ -5,6 +5,7 @@ import type {
   OrchestrationSessionProviderRetry,
   OrchestrationThreadActivity,
   PersonalBrowserStatus,
+  PersonalChatNoticeMarker,
   PersonalGroupSystemEvent,
   PersonalTask,
 } from "@t3tools/contracts";
@@ -15,6 +16,7 @@ import { formatContextWindowTokens } from "~/lib/contextWindow";
 import type { ChatMessage, ProposedPlan } from "~/types";
 import type { TimelineEntry, WorkLogEntry } from "~/session-logic";
 
+import { readChatNotice } from "./chatNotices";
 import { readServerTurn, type ServerTurn, taskCreatedMs } from "./delegationModel";
 import { readGroupMarker } from "./groupModel";
 import { PERSONAL_TIME_ZONE } from "./greeting";
@@ -393,6 +395,17 @@ export type ConversationItem =
       readonly turn: ServerTurn;
     }
   | { readonly kind: "plan"; readonly id: string; readonly plan: ProposedPlan }
+  /**
+   * A line the server wrote in the chat on its own behalf: paused on a usage
+   * limit, or the automatic continue after it (a user-role turn message, never
+   * the owner's words).
+   */
+  | {
+      readonly kind: "notice";
+      readonly id: string;
+      readonly message: ChatMessage;
+      readonly notice: PersonalChatNoticeMarker;
+    }
   | {
       readonly kind: "work";
       readonly id: string;
@@ -545,6 +558,11 @@ export function buildConversationItems(
         });
         continue;
       }
+      const notice = readChatNotice(entry.message);
+      if (notice !== null) {
+        items.push({ kind: "notice", id: entry.id, message: entry.message, notice });
+        continue;
+      }
       const turn = readServerTurn(entry.message);
       items.push(
         turn === null
@@ -587,6 +605,7 @@ export function isTurnBoundary(item: ConversationItem): boolean {
   return (
     item.kind === "divider" ||
     item.kind === "system-turn" ||
+    (item.kind === "notice" && item.notice.notice === "usage-limit-resumed") ||
     item.kind === "group-system" ||
     (item.kind === "message" && item.message.role === "user")
   );
@@ -598,6 +617,7 @@ function itemTimeMs(item: ConversationItem): number {
       return item.at.getTime();
     case "message":
     case "system-turn":
+    case "notice":
     case "group-message":
     case "group-system":
       return Date.parse(item.message.createdAt);

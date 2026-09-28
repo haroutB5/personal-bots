@@ -238,6 +238,8 @@ export interface CodexSessionRuntimeShape {
   ) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly events: Stream.Stream<ProviderEvent, never>;
   readonly close: Effect.Effect<void>;
+  /** The app-server process's PID while it runs (what its commands descend from). */
+  readonly processId?: Effect.Effect<number | undefined>;
 }
 
 export type CodexSessionRuntimeError =
@@ -2744,5 +2746,9 @@ export const makeCodexSessionRuntime = (
         }),
       events: Stream.fromQueue(events),
       close,
+      processId: child.isRunning.pipe(
+        Effect.map((running) => (running ? Number(child.pid) : undefined)),
+        Effect.orElseSucceed(() => undefined),
+      ),
     } satisfies CodexSessionRuntimeShape;
   });

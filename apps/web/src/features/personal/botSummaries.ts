@@ -20,6 +20,7 @@ import {
   isTurnThinking,
   providerWaitState,
 } from "./conversationModel";
+import { botModelLabel } from "./botModelLabel";
 import { routineNextRunLabel } from "./taskPresentation";
 
 export interface BotProviderStatus {
@@ -33,6 +34,8 @@ export interface BotProviderStatus {
 export interface BotSummary {
   readonly bot: PersonalBot;
   readonly provider: BotProviderStatus;
+  /** "Opus 5.5 medium": the bot's model and effort, for the row beside its name. */
+  readonly modelLabel: string | null;
   /** Most recently updated, non-archived thread linked to the bot. */
   readonly newestThread: EnvironmentThreadShell | null;
   /** That thread's newest user/assistant message, from `personalBots.list`. */
@@ -278,6 +281,7 @@ export function buildBotSummaries(input: {
     return {
       bot,
       provider: resolveBotProvider(bot.modelSelection.instanceId, input.providers),
+      modelLabel: botModelLabel(bot.modelSelection, input.providers),
       newestThread,
       newestMessage:
         newestThread === null ? null : (newestMessageByThread.get(newestThread.id) ?? null),

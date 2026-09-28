@@ -1772,3 +1772,31 @@ it.effect(
     }).pipe(Effect.provide(makeLayer(harness)));
   },
 );
+
+it.effect("a chat resuming after a usage limit takes a slot from the same cap as tasks", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    // Two chats resume; the tasks get what is left of the five slots.
+    expect(yield* service.reserveExternalSlot("chat-resume:a")).toBe(true);
+    expect(yield* service.reserveExternalSlot("chat-resume:b")).toBe(true);
+    // Holding a slot twice is still one slot.
+    expect(yield* service.reserveExternalSlot("chat-resume:a")).toBe(true);
+    const roots: Array<Effect.Success<ReturnType<typeof createRoot>>> = [];
+    for (let slot = 1; slot <= PersonalTaskService.PERSONAL_TASKS_CONCURRENCY - 1; slot++) {
+      roots.push(yield* createRoot(`slot-share-${slot}`, "developer"));
+    }
+    const statuses = () =>
+      Effect.forEach(roots, (root) => reload(root.taskId).pipe(Effect.map((task) => task.status)));
+    expect(yield* statuses()).toEqual(["running", "running", "running", "queued"]);
+    // Every slot busy: another chat has to wait.
+    expect(yield* service.reserveExternalSlot("chat-resume:c")).toBe(false);
+
+    // A resumed chat's turn ends: its slot goes to the queued task.
+    yield* service.releaseExternalSlot("chat-resume:a");
+    yield* service.drain;
+    expect(yield* statuses()).toEqual(["running", "running", "running", "running"]);
+    expect(PersonalTaskService.PERSONAL_TASKS_CONCURRENCY).toBe(5);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});

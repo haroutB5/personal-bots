@@ -30,6 +30,7 @@ export * from "./pullRequest.ts";
 export * from "./orchestration.ts";
 export * from "./personalBots.ts";
 export * from "./personalTasks.ts";
+export * from "./personalChatNotices.ts";
 export * from "./personalGroups.ts";
 export * from "./personalSecrets.ts";
 export * from "./personalConnections.ts";

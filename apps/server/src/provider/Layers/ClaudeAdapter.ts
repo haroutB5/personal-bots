@@ -28,7 +28,15 @@ import {
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { type ClaudeScopedLimitNames, claudeRateLimitEventToUpdate } from "./claudeUsageLimits.ts";
+import {
+  type ClaudeProcessHandle,
+  claudeSdkSpawnDisabled,
+  liveClaudeProcessPid,
+  makeClaudeProcessHandle,
+  makeRecordingClaudeSpawner,
+} from "./claudeProcessSpawner.ts";
 import { claudeApiRetryInfo, claudeRateLimitRejectionInfo } from "./claudeRetryInfo.ts";
+import { terminateDescendants } from "../processTree.ts";
 import {
   ApprovalRequestId,
   classifyTaskAgentKind,
@@ -42,6 +50,7 @@ import {
   type MessageId,
   type ModelSelection,
   ProviderItemId,
+  type ProviderRetryInfo,
   type ProviderRuntimeEvent,
   type ProviderRuntimeTurnStatus,
   type ProviderSendTurnInput,
@@ -286,6 +295,8 @@ interface ClaudeTurnState {
   nextSyntheticAssistantBlockIndex: number;
   authenticationFailureMessage: string | undefined;
   rejectedRateLimitTypes: Set<string>;
+  /** The reported wait of each window in `rejectedRateLimitTypes`, for the failed turn. */
+  readonly rejectedRateLimitRetries: Map<string, ProviderRetryInfo>;
   latestAssistantRateLimited: boolean;
   emittedThinkingText: boolean;
   readonly thinkingSnapshotIds: Set<string>;
@@ -417,6 +428,8 @@ function rememberPendingTaskModel(
 
 interface ClaudeSessionContext {
   session: ProviderSession;
+  /** The CLI process this session spawned (unset when the SDK spawned it). */
+  readonly process?: ClaudeProcessHandle;
   startInput: Parameters<ClaudeAdapterShape["startSession"]>[0];
   readonly turnStartMessageIds: Array<string | null>;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
@@ -678,6 +691,32 @@ function describeClaudeUsageLimit(
   return `Claude usage limit reached. This turn is paused until the ${
     label ? `${label} ` : ""
   }limit resets${wait ? ` in ${wait}` : ""}.`;
+}
+
+/**
+ * The wait a turn that failed on a usage limit ends with: the window that
+ * resets last, since the turn cannot run before every blocking window has
+ * reset. A limit seen only in the reply text carries no reset time.
+ */
+export function usageLimitRetryForFailedTurn(turn: {
+  readonly rejectedRateLimitTypes: ReadonlySet<string>;
+  readonly rejectedRateLimitRetries: ReadonlyMap<string, ProviderRetryInfo>;
+  readonly latestAssistantRateLimited: boolean;
+}): { readonly retry?: ProviderRetryInfo } {
+  if (turn.rejectedRateLimitTypes.size === 0 && !turn.latestAssistantRateLimited) return {};
+  let latest: ProviderRetryInfo | undefined;
+  for (const type of turn.rejectedRateLimitTypes) {
+    const info = turn.rejectedRateLimitRetries.get(type);
+    if (info === undefined) continue;
+    if (
+      latest === undefined ||
+      (info.retryAt !== undefined &&
+        (latest.retryAt === undefined || Date.parse(info.retryAt) > Date.parse(latest.retryAt)))
+    ) {
+      latest = info;
+    }
+  }
+  return { retry: latest ?? { kind: "rate_limited" } };
 }
 
 function formatClaudeUsageLimitWait(waitMs: number): string {
@@ -2927,6 +2966,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           : {}),
         ...(errorMessage ? { errorMessage } : {}),
         tokenUsage: normalizeClaudeTurnTokenUsage(result, turnState.hasSubagents, status),
+        // The limit's reset rides on the failed turn: the limit notice itself
+        // is output, which clears the session's earlier "rate limited" wait.
+        ...(status === "failed" ? usageLimitRetryForFailedTurn(turnState) : {}),
       },
       providerRefs: nativeProviderRefs(context),
     });
@@ -3474,6 +3516,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         nextSyntheticAssistantBlockIndex: -1,
         authenticationFailureMessage: undefined,
         rejectedRateLimitTypes: new Set(),
+        rejectedRateLimitRetries: new Map(),
         latestAssistantRateLimited: false,
         emittedThinkingText: false,
         thinkingSnapshotIds: new Set(),
@@ -4217,13 +4260,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // Current blocking evidence is independent of whether its warning has
         // already been shown. A recovery can omit or advance the reset time;
         // its window type remains stable without clearing another window.
-        if (blocked) context.turnState.rejectedRateLimitTypes.add(limitType);
-        else if (
+        if (blocked) {
+          context.turnState.rejectedRateLimitTypes.add(limitType);
+          context.turnState.rejectedRateLimitRetries.set(
+            limitType,
+            claudeRateLimitRejectionInfo(rateLimitInfo),
+          );
+        } else if (
           rateLimitInfo.status === "allowed" ||
           rateLimitInfo.status === "allowed_warning" ||
           overageAllowed
         ) {
           context.turnState.rejectedRateLimitTypes.delete(limitType);
+          context.turnState.rejectedRateLimitRetries.delete(limitType);
         }
       }
       if (blocked && context.turnState !== undefined) {
@@ -4454,9 +4503,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
     context: ClaudeSessionContext,
-    options?: { readonly emitExitEvent?: boolean },
+    options?: { readonly emitExitEvent?: boolean; readonly terminateProcesses?: boolean },
   ) {
     if (context.stopped) return;
+
+    // Before the CLI goes: once it exits, the commands it started lose their
+    // parent link and can no longer be found from its PID.
+    const cliPid =
+      options?.terminateProcesses === true ? liveClaudeProcessPid(context.process) : undefined;
+    if (cliPid !== undefined) {
+      const ended = yield* terminateDescendants(cliPid);
+      yield* Effect.logInfo("claude.session.processes-terminated", {
+        threadId: context.session.threadId,
+        cliPid,
+        found: ended.found.map((entry) => `${entry.pid}:${entry.name}`).join(","),
+        killed: ended.killed.join(","),
+        snapshotFailed: ended.snapshotFailed,
+      });
+    }
 
     // Schedule process termination before any cleanup that can wait on the
     // provider. The SDK closes stdin, then escalates from SIGTERM to SIGKILL.
@@ -5133,7 +5197,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? [input.cwd] : []),
         serverConfig.attachmentsDir,
       ];
+      // Remembers the CLI's PID so a deleted chat can end the commands it ran.
+      const processHandle = claudeSdkSpawnDisabled() ? undefined : makeClaudeProcessHandle();
       const queryOptions: ClaudeQueryOptions = {
+        ...(processHandle !== undefined
+          ? {
+              spawnClaudeCodeProcess: makeRecordingClaudeSpawner(processHandle, (detail) => {
+                runFork(
+                  Effect.logWarning("claude.process.exited-abnormally", {
+                    threadId,
+                    code: detail.code,
+                    signal: detail.signal,
+                    stderrTail: detail.stderrTail.slice(-2_000),
+                  }),
+                );
+              }),
+            }
+          : {}),
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
@@ -5254,6 +5334,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
       const context: ClaudeSessionContext = {
         session,
+        ...(processHandle !== undefined ? { process: processHandle } : {}),
         startInput: input,
         turnStartMessageIds: resumeState?.turnStartMessageIds
           ? [...resumeState.turnStartMessageIds]
@@ -5442,6 +5523,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         nextSyntheticAssistantBlockIndex: -1,
         authenticationFailureMessage: undefined,
         rejectedRateLimitTypes: new Set(),
+        rejectedRateLimitRetries: new Map(),
         latestAssistantRateLimited: false,
         emittedThinkingText: false,
         thinkingSnapshotIds: new Set(),
@@ -5760,10 +5842,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   });
 
   const stopSession: ClaudeAdapterShape["stopSession"] = Effect.fn("stopSession")(
-    function* (threadId) {
+    function* (threadId, stopOptions) {
       const context = yield* requireSession(threadId);
       yield* stopSessionInternal(context, {
         emitExitEvent: true,
+        ...(stopOptions?.terminateProcesses === true ? { terminateProcesses: true } : {}),
       });
     },
   );

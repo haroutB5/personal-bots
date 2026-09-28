@@ -1,5 +1,6 @@
 import * as NodeCrypto from "node:crypto";
 
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -638,8 +639,40 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(updated)) {
         return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
       }
+      if (input.archived) yield* stopArchivedSession(input.threadId, now);
       return updated.value;
     });
+
+  /**
+   * An archived chat stops working: its turn ends and so do the commands its
+   * session started, as when it is deleted. A session already stopped has
+   * nothing to end. Best effort: the archive itself already happened.
+   */
+  const stopArchivedSession = (threadId: ThreadId, now: DateTime.Utc) =>
+    Effect.gen(function* () {
+      const shell = yield* snapshots.getThreadShellById(threadId);
+      if (Option.isNone(shell)) return;
+      const session = shell.value.session;
+      if (session == null || session.status === "stopped") return;
+      yield* engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make(
+          `personal-bots:archive-stop:${threadId}:${DateTime.toEpochMillis(now)}`,
+        ),
+        threadId,
+        createdAt: DateTime.formatIso(now),
+        terminateProcesses: true,
+      });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal chat archive could not stop its session", {
+              threadId,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
 
   const deleteThread: PersonalBotService["Service"]["deleteThread"] = (input) =>
     Effect.gen(function* () {

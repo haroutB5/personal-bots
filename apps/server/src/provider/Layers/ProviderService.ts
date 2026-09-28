@@ -2222,7 +2222,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
               input.threadId,
             );
           }
-          yield* routed.adapter.stopSession(routed.threadId);
+          yield* routed.adapter.stopSession(
+            routed.threadId,
+            input.terminateProcesses === true ? { terminateProcesses: true } : undefined,
+          );
         }
         const pendingCompaction = pendingCompactions.get(input.threadId);
         if (pendingCompaction !== undefined) {

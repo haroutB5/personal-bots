@@ -1453,6 +1453,11 @@ const ThreadSessionStopCommand = Schema.Struct({
   // closes the race a post-settle snapshot read cannot: commands are decided
   // serially against the authoritative read model.
   onlyIfSettled: Schema.optional(Schema.Boolean),
+  /**
+   * Also end the processes the session started (its shell commands). Set by
+   * archiving a bot chat; a settle stop leaves them running.
+   */
+  terminateProcesses: Schema.optional(Schema.Boolean),
 });
 
 const DispatchableClientOrchestrationCommand = Schema.Union([
@@ -2011,6 +2016,8 @@ export const ThreadRevertedPayload = Schema.Struct({
 export const ThreadSessionStopRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   createdAt: IsoDateTime,
+  /** See `thread.session.stop`. Absent on older events. */
+  terminateProcesses: Schema.optional(Schema.Boolean),
 });
 
 export const ThreadSessionSetPayload = Schema.Struct({

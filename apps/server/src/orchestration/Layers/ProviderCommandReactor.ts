@@ -1952,7 +1952,10 @@ const make = Effect.gen(function* () {
     ).pipe(
       Effect.andThen(
         thread.session && thread.session.status !== "stopped"
-          ? providerService.stopSession({ threadId: thread.id })
+          ? providerService.stopSession({
+              threadId: thread.id,
+              ...(event.payload.terminateProcesses === true ? { terminateProcesses: true } : {}),
+            })
           : Effect.void,
       ),
       Effect.matchCauseEffect({

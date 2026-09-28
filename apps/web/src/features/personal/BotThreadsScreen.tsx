@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -10,9 +11,11 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 
 import { useThreadDetail, useThreadShells } from "~/state/entities";
+import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatar } from "./BotAvatar";
+import { botModelLabel } from "./botModelLabel";
 import { botThreadRows, type BotThreadRow } from "./botThreadRows";
 import { commandFailureMessage } from "./commandFeedback";
 import { isThreadLive, isThreadRateLimited, threadNeedsAttention } from "./botSummaries";
@@ -247,6 +250,8 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   const list = usePersonalBotsList(environmentId);
   const shells = useThreadShells();
   const bot = list.data?.bots.find((candidate) => candidate.botId === botId) ?? null;
+  const providers = useAtomValue(primaryServerProvidersAtom);
+  const modelLabel = bot === null ? null : botModelLabel(bot.modelSelection, providers);
   const { start, starting } = useStartBotChat(environmentId, bot?.botId ?? null);
   const [now] = useState(() => Date.now());
   const [wrapupError, setWrapupError] = useState<string | null>(null);
@@ -446,9 +451,19 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
                 label={bot.name}
               />
               <div className="min-w-0 flex-1">
-                <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
-                  {bot.name}
-                </h1>
+                <div className="flex min-w-0 items-baseline">
+                  <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
+                    {bot.name}
+                  </h1>
+                  {modelLabel !== null ? (
+                    <span
+                      data-testid="bot-model-label"
+                      className="ml-1.5 min-w-0 shrink-[100] truncate text-[13px] text-[var(--personal-text-tertiary)]"
+                    >
+                      {modelLabel}
+                    </span>
+                  ) : null}
+                </div>
                 {bot.title !== "" ? (
                   <p className="truncate text-[13px] text-[var(--personal-text-secondary)]">
                     {bot.title}

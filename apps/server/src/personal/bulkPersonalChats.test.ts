@@ -52,6 +52,13 @@ const makeLayer = (dispatched: Array<OrchestrationCommand>) =>
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         getProjectShellById: () => Effect.succeed(Option.none()),
         getProjectShells: () => Effect.succeed([]),
+        // The working chat's session is mid-turn; the others have none.
+        getThreadShellById: (threadId: ThreadId) =>
+          Effect.succeed(
+            threadId === working
+              ? Option.some({ id: working, session: { threadId: working, status: "running" } })
+              : Option.none(),
+          ),
       } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
     ),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-bulk-test-" })),
@@ -213,8 +220,9 @@ describe("deletePersonalChats", () => {
 });
 
 describe("archivePersonalChats", () => {
-  it.effect("archives and unarchives each chat, reporting one that is gone", () =>
-    Effect.gen(function* () {
+  it.effect("archives and unarchives each chat, reporting one that is gone", () => {
+    const dispatched: Array<OrchestrationCommand> = [];
+    return Effect.gen(function* () {
       const bots = yield* seed;
       const gone = ThreadId.make("thread-gone");
 
@@ -232,12 +240,26 @@ describe("archivePersonalChats", () => {
         .toSorted();
       assert.deepEqual(archivedIds, [quiet, working].toSorted());
 
+      // Archiving the working chat stops its turn and the commands it started.
+      const stops = dispatched.flatMap((command) =>
+        command.type === "thread.session.stop" ? [command] : [],
+      );
+      assert.deepEqual(
+        stops.map((command) => [command.threadId, command.terminateProcesses]),
+        [[working, true]],
+      );
+
       const restored = yield* archivePersonalChats(bots, [quiet, working], false);
       assert.deepEqual(restored.done, [quiet, working]);
       const afterRestore = yield* bots.list();
       expect(afterRestore.threads.every((thread) => thread.archivedAt === null)).toBe(true);
-    }).pipe(Effect.provide(makeLayer([]))),
-  );
+      // Unarchiving stops nothing.
+      assert.equal(
+        dispatched.filter((command) => command.type === "thread.session.stop").length,
+        1,
+      );
+    }).pipe(Effect.provide(makeLayer(dispatched)));
+  });
 
   it.effect("uses the server's own message for a refusal", () =>
     Effect.gen(function* () {

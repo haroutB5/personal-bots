@@ -61,6 +61,8 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import type { ProviderAdapterStopOptions } from "../Services/ProviderAdapter.ts";
+import { terminateDescendants } from "../processTree.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
@@ -2734,9 +2736,25 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
   const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
     session: CodexAdapterSessionContext,
+    stopOptions?: ProviderAdapterStopOptions,
   ) {
     if (session.stopped) {
       return;
+    }
+    // Before the app-server goes: once it exits, the commands it started lose
+    // their parent link and can no longer be found from its PID.
+    if (stopOptions?.terminateProcesses === true && session.runtime.processId !== undefined) {
+      const appServerPid = yield* session.runtime.processId;
+      if (appServerPid !== undefined) {
+        const ended = yield* terminateDescendants(appServerPid);
+        yield* Effect.logInfo("codex.session.processes-terminated", {
+          threadId: session.threadId,
+          appServerPid,
+          found: ended.found.map((entry) => `${entry.pid}:${entry.name}`).join(","),
+          killed: ended.killed.join(","),
+          snapshotFailed: ended.snapshotFailed,
+        });
+      }
     }
     session.stopped = true;
     sessions.delete(session.threadId);
@@ -2745,13 +2763,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
   });
 
-  const stopSession: CodexAdapterShape["stopSession"] = (threadId) =>
+  const stopSession: CodexAdapterShape["stopSession"] = (threadId, stopOptions) =>
     Effect.gen(function* () {
       const session = sessions.get(threadId);
       if (!session) {
         return;
       }
-      yield* stopSessionInternal(session);
+      yield* stopSessionInternal(session, stopOptions);
     });
 
   const listSessions: CodexAdapterShape["listSessions"] = () =>
@@ -2765,7 +2783,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     Effect.succeed(Boolean(sessions.get(threadId) && !sessions.get(threadId)?.stopped));
 
   const stopAll: CodexAdapterShape["stopAll"] = () =>
-    Effect.forEach(Array.from(sessions.values()), stopSessionInternal, {
+    Effect.forEach(Array.from(sessions.values()), (session) => stopSessionInternal(session), {
       concurrency: 1,
       discard: true,
     }).pipe(Effect.asVoid);

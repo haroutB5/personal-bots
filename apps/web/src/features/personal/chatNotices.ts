@@ -1,0 +1,77 @@
+import {
+  type OrchestrationMessageContext,
+  PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
+  PersonalChatNoticeMarker,
+} from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+
+import { PERSONAL_TIME_ZONE } from "./greeting";
+
+const decodeMarker = Schema.decodeUnknownOption(PersonalChatNoticeMarker);
+
+/** Server-written notice rows and continue turns, by id when the context is not at hand. */
+const NOTICE_MESSAGE_ID = /^personal-(notice|resume)-/;
+
+/**
+ * The server's own line in a bot chat (paused on a usage limit, or its
+ * automatic continue), or null for anything anyone else wrote.
+ */
+export function readChatNotice(message: {
+  readonly context?: OrchestrationMessageContext | undefined;
+}): PersonalChatNoticeMarker | null {
+  for (const record of message.context?.records ?? []) {
+    if (record.kind !== PERSONAL_CHAT_NOTICE_CONTEXT_KIND || !("payload" in record)) continue;
+    const marker = decodeMarker(record.payload);
+    return Option.isSome(marker) ? marker.value : null;
+  }
+  return null;
+}
+
+export function isChatNoticeMessageId(messageId: string): boolean {
+  return NOTICE_MESSAGE_ID.test(messageId);
+}
+
+export const RESUMED_NOTICE_LABEL = "Auto-continue after usage reset";
+
+function formatResumeTime(resumeAtMs: number, nowMs: number, timeZone: string): string {
+  const day = (ms: number) =>
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(ms);
+  const time = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(resumeAtMs);
+  if (day(resumeAtMs) === day(nowMs)) return time;
+  const weekday = new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "short" }).format(
+    resumeAtMs,
+  );
+  return `${weekday} ${time}`;
+}
+
+/**
+ * The row's words. The paused line is the server's text with its time
+ * re-read from the marker in this device's zone ("Continues at 23:00"); the
+ * continue is always the same label, whatever prompt the provider was given.
+ */
+export function chatNoticeLabel(
+  notice: PersonalChatNoticeMarker,
+  text: string,
+  nowMs: number,
+  timeZone: string = PERSONAL_TIME_ZONE,
+): string {
+  if (notice.notice === "usage-limit-resumed") return RESUMED_NOTICE_LABEL;
+  const trimmed = text.trim();
+  const resumeAtMs = notice.resumeAt === undefined ? Number.NaN : Date.parse(notice.resumeAt);
+  if (!Number.isFinite(resumeAtMs)) {
+    return trimmed === "" ? `Paused: ${notice.provider} usage limit.` : trimmed;
+  }
+  const head = trimmed.replace(/\s*Continues at .*$/, "");
+  return `${head === "" ? `Paused: ${notice.provider} usage limit.` : head} Continues at ${formatResumeTime(resumeAtMs, nowMs, timeZone)}.`;
+}

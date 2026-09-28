@@ -46,7 +46,9 @@ const make = Effect.gen(function* () {
 
   const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
-      effect: providerService.stopSession({ threadId }),
+      // A chat deleted mid-turn also ends the commands its session started:
+      // nothing can read their output any more.
+      effect: providerService.stopSession({ threadId, terminateProcesses: true }),
       message: "thread deletion cleanup skipped provider session stop",
       threadId,
     });

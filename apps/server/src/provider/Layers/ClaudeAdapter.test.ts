@@ -29,6 +29,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -3448,6 +3449,14 @@ describe("ClaudeAdapterLive", () => {
         payload.errorMessage,
         "Claude usage limit reached. Send the message again once the limit resets.",
       );
+      // The reset rides on the failed turn, so the chat can continue after it.
+      assert.deepEqual(payload.retry, {
+        kind: "rate_limited",
+        retryAt: DateTime.formatIso(
+          DateTime.makeUnsafe((Math.floor(nowMs / 1000) + 2 * 60 * 60) * 1000),
+        ),
+        reason: "five_hour",
+      });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -3533,6 +3542,11 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(errors[0]?.payload.message, expected);
       assert.equal(completedTurn(events).state, "failed");
       assert.equal(completedTurn(events).errorMessage, expected);
+      // A limit seen only in the reply is a limit with no reset time.
+      assert.deepEqual(
+        completedTurn(events).retry,
+        expected === usageLimitMessage ? { kind: "rate_limited" } : undefined,
+      );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

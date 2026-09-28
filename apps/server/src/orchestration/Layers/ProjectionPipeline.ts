@@ -1360,6 +1360,24 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         });
         return;
       }
+      if (event.type === "thread.deleted") {
+        // Deleting a chat stops its session, but the decider rejects session
+        // updates for a deleted thread, so the "stopped" that follows never
+        // lands and the row read "running" for good (1.49.0). The session ends
+        // with the thread, so it is marked stopped here.
+        const existing = yield* projectionThreadSessionRepository.getByThreadId({
+          threadId: event.payload.threadId,
+        });
+        if (Option.isNone(existing) || existing.value.status === "stopped") return;
+        yield* projectionThreadSessionRepository.upsert({
+          ...existing.value,
+          status: "stopped",
+          activeTurnId: null,
+          providerRetry: null,
+          updatedAt: event.occurredAt,
+        });
+        return;
+      }
       if (event.type !== "thread.session-set") {
         return;
       }

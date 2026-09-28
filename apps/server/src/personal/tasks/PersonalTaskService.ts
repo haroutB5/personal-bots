@@ -278,6 +278,15 @@ export class PersonalTaskService extends Context.Service<
      * from the task stream (or is a delegation the user is not waiting on).
      */
     readonly ownsThreadTurn: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /**
+     * Takes one of the {@link PERSONAL_TASKS_CONCURRENCY} slots for work that
+     * is not a task (a chat continuing after a usage limit reset), so the cap
+     * stays one number across both. False when every slot is busy. `key`
+     * identifies the holder; taking a slot twice for one key holds one slot.
+     */
+    readonly reserveExternalSlot: (key: string) => Effect.Effect<boolean>;
+    /** Gives a slot from {@link reserveExternalSlot} back; queued tasks may start. */
+    readonly releaseExternalSlot: (key: string) => Effect.Effect<void>;
     /** Root of the task tree `threadId` works in: its active task, else its latest task. */
     readonly rootTaskIdForThread: (
       threadId: ThreadId,
@@ -474,6 +483,8 @@ export const make = Effect.gen(function* () {
   // Serialises public mutations with dispatcher steps, so a claim never
   // interleaves with a cancel or a delegation on the same rows.
   const lock = yield* Semaphore.make(1);
+  /** Slots held by work that is not a task (see `reserveExternalSlot`). In memory: a restart ends that work. */
+  const externalSlots = new Set<string>();
   // Provider threads with an active attempt; filters the hot event stream.
   const activeThreadIds = new Set<string>();
   // Threads whose waiting task queues once their provider session is gone.
@@ -949,7 +960,7 @@ export const make = Effect.gen(function* () {
   const pump = Effect.fn("PersonalTaskService.pump")(function* () {
     while (true) {
       const active = yield* repository.listActiveAttempts();
-      if (active.length >= PERSONAL_TASKS_CONCURRENCY) {
+      if (active.length + externalSlots.size >= PERSONAL_TASKS_CONCURRENCY) {
         return;
       }
       const busyThreads = new Set<string>(active.map((attempt) => attempt.providerThreadId));
@@ -2106,6 +2117,33 @@ export const make = Effect.gen(function* () {
       )
       .pipe(toPublic("resolveCallerTask"));
 
+  const reserveExternalSlot: PersonalTaskService["Service"]["reserveExternalSlot"] = (key) =>
+    lock
+      .withPermit(
+        Effect.gen(function* () {
+          if (externalSlots.has(key)) return true;
+          const active = yield* repository.listActiveAttempts();
+          if (active.length + externalSlots.size >= PERSONAL_TASKS_CONCURRENCY) return false;
+          externalSlots.add(key);
+          return true;
+        }),
+      )
+      .pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("personal tasks could not count slots for outside work", {
+                key,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as(false)),
+        ),
+      );
+
+  const releaseExternalSlot: PersonalTaskService["Service"]["releaseExternalSlot"] = (key) =>
+    Effect.suspend(() =>
+      externalSlots.delete(key) ? worker.enqueue({ type: "pump" }) : Effect.void,
+    );
+
   const ownsThreadTurn: PersonalTaskService["Service"]["ownsThreadTurn"] = (threadId) =>
     Effect.gen(function* () {
       if (activeThreadIds.has(threadId)) return true;
@@ -2282,6 +2320,8 @@ export const make = Effect.gen(function* () {
     drain: worker.drain,
     resolveCallerTask,
     ownsThreadTurn,
+    reserveExternalSlot,
+    releaseExternalSlot,
     rootTaskIdForThread,
     waitForUser,
     waitForBrowser,

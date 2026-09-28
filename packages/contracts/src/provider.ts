@@ -134,6 +134,11 @@ export type ProviderInterruptTurnInput = typeof ProviderInterruptTurnInput.Type;
 
 export const ProviderStopSessionInput = Schema.Struct({
   threadId: ThreadId,
+  /**
+   * Also end the processes the session started (its shell commands), by the
+   * provider process's own PID. Set when the chat is deleted or archived.
+   */
+  terminateProcesses: Schema.optional(Schema.Boolean),
 });
 export type ProviderStopSessionInput = typeof ProviderStopSessionInput.Type;
 

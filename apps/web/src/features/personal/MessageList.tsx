@@ -24,6 +24,7 @@ import { AttachmentPreview, type AttachmentPreviewData } from "./AttachmentPrevi
 import { BotAvatar, type BotAvatarShape } from "./BotAvatar";
 import { type ConversationItem, formatDayDivider } from "./conversationModel";
 import type { ServerTurn } from "./delegationModel";
+import { chatNoticeLabel } from "./chatNotices";
 import { groupSystemLabel, readGroupMarker } from "./groupModel";
 import { QuestionCard } from "./QuestionCard";
 import type { UserInputAnswers } from "./questionCards";
@@ -655,6 +656,7 @@ export function MessageList({
     for (let index = items.length - 1; index >= 0; index -= 1) {
       const item = items[index]!;
       if (item.kind === "system-turn") return null;
+      if (item.kind === "notice" && item.notice.notice === "usage-limit-resumed") return null;
       if (item.kind === "message" && item.message.role === "user") return null;
       if (item.kind === "work") return item.id;
     }
@@ -772,6 +774,24 @@ export function MessageList({
                     </div>
                   );
                 }
+              case "notice":
+                // The continue shows the prompt the bot got when tapped, like
+                // any server-written turn; the pause is a plain line.
+                return item.notice.notice === "usage-limit-resumed" ? (
+                  <SystemTurnRow
+                    key={item.id}
+                    label={chatNoticeLabel(item.notice, item.message.text, now.getTime())}
+                    text={item.message.text}
+                  />
+                ) : (
+                  <p
+                    key={item.id}
+                    data-testid="chat-notice"
+                    className="mx-auto max-w-[90%] text-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
+                  >
+                    {chatNoticeLabel(item.notice, item.message.text, now.getTime())}
+                  </p>
+                );
               case "group-system":
                 return (
                   <p

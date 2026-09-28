@@ -4926,3 +4926,62 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-delt
     );
   },
 );
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-session-delete-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("a chat deleted mid-turn leaves its session stopped, not running", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-deleted-mid-turn");
+        const base = (id: string, occurredAt: string) => ({
+          eventId: EventId.make(id),
+          aggregateKind: "thread" as const,
+          aggregateId: threadId,
+          occurredAt,
+          commandId: CommandId.make(`cmd-${id}`),
+          causationEventId: null,
+          correlationId: CorrelationId.make(`cmd-${id}`),
+          metadata: {},
+        });
+        yield* eventStore.append({
+          ...base("evt-session-running", "2026-09-28T10:00:00.000Z"),
+          type: "thread.session-set",
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "claudeAgent",
+              runtimeMode: "full-access",
+              activeTurnId: TurnId.make("turn-mid"),
+              lastError: null,
+              updatedAt: "2026-09-28T10:00:00.000Z",
+            },
+          },
+        });
+        yield* eventStore.append({
+          ...base("evt-session-deleted", "2026-09-28T10:01:00.000Z"),
+          type: "thread.deleted",
+          payload: { threadId, deletedAt: "2026-09-28T10:01:00.000Z" },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly status: string;
+          readonly activeTurnId: string | null;
+          readonly updatedAt: string;
+        }>`
+          SELECT status, active_turn_id AS "activeTurnId", updated_at AS "updatedAt"
+          FROM projection_thread_sessions WHERE thread_id = ${threadId}
+        `;
+        assert.deepEqual(rows, [
+          { status: "stopped", activeTurnId: null, updatedAt: "2026-09-28T10:01:00.000Z" },
+        ]);
+      }),
+    );
+  },
+);

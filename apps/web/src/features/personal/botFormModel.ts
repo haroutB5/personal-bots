@@ -54,8 +54,8 @@ export function noBotProviderMessage(providers: ReadonlyArray<ServerProvider>): 
     : "No provider is ready on your computer yet. Set up Claude Code or Codex there, then come back to create a bot.";
 }
 
-/** Claude calls the effort option `effort`, Codex `reasoningEffort`, OpenCode `variant`. */
-export const EFFORT_OPTION_IDS: ReadonlyArray<string> = ["effort", "reasoningEffort", "variant"];
+export { EFFORT_OPTION_IDS } from "./botModelLabel";
+import { EFFORT_OPTION_IDS } from "./botModelLabel";
 
 /**
  * The provider's own default model, or "" when it names none (OpenCode lists

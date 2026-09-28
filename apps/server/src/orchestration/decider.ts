@@ -1888,6 +1888,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           createdAt: command.createdAt,
+          ...(command.terminateProcesses === true ? { terminateProcesses: true } : {}),
         },
       };
     }

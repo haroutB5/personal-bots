@@ -62,6 +62,11 @@ export interface ProviderAdapterCapabilities {
   readonly userMessageDelivery?: "adapter" | "turn-started" | "handover";
 }
 
+export interface ProviderAdapterStopOptions {
+  /** End the processes the session started too (chat deleted or archived). */
+  readonly terminateProcesses?: boolean;
+}
+
 export interface ProviderThreadTurnSnapshot {
   readonly id: TurnId;
   readonly items: ReadonlyArray<unknown>;
@@ -120,9 +125,13 @@ export interface ProviderAdapterShape<TError> {
   ) => Effect.Effect<void, TError>;
 
   /**
-   * Stop one provider session.
+   * Stop one provider session. `terminateProcesses` also ends what the session
+   * started (shell commands), for adapters that own a process per session.
    */
-  readonly stopSession: (threadId: ThreadId) => Effect.Effect<void, TError>;
+  readonly stopSession: (
+    threadId: ThreadId,
+    options?: ProviderAdapterStopOptions,
+  ) => Effect.Effect<void, TError>;
 
   /**
    * List currently active provider sessions for this adapter.

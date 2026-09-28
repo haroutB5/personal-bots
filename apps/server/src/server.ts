@@ -122,6 +122,7 @@ import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalPro
 import * as PersonalClaudeCodeReview from "./personal/claudeCodeReview/PersonalClaudeCodeReview.ts";
 import * as PersonalTaskTitleBackfill from "./personal/taskTitleBackfill.ts";
 import * as PersonalTurnRetry from "./personal/PersonalTurnRetryService.ts";
+import * as PersonalChatResume from "./personal/PersonalChatResumeService.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -566,6 +567,8 @@ const PersonalReactorsLive = Layer.effectDiscard(
     // Re-runs a bot reply that died on a transient provider fault. Subscribes
     // here so it never misses the turn-start it has to track.
     yield* (yield* PersonalTurnRetry.PersonalTurnRetry).start();
+    // Continues a bot chat stopped by a usage limit once it resets.
+    yield* (yield* PersonalChatResume.PersonalChatResume).start();
     // One-off: names old task/routine chats still on "New chat" after their
     // task, once the server is up. Marker in personal_meta; never blocks start.
     yield* forkParked(PersonalTaskTitleBackfill.runTaskTitleBackfillSafely);
@@ -581,6 +584,7 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   // Consumes the routine service and the bot service/repository below.
   Layer.provideMerge(PersonalClaudeCodeReview.layer),
   Layer.provideMerge(PersonalTurnRetry.layer),
+  Layer.provideMerge(PersonalChatResume.layer),
   Layer.provideMerge(
     PersonalPushService.layer.pipe(
       Layer.provide(PersonalPushService.transportLive),

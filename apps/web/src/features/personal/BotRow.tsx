@@ -11,6 +11,7 @@ import { BotAvatar } from "./BotAvatar";
 import { MutedBell } from "./BotMute";
 import { botMuteState } from "./botMuteModel";
 import { botStatus, type BotSummary } from "./botSummaries";
+import { chatNoticeLabel, readChatNotice } from "./chatNotices";
 import { readServerTurn, type ServerTurn } from "./delegationModel";
 import { formatRelativeTime } from "./relativeTime";
 import { useStartBotChat } from "./startBotChat";
@@ -68,6 +69,8 @@ export function previewOf(summary: BotSummary, describeTurn: (turn: ServerTurn) 
   if (thread === null) return "No chats yet";
   const message = summary.newestMessage;
   if (message !== null) {
+    const notice = readChatNotice(message);
+    if (notice !== null) return chatNoticeLabel(notice, message.text, Date.now());
     const turn = readServerTurn(message);
     if (turn !== null) return describeTurn(turn);
     const line = message.text
@@ -112,6 +115,8 @@ export function snapshotPreviewLabel(
   describeTurn: (turn: ServerTurn) => string,
 ): string | null {
   if (summary.newestThread === null || summary.newestMessage === null) return null;
+  const notice = readChatNotice(summary.newestMessage);
+  if (notice !== null) return chatNoticeLabel(notice, summary.newestMessage.text, Date.now());
   const turn = readServerTurn(summary.newestMessage);
   return turn === null ? null : describeTurn(turn);
 }
@@ -168,6 +173,15 @@ export const BotRow = memo(function BotRow({
           <span className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
             {bot.name}
           </span>
+          {summary.modelLabel !== null ? (
+            // Gives way before the name does: it shrinks first and truncates.
+            <span
+              data-testid="bot-model-label"
+              className="ml-1.5 min-w-0 shrink-[100] truncate text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]"
+            >
+              {summary.modelLabel}
+            </span>
+          ) : null}
           {botMuteState(bot, now).muted ? <MutedBell className="ml-1.5" /> : null}
           {live ? (
             <span className="ml-2 flex shrink-0 items-center">
