@@ -86,8 +86,6 @@ export interface OpenCodeServerProcess {
   readonly url: string;
   readonly serverPassword?: string;
   readonly version: string;
-  /** PID of the process the runtime spawned for this server (the root of its command tree). */
-  readonly pid?: number;
   readonly isRunning: Effect.Effect<boolean>;
   readonly exitCode: Effect.Effect<number, never>;
 }
@@ -96,8 +94,6 @@ export interface OpenCodeServerConnection {
   readonly url: string;
   readonly serverPassword?: string;
   readonly version: string;
-  /** Set for a server this runtime spawned; an external server has none. */
-  readonly pid?: number;
   readonly exitCode: Effect.Effect<number, never> | null;
   readonly external: boolean;
 }
@@ -853,7 +849,6 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         url,
         ...(serverPassword !== undefined ? { serverPassword } : {}),
         version,
-        ...(Number.isInteger(Number(child.pid)) ? { pid: Number(child.pid) } : {}),
         isRunning: child.isRunning.pipe(Effect.orElseSucceed(() => false)),
         exitCode: child.exitCode.pipe(
           Effect.map(Number),
@@ -899,7 +894,6 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         url: server.url,
         ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
         version: server.version,
-        ...(server.pid !== undefined ? { pid: server.pid } : {}),
         exitCode: server.exitCode,
         external: false,
       })),

@@ -1,5 +1,4 @@
 import * as NodeAssert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -17,7 +16,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { beforeEach, describe, vi } from "vite-plus/test";
+import { beforeEach, vi } from "vite-plus/test";
 import type {
   Event as OpenCodeEvent,
   PermissionRequest,
@@ -144,11 +143,8 @@ const runtimeMock = {
       environment: NodeJS.ProcessEnv | undefined;
     }>,
     mcpAddCalls: [] as Array<unknown>,
-    /** PID the test double reports for the server it "spawned". */
-    serverPid: undefined as number | undefined,
   },
   reset() {
-    this.state.serverPid = undefined;
     this.state.connectInputs.length = 0;
     this.state.mcpAddCalls.length = 0;
     this.state.startCalls.length = 0;
@@ -250,9 +246,6 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         url,
         version: "1.15.13",
         ...(serverPassword ? { serverPassword } : {}),
-        ...(runtimeMock.state.serverPid !== undefined && !serverUrl
-          ? { pid: runtimeMock.state.serverPid }
-          : {}),
         exitCode: null,
         external: Boolean(serverUrl),
       };
@@ -778,88 +771,6 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped),
   );
-
-  describe("commands a chat's own server started", () => {
-    const isAlive = (pid: number) => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    /** A stand-in server process with one long-running "shell command" under it. */
-    const startFakeServer = Effect.promise(async () => {
-      const server = spawn(
-        process.execPath,
-        [
-          "-e",
-          `const c = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 120000)"], { stdio: "ignore" }); console.log(c.pid); setTimeout(() => {}, 120000);`,
-        ],
-        { stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
-      );
-      const commandPid = await new Promise<number>((resolve) => {
-        server.stdout.once("data", (chunk: Buffer) => resolve(Number(String(chunk).trim())));
-      });
-      return { server, commandPid };
-    });
-    const startBotSession = (threadId: ReturnType<typeof asThreadId>) =>
-      Effect.gen(function* () {
-        const adapter = yield* makeOpenCodeAdapter(localOpenCodeSettings, {
-          personalBotConfigHome: BOT_CONFIG_HOME,
-          environment: { PATH: "p", XDG_CONFIG_HOME: "C:/owner/config" },
-        });
-        yield* withMcpSession(botMcpSession(threadId));
-        yield* adapter.startSession({
-          provider: ProviderDriverKind.make("opencode"),
-          threadId,
-          runtimeMode: "full-access",
-          personalBot: true,
-          modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), BOT_MODEL),
-        });
-        return adapter;
-      });
-
-    it.effect("a stop that asks for it ends them, by the server's own PID", () =>
-      Effect.gen(function* () {
-        const { server, commandPid } = yield* startFakeServer;
-        try {
-          runtimeMock.state.serverPid = server.pid;
-          const threadId = asThreadId("thread-opencode-terminate");
-          const adapter = yield* startBotSession(threadId);
-          NodeAssert.equal(isAlive(commandPid), true);
-
-          yield* adapter.stopSession(threadId, { terminateProcesses: true });
-          yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 500)));
-
-          NodeAssert.equal(isAlive(commandPid), false);
-          // The server itself is closed through its scope, not by this walk.
-          NodeAssert.equal(isAlive(server.pid!), true);
-        } finally {
-          server.kill();
-        }
-      }).pipe(Effect.scoped),
-    );
-
-    it.effect("an ordinary stop (a chat settling) leaves them alone", () =>
-      Effect.gen(function* () {
-        const { server, commandPid } = yield* startFakeServer;
-        try {
-          runtimeMock.state.serverPid = server.pid;
-          const threadId = asThreadId("thread-opencode-plain-stop");
-          const adapter = yield* startBotSession(threadId);
-
-          yield* adapter.stopSession(threadId);
-          yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 500)));
-
-          NodeAssert.equal(isAlive(commandPid), true);
-        } finally {
-          process.kill(commandPid);
-          server.kill();
-        }
-      }).pipe(Effect.scoped),
-    );
-  });
 
   it.effect("keeps a non-bot session on the owner's own OpenCode config", () =>
     Effect.gen(function* () {

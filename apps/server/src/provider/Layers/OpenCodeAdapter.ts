@@ -45,8 +45,6 @@ import {
 } from "../Errors.ts";
 import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
-import type { ProviderAdapterStopOptions } from "../Services/ProviderAdapter.ts";
-import { terminateDescendants } from "../processTree.ts";
 import {
   PERSONAL_BOT_OPENCODE_AGENTS,
   personalBotOpenCodeEnvironment,
@@ -926,7 +924,6 @@ const closeStartingOpenCodeContext = Effect.fn("closeStartingOpenCodeContext")(f
 
 const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   context: OpenCodeSessionContext,
-  options?: ProviderAdapterStopOptions,
 ) {
   // Race-safe one-shot: first caller flips the flag, everyone else no-ops.
   if (yield* Ref.getAndSet(context.stopped, true)) {
@@ -952,23 +949,6 @@ const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   // handles (event-pump fiber, server-exit fiber, event-subscribe fetch),
   // but we still want to tell OpenCode that this session is done.
   yield* abortOpenCodeSessionForTeardown(context);
-
-  // A chat deleted or archived mid-command: the shell command is a descendant
-  // of the `opencode serve` process this session spawned (bots never share a
-  // server), and once that process exits the command loses its parent link
-  // and can no longer be found. Walk it now, from this session's own server
-  // PID only, never by name.
-  const serverPid = context.server.pid;
-  if (options?.terminateProcesses === true && serverPid !== undefined) {
-    const ended = yield* terminateDescendants(serverPid);
-    yield* Effect.logInfo("opencode.session.processes-terminated", {
-      threadId: context.session.threadId,
-      serverPid,
-      found: ended.found.map((entry) => `${entry.pid}:${entry.name}`).join(","),
-      killed: ended.killed.join(","),
-      snapshotFailed: ended.snapshotFailed,
-    });
-  }
 
   // Closing the session scope interrupts every fiber forked into it and
   // runs each finalizer we registered — the `AbortController.abort()` call,
@@ -3988,7 +3968,7 @@ export function makeOpenCodeAdapter(
     });
 
     const stopSession: OpenCodeAdapterShape["stopSession"] = Effect.fn("stopSession")(
-      function* (threadId, stopOptions) {
+      function* (threadId) {
         const context = sessions.get(threadId);
         if (!context) {
           return yield* new ProviderAdapterSessionNotFoundError({
@@ -3996,7 +3976,7 @@ export function makeOpenCodeAdapter(
             threadId,
           });
         }
-        const stopped = yield* stopOpenCodeContext(context, stopOptions);
+        const stopped = yield* stopOpenCodeContext(context);
         deleteContextIfCurrent(context);
         if (!stopped) {
           return;
