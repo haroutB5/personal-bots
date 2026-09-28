@@ -310,9 +310,9 @@ describe("deriveDelegationCard", () => {
         task: child({ status: "waiting_for_agent" }),
         entries,
         labelOf,
-        waitingFor: "Waiting for Researcher",
+        waitingFor: "Waiting on Researcher",
       }),
-    ).toMatchObject({ status: "Waiting for Researcher", canCancel: true });
+    ).toMatchObject({ status: "Waiting on Researcher", canCancel: true });
   });
 });
 
@@ -347,15 +347,41 @@ describe("delegatedChildren and waiting labels", () => {
 
   it("names only the unfinished children a parked parent waits for", () => {
     const labels = waitingLabelsByThread(tasks, nameOf);
-    expect(labels.get("thread-parent")).toBe("Waiting for Developer");
-    expect(labels.has("thread-dev")).toBe(false);
+    expect(labels.get("thread-parent")).toBe("Waiting on Developer");
+    // The running child has no children of its own; a live turn still reads as Working.
+    expect(labels.get("thread-dev")).toBe("Waiting on a task");
     // A parked parent whose children all just finished waits for no one in particular.
     const done = tasks.map((value) =>
       value.taskId === "dev"
         ? task({ taskId: "dev", parentTaskId: "root", botId: "bot-developer", status: "completed" })
         : value,
     );
-    expect(waitingLabelsByThread(done, nameOf).get("thread-parent")).toBe("Waiting on another bot");
+    expect(waitingLabelsByThread(done, nameOf).get("thread-parent")).toBe("Waiting on a task");
+  });
+
+  it("also labels a task that is still running with no turn of its own to show", () => {
+    // A task waiting on background work stays `running` after its turn ended.
+    const running = [task({ taskId: "solo", threadId: "thread-solo", status: "running" })];
+    expect(waitingLabelsByThread(running, nameOf).get("thread-solo")).toBe("Waiting on a task");
+    // With an open child it names the child's bot, whatever the parent's status.
+    const withChild = [
+      task({ taskId: "parent", threadId: "thread-p", status: "running" }),
+      task({ taskId: "kid", parentTaskId: "parent", botId: "bot-researcher", threadId: null }),
+    ];
+    expect(waitingLabelsByThread(withChild, nameOf).get("thread-p")).toBe("Waiting on Researcher");
+    // Queued, blocked-on-the-user and finished tasks are not "waiting on a task".
+    for (const status of ["queued", "waiting_for_user", "completed", "failed"]) {
+      const other = [task({ taskId: "x", threadId: "thread-x", status })];
+      expect(waitingLabelsByThread(other, nameOf).has("thread-x")).toBe(false);
+    }
+    // Three open children collapse to a count.
+    const three = [
+      task({ taskId: "p3", threadId: "thread-3", status: "waiting_for_agent" }),
+      ...["bot-assistant", "bot-developer", "bot-researcher"].map((botId) =>
+        task({ taskId: `kid-${botId}`, parentTaskId: "p3", botId, threadId: null }),
+      ),
+    ];
+    expect(waitingLabelsByThread(three, nameOf).get("thread-3")).toBe("Waiting on 3 bots");
   });
 });
 

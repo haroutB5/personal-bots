@@ -1,5 +1,5 @@
 import type { JSX, PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type {
   EnvironmentId,
@@ -84,14 +84,59 @@ const TILE_NAME_CLASS =
   "w-full truncate text-[12px] leading-[15px] font-medium text-[var(--personal-text)]";
 
 /**
- * The model line under a pinned bot's name ("Opus 5.5 medium"), from the same
- * `botModelLabel` the list rows use. One line, truncated inside the fixed
- * 72px tile. Every tile reserves the line (blank when there is no label: a
- * group, the cold-start snapshot), so the live list landing or a model change
- * never changes the strip's height.
+ * The model line under a pinned bot's name ("Opus 5.5 · M"), the short form of
+ * the list row's label. One line inside the fixed 72px tile. Every tile
+ * reserves the line (blank when there is no label: a group, the cold-start
+ * snapshot), so the live list landing or a model change never changes the
+ * strip's height.
  */
 const TILE_MODEL_CLASS =
   "-mt-1 w-full truncate text-[11px] leading-[14px] text-[var(--personal-text-tertiary)]";
+
+/**
+ * Font sizes the model line tries, largest first; the last also tightens the
+ * letter spacing. A label that still overflows at the last is cut with an
+ * ellipsis. The line height is fixed, so a smaller size never moves the strip.
+ */
+const MODEL_FONT_TIERS = [
+  { sizePx: 11, letterSpacing: "" },
+  { sizePx: 10, letterSpacing: "" },
+  { sizePx: 9, letterSpacing: "-0.02em" },
+] as const;
+
+/**
+ * The model line, at the largest of {@link MODEL_FONT_TIERS} that fits the
+ * tile. Measured on the device, in its own font, so "GPT-6 Astra · M" can take
+ * 10px where "Opus 5.5 · M" keeps 11.
+ */
+function TileModelLabel({ label }: { readonly label: string }): JSX.Element {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (element === null) return;
+    const fit = () => {
+      for (const tier of MODEL_FONT_TIERS) {
+        element.style.fontSize = `${tier.sizePx}px`;
+        element.style.letterSpacing = tier.letterSpacing;
+        if (element.scrollWidth <= element.clientWidth) return;
+      }
+    };
+    fit();
+    // The first paint can use a fallback font; measure again once the real one is in.
+    let cancelled = false;
+    void document.fonts?.ready.then(() => {
+      if (!cancelled) fit();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [label]);
+  return (
+    <span ref={ref} data-testid="pinned-model-label" className={TILE_MODEL_CLASS}>
+      {label}
+    </span>
+  );
+}
 
 /**
  * Where a tile goes when tapped. Deliberately the same destinations the pinned
@@ -189,6 +234,7 @@ export function PinnedTile({
   muted = false,
   menuExtra = null,
   modelLabel = null,
+  modelShortLabel = null,
 }: {
   readonly name: string;
   readonly avatar: ReactNode;
@@ -206,6 +252,8 @@ export function PinnedTile({
   readonly menuExtra?: ReactNode;
   /** A bot's model and effort, under the name. Null: the line stays blank. */
   readonly modelLabel?: string | null | undefined;
+  /** The short form of `modelLabel` drawn on the tile; `modelLabel` still names it to assistive tech. */
+  readonly modelShortLabel?: string | null | undefined;
 }): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const anchor = useRef<HTMLLIElement | null>(null);
@@ -291,9 +339,7 @@ export function PinnedTile({
         <span className={TILE_NAME_CLASS}>{name}</span>
       )}
       {modelLabel !== null ? (
-        <span data-testid="pinned-model-label" className={TILE_MODEL_CLASS}>
-          {modelLabel}
-        </span>
+        <TileModelLabel label={modelShortLabel ?? modelLabel} />
       ) : (
         <span aria-hidden="true" className={TILE_MODEL_CLASS}>
           {" "}
@@ -467,6 +513,7 @@ export function PinnedBotTile({
         <BotMuteMenuItems bot={bot} now={now} onChange={(mute) => void setMute(bot, mute)} />
       }
       modelLabel={summary.modelLabel}
+      modelShortLabel={summary.modelShortLabel}
     />
   );
 }

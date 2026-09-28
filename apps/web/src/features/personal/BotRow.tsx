@@ -200,13 +200,21 @@ export const BotRow = memo(function BotRow({
         </span>
         <span
           className={cn(
-            "truncate text-sm leading-5",
+            "flex min-w-0 items-center gap-1.5 text-sm leading-5",
             status.tone === "review"
               ? "text-[var(--personal-review-text)]"
               : "text-[var(--personal-text-secondary)]",
           )}
         >
-          {status.label}
+          {status.tone === "waiting" ? (
+            // A hollow ring, not the live dot: the bot is not working, it waits on a task.
+            <span
+              aria-hidden="true"
+              data-testid="bot-waiting-ring"
+              className="size-2 shrink-0 rounded-full border border-[var(--personal-text-tertiary)]"
+            />
+          ) : null}
+          <span className="truncate">{status.label}</span>
         </span>
         <span className="truncate text-sm leading-5 text-[var(--personal-text-preview)]">
           {preview}

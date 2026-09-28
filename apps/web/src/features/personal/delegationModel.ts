@@ -312,22 +312,32 @@ export function deriveDelegationCard(input: {
 // ---------------------------------------------------------------------------
 
 function waitingText(names: ReadonlyArray<string>): string {
-  if (names.length === 0) return "Waiting on another bot";
-  if (names.length <= 2) return `Waiting for ${joinNames(names)}`;
-  return `Waiting for ${names.length} bots`;
+  if (names.length === 0) return "Waiting on a task";
+  if (names.length <= 2) return `Waiting on ${joinNames(names)}`;
+  return `Waiting on ${names.length} bots`;
 }
 
+/** Task statuses that keep a bot busy while its own turn is not running. */
+const WAITING_TASK_STATUSES: ReadonlyArray<PersonalTask["status"]> = [
+  "waiting_for_agent",
+  "running",
+];
+
 /**
- * "Waiting for Developer" per thread whose task is parked on delegated work,
- * naming the bots of its unfinished children. Two parked tasks in one thread
- * (two chat turns that both delegated) merge their names.
+ * "Waiting on Developer" per thread whose task is unfinished while the thread
+ * has no live turn to show for it: parked on delegated work
+ * (`waiting_for_agent`), or still `running` after its turn ended (waiting on
+ * background work). Names the bots of the task's unfinished children, and says
+ * "Waiting on a task" when there are none. Two tasks in one thread (two chat
+ * turns that both delegated) merge their names. A thread with a live turn is
+ * "Working" whatever this says: callers check the live turn first.
  */
 export function waitingLabelsByThread(
   tasks: ReadonlyArray<PersonalTask>,
   nameOf: BotNameOf,
 ): ReadonlyMap<string, string> {
   const waiting = tasks.filter(
-    (task) => task.status === "waiting_for_agent" && task.threadId !== null,
+    (task) => WAITING_TASK_STATUSES.includes(task.status) && task.threadId !== null,
   );
   if (waiting.length === 0) return new Map();
   const openChildrenByParent = new Map<string, PersonalTask[]>();
