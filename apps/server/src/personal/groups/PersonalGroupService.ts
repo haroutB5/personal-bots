@@ -72,6 +72,14 @@ import {
   threadExposureKey,
 } from "../browser/sensitiveExposureStore.ts";
 import { parseMentions } from "./groupMentions.ts";
+import { decideLimitHit } from "../personalChatResumePolicy.ts";
+import {
+  GROUP_LIMIT_RESUME_BUSY_WAIT_MS,
+  GROUP_RESUMED_NOTICE_TEXT,
+  groupPausedText,
+  makeGroupLimitResumeStore,
+  type GroupLimitResumeKind,
+} from "./groupLimitResumes.ts";
 import { admitMentions, nextStep, roundBudget, roundWallClockMs } from "./groupRoundPolicy.ts";
 import { buildCatchUpBrief, type GroupCatchUpMessage } from "./groupTurnText.ts";
 import { normaliseQuestion, tallyVote } from "./groupVotePolicy.ts";
@@ -251,7 +259,9 @@ export const make = Effect.gen(function* () {
   // The sensitive-site taint travels with the transcript: a member's reply
   // carries its thread's taint into the group, and the group's taint rides the
   // catch-up brief into the next speaker's thread (audit K2).
-  const exposures = makeSensitiveExposureStore(yield* SqlClient.SqlClient);
+  const sqlClient = yield* SqlClient.SqlClient;
+  const exposures = makeSensitiveExposureStore(sqlClient);
+  const limitResumes = makeGroupLimitResumeStore(sqlClient);
   const carryTaint = (from: ReadonlyArray<string>, to: string) =>
     exposures.copySources(from, to).pipe(
       Effect.catchCause((cause) =>
@@ -1138,16 +1148,131 @@ export const make = Effect.gen(function* () {
     yield* writeRound(round, { ...clearActive, queue: [...round.queue, ...admitted] });
   });
 
+  interface LimitOrigin {
+    readonly provider: string | null | undefined;
+    readonly reason: string | undefined;
+  }
+
+  interface LimitPlan {
+    readonly decision: ReturnType<typeof decideLimitHit>;
+    readonly nowMs: number;
+  }
+
+  /**
+   * Whether a cut-off member can be carried on after the reset it reported.
+   * Null without a reported reset: the round's own handling is all there is.
+   */
+  const planLimitHit = (
+    group: GroupRecord,
+    retryAtMs: number | null,
+  ): Effect.Effect<LimitPlan | null> =>
+    retryAtMs === null
+      ? Effect.succeed(null)
+      : Effect.gen(function* () {
+          const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+          const lastOwner = yield* limitResumes.latestOwnerMessageAt(group.groupId);
+          const consecutiveResumes = yield* limitResumes.countResumedSince(
+            group.groupId,
+            lastOwner,
+          );
+          return {
+            decision: decideLimitHit({
+              retry: { retryAt: new Date(retryAtMs).toISOString() },
+              nowMs,
+              consecutiveResumes,
+            }),
+            nowMs,
+          } satisfies LimitPlan;
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.interrupt
+              : Effect.logWarning("personal group could not plan a limit resume", {
+                  groupId: group.groupId,
+                  cause: Cause.pretty(cause),
+                }).pipe(Effect.as(null)),
+          ),
+        );
+
+  /** Books the resume for a planned hit and says so in the transcript. */
+  const commitLimitHit = (
+    group: GroupRecord,
+    round: RoundRecord,
+    kind: GroupLimitResumeKind,
+    botId: PersonalBotId,
+    plan: LimitPlan | null,
+    origin: LimitOrigin,
+  ) =>
+    Effect.gen(function* () {
+      if (plan === null) return;
+      const { decision, nowMs } = plan;
+      // A reset too far out is not believed: the round's own handling only.
+      if (decision.kind === "notice_only" && decision.reason !== "too_many_resumes") return;
+      const all = yield* liveBots();
+      const name = botName(all, botId);
+      if (decision.kind === "schedule") {
+        yield* limitResumes.schedule({
+          resumeId: NodeCrypto.randomUUID(),
+          groupId: group.groupId,
+          roundId: round.roundId,
+          kind,
+          botId,
+          provider: origin.provider ?? "unknown",
+          reason: origin.reason ?? null,
+          hitAt: new Date(nowMs).toISOString(),
+          resumeAt: new Date(decision.resumeAtMs).toISOString(),
+        });
+      }
+      yield* writeSystemRow(
+        group,
+        round.roundId,
+        "member-paused",
+        groupPausedText({
+          provider: origin.provider,
+          reason: origin.reason,
+          names: [name],
+          decision,
+          nowMs,
+        }),
+      );
+      yield* Effect.logInfo("personal group member paused on a provider limit", {
+        groupId: group.groupId,
+        roundId: round.roundId,
+        botId,
+        kind,
+        provider: origin.provider,
+        reason: origin.reason,
+        resumeAt: decision.kind === "schedule" ? new Date(decision.resumeAtMs).toISOString() : null,
+        noticeOnly: decision.kind === "notice_only" ? decision.reason : null,
+      });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal group could not book a limit resume", {
+              groupId: group.groupId,
+              roundId: round.roundId,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
+
   /**
    * A member whose provider is rate limited. One of several addressees is
    * skipped and the round carries on; the only addressee parks the round until
    * the reported reset. Two throttles in a row drop the member from the round.
+   *
+   * A skipped or dropped member (or a verdict that could not finish) whose
+   * provider reported a reset is booked for a resume: at the reset the server
+   * reopens the round for that member, unless the owner wrote in the group
+   * since, the group was deleted or archived, or it was resumed already.
    */
   const handleThrottle = Effect.fn("PersonalGroupService.handleThrottle")(function* (
     group: GroupRecord,
     round: RoundRecord,
     retryAtMs: number | null,
     detail: string,
+    origin: LimitOrigin,
   ) {
     const botId = round.activeBotId;
     if (botId === null) {
@@ -1156,9 +1281,14 @@ export const make = Effect.gen(function* () {
     if (round.activeMessageId?.endsWith("-verdict")) {
       yield* interruptActiveTurn(round, "verdict-throttled");
       yield* abandonActive(group, round);
+      const plan = yield* planLimitHit(group, retryAtMs);
+      const scheduled = plan?.decision.kind === "schedule";
+      yield* commitLimitHit(group, round, "verdict", botId, plan, origin);
       yield* endRound(group, round, "interrupted", {
         event: "round-interrupted",
-        text: "The final verdict could not finish because its bot was rate limited. The contributions are still available; send a follow-up to try again.",
+        text: scheduled
+          ? "The final verdict could not finish because its bot was rate limited. The contributions are still available; it will try again after the reset."
+          : "The final verdict could not finish because its bot was rate limited. The contributions are still available; send a follow-up to try again.",
       });
       return;
     }
@@ -1186,6 +1316,14 @@ export const make = Effect.gen(function* () {
         queue: round.queue.filter((entry) => entry !== botId),
         errorMessage: detail,
       });
+      yield* commitLimitHit(
+        group,
+        round,
+        "members",
+        botId,
+        yield* planLimitHit(group, retryAtMs),
+        origin,
+      );
       return;
     }
     if (round.queue.length > 0) {
@@ -1196,20 +1334,53 @@ export const make = Effect.gen(function* () {
         `${name} is rate limited, so the group moved on.`,
       );
       yield* writeRound(round, { ...clearActive, budgetRemaining, errorMessage: detail });
+      yield* commitLimitHit(
+        group,
+        round,
+        "members",
+        botId,
+        yield* planLimitHit(group, retryAtMs),
+        origin,
+      );
       return;
     }
     const now = yield* DateTime.now;
+    const availableAt =
+      retryAtMs === null
+        ? DateTime.add(now, { milliseconds: UNREPORTED_THROTTLE_BACKOFF_MS })
+        : DateTime.add(now, { milliseconds: retryAtMs - DateTime.toEpochMillis(now) });
+    // The round's clock was set when it started and a usage limit resets hours
+    // later: without a new window the wake-up below would find the round out of
+    // time and end it instead of letting the member speak.
+    const windowEnd = DateTime.add(availableAt, {
+      milliseconds: windowMsFor(1 + (round.verdictBotId === null ? 0 : 1)),
+    });
     yield* writeRound(round, {
       ...clearActive,
       status: "waiting_provider",
       budgetRemaining,
       queue: [botId],
-      availableAt:
-        retryAtMs === null
-          ? DateTime.add(now, { milliseconds: UNREPORTED_THROTTLE_BACKOFF_MS })
-          : DateTime.add(now, { milliseconds: retryAtMs - DateTime.toEpochMillis(now) }),
+      availableAt,
+      deadlineAt: DateTime.isGreaterThan(windowEnd, round.deadlineAt)
+        ? windowEnd
+        : round.deadlineAt,
       errorMessage: detail,
     });
+    if (retryAtMs !== null) {
+      // The round wakes itself at the reset, so this is only the notice line.
+      yield* writeSystemRow(
+        group,
+        round.roundId,
+        "member-paused",
+        groupPausedText({
+          provider: origin.provider,
+          reason: origin.reason,
+          names: [name],
+          decision: { kind: "schedule", resumeAtMs: retryAtMs },
+          nowMs: DateTime.toEpochMillis(now),
+        }),
+      ).pipe(Effect.ignore({ log: true }));
+    }
   });
 
   /** Decides whether the active member's turn has ended, from the projection. */
@@ -1250,6 +1421,7 @@ export const make = Effect.gen(function* () {
           round,
           pause.retryAtMs,
           pause.retry.reason ?? "The provider is rate limited.",
+          { provider: pause.retry.provider, reason: pause.retry.reason },
         );
       }
       return;
@@ -1289,6 +1461,7 @@ export const make = Effect.gen(function* () {
             round,
             Number.isFinite(resetMs) ? resetMs : null,
             session.lastError ?? "The provider is rate limited.",
+            { provider: limit?.provider ?? session.providerName, reason: limit?.reason },
           );
           return;
         }
@@ -1385,6 +1558,124 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * Carries cut-off rounds on once the limit that cut them off has reset (the
+   * group counterpart of the bot chat's auto-continue). Runs in the sweep,
+   * under the lock, so it never interleaves with a relay or a stop.
+   *
+   * Skipped when the owner wrote in the group since the hit, the group was
+   * deleted or archived, or another round has taken over. A hit resumes once:
+   * the row is claimed before anything is reopened.
+   */
+  const resumeDueLimitHits = Effect.fn("PersonalGroupService.resumeDueLimitHits")(function* () {
+    const now = yield* DateTime.now;
+    const nowMs = DateTime.toEpochMillis(now);
+    const nowIso = new Date(nowMs).toISOString();
+    const due = yield* limitResumes.listDue(nowIso);
+    for (const row of due) {
+      const skip = (reason: string) =>
+        limitResumes.resolve(row.resumeId, "skipped", reason, nowIso).pipe(
+          Effect.andThen(
+            Effect.logInfo("personal group resume skipped", {
+              groupId: row.groupId,
+              resumeId: row.resumeId,
+              reason,
+            }),
+          ),
+        );
+      const found = yield* repository.getGroup(PersonalGroupId.make(row.groupId));
+      if (Option.isNone(found)) {
+        yield* skip("deleted");
+        continue;
+      }
+      const group = found.value;
+      if (group.archivedAt !== null) {
+        yield* skip("archived");
+        continue;
+      }
+      if ((yield* limitResumes.latestOwnerMessageAt(row.groupId)) > row.hitAt) {
+        yield* skip("new_message");
+        continue;
+      }
+      const latest = yield* repository.latestRoundForGroup(group.groupId);
+      if (Option.isNone(latest) || latest.value.roundId !== row.roundId) {
+        yield* skip("superseded");
+        continue;
+      }
+      const round = latest.value;
+      if (
+        PersonalGroupRepository.PERSONAL_GROUP_LIVE_ROUND_STATUSES.some(
+          (status) => status === round.status,
+        )
+      ) {
+        // Still talking (or waiting on the owner): try again on the next sweep.
+        if (nowMs - Date.parse(row.resumeAt) > GROUP_LIMIT_RESUME_BUSY_WAIT_MS) {
+          yield* skip("busy");
+        }
+        continue;
+      }
+      const members = yield* repository.listMembers(group.groupId);
+      const all = yield* liveBots();
+      const targets = members.filter(
+        (member) =>
+          row.botIds.includes(member.botId) && all.some((bot) => bot.botId === member.botId),
+      );
+      if (targets.length === 0) {
+        yield* skip("no_members");
+        continue;
+      }
+      // Claimed before anything is reopened: whatever goes wrong next, this hit
+      // never resumes a second time.
+      if (!(yield* limitResumes.resolve(row.resumeId, "resumed", null, nowIso))) continue;
+
+      const botIds = targets.map((member) => member.botId);
+      if (row.kind === "members") {
+        // A cut-off member's cursor moved when its turn started. Rewinding it
+        // to the question means its brief replays what the group has said
+        // since, instead of an empty catch-up.
+        const trigger = yield* repository.getMessageByMessageId(round.triggerMessageId);
+        if (Option.isSome(trigger)) {
+          for (const target of targets) {
+            const rewound = trigger.value.seq - 1;
+            if (target.deliveredSeq > rewound) {
+              yield* repository.writeMember({ ...target, deliveredSeq: rewound });
+            }
+          }
+        }
+      }
+      for (const botId of botIds) throttles.delete(`${round.roundId}:${botId}`);
+      const verdict = row.kind === "verdict";
+      yield* writeRound(round, {
+        ...clearActive,
+        status: "running",
+        queue: verdict ? [] : botIds,
+        verdictBotId: verdict ? botIds[0]! : null,
+        budgetRemaining: Math.max(round.budgetRemaining, botIds.length + 1),
+        deadlineAt: DateTime.add(now, {
+          milliseconds: windowMsFor(botIds.length + (verdict ? 1 : 0)),
+        }),
+        availableAt: null,
+        errorMessage: null,
+      });
+      yield* writeSystemRow(
+        group,
+        round.roundId,
+        "round-resumed",
+        `${GROUP_RESUMED_NOTICE_TEXT}: ${targets
+          .map((member) => botName(all, member.botId))
+          .join(", ")} ${targets.length > 1 ? "continue" : "continues"}.`,
+      );
+      yield* Effect.logInfo("personal group resumed after a provider limit", {
+        groupId: row.groupId,
+        roundId: row.roundId,
+        resumeId: row.resumeId,
+        kind: row.kind,
+        botIds: botIds.join(","),
+        resumeAt: row.resumeAt,
+      });
+    }
+  });
+
   const sweepOnce = Effect.fn("PersonalGroupService.sweepOnce")(function* () {
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
@@ -1455,6 +1746,15 @@ export const make = Effect.gen(function* () {
         yield* settleActive(round.activeThreadId);
       }
     }
+    yield* resumeDueLimitHits().pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("personal group limit resumes failed", {
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
     yield* pump;
   });
 

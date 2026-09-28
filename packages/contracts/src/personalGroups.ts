@@ -101,6 +101,10 @@ export const PersonalGroupSystemEvent = Schema.Literals([
   "member-removed",
   "member-skipped",
   "member-dropped",
+  /** A member was cut off by a usage limit; the row says when it continues. */
+  "member-paused",
+  /** The server carried a cut-off round on after the limit reset. */
+  "round-resumed",
   "round-paused-budget",
   "round-stopped",
   "round-interrupted",

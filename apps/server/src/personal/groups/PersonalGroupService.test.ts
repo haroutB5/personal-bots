@@ -1326,6 +1326,307 @@ it.effect("a member throttled twice in one round is dropped from it", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 13b. a usage limit that reports a reset: the round carries on at the reset
+// ---------------------------------------------------------------------------
+
+const usageLimit = (now: DateTime.Utc, waitMs: number) => ({
+  kind: "rate_limited" as const,
+  provider: "claudeAgent",
+  observedAt: DateTime.formatIso(now),
+  retryAt: DateTime.formatIso(DateTime.add(now, { milliseconds: waitMs })),
+  reason: "five_hour",
+});
+
+const SIX_HOURS = 6 * 60 * 60_000;
+
+/** The member holding the slot runs into a usage limit that resets in `waitMs`. */
+const hitUsageLimit = (harness: Harness, threadId: ThreadId, waitMs: number = SIX_HOURS) =>
+  Effect.gen(function* () {
+    const turnId = yield* beginTurn(harness, threadId);
+    const now = yield* DateTime.now;
+    yield* setSession(
+      harness,
+      makeSession({
+        threadId,
+        status: "running",
+        activeTurnId: turnId,
+        providerRetry: usageLimit(now, waitMs),
+        updatedAt: DateTime.formatIso(now),
+      }),
+    );
+  });
+
+const limitRows = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql<{
+    readonly status: string;
+    readonly outcome: string | null;
+    readonly kind: string;
+    readonly botIdsJson: string;
+  }>`
+    SELECT status, outcome, kind, bot_ids_json AS "botIdsJson"
+    FROM personal_group_limit_resumes ORDER BY resume_at, hit_at
+  `;
+});
+
+const sweepGroup = Effect.gen(function* () {
+  const service = yield* PersonalGroupService.PersonalGroupService;
+  yield* service.sweep;
+  yield* service.drain;
+});
+
+const transcriptTexts = (harness: Harness) =>
+  groupTranscript(harness).map((message) => message.text);
+
+/**
+ * Assistant is cut off first by a six-hour usage limit; Dev answers and the
+ * round completes without it. Returns the reset's distance from the hit.
+ */
+const cutOffThenRoundEnds = (harness: Harness) =>
+  Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("@Assistant and @Dev what should we ship?");
+    const first = yield* currentRound;
+    expect(first.activeBotId).toBe(botId("assistant"));
+    yield* hitUsageLimit(harness, first.activeThreadId!);
+    const skipped = yield* currentRound;
+    expect(skipped.activeBotId).toBe(botId("dev"));
+    yield* speak(harness, "Ship the small fix first.");
+    const done = yield* currentRound;
+    expect(done.status).toBe("completed");
+    return first.activeThreadId!;
+  });
+
+it.effect("a member cut off by a usage limit continues once, at the reset", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const assistantThread = yield* cutOffThenRoundEnds(harness);
+
+    // The notice line says who is paused and until when.
+    const paused = groupTranscript(harness).find((message) =>
+      message.text.startsWith("Paused: Claude usage limit. Assistant continues at"),
+    );
+    expect(paused).toBeDefined();
+    expect(markerOf(paused)).toMatchObject({
+      speaker: { kind: "system", event: "member-paused" },
+    });
+    expect(yield* limitRows).toMatchObject([
+      { status: "scheduled", kind: "members", botIdsJson: JSON.stringify([botId("assistant")]) },
+    ]);
+
+    // Before the reset nothing runs, however often the sweep looks.
+    const started = turnStarts(harness).length;
+    yield* TestClock.adjust("5 hours");
+    yield* sweepGroup;
+    yield* sweepGroup;
+    expect(turnStarts(harness).length).toBe(started);
+    expect((yield* currentRound).status).toBe("completed");
+
+    // At the reset (plus the grace): the round reopens for Assistant only.
+    yield* TestClock.adjust("61 minutes");
+    yield* sweepGroup;
+    const resumed = yield* currentRound;
+    expect(resumed.status).toBe("running");
+    expect(resumed.activeBotId).toBe(botId("assistant"));
+    expect(resumed.activeThreadId).toBe(assistantThread);
+    expect(turnStarts(harness).length).toBe(started + 1);
+    // Its brief replays the question and what the group said since.
+    const brief = turnStarts(harness).at(-1)!.message.text;
+    expect(brief).toContain("what should we ship?");
+    expect(brief).toContain("Ship the small fix first.");
+    expect(
+      transcriptTexts(harness).some((text) =>
+        text.startsWith("Auto-continue after usage reset: Assistant continues."),
+      ),
+    ).toBe(true);
+    expect(markerOf(groupTranscript(harness).at(-1))).toMatchObject({
+      speaker: { kind: "system", event: "round-resumed" },
+    });
+
+    // It answers and the round ends; later sweeps never resume it again.
+    yield* speak(harness, "Agreed, and I would add a changelog line.");
+    yield* sweepGroup;
+    expect((yield* currentRound).status).toBe("completed");
+    yield* TestClock.adjust("10 minutes");
+    yield* sweepGroup;
+    yield* sweepGroup;
+    expect(turnStarts(harness).length).toBe(started + 1);
+    expect(yield* limitRows).toMatchObject([{ status: "resumed", outcome: null }]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a resume is skipped when the owner wrote in the group since the hit", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* cutOffThenRoundEnds(harness);
+    yield* TestClock.adjust("1 hour");
+    yield* send("Never mind, park this for now.");
+    const started = turnStarts(harness).length;
+
+    yield* TestClock.adjust("301 minutes");
+    yield* sweepGroup;
+    expect(yield* limitRows).toMatchObject([{ status: "skipped", outcome: "new_message" }]);
+    expect(
+      transcriptTexts(harness).some((text) => text.startsWith("Auto-continue after usage reset")),
+    ).toBe(false);
+    // Whatever the new message started, the resume added no turn of its own.
+    expect(turnStarts(harness).length).toBe(started);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a resume is skipped when the group was archived or deleted", () => {
+  const archivedHarness = makeHarness();
+  const archived = Effect.gen(function* () {
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    yield* cutOffThenRoundEnds(archivedHarness);
+    yield* service.update({ groupId: GROUP, archived: true });
+    const started = turnStarts(archivedHarness).length;
+    yield* TestClock.adjust("361 minutes");
+    yield* sweepGroup;
+    expect(yield* limitRows).toMatchObject([{ status: "skipped", outcome: "archived" }]);
+    expect(turnStarts(archivedHarness).length).toBe(started);
+  }).pipe(Effect.provide(makeLayer(archivedHarness)));
+
+  const deletedHarness = makeHarness();
+  const deleted = Effect.gen(function* () {
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    yield* cutOffThenRoundEnds(deletedHarness);
+    yield* service.remove({ groupId: GROUP });
+    const started = turnStarts(deletedHarness).length;
+    yield* TestClock.adjust("361 minutes");
+    yield* sweepGroup;
+    expect(yield* limitRows).toMatchObject([{ status: "skipped", outcome: "deleted" }]);
+    expect(turnStarts(deletedHarness).length).toBe(started);
+  }).pipe(Effect.provide(makeLayer(deletedHarness)));
+
+  return archived.pipe(Effect.andThen(deleted));
+});
+
+it.effect("a resume booked before a restart runs once after it", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-personal-groups-db-" });
+    const dbPath = path.join(directory, "state.sqlite");
+
+    const before = makeHarness();
+    const assistantThread = yield* cutOffThenRoundEnds(before).pipe(
+      Effect.provide(makeLayer(before, dbPath)),
+    );
+
+    // A second service on the same database, after the reset: a restart.
+    yield* TestClock.adjust("361 minutes");
+    const after = makeHarness();
+    after.liveThreads.add(assistantThread);
+    yield* Effect.gen(function* () {
+      yield* sweepGroup;
+      const resumed = yield* currentRound;
+      expect(resumed.status).toBe("running");
+      expect(resumed.activeBotId).toBe(botId("assistant"));
+      expect(turnStarts(after).length).toBe(1);
+      // More sweeps, and a third service on the same rows: still one turn.
+      yield* sweepGroup;
+      yield* sweepGroup;
+      expect(turnStarts(after).length).toBe(1);
+      expect(yield* limitRows).toMatchObject([{ status: "resumed" }]);
+    }).pipe(Effect.provide(makeLayer(after, dbPath)));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("a verdict cut off by a usage limit is tried again at the reset", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"], 6);
+    // No names: a broadcast, so every member speaks and the first one closes.
+    yield* send("What is the plan?");
+    yield* speak(harness, "First thoughts.");
+    yield* speak(harness, "Second thoughts.");
+    const verdict = yield* currentRound;
+    expect(verdict.activeMessageId?.endsWith("-verdict")).toBe(true);
+    yield* hitUsageLimit(harness, verdict.activeThreadId!);
+
+    const ended = yield* currentRound;
+    expect(ended.status).toBe("interrupted");
+    expect(
+      transcriptTexts(harness).some((text) => text.includes("it will try again after the reset")),
+    ).toBe(true);
+    expect(yield* limitRows).toMatchObject([{ status: "scheduled", kind: "verdict" }]);
+
+    yield* TestClock.adjust("361 minutes");
+    yield* sweepGroup;
+    const retried = yield* currentRound;
+    expect(retried.status).toBe("running");
+    expect(retried.activeMessageId?.endsWith("-verdict")).toBe(true);
+    expect(yield* limitRows).toMatchObject([{ status: "resumed" }]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a lone addressee parked on a usage limit still speaks at the reset", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("@Assistant can you check this?");
+    const first = yield* currentRound;
+    yield* hitUsageLimit(harness, first.activeThreadId!);
+
+    const parked = yield* currentRound;
+    expect(parked.status).toBe("waiting_provider");
+    // The round's own clock was minutes long: it moved out to the reset.
+    expect(DateTime.toEpochMillis(parked.deadlineAt)).toBeGreaterThan(
+      DateTime.toEpochMillis(parked.availableAt!),
+    );
+    expect(
+      transcriptTexts(harness).some((text) =>
+        text.startsWith("Paused: Claude usage limit. Assistant continues at"),
+      ),
+    ).toBe(true);
+
+    yield* TestClock.adjust("361 minutes");
+    yield* sweepGroup;
+    const woken = yield* currentRound;
+    // Before this, a wake-up past the round's deadline ended it as "ran out of time".
+    expect(woken.status).toBe("running");
+    expect(woken.activeBotId).toBe(botId("assistant"));
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("after two automatic continues the third hit only says so", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("@Assistant and @Dev what now?");
+    for (const [index, id] of ["earlier-1", "earlier-2"].entries()) {
+      yield* sql`
+        INSERT INTO personal_group_limit_resumes (
+          resume_id, group_id, round_id, kind, bot_ids_json, provider, hit_at, resume_at,
+          status, resolved_at
+        )
+        VALUES (
+          ${id}, ${GROUP}, 'older-round', 'members', '[]', 'claudeAgent',
+          '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z',
+          'resumed', ${`1970-01-01T00:00:0${String(index + 1)}.000Z`}
+        )
+      `;
+    }
+    const first = yield* currentRound;
+    yield* hitUsageLimit(harness, first.activeThreadId!);
+
+    expect(
+      transcriptTexts(harness).some((text) =>
+        text.includes("Assistant already continued on its own, so send a message to continue."),
+      ),
+    ).toBe(true);
+    // Nothing new is booked: only the two earlier rows exist.
+    expect((yield* limitRows).filter((row) => row.status === "scheduled")).toEqual([]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+// ---------------------------------------------------------------------------
 // 14. restart
 // ---------------------------------------------------------------------------
 

@@ -172,6 +172,8 @@ const SYSTEM_EVENT_TEXT: Record<PersonalGroupSystemEvent, string> = {
   "member-removed": "left the group",
   "member-skipped": "was skipped",
   "member-dropped": "was dropped from this round",
+  "member-paused": "is paused until the usage limit resets",
+  "round-resumed": "Auto-continue after usage reset",
   "round-paused-budget": "The group used its replies for this message",
   "round-stopped": "You stopped the group",
   "round-interrupted": "The group was interrupted",
