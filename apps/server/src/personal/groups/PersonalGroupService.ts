@@ -295,6 +295,16 @@ export const make = Effect.gen(function* () {
    * a restart ends the round anyway (§2.6), so there is nothing to carry.
    */
   const throttles = new Map<string, number>();
+  /**
+   * The last usage-limit wait a member's running session reported, by thread.
+   * A wait shorter than the long-wait threshold is left to the provider, and
+   * the error that ends the turn often arrives without its reset time (the
+   * time rides on the session event just before it): this keeps it.
+   */
+  const reportedWaits = new Map<
+    string,
+    { readonly retryAt: string; readonly provider: string; readonly reason: string | undefined }
+  >();
 
   const fail = (message: string, cause?: unknown) =>
     new PersonalGroupsError({ message, ...(cause === undefined ? {} : { cause }) });
@@ -712,6 +722,7 @@ export const make = Effect.gen(function* () {
     }
     const now = yield* DateTime.now;
     const threadId = member.threadId ?? ThreadId.make(NodeCrypto.randomUUID());
+    reportedWaits.delete(threadId);
     yield* bots
       .createThread({ botId, threadId })
       .pipe(
@@ -1071,6 +1082,7 @@ export const make = Effect.gen(function* () {
       yield* carryTaint([threadExposureKey(round.activeThreadId)], groupExposureKey(group.groupId));
     }
     throttles.delete(`${round.roundId}:${botId}`);
+    if (round.activeThreadId !== null) reportedWaits.delete(round.activeThreadId);
     const all = yield* liveBots();
     const name = botName(all, botId);
 
@@ -1292,6 +1304,7 @@ export const make = Effect.gen(function* () {
       });
       return;
     }
+    if (round.activeThreadId !== null) reportedWaits.delete(round.activeThreadId);
     const key = `${round.roundId}:${botId}`;
     const count = (throttles.get(key) ?? 0) + 1;
     throttles.set(key, count);
@@ -1414,6 +1427,14 @@ export const make = Effect.gen(function* () {
         round = yield* writeRound(round, { activeTurnId: session.activeTurnId });
       }
       const now = yield* DateTime.now;
+      const wait = session.providerRetry;
+      if (wait?.kind === "rate_limited" && wait.retryAt !== undefined) {
+        reportedWaits.set(threadId, {
+          retryAt: wait.retryAt,
+          provider: wait.provider,
+          reason: wait.reason,
+        });
+      }
       const pause = providerWaitPause(session.providerRetry, DateTime.toEpochMillis(now));
       if (pause !== null) {
         yield* handleThrottle(
@@ -1452,8 +1473,14 @@ export const make = Effect.gen(function* () {
         return;
       }
       case "error": {
+        const stale = DateTime.toEpochMillis(yield* DateTime.now) - 60_000;
+        const remembered = reportedWaits.get(threadId);
         const limit =
-          session.providerRetry?.kind === "rate_limited" ? session.providerRetry : undefined;
+          session.providerRetry?.kind === "rate_limited"
+            ? session.providerRetry
+            : remembered !== undefined && Date.parse(remembered.retryAt) > stale
+              ? { ...remembered, kind: "rate_limited" as const }
+              : undefined;
         const resetMs = limit?.retryAt === undefined ? Number.NaN : Date.parse(limit.retryAt);
         if (limit !== undefined || classifyProviderError(session.lastError) === "rate_limited") {
           yield* handleThrottle(

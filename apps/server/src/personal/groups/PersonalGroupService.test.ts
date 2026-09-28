@@ -1456,6 +1456,46 @@ it.effect("a member cut off by a usage limit continues once, at the reset", () =
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+it.effect("a short usage-limit wait reported on the running session is kept for the error", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("@Assistant and @Dev what should we ship?");
+    const first = yield* currentRound;
+    const threadId = first.activeThreadId!;
+    const turnId = yield* beginTurn(harness, threadId);
+    const now = yield* DateTime.now;
+    // 90 s is under the long-wait threshold, so the provider is left to retry...
+    yield* setSession(
+      harness,
+      makeSession({
+        threadId,
+        status: "running",
+        activeTurnId: turnId,
+        providerRetry: usageLimit(now, 90_000),
+        updatedAt: DateTime.formatIso(now),
+      }),
+    );
+    expect((yield* currentRound).activeBotId).toBe(botId("assistant"));
+    // ...and the turn then fails with the limit text and no reset time on it.
+    yield* endTurn(harness, threadId, turnId, "", {
+      status: "error",
+      lastError: "Claude usage limit reached. Send the message again once the limit resets.",
+    });
+
+    expect((yield* currentRound).activeBotId).toBe(botId("dev"));
+    expect(yield* limitRows).toMatchObject([{ status: "scheduled", kind: "members" }]);
+    yield* speak(harness, "Ship the small fix first.");
+
+    yield* TestClock.adjust("2 minutes");
+    yield* sweepGroup;
+    const resumed = yield* currentRound;
+    expect(resumed.status).toBe("running");
+    expect(resumed.activeBotId).toBe(botId("assistant"));
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 it.effect("a resume is skipped when the owner wrote in the group since the hit", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
