@@ -94,14 +94,18 @@ const TILE_MODEL_CLASS =
   "-mt-1 w-full truncate text-[11px] leading-[14px] text-[var(--personal-text-tertiary)]";
 
 /**
- * Font sizes the model line tries, largest first. A label that still overflows
- * at the last one is cut with an ellipsis. The line height is fixed, so a
- * smaller size never moves the strip.
+ * Font sizes the model line tries, largest first; the last also tightens the
+ * letter spacing. A label that still overflows at the last is cut with an
+ * ellipsis. The line height is fixed, so a smaller size never moves the strip.
  */
-const MODEL_FONT_SIZES_PX = [11, 10, 9] as const;
+const MODEL_FONT_TIERS = [
+  { sizePx: 11, letterSpacing: "" },
+  { sizePx: 10, letterSpacing: "" },
+  { sizePx: 9, letterSpacing: "-0.02em" },
+] as const;
 
 /**
- * The model line, at the largest of {@link MODEL_FONT_SIZES_PX} that fits the
+ * The model line, at the largest of {@link MODEL_FONT_TIERS} that fits the
  * tile. Measured on the device, in its own font, so "GPT-6 Astra · M" can take
  * 10px where "Opus 5.5 · M" keeps 11.
  */
@@ -111,8 +115,9 @@ function TileModelLabel({ label }: { readonly label: string }): JSX.Element {
     const element = ref.current;
     if (element === null) return;
     const fit = () => {
-      for (const size of MODEL_FONT_SIZES_PX) {
-        element.style.fontSize = `${size}px`;
+      for (const tier of MODEL_FONT_TIERS) {
+        element.style.fontSize = `${tier.sizePx}px`;
+        element.style.letterSpacing = tier.letterSpacing;
         if (element.scrollWidth <= element.clientWidth) return;
       }
     };
