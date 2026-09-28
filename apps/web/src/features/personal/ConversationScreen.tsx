@@ -169,9 +169,15 @@ function ConversationSubtitle({
   return (
     <p className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
       <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", STATE_DOT[state])} />
-      <span className="shrink-0 whitespace-nowrap">
-        {parts.prefix === null ? parts.status : `${parts.prefix} · ${parts.status}`}
-      </span>
+      {parts.prefix === null ? null : (
+        // The provider gives way first, so a long status ("Waiting on Planner")
+        // is never the part that gets cut.
+        <span className="min-w-0 truncate whitespace-nowrap">
+          {parts.prefix}
+          <span aria-hidden="true"> ·</span>
+        </span>
+      )}
+      <span className="shrink-0 whitespace-nowrap">{parts.status}</span>
       {title !== "" ? (
         <span className="min-w-0 truncate">
           <span aria-hidden="true">· </span>
