@@ -1324,6 +1324,44 @@ it.effect(
   },
 );
 
+it.effect("steer keeps a prefix the sender already wrote instead of doubling it", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const bots = yield* PersonalBotService.PersonalBotService;
+    yield* bots.update({ botId: botId("assistant"), modelSelection: claudeOpus });
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("steer-prefixed");
+    const thread = threadOf(root);
+    yield* beginTurn(harness, thread);
+
+    yield* service.steer({
+      taskId: root.taskId,
+      fromName: "CTO",
+      message: "update from cto: Only check the login page.",
+    });
+    expect(turnStarts(harness).at(-1)!.message.text).toBe(
+      "update from cto: Only check the login page.",
+    );
+    // A different name in the text is still the sender's own prefix.
+    yield* service.steer({
+      taskId: root.taskId,
+      fromName: "CTO",
+      message: "Update from Harout: Skip the tests.",
+    });
+    expect(turnStarts(harness).at(-1)!.message.text).toBe("Update from Harout: Skip the tests.");
+    // Text that merely mentions the phrase later still gets the prefix.
+    yield* service.steer({
+      taskId: root.taskId,
+      fromName: "CTO",
+      message: "Please send an Update from you: when done.",
+    });
+    expect(turnStarts(harness).at(-1)!.message.text).toBe(
+      "Update from CTO: Please send an Update from you: when done.",
+    );
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 it.effect("steer on a queued task lands in the brief it starts with", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {

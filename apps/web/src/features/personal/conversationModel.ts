@@ -43,8 +43,8 @@ export const CONVERSATION_STATE_LABEL: Record<ConversationState, string> = {
   needs_help: "Needs your help",
   working: "Working",
   waiting: "Waiting for you",
-  // The screen names the bots ("Waiting for Developer") when it knows them.
-  delegating: "Waiting on another bot",
+  // The screen names the bots ("Waiting on Developer") when it knows them.
+  delegating: "Waiting on a task",
   rate_limited: "Rate limited",
   retrying: "Retrying",
   error: "Error",

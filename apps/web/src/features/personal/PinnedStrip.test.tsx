@@ -249,6 +249,30 @@ describe("PinnedStrip", () => {
     expect(blank[0]!.props.className).toBe(labels[0]!.props.className);
   });
 
+  it("draws the short model label but names the full one to assistive tech", async () => {
+    stubWindow();
+    await act(async () => {
+      renderer = create(
+        <PinnedStrip>
+          <PinnedTile
+            name="CTO"
+            avatar={<BotAvatar shape="pill" color="#E8711A" size={56} label="CTO" />}
+            badge={null}
+            statusLabel={null}
+            target={{ kind: "none" }}
+            onUnpin={() => undefined}
+            modelLabel="Opus 5.5 medium"
+            modelShortLabel="Opus 5.5 · M"
+          />
+        </PinnedStrip>,
+      );
+    });
+
+    const labels = renderer!.root.findAllByProps({ "data-testid": "pinned-model-label" });
+    expect(labels.map((label) => label.props.children)).toEqual(["Opus 5.5 · M"]);
+    expect(renderer!.root.findByProps({ "aria-label": "CTO, Opus 5.5 medium" })).toBeDefined();
+  });
+
   /**
    * The gesture that replaces the swiped-away "Unpin": hold a face, get the
    * menu, and do not also open the chat underneath.

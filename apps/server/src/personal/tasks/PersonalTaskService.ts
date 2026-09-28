@@ -1836,8 +1836,13 @@ export const make = Effect.gen(function* () {
       )
       .pipe(toPublic("retry"));
 
+  // A steer already written as "Update from <name>: ..." keeps its own prefix,
+  // so the bot does not read "Update from CTO: Update from CTO: ...".
+  const ALREADY_PREFIXED = /^update from [^:\n]{1,80}:/i;
   const steerText = (fromName: string, message: string) =>
-    `Update from ${fromName.trim() || "your delegator"}: ${message.trim()}`;
+    ALREADY_PREFIXED.test(message.trim())
+      ? message.trim()
+      : `Update from ${fromName.trim() || "your delegator"}: ${message.trim()}`;
 
   // Under the service lock, like claim and settle: the task cannot start,
   // settle or be cancelled between the status read and the delivery.

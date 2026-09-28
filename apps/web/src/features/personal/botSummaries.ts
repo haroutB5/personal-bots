@@ -20,7 +20,7 @@ import {
   isTurnThinking,
   providerWaitState,
 } from "./conversationModel";
-import { botModelLabel } from "./botModelLabel";
+import { botModelLabel, botModelShortLabel } from "./botModelLabel";
 import { chatActivityMs } from "./chatActivity";
 import { routineNextRunLabel } from "./taskPresentation";
 
@@ -37,6 +37,8 @@ export interface BotSummary {
   readonly provider: BotProviderStatus;
   /** "Opus 5.5 medium": the bot's model and effort, for the row beside its name. */
   readonly modelLabel: string | null;
+  /** {@link botModelShortLabel}: the pinned tile's form of the label. */
+  readonly modelShortLabel: string | null;
   /** Most recently updated, non-archived thread linked to the bot. */
   readonly newestThread: EnvironmentThreadShell | null;
   /** That thread's newest user/assistant message, from `personalBots.list`. */
@@ -59,7 +61,7 @@ export interface BotSummary {
   readonly needsBrowserHelp: boolean;
   /** A linked chat has a secret request the bot is parked on. */
   readonly needsSecret: boolean;
-  /** "Waiting for Developer": a linked thread's task is parked on delegated work. */
+  /** "Waiting on Developer": a linked thread's task is unfinished with no live turn. */
   readonly waitingFor: string | null;
   /** A linked chat holds the user's real PC right now. */
   readonly usingPc?: boolean;
@@ -167,7 +169,8 @@ export function threadNeedsAttention(shell: EnvironmentThreadShell): boolean {
   return shell.hasPendingApprovals || shell.hasPendingUserInput;
 }
 
-export type BotStatusTone = "review" | "normal";
+/** `waiting`: no live turn, but a task of the bot is unfinished. Drawn with a hollow ring, never the live dot. */
+export type BotStatusTone = "review" | "normal" | "waiting";
 
 export function botStatus(
   summary: BotSummary,
@@ -200,7 +203,7 @@ export function botStatus(
       tone: "review",
     };
   }
-  if (summary.waitingFor !== null) return { label: summary.waitingFor, tone: "normal" };
+  if (summary.waitingFor !== null) return { label: summary.waitingFor, tone: "waiting" };
   if (summary.nextRoutine !== null) {
     return {
       label: routineNextRunLabel(summary.nextRoutine).replace(/^Next: /, "Next run "),
@@ -227,7 +230,7 @@ export function buildBotSummaries(input: {
   readonly links: ReadonlyArray<PersonalBotThread>;
   readonly shells: ReadonlyArray<EnvironmentThreadShell>;
   readonly providers: ReadonlyArray<ServerProvider>;
-  /** From `waitingLabelsByThread`: thread id to "Waiting for Developer". */
+  /** From `waitingLabelsByThread`: thread id to "Waiting on Developer". */
   readonly waitingByThread?: ReadonlyMap<string, string>;
   readonly browserHelpThreadId?: string | null;
   /** From `threadIdsAwaitingSecret`: chats with a pending secret request. */
@@ -284,6 +287,7 @@ export function buildBotSummaries(input: {
       bot,
       provider: resolveBotProvider(bot.modelSelection.instanceId, input.providers),
       modelLabel: botModelLabel(bot.modelSelection, input.providers),
+      modelShortLabel: botModelShortLabel(bot.modelSelection, input.providers),
       newestThread,
       newestMessage:
         newestThread === null ? null : (newestMessageByThread.get(newestThread.id) ?? null),

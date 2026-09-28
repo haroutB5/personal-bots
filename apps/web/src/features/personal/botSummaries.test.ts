@@ -127,10 +127,10 @@ describe("buildBotSummaries", () => {
       links,
       shells,
       providers: [provider("codex")],
-      waitingByThread: new Map([["t-old", "Waiting for Developer"]]),
+      waitingByThread: new Map([["t-old", "Waiting on Developer"]]),
     });
     expect(waiting.find((summary) => summary.bot.name === "Assistant")?.waitingFor).toBe(
-      "Waiting for Developer",
+      "Waiting on Developer",
     );
     expect(waiting.find((summary) => summary.bot.name === "Developer")?.waitingFor).toBeNull();
     expect(summaries.every((summary) => summary.waitingFor === null)).toBe(true);
@@ -306,8 +306,16 @@ describe("botStatusLine", () => {
     expect(botStatusLine(summary({ rateLimitedThread: limited }), now)).toBe(
       "Rate limited · retry ~10:47",
     );
-    expect(botStatusLine(summary({ waitingFor: "Waiting for Developer" }), now)).toBe(
-      "Waiting for Developer",
+    expect(botStatusLine(summary({ waitingFor: "Waiting on Developer" }), now)).toBe(
+      "Waiting on Developer",
+    );
+    // Waiting on a task is its own tone (a hollow ring), and never wins over a live turn.
+    expect(botStatus(summary({ waitingFor: "Waiting on a task" }), now)).toEqual({
+      label: "Waiting on a task",
+      tone: "waiting",
+    });
+    expect(botStatus(summary({ waitingFor: "Waiting on a task", live: true }), now).label).toBe(
+      "Working",
     );
 
     const routine = {

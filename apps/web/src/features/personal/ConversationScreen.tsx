@@ -142,8 +142,8 @@ const STATE_DOT: Record<ConversationState, string> = {
   needs_help: "bg-[var(--personal-review)]",
   working: "bg-[var(--personal-live)]",
   waiting: "bg-[var(--personal-review)]",
-  // Parked on another bot's work: not working itself, not needing the user.
-  delegating: "bg-[var(--personal-text-tertiary)]",
+  // Waiting on a task: not working itself, not needing the user. A hollow ring, never the live dot.
+  delegating: "border border-[var(--personal-text-tertiary)]",
   rate_limited: "bg-[var(--personal-review)]",
   retrying: "bg-[var(--personal-review)]",
   error: "bg-[var(--personal-error)]",
