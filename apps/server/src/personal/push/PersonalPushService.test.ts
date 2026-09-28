@@ -1159,3 +1159,37 @@ it.effect(
     }).pipe(Effect.provide(makeLayer(harness)));
   },
 );
+
+it.effect("an open chat records when it was last viewed, once a minute", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    const start = Date.parse("2026-09-28T20:00:00Z");
+    yield* TestClock.setTime(start);
+    yield* seedBot;
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const chat = ThreadId.make("thread-task-chat");
+    yield* bots.insertThreadLink({ botId: BOT, threadId: chat, createdAt: yield* DateTime.now });
+    const push = yield* PersonalPushService.PersonalPushService;
+    const sql = yield* SqlClient.SqlClient;
+    const viewedAt = Effect.map(
+      sql<{ readonly v: string | null }>`
+        SELECT last_viewed_at AS v FROM personal_bot_threads WHERE thread_id = ${chat}
+      `,
+      (rows) => rows[0]?.v ?? null,
+    );
+
+    yield* push.reportViewing({ connectionId: "phone", threadId: chat });
+    expect(yield* viewedAt).toBe("2026-09-28T20:00:00.000Z");
+    // The 10 s heartbeat does not write every time.
+    yield* TestClock.setTime(start + 10_000);
+    yield* push.reportViewing({ connectionId: "phone", threadId: chat });
+    expect(yield* viewedAt).toBe("2026-09-28T20:00:00.000Z");
+    yield* TestClock.setTime(start + 60_000);
+    yield* push.reportViewing({ connectionId: "phone", threadId: chat });
+    expect(yield* viewedAt).toBe("2026-09-28T20:01:00.000Z");
+    // Leaving the chat writes nothing.
+    yield* TestClock.setTime(start + 5 * 60_000);
+    yield* push.reportViewing({ connectionId: "phone", threadId: null });
+    expect(yield* viewedAt).toBe("2026-09-28T20:01:00.000Z");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});

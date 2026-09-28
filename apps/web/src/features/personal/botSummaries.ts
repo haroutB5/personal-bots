@@ -21,6 +21,7 @@ import {
   providerWaitState,
 } from "./conversationModel";
 import { botModelLabel } from "./botModelLabel";
+import { chatActivityMs } from "./chatActivity";
 import { routineNextRunLabel } from "./taskPresentation";
 
 export interface BotProviderStatus {
@@ -216,11 +217,6 @@ export function botStatusLine(summary: BotSummary, now: number): string {
   return botStatus(summary, now).label;
 }
 
-function updatedMs(shell: EnvironmentThreadShell): number {
-  const parsed = Date.parse(shell.updatedAt);
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
 /**
  * Join bots with their linked thread shells. Only real state feeds the row:
  * activity, attention and timestamps all come from the thread shells. Rows are
@@ -244,6 +240,12 @@ export function buildBotSummaries(input: {
   } | null;
 }): BotSummary[] {
   const shellsById = new Map(input.shells.map((shell) => [shell.id as string, shell] as const));
+  const linksByThread = new Map(
+    input.links.map((link) => [link.threadId as string, link] as const),
+  );
+  // Real conversation activity, never `updatedAt` (see chatActivity.ts).
+  const activityMs = (shell: EnvironmentThreadShell) =>
+    chatActivityMs(shell, linksByThread.get(shell.id));
   const shellsByBot = new Map<string, EnvironmentThreadShell[]>();
   const newestMessageByThread = new Map<string, PersonalBotThreadNewestMessage>();
   for (const link of input.links) {
@@ -261,7 +263,7 @@ export function buildBotSummaries(input: {
 
   const summaries = input.bots.map((bot): BotSummary => {
     const shells = (shellsByBot.get(bot.botId) ?? []).toSorted(
-      (left, right) => updatedMs(right) - updatedMs(left),
+      (left, right) => activityMs(right) - activityMs(left),
     );
     const newestThread = shells[0] ?? null;
     const rateLimitedThread = shells.find(isThreadRateLimited) ?? null;
@@ -324,7 +326,7 @@ export function buildBotSummaries(input: {
           (input.desktop?.waitingThreadIds.has(link.threadId) ?? false),
       ),
       nextRoutine,
-      lastActivityMs: newestThread === null ? null : updatedMs(newestThread),
+      lastActivityMs: newestThread === null ? null : activityMs(newestThread),
     };
   });
 
@@ -456,5 +458,5 @@ export function collectAttentionThreads(
 ): EnvironmentThreadShell[] {
   return summaries
     .flatMap((summary) => summary.attentionThreads)
-    .toSorted((left, right) => updatedMs(right) - updatedMs(left));
+    .toSorted((left, right) => chatActivityMs(right) - chatActivityMs(left));
 }

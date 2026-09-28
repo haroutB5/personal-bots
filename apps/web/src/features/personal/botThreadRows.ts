@@ -1,6 +1,8 @@
 import type { PersonalBotThread } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
+import { chatActivityMs } from "./chatActivity";
+
 export interface BotThreadRow {
   readonly link: PersonalBotThread;
   readonly shell: EnvironmentThreadShell;
@@ -18,8 +20,8 @@ export function botThreadRows(
     if (link.botId !== botId) return [];
     const shell = shellsById.get(link.threadId);
     if (shell === undefined) return [];
-    const parsed = Date.parse(shell.updatedAt);
-    return [{ link, shell, updatedMs: Number.isNaN(parsed) ? 0 : parsed }];
+    // Real conversation activity, never `updatedAt` (see chatActivity.ts).
+    return [{ link, shell, updatedMs: chatActivityMs(shell, link) }];
   });
   const newestFirst = (left: BotThreadRow, right: BotThreadRow) => right.updatedMs - left.updatedMs;
   return {

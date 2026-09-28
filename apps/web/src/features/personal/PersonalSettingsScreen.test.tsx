@@ -164,8 +164,14 @@ describe("Settings chat preferences", () => {
       renderer = create(<PersonalSettingsScreen />);
     });
 
-    // Chat > Show tool steps, Chat > Show routines, Advanced > Diagnostics.
-    expect(toggles().map((toggle) => toggle.props["aria-pressed"])).toEqual([false, true, false]);
+    // Chat > Show tool steps, Chat > Show routines, Chat > Auto-archive
+    // finished task chats (server side, on), Advanced > Diagnostics.
+    expect(toggles().map((toggle) => toggle.props["aria-pressed"])).toEqual([
+      false,
+      true,
+      true,
+      false,
+    ]);
 
     await act(async () => toggles()[0]!.props.onClick());
     await act(async () => toggles()[1]!.props.onClick());
@@ -173,7 +179,12 @@ describe("Settings chat preferences", () => {
     // "Off" for a default-on flag has to be written, not just left absent.
     expect(store.get("personal-show-tool-steps")).toBe("1");
     expect(store.get("personal-show-routines-strip")).toBe("0");
-    expect(toggles().map((toggle) => toggle.props["aria-pressed"])).toEqual([true, false, false]);
+    expect(toggles().map((toggle) => toggle.props["aria-pressed"])).toEqual([
+      true,
+      false,
+      true,
+      false,
+    ]);
   });
 });
 
@@ -248,5 +259,37 @@ describe("Settings plugins", () => {
     // The list and its Add form live on /bots/settings/api-keys now.
     expect(renderer!.root.findAllByProps({ "aria-labelledby": "settings-api-keys" })).toEqual([]);
     expect(row).not.toContain("Add API key");
+  });
+});
+
+describe("Settings auto-archive finished task chats", () => {
+  const findRow = () =>
+    renderer!.root
+      .findAllByType("button")
+      .find((button) =>
+        button
+          .findAllByType("span")
+          .some((span) => span.props.children === "Auto-archive finished task chats"),
+      )!;
+  const stateLabel = () => findRow().findAllByType("span").at(-1)!.props.children;
+
+  it("shows On by default and saves Off through the profile", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    stubWindow();
+    await act(async () => {
+      renderer = create(<PersonalSettingsScreen />);
+    });
+    expect(findRow().props["aria-pressed"]).toBe(true);
+    expect(stateLabel()).toBe("On");
+
+    state.result = {
+      _tag: "Success",
+      value: { displayName: "Harout", autoArchiveTaskChats: false } as { displayName: string },
+    };
+    await act(async () => {
+      findRow().props.onClick();
+    });
+    expect(findRow().props["aria-pressed"]).toBe(false);
+    expect(stateLabel()).toBe("Off");
   });
 });

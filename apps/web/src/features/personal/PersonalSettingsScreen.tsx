@@ -155,6 +155,68 @@ function PreferenceRow({
 }
 
 /**
+ * "Auto-archive finished task chats". Unlike `PreferenceRow` this setting
+ * lives on the laptop (the server runs the sweep), so it is the same on every
+ * device and saves through the profile.
+ */
+function AutoArchiveTaskChatsRow({
+  environmentId,
+  enabled,
+}: {
+  environmentId: EnvironmentId;
+  enabled: boolean;
+}): JSX.Element {
+  const setProfile = useAtomCommand(personalProfileSet);
+  const [pending, setPending] = useState<boolean | null>(null);
+  const [saved, setSaved] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const shown = pending ?? saved ?? enabled;
+
+  const toggle = async () => {
+    if (pending !== null) return;
+    const next = !shown;
+    setPending(next);
+    const result = await setProfile({ environmentId, input: { autoArchiveTaskChats: next } });
+    setPending(null);
+    const failure = commandFailureMessage(result, "Couldn't save the setting. Try again.");
+    setError(failure);
+    if (failure === null && result._tag === "Success") {
+      setSaved(result.value.autoArchiveTaskChats ?? true);
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => void toggle()}
+        aria-pressed={shown}
+        aria-busy={pending !== null}
+        className={`${SETTINGS_ROW} w-full text-left`}
+      >
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="text-[15px] font-semibold text-[var(--personal-text)]">
+            Auto-archive finished task chats
+          </span>
+          <span className="text-[13px] text-[var(--personal-text-secondary)]">
+            A chat a bot opened for a task archives once the task is done and the chat has gone
+            unused for 30 minutes. Nothing is deleted.
+          </span>
+        </span>
+        <span className="shrink-0 text-[13px] font-semibold text-[var(--personal-text-secondary)]">
+          {shown ? "On" : "Off"}
+        </span>
+      </button>
+      {error !== null ? (
+        <p role="alert" className="px-4 pb-2.5 text-sm text-[var(--personal-error)]">
+          {error}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/**
  * System / Light / Dark. A segmented radiogroup rather than the On/Off
  * `PreferenceRow` next door, because three states do not collapse to a toggle
  * and the current one has to be readable without tapping.
@@ -351,6 +413,14 @@ export function PersonalSettingsScreen(): JSX.Element {
               hint="The Routines strip under a chat, listing that bot's scheduled work."
             />
           </li>
+          {environmentId !== null && profile.data !== null ? (
+            <li>
+              <AutoArchiveTaskChatsRow
+                environmentId={environmentId}
+                enabled={profile.data.autoArchiveTaskChats ?? true}
+              />
+            </li>
+          ) : null}
         </ul>
       </section>
 

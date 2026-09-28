@@ -1,5 +1,6 @@
 import { PersonalBotId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -165,6 +166,83 @@ it.effect("previews only each bot's two newest eligible chats", () =>
       "t-archived-thread": null,
       "t-relay": null,
       "t-newest": "text of t-newest",
+    });
+  }).pipe(Effect.provide(testLayer)),
+);
+
+// 28 Sep: upstream's auto-settle settled two 3-day-old chats and stamped their
+// updated_at, and they jumped to the top of the Bots list. The list ranks and
+// reports chats by their last message, never by updated_at.
+it.effect("ranks previews and reports lastActivityAt by the last message, not updated_at", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const repository = yield* PersonalBotRepository.PersonalBotRepository;
+    const botId = PersonalBotId.make("bot-activity");
+    yield* repository.createBot(
+      decodeCreateBot({
+        botId,
+        name: "Backend",
+        title: "Engineer",
+        description: "Builds.",
+        instructions: "Be helpful.",
+        avatarShape: "blob",
+        avatarColor: "#1A73E8",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-astra" },
+        team: "assistant",
+        lead: false,
+        pinned: false,
+        sortOrder: 0,
+        createdAt: "2026-09-25T19:00:00.000Z",
+        updatedAt: "2026-09-25T19:00:00.000Z",
+      }),
+    );
+    // [thread, last message, updated_at]
+    const threads = [
+      // Settled three days after its last turn: updated_at moved, nothing was said.
+      ["t-settled", "2026-09-25T20:09:17.316Z", "2026-09-28T20:10:05.321Z"],
+      ["t-recent-a", "2026-09-28T18:00:00.000Z", "2026-09-28T18:00:00.000Z"],
+      ["t-recent-b", "2026-09-28T19:00:00.000Z", "2026-09-28T19:00:00.000Z"],
+      // Opened but never written in: falls back to when it was made.
+      ["t-empty", null, "2026-09-28T20:17:00.000Z"],
+    ] as const;
+    for (const [id, messageAt, updatedAt] of threads) {
+      yield* repository.insertThreadLink(
+        decodeInsertThreadLink({
+          botId,
+          threadId: ThreadId.make(id),
+          createdAt: "2026-09-25T19:56:00.000Z",
+        }),
+      );
+      yield* sql`
+        INSERT INTO projection_threads (thread_id, project_id, title, created_at, updated_at)
+        VALUES (${id}, 'project-1', ${id}, '2026-09-25T19:56:00.000Z', ${updatedAt})
+      `;
+      if (messageAt !== null) {
+        yield* sql`
+          INSERT INTO projection_thread_messages (
+            message_id, thread_id, role, text, is_streaming, created_at, updated_at
+          ) VALUES (${`m-${id}`}, ${id}, 'assistant', ${`text of ${id}`}, 0, ${messageAt}, ${updatedAt})
+        `;
+      }
+    }
+
+    const links = yield* repository.listThreadLinks();
+    const byId = new Map(links.map((link) => [link.threadId as string, link]));
+    // The newest two by conversation get a preview; the settled one does not.
+    expect(byId.get("t-recent-b")?.newestMessage?.text).toBe("text of t-recent-b");
+    expect(byId.get("t-recent-a")?.newestMessage?.text).toBe("text of t-recent-a");
+    expect(byId.get("t-settled")?.newestMessage ?? null).toBeNull();
+    const activity = Object.fromEntries(
+      links.map((link) => [
+        link.threadId,
+        link.lastActivityAt == null ? null : DateTime.formatIso(link.lastActivityAt),
+      ]),
+    );
+    expect(activity).toEqual({
+      "t-settled": "2026-09-25T20:09:17.316Z",
+      "t-recent-a": "2026-09-28T18:00:00.000Z",
+      "t-recent-b": "2026-09-28T19:00:00.000Z",
+      "t-empty": "2026-09-25T19:56:00.000Z",
     });
   }).pipe(Effect.provide(testLayer)),
 );

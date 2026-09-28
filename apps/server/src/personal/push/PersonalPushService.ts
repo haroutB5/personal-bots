@@ -52,6 +52,7 @@ import {
   type VapidKeyPair,
   type WebPushRequest,
 } from "./webPushCrypto.ts";
+import { TASK_CHAT_VIEWED_WRITE_INTERVAL_MS } from "../taskChatAutoArchivePolicy.ts";
 import { ForegroundPresence, ViewingPresence } from "./viewingPresence.ts";
 
 /**
@@ -764,10 +765,34 @@ export const make = Effect.gen(function* () {
 
   const presence = new ViewingPresence();
 
+  // Last "opened" write per chat, so the 10 s heartbeat writes once a minute.
+  const viewedWrittenAtMs = new Map<string, number>();
+
   const reportViewing: PersonalPushService["Service"]["reportViewing"] = (input) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
-      presence.report(input.connectionId, input.threadId, DateTime.toEpochMillis(now));
+      const nowMs = DateTime.toEpochMillis(now);
+      presence.report(input.connectionId, input.threadId, nowMs);
+      if (input.threadId === null) return;
+      // A finished task chat's auto-archive clock restarts while it is open
+      // (PersonalTaskChatArchiveService reads last_viewed_at).
+      const writtenAtMs = viewedWrittenAtMs.get(input.threadId);
+      if (writtenAtMs !== undefined && nowMs - writtenAtMs < TASK_CHAT_VIEWED_WRITE_INTERVAL_MS) {
+        return;
+      }
+      viewedWrittenAtMs.set(input.threadId, nowMs);
+      yield* botRepository
+        .recordThreadViewed({ threadId: input.threadId, viewedAt: DateTime.formatIso(now) })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.interrupt
+              : Effect.logWarning("personal chat viewed time not recorded", {
+                  threadId: input.threadId,
+                  cause: Cause.pretty(cause),
+                }),
+          ),
+        );
     });
 
   const dropConnection: PersonalPushService["Service"]["dropConnection"] = (connectionId) =>

@@ -96,6 +96,7 @@ import Migration0079 from "./Migrations/079_PersonalRoutineDelivery.ts";
 import Migration0080 from "./Migrations/080_PersonalBotNotificationMute.ts";
 import Migration0081 from "./Migrations/081_PersonalRoutineThread.ts";
 import Migration0084 from "./Migrations/084_PersonalChatResumes.ts";
+import Migration0085 from "./Migrations/085_PersonalTaskChatAutoArchive.ts";
 import MigrationUpstream0053 from "./Migrations/053_PullRequestFilesViewed.ts";
 import MigrationUpstream0054 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 
@@ -197,6 +198,7 @@ const migrationEntries = [
   // Upstream 054_ProjectionThreadsAutoSettleDisabledAt, renumbered (see upstreamMigrationIds.ts).
   [83, "ProjectionThreadsAutoSettleDisabledAt", MigrationUpstream0054],
   [84, "PersonalChatResumes", Migration0084],
+  [85, "PersonalTaskChatAutoArchive", Migration0085],
   // Ids are contiguous. The migrator runs only ids above the latest applied
   // one, so every new migration (ours or upstream's) takes the next free id;
   // never deploy a gap. Upstream migrations keep their file name and are

@@ -123,6 +123,7 @@ import * as PersonalClaudeCodeReview from "./personal/claudeCodeReview/PersonalC
 import * as PersonalTaskTitleBackfill from "./personal/taskTitleBackfill.ts";
 import * as PersonalTurnRetry from "./personal/PersonalTurnRetryService.ts";
 import * as PersonalChatResume from "./personal/PersonalChatResumeService.ts";
+import * as PersonalTaskChatArchive from "./personal/PersonalTaskChatArchiveService.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -569,6 +570,8 @@ const PersonalReactorsLive = Layer.effectDiscard(
     yield* (yield* PersonalTurnRetry.PersonalTurnRetry).start();
     // Continues a bot chat stopped by a usage limit once it resets.
     yield* (yield* PersonalChatResume.PersonalChatResume).start();
+    // Archives finished delegated-task chats after 30 idle minutes (startup + every 5 min).
+    yield* (yield* PersonalTaskChatArchive.PersonalTaskChatArchive).start();
     // One-off: names old task/routine chats still on "New chat" after their
     // task, once the server is up. Marker in personal_meta; never blocks start.
     yield* forkParked(PersonalTaskTitleBackfill.runTaskTitleBackfillSafely);
@@ -585,6 +588,7 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   Layer.provideMerge(PersonalClaudeCodeReview.layer),
   Layer.provideMerge(PersonalTurnRetry.layer),
   Layer.provideMerge(PersonalChatResume.layer),
+  Layer.provideMerge(PersonalTaskChatArchive.layer),
   Layer.provideMerge(
     PersonalPushService.layer.pipe(
       Layer.provide(PersonalPushService.transportLive),

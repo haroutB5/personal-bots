@@ -1,0 +1,175 @@
+/**
+ * Which finished delegated-task chats archive themselves, and when. Pure (no
+ * Effect, no clock), so every rule is testable alone and the read-only dry
+ * run against a copy of the live database (qa script) imports the very same
+ * SQL and decision. The service (`PersonalTaskChatArchiveService`) applies it.
+ */
+
+/** A finished task chat archives once it has been idle and unopened this long. */
+export const TASK_CHAT_AUTO_ARCHIVE_IDLE_MS = 30 * 60_000;
+/** How often the sweep looks. It also runs once at startup. */
+export const TASK_CHAT_AUTO_ARCHIVE_SWEEP_MS = 5 * 60_000;
+/**
+ * A chat's "last opened" time is written at most this often while it stays
+ * open (the page reports every 10 s). Far below the idle time, so the clock
+ * restarts in time.
+ */
+export const TASK_CHAT_VIEWED_WRITE_INTERVAL_MS = 60_000;
+/** `personal_meta` key of the Settings toggle. Absent = on. */
+export const TASK_CHAT_AUTO_ARCHIVE_META_KEY = "taskChatAutoArchive";
+
+export const TASK_TERMINAL_STATUSES = ["completed", "failed", "cancelled"] as const;
+
+/**
+ * Candidate chats: only a chat created for a delegated task (the thread came
+ * after the task), every task on it finished, none of its child tasks still
+ * open, and it is not archived (now or ever by this sweep), pinned, a
+ * routine's chat, a group member's thread or a deleted bot's chat. A chat
+ * holding any task that is not a delegation (Harout's own messages to a bot
+ * become `user` tasks, routine runs `routine` tasks) is not a task chat.
+ *
+ * Idle and liveness are decided per row by `decideTaskChatArchive`.
+ */
+export const TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL = `
+  SELECT
+    bt.thread_id AS "threadId",
+    bt.bot_id AS "botId",
+    b.name AS "botName",
+    p.title AS "title",
+    (
+      SELECT max(COALESCE(o.completed_at, o.updated_at))
+      FROM personal_tasks o
+      WHERE o.thread_id = bt.thread_id
+    ) AS "taskEndedAt",
+    (
+      SELECT max(m.created_at)
+      FROM projection_thread_messages m
+      WHERE m.thread_id = bt.thread_id
+    ) AS "lastMessageAt",
+    (
+      SELECT max(m.created_at)
+      FROM projection_thread_messages m
+      WHERE m.thread_id = bt.thread_id
+        AND m.role = 'user'
+        AND m.message_id NOT LIKE 'personal-%'
+    ) AS "lastOwnerMessageAt",
+    bt.last_viewed_at AS "lastViewedAt",
+    s.status AS "sessionStatus",
+    s.active_turn_id AS "activeTurnId",
+    p.pending_approval_count + p.pending_user_input_count AS "pendingRequests"
+  FROM personal_bot_threads bt
+  JOIN personal_bots b ON b.bot_id = bt.bot_id
+  JOIN projection_threads p ON p.thread_id = bt.thread_id
+  LEFT JOIN projection_thread_sessions s ON s.thread_id = bt.thread_id
+  WHERE bt.archived_at IS NULL
+    AND bt.auto_archived_at IS NULL
+    AND b.deleted_at IS NULL
+    AND p.archived_at IS NULL
+    AND p.deleted_at IS NULL
+    AND p.pinned_at IS NULL
+    AND (p.settled_override IS NULL OR p.settled_override <> 'active')
+    AND EXISTS (
+      SELECT 1 FROM personal_tasks d
+      WHERE d.thread_id = bt.thread_id
+        AND d.source = 'delegation'
+        AND d.created_at <= bt.created_at
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM personal_tasks o
+      WHERE o.thread_id = bt.thread_id
+        AND (o.source <> 'delegation' OR o.status NOT IN ('completed', 'failed', 'cancelled'))
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM personal_tasks c
+      JOIN personal_tasks parent ON parent.task_id = c.parent_task_id
+      WHERE parent.thread_id = bt.thread_id
+        AND c.status NOT IN ('completed', 'failed', 'cancelled')
+    )
+    AND NOT EXISTS (SELECT 1 FROM personal_routines r WHERE r.thread_id = bt.thread_id)
+    AND NOT EXISTS (SELECT 1 FROM personal_group_members gm WHERE gm.thread_id = bt.thread_id)
+  ORDER BY bt.created_at ASC, bt.thread_id ASC
+`;
+
+/** One row of `TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL`. */
+export interface TaskChatArchiveCandidate {
+  readonly threadId: string;
+  readonly botId: string;
+  readonly botName: string;
+  readonly title: string;
+  readonly taskEndedAt: string | null;
+  readonly lastMessageAt: string | null;
+  readonly lastOwnerMessageAt: string | null;
+  readonly lastViewedAt: string | null;
+  readonly sessionStatus: string | null;
+  readonly activeTurnId: string | null;
+  readonly pendingRequests: number;
+}
+
+/** What the live projection adds at sweep time (the dry run has no live server). */
+export interface TaskChatLiveState {
+  /** The session has background work (a command, a subagent) still running. */
+  readonly backgroundWork: boolean;
+  /** Completion of the chat's latest turn, when known. */
+  readonly latestTurnCompletedAt: string | null;
+}
+
+export type TaskChatArchiveDecision =
+  | { readonly kind: "archive"; readonly idleSinceMs: number }
+  | {
+      readonly kind: "keep";
+      readonly reason: "live_turn" | "background_work" | "pending_request" | "recent";
+      /** When it becomes due, for `recent`. */
+      readonly dueAtMs?: number;
+    };
+
+const parseMs = (value: string | null | undefined): number | null => {
+  if (value == null) return null;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? null : ms;
+};
+
+/**
+ * The idle clock starts at the latest of: the task finishing, the chat's last
+ * message (the bot's or Harout's) and Harout last having it open. Opening or
+ * writing in it restarts the clock.
+ */
+export function taskChatIdleSinceMs(
+  candidate: Pick<TaskChatArchiveCandidate, "taskEndedAt" | "lastMessageAt" | "lastViewedAt">,
+  live?: Pick<TaskChatLiveState, "latestTurnCompletedAt">,
+): number | null {
+  const times = [
+    candidate.taskEndedAt,
+    candidate.lastMessageAt,
+    candidate.lastViewedAt,
+    live?.latestTurnCompletedAt ?? null,
+  ]
+    .map(parseMs)
+    .filter((ms): ms is number => ms !== null);
+  return times.length === 0 ? null : Math.max(...times);
+}
+
+export function decideTaskChatArchive(
+  candidate: TaskChatArchiveCandidate,
+  nowMs: number,
+  live?: TaskChatLiveState,
+): TaskChatArchiveDecision {
+  if (
+    candidate.sessionStatus === "running" ||
+    candidate.sessionStatus === "starting" ||
+    candidate.activeTurnId !== null
+  ) {
+    return { kind: "keep", reason: "live_turn" };
+  }
+  if (live?.backgroundWork === true) return { kind: "keep", reason: "background_work" };
+  if (candidate.pendingRequests > 0) return { kind: "keep", reason: "pending_request" };
+  const idleSinceMs = taskChatIdleSinceMs(candidate, live);
+  // Every finished task has an updated_at, so this only guards bad data.
+  if (idleSinceMs === null) return { kind: "keep", reason: "recent" };
+  const dueAtMs = idleSinceMs + TASK_CHAT_AUTO_ARCHIVE_IDLE_MS;
+  if (nowMs < dueAtMs) return { kind: "keep", reason: "recent", dueAtMs };
+  return { kind: "archive", idleSinceMs };
+}
+
+/** The Settings toggle as stored: anything but "off" (or no row) is on. */
+export const taskChatAutoArchiveEnabled = (stored: string | null | undefined): boolean =>
+  stored !== "off";

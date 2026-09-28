@@ -27,6 +27,7 @@ import {
   PersistenceDecodeError,
   type PersistenceErrorCorrelation,
   PersistenceSqlError,
+  toPersistenceSqlError,
 } from "../persistence/Errors.ts";
 import type { PersonalBotPersona } from "./personalBotInstructions.ts";
 
@@ -150,6 +151,14 @@ export class PersonalBotRepository extends Context.Service<
     readonly setThreadArchived: (
       input: SetPersonalBotThreadArchivedInput,
     ) => Effect.Effect<Option.Option<PersonalBotThread>, PersonalBotRepositoryError>;
+    /**
+     * The owner has this chat open (viewing heartbeat). Only moves forward;
+     * a thread that is not a bot chat (a group's) is left alone.
+     */
+    readonly recordThreadViewed: (input: {
+      readonly threadId: ThreadId;
+      readonly viewedAt: string;
+    }) => Effect.Effect<void, PersonalBotRepositoryError>;
     /** Removes exactly one bot-thread link row; the thread itself is deleted via `thread.delete`. */
     readonly deleteThreadLink: (
       input: GetPersonalBotThreadInput,
@@ -252,6 +261,7 @@ const PersonalBotThreadRawDbRow = Schema.Struct({
 // show a preview without a live thread subscription per row.
 const PersonalBotThreadListDbRow = Schema.Struct({
   ...PersonalBotThreadDbRow.fields,
+  lastActivityAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   newestMessageId: Schema.NullOr(MessageId),
   newestRole: Schema.NullOr(OrchestrationMessageRole),
   newestText: Schema.NullOr(Schema.String),
@@ -260,6 +270,7 @@ const PersonalBotThreadListDbRow = Schema.Struct({
 
 const PersonalBotThreadListRawDbRow = Schema.Struct({
   ...PersonalBotThreadRawDbRow.fields,
+  lastActivityAt: Schema.Unknown,
   newestMessageId: Schema.Unknown,
   newestRole: Schema.Unknown,
   newestText: Schema.Unknown,
@@ -374,7 +385,7 @@ function toPersonalBotThreadWithPreview(
           text: row.newestText,
           ...(row.newestContext !== null ? { context: row.newestContext } : {}),
         };
-  return { ...toPersonalBotThread(row), newestMessage };
+  return { ...toPersonalBotThread(row), lastActivityAt: row.lastActivityAt, newestMessage };
 }
 
 function toPersistenceSqlOrDecodeError(
@@ -637,7 +648,9 @@ export const make = Effect.gen(function* () {
   // Only a bot's newest chats carry a preview. The one reader (the Chats
   // screen's `buildBotSummaries`) shows the preview of each bot's newest
   // thread: not archived (link or thread), not deleted, not an active group
-  // member relay, ordered by the thread's `updated_at`. Every other link used
+  // member relay, ordered by its last message (`activity_at`, also returned as
+  // `lastActivityAt`), never `updated_at`: auto-settle, a session stop or a
+  // rename move that without anything said in the chat. Every other link used
   // to ship up to 400 chars nobody read, and the list is refetched while bots
   // stream. The newest TWO eligible threads per bot keep a preview, so a
   // client whose shells are one update behind the server still finds its
@@ -668,7 +681,15 @@ export const make = Effect.gen(function* () {
               THEN 1
               ELSE 0
             END AS eligible,
-            p.updated_at
+            COALESCE(
+              (
+                SELECT max(a.created_at)
+                FROM projection_thread_messages a
+                WHERE a.thread_id = t.thread_id AND a.role NOT IN ('system', 'reasoning')
+              ),
+              p.created_at,
+              t.created_at
+            ) AS activity_at
           FROM personal_bot_threads t
           LEFT JOIN projection_threads p ON p.thread_id = t.thread_id
         ),
@@ -677,7 +698,7 @@ export const make = Effect.gen(function* () {
             c.*,
             ROW_NUMBER() OVER (
               PARTITION BY c.bot_id, c.eligible
-              ORDER BY c.updated_at DESC, c.created_at ASC, c.thread_id ASC
+              ORDER BY c.activity_at DESC, c.created_at ASC, c.thread_id ASC
             ) AS preview_rank
           FROM candidates c
         )
@@ -686,6 +707,7 @@ export const make = Effect.gen(function* () {
           r.thread_id AS "threadId",
           r.created_at AS "createdAt",
           r.archived_at AS "archivedAt",
+          r.activity_at AS "lastActivityAt",
           m.message_id AS "newestMessageId",
           m.role AS "newestRole",
           substr(m.text, 1, 400) AS "newestText",
@@ -953,6 +975,17 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const recordThreadViewed: PersonalBotRepository["Service"]["recordThreadViewed"] = (input) =>
+    sql`
+      UPDATE personal_bot_threads
+      SET last_viewed_at = ${input.viewedAt}
+      WHERE thread_id = ${input.threadId}
+        AND (last_viewed_at IS NULL OR last_viewed_at < ${input.viewedAt})
+    `.pipe(
+      Effect.asVoid,
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.recordThreadViewed:query")),
+    );
+
   const deleteThreadLink: PersonalBotRepository["Service"]["deleteThreadLink"] = (input) =>
     deleteThreadLinkRow(input).pipe(
       Effect.mapError(
@@ -1086,6 +1119,7 @@ export const make = Effect.gen(function* () {
     insertThreadLink,
     getThreadLink,
     setThreadArchived,
+    recordThreadViewed,
     deleteThreadLink,
     listThreadLinks,
     listGroupPresence,

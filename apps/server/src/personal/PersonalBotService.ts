@@ -52,6 +52,10 @@ import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import { withGroupPresence } from "./groupOnlyBots.ts";
 import { PERSONAL_THREAD_TITLE } from "./personalThreadTitles.ts";
+import {
+  TASK_CHAT_AUTO_ARCHIVE_META_KEY,
+  taskChatAutoArchiveEnabled,
+} from "./taskChatAutoArchivePolicy.ts";
 
 const PERSONAL_META_SEEDED = "seeded";
 const PERSONAL_META_PROJECT_ID = "personalProjectId";
@@ -724,9 +728,11 @@ export const make = Effect.gen(function* () {
             ),
           )
         : [];
+      const autoArchive = yield* repository.getMeta({ key: TASK_CHAT_AUTO_ARCHIVE_META_KEY });
       return {
         displayName: Option.getOrElse(stored, () => ""),
         ...(customTeams.length > 0 ? { customTeams } : {}),
+        autoArchiveTaskChats: taskChatAutoArchiveEnabled(Option.getOrNull(autoArchive)),
       };
     }).pipe(Effect.mapError(repositoryError("profile lookup")));
 
@@ -774,6 +780,14 @@ export const make = Effect.gen(function* () {
         yield* repository
           .setMeta({ key: "customTeams", value })
           .pipe(Effect.mapError(repositoryError("team update")));
+      }
+      if (input.autoArchiveTaskChats !== undefined) {
+        yield* repository
+          .setMeta({
+            key: TASK_CHAT_AUTO_ARCHIVE_META_KEY,
+            value: input.autoArchiveTaskChats ? "on" : "off",
+          })
+          .pipe(Effect.mapError(repositoryError("profile update")));
       }
       yield* repository
         .setMeta({ key: PERSONAL_META_DISPLAY_NAME, value: displayName })

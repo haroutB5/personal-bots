@@ -239,6 +239,12 @@ export const PersonalBotThread = Schema.Struct({
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   /** Only on `personalBots.list`; absent on create/archive results. */
   newestMessage: Schema.optional(Schema.NullOr(PersonalBotThreadNewestMessage)),
+  /**
+   * Only on `personalBots.list`: when the chat last had a message (else when
+   * it was made). What chat lists order by, never the thread's updatedAt,
+   * which any metadata write moves (auto-settle, a session stop, a rename).
+   */
+  lastActivityAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
 });
 export type PersonalBotThread = typeof PersonalBotThread.Type;
 
@@ -363,6 +369,12 @@ export type PersonalBotsListResult = typeof PersonalBotsListResult.Type;
 export const PersonalProfile = Schema.Struct({
   displayName: Schema.String,
   customTeams: Schema.optionalKey(Schema.Array(PersonalBotTeam)),
+  /**
+   * Chats made for a delegated task archive themselves once the task has
+   * finished and the chat sat idle for 30 minutes. On unless turned off.
+   * Optional so an older server's profile still decodes (read as on).
+   */
+  autoArchiveTaskChats: Schema.optionalKey(Schema.Boolean),
 });
 export type PersonalProfile = typeof PersonalProfile.Type;
 
@@ -375,6 +387,7 @@ export const PersonalProfileSetInput = Schema.Struct({
       name: PersonalBotTeam,
     }),
   ),
+  autoArchiveTaskChats: Schema.optional(Schema.Boolean),
 });
 export type PersonalProfileSetInput = typeof PersonalProfileSetInput.Type;
 

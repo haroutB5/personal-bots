@@ -446,18 +446,42 @@ it.effect("profile display name defaults to empty, trims on set, and rejects lon
   const context = makeContext();
   return Effect.gen(function* () {
     const service = yield* PersonalBotService.PersonalBotService;
-    expect(yield* service.getProfile()).toEqual({ displayName: "" });
+    expect(yield* service.getProfile()).toEqual({ displayName: "", autoArchiveTaskChats: true });
 
     expect(yield* service.setProfile({ displayName: "  Harout  " })).toEqual({
       displayName: "Harout",
+      autoArchiveTaskChats: true,
     });
-    expect(yield* service.getProfile()).toEqual({ displayName: "Harout" });
+    expect(yield* service.getProfile()).toEqual({
+      displayName: "Harout",
+      autoArchiveTaskChats: true,
+    });
 
-    expect(yield* service.setProfile({ displayName: "" })).toEqual({ displayName: "" });
-    expect(yield* service.getProfile()).toEqual({ displayName: "" });
+    expect(yield* service.setProfile({ displayName: "" })).toEqual({
+      displayName: "",
+      autoArchiveTaskChats: true,
+    });
+    expect(yield* service.getProfile()).toEqual({ displayName: "", autoArchiveTaskChats: true });
 
     const tooLong = yield* Effect.flip(service.setProfile({ displayName: "x".repeat(81) }));
     expect(tooLong.message).toContain("at most 80 characters");
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});
+
+it.effect("auto-archive of finished task chats is on by default and saved when turned off", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+    yield* service.setProfile({ displayName: "Harout" });
+    expect((yield* service.getProfile()).autoArchiveTaskChats).toBe(true);
+    const off = yield* service.setProfile({ autoArchiveTaskChats: false });
+    expect(off).toEqual({ displayName: "Harout", autoArchiveTaskChats: false });
+    expect((yield* service.getProfile()).autoArchiveTaskChats).toBe(false);
+    // A name change alone leaves the setting as it was.
+    yield* service.setProfile({ displayName: "Ht" });
+    expect((yield* service.getProfile()).autoArchiveTaskChats).toBe(false);
+    yield* service.setProfile({ autoArchiveTaskChats: true });
+    expect((yield* service.getProfile()).autoArchiveTaskChats).toBe(true);
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
 
@@ -473,6 +497,7 @@ it.effect(
       expect(yield* service.getProfile()).toEqual({
         displayName: "Harout",
         customTeams: ["Research"],
+        autoArchiveTaskChats: true,
       });
       yield* service.setProfile({ displayName: "Ht" });
       expect((yield* service.getProfile()).customTeams).toEqual(["Research"]);
@@ -497,7 +522,10 @@ it.effect(
       yield* service.update({ botId: second.botId, team: "assistant", lead: false });
       expect((yield* service.getProfile()).customTeams).toEqual(["Research"]);
       yield* service.setProfile({ teamChange: { operation: "delete", name: "Research" } });
-      expect(yield* service.getProfile()).toEqual({ displayName: "Ht" });
+      expect(yield* service.getProfile()).toEqual({
+        displayName: "Ht",
+        autoArchiveTaskChats: true,
+      });
     }).pipe(Effect.provide(makeTestLayer(context)));
   },
 );
@@ -595,13 +623,17 @@ it.effect("an undecodable customTeams row still serves the profile", () => {
     yield* repository.setMeta({ key: "customTeams", value: "{not json" });
 
     // The greeting name is a separate row and must survive a corrupt one.
-    expect(yield* service.getProfile()).toEqual({ displayName: "Harout" });
+    expect(yield* service.getProfile()).toEqual({
+      displayName: "Harout",
+      autoArchiveTaskChats: true,
+    });
 
     // And the user can register a team again, which rewrites the bad row.
     yield* service.setProfile({ teamChange: { operation: "create", name: "Research" } });
     expect(yield* service.getProfile()).toEqual({
       displayName: "Harout",
       customTeams: ["Research"],
+      autoArchiveTaskChats: true,
     });
   }).pipe(Effect.provide(makeTestLayer(context)));
 });

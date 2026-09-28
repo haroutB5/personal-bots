@@ -62,6 +62,10 @@ function shell(
     id,
     title: `Thread ${id}`,
     updatedAt,
+    // The fixture's time is when the chat last had activity (lists order by
+    // that, see chatActivity.ts); `overrides` can move either one.
+    createdAt: updatedAt,
+    latestUserMessageAt: null,
     archivedAt: null,
     latestTurn: null,
     session: null,
@@ -461,5 +465,58 @@ describe("isBotThinking", () => {
     });
     expect(summary?.live).toBe(true);
     expect(summary?.thinking).toBe(true);
+  });
+});
+
+describe("list order follows conversation, not metadata writes", () => {
+  // 28 Sep 20:10Z: upstream's auto-settle settled "Backend exercise set r2"
+  // (last turn 25 Sep) and stamped its updatedAt; it jumped to the top as "Now".
+  const bots = [bot("backend", "Backend", "codex", 0), bot("qa", "QA", "codex", 1)];
+  const links = [link("backend", "t-bench"), link("backend", "t-live"), link("qa", "t-qa")];
+  const benchShell = shell("t-bench", "2026-09-28T20:10:05.321Z", {
+    createdAt: "2026-09-25T19:56:26.677Z",
+    latestUserMessageAt: "2026-09-25T19:56:26.703Z",
+    latestTurn: {
+      state: "completed",
+      requestedAt: "2026-09-25T19:56:26.703Z",
+      startedAt: "2026-09-25T19:56:27.000Z",
+      completedAt: "2026-09-25T20:09:17.316Z",
+    },
+  });
+
+  it("keeps a settled 3-day-old chat where its last turn put it", () => {
+    const summaries = buildBotSummaries({
+      bots,
+      links,
+      shells: [
+        benchShell,
+        shell("t-live", "2026-09-27T09:00:00.000Z"),
+        shell("t-qa", "2026-09-28T19:00:00.000Z"),
+      ],
+      providers: [provider("codex")],
+    });
+    expect(summaries.map((summary) => summary.bot.name)).toEqual(["QA", "Backend"]);
+    const backend = summaries.find((summary) => summary.bot.name === "Backend")!;
+    expect(backend.newestThread?.id).toBe("t-live");
+    expect(backend.lastActivityMs).toBe(Date.parse("2026-09-27T09:00:00.000Z"));
+  });
+
+  it("takes the server's last message time, which a relay routine posts without a turn", () => {
+    const relayed = {
+      ...link("qa", "t-qa"),
+      lastActivityAt: DateTime.makeUnsafe("2026-09-28T21:00:00.000Z"),
+    } as unknown as PersonalBotThread;
+    const summaries = buildBotSummaries({
+      bots,
+      links: [link("backend", "t-bench"), link("backend", "t-live"), relayed],
+      shells: [
+        benchShell,
+        shell("t-live", "2026-09-28T20:30:00.000Z"),
+        shell("t-qa", "2026-09-28T19:00:00.000Z"),
+      ],
+      providers: [provider("codex")],
+    });
+    expect(summaries[0]?.bot.name).toBe("QA");
+    expect(summaries[0]?.lastActivityMs).toBe(Date.parse("2026-09-28T21:00:00.000Z"));
   });
 });
