@@ -110,6 +110,9 @@ const budgetFor = (input: {
     ceiling: PERSONAL_GROUP_MAX_BOT_TURNS_CEILING,
   });
 
+/** An epoch time as the ISO string the tables and the wire use. */
+const isoAt = (ms: number): string => DateTime.formatIso(DateTime.makeUnsafe(ms));
+
 /** The wall-clock window for a round with `queuedTurns` still to run. */
 const windowMsFor = (queuedTurns: number): number =>
   roundWallClockMs({
@@ -1189,7 +1192,7 @@ export const make = Effect.gen(function* () {
           );
           return {
             decision: decideLimitHit({
-              retry: { retryAt: new Date(retryAtMs).toISOString() },
+              retry: { retryAt: isoAt(retryAtMs) },
               nowMs,
               consecutiveResumes,
             }),
@@ -1231,8 +1234,8 @@ export const make = Effect.gen(function* () {
           botId,
           provider: origin.provider ?? "unknown",
           reason: origin.reason ?? null,
-          hitAt: new Date(nowMs).toISOString(),
-          resumeAt: new Date(decision.resumeAtMs).toISOString(),
+          hitAt: isoAt(nowMs),
+          resumeAt: isoAt(decision.resumeAtMs),
         });
       }
       yield* writeSystemRow(
@@ -1254,7 +1257,7 @@ export const make = Effect.gen(function* () {
         kind,
         provider: origin.provider,
         reason: origin.reason,
-        resumeAt: decision.kind === "schedule" ? new Date(decision.resumeAtMs).toISOString() : null,
+        resumeAt: decision.kind === "schedule" ? isoAt(decision.resumeAtMs) : null,
         noticeOnly: decision.kind === "notice_only" ? decision.reason : null,
       });
     }).pipe(
@@ -1597,7 +1600,7 @@ export const make = Effect.gen(function* () {
   const resumeDueLimitHits = Effect.fn("PersonalGroupService.resumeDueLimitHits")(function* () {
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
-    const nowIso = new Date(nowMs).toISOString();
+    const nowIso = isoAt(nowMs);
     const due = yield* limitResumes.listDue(nowIso);
     for (const row of due) {
       const skip = (reason: string) =>

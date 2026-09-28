@@ -1412,7 +1412,7 @@ it.effect("a member cut off by a usage limit continues once, at the reset", () =
       speaker: { kind: "system", event: "member-paused" },
     });
     expect(yield* limitRows).toMatchObject([
-      { status: "scheduled", kind: "members", botIdsJson: JSON.stringify([botId("assistant")]) },
+      { status: "scheduled", kind: "members", botIdsJson: `["${botId("assistant")}"]` },
     ]);
 
     // Before the reset nothing runs, however often the sweep looks.

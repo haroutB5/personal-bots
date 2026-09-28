@@ -1,4 +1,6 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
@@ -42,16 +44,11 @@ interface StoredRow {
   readonly resumeAt: string;
 }
 
-const parseBotIds = (json: string): ReadonlyArray<string> => {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return Array.isArray(parsed)
-      ? parsed.filter((entry): entry is string => typeof entry === "string")
-      : [];
-  } catch {
-    return [];
-  }
-};
+const BotIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
+const encodeBotIds = Schema.encodeSync(BotIdsJson);
+
+const parseBotIds = (json: string): ReadonlyArray<string> =>
+  Option.getOrElse(Schema.decodeUnknownOption(BotIdsJson)(json), () => []);
 
 const toRow = (row: StoredRow): GroupLimitResumeRow => ({
   resumeId: row.resumeId,
@@ -99,7 +96,7 @@ export const makeGroupLimitResumeStore = (sql: SqlClient.SqlClient) => {
           )
           VALUES (
             ${input.resumeId}, ${input.groupId}, ${input.roundId}, ${input.kind},
-            ${JSON.stringify([input.botId])}, ${input.provider}, ${input.reason},
+            ${encodeBotIds([input.botId])}, ${input.provider}, ${input.reason},
             ${input.hitAt}, ${input.resumeAt}, 'scheduled'
           )
         `;
@@ -110,7 +107,7 @@ export const makeGroupLimitResumeStore = (sql: SqlClient.SqlClient) => {
       const resumeAt = row.resumeAt > input.resumeAt ? row.resumeAt : input.resumeAt;
       yield* sql`
         UPDATE personal_group_limit_resumes
-        SET bot_ids_json = ${JSON.stringify(merged)}, resume_at = ${resumeAt}
+        SET bot_ids_json = ${encodeBotIds(merged)}, resume_at = ${resumeAt}
         WHERE resume_id = ${row.resumeId} AND status = 'scheduled'
       `;
       return resumeAt;
