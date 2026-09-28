@@ -603,10 +603,14 @@ export function runtimeEventToActivities(
     }
 
     case "user-message.delivered": {
-      // One per owner message: the chat's "Read" status under it. Not work.
+      // The chat's "Read" status under the owner's latest message. Not work.
+      // One row per thread, replaced by each delivery (the activity upserts by
+      // id): the status only ever reads the newest one, and a row per message
+      // rode along in every thread snapshot for the life of the chat (ten
+      // messages added ~2 KB and pushed the transfer-budget scenario over).
       return [
         {
-          id: event.eventId,
+          id: EventId.make(`user-message-delivered:${event.threadId}`),
           createdAt: event.createdAt,
           tone: "info",
           kind: "user-message.delivered",

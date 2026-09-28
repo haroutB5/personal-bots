@@ -212,7 +212,7 @@ describe("runtimeEventToActivities user message delivery", () => {
     } satisfies ProviderRuntimeEvent);
     expect(activities).toEqual([
       {
-        id: "evt-delivered",
+        id: `user-message-delivered:${base.threadId}`,
         createdAt: base.createdAt,
         tone: "info",
         kind: "user-message.delivered",
@@ -221,5 +221,24 @@ describe("runtimeEventToActivities user message delivery", () => {
         turnId: "turn-1",
       },
     ]);
+  });
+
+  it("keeps one row per thread: a later delivery has the same id as the earlier one", () => {
+    const deliver = (threadId: ThreadId, messageId: string) =>
+      runtimeEventToActivities({
+        ...base,
+        threadId,
+        type: "user-message.delivered",
+        eventId: EventId.make(`evt-${messageId}`),
+        turnId: TurnId.make("turn-1"),
+        payload: { messageId: MessageId.make(messageId) },
+      } satisfies ProviderRuntimeEvent)[0]!;
+    const first = deliver(base.threadId, "owner-message-1");
+    const second = deliver(base.threadId, "owner-message-2");
+    // The projection upserts by id, so the second replaces the first.
+    expect(second.id).toBe(first.id);
+    expect(second.payload).toEqual({ messageId: "owner-message-2" });
+    // Another chat keeps its own row.
+    expect(deliver(ThreadId.make("thread-other"), "owner-message-1").id).not.toBe(first.id);
   });
 });
