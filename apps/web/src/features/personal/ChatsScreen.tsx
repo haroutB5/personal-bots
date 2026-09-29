@@ -527,7 +527,7 @@ export function ChatsScreen({
     );
   }, [visible]);
   const { pinned, rest } = useMemo(() => partitionPinnedSummaries(visible), [visible]);
-  // Every working bot draws the comet (compositor-only since 1.57.1). The
+  // Every working bot draws the comet (compositor-only since 1.57.3). The
   // kill switch bots:perf-off=anim-all keeps it on the first working row on
   // screen (pinned box first, then the list), anim-comet draws none.
   const cometBotIds = useMemo(() => {

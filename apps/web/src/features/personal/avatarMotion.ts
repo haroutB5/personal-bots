@@ -91,7 +91,7 @@ export function firstContinuousMotionOnly(motions: ReadonlyArray<AvatarMotion>):
 /**
  * Which rows of a list draw the working comet: every `working` one, or, with
  * `onlyFirst` (the `anim-all` kill switch), the first one only, or none.
- * Since 1.57.1 the comet is built from compositor-only layers
+ * Since 1.57.3 the comet is built from compositor-only layers
  * (`avatarComet.ts`), so every busy bot gets it without costing the main
  * thread anything; until 1.56 it repainted per frame and stayed on one row
  * (five of them dropped /bots to ~22 fps at 4x CPU).
