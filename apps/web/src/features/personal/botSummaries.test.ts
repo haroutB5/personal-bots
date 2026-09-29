@@ -528,3 +528,39 @@ describe("list order follows conversation, not metadata writes", () => {
     expect(summaries[0]?.lastActivityMs).toBe(Date.parse("2026-09-28T21:00:00.000Z"));
   });
 });
+
+describe("bot list row model label", () => {
+  it("carries the short form the list row draws beside the name", () => {
+    const opus = decodeBot({
+      botId: "cto",
+      name: "CTO",
+      title: "Chief technology officer",
+      description: "",
+      instructions: "",
+      avatarShape: "blob",
+      avatarColor: "#1A73E8",
+      modelSelection: {
+        instanceId: "claudeAgent",
+        model: "claude-opus-5-5",
+        options: [{ id: "effort", value: "high" }],
+      },
+      enabled: true,
+      sortOrder: 0,
+      createdAt: "2026-09-01T10:00:00.000Z",
+      updatedAt: "2026-09-01T10:00:00.000Z",
+    });
+    const [summary] = buildBotSummaries({
+      bots: [opus],
+      links: [],
+      shells: [],
+      providers: [
+        provider("claudeAgent", {
+          models: [{ slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false }],
+        } as unknown as Partial<ServerProvider>),
+      ],
+    });
+    expect(summary?.modelShortLabel).toBe("Opus 5.5 · H");
+    // The full form stays for assistive text.
+    expect(summary?.modelLabel).toBe("Opus 5.5 high");
+  });
+});

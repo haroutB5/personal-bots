@@ -162,6 +162,8 @@ export const BotRow = memo(function BotRow({
   const rowClass = cn(ROW_CLASS, selected && SELECTED_ROW_CLASS);
   const selectedProps = selectedChatProps(selected);
 
+  // The same short form as the pinned tiles and the chat headers: "Sonnet 5.5 · H".
+  const rowModelLabel = summary.modelShortLabel;
   const content: ReactNode = (
     <>
       <BotAvatar
@@ -177,13 +179,13 @@ export const BotRow = memo(function BotRow({
           <span className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
             {bot.name}
           </span>
-          {summary.modelLabel !== null ? (
+          {rowModelLabel !== null ? (
             // Gives way before the name does: it shrinks first and truncates.
             <span
               data-testid="bot-model-label"
               className="ml-1.5 min-w-0 shrink-[100] truncate text-[13px] leading-[22px] text-[var(--personal-text-tertiary)]"
             >
-              {summary.modelLabel}
+              {rowModelLabel}
             </span>
           ) : null}
           {botMuteState(bot, now).muted ? <MutedBell className="ml-1.5" /> : null}
