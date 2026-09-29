@@ -1144,6 +1144,60 @@ describe("team lead bot tools", () => {
     ),
   );
 
+  it.effect("a lead owns only what it created and only while it stays on its team", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call, bots } = yield* setup;
+        taskSays(harness, CFO_THREAD, "[Routine] tidy up.");
+        const made = yield* call("create_bot", { name: "Tax", instructions: "Do the tax." });
+        // Its own creation: done at once, even in a routine turn.
+        const direct = yield* call("update_bot", { bot: "Tax", instructions: "Do it well." });
+        expect(direct.pending).toBe(false);
+
+        // The user moves it to the dev team and back: no longer fully the lead's.
+        yield* bots.update({ botId: made.botId as PersonalBotId, team: "dev" });
+        yield* bots.update({ botId: made.botId as PersonalBotId, team: "Finance" });
+        const sql = yield* SqlClient.SqlClient;
+        const moves = yield* sql<{ readonly from_team: string; readonly to_team: string }>`
+          SELECT from_team, to_team FROM personal_bot_team_moves WHERE bot_id = ${made.botId} ORDER BY move_id
+        `;
+        expect(moves.map((move) => `${move.from_team}>${move.to_team}`)).toEqual([
+          "Finance>dev",
+          "dev>Finance",
+        ]);
+        expect(
+          yield* Effect.flip(call("update_bot", { bot: "Tax", instructions: "Again." })),
+        ).toMatchObject({
+          reason: expect.stringContaining("Ask Harout to request this in chat"),
+        });
+        userSays(harness, CFO_THREAD, "Please update Tax.");
+        const asked = yield* call("update_bot", { bot: "Tax", instructions: "Again." });
+        expect(asked.pending).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("another lead of the same team gets a card for a bot its predecessor created", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call, bots } = yield* setup;
+        yield* call("create_bot", { name: "Tax", instructions: "Do the tax." });
+        // The user makes the Analyst the Finance lead; the CFO steps down.
+        yield* bots.update({ botId: botId("analyst"), lead: true });
+        userSays(harness, ANALYST_THREAD, "Please rewrite Tax.");
+        const asked = yield* call(
+          "update_bot",
+          { bot: "Tax", instructions: "New." },
+          ANALYST_THREAD,
+        );
+        expect(asked.pending).toBe(true);
+        expect((yield* liveBots).find((bot) => bot.name === "Tax")!.instructions).toBe(
+          "Do the tax.",
+        );
+      }),
+    ),
+  );
+
   it.effect("no MCP tool approves a card or restores a bot", () =>
     Effect.sync(() => {
       const names = Object.keys(BotsToolkit.tools);

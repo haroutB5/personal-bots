@@ -8,6 +8,9 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
  *    own, waiting for the owner's tap on a card in the lead's chat.
  *  - personal_lead_bot_actions.confirmation_id: links the audit row of an approved change to
  *    the request that the owner approved.
+ *  - personal_bot_team_moves (+ trigger on personal_bots.team): every team change, whichever
+ *    path made it (the form, the Team screen drag, a sync), so a bot a lead created and the
+ *    owner later moved is no longer "fully the lead's".
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -52,4 +55,26 @@ export default Effect.gen(function* () {
   `;
 
   yield* sql`ALTER TABLE personal_lead_bot_actions ADD COLUMN confirmation_id TEXT`;
+
+  yield* sql`
+    CREATE TABLE personal_bot_team_moves (
+      move_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bot_id TEXT NOT NULL,
+      from_team TEXT,
+      to_team TEXT,
+      moved_at TEXT NOT NULL
+    )
+  `;
+  yield* sql`
+    CREATE INDEX idx_personal_bot_team_moves_bot ON personal_bot_team_moves (bot_id, moved_at)
+  `;
+  yield* sql`
+    CREATE TRIGGER personal_bots_team_moved
+    AFTER UPDATE OF team ON personal_bots
+    WHEN OLD.team IS NOT NEW.team
+    BEGIN
+      INSERT INTO personal_bot_team_moves (bot_id, from_team, to_team, moved_at)
+      VALUES (NEW.bot_id, OLD.team, NEW.team, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    END
+  `;
 });

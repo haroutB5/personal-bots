@@ -485,15 +485,29 @@ export const make = Effect.gen(function* () {
       return { openTasks: openTasks[0]?.n ?? 0, activeSessions: activeSessions[0]?.n ?? 0 };
     });
 
-  /** Some lead created this bot (a `create` row in the audit table); a bot the user made has none. */
-  const ownedByCaller = (_leadBotId: string, target: PersonalBot) =>
-    sql<{ readonly n: number }>`
-      SELECT count(*) AS n FROM personal_lead_bot_actions
-      WHERE target_bot_id = ${target.botId} AND action = 'create'
-    `.pipe(
-      Effect.map((rows) => (rows[0]?.n ?? 0) > 0),
-      orFail("check who made the bot"),
-    );
+  /**
+   * The caller created this bot and it has not left the caller's team since: its
+   * `create` audit row names this lead, the row's team is the bot's team now, and
+   * no team move (any path: the form, the Team screen, a sync) is recorded after
+   * it. A bot the user made, another lead made, or that was moved is the user's.
+   */
+  const ownedByCaller = (leadBotId: string, target: PersonalBot) =>
+    Effect.gen(function* () {
+      const created = yield* sql<{ readonly createdAt: string; readonly team: string }>`
+        SELECT created_at AS "createdAt", team FROM personal_lead_bot_actions
+        WHERE target_bot_id = ${target.botId} AND lead_bot_id = ${leadBotId} AND action = 'create'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `;
+      const row = created[0];
+      if (row === undefined) return false;
+      if (row.team.trim().toLowerCase() !== botTeam(target).trim().toLowerCase()) return false;
+      const moves = yield* sql<{ readonly n: number }>`
+        SELECT count(*) AS n FROM personal_bot_team_moves
+        WHERE bot_id = ${target.botId} AND moved_at > ${row.createdAt}
+      `;
+      return (moves[0]?.n ?? 0) === 0;
+    }).pipe(orFail("check who made the bot"));
 
   const activeRoutinesOf = (botId: string) =>
     routines.list().pipe(
