@@ -59,7 +59,7 @@ import { BotMuteMenuItems, useSetBotMute } from "./BotMute";
 import { ConversationHeaderName } from "./ConversationHeaderName";
 import { ConversationSubtitle } from "./ConversationSubtitle";
 import { botMuteState } from "./botMuteModel";
-import { conversationHeaderStatus, resolveBotProvider } from "./botSummaries";
+import { conversationHeaderStatus, resolveBotProvider, taskCardBotLine } from "./botSummaries";
 import { botModelShortLabel } from "./botModelLabel";
 import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerLink } from "./ConversationComputerLink";
@@ -368,11 +368,7 @@ export function ConversationScreen({
           environmentId={environmentId!}
           task={task}
           bot={childBot}
-          providerLabel={
-            childBot === null
-              ? null
-              : resolveBotProvider(childBot.modelSelection.instanceId, providers).label
-          }
+          modelLabel={taskCardBotLine(childBot, providers)}
           waitingFor={task.threadId === null ? null : (waitingLabels.get(task.threadId) ?? null)}
         />
       );

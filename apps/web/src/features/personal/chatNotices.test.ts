@@ -67,6 +67,15 @@ const transcript = [
 ];
 
 describe("chat notices", () => {
+  it("shows a team lead's bot change as its own line, with no usage-limit wording", () => {
+    const line = "CFO created bot 'Tax' (Sonnet 5.5 · H) on Finance";
+    const notice = readChatNotice({
+      context: context({ notice: "team-bot-change", provider: "Team" }),
+    } as never);
+    expect(notice).toEqual({ notice: "team-bot-change", provider: "Team" });
+    expect(chatNoticeLabel(notice!, line, NOW)).toBe(line);
+  });
+
   it("reads the marker and says when the chat continues", () => {
     const notice = readChatNotice({ context: context(PAUSED) } as never)!;
     expect(chatNoticeLabel(notice, "Paused: Claude usage limit. Continues at 23:00.", NOW)).toBe(

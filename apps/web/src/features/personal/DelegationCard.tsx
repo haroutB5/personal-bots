@@ -65,13 +65,14 @@ export const DelegationCard = memo(function DelegationCard({
   environmentId,
   task,
   bot,
-  providerLabel,
+  modelLabel,
   waitingFor,
 }: {
   environmentId: EnvironmentId;
   task: PersonalTask;
   bot: PersonalBot | null;
-  providerLabel: string | null;
+  /** The bot's short model label ("Opus 5.5 · H"); its provider's name when no model is known. */
+  modelLabel: string | null;
   /** When the child is itself parked on a bot: "Waiting for Researcher". */
   waitingFor: string | null;
 }): JSX.Element {
@@ -141,9 +142,9 @@ export const DelegationCard = memo(function DelegationCard({
           <p className="truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
             {name}
           </p>
-          {providerLabel !== null ? (
+          {modelLabel !== null ? (
             <p className="truncate text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
-              {providerLabel}
+              {modelLabel}
             </p>
           ) : null}
         </div>

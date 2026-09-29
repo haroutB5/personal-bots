@@ -23,6 +23,7 @@ import {
   previewRefreshKey,
   providerLine,
   resolveBotProvider,
+  taskCardBotLine,
 } from "./botSummaries";
 
 const decodeBot = Schema.decodeUnknownSync(PersonalBot);
@@ -562,5 +563,39 @@ describe("bot list row model label", () => {
     expect(summary?.modelShortLabel).toBe("Opus 5.5 · H");
     // The full form stays for assistive text.
     expect(summary?.modelLabel).toBe("Opus 5.5 high");
+  });
+});
+
+describe("taskCardBotLine", () => {
+  const claude = provider("claudeAgent", {
+    models: [
+      { slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false },
+      { slug: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", isCustom: false },
+    ],
+  } as unknown as Partial<ServerProvider>);
+
+  const selection = (model: string, effort?: string) =>
+    ({
+      modelSelection: {
+        instanceId: "claudeAgent",
+        model,
+        ...(effort === undefined ? {} : { options: [{ id: "effort", value: effort }] }),
+      },
+    }) as unknown as Pick<PersonalBot, "modelSelection">;
+
+  it("shows the short model label instead of the provider name", () => {
+    expect(taskCardBotLine(selection("claude-opus-5-5", "high"), [claude])).toBe("Opus 5.5 · H");
+    expect(taskCardBotLine(selection("claude-sonnet-5-5", "medium"), [claude])).toBe(
+      "Sonnet 5.5 · M",
+    );
+    expect(taskCardBotLine(selection("claude-sonnet-5-5"), [claude])).toBe("Sonnet 5.5");
+  });
+
+  it("falls back to the provider name only when no model is known", () => {
+    expect(taskCardBotLine(selection(" "), [claude])).toBe("Claude Code");
+  });
+
+  it("is null when the bot is gone", () => {
+    expect(taskCardBotLine(null, [claude])).toBeNull();
   });
 });

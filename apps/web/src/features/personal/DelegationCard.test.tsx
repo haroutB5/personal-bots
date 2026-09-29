@@ -57,7 +57,7 @@ const render = async (value: PersonalTask) => {
         environmentId={"env-1" as EnvironmentId}
         task={value}
         bot={bot}
-        providerLabel="Claude Code"
+        modelLabel="Sonnet 5.5 · H"
         waitingFor={null}
       />,
     );
@@ -94,6 +94,15 @@ describe("DelegationCard", () => {
       environmentId: "env-1",
       input: { taskId: "task-1" },
     });
+  });
+
+  it("names the bot's model under its name, and nothing when there is none", async () => {
+    await render(task());
+    const texts = renderer!.root
+      .findAll((node) => node.type === "p")
+      .map((node) => node.children.join(""));
+    expect(texts).toContain("Sonnet 5.5 · H");
+    expect(texts).not.toContain("Claude Code");
   });
 
   it("is not tappable when the task has no chat yet", async () => {

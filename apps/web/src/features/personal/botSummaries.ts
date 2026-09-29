@@ -104,6 +104,23 @@ export function resolveBotProvider(
   };
 }
 
+/**
+ * The line under a bot's name on a task card: the short model label ("Opus 5.5
+ * · H", "Sonnet 5.5 · H", the same one the Bots list and pinned tiles show).
+ * The provider's name ("Claude Code") stays only as the fallback when the bot
+ * has no model to name; null when the bot itself is gone.
+ */
+export function taskCardBotLine(
+  bot: Pick<PersonalBot, "modelSelection"> | null,
+  providers: ReadonlyArray<ServerProvider>,
+): string | null {
+  if (bot === null) return null;
+  return (
+    botModelShortLabel(bot.modelSelection, providers) ??
+    resolveBotProvider(bot.modelSelection.instanceId, providers).label
+  );
+}
+
 /** The bots' test message failed on the installed version; a verdict for another version says nothing. */
 export function isProviderBroken(
   snapshot: Pick<ServerProvider, "version" | "smokeCheck">,
