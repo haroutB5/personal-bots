@@ -10,6 +10,7 @@ import {
   LEAD_BOT_CREATES_PER_DAY,
   looksLikeSecret,
   normalizeBotNameKey,
+  rawBotNameKey,
   type LeadBotFacts,
 } from "./leadBotPolicy.ts";
 
@@ -277,7 +278,25 @@ describe("checkBotName", () => {
     expect(checkBotName("AI2")).toEqual({ ok: true, name: "AI2" });
   });
 
-  it("compares names in one normal form", () => {
+  it("checks the name as submitted as well as its normal form", () => {
+    // Each of these normalises to something valid; the raw name is what is refused.
+    // A ligature that expands to three letters (raw: one character).
+    expect(checkBotName("\ufb03")).toMatchObject({ ok: false });
+    expect("\ufb03".normalize("NFKC")).toBe("ffi");
+    // Styled maths capitals next to plain letters: raw mixes "alphabets", normal is plain Latin.
+    expect("\u{1D5D4}dmin".normalize("NFKC")).toBe("Admin");
+    expect(checkBotName("\u{1D5D4}dmin")).toMatchObject({ ok: false });
+    // The same name with a soft hyphen or a word joiner hidden inside.
+    expect(checkBotName("Ad\u00admin")).toMatchObject({ ok: false });
+    expect(checkBotName("Ad\u2060min")).toMatchObject({ ok: false });
+    // Plain and fullwidth Latin are still fine, and the stored form is the normal one.
+    expect(checkBotName("\uff21dmin")).toEqual({ ok: true, name: "Admin" });
+  });
+
+  it("compares names in one normal form and as submitted", () => {
+    expect(rawBotNameKey("  Tax   ADVISER ")).toBe("tax adviser");
+    expect(rawBotNameKey("\uff34ax")).not.toBe(rawBotNameKey("Tax"));
+    expect(normalizeBotNameKey("\uff34ax")).toBe(normalizeBotNameKey("Tax"));
     expect(normalizeBotNameKey("Ｔax  ADVISER")).toBe(normalizeBotNameKey("tax adviser"));
     expect(normalizeBotNameKey("‏Maxi2")).toBe(normalizeBotNameKey("maxi2"));
   });

@@ -45,6 +45,7 @@ import {
   LEAD_BOT_FORBIDDEN_FIELDS,
   looksLikeSecret,
   normalizeBotNameKey,
+  rawBotNameKey,
   type LeadBotAction,
   type LeadBotFacts,
   type LeadBotForbiddenField,
@@ -401,10 +402,16 @@ export const make = Effect.gen(function* () {
     if (current !== null && fields.name.trim() === current.name) return { name: current.name };
     const checked = checkBotName(fields.name);
     if (!checked.ok) return yield* invalid(checked.reason);
+    // Unique in normal form AND as submitted, against every live bot.
     const wanted = normalizeBotNameKey(checked.name);
+    const wantedRaw = rawBotNameKey(fields.name);
     const all = yield* repository.listBots().pipe(orFail("read the bot list"));
     const clash = all.find(
-      (bot) => bot.botId !== current?.botId && normalizeBotNameKey(bot.name) === wanted,
+      (bot) =>
+        bot.botId !== current?.botId &&
+        (normalizeBotNameKey(bot.name) === wanted ||
+          normalizeBotNameKey(bot.name) === normalizeBotNameKey(fields.name!) ||
+          rawBotNameKey(bot.name) === wantedRaw),
     );
     if (clash !== undefined) {
       return yield* invalid(

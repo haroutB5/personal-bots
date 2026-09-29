@@ -51,6 +51,15 @@ export const normalizeBotNameKey = (name: string): string =>
     .trim()
     .toLowerCase();
 
+/**
+ * The name as submitted, compared without any normalisation beyond case and
+ * spacing: two bots whose raw names are the same word must not coexist even if
+ * NFKC ever treated them differently. Uniqueness is checked on this key AND on
+ * {@link normalizeBotNameKey}.
+ */
+export const rawBotNameKey = (name: string): string =>
+  name.replace(/\s+/gu, " ").trim().toLowerCase();
+
 export const isProtectedBot = (bot: { readonly botId: string; readonly name: string }): boolean =>
   bot.botId.startsWith(PROTECTED_BOT_ID_PREFIX) ||
   PROTECTED_BOT_NAMES.has(normalizeBotNameKey(bot.name));
@@ -300,42 +309,52 @@ const SCRIPT_TESTS: ReadonlyArray<readonly [string, RegExp]> = LETTER_SCRIPTS.ma
   new RegExp(`\\p{Script=${script}}`, "u"),
 ]);
 
+const scriptOf = (char: string): string => {
+  const script = SCRIPT_TESTS.find(([, test]) => test.test(char))?.[0] ?? "Other";
+  return script === "Hiragana" || script === "Katakana" ? "Han" : script;
+};
+
+/** The reason one form of a name (raw or normal) is not acceptable, or null. */
+const nameFormProblem = (name: string, form: "raw" | "normal"): string | null => {
+  if (/\p{Cf}/u.test(name)) {
+    return "The name contains an invisible formatting character. Use plain visible characters only.";
+  }
+  const collapsed = name.replace(/\s+/gu, " ").trim();
+  if ([...collapsed].length < 3 || !/\p{L}/u.test(collapsed)) {
+    return "The name must be at least 3 characters and include a letter.";
+  }
+  const scripts = new Set<string>();
+  for (const char of collapsed) {
+    if (/\p{L}/u.test(char)) scripts.add(scriptOf(char));
+  }
+  if (scripts.size > 1) {
+    return form === "raw"
+      ? "The name mixes letters from different alphabets or styled look-alike letters (for example Latin next to Cyrillic, or maths-italic capitals), which can pass one bot off as another. Use one alphabet and plain letters."
+      : "The name mixes letters from different alphabets (for example Latin and Cyrillic), which can pass one bot off as another. Use one alphabet.";
+  }
+  return null;
+};
+
 /**
- * A name a lead may give a bot, or the reason it may not: NFKC-normalised, no
- * invisible format characters, at least three characters with a letter among
- * them, and letters from one script only (Latin next to Cyrillic is how one
- * name is made to look like another). Japanese mixes Han, Hiragana and Katakana
- * on purpose, so those three count as one script. Returns the normal form.
+ * A name a lead may give a bot, or the reason it may not. The name as submitted
+ * (raw) AND its NFKC-normalised form must each pass: no invisible format
+ * characters, at least three characters with a letter among them, letters from
+ * one script only (Latin next to Cyrillic is how one name is made to look like
+ * another). Checking only the normal form let a name through that merely
+ * normalises to something valid (a ligature that expands to three letters, a
+ * run of styled capitals next to plain letters). Japanese mixes Han, Hiragana
+ * and Katakana on purpose, so those three count as one script. Returns the
+ * normal form.
  */
 export function checkBotName(
   raw: string,
 ): { readonly ok: true; readonly name: string } | { readonly ok: false; readonly reason: string } {
+  const rawProblem = nameFormProblem(raw, "raw");
+  if (rawProblem !== null) return { ok: false, reason: rawProblem };
   const normalized = raw.normalize("NFKC");
-  if (/\p{Cf}/u.test(normalized)) {
-    return {
-      ok: false,
-      reason:
-        "The name contains an invisible formatting character. Use plain visible characters only.",
-    };
-  }
-  const name = normalized.replace(/\s+/gu, " ").trim();
-  if ([...name].length < 3 || !/\p{L}/u.test(name)) {
-    return { ok: false, reason: "The name must be at least 3 characters and include a letter." };
-  }
-  const scripts = new Set<string>();
-  for (const char of name) {
-    if (!/\p{L}/u.test(char)) continue;
-    const script = SCRIPT_TESTS.find(([, test]) => test.test(char))?.[0] ?? "Other";
-    scripts.add(script === "Hiragana" || script === "Katakana" ? "Han" : script);
-  }
-  if (scripts.size > 1) {
-    return {
-      ok: false,
-      reason:
-        "The name mixes letters from different alphabets (for example Latin and Cyrillic), which can pass one bot off as another. Use one alphabet.",
-    };
-  }
-  return { ok: true, name };
+  const normalProblem = nameFormProblem(normalized, "normal");
+  if (normalProblem !== null) return { ok: false, reason: normalProblem };
+  return { ok: true, name: normalized.replace(/\s+/gu, " ").trim() };
 }
 
 /**
