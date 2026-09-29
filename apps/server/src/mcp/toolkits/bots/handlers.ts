@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   botTeam,
   DEFAULT_PERSONAL_BOT_TEAM,
+  isBotOnTeam,
   PERSONAL_TASK_TERMINAL_STATUSES,
   PersonalTaskStatus,
   personalBotTeamLabel,
@@ -199,17 +200,38 @@ const make = Effect.gen(function* () {
    * delegation brief that happens to mention a bot cannot authorise reaching
    * it — otherwise one bot could widen its own reach by writing a name.
    */
-  const ownerNamedBot = Effect.fn("BotsToolkit.ownerNamedBot")(function* (
+  const latestOwnerMessage = Effect.fn("BotsToolkit.latestOwnerMessage")(function* (
     threadId: ThreadId,
-    target: PersonalBot,
   ) {
     const messages = yield* threadMessages
       .listByThreadId({ threadId })
       .pipe(Effect.mapError(() => toolError("Could not read this chat's messages.")));
-    const latest = messages.findLast(
+    return messages.findLast(
       (message) => message.role === "user" && !isPersonalTaskMessageId(message.messageId),
     );
+  });
+
+  const ownerNamedBot = Effect.fn("BotsToolkit.ownerNamedBot")(function* (
+    threadId: ThreadId,
+    target: PersonalBot,
+  ) {
+    const latest = yield* latestOwnerMessage(threadId);
     return latest !== undefined && messageNamesBot(latest.text, target);
+  });
+
+  /**
+   * The same check for the lead tools that change a bot no lead created: the
+   * owner's latest real message must name it. A chat with no such message at all
+   * is a routine or task turn, which the lead tools report differently.
+   */
+  const ownerRequestFor = Effect.fn("BotsToolkit.ownerRequestFor")(function* (
+    threadId: ThreadId,
+    target: PersonalBot | undefined,
+  ) {
+    if (target === undefined) return "not_named" as const;
+    const latest = yield* latestOwnerMessage(threadId);
+    if (latest === undefined) return "no_user_message" as const;
+    return messageNamesBot(latest.text, target) ? ("named" as const) : ("not_named" as const);
   });
 
   const currentTurnId = Effect.fn("BotsToolkit.currentTurnId")(function* (threadId: ThreadId) {
@@ -321,11 +343,13 @@ const make = Effect.gen(function* () {
   ) {
     const all = yield* listBots;
     const byId = all.find((bot) => bot.botId === ref);
-    if (byId !== undefined) return byId.botId as string;
+    if (byId !== undefined) return { botId: byId.botId as string, bot: byId };
     const wanted = ref.trim().toLowerCase();
     const named = all.filter((bot) => bot.name.trim().toLowerCase() === wanted);
-    const pick = named.find((bot) => botTeam(bot) === team) ?? named[0];
-    return pick === undefined ? ref : (pick.botId as string);
+    const pick = named.find((bot) => isBotOnTeam(bot, team)) ?? named[0];
+    return pick === undefined
+      ? { botId: ref, bot: undefined }
+      : { botId: pick.botId as string, bot: pick };
   });
 
   return BotsToolkit.of({
@@ -592,8 +616,10 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const caller = yield* leadCaller();
         const { bot, ...fields } = input;
+        const target = yield* resolveBotRef(bot, caller.team);
+        const ownerRequest = yield* ownerRequestFor(caller.threadId, target.bot);
         const result = yield* leadBots
-          .update(caller, yield* resolveBotRef(bot, caller.team), fields)
+          .update({ ...caller, ownerRequest }, target.botId, fields)
           .pipe(Effect.mapError(readable));
         return {
           ...result,
@@ -606,8 +632,10 @@ const make = Effect.gen(function* () {
     remove_bot: (input) =>
       Effect.gen(function* () {
         const caller = yield* leadCaller();
+        const target = yield* resolveBotRef(input.bot, caller.team);
+        const ownerRequest = yield* ownerRequestFor(caller.threadId, target.bot);
         const result = yield* leadBots
-          .remove(caller, yield* resolveBotRef(input.bot, caller.team))
+          .remove({ ...caller, ownerRequest }, target.botId, input.reason)
           .pipe(Effect.mapError(readable));
         return {
           ...result,

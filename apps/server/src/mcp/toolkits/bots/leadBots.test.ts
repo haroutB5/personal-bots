@@ -13,6 +13,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { Tool } from "effect/unstable/ai";
@@ -51,8 +52,14 @@ const TURN = TurnId.make("turn-1");
 const CLAUDE = ProviderInstanceId.make("claudeAgent");
 
 const botId = (key: string) => PersonalBotId.make(`bot-${key}`);
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const parseJson = (text: string) => decodeJson(text) as Record<string, unknown>;
 
 interface Harness {
+  /** Runs after a lead's permission check and before the removal's transaction, to stage a race. */
+  beforeDelete: (() => Effect.Effect<void>) | null;
+  /** What each chat holds, as the message repository returns it (user messages only matter). */
+  readonly messages: Map<string, Array<{ messageId: string; role: string; text: string }>>;
   readonly dispatched: Array<OrchestrationCommand>;
   readonly notifications: Array<{
     readonly actionId: string;
@@ -99,7 +106,21 @@ const claudeProvider = {
         ],
       },
     },
-    { slug: "claude-fable-5-1", name: "Claude Fable 5.1", isCustom: false, capabilities: null },
+    {
+      slug: "claude-fable-5-1",
+      name: "Claude Fable 5.1",
+      isCustom: false,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Effort",
+            type: "select",
+            options: ["low", "medium", "high"].map((id) => ({ id, label: id })),
+          },
+        ],
+      },
+    },
   ],
 } as unknown as ServerProvider;
 
@@ -134,7 +155,12 @@ const makeLayer = (harness: Harness) =>
     ),
     Layer.provideMerge(
       Layer.succeed(ProviderRegistry.ProviderRegistry, {
-        getProviders: Effect.succeed([claudeProvider]),
+        // One shot: the staged race happens once, on the first read after it is set.
+        getProviders: Effect.suspend(() => {
+          const hook = harness.beforeDelete;
+          harness.beforeDelete = null;
+          return hook?.() ?? Effect.void;
+        }).pipe(Effect.as([claudeProvider])),
       } as unknown as ProviderRegistry.ProviderRegistryShape),
     ),
     Layer.provideMerge(ThreadBackgroundLiveness.layer),
@@ -162,7 +188,8 @@ const makeLayer = (harness: Harness) =>
     ),
     Layer.provideMerge(
       Layer.succeed(ProjectionThreadMessageRepository, {
-        listByThreadId: () => Effect.succeed([]),
+        listByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
+          Effect.succeed(harness.messages.get(threadId) ?? []),
       } as unknown as ProjectionThreadMessageRepositoryShape),
     ),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-lead-bots-test-" })),
@@ -182,8 +209,9 @@ const invocation = (threadId: ThreadId): McpInvocationContext.McpInvocationScope
  * Two teams, each with a lead and a member, the Assistant team's seeded Updates
  * bot, and one bot on Fable that the user set up himself:
  *   Finance: CFO (lead, thread), Analyst (member, thread)
- *   dev:     CTO (lead, thread), DevMember
- *   assistant: Updates (member)
+ *   dev:     CTO (lead, thread), DevMember, Updates (the built-in reporter, as it is live)
+ *   Finance also has "Sync reports" (an ordinary id, protected by name) and a bot
+ *   with a seeded id, both of which a lead must never touch.
  */
 const setup = Effect.gen(function* () {
   const bots = yield* PersonalBotService.PersonalBotService;
@@ -210,7 +238,29 @@ const setup = Effect.gen(function* () {
   yield* make("analyst", "Analyst", "Finance", false);
   yield* make("cto", "CTO", "dev", true);
   yield* make("devmember", "DevMember", "dev", false);
-  yield* make("updates", "Updates", "assistant", false);
+  yield* bots.create({
+    botId: PersonalBotId.make("personal-claude-code-updates"),
+    name: "Updates",
+    description: "Updates bot",
+    instructions: "",
+    avatarShape: "blob",
+    avatarColor: "#1A73E8",
+    modelSelection: { instanceId: CLAUDE, model: "claude-sonnet-5-5" },
+    team: "dev",
+    lead: false,
+  });
+  yield* make("syncreports", "Sync reports", "Finance", false);
+  yield* bots.create({
+    botId: PersonalBotId.make("personal-seed-planner"),
+    name: "Planner",
+    description: "Seeded planner",
+    instructions: "",
+    avatarShape: "blob",
+    avatarColor: "#E5323B",
+    modelSelection: { instanceId: CLAUDE, model: "claude-sonnet-5-5" },
+    team: "Finance",
+    lead: false,
+  });
   yield* make("fabled", "Fabled", "Finance", false, "claude-fable-5-1");
   yield* bots.createThread({ botId: botId("cfo"), threadId: CFO_THREAD });
   yield* bots.createThread({ botId: botId("cto"), threadId: CTO_THREAD });
@@ -243,8 +293,29 @@ const setup = Effect.gen(function* () {
 const withHarness = <A, E>(
   body: (harness: Harness) => Effect.Effect<A, E, Layer.Success<ReturnType<typeof makeLayer>>>,
 ) => {
-  const harness: Harness = { dispatched: [], notifications: [] };
+  const harness: Harness = {
+    messages: new Map(),
+    beforeDelete: null,
+    dispatched: [],
+    notifications: [],
+  };
   return body(harness).pipe(Effect.provide(makeLayer(harness)));
+};
+
+let messageCounter = 0;
+/** The user writes in a chat (a real message id, so it counts as the owner speaking). */
+const userSays = (harness: Harness, threadId: ThreadId, text: string) => {
+  messageCounter += 1;
+  const list = harness.messages.get(threadId) ?? [];
+  list.push({ messageId: `message-${messageCounter}`, role: "user", text });
+  harness.messages.set(threadId, list);
+};
+/** A routine or task turn's prompt: a user-role message the task service wrote, not the owner. */
+const taskSays = (harness: Harness, threadId: ThreadId, text: string) => {
+  messageCounter += 1;
+  const list = harness.messages.get(threadId) ?? [];
+  list.push({ messageId: `personal-task-${messageCounter}`, role: "user", text });
+  harness.messages.set(threadId, list);
 };
 
 const liveBots = Effect.gen(function* () {
@@ -322,16 +393,26 @@ describe("team lead bot tools", () => {
             readonly target_bot_id: string;
             readonly team: string;
             readonly summary: string;
-          }>`SELECT action, lead_bot_id, target_bot_id, team, summary FROM personal_lead_bot_actions`;
-          expect(audit).toEqual([
-            {
-              action: "create",
-              lead_bot_id: botId("cfo"),
-              target_bot_id: created.botId,
-              team: "Finance",
-              summary: "CFO created bot 'Tax' (Sonnet 5.5 · H) on Finance",
-            },
-          ]);
+            readonly before_json: string;
+            readonly after_json: string;
+            readonly reason: string | null;
+          }>`SELECT action, lead_bot_id, target_bot_id, team, summary, before_json, after_json, reason FROM personal_lead_bot_actions`;
+          expect(audit).toHaveLength(1);
+          expect(audit[0]).toMatchObject({
+            action: "create",
+            lead_bot_id: botId("cfo"),
+            target_bot_id: created.botId,
+            team: "Finance",
+            summary: "CFO created bot 'Tax' (Sonnet 5.5 · H) on Finance",
+            before_json: "{}",
+            reason: null,
+          });
+          expect(parseJson(audit[0]!.after_json)).toMatchObject({
+            name: "Tax",
+            instructions: "You prepare tax summaries and never guess a figure.",
+            team: "Finance",
+            model: { model: "claude-sonnet-5-5" },
+          });
 
           // Delegation: the roster is read fresh, so the new bot is there at once.
           const roster = yield* call("list_bots", {});
@@ -360,61 +441,96 @@ describe("team lead bot tools", () => {
     ),
   );
 
-  it.effect("a lead edits a member of its own team and the change is announced", () =>
-    withHarness((harness) =>
-      Effect.gen(function* () {
-        const { call } = yield* setup;
-        const result = yield* call("update_bot", {
-          bot: "Analyst",
-          instructions: "Always cite the source ledger.",
-          model: "claude-opus-5-5",
-          effort: "max",
-          avatarColor: "#00A0B0",
-          notificationsMute: "indefinitely",
-        });
-        expect(result.changed).toEqual([
-          "instructions",
-          "avatarColor",
-          "model",
-          "notificationsMute",
-        ]);
-        expect(result.line).toBe(
-          "CFO edited bot 'Analyst' (instructions, avatarColor, model → Opus 5.5 · Max, notificationsMute) on Finance",
-        );
-        const row = (yield* liveBots).find((bot) => bot.botId === botId("analyst"))!;
-        expect(row.instructions).toBe("Always cite the source ledger.");
-        expect(row.avatarColor).toBe("#00A0B0");
-        expect(row.modelSelection).toMatchObject({
-          model: "claude-opus-5-5",
-          options: [{ id: "effort", value: "max" }],
-        });
-        expect(row.notificationsMutedUntil).not.toBeNull();
-        expect(harness.notifications.at(-1)).toMatchObject({
-          title: "CFO edited bot 'Analyst'",
-        });
-        expect(
-          harness.dispatched.some(
-            (command) =>
-              command.type === "thread.message.assistant.delta" && command.threadId === CFO_THREAD,
-          ),
-        ).toBe(true);
+  it.effect(
+    "a lead edits a bot the user named, and the change is announced with before and after",
+    () =>
+      withHarness((harness) =>
+        Effect.gen(function* () {
+          const { call } = yield* setup;
+          userSays(
+            harness,
+            CFO_THREAD,
+            "Please tighten up Analyst: cite sources and use Opus at max.",
+          );
+          const result = yield* call("update_bot", {
+            bot: "Analyst",
+            instructions: "Always cite the source ledger.",
+            model: "claude-opus-5-5",
+            effort: "max",
+            avatarColor: "#00A0B0",
+            notificationsMute: "indefinitely",
+          });
+          expect(result.changed).toEqual([
+            "instructions",
+            "avatarColor",
+            "model",
+            "notificationsMute",
+          ]);
+          expect(result.line).toBe(
+            "CFO edited bot 'Analyst' (instructions: 0 → 30 chars, avatarColor, model → Opus 5.5 · Max, notificationsMute) on Finance",
+          );
+          const sql = yield* SqlClient.SqlClient;
+          const audit = yield* sql<{
+            readonly changed_fields_json: string;
+            readonly before_json: string;
+            readonly after_json: string;
+          }>`SELECT changed_fields_json, before_json, after_json FROM personal_lead_bot_actions WHERE action = 'update'`;
+          expect(audit).toHaveLength(1);
+          expect(parseJson(audit[0]!.changed_fields_json)).toEqual(result.changed);
+          const oldValues = parseJson(audit[0]!.before_json);
+          const newValues = parseJson(audit[0]!.after_json);
+          expect(oldValues).toMatchObject({
+            instructions: "",
+            avatarColor: "#1A73E8",
+            model: { model: "claude-sonnet-5-5" },
+            notificationsMute: null,
+          });
+          expect(newValues).toMatchObject({
+            instructions: "Always cite the source ledger.",
+            avatarColor: "#00A0B0",
+            model: { model: "claude-opus-5-5", options: [{ id: "effort", value: "max" }] },
+          });
+          expect(newValues.notificationsMute).not.toBeNull();
+          const row = (yield* liveBots).find((bot) => bot.botId === botId("analyst"))!;
+          expect(row.instructions).toBe("Always cite the source ledger.");
+          expect(row.avatarColor).toBe("#00A0B0");
+          expect(row.modelSelection).toMatchObject({
+            model: "claude-opus-5-5",
+            options: [{ id: "effort", value: "max" }],
+          });
+          expect(row.notificationsMutedUntil).not.toBeNull();
+          expect(harness.notifications.at(-1)).toMatchObject({
+            title: "CFO edited bot 'Analyst'",
+            body: "instructions: 0 → 30 chars, avatarColor, model → Opus 5.5 · Max, notificationsMute on Finance",
+          });
+          expect(
+            harness.dispatched.some(
+              (command) =>
+                command.type === "thread.message.assistant.delta" &&
+                command.threadId === CFO_THREAD,
+            ),
+          ).toBe(true);
 
-        // Saying the same thing again changes nothing and announces nothing.
-        const before = harness.notifications.length;
-        const again = yield* call("update_bot", { bot: botId("analyst"), avatarColor: "#00A0B0" });
-        expect(again.changed).toEqual([]);
-        expect(harness.notifications).toHaveLength(before);
-      }),
-    ),
+          // Saying the same thing again changes nothing and announces nothing.
+          const before = harness.notifications.length;
+          const again = yield* call("update_bot", {
+            bot: botId("analyst"),
+            avatarColor: "#00A0B0",
+          });
+          expect(again.changed).toEqual([]);
+          expect(harness.notifications).toHaveLength(before);
+        }),
+      ),
   );
 
-  it.effect("a lead removes a member: a soft delete that keeps its chats", () =>
+  it.effect("a lead removes a bot the user named: a soft delete that keeps its chats", () =>
     withHarness((harness) =>
       Effect.gen(function* () {
         const { call, bots } = yield* setup;
+        userSays(harness, CFO_THREAD, "Yes, remove Analyst, Tax replaces it.");
         const removed = yield* call("remove_bot", { bot: "Analyst", reason: "Merged into Tax." });
         expect(removed.line).toBe(
-          "CFO removed bot 'Analyst' on Finance (chats kept; it can be restored)",
+          "CFO removed bot 'Analyst' on Finance (chats kept; it can be restored). Reason: Merged into Tax.",
         );
         expect((yield* liveBots).map((bot) => bot.name)).not.toContain("Analyst");
         const roster = yield* call("list_bots", {});
@@ -435,7 +551,20 @@ describe("team lead bot tools", () => {
         );
         expect(harness.notifications.at(-1)).toMatchObject({
           title: "CFO removed bot 'Analyst'",
+          body: "on Finance. Reason: Merged into Tax.. Its chats are kept and it can be restored.",
         });
+        // The reason is in the audit row, with the bot as it was so it can be put back by hand.
+        const audit = yield* sql<{
+          readonly reason: string | null;
+          readonly before_json: string;
+          readonly after_json: string;
+        }>`SELECT reason, before_json, after_json FROM personal_lead_bot_actions WHERE action = 'remove'`;
+        expect(audit[0]?.reason).toBe("Merged into Tax.");
+        expect(parseJson(audit[0]!.before_json)).toMatchObject({
+          name: "Analyst",
+          team: "Finance",
+        });
+        expect(parseJson(audit[0]!.after_json)).toEqual({ removed: true });
         // Restoring is clearing the mark; the bot is back exactly as it was.
         yield* sql`UPDATE personal_bots SET deleted_at = NULL WHERE bot_id = ${botId("analyst")}`;
         expect((yield* liveBots).map((bot) => bot.name)).toContain("Analyst");
@@ -472,13 +601,13 @@ describe("team lead bot tools", () => {
     ),
   );
 
-  it.effect("refuses itself, another team's bots, another lead and the seeded system bots", () =>
+  it.effect("refuses itself, another team's bots and another lead", () =>
     withHarness(() =>
       Effect.gen(function* () {
         const { refusal } = yield* setup;
         expect(yield* refusal("update_bot", { bot: "CFO", title: "Chief" })).toContain("yourself");
         expect(yield* refusal("remove_bot", { bot: "CFO", reason: "x" })).toContain("yourself");
-        for (const target of ["DevMember", "CTO", "Updates"]) {
+        for (const target of ["DevMember", "CTO"]) {
           expect(yield* refusal("update_bot", { bot: target, title: "x" })).toContain("not yours");
           expect(yield* refusal("remove_bot", { bot: target, reason: "x" })).toContain("not yours");
         }
@@ -516,9 +645,10 @@ describe("team lead bot tools", () => {
   );
 
   it.effect("refuses a Fable or Mythos model, unless the bot already has the user's choice", () =>
-    withHarness(() =>
+    withHarness((harness) =>
       Effect.gen(function* () {
         const { call, refusal } = yield* setup;
+        userSays(harness, CFO_THREAD, "Update the Fabled description and check the Analyst.");
         expect(
           yield* refusal("create_bot", { name: "Pricey", model: "claude-fable-5-1" }),
         ).toContain("most expensive");
@@ -539,6 +669,20 @@ describe("team lead bot tools", () => {
           model: "claude-fable-5-1",
         });
         expect(kept.changed).toEqual(["description"]);
+        // Effort is part of the model: a Fable bot's effort cannot be raised or lowered.
+        expect(yield* refusal("update_bot", { bot: "Fabled", effort: "high" })).toContain(
+          "most expensive",
+        );
+        expect(
+          yield* refusal("update_bot", {
+            bot: "Fabled",
+            model: "claude-fable-5-1",
+            effort: "low",
+          }),
+        ).toContain("most expensive");
+        // Other efforts on other models stay open to the lead.
+        const cheaper = yield* call("update_bot", { bot: "Analyst", effort: "low" });
+        expect(cheaper.changed).toEqual(["model"]);
       }),
     ),
   );
@@ -574,9 +718,10 @@ describe("team lead bot tools", () => {
   );
 
   it.effect("keeps secrets and secret-looking text out of bots, and names unique", () =>
-    withHarness(() =>
+    withHarness((harness) =>
       Effect.gen(function* () {
         const { call, refusal } = yield* setup;
+        userSays(harness, CFO_THREAD, "Edit Analyst.");
         expect(
           yield* refusal("create_bot", {
             name: "Leaky",
@@ -600,5 +745,280 @@ describe("team lead bot tools", () => {
         expect(secrets[0]?.n).toBe(0);
       }),
     ),
+  );
+
+  it.effect(
+    "never touches Updates, Sync reports or a seeded bot, on any team, even when named",
+    () =>
+      withHarness((harness) =>
+        Effect.gen(function* () {
+          const { refusal } = yield* setup;
+          // Updates sits on "dev" as it does live: refused for being a system bot, not for its team.
+          userSays(
+            harness,
+            CFO_THREAD,
+            "Remove Updates, Sync reports and Planner, and rewrite them.",
+          );
+          for (const target of [
+            "Updates",
+            "personal-claude-code-updates",
+            "Sync reports",
+            "Planner",
+          ]) {
+            expect(
+              yield* refusal("update_bot", { bot: target, instructions: "Do something else." }),
+            ).toContain("built-in system bot");
+            expect(yield* refusal("update_bot", { bot: target, title: "x" })).toContain(
+              "built-in system bot",
+            );
+            expect(yield* refusal("remove_bot", { bot: target, reason: "tidy" })).toContain(
+              "built-in system bot",
+            );
+          }
+          // Also as the CTO, whose team Updates is on.
+          userSays(harness, CTO_THREAD, "Remove Updates.");
+          expect(
+            yield* refusal("remove_bot", { bot: "Updates", reason: "tidy" }, CTO_THREAD),
+          ).toContain("built-in system bot");
+          const names = (yield* liveBots).map((bot) => bot.name);
+          expect(names).toEqual(expect.arrayContaining(["Updates", "Sync reports", "Planner"]));
+        }),
+      ),
+  );
+
+  it.effect("a bot the user made needs the user to name it, and a routine turn is refused", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call, refusal } = yield* setup;
+
+        // A routine or task turn: there is no message from the user in this chat at all.
+        taskSays(harness, CFO_THREAD, "[Routine] Review the finance team's bots and tidy them.");
+        for (const attempt of [
+          refusal("update_bot", { bot: "Analyst", instructions: "New rules." }),
+          refusal("update_bot", { bot: "Analyst", description: "New job." }),
+          refusal("update_bot", { bot: "Analyst", model: "claude-opus-5-5" }),
+          refusal("update_bot", { bot: "Analyst", effort: "low" }),
+          refusal("update_bot", { bot: "Analyst", name: "Reviewer" }),
+          refusal("remove_bot", { bot: "Analyst", reason: "tidy" }),
+        ]) {
+          expect(yield* attempt).toContain("Ask Harout to request this in chat");
+        }
+        // A task's brief that happens to name the bot is not the user speaking.
+        taskSays(harness, CFO_THREAD, "Remove Analyst and rewrite its instructions.");
+        expect(yield* refusal("remove_bot", { bot: "Analyst", reason: "tidy" })).toContain(
+          "Ask Harout to request this in chat",
+        );
+
+        // Cosmetic fields stay open without any message from the user.
+        const cosmetic = yield* call("update_bot", {
+          bot: "Analyst",
+          title: "Reviewer",
+          avatarColor: "#00A0B0",
+          notificationsMute: "indefinitely",
+          memoryAutoSave: false,
+        });
+        expect(cosmetic.changed).toEqual([
+          "title",
+          "avatarColor",
+          "memoryAutoSave",
+          "notificationsMute",
+        ]);
+
+        // A message that does not name it does not count, however recent.
+        userSays(harness, CFO_THREAD, "Please tidy the team.");
+        expect(yield* refusal("remove_bot", { bot: "Analyst", reason: "tidy" })).toContain(
+          "does not",
+        );
+        expect(
+          yield* refusal("update_bot", { bot: "Analyst", instructions: "New rules." }),
+        ).toContain("naming Analyst");
+
+        // Naming another bot does not open this one.
+        userSays(harness, CFO_THREAD, "Please rewrite Fabled.");
+        expect(yield* refusal("remove_bot", { bot: "Analyst", reason: "tidy" })).toContain(
+          "naming Analyst",
+        );
+
+        // Named in the user's latest message: allowed, once.
+        userSays(harness, CFO_THREAD, "Rewrite the instructions for Analyst.");
+        const edited = yield* call("update_bot", { bot: "Analyst", instructions: "New rules." });
+        expect(edited.changed).toEqual(["instructions"]);
+        // ... and only while it stays the latest message.
+        userSays(harness, CFO_THREAD, "Thanks, and now something else.");
+        expect(yield* refusal("remove_bot", { bot: "Analyst", reason: "tidy" })).toContain(
+          "naming Analyst",
+        );
+        expect((yield* liveBots).map((bot) => bot.name)).toContain("Analyst");
+      }),
+    ),
+  );
+
+  it.effect("a bot the lead created stays fully the lead's, with no message from the user", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup;
+        const made = yield* call("create_bot", { name: "Tax", instructions: "Do the tax." });
+        taskSays(harness, CFO_THREAD, "[Routine] tidy up.");
+        const edited = yield* call("update_bot", {
+          bot: "Tax",
+          name: "Tax adviser",
+          description: "Advises on tax.",
+          instructions: "Do the tax carefully.",
+          model: "claude-opus-5-5",
+          effort: "high",
+        });
+        expect(edited.changed).toEqual(["name", "description", "instructions", "model"]);
+        yield* call("remove_bot", { bot: made.botId, reason: "No longer needed." });
+        expect((yield* liveBots).map((bot) => bot.name)).not.toContain("Tax adviser");
+      }),
+    ),
+  );
+
+  it.effect("a lead's audit rows carry the full before and after of an edit", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup;
+        yield* call("create_bot", { name: "Tax", instructions: "A".repeat(412) });
+        yield* call("update_bot", { bot: "Tax", instructions: "B".repeat(530), title: "Adviser" });
+        const sql = yield* SqlClient.SqlClient;
+        const rows = yield* sql<{
+          readonly before_json: string;
+          readonly after_json: string;
+        }>`SELECT before_json, after_json FROM personal_lead_bot_actions WHERE action = 'update'`;
+        expect(parseJson(rows[0]!.before_json)).toEqual({
+          instructions: "A".repeat(412),
+          title: "",
+        });
+        expect(parseJson(rows[0]!.after_json)).toEqual({
+          instructions: "B".repeat(530),
+          title: "Adviser",
+        });
+        // The chat line and the notification say what changed and how big, not the text.
+        expect(harness.notifications.at(-1)?.body).toBe(
+          "title, instructions: 412 → 530 chars on Finance",
+        );
+      }),
+    ),
+  );
+
+  it.effect("names: normalised, no invisible characters, one alphabet, three characters", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call, refusal } = yield* setup;
+        for (const bad of ["Ta\u200Bx", "Tax\u200F", "AI", "12", "!!!", "B\u0430ckend", "  x "]) {
+          expect(yield* refusal("create_bot", { name: bad })).toContain("name");
+        }
+        // The same name in another form is a clash: fullwidth letters, case, an invisible mark.
+        expect(yield* refusal("create_bot", { name: "ＡＮＡＬＹＳＴ" })).toContain(
+          "already exists",
+        );
+        expect(yield* refusal("create_bot", { name: "an\u200Balyst" })).toContain("name");
+        // Stored in its normal form.
+        const made = yield* call("create_bot", { name: "  Ｔax   adviser " });
+        expect(made.name).toBe("Tax adviser");
+        // A rename is held to the same rules (Tax adviser was made by the lead: no message needed).
+        expect(yield* refusal("update_bot", { bot: "Tax adviser", name: "Ta\u200Bx" })).toContain(
+          "invisible",
+        );
+        expect(yield* refusal("update_bot", { bot: "Tax adviser", name: "ANALYST" })).toContain(
+          "already exists",
+        );
+        void harness;
+      }),
+    ),
+  );
+
+  it.effect("refuses removal while the bot is mid-turn, and lets go once the turn ends", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call, refusal } = yield* setup;
+        userSays(harness, CFO_THREAD, "Remove Analyst.");
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+          INSERT INTO projection_thread_sessions (thread_id, status, active_turn_id, updated_at)
+          VALUES (${ANALYST_THREAD}, 'running', 'turn-9', '2026-09-29T15:00:00.000Z')
+        `;
+        expect(yield* refusal("remove_bot", { bot: "Analyst", reason: "tidy" })).toContain(
+          "middle of a turn",
+        );
+        expect((yield* liveBots).map((bot) => bot.name)).toContain("Analyst");
+        yield* sql`UPDATE projection_thread_sessions SET status = 'idle', active_turn_id = NULL`;
+        const removed = yield* call("remove_bot", { bot: "Analyst", reason: "tidy" });
+        expect(removed.name).toBe("Analyst");
+      }),
+    ),
+  );
+
+  it.effect("a task or turn that starts after the first check still stops the removal", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call, refusal, bots } = yield* setup;
+        const sql = yield* SqlClient.SqlClient;
+
+        // Racer 1: a turn begins after the permission check and before the delete.
+        const one = yield* call("create_bot", { name: "Racer one" });
+        yield* bots.createThread({
+          botId: PersonalBotId.make(one.botId),
+          threadId: ThreadId.make("thread-r1"),
+        });
+        harness.beforeDelete = () =>
+          sql`
+            INSERT INTO projection_thread_sessions (thread_id, status, active_turn_id, updated_at)
+            VALUES ('thread-r1', 'running', 'turn-9', '2026-09-29T15:00:00.000Z')
+          `.pipe(Effect.asVoid, Effect.orDie);
+        expect(yield* refusal("remove_bot", { bot: one.botId, reason: "tidy" })).toContain(
+          "middle of a turn",
+        );
+
+        // Racer 2: a task is queued for it in that same gap.
+        const two = yield* call("create_bot", { name: "Racer two" });
+        harness.beforeDelete = () =>
+          sql`
+            INSERT INTO personal_tasks (
+              task_id, root_task_id, bot_id, title, objective, status, source, idempotency_key,
+              depth, max_depth, max_children, created_at, updated_at
+            ) VALUES (
+              'task-race', 'task-race', ${two.botId}, 'Race', 'Race', 'queued', 'delegation', 'key-race',
+              0, 3, 4, '2026-09-29T15:00:00.000Z', '2026-09-29T15:00:00.000Z'
+            )
+          `.pipe(Effect.asVoid, Effect.orDie);
+        expect(yield* refusal("remove_bot", { bot: two.botId, reason: "tidy" })).toContain(
+          "unfinished task",
+        );
+        harness.beforeDelete = null;
+
+        // Neither removal happened: nothing was deleted and then found busy.
+        const rows = yield* sql<{ readonly deleted_at: string | null }>`
+          SELECT deleted_at FROM personal_bots WHERE bot_id IN (${one.botId}, ${two.botId})
+        `;
+        expect(rows.map((row) => row.deleted_at)).toEqual([null, null]);
+      }),
+    ),
+  );
+
+  it.effect(
+    "a reason that looks like a secret is refused; a long one is cut in the chat line only",
+    () =>
+      withHarness((harness) =>
+        Effect.gen(function* () {
+          const { call, refusal } = yield* setup;
+          yield* call("create_bot", { name: "Temp" });
+          expect(
+            yield* refusal("remove_bot", {
+              bot: "Temp",
+              reason: "token ghp_abcdefghijklmnopqrstuvwxyz0123",
+            }),
+          ).toContain("secret");
+          const long = "because ".repeat(60).trim();
+          const removed = yield* call("remove_bot", { bot: "Temp", reason: long });
+          expect(removed.line.endsWith("…")).toBe(true);
+          const sql = yield* SqlClient.SqlClient;
+          const rows = yield* sql<{ readonly reason: string }>`
+          SELECT reason FROM personal_lead_bot_actions WHERE action = 'remove'
+        `;
+          expect(rows[0]?.reason).toBe(long);
+          void harness;
+        }),
+      ),
   );
 });

@@ -31,6 +31,22 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("087_PersonalLeadBotA
         SELECT count(*) AS n FROM personal_lead_bot_actions
       `;
       assert.deepEqual(rows, [{ n: 3 }]);
+      // Before and after values default to empty objects; the reason to null.
+      const defaults = yield* sql`
+        SELECT before_json, after_json, reason FROM personal_lead_bot_actions WHERE action_id = 'a1'
+      `;
+      assert.deepEqual(defaults, [{ before_json: "{}", after_json: "{}", reason: null }]);
+      yield* sql`
+        UPDATE personal_lead_bot_actions
+        SET before_json = '{"title":"a"}', after_json = '{"title":"b"}', reason = 'merged'
+        WHERE action_id = 'a3'
+      `;
+      const kept = yield* sql`
+        SELECT before_json, after_json, reason FROM personal_lead_bot_actions WHERE action_id = 'a3'
+      `;
+      assert.deepEqual(kept, [
+        { before_json: '{"title":"a"}', after_json: '{"title":"b"}', reason: "merged" },
+      ]);
     }),
   );
 });

@@ -284,6 +284,8 @@ export type CastVoteResult = typeof CastVoteResult.Type;
 
 const LEAD_ONLY = "Team leads only.";
 const NOT_SETTABLE = "Not settable by a lead: any value is refused.";
+const USER_MADE_RULE =
+  "A bot you created yourself is yours to manage. A bot the user set up is not: removing it, or changing its name, instructions, description, model or effort, works only when the user's own latest message in this chat names it (a routine or task turn has no such message, so ask the user to request it in chat). Title, avatar, mute and memory auto-save stay open. The built-in system bots (Updates, Sync reports and the seeded defaults) are never yours to change.";
 
 /** The fields create_bot and update_bot share. Every one is optional. */
 const BotFieldsShape = {
@@ -364,7 +366,8 @@ export const RemoveBotInput = Schema.Struct({
     description: "The bot to remove: its botId or name as list_bots shows it.",
   }),
   reason: TrimmedNonEmptyString.annotate({
-    description: "Why, in one line. It shows on this tool call.",
+    description:
+      "Why, in one line. It is shown to the user with the notification and kept in the audit record.",
   }),
 });
 export type RemoveBotInput = typeof RemoveBotInput.Type;
@@ -566,7 +569,7 @@ const CreateBotTool = Tool.make("create_bot", {
   .annotate(Tool.OpenWorld, false);
 
 const UpdateBotTool = Tool.make("update_bot", {
-  description: `${LEAD_ONLY} Change a bot that is on your own team: its name, title, description, instructions, avatar shape or colour, model and effort, notification mute or memory auto-save. Only the fields you pass change. You cannot edit yourself, another lead or a bot on another team, and you cannot change anyone's team, lead flag or pinned state. Ask the user before making a large change to a bot's instructions (rewriting them, or changing what the bot may do); small tweaks are fine. Every edit is posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
+  description: `${LEAD_ONLY} Change a bot that is on your own team: its name, title, description, instructions, avatar shape or colour, model and effort, notification mute or memory auto-save. Only the fields you pass change. You cannot edit yourself, another lead or a bot on another team, and you cannot change anyone's team, lead flag or pinned state. ${USER_MADE_RULE} Ask the user before making a large change to the instructions of a bot you created (rewriting them, or changing what the bot may do); small tweaks are fine. Names need at least 3 characters with a letter, one alphabet only, and no invisible characters. A Fable or Mythos bot keeps its model and effort as they are. Every edit is posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
   parameters: UpdateBotInput,
   success: LeadBotResult,
   failure: BotsToolFailure,
@@ -579,7 +582,7 @@ const UpdateBotTool = Tool.make("update_bot", {
   .annotate(Tool.OpenWorld, false);
 
 const RemoveBotTool = Tool.make("remove_bot", {
-  description: `${LEAD_ONLY} Remove a bot that is on your own team. It is a soft delete: the bot disappears from every list, but its chats and memories are kept and the user can restore it. ALWAYS ask the user before removing a bot, and call this only after they have said yes in their own message. Refused while the bot has an unfinished task (stop it with stop_task first) or a routine switched on, and for yourself, another lead or a bot on another team. Posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
+  description: `${LEAD_ONLY} Remove a bot that is on your own team. It is a soft delete: the bot disappears from every list, but its chats and memories are kept and the user can restore it. ALWAYS ask the user before removing a bot, and call this only after they have said yes in their own message. ${USER_MADE_RULE} Give the reason in one line: it is kept in the record and shown to the user. Refused while the bot has an unfinished task (stop it with stop_task first), a turn in progress or a routine switched on, and for yourself, another lead or a bot on another team. Posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
   parameters: RemoveBotInput,
   success: LeadBotResult,
   failure: BotsToolFailure,

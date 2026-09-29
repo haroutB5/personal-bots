@@ -28,6 +28,49 @@ export const isLeadForbiddenModel = (slug: string): boolean => /fable|mythos/i.t
 
 export type LeadBotAction = "create" | "update" | "remove";
 
+/**
+ * Bots no lead may edit or remove, whatever team they sit on: the seeded system
+ * bots (ids `personal-seed-*`), the Updates bot (`personal-claude-code-updates`)
+ * and the maintenance reporter "Sync reports" (an ordinary random id, so by name).
+ * Every app-owned bot id starts with `personal-`; bots people make (the app's
+ * form, a lead) get a UUID or `bot-<uuid>`.
+ */
+const PROTECTED_BOT_ID_PREFIX = "personal-";
+const PROTECTED_BOT_NAMES: ReadonlySet<string> = new Set(["sync reports", "updates"]);
+
+/**
+ * Bot names are compared in one normal form so two names that look the same are
+ * the same: Unicode NFKC, invisible format characters (\p{Cf}) dropped, runs of
+ * whitespace collapsed, trimmed, lower-cased.
+ */
+export const normalizeBotNameKey = (name: string): string =>
+  name
+    .normalize("NFKC")
+    .replace(/\p{Cf}/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .toLowerCase();
+
+export const isProtectedBot = (bot: { readonly botId: string; readonly name: string }): boolean =>
+  bot.botId.startsWith(PROTECTED_BOT_ID_PREFIX) ||
+  PROTECTED_BOT_NAMES.has(normalizeBotNameKey(bot.name));
+
+/**
+ * The fields whose change on a bot no lead created needs the user's say-so:
+ * what the bot is (name), what it does (instructions, description) and what it
+ * costs (model, provider, effort: one "model" change). Title, avatar, mute and
+ * memory auto-save are cosmetic and stay open.
+ */
+export const LEAD_BOT_SENSITIVE_FIELDS = ["name", "instructions", "description", "model"] as const;
+export type LeadBotSensitiveField = (typeof LEAD_BOT_SENSITIVE_FIELDS)[number];
+
+/**
+ * Whether the user's own words in the calling chat name the target: `named`
+ * (the latest real message from the user names it), `not_named` (it does not)
+ * or `no_user_message` (routine and task turns, where the user wrote nothing).
+ */
+export type LeadBotOwnerRequest = "named" | "not_named" | "no_user_message";
+
 export type LeadBotRefusalCode =
   | "caller_gone"
   | "not_a_lead"
@@ -38,6 +81,8 @@ export type LeadBotRefusalCode =
   | "self"
   | "other_lead"
   | "other_team"
+  | "protected"
+  | "needs_owner"
   | "running_task"
   | "active_routines";
 
@@ -54,11 +99,21 @@ export interface LeadBotFacts {
   readonly requestedModel: {
     readonly instanceId: string;
     readonly model: string;
+    /** True when instance, model or effort differs from what the target has now (always for create). */
+    readonly changed: boolean;
   } | null;
   /** Bots this lead created in the last {@link LEAD_BOT_CREATE_WINDOW_MS}. */
   readonly createsInWindow: number;
+  /** Update: which sensitive fields this call would actually change on the target. */
+  readonly sensitiveChanges: ReadonlyArray<LeadBotSensitiveField>;
+  /** Some lead created the target (a `create` row in the audit table). */
+  readonly targetCreatedByLead: boolean;
+  /** Whether the user's own message in this chat names the target. */
+  readonly ownerRequest: LeadBotOwnerRequest;
   /** Remove: the target's tasks that are not finished (running, queued or waiting). */
   readonly targetOpenTasks: number;
+  /** Remove: the target's chat sessions that have a turn in progress. */
+  readonly targetActiveSessions: number;
   /** Remove: the target's routines that are switched on. */
   readonly targetActiveRoutines: number;
 }
@@ -89,11 +144,16 @@ const refuse = (code: LeadBotRefusalCode, reason: string): LeadBotVerdict => ({
  *     (Harout's own choice, left as it is).
  *  3. Create: a bot lands on the caller's own team, at most
  *     {@link LEAD_BOT_CREATES_PER_DAY} per rolling day.
- *  4. Update and remove: the target must be a bot on the caller's own team that
- *     is not the caller and not a lead. Anything on another team (including the
- *     seeded system bots) is out of reach unless it sits on this team.
- *  5. Remove: refused while the target has unfinished tasks or switched-on
- *     routines, so nothing is orphaned.
+ *  4. Update and remove: never a protected bot (Updates, Sync reports, any
+ *     seeded system bot), wherever it sits. Otherwise the target must be a bot on
+ *     the caller's own team that is not the caller and not a lead.
+ *  5. A bot no lead created (the user made it) is the user's to change: remove,
+ *     and an edit of its name, instructions, description or model/effort, need
+ *     the user's own latest message in this chat to name it. Routine and task
+ *     turns have no such message and are refused. Cosmetic edits stay open.
+ *  6. Remove: refused while the target has unfinished tasks, a turn in progress
+ *     or switched-on routines, so nothing is orphaned. (The service repeats the
+ *     task and turn test inside the transaction that deletes, see `busyRefusal`.)
  */
 export function authorizeLeadBotAction(facts: LeadBotFacts): LeadBotVerdict {
   const { caller, target } = facts;
@@ -120,7 +180,10 @@ export function authorizeLeadBotAction(facts: LeadBotFacts): LeadBotVerdict {
       facts.action === "update" &&
       target !== null &&
       target.modelSelection.instanceId === facts.requestedModel.instanceId &&
-      target.modelSelection.model === facts.requestedModel.model;
+      target.modelSelection.model === facts.requestedModel.model &&
+      // Effort counts too: a bot the user put on Fable keeps its effort, or a
+      // lead could raise the cost of a model it may not choose.
+      !facts.requestedModel.changed;
     if (!unchanged) {
       return refuse(
         "forbidden_model",
@@ -148,6 +211,12 @@ export function authorizeLeadBotAction(facts: LeadBotFacts): LeadBotVerdict {
   if (target.botId === caller.botId) {
     return refuse("self", "You cannot edit or remove yourself. Ask the user.");
   }
+  if (isProtectedBot(target)) {
+    return refuse(
+      "protected",
+      `${target.name} is a built-in system bot. Only the user changes or removes it.`,
+    );
+  }
   if (!isBotOnTeam(target, team)) {
     return refuse(
       "other_team",
@@ -158,13 +227,24 @@ export function authorizeLeadBotAction(facts: LeadBotFacts): LeadBotVerdict {
     return refuse("other_lead", `${target.name} is a team lead. Only the user changes a lead.`);
   }
 
+  if (
+    !facts.targetCreatedByLead &&
+    (facts.action === "remove" || facts.sensitiveChanges.length > 0) &&
+    facts.ownerRequest !== "named"
+  ) {
+    const what =
+      facts.action === "remove" ? "remove it" : `change its ${facts.sensitiveChanges.join(", ")}`;
+    return refuse(
+      "needs_owner",
+      facts.ownerRequest === "no_user_message"
+        ? `${target.name} was set up by the user, not by a lead, so you may only ${what} when the user asks for it in chat by name. This turn has no message from the user (a routine or task run). Ask Harout to request this in chat.`
+        : `${target.name} was set up by the user, not by a lead, so you may only ${what} when the user's own latest message names ${target.name}. It does not. Ask Harout to request this in chat, naming ${target.name}.`,
+    );
+  }
+
   if (facts.action === "remove") {
-    if (facts.targetOpenTasks > 0) {
-      return refuse(
-        "running_task",
-        `${target.name} has ${facts.targetOpenTasks} unfinished task${facts.targetOpenTasks === 1 ? "" : "s"}. Wait for them to finish, or stop them with stop_task, then try again.`,
-      );
-    }
+    const busy = busyRefusal(target, facts.targetOpenTasks, facts.targetActiveSessions);
+    if (busy !== null) return busy;
     if (facts.targetActiveRoutines > 0) {
       return refuse(
         "active_routines",
@@ -173,6 +253,89 @@ export function authorizeLeadBotAction(facts: LeadBotFacts): LeadBotVerdict {
     }
   }
   return { allowed: true, team };
+}
+
+/**
+ * The refusal for a target that is mid-work, or null. The service asks it again
+ * inside the transaction that soft-deletes, so a task or turn that started
+ * after the first check still stops the removal.
+ */
+export function busyRefusal(
+  target: { readonly name: string },
+  openTasks: number,
+  activeSessions: number,
+): LeadBotVerdict | null {
+  if (openTasks > 0) {
+    return refuse(
+      "running_task",
+      `${target.name} has ${openTasks} unfinished task${openTasks === 1 ? "" : "s"}. Wait for them to finish, or stop them with stop_task, then try again.`,
+    );
+  }
+  if (activeSessions > 0) {
+    return refuse(
+      "running_task",
+      `${target.name} is in the middle of a turn. Wait for it to finish, then try again.`,
+    );
+  }
+  return null;
+}
+
+const LETTER_SCRIPTS = [
+  "Latin",
+  "Cyrillic",
+  "Greek",
+  "Armenian",
+  "Georgian",
+  "Hebrew",
+  "Arabic",
+  "Devanagari",
+  "Thai",
+  "Hangul",
+  "Han",
+  "Hiragana",
+  "Katakana",
+] as const;
+const SCRIPT_TESTS: ReadonlyArray<readonly [string, RegExp]> = LETTER_SCRIPTS.map((script) => [
+  script,
+  new RegExp(`\\p{Script=${script}}`, "u"),
+]);
+
+/**
+ * A name a lead may give a bot, or the reason it may not: NFKC-normalised, no
+ * invisible format characters, at least three characters with a letter among
+ * them, and letters from one script only (Latin next to Cyrillic is how one
+ * name is made to look like another). Japanese mixes Han, Hiragana and Katakana
+ * on purpose, so those three count as one script. Returns the normal form.
+ */
+export function checkBotName(
+  raw: string,
+): { readonly ok: true; readonly name: string } | { readonly ok: false; readonly reason: string } {
+  const normalized = raw.normalize("NFKC");
+  if (/\p{Cf}/u.test(normalized)) {
+    return {
+      ok: false,
+      reason:
+        "The name contains an invisible formatting character. Use plain visible characters only.",
+    };
+  }
+  const name = normalized.replace(/\s+/gu, " ").trim();
+  if ([...name].length < 3 || !/\p{L}/u.test(name)) {
+    return { ok: false, reason: "The name must be at least 3 characters and include a letter." };
+  }
+  const scripts = new Set<string>();
+  for (const char of name) {
+    if (!/\p{L}/u.test(char)) continue;
+    const script = SCRIPT_TESTS.find(([, test]) => test.test(char))?.[0] ?? "Other";
+    scripts.add(script === "Hiragana" || script === "Katakana" ? "Han" : script);
+  }
+  if (scripts.size > 1) {
+    return {
+      ok: false,
+      reason:
+        "The name mixes letters from different alphabets (for example Latin and Cyrillic), which can pass one bot off as another. Use one alphabet.",
+    };
+  }
+  return { ok: true, name };
 }
 
 /**
