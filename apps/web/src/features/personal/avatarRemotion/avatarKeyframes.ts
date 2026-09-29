@@ -251,6 +251,14 @@ function poseCss(): { rules: string[]; keyframes: string[] } {
   return { rules, keyframes };
 }
 
+/** `fn(a, b, c)` as the formatter lays out a long one: an argument per line. */
+function multiline(value: string): string {
+  const open = value.indexOf("(");
+  const args = value.slice(open + 1, -1).split(", ");
+  const lines = args.map((arg) => `    ${arg}`).join(",\n");
+  return `${value.slice(0, open + 1)}\n${lines}\n  )`;
+}
+
 function cometCss(): string[] {
   const css: string[] = [
     // Both comets share one hue cycle (the same phase), so it turns the whole
@@ -290,7 +298,7 @@ function cometCss(): string[] {
     );
     css.push(
       `.bot-avatar-conic-${index} {\n` +
-        `  background: ${avatarCometConicGradient(spec)};\n` +
+        `  background: ${multiline(avatarCometConicGradient(spec))};\n` +
         `  animation: bot-avatar-comet-orbit ${seconds(spec.orbitSeconds)} linear ${seconds(delay)} infinite;\n}`,
     );
   });
