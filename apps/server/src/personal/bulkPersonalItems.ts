@@ -111,6 +111,19 @@ export const deletePersonalMemories = Effect.fn("deletePersonalMemories")(functi
   } satisfies PersonalMemoryBatchResult;
 });
 
+/**
+ * The routine service names a missing routine by id ("Routine '<uuid>' was
+ * not found.", which helps a bot); on the phone the row itself is the name.
+ */
+function routineFailures(
+  failed: ReadonlyArray<{ readonly id: PersonalRoutineId; readonly message: string }>,
+): PersonalRoutinesBatchResult["failed"] {
+  return failed.map(({ id, message }) => ({
+    routineId: id,
+    message: message === `Routine '${id}' was not found.` ? "It was already deleted." : message,
+  }));
+}
+
 /** Deletes several routines, each through the routine service's `remove`. */
 export const deletePersonalRoutines = Effect.fn("deletePersonalRoutines")(function* (
   routines: PersonalRoutineService.PersonalRoutineService["Service"],
@@ -126,7 +139,7 @@ export const deletePersonalRoutines = Effect.fn("deletePersonalRoutines")(functi
   });
   return {
     done: result.done,
-    failed: result.failed.map(({ id, message }) => ({ routineId: id, message })),
+    failed: routineFailures(result.failed),
   } satisfies PersonalRoutinesBatchResult;
 });
 
@@ -155,7 +168,7 @@ export const setPersonalRoutinesEnabled = Effect.fn("setPersonalRoutinesEnabled"
   );
   return {
     done: result.done,
-    failed: result.failed.map(({ id, message }) => ({ routineId: id, message })),
+    failed: routineFailures(result.failed),
   } satisfies PersonalRoutinesBatchResult;
 });
 

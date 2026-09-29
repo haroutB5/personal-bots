@@ -122,7 +122,9 @@ describe("routine batches", () => {
         Effect.suspend(() => {
           calls.push(`pause:${routineId}`);
           return routineId === gone
-            ? Effect.fail(new PersonalRoutinesError({ message: "Routine not found." }))
+            ? Effect.fail(
+                new PersonalRoutinesError({ message: `Routine '${routineId}' was not found.` }),
+              )
             : Effect.succeed({ routineId });
         }),
       resume: ({ routineId }: { routineId: PersonalRoutineId }) =>
@@ -158,9 +160,10 @@ describe("routine batches", () => {
         "resume:routine-gone",
         "resume:routine-b",
       ]);
+      // A missing routine is worded for the phone, without its id.
       assert.deepEqual(paused, {
         done: [a],
-        failed: [{ routineId: gone, message: "Routine not found." }],
+        failed: [{ routineId: gone, message: "It was already deleted." }],
       });
       assert.deepEqual(resumed, {
         done: [b],
