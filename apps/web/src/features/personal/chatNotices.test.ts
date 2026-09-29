@@ -5,7 +5,12 @@ import type { TimelineEntry } from "~/session-logic";
 
 import { previewOf } from "./BotRow";
 import type { BotSummary } from "./botSummaries";
-import { chatNoticeLabel, readChatNotice, RESUMED_NOTICE_LABEL } from "./chatNotices";
+import {
+  chatNoticeLabel,
+  isServerTurnNotice,
+  readChatNotice,
+  RESUMED_NOTICE_LABEL,
+} from "./chatNotices";
 import { buildConversationItems, isTurnBoundary } from "./conversationModel";
 import { deriveLatestMessageReadStatus, USER_MESSAGE_DELIVERED_KIND } from "./messageReadStatus";
 
@@ -74,6 +79,24 @@ describe("chat notices", () => {
     } as never);
     expect(notice).toEqual({ notice: "team-bot-change", provider: "Team" });
     expect(chatNoticeLabel(notice!, line, NOW)).toBe(line);
+  });
+
+  it("shows the server's answer to a lead as a system row in the owner's place, as written", () => {
+    const text = "Harout approved your request to remove Tax.";
+    const answer = { notice: "team-bot-answer", provider: "Team" };
+    const notice = readChatNotice({ context: context(answer) } as never)!;
+    expect(chatNoticeLabel(notice, `${text}\n`, NOW)).toBe(text);
+    expect(isServerTurnNotice(notice)).toBe(true);
+    expect(isServerTurnNotice({ notice: "team-bot-change", provider: "Team" })).toBe(false);
+
+    const items = buildConversationItems([
+      entry("owner-1", "user", "2026-09-27T19:40:00.000Z", "Remove Tax"),
+      entry("assistant-1", "assistant", "2026-09-27T19:41:00.000Z", "Asked."),
+      entry("personal-answer-1", "user", "2026-09-27T19:45:00.000Z", text, answer),
+    ]);
+    const row = items.find((item) => item.id === "personal-answer-1")!;
+    expect(row.kind).toBe("notice");
+    expect(isTurnBoundary(row)).toBe(true);
   });
 
   it("reads the marker and says when the chat continues", () => {

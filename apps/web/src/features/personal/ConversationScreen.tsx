@@ -84,6 +84,7 @@ import {
   placeQuestionCards,
   placeSecretRequestCards,
   placeConnectionApprovalCards,
+  placeLeadBotChangeCards,
   resolveConversationHeaderName,
 } from "./conversationModel";
 import { deriveLatestMessageReadStatus } from "./messageReadStatus";
@@ -104,6 +105,7 @@ import {
 } from "./questionCards";
 import { deriveSecretRequestCards, type SecretRequestOutcome } from "./secretRequestCards";
 import { useConnectionApprovalCards } from "./useConnectionApprovalCards";
+import { useLeadBotChangeCards } from "./useLeadBotChangeCards";
 import {
   personalSecretCancel,
   personalSecretFulfill,
@@ -449,19 +451,31 @@ export function ConversationScreen({
   // Gated vendor calls, shared with the group screen so both can answer one.
   const connectionApprovals = useConnectionApprovalCards(environmentId, threadId);
   const connectionApprovalCards = connectionApprovals.cards;
+  // A team lead asking to remove or rewrite a bot it did not create.
+  const leadBotChanges = useLeadBotChangeCards(environmentId, threadId);
+  const leadBotChangeCards = leadBotChanges.cards;
   // The cards the bot put in the conversation belong in it: an answered
   // question keeps the spot where it was asked, so the bot's next reply reads
   // below it instead of above a card stuck at the bottom of the chat.
   const items = useMemo(
     () =>
-      placeConnectionApprovalCards(
-        placeSecretRequestCards(
-          placeQuestionCards(delegationItems, questionCards),
-          secretRequestCards,
+      placeLeadBotChangeCards(
+        placeConnectionApprovalCards(
+          placeSecretRequestCards(
+            placeQuestionCards(delegationItems, questionCards),
+            secretRequestCards,
+          ),
+          connectionApprovalCards,
         ),
-        connectionApprovalCards,
+        leadBotChangeCards,
       ),
-    [connectionApprovalCards, delegationItems, questionCards, secretRequestCards],
+    [
+      connectionApprovalCards,
+      delegationItems,
+      leadBotChangeCards,
+      questionCards,
+      secretRequestCards,
+    ],
   );
 
   const conversationState = deriveConversationState({
@@ -926,6 +940,8 @@ export function ConversationScreen({
             approvals={approvals}
             respondingIds={respondingIds}
             approvalRespondingIds={connectionApprovals.respondingIds}
+            onDecideLeadBotChange={leadBotChanges.decide}
+            leadBotChangeRespondingIds={leadBotChanges.respondingIds}
             onRespondToApproval={(requestId, decision) =>
               void onRespondToApproval(requestId, decision)
             }

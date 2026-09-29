@@ -32,6 +32,14 @@ export function isChatNoticeMessageId(messageId: string): boolean {
   return NOTICE_MESSAGE_ID.test(messageId);
 }
 
+/**
+ * Notices that are the server's user-role turn message (the provider needs a
+ * prompt): shown as an expandable system row, and they start a new turn.
+ */
+export function isServerTurnNotice(notice: PersonalChatNoticeMarker): boolean {
+  return notice.notice === "usage-limit-resumed" || notice.notice === "team-bot-answer";
+}
+
 export const RESUMED_NOTICE_LABEL = "Auto-continue after usage reset";
 
 function formatResumeTime(resumeAtMs: number, nowMs: number, timeZone: string): string {
@@ -68,6 +76,8 @@ export function chatNoticeLabel(
 ): string {
   if (notice.notice === "usage-limit-resumed") return RESUMED_NOTICE_LABEL;
   const trimmed = text.trim();
+  if (notice.notice === "team-bot-answer")
+    return trimmed === "" ? "You answered a request" : trimmed;
   const resumeAtMs = notice.resumeAt === undefined ? Number.NaN : Date.parse(notice.resumeAt);
   if (!Number.isFinite(resumeAtMs)) {
     return trimmed === "" ? `Paused: ${notice.provider} usage limit.` : trimmed;

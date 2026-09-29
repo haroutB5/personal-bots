@@ -571,6 +571,8 @@ const PersonalReactorsLive = Layer.effectDiscard(
     yield* (yield* PersonalTurnRetry.PersonalTurnRetry).start();
     // Continues a bot chat stopped by a usage limit once it resets.
     yield* (yield* PersonalChatResume.PersonalChatResume).start();
+    // Cancels lead-bot confirm cards nobody answered in 15 minutes and tells their lead.
+    yield* (yield* PersonalLeadBots.PersonalLeadBotService).start();
     // Archives finished delegated-task chats after 30 idle minutes (startup + every 5 min).
     yield* (yield* PersonalTaskChatArchive.PersonalTaskChatArchive).start();
     // One-off: names old task/routine chats still on "New chat" after their

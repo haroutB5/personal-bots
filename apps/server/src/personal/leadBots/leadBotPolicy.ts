@@ -65,20 +65,14 @@ export const isProtectedBot = (bot: { readonly botId: string; readonly name: str
   PROTECTED_BOT_NAMES.has(normalizeBotNameKey(bot.name));
 
 /**
- * The fields whose change on a bot no lead created needs the user's say-so:
- * what the bot is (name), what it does (instructions, description) and what it
- * costs (model, provider, effort: one "model" change). Title, avatar, mute and
- * memory auto-save are cosmetic and stay open.
+ * The fields whose change on a bot the calling lead does not own needs the
+ * user's tap on a confirm card: what the bot is (name), what it does
+ * (instructions, description) and what it costs (model, provider, effort: one
+ * "model" change). Title, avatar, mute and memory auto-save are cosmetic and
+ * stay open.
  */
 export const LEAD_BOT_SENSITIVE_FIELDS = ["name", "instructions", "description", "model"] as const;
 export type LeadBotSensitiveField = (typeof LEAD_BOT_SENSITIVE_FIELDS)[number];
-
-/**
- * Whether the user's own words in the calling chat name the target: `named`
- * (the latest real message from the user names it), `not_named` (it does not)
- * or `no_user_message` (routine and task turns, where the user wrote nothing).
- */
-export type LeadBotOwnerRequest = "named" | "not_named" | "no_user_message";
 
 export type LeadBotRefusalCode =
   | "caller_gone"
@@ -115,10 +109,23 @@ export interface LeadBotFacts {
   readonly createsInWindow: number;
   /** Update: which sensitive fields this call would actually change on the target. */
   readonly sensitiveChanges: ReadonlyArray<LeadBotSensitiveField>;
-  /** Some lead created the target (a `create` row in the audit table). */
-  readonly targetCreatedByLead: boolean;
-  /** Whether the user's own message in this chat names the target. */
-  readonly ownerRequest: LeadBotOwnerRequest;
+  /**
+   * The calling lead created the target AND the target has stayed on that lead's
+   * team since (no team move after the create row). Every other bot (made by the
+   * user, by another lead, or moved since) is treated as the user's.
+   */
+  readonly targetOwnedByCaller: boolean;
+  /**
+   * The turn making this call was started by the user's own message in this chat
+   * (not by a routine, a task, a group round or the server). Only such a turn can
+   * put a confirm card in front of the user.
+   */
+  readonly ownerTurn: boolean;
+  /**
+   * The user tapped Yes on the confirm card for exactly this change: the
+   * confirm requirement is met. Every other rule is checked again as normal.
+   */
+  readonly approvedByOwner?: boolean;
   /** Remove: the target's tasks that are not finished (running, queued or waiting). */
   readonly targetOpenTasks: number;
   /** Remove: the target's chat sessions that have a turn in progress. */
@@ -128,7 +135,12 @@ export interface LeadBotFacts {
 }
 
 export type LeadBotVerdict =
-  | { readonly allowed: true; readonly team: PersonalBotTeam }
+  | {
+      readonly allowed: true;
+      readonly team: PersonalBotTeam;
+      /** True: nothing is done until the user taps Yes on a confirm card. */
+      readonly confirm: boolean;
+    }
   | {
       readonly allowed: false;
       readonly code: LeadBotRefusalCode;
@@ -156,10 +168,12 @@ const refuse = (code: LeadBotRefusalCode, reason: string): LeadBotVerdict => ({
  *  4. Update and remove: never a protected bot (Updates, Sync reports, any
  *     seeded system bot), wherever it sits. Otherwise the target must be a bot on
  *     the caller's own team that is not the caller and not a lead.
- *  5. A bot no lead created (the user made it) is the user's to change: remove,
- *     and an edit of its name, instructions, description or model/effort, need
- *     the user's own latest message in this chat to name it. Routine and task
- *     turns have no such message and are refused. Cosmetic edits stay open.
+ *  5. A bot the calling lead did not create, or created but which has left its
+ *     team since, is the user's to change: remove, and an edit of its name,
+ *     instructions, description or model/effort, are not done at once but put to
+ *     the user as a confirm card (`confirm: true`); only a turn the user started
+ *     can raise one (routine, task and server turns are refused). Cosmetic edits
+ *     stay open.
  *  6. Remove: refused while the target has unfinished tasks, a turn in progress
  *     or switched-on routines, so nothing is orphaned. (The service repeats the
  *     task and turn test inside the transaction that deletes, see `busyRefusal`.)
@@ -208,7 +222,7 @@ export function authorizeLeadBotAction(facts: LeadBotFacts): LeadBotVerdict {
         `You have already created ${LEAD_BOT_CREATES_PER_DAY} bots in the last 24 hours, which is the limit. Ask the user if you need more.`,
       );
     }
-    return { allowed: true, team };
+    return { allowed: true, team, confirm: false };
   }
 
   if (target === null) {
@@ -236,18 +250,16 @@ export function authorizeLeadBotAction(facts: LeadBotFacts): LeadBotVerdict {
     return refuse("other_lead", `${target.name} is a team lead. Only the user changes a lead.`);
   }
 
-  if (
-    !facts.targetCreatedByLead &&
+  const needsConfirm =
+    !facts.targetOwnedByCaller &&
     (facts.action === "remove" || facts.sensitiveChanges.length > 0) &&
-    facts.ownerRequest !== "named"
-  ) {
+    facts.approvedByOwner !== true;
+  if (needsConfirm && !facts.ownerTurn) {
     const what =
       facts.action === "remove" ? "remove it" : `change its ${facts.sensitiveChanges.join(", ")}`;
     return refuse(
       "needs_owner",
-      facts.ownerRequest === "no_user_message"
-        ? `${target.name} was set up by the user, not by a lead, so you may only ${what} when the user asks for it in chat by name. This turn has no message from the user (a routine or task run). Ask Harout to request this in chat.`
-        : `${target.name} was set up by the user, not by a lead, so you may only ${what} when the user's own latest message names ${target.name}. It does not. Ask Harout to request this in chat, naming ${target.name}.`,
+      `${target.name} was not created by you (the user, or another lead, set it up), so you may only ${what} with the user's OK on a confirm card, and a card can only be raised from a chat turn the user started. This turn was started by a routine, a task, a group round or the server. Ask Harout to request this in chat.`,
     );
   }
 
@@ -261,7 +273,7 @@ export function authorizeLeadBotAction(facts: LeadBotFacts): LeadBotVerdict {
       );
     }
   }
-  return { allowed: true, team };
+  return { allowed: true, team, confirm: needsConfirm };
 }
 
 /**

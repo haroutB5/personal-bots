@@ -24,13 +24,14 @@ import { AttachmentPreview, type AttachmentPreviewData } from "./AttachmentPrevi
 import { BotAvatar, type BotAvatarShape } from "./BotAvatar";
 import { type ConversationItem, formatDayDivider } from "./conversationModel";
 import type { ServerTurn } from "./delegationModel";
-import { chatNoticeLabel } from "./chatNotices";
+import { chatNoticeLabel, isServerTurnNotice } from "./chatNotices";
 import { groupSystemLabel, readGroupMarker } from "./groupModel";
 import { QuestionCard } from "./QuestionCard";
 import type { UserInputAnswers } from "./questionCards";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { ConnectionApprovalCard } from "./ConnectionApprovalCard";
 import { approvalHasExpired } from "./connectionApprovalCards";
+import { LeadBotChangeCard } from "./LeadBotChangeCard";
 import { ToolDetails } from "./ToolDetails";
 import type { LatestMessageReadStatus, MessageReadStatus } from "./messageReadStatus";
 
@@ -412,6 +413,8 @@ export function MessageList({
   onDeclineSecret,
   onDecideConnectionApproval,
   approvalRespondingIds,
+  onDecideLeadBotChange,
+  leadBotChangeRespondingIds,
   approvalsNowMs,
   errorText,
   errorDetail = null,
@@ -455,6 +458,13 @@ export function MessageList({
   onDeclineSecret: (requestId: string) => void;
   onDecideConnectionApproval: (approvalId: string, decision: "approved" | "denied") => void;
   approvalRespondingIds: ReadonlySet<string>;
+  /** One-to-one chat only. Resolves to an error message for the card, or null. */
+  onDecideLeadBotChange?: (
+    changeId: string,
+    changeHash: string,
+    decision: "approved" | "declined",
+  ) => Promise<string | null>;
+  leadBotChangeRespondingIds?: ReadonlySet<string>;
   /** Passed in rather than read here so a card cannot re-render itself live past its expiry. */
   approvalsNowMs: number;
   errorText: string | null;
@@ -656,7 +666,7 @@ export function MessageList({
     for (let index = items.length - 1; index >= 0; index -= 1) {
       const item = items[index]!;
       if (item.kind === "system-turn") return null;
-      if (item.kind === "notice" && item.notice.notice === "usage-limit-resumed") return null;
+      if (item.kind === "notice" && isServerTurnNotice(item.notice)) return null;
       if (item.kind === "message" && item.message.role === "user") return null;
       if (item.kind === "work") return item.id;
     }
@@ -777,7 +787,7 @@ export function MessageList({
               case "notice":
                 // The continue shows the prompt the bot got when tapped, like
                 // any server-written turn; the pause is a plain line.
-                return item.notice.notice === "usage-limit-resumed" ? (
+                return isServerTurnNotice(item.notice) ? (
                   <SystemTurnRow
                     key={item.id}
                     label={chatNoticeLabel(item.notice, item.message.text, now.getTime())}
@@ -838,6 +848,18 @@ export function MessageList({
                     responding={approvalRespondingIds.has(item.card.approvalId)}
                     onApprove={(approvalId) => onDecideConnectionApproval(approvalId, "approved")}
                     onDeny={(approvalId) => onDecideConnectionApproval(approvalId, "denied")}
+                  />
+                );
+              case "lead-bot-change":
+                return (
+                  <LeadBotChangeCard
+                    key={item.id}
+                    card={item.card}
+                    nowMs={approvalsNowMs}
+                    responding={leadBotChangeRespondingIds?.has(item.card.changeId) ?? false}
+                    onDecide={(changeId, changeHash, decision) =>
+                      onDecideLeadBotChange?.(changeId, changeHash, decision)
+                    }
                   />
                 );
               case "message":

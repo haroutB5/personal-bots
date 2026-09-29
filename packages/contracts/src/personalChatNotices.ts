@@ -16,11 +16,15 @@ export const PERSONAL_CHAT_NOTICE_CONTEXT_KIND = "personal-chat-notice";
  * team-bot-change: a team lead created, edited or removed a bot on its team
  * (an assistant-role row whose text is the whole line; `provider` is unused
  * there and carries "Team").
+ * team-bot-answer: the server's turn message telling a lead how the owner
+ * answered its change request (a user-role turn message, since the provider
+ * needs a prompt; never the owner's words; rendered as a system row).
  */
 export const PersonalChatNoticeKind = Schema.Literals([
   "usage-limit-paused",
   "usage-limit-resumed",
   "team-bot-change",
+  "team-bot-answer",
 ]);
 export type PersonalChatNoticeKind = typeof PersonalChatNoticeKind.Type;
 

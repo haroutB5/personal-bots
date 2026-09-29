@@ -16,13 +16,14 @@ import { formatContextWindowTokens } from "~/lib/contextWindow";
 import type { ChatMessage, ProposedPlan } from "~/types";
 import type { TimelineEntry, WorkLogEntry } from "~/session-logic";
 
-import { readChatNotice } from "./chatNotices";
+import { isServerTurnNotice, readChatNotice } from "./chatNotices";
 import { readServerTurn, type ServerTurn, taskCreatedMs } from "./delegationModel";
 import { readGroupMarker } from "./groupModel";
 import { PERSONAL_TIME_ZONE } from "./greeting";
 import type { QuestionCardItem } from "./questionCards";
 import type { SecretRequestCardItem } from "./secretRequestCards";
 import type { ConnectionApprovalCardItem } from "./connectionApprovalCards";
+import type { LeadBotChangeCardItem } from "./leadBotChangeCards";
 
 /**
  * Header state for a bot conversation, derived only from session/turn/request
@@ -441,7 +442,9 @@ export type ConversationItem =
       readonly kind: "connection-approval";
       readonly id: string;
       readonly card: ConnectionApprovalCardItem;
-    };
+    }
+  /** A team lead asking to remove or rewrite a bot, in the lead's chat. */
+  | { readonly kind: "lead-bot-change"; readonly id: string; readonly card: LeadBotChangeCardItem };
 
 /**
  * Flattens the upstream timeline into chat rows: consecutive work entries
@@ -605,7 +608,7 @@ export function isTurnBoundary(item: ConversationItem): boolean {
   return (
     item.kind === "divider" ||
     item.kind === "system-turn" ||
-    (item.kind === "notice" && item.notice.notice === "usage-limit-resumed") ||
+    (item.kind === "notice" && isServerTurnNotice(item.notice)) ||
     item.kind === "group-system" ||
     (item.kind === "message" && item.message.role === "user")
   );
@@ -631,6 +634,7 @@ function itemTimeMs(item: ConversationItem): number {
       return Date.parse(item.card.createdAt);
     case "secret":
     case "connection-approval":
+    case "lead-bot-change":
       return item.card.createdAtMs;
   }
 }
@@ -765,6 +769,21 @@ export function placeConnectionApprovalCards(
         id: `connection-approval:${card.approvalId}`,
         card,
       } as const,
+      atMs: card.createdAtMs,
+      pending: card.kind === "pending",
+    })),
+  );
+}
+
+/** Lead-bot change cards, placed like the connection approvals: at the moment they were asked. */
+export function placeLeadBotChangeCards(
+  items: ReadonlyArray<ConversationItem>,
+  cards: ReadonlyArray<LeadBotChangeCardItem>,
+): ConversationItem[] {
+  return placeTimedCards(
+    items,
+    cards.map((card) => ({
+      item: { kind: "lead-bot-change", id: `lead-bot-change:${card.changeId}`, card } as const,
       atMs: card.createdAtMs,
       pending: card.kind === "pending",
     })),

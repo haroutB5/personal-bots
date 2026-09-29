@@ -333,6 +333,12 @@ import {
   PersonalSecretCreateInput,
 } from "./personalSecrets.ts";
 import {
+  PersonalLeadBotChange,
+  PersonalLeadBotChangeDecideInput,
+  PersonalLeadBotChangeListResult,
+  PersonalLeadBotChangesError,
+} from "./personalLeadBots.ts";
+import {
   PersonalConnection,
   PersonalConnectionApproval,
   PersonalConnectionApprovalDecideInput,
@@ -576,6 +582,8 @@ export const WS_METHODS = {
   personalBotsSetProfile: "personalBots.setProfile",
   personalBotsListFiles: "personalBots.listFiles",
   personalBotsRecheckProvider: "personalBots.recheckProvider",
+  personalLeadBotChangesList: "personalLeadBotChanges.list",
+  personalLeadBotChangesDecide: "personalLeadBotChanges.decide",
   personalFilesDelete: "personalFiles.delete",
 
   // Personal tasks methods
@@ -1264,6 +1272,25 @@ const WsPersonalBotsListFilesRpc = Rpc.make(WS_METHODS.personalBotsListFiles, {
   payload: Schema.Struct({}),
   success: PersonalFilesListResult,
   error: PersonalBotsRpcError,
+});
+
+// A team lead's remove or rewrite of a bot it did not create, waiting on the
+// owner's tap. `decide` is the only way to approve one.
+const PersonalLeadBotChangesRpcError = Schema.Union([
+  PersonalLeadBotChangesError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsPersonalLeadBotChangesListRpc = Rpc.make(WS_METHODS.personalLeadBotChangesList, {
+  payload: Schema.Struct({}),
+  success: PersonalLeadBotChangeListResult,
+  error: PersonalLeadBotChangesRpcError,
+});
+
+const WsPersonalLeadBotChangesDecideRpc = Rpc.make(WS_METHODS.personalLeadBotChangesDecide, {
+  payload: PersonalLeadBotChangeDecideInput,
+  success: PersonalLeadBotChange,
+  error: PersonalLeadBotChangesRpcError,
 });
 
 const WsPersonalFilesDeleteRpc = Rpc.make(WS_METHODS.personalFilesDelete, {
@@ -2378,6 +2405,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalBotsSetProfileRpc,
   WsPersonalBotsListFilesRpc,
   WsPersonalBotsRecheckProviderRpc,
+  WsPersonalLeadBotChangesListRpc,
+  WsPersonalLeadBotChangesDecideRpc,
   WsPersonalFilesDeleteRpc,
   WsPersonalTasksListRpc,
   WsPersonalTasksGetRpc,

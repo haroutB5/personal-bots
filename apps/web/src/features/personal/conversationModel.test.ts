@@ -20,6 +20,7 @@ import {
   formatDayDivider,
   friendlyTurnError,
   isTurnThinking,
+  placeLeadBotChangeCards,
   placeQuestionCards,
   placeSecretRequestCards,
   providerWaitState,
@@ -519,6 +520,31 @@ const secret = (id: string, createdAt: string, kind: "pending" | "provided") =>
         name: "GITHUB_TOKEN",
         label: "GitHub token",
       }) as unknown as SecretRequestCardItem;
+
+describe("placeLeadBotChangeCards", () => {
+  const leadCard = (id: string, createdAt: string, kind: "pending" | "approved") =>
+    ({ kind, changeId: id, createdAtMs: Date.parse(createdAt) }) as never;
+
+  it("puts a settled request where it was asked and a pending one last", () => {
+    const items = buildConversationItems([
+      message("u1", "user", "2026-09-16T10:00:00.000Z"),
+      message("a1", "assistant", "2026-09-16T10:00:10.000Z"),
+      message("a2", "assistant", "2026-09-16T10:01:30.000Z"),
+    ]);
+    const placed = placeLeadBotChangeCards(items, [
+      leadCard("c-open", "2026-09-16T10:00:15.000Z", "pending"),
+      leadCard("c-done", "2026-09-16T10:00:20.000Z", "approved"),
+    ]);
+    expect(placed.map((item) => item.id)).toEqual([
+      "divider:2026-09-16T10:00:00.000Z",
+      "u1",
+      "a1",
+      "lead-bot-change:c-done",
+      "a2",
+      "lead-bot-change:c-open",
+    ]);
+  });
+});
 
 describe("placeQuestionCards", () => {
   it("keeps what the bot said after an answer below the card it answered", () => {

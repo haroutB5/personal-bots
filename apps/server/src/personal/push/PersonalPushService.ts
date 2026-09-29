@@ -431,6 +431,8 @@ export class PersonalPushService extends Context.Service<
       readonly leadBotId: string;
       readonly title: string;
       readonly body: string;
+      /** Where a tap opens; the Team screen when absent (a confirm request opens the lead's chat). */
+      readonly url?: string | undefined;
     }) => Effect.Effect<void, PersonalPushError>;
     /** Queues the one "provider is failing for your bots" alert for this version. */
     readonly notifyProviderBroken: (input: {
@@ -1192,7 +1194,7 @@ export const make = Effect.gen(function* () {
       yield* deliver(`team-bot:${input.actionId}`, {
         title: input.title,
         body: input.body.length > 160 ? `${input.body.slice(0, 157)}...` : input.body,
-        url: "/bots/team",
+        url: input.url ?? "/bots/team",
         tag: `team-bot-${input.actionId}`,
         ...avatarFields(botIdentity(lead)),
       });

@@ -44,10 +44,11 @@ const facts = (overrides: Partial<LeadBotFacts>): LeadBotFacts => ({
   forbiddenFields: [],
   requestedModel: null,
   createsInWindow: 0,
-  // A bot a lead made: fully the lead's to manage. The user-made cases set these.
+  // A bot this lead made and that stayed on its team: fully the lead's to manage.
+  // The cases about a bot it does not own set targetOwnedByCaller false.
   sensitiveChanges: [],
-  targetCreatedByLead: true,
-  ownerRequest: "not_named",
+  targetOwnedByCaller: true,
+  ownerTurn: true,
   targetOpenTasks: 0,
   targetActiveSessions: 0,
   targetActiveRoutines: 0,
@@ -62,7 +63,11 @@ const refusedWith = (overrides: Partial<LeadBotFacts>) => {
 describe("authorizeLeadBotAction", () => {
   it("allows a lead to create, edit and remove a member of its own team", () => {
     for (const action of ["create", "update", "remove"] as const) {
-      expect(authorizeLeadBotAction(facts({ action }))).toEqual({ allowed: true, team: "Finance" });
+      expect(authorizeLeadBotAction(facts({ action }))).toEqual({
+        allowed: true,
+        team: "Finance",
+        confirm: false,
+      });
     }
   });
 
@@ -172,51 +177,62 @@ describe("authorizeLeadBotAction", () => {
     expect(isProtectedBot(bot("sync-helper", { name: "Sync helper" }))).toBe(false);
   });
 
-  it("needs the user to name a bot no lead created before it is removed or its substance changed", () => {
-    const userMade = { targetCreatedByLead: false } as const;
-    // Remove: only when the user's latest message names it.
-    expect(refusedWith({ ...userMade, action: "remove", ownerRequest: "named" })).toBe("allowed");
-    expect(refusedWith({ ...userMade, action: "remove", ownerRequest: "not_named" })).toBe(
-      "needs_owner",
+  it("puts a bot the lead does not own to the user on a card, and only from a turn the user started", () => {
+    const notOwned = { targetOwnedByCaller: false } as const;
+    const verdictOf = (overrides: Partial<LeadBotFacts>) =>
+      authorizeLeadBotAction(facts(overrides));
+    // Remove: allowed, but as a card (confirm) rather than at once.
+    expect(verdictOf({ ...notOwned, action: "remove" })).toMatchObject({
+      allowed: true,
+      confirm: true,
+    });
+    // A routine, task, group or server turn cannot raise a card, and the reason says who to ask.
+    const noOwnerTurn = verdictOf({ ...notOwned, action: "remove", ownerTurn: false });
+    expect(noOwnerTurn.allowed).toBe(false);
+    expect(!noOwnerTurn.allowed && noOwnerTurn.code).toBe("needs_owner");
+    expect(!noOwnerTurn.allowed && noOwnerTurn.reason).toContain(
+      "Ask Harout to request this in chat",
     );
-    // Routine and task turns have no user message at all, and the reason says so.
-    const noMessage = authorizeLeadBotAction(
-      facts({ ...userMade, action: "remove", ownerRequest: "no_user_message" }),
-    );
-    expect(noMessage.allowed).toBe(false);
-    expect(!noMessage.allowed && noMessage.reason).toContain("Ask Harout to request this in chat");
-    // The same bot made by a lead stays fully the lead's.
-    for (const ownerRequest of ["named", "not_named", "no_user_message"] as const) {
-      expect(refusedWith({ action: "remove", targetCreatedByLead: true, ownerRequest })).toBe(
-        "allowed",
-      );
+    // A bot this lead made and kept on its team is done at once, in any kind of turn.
+    for (const ownerTurn of [true, false]) {
+      expect(verdictOf({ action: "remove", targetOwnedByCaller: true, ownerTurn })).toMatchObject({
+        allowed: true,
+        confirm: false,
+      });
     }
-    // Update: each sensitive field is gated, cosmetic ones are not.
+    // Update: each sensitive field goes through a card, cosmetic ones do not.
     for (const field of ["name", "instructions", "description", "model"] as const) {
-      const change = { ...userMade, action: "update", sensitiveChanges: [field] } as const;
-      expect(refusedWith({ ...change, ownerRequest: "not_named" })).toBe("needs_owner");
-      expect(refusedWith({ ...change, ownerRequest: "no_user_message" })).toBe("needs_owner");
-      expect(refusedWith({ ...change, ownerRequest: "named" })).toBe("allowed");
+      const change = { ...notOwned, action: "update", sensitiveChanges: [field] } as const;
+      expect(verdictOf(change)).toMatchObject({ allowed: true, confirm: true });
+      expect(refusedWith({ ...change, ownerTurn: false })).toBe("needs_owner");
       expect(
-        refusedWith({
-          action: "update",
-          sensitiveChanges: [field],
-          ownerRequest: "no_user_message",
-        }),
-      ).toBe("allowed");
+        verdictOf({ action: "update", sensitiveChanges: [field], ownerTurn: false }),
+      ).toMatchObject({ allowed: true, confirm: false });
     }
     expect(
-      refusedWith({
-        ...userMade,
-        action: "update",
-        sensitiveChanges: [],
-        ownerRequest: "no_user_message",
-      }),
-    ).toBe("allowed");
+      verdictOf({ ...notOwned, action: "update", sensitiveChanges: [], ownerTurn: false }),
+    ).toMatchObject({ allowed: true, confirm: false });
     // Create never asks.
-    expect(refusedWith({ ...userMade, action: "create", ownerRequest: "no_user_message" })).toBe(
-      "allowed",
-    );
+    expect(verdictOf({ ...notOwned, action: "create", ownerTurn: false })).toMatchObject({
+      allowed: true,
+      confirm: false,
+    });
+    // The owner's tap on exactly this change meets the requirement, in any turn; every
+    // other rule still applies to it.
+    expect(
+      verdictOf({ ...notOwned, action: "remove", ownerTurn: false, approvedByOwner: true }),
+    ).toMatchObject({ allowed: true, confirm: false });
+    expect(
+      refusedWith({ ...notOwned, action: "remove", approvedByOwner: true, targetOpenTasks: 1 }),
+    ).toBe("running_task");
+    expect(
+      refusedWith({
+        ...notOwned,
+        action: "remove",
+        approvedByOwner: true,
+        target: bot("boss", { lead: true }),
+      }),
+    ).toBe("other_lead");
   });
 
   it("refuses removing a bot mid-turn, and the transaction's check says the same", () => {

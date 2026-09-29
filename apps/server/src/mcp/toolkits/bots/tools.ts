@@ -285,7 +285,7 @@ export type CastVoteResult = typeof CastVoteResult.Type;
 const LEAD_ONLY = "Team leads only.";
 const NOT_SETTABLE = "Not settable by a lead: any value is refused.";
 const USER_MADE_RULE =
-  "A bot you created yourself is yours to manage. A bot the user set up is not: removing it, or changing its name, instructions, description, model or effort, works only when the user's own latest message in this chat names it (a routine or task turn has no such message, so ask the user to request it in chat). Title, avatar, mute and memory auto-save stay open. The built-in system bots (Updates, Sync reports and the seeded defaults) are never yours to change.";
+  "A bot you created yourself is yours to manage while it stays on your team. Any other bot (one the user set up, another lead made, or one moved since) is not: removing it, or changing its name, instructions, description, model or effort, is not done at once. It puts a Yes/No card in this chat and nothing changes until Harout taps Yes himself; the call returns pending, so tell him in one line what you asked for and end your turn, and his answer arrives as a follow-up message. It works only from a chat turn Harout started (a routine, task or group turn is refused, so ask him to request it in chat). Title, avatar, mute and memory auto-save stay open. The built-in system bots (Updates, Sync reports and the seeded defaults) are never yours to change.";
 
 /** The fields create_bot and update_bot share. Every one is optional. */
 const BotFieldsShape = {
@@ -382,6 +382,10 @@ export const LeadBotResult = Schema.Struct({
   }),
   line: Schema.String.annotate({
     description: "The line posted in your chat and sent to the user as a notification.",
+  }),
+  pending: Schema.Boolean.annotate({
+    description:
+      "True when nothing has changed yet: Harout has a Yes/No card to answer. Do not retry; his answer arrives later.",
   }),
   note: Schema.String,
 });
@@ -582,7 +586,7 @@ const UpdateBotTool = Tool.make("update_bot", {
   .annotate(Tool.OpenWorld, false);
 
 const RemoveBotTool = Tool.make("remove_bot", {
-  description: `${LEAD_ONLY} Remove a bot that is on your own team. It is a soft delete: the bot disappears from every list, but its chats and memories are kept and the user can restore it. ALWAYS ask the user before removing a bot, and call this only after they have said yes in their own message. ${USER_MADE_RULE} Give the reason in one line: it is kept in the record and shown to the user. Refused while the bot has an unfinished task (stop it with stop_task first), a turn in progress or a routine switched on, and for yourself, another lead or a bot on another team. Posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
+  description: `${LEAD_ONLY} Remove a bot that is on your own team. It is a soft delete: the bot disappears from every list, but its chats and memories are kept and the user can restore it. Ask the user before removing a bot. ${USER_MADE_RULE} Give the reason in one line: it is kept in the record and shown to the user. Refused while the bot has an unfinished task (stop it with stop_task first), a turn in progress or a routine switched on, and for yourself, another lead or a bot on another team. Posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
   parameters: RemoveBotInput,
   success: LeadBotResult,
   failure: BotsToolFailure,

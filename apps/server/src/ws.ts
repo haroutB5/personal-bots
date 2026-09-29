@@ -203,6 +203,7 @@ import {
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
 import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
+import * as PersonalLeadBotService from "./personal/leadBots/PersonalLeadBotService.ts";
 import * as PersonalConnectionService from "./personal/connections/service.ts";
 // personal browser
 import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
@@ -760,6 +761,7 @@ const makeWsRpcLayer = (
       const personalConnections = yield* PersonalConnectionService.PersonalConnectionService;
       const personalConnectionApprovals =
         yield* PersonalConnectionApprovalService.PersonalConnectionApprovalService;
+      const personalLeadBots = yield* PersonalLeadBotService.PersonalLeadBotService;
       // personal browser
       const personalBrowser = yield* PersonalBrowser.PersonalBrowser;
       const personalDesktop = yield* PersonalDesktop.PersonalDesktop;
@@ -3289,6 +3291,18 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalBotsSetProfile, personalBots.setProfile(input), {
             "rpc.aggregate": "server",
           }),
+        // A team lead's request to remove or rewrite a bot it did not create. `decide` is the
+        // tap on the card and the only way to approve one.
+        [WS_METHODS.personalLeadBotChangesList]: (_input) =>
+          observeRpcEffect(WS_METHODS.personalLeadBotChangesList, personalLeadBots.listChanges(), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalLeadBotChangesDecide]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalLeadBotChangesDecide,
+            personalLeadBots.decide(input),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalBotsRecheckProvider]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalBotsRecheckProvider,
@@ -4558,6 +4572,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const personalConnections = yield* PersonalConnectionService.PersonalConnectionService;
     const personalConnectionApprovals =
       yield* PersonalConnectionApprovalService.PersonalConnectionApprovalService;
+    const personalLeadBots = yield* PersonalLeadBotService.PersonalLeadBotService;
     const personalRoutines = yield* PersonalRoutineService.PersonalRoutineService;
     const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
     const personalPush = yield* PersonalPushService.PersonalPushService;
@@ -4636,6 +4651,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
                   PersonalConnectionApprovalService.PersonalConnectionApprovalService,
                   personalConnectionApprovals,
                 ),
+              ),
+              Layer.provide(
+                Layer.succeed(PersonalLeadBotService.PersonalLeadBotService, personalLeadBots),
               ),
               Layer.provide(
                 Layer.succeed(PersonalRoutineService.PersonalRoutineService, personalRoutines),

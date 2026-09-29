@@ -23,6 +23,7 @@ import { isPersonalTaskMessageId } from "../../../personal/personalThreadTitles.
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import * as PersonalBrowser from "../../../personal/browser/PersonalBrowser.ts";
 import * as PersonalGroupService from "../../../personal/groups/PersonalGroupService.ts";
+import { isOwnerMessageId } from "../../../personal/leadBots/leadBotConfirm.ts";
 import * as PersonalLeadBotService from "../../../personal/leadBots/PersonalLeadBotService.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
@@ -56,6 +57,8 @@ export const CAST_VOTE_OPEN_NOTE =
   "Your ballot is recorded. Waiting on the other members; you cannot vote again.";
 export const CAST_VOTE_DECIDED_NOTE =
   "Your ballot was the last one, so the vote is resolved and the user has been shown the tally. Do not act on the result: wait to be told it was approved.";
+export const PENDING_CONFIRM_NOTE =
+  "Not done yet: a Yes/No card in this chat asks Harout to confirm, and only his tap can approve it. Do not retry, rephrase or work around it. Tell him in one line what you asked for and end your turn; his answer arrives as a follow-up message.";
 export const REQUEST_SECRET_NOTE =
   "Requested. The user will enter it in a secure form; you'll be resumed. Never ask for it in chat.";
 
@@ -220,18 +223,22 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * The same check for the lead tools that change a bot no lead created: the
-   * owner's latest real message must name it. A chat with no such message at all
-   * is a routine or task turn, which the lead tools report differently.
+   * Whether the turn making a lead-tool call was started by the owner's own
+   * message: the newest user-role message in this chat is his (its id is a client
+   * id, not one of the server's own `personal-` ids: a task brief or steer, a
+   * routine run, a usage-limit continue, a group round, or the answer to a confirm
+   * card). Only such a turn may put a confirm card in front of him; a routine or
+   * task turn is refused, and so is the turn that carries the answer to an
+   * earlier card, so a lead cannot chain requests without him. Unlike the
+   * cross-team delegation check this looks at the LATEST message overall, so a
+   * routine that fires in a chat where he once spoke does not inherit his turn.
    */
-  const ownerRequestFor = Effect.fn("BotsToolkit.ownerRequestFor")(function* (
-    threadId: ThreadId,
-    target: PersonalBot | undefined,
-  ) {
-    if (target === undefined) return "not_named" as const;
-    const latest = yield* latestOwnerMessage(threadId);
-    if (latest === undefined) return "no_user_message" as const;
-    return messageNamesBot(latest.text, target) ? ("named" as const) : ("not_named" as const);
+  const ownerTurnFor = Effect.fn("BotsToolkit.ownerTurnFor")(function* (threadId: ThreadId) {
+    const messages = yield* threadMessages
+      .listByThreadId({ threadId })
+      .pipe(Effect.mapError(() => toolError("Could not read this chat's messages.")));
+    const latest = messages.findLast((message) => message.role === "user");
+    return latest !== undefined && isOwnerMessageId(latest.messageId);
   });
 
   const currentTurnId = Effect.fn("BotsToolkit.currentTurnId")(function* (threadId: ThreadId) {
@@ -606,9 +613,12 @@ const make = Effect.gen(function* () {
     create_bot: (input) =>
       Effect.gen(function* () {
         const caller = yield* leadCaller();
-        const result = yield* leadBots.create(caller, input).pipe(Effect.mapError(readable));
+        const { pendingChangeId: _pending, ...result } = yield* leadBots
+          .create(caller, input)
+          .pipe(Effect.mapError(readable));
         return {
           ...result,
+          pending: false,
           note: "Created and posted in your chat. It is on your team now, so list_bots shows it and you can delegate to it. The user has been notified.",
         };
       }),
@@ -617,29 +627,36 @@ const make = Effect.gen(function* () {
         const caller = yield* leadCaller();
         const { bot, ...fields } = input;
         const target = yield* resolveBotRef(bot, caller.team);
-        const ownerRequest = yield* ownerRequestFor(caller.threadId, target.bot);
-        const result = yield* leadBots
-          .update({ ...caller, ownerRequest }, target.botId, fields)
+        const ownerTurn = yield* ownerTurnFor(caller.threadId);
+        const { pendingChangeId, ...result } = yield* leadBots
+          .update({ ...caller, ownerTurn }, target.botId, fields)
           .pipe(Effect.mapError(readable));
         return {
           ...result,
+          pending: pendingChangeId !== undefined,
           note:
-            result.changed.length === 0
-              ? "Nothing needed changing."
-              : "Changed and posted in your chat. The user has been notified.",
+            pendingChangeId !== undefined
+              ? PENDING_CONFIRM_NOTE
+              : result.changed.length === 0
+                ? "Nothing needed changing."
+                : "Changed and posted in your chat. The user has been notified.",
         };
       }),
     remove_bot: (input) =>
       Effect.gen(function* () {
         const caller = yield* leadCaller();
         const target = yield* resolveBotRef(input.bot, caller.team);
-        const ownerRequest = yield* ownerRequestFor(caller.threadId, target.bot);
-        const result = yield* leadBots
-          .remove({ ...caller, ownerRequest }, target.botId, input.reason)
+        const ownerTurn = yield* ownerTurnFor(caller.threadId);
+        const { pendingChangeId, ...result } = yield* leadBots
+          .remove({ ...caller, ownerTurn }, target.botId, input.reason)
           .pipe(Effect.mapError(readable));
         return {
           ...result,
-          note: "Removed (soft delete): its chats are kept and the user can restore it. Posted in your chat; the user has been notified.",
+          pending: pendingChangeId !== undefined,
+          note:
+            pendingChangeId !== undefined
+              ? PENDING_CONFIRM_NOTE
+              : "Removed (soft delete): its chats are kept and the user can restore it. Posted in your chat; the user has been notified.",
         };
       }),
     close_browser: () =>
