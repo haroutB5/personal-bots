@@ -45,8 +45,8 @@ export function leadBotChangeHasExpired(change: PersonalLeadBotChange, nowMs: nu
   return DateTime.toEpochMillis(change.expiresAt) <= nowMs;
 }
 
-/** Whole minutes left, at least 1 while the request is still live. */
+/** Minutes left, rounded (the clock ticks once a minute, so a fresh 15 minute card reads 15), at least 1 while live. */
 export function leadBotChangeMinutesLeft(change: PersonalLeadBotChange, nowMs: number): number {
   const left = DateTime.toEpochMillis(change.expiresAt) - nowMs;
-  return Math.max(1, Math.ceil(left / 60_000));
+  return Math.max(1, Math.round(left / 60_000));
 }
