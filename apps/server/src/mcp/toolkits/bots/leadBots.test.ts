@@ -1207,6 +1207,77 @@ describe("team lead bot tools", () => {
     }),
   );
 
+  it.effect("the user restores a removed bot with its chats, and a lead cannot", () =>
+    withHarness(() =>
+      Effect.gen(function* () {
+        const { call, bots } = yield* setup;
+        const service = yield* PersonalLeadBotService.PersonalLeadBotService;
+        // A bot the user deleted without a lead is not listed (nothing to bring back).
+        yield* bots.create({
+          botId: botId("gone"),
+          name: "Gone",
+          description: "",
+          instructions: "",
+          avatarShape: "blob",
+          avatarColor: "#1A73E8",
+          modelSelection: { instanceId: CLAUDE, model: "claude-sonnet-5-5" },
+        });
+        yield* bots.remove({ botId: botId("gone") });
+
+        const made = yield* call("create_bot", { name: "Tax", instructions: "Do the tax." });
+        yield* bots.createThread({
+          botId: made.botId as PersonalBotId,
+          threadId: ThreadId.make("thread-tax"),
+        });
+        yield* call("remove_bot", { bot: "Tax", reason: "Not needed." });
+        const listed = (yield* service.listRemoved()).bots;
+        expect(listed.map((bot) => bot.name)).toEqual(["Tax"]);
+        expect(listed[0]).toMatchObject({
+          removedBy: "CFO",
+          reason: "Not needed.",
+          chats: 1,
+          modelLabel: "Opus 5.5 · M",
+        });
+
+        // The name was taken meanwhile: it comes back under a free one.
+        yield* bots.create({
+          botId: botId("othertax"),
+          name: "Tax",
+          description: "",
+          instructions: "",
+          avatarShape: "blob",
+          avatarColor: "#1A73E8",
+          modelSelection: { instanceId: CLAUDE, model: "claude-sonnet-5-5" },
+          team: "Finance",
+        });
+        const restored = yield* service.restore({ botId: made.botId });
+        expect(restored.renamedFrom).toBe("Tax");
+        expect(restored.bot).toMatchObject({
+          botId: made.botId,
+          name: "Tax (restored)",
+          instructions: "Do the tax.",
+          team: "Finance",
+        });
+        // Its chats never left, and it is listed again.
+        const sql = yield* SqlClient.SqlClient;
+        const links = yield* sql<{ readonly n: number }>`
+          SELECT count(*) AS n FROM personal_bot_threads WHERE bot_id = ${made.botId}
+        `;
+        expect(links[0]?.n).toBe(1);
+        expect((yield* liveBots).map((bot) => bot.name)).toContain("Tax (restored)");
+        // Audited, and no longer offered.
+        const audit = yield* sql<{ readonly bot_name: string; readonly restored_name: string }>`
+          SELECT bot_name, restored_name FROM personal_bot_restores
+        `;
+        expect(audit).toEqual([{ bot_name: "Tax", restored_name: "Tax (restored)" }]);
+        expect((yield* service.listRemoved()).bots).toEqual([]);
+        expect((yield* Effect.flip(service.restore({ botId: made.botId }))).message).toContain(
+          "Nothing to bring back",
+        );
+      }),
+    ),
+  );
+
   it.effect("a bot the lead created stays fully the lead's, with no message from the user", () =>
     withHarness((harness) =>
       Effect.gen(function* () {

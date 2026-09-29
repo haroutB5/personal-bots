@@ -16,6 +16,7 @@ import {
   Network,
   Plus,
   SquareTerminal,
+  UserRoundX,
 } from "lucide-react";
 
 import { primaryServerProvidersAtom } from "~/state/server";
@@ -42,6 +43,7 @@ import {
   usePersonalTheme,
 } from "./personalTheme";
 import { useAppVersion } from "./appVersion";
+import { useRemovedBots } from "./useRemovedBots";
 import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { PersonalProviderRows } from "./PersonalProviderRows";
 import { buildProviderUpdateRows } from "./providerUpdateRows";
@@ -279,6 +281,7 @@ export function PersonalSettingsScreen(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const profile = usePersonalProfile(environmentId);
   const list = usePersonalBotsList(environmentId);
+  const removedCount = useRemovedBots(environmentId).data?.bots.length ?? 0;
   const providers = useAtomValue(primaryServerProvidersAtom);
   const { label: versionLabel, updateAvailable } = useAppVersion();
   const versionNumber = versionLabel?.replace(/^v/, "") ?? null;
@@ -365,6 +368,38 @@ export function PersonalSettingsScreen(): JSX.Element {
               />
             </Link>
           </li>
+          {/* Only while a lead has removed something: an always-there empty row
+              would be a dead end for the common case. */}
+          {removedCount > 0 ? (
+            <li>
+              <Link to="/bots/settings/removed" className={SETTINGS_ROW}>
+                <UserRoundX
+                  aria-hidden="true"
+                  className="size-5 shrink-0 text-[var(--personal-text)]"
+                  strokeWidth={1.75}
+                />
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="text-[15px] font-semibold text-[var(--personal-text)]">
+                    Removed bots
+                  </span>
+                  <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
+                    Bots a team lead removed, and bringing them back
+                  </span>
+                </span>
+                <span
+                  aria-label={`${removedCount} removed`}
+                  className="min-w-6 shrink-0 rounded-full bg-[var(--personal-fill-muted)] px-2 py-0.5 text-center text-[13px] font-semibold text-[var(--personal-text)]"
+                >
+                  {removedCount}
+                </span>
+                <ChevronRight
+                  aria-hidden="true"
+                  className="size-5 shrink-0 text-[var(--personal-text-secondary)]"
+                  strokeWidth={1.75}
+                />
+              </Link>
+            </li>
+          ) : null}
         </ul>
       </section>
 

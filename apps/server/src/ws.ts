@@ -3291,6 +3291,16 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalBotsSetProfile, personalBots.setProfile(input), {
             "rpc.aggregate": "server",
           }),
+        // Owner-only: the app's own session, never an MCP credential. Restore brings a bot a
+        // team lead removed back with its settings, chats and memory.
+        [WS_METHODS.personalBotsListRemoved]: (_input) =>
+          observeRpcEffect(WS_METHODS.personalBotsListRemoved, personalLeadBots.listRemoved(), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalBotsRestore]: (input) =>
+          observeRpcEffect(WS_METHODS.personalBotsRestore, personalLeadBots.restore(input), {
+            "rpc.aggregate": "server",
+          }),
         // A team lead's request to remove or rewrite a bot it did not create. `decide` is the
         // tap on the card and the only way to approve one.
         [WS_METHODS.personalLeadBotChangesList]: (_input) =>

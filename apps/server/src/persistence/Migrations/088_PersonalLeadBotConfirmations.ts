@@ -2,15 +2,18 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 /**
- * Team-lead follow-ups (1.57). Additive only.
+ * Team-lead follow-ups (1.57). Additive only: three new tables, one new nullable
+ * column, one trigger.
  *
- *  - personal_lead_bot_confirmations: a lead's request to remove or rewrite a bot it does not
- *    own, waiting for the owner's tap on a card in the lead's chat.
- *  - personal_lead_bot_actions.confirmation_id: links the audit row of an approved change to
- *    the request that the owner approved.
- *  - personal_bot_team_moves (+ trigger on personal_bots.team): every team change, whichever
- *    path made it (the form, the Team screen drag, a sync), so a bot a lead created and the
- *    owner later moved is no longer "fully the lead's".
+ *  - personal_lead_bot_confirmations: a lead's request to remove or rewrite a bot it
+ *    does not own, waiting for the owner's tap on a card in the lead's chat.
+ *  - personal_lead_bot_actions.confirmation_id: links the audit row of an approved
+ *    change to the request that the owner approved.
+ *  - personal_bot_team_moves (+ trigger on personal_bots.team): every team change,
+ *    whichever path made it (the form, the Team screen drag, a sync), so a bot a
+ *    lead created and the owner later moved is no longer "fully the lead's".
+ *  - personal_bot_restores: the owner bringing a removed bot back (the audit table
+ *    for lead actions only admits create, update and remove).
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -76,5 +79,19 @@ export default Effect.gen(function* () {
       INSERT INTO personal_bot_team_moves (bot_id, from_team, to_team, moved_at)
       VALUES (NEW.bot_id, OLD.team, NEW.team, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
     END
+  `;
+
+  yield* sql`
+    CREATE TABLE personal_bot_restores (
+      restore_id TEXT PRIMARY KEY,
+      bot_id TEXT NOT NULL,
+      bot_name TEXT NOT NULL,
+      -- Set when the name was taken meanwhile and the bot came back under another one.
+      restored_name TEXT NOT NULL,
+      restored_at TEXT NOT NULL
+    )
+  `;
+  yield* sql`
+    CREATE INDEX idx_personal_bot_restores_bot ON personal_bot_restores (bot_id, restored_at)
   `;
 });

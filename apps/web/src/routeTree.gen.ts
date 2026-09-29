@@ -46,6 +46,7 @@ import { Route as PersonalBotsBotIdIndexRouteImport } from './routes/_personal.b
 import { Route as PersonalTasksRoutinesNewRouteImport } from './routes/_personal.tasks_.routines_.new'
 import { Route as PersonalTasksRoutinesRoutineIdRouteImport } from './routes/_personal.tasks_.routines_.$routineId'
 import { Route as PersonalBotsTeamsNewRouteImport } from './routes/_personal.bots_.teams.new'
+import { Route as PersonalBotsSettingsRemovedRouteImport } from './routes/_personal.bots_.settings_.removed'
 import { Route as PersonalBotsSettingsPasswordsRouteImport } from './routes/_personal.bots_.settings_.passwords'
 import { Route as PersonalBotsSettingsNotificationsRouteImport } from './routes/_personal.bots_.settings_.notifications'
 import { Route as PersonalBotsSettingsMemoryRouteImport } from './routes/_personal.bots_.settings_.memory'
@@ -244,6 +245,12 @@ const PersonalBotsTeamsNewRoute = PersonalBotsTeamsNewRouteImport.update({
   path: '/bots/teams/new',
   getParentRoute: () => PersonalRoute,
 } as any)
+const PersonalBotsSettingsRemovedRoute =
+  PersonalBotsSettingsRemovedRouteImport.update({
+    id: '/bots_/settings_/removed',
+    path: '/bots/settings/removed',
+    getParentRoute: () => PersonalRoute,
+  } as any)
 const PersonalBotsSettingsPasswordsRoute =
   PersonalBotsSettingsPasswordsRouteImport.update({
     id: '/bots_/settings_/passwords',
@@ -344,6 +351,7 @@ export interface FileRoutesByFullPath {
   '/bots/settings/memory': typeof PersonalBotsSettingsMemoryRoute
   '/bots/settings/notifications': typeof PersonalBotsSettingsNotificationsRoute
   '/bots/settings/passwords': typeof PersonalBotsSettingsPasswordsRoute
+  '/bots/settings/removed': typeof PersonalBotsSettingsRemovedRoute
   '/bots/teams/new': typeof PersonalBotsTeamsNewRoute
   '/tasks/routines/$routineId': typeof PersonalTasksRoutinesRoutineIdRoute
   '/tasks/routines/new': typeof PersonalTasksRoutinesNewRoute
@@ -391,6 +399,7 @@ export interface FileRoutesByTo {
   '/bots/settings/memory': typeof PersonalBotsSettingsMemoryRoute
   '/bots/settings/notifications': typeof PersonalBotsSettingsNotificationsRoute
   '/bots/settings/passwords': typeof PersonalBotsSettingsPasswordsRoute
+  '/bots/settings/removed': typeof PersonalBotsSettingsRemovedRoute
   '/bots/teams/new': typeof PersonalBotsTeamsNewRoute
   '/tasks/routines/$routineId': typeof PersonalTasksRoutinesRoutineIdRoute
   '/tasks/routines/new': typeof PersonalTasksRoutinesNewRoute
@@ -441,6 +450,7 @@ export interface FileRoutesById {
   '/_personal/bots_/settings_/memory': typeof PersonalBotsSettingsMemoryRoute
   '/_personal/bots_/settings_/notifications': typeof PersonalBotsSettingsNotificationsRoute
   '/_personal/bots_/settings_/passwords': typeof PersonalBotsSettingsPasswordsRoute
+  '/_personal/bots_/settings_/removed': typeof PersonalBotsSettingsRemovedRoute
   '/_personal/bots_/teams/new': typeof PersonalBotsTeamsNewRoute
   '/_personal/tasks_/routines_/$routineId': typeof PersonalTasksRoutinesRoutineIdRoute
   '/_personal/tasks_/routines_/new': typeof PersonalTasksRoutinesNewRoute
@@ -490,6 +500,7 @@ export interface FileRouteTypes {
     | '/bots/settings/memory'
     | '/bots/settings/notifications'
     | '/bots/settings/passwords'
+    | '/bots/settings/removed'
     | '/bots/teams/new'
     | '/tasks/routines/$routineId'
     | '/tasks/routines/new'
@@ -537,6 +548,7 @@ export interface FileRouteTypes {
     | '/bots/settings/memory'
     | '/bots/settings/notifications'
     | '/bots/settings/passwords'
+    | '/bots/settings/removed'
     | '/bots/teams/new'
     | '/tasks/routines/$routineId'
     | '/tasks/routines/new'
@@ -586,6 +598,7 @@ export interface FileRouteTypes {
     | '/_personal/bots_/settings_/memory'
     | '/_personal/bots_/settings_/notifications'
     | '/_personal/bots_/settings_/passwords'
+    | '/_personal/bots_/settings_/removed'
     | '/_personal/bots_/teams/new'
     | '/_personal/tasks_/routines_/$routineId'
     | '/_personal/tasks_/routines_/new'
@@ -865,6 +878,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PersonalBotsTeamsNewRouteImport
       parentRoute: typeof PersonalRoute
     }
+    '/_personal/bots_/settings_/removed': {
+      id: '/_personal/bots_/settings_/removed'
+      path: '/bots/settings/removed'
+      fullPath: '/bots/settings/removed'
+      preLoaderRoute: typeof PersonalBotsSettingsRemovedRouteImport
+      parentRoute: typeof PersonalRoute
+    }
     '/_personal/bots_/settings_/passwords': {
       id: '/_personal/bots_/settings_/passwords'
       path: '/bots/settings/passwords'
@@ -972,6 +992,7 @@ interface PersonalRouteChildren {
   PersonalBotsSettingsMemoryRoute: typeof PersonalBotsSettingsMemoryRoute
   PersonalBotsSettingsNotificationsRoute: typeof PersonalBotsSettingsNotificationsRoute
   PersonalBotsSettingsPasswordsRoute: typeof PersonalBotsSettingsPasswordsRoute
+  PersonalBotsSettingsRemovedRoute: typeof PersonalBotsSettingsRemovedRoute
   PersonalBotsTeamsNewRoute: typeof PersonalBotsTeamsNewRoute
   PersonalTasksRoutinesRoutineIdRoute: typeof PersonalTasksRoutinesRoutineIdRoute
   PersonalTasksRoutinesNewRoute: typeof PersonalTasksRoutinesNewRoute
@@ -998,6 +1019,7 @@ const PersonalRouteChildren: PersonalRouteChildren = {
   PersonalBotsSettingsNotificationsRoute:
     PersonalBotsSettingsNotificationsRoute,
   PersonalBotsSettingsPasswordsRoute: PersonalBotsSettingsPasswordsRoute,
+  PersonalBotsSettingsRemovedRoute: PersonalBotsSettingsRemovedRoute,
   PersonalBotsTeamsNewRoute: PersonalBotsTeamsNewRoute,
   PersonalTasksRoutinesRoutineIdRoute: PersonalTasksRoutinesRoutineIdRoute,
   PersonalTasksRoutinesNewRoute: PersonalTasksRoutinesNewRoute,

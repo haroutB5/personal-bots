@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
     readonly cause?: unknown;
   },
   reload: vi.fn(),
+  removedCount: 0,
   versionInfo: { label: "v1.9.4", updateAvailable: false } as {
     label: string | null;
     updateAvailable: boolean;
@@ -38,6 +39,11 @@ vi.mock("./usePersonalBots", () => ({
   usePersonalBotsList: () => ({ data: { bots: [] } }),
   usePersonalProfile: () => ({ data: { displayName: "Harout" } }),
 }));
+vi.mock("./useRemovedBots", () => ({
+  useRemovedBots: () => ({
+    data: { bots: Array.from({ length: state.removedCount }, (_, index) => ({ botId: index })) },
+  }),
+}));
 vi.mock("./appVersion", () => ({ useAppVersion: () => state.versionInfo }));
 
 let renderer: ReactTestRenderer | undefined;
@@ -47,6 +53,7 @@ afterEach(async () => {
   renderer = undefined;
   state.result = { _tag: "Success", value: { displayName: "Harout" } };
   state.reload.mockClear();
+  state.removedCount = 0;
   state.versionInfo = { label: "v1.9.4", updateAvailable: false };
   vi.unstubAllGlobals();
 });
@@ -293,5 +300,32 @@ describe("Settings auto-archive finished task chats", () => {
     });
     expect(findRow().props["aria-pressed"]).toBe(false);
     expect(stateLabel()).toBe("Off");
+  });
+});
+
+describe("Settings removed bots", () => {
+  const botsLinks = async () => {
+    stubWindow();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    await act(async () => {
+      renderer = create(<PersonalSettingsScreen />);
+    });
+    return renderer!.root
+      .findByProps({ "aria-labelledby": "settings-bots" })
+      .findAllByType("a")
+      .map((link) => link.props.href);
+  };
+
+  it("has no Removed bots row while nothing is removed", async () => {
+    expect(await botsLinks()).toEqual(["/bots/team", "/bots/new"]);
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Removed bots");
+  });
+
+  it("shows the row with a count once a lead has removed a bot", async () => {
+    state.removedCount = 3;
+    expect(await botsLinks()).toEqual(["/bots/team", "/bots/new", "/bots/settings/removed"]);
+    const badge = renderer!.root.findByProps({ "aria-label": "3 removed" });
+    expect(badge.props.children).toBe(3);
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Removed bots");
   });
 });

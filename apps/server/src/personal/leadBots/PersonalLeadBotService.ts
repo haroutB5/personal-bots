@@ -21,19 +21,23 @@ import {
   CommandId,
   ComposerContextId,
   MessageId,
+  ModelSelection,
   PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
   PERSONAL_TASK_TERMINAL_STATUSES,
   PersonalBotId,
+  PersonalBotsError,
   personalBotTeamLabel,
   PersonalLeadBotChangeId,
   PersonalLeadBotChangesError,
   type OrchestrationMessageContext,
   type PersonalBot,
   type PersonalBotNotificationMute,
+  type PersonalBotRestoreResult,
   type PersonalBotUpdateInput,
   type PersonalLeadBotChange,
   type PersonalLeadBotChangeDecideInput,
   type PersonalLeadBotChangeListResult,
+  type PersonalRemovedBotsListResult,
   type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -419,6 +423,12 @@ export class PersonalLeadBotService extends Context.Service<
     readonly sweepExpired: Effect.Effect<void>;
     /** Starts the periodic sweep (every 30 s). Park-aware. */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
+    /** Bots a lead removed and nobody has restored since. */
+    readonly listRemoved: () => Effect.Effect<PersonalRemovedBotsListResult, PersonalBotsError>;
+    /** The user brings a removed bot back, with its settings, chats and memory. */
+    readonly restore: (input: {
+      readonly botId: string;
+    }) => Effect.Effect<PersonalBotRestoreResult, PersonalBotsError>;
   }
 >()("t3/personal/leadBots/PersonalLeadBotService") {}
 
@@ -1614,6 +1624,158 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // ---- removed bots and Restore ---------------------------------------------
+
+  interface RemovedRow {
+    readonly botId: string;
+    readonly name: string;
+    readonly title: string;
+    readonly team: string;
+    readonly avatarShape: string;
+    readonly avatarColor: string;
+    readonly modelJson: string;
+    readonly removedAt: string;
+    readonly removedBy: string;
+    readonly reason: string | null;
+    readonly chats: number;
+  }
+
+  /**
+   * Bots a lead removed (the newest `remove` audit row is theirs) that are still
+   * removed and were not restored after it. A bot the user deleted with the app's
+   * own Delete has no such row, and one purged after a restore has a restore row
+   * newer than its removal: neither is listed, because their chats are gone.
+   */
+  const removedRows = sql<RemovedRow>`
+    SELECT b.bot_id AS "botId", b.name AS name, b.title AS title, b.team AS team,
+           b.avatar_shape AS "avatarShape", b.avatar_color AS "avatarColor",
+           b.model_selection_json AS "modelJson", b.deleted_at AS "removedAt",
+           a.lead_name AS "removedBy", a.reason AS reason,
+           (SELECT count(*) FROM personal_bot_threads t WHERE t.bot_id = b.bot_id) AS chats
+    FROM personal_bots b
+    JOIN personal_lead_bot_actions a ON a.action_id = (
+      SELECT a2.action_id FROM personal_lead_bot_actions a2
+      WHERE a2.target_bot_id = b.bot_id AND a2.action = 'remove'
+      ORDER BY a2.created_at DESC LIMIT 1
+    )
+    WHERE b.deleted_at IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM personal_bot_restores r
+        WHERE r.bot_id = b.bot_id AND r.restored_at > a.created_at
+      )
+    ORDER BY b.deleted_at DESC
+  `;
+
+  const botsFailure = (message: string) => new PersonalBotsError({ message });
+
+  const listRemoved: PersonalLeadBotService["Service"]["listRemoved"] = () =>
+    Effect.gen(function* () {
+      const all = yield* providers.getProviders;
+      const rows = yield* removedRows;
+      return {
+        bots: rows.map((row) => {
+          let modelLabel = "";
+          try {
+            const selection = Schema.decodeUnknownSync(Schema.fromJsonString(ModelSelection))(
+              row.modelJson,
+            );
+            modelLabel = leadBotModelLabel(selection, all);
+          } catch {
+            modelLabel = "";
+          }
+          return {
+            botId: PersonalBotId.make(row.botId),
+            name: row.name,
+            title: row.title,
+            team: row.team,
+            avatarShape: row.avatarShape as BotAvatarShape,
+            avatarColor: row.avatarColor,
+            modelLabel,
+            removedAt: DateTime.toUtc(DateTime.makeUnsafe(row.removedAt)),
+            removedBy: row.removedBy,
+            reason: row.reason,
+            chats: row.chats,
+          };
+        }),
+      };
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal removed bots list failed", {
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.andThen(Effect.fail(botsFailure("Could not read the removed bots.")))),
+      ),
+    );
+
+  const restore: PersonalLeadBotService["Service"]["restore"] = (input) =>
+    lock
+      .withPermit(
+        Effect.gen(function* () {
+          const removed = (yield* removedRows).find((row) => row.botId === input.botId);
+          if (removed === undefined) {
+            return yield* botsFailure(
+              "That bot was not removed by a team lead, or it was already restored. Nothing to bring back.",
+            );
+          }
+          // The name may have been taken since: come back under a free one rather than clash.
+          const live = yield* repository.listBots();
+          const taken = new Set(
+            live.flatMap((bot) => [normalizeBotNameKey(bot.name), rawBotNameKey(bot.name)]),
+          );
+          const free = (candidate: string) =>
+            !taken.has(normalizeBotNameKey(candidate)) && !taken.has(rawBotNameKey(candidate));
+          let name = removed.name;
+          for (let attempt = 1; !free(name); attempt += 1) {
+            name = `${removed.name} (restored${attempt > 1 ? ` ${attempt}` : ""})`;
+          }
+          const nowIso = DateTime.formatIso(yield* DateTime.now);
+          const restoreId = NodeCrypto.randomUUID();
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                UPDATE personal_bots
+                SET deleted_at = NULL, name = ${name}, updated_at = ${nowIso}
+                WHERE bot_id = ${removed.botId} AND deleted_at IS NOT NULL
+              `;
+              yield* sql`
+                INSERT INTO personal_bot_restores (
+                  restore_id, bot_id, bot_name, restored_name, restored_at
+                ) VALUES (${restoreId}, ${removed.botId}, ${removed.name}, ${name}, ${nowIso})
+              `;
+            }),
+          );
+          yield* Effect.logInfo("personal bot restored", {
+            restoreId,
+            botId: removed.botId,
+            name,
+            removedName: removed.name,
+          });
+          const restored = yield* repository.getBotById({
+            botId: PersonalBotId.make(removed.botId),
+          });
+          if (Option.isNone(restored)) {
+            return yield* botsFailure("The bot could not be read after it was restored.");
+          }
+          return {
+            bot: restored.value,
+            renamedFrom: name === removed.name ? null : removed.name,
+          };
+        }),
+      )
+      .pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt;
+          const failure = Cause.findErrorOption(cause);
+          if (Option.isSome(failure) && Schema.is(PersonalBotsError)(failure.value)) {
+            return Effect.fail(failure.value);
+          }
+          return Effect.logWarning("personal bot restore failed", {
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.andThen(Effect.fail(botsFailure("Could not restore the bot."))));
+        }),
+      );
+
   return {
     create,
     update,
@@ -1622,6 +1784,8 @@ export const make = Effect.gen(function* () {
     decide,
     sweepExpired,
     start,
+    listRemoved,
+    restore,
   } satisfies PersonalLeadBotService["Service"];
 });
 

@@ -333,10 +333,13 @@ import {
   PersonalSecretCreateInput,
 } from "./personalSecrets.ts";
 import {
+  PersonalBotRestoreInput,
+  PersonalBotRestoreResult,
   PersonalLeadBotChange,
   PersonalLeadBotChangeDecideInput,
   PersonalLeadBotChangeListResult,
   PersonalLeadBotChangesError,
+  PersonalRemovedBotsListResult,
 } from "./personalLeadBots.ts";
 import {
   PersonalConnection,
@@ -582,6 +585,8 @@ export const WS_METHODS = {
   personalBotsSetProfile: "personalBots.setProfile",
   personalBotsListFiles: "personalBots.listFiles",
   personalBotsRecheckProvider: "personalBots.recheckProvider",
+  personalBotsListRemoved: "personalBots.listRemoved",
+  personalBotsRestore: "personalBots.restore",
   personalLeadBotChangesList: "personalLeadBotChanges.list",
   personalLeadBotChangesDecide: "personalLeadBotChanges.decide",
   personalFilesDelete: "personalFiles.delete",
@@ -1271,6 +1276,20 @@ const WsPersonalBotsRecheckProviderRpc = Rpc.make(WS_METHODS.personalBotsRecheck
 const WsPersonalBotsListFilesRpc = Rpc.make(WS_METHODS.personalBotsListFiles, {
   payload: Schema.Struct({}),
   success: PersonalFilesListResult,
+  error: PersonalBotsRpcError,
+});
+
+// Bots a team lead removed (soft delete), and bringing one back. Owner only:
+// no MCP tool reaches either.
+const WsPersonalBotsListRemovedRpc = Rpc.make(WS_METHODS.personalBotsListRemoved, {
+  payload: Schema.Struct({}),
+  success: PersonalRemovedBotsListResult,
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsRestoreRpc = Rpc.make(WS_METHODS.personalBotsRestore, {
+  payload: PersonalBotRestoreInput,
+  success: PersonalBotRestoreResult,
   error: PersonalBotsRpcError,
 });
 
@@ -2405,6 +2424,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalBotsSetProfileRpc,
   WsPersonalBotsListFilesRpc,
   WsPersonalBotsRecheckProviderRpc,
+  WsPersonalBotsListRemovedRpc,
+  WsPersonalBotsRestoreRpc,
   WsPersonalLeadBotChangesListRpc,
   WsPersonalLeadBotChangesDecideRpc,
   WsPersonalFilesDeleteRpc,

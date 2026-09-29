@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
-import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { PersonalBotId } from "./personalBots.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { BotAvatarShape, PersonalBot, PersonalBotId } from "./personalBots.ts";
 
 /**
  * A team lead's request to remove or rewrite a bot it did not create, waiting
@@ -80,3 +80,41 @@ export class PersonalLeadBotChangesError extends Schema.TaggedError<PersonalLead
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+/**
+ * A bot a team lead removed (soft delete: its chats, memory and settings were
+ * kept), as the owner sees it in the "Removed bots" list.
+ */
+export const PersonalRemovedBot = Schema.Struct({
+  botId: PersonalBotId,
+  name: Schema.String,
+  title: Schema.String,
+  team: Schema.String,
+  avatarShape: BotAvatarShape,
+  avatarColor: Schema.String,
+  /** Short model label ("Sonnet 5.5 · H"), or the raw model id. */
+  modelLabel: Schema.String,
+  removedAt: Schema.DateTimeUtcFromString,
+  /** The lead that removed it. */
+  removedBy: Schema.String,
+  reason: Schema.NullOr(Schema.String),
+  chats: NonNegativeInt,
+});
+export type PersonalRemovedBot = typeof PersonalRemovedBot.Type;
+
+export const PersonalRemovedBotsListResult = Schema.Struct({
+  bots: Schema.Array(PersonalRemovedBot),
+});
+export type PersonalRemovedBotsListResult = typeof PersonalRemovedBotsListResult.Type;
+
+export const PersonalBotRestoreInput = Schema.Struct({
+  botId: PersonalBotId,
+});
+export type PersonalBotRestoreInput = typeof PersonalBotRestoreInput.Type;
+
+export const PersonalBotRestoreResult = Schema.Struct({
+  bot: PersonalBot,
+  /** Set when the name was taken by another bot meanwhile: what it was called when removed. */
+  renamedFrom: Schema.NullOr(Schema.String),
+});
+export type PersonalBotRestoreResult = typeof PersonalBotRestoreResult.Type;

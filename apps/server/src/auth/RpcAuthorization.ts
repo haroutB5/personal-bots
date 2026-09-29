@@ -118,6 +118,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalBotsListFiles]: AuthOrchestrationReadScope,
   [WS_METHODS.personalBotsRecheckProvider]: AuthOrchestrationOperateScope,
   // Owner-only, like every other write: no MCP tool reaches these.
+  [WS_METHODS.personalBotsListRemoved]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalBotsRestore]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalLeadBotChangesList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalLeadBotChangesDecide]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalFilesDelete]: AuthOrchestrationOperateScope,

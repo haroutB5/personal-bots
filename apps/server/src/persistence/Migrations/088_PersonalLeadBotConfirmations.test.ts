@@ -87,5 +87,17 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
         assert.match(stamp[0]!.moved_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
       }),
     );
+
+    it.effect("keeps a row per restore", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+          INSERT INTO personal_bot_restores (restore_id, bot_id, bot_name, restored_name, restored_at)
+          VALUES ('r1', 'bot-a', 'Alpha', 'Alpha (restored)', '2026-09-29T16:00:00.000Z')
+        `;
+        const rows = yield* sql`SELECT restore_id, restored_name FROM personal_bot_restores`;
+        assert.deepEqual(rows, [{ restore_id: "r1", restored_name: "Alpha (restored)" }]);
+      }),
+    );
   },
 );
