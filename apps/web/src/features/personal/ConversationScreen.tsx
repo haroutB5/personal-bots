@@ -134,6 +134,7 @@ import { useDeleteChat } from "./useDeleteChat";
 import { RenameChatDialog } from "./RenameChatDialog";
 import { pendingForThread } from "./pendingOutgoing";
 import { renameChatInitialTitle, useRenameChat } from "./renameChat";
+import { usePersonalBackTarget } from "./usePersonalBackTarget";
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -197,6 +198,7 @@ export function ConversationScreen({
   threadId: string;
 }): JSX.Element {
   const navigate = useNavigate();
+  const backTarget = usePersonalBackTarget();
   const environmentId = usePersonalEnvironmentId();
   const threadId = ThreadId.make(threadIdParam);
   const threadRef = useMemo(
@@ -753,7 +755,11 @@ export function ConversationScreen({
       {diagnosticsEnabled() ? <DiagnosticsOverlay /> : null}
       <header className="personal-column flex h-16 shrink-0 items-center gap-3 px-2">
         {/* md+: the bot list is always beside the chat, so Back has nowhere to go. */}
-        <Link to="/bots" aria-label="Back to Bots" className={cn(ICON_BUTTON, "md:hidden")}>
+        <Link
+          to={backTarget.to}
+          aria-label={backTarget.label}
+          className={cn(ICON_BUTTON, "md:hidden")}
+        >
           <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
         </Link>
         {bot !== null ? (

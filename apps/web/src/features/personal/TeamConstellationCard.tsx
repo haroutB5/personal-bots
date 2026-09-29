@@ -361,7 +361,12 @@ function MemberNode({
     // pan-y keeps a flick scrolling the page; the long press that lifts a bot
     // blocks touchmove itself once it matures.
     touchAction: "pan-y pinch-zoom",
+    // iOS starts text selection and its callout on the same long press that
+    // lifts a bot; the node must never be selectable.
     WebkitTouchCallout: "none",
+    WebkitUserSelect: "none",
+    userSelect: "none",
+    WebkitTapHighlightColor: "transparent",
     opacity: lifted ? 0.35 : moving ? 0.7 : 1,
   };
   return (
@@ -445,6 +450,9 @@ function HubNode({
         transform: "translateX(-50%)",
         touchAction: "pan-y pinch-zoom",
         WebkitTouchCallout: "none",
+        WebkitUserSelect: "none",
+        userSelect: "none",
+        WebkitTapHighlightColor: "transparent",
         opacity: lifted ? 0.35 : moving ? 0.7 : 1,
       }}
     >

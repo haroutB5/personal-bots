@@ -2,7 +2,14 @@ import type { RouterHistory } from "@tanstack/react-router";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
-import { isPersonalChatPath } from "./botsBackStack";
+import {
+  isPersonalChatPath,
+  TEAM_BEHIND_STATE_KEY,
+  TEAM_RESUME_STATE_KEY,
+  TEAM_VIEW_STATE_KEY,
+} from "./botsBackStack";
+import { parseTeamView, type TeamView } from "./teamView";
+import { usePersonalBackTarget } from "./usePersonalBackTarget";
 
 /**
  * Reopens the chat the user left when the installed app comes back cold.
@@ -31,17 +38,35 @@ const RESUMED_STATE_KEY = "personalResumedChat";
 
 type KeyValueStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
+/**
+ * The chat was opened from the Team screen, so Back from it goes there. Kept
+ * with the chat because the history that says so is gone after iOS ends the app.
+ */
+export interface SavedTeamOrigin {
+  readonly view: TeamView | null;
+}
+
 interface SavedChat {
   readonly path: string;
   readonly at: number;
+  readonly team: SavedTeamOrigin | null;
 }
 
 function parseSaved(raw: string | null): SavedChat | null {
   if (raw === null) return null;
   try {
-    const data = JSON.parse(raw) as { path?: unknown; at?: unknown } | null;
+    const data = JSON.parse(raw) as {
+      path?: unknown;
+      at?: unknown;
+      team?: unknown;
+      teamView?: unknown;
+    } | null;
     if (typeof data?.path !== "string" || typeof data.at !== "number") return null;
-    return { path: data.path, at: data.at };
+    return {
+      path: data.path,
+      at: data.at,
+      team: data.team === true ? { view: parseTeamView(data.teamView) } : null,
+    };
   } catch {
     return null;
   }
@@ -49,6 +74,14 @@ function parseSaved(raw: string | null): SavedChat | null {
 
 /** The saved chat path when it is still fresh, else null (and drops a stale one). */
 export function readLastChat(storage: KeyValueStorage | null, now: number): string | null {
+  return readLastChatEntry(storage, now)?.path ?? null;
+}
+
+/** The saved chat, with where it was opened from, when it is still fresh. */
+export function readLastChatEntry(
+  storage: KeyValueStorage | null,
+  now: number,
+): { readonly path: string; readonly team: SavedTeamOrigin | null } | null {
   if (storage === null) return null;
   try {
     const saved = parseSaved(storage.getItem(LAST_CHAT_STORAGE_KEY));
@@ -61,7 +94,7 @@ export function readLastChat(storage: KeyValueStorage | null, now: number): stri
       storage.removeItem(LAST_CHAT_STORAGE_KEY);
       return null;
     }
-    return saved.path;
+    return { path: saved.path, team: saved.team };
   } catch {
     return null;
   }
@@ -72,11 +105,19 @@ export function rememberLastChat(
   storage: KeyValueStorage | null,
   pathname: string,
   now: number,
+  team: SavedTeamOrigin | null = null,
 ): void {
   if (storage === null) return;
   try {
     if (isPersonalChatPath(pathname)) {
-      storage.setItem(LAST_CHAT_STORAGE_KEY, JSON.stringify({ path: pathname, at: now }));
+      storage.setItem(
+        LAST_CHAT_STORAGE_KEY,
+        JSON.stringify(
+          team === null
+            ? { path: pathname, at: now }
+            : { path: pathname, at: now, team: true, teamView: team.view },
+        ),
+      );
     } else {
       storage.removeItem(LAST_CHAT_STORAGE_KEY);
     }
@@ -114,9 +155,20 @@ export function resumeLastChatAtBoot(history: RouterHistory, deps: ResumeBootDep
   }
   if (!deps.standalone) return null;
   if (!START_PATHS.has(here.pathname) || here.search !== "" || here.hash !== "") return null;
-  const path = readLastChat(deps.storage, deps.now);
-  if (path === null) return null;
-  history.replace(path, { [RESUMED_STATE_KEY]: true } as never, { ignoreBlocker: true });
+  const saved = readLastChatEntry(deps.storage, deps.now);
+  if (saved === null) return null;
+  const { path, team } = saved;
+  // A chat opened from the Team screen goes back there: say so, and hand over
+  // how the Team screen looked, for botsBackStack to write behind the chat.
+  const state =
+    team === null
+      ? { [RESUMED_STATE_KEY]: true }
+      : {
+          [RESUMED_STATE_KEY]: true,
+          [TEAM_RESUME_STATE_KEY]: true,
+          ...(team.view === null ? {} : { [TEAM_VIEW_STATE_KEY]: team.view }),
+        };
+  history.replace(path, state as never, { ignoreBlocker: true });
   history.flush();
   resumedChat = path;
   return path;
@@ -137,7 +189,15 @@ export function trackLastChat(history: RouterHistory, deps: TrackLastChatDeps): 
   const record = () => {
     const { pathname } = history.location;
     if (resumedChat !== null && pathname !== resumedChat) resumedChat = null;
-    rememberLastChat(deps.storage, pathname, deps.now());
+    const state = (history.location.state ?? {}) as unknown as Record<string, unknown>;
+    rememberLastChat(
+      deps.storage,
+      pathname,
+      deps.now(),
+      state[TEAM_BEHIND_STATE_KEY] === true
+        ? { view: parseTeamView(state[TEAM_VIEW_STATE_KEY]) }
+        : null,
+    );
   };
   record();
   const unsubscribe = history.subscribe(record);
@@ -161,16 +221,17 @@ export function leaveResumedChatIfGone(
 ): boolean {
   if (!gone || resumedChat !== pathname) return false;
   resumedChat = null;
-  // /bots sits right behind, so this steps back onto it (botsBackStack.ts).
+  // /bots (or the Team screen) sits right behind, so this steps back onto it (botsBackStack.ts).
   goToBots();
   return true;
 }
 
 export function useLeaveResumedChatIfGone(pathname: string, gone: boolean): void {
   const navigate = useNavigate();
+  const backTarget = usePersonalBackTarget();
   useEffect(() => {
-    leaveResumedChatIfGone(pathname, gone, () => void navigate({ to: "/bots" }));
-  }, [gone, pathname, navigate]);
+    leaveResumedChatIfGone(pathname, gone, () => void navigate({ to: backTarget.to }));
+  }, [backTarget.to, gone, pathname, navigate]);
 }
 
 /** Browser defaults for main.tsx. */

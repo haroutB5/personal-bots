@@ -1,8 +1,9 @@
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import { useLocation, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 
+import { behindOfState } from "./botsBackStack";
 import { ChatsScreen } from "./ChatsScreen";
 import {
   chatSwipeBackEnabled,
@@ -15,6 +16,10 @@ import { isStandaloneDisplay } from "./serviceWorker";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 
 const BOTS_ROUTE_ID = "/_personal/bots" as const;
+const TEAM_ROUTE_ID = "/_personal/bots_/team" as const;
+const TeamScreen = lazy(() =>
+  import("./TeamScreen").then((module) => ({ default: module.TeamScreen })),
+);
 const SETTLE_MS = 220;
 /** How far left the list starts, as iOS navigation does (share of the width). */
 const PARALLAX = 0.3;
@@ -51,7 +56,8 @@ function scrollableAncestor(element: Element | null): Element | null {
 }
 
 /**
- * An iOS-style edge swipe back to Bots for the phone shell, on chats in the
+ * An iOS-style edge swipe back to Bots (or, for a chat opened from the Team
+ * screen, back to the Team screen) for the phone shell, on chats in the
  * installed app (see edgeSwipeBack.ts for why the native one is replaced).
  * The shell puts `style` on its root and renders `layers` beside it. The Bots
  * list is rendered under the chat only while a swipe is on screen; letting go
@@ -67,6 +73,9 @@ export function useChatSwipeBack({ wide }: { readonly wide: boolean }): {
   const navigate = useNavigate();
   const location = useLocation();
   const routeId = useRouterState({ select: (state) => state.matches.at(-1)?.routeId });
+  // What is behind the chat: the Bots list, or the Team screen it was opened from.
+  const behindTeam = behindOfState(location.state) === "team";
+  const targetRouteId = behindTeam ? TEAM_ROUTE_ID : BOTS_ROUTE_ID;
   const enabled = chatSwipeBackEnabled({
     pathname: location.pathname,
     state: location.state,
@@ -91,13 +100,13 @@ export function useChatSwipeBack({ wide }: { readonly wide: boolean }): {
   // inside it on every chat open, so it never warmed anything.
   useEffect(() => {
     if (!enabled) return;
-    const route = router.routesById[BOTS_ROUTE_ID] as
-      | (typeof router.routesById)[typeof BOTS_ROUTE_ID]
+    const route = router.routesById[targetRouteId] as
+      | (typeof router.routesById)[typeof targetRouteId]
       | undefined;
     if (route === undefined) return;
     // Undefined when the chunk is already loaded.
     void router.loadRouteChunk(route)?.catch(() => undefined);
-  }, [enabled, router]);
+  }, [enabled, router, targetRouteId]);
 
   // Once the routed Bots page is what the column renders, the list beneath
   // has done its job; leaving the chat any other way mid-swipe (a
@@ -106,13 +115,13 @@ export function useChatSwipeBack({ wide }: { readonly wide: boolean }): {
   const pathname = location.pathname;
   const [seenPath, setSeenPath] = useState(pathname);
   const leaving = phase.kind === "settle" && phase.leaving;
-  if (leaving && routeId === BOTS_ROUTE_ID) {
+  if (leaving && routeId === targetRouteId) {
     setPhase({ kind: "idle" });
   } else if (seenPath !== pathname) {
     setSeenPath(pathname);
     if (!leaving) setPhase({ kind: "idle" });
   }
-  const shown: Phase = leaving && routeId === BOTS_ROUTE_ID ? { kind: "idle" } : phase;
+  const shown: Phase = leaving && routeId === targetRouteId ? { kind: "idle" } : phase;
 
   useEffect(() => {
     const strip = stripRef.current;
@@ -190,8 +199,9 @@ export function useChatSwipeBack({ wide }: { readonly wide: boolean }): {
       }
       setPhase({ kind: "settle", offset: window.innerWidth, leaving: true });
       timer = window.setTimeout(() => {
-        // The arrow's own path: /bots is right behind, so this steps back.
-        void navigate({ to: "/bots" });
+        // The arrow's own path: the Bots list (or the Team screen) is right
+        // behind, so this steps back.
+        void navigate({ to: behindTeam ? "/bots/team" : "/bots" });
         window.clearTimeout(leaveFallback.current);
         leaveFallback.current = window.setTimeout(() => setPhase({ kind: "idle" }), 2000);
       }, SETTLE_MS);
@@ -211,7 +221,7 @@ export function useChatSwipeBack({ wide }: { readonly wide: boolean }): {
       strip.removeEventListener("touchend", onEnd);
       strip.removeEventListener("touchcancel", onCancel);
     };
-  }, [enabled, navigate]);
+  }, [behindTeam, enabled, navigate]);
 
   const moving = shown.kind !== "idle";
   const offset = shown.kind === "idle" ? 0 : shown.offset;
@@ -242,7 +252,13 @@ export function useChatSwipeBack({ wide }: { readonly wide: boolean }): {
           }}
         >
           <div className="min-h-0 flex-1 overflow-hidden pt-[env(safe-area-inset-top)]">
-            <ChatsScreen />
+            {behindTeam ? (
+              <Suspense fallback={null}>
+                <TeamScreen />
+              </Suspense>
+            ) : (
+              <ChatsScreen />
+            )}
           </div>
           <PersonalTabBar active="chats" />
           <div

@@ -60,6 +60,7 @@ import {
   usePersonalEnvironmentId,
   usePersonalProfile,
 } from "./usePersonalBots";
+import { usePersonalBackTarget } from "./usePersonalBackTarget";
 import { personalGroupAddMember } from "./usePersonalGroups";
 
 const FIELD_CLASS =
@@ -241,6 +242,7 @@ function PersonalPageHeader({
   /** Back returns to this group's settings instead of the Bots list. */
   backToGroupId?: string | null;
 }) {
+  const backTarget = usePersonalBackTarget();
   return (
     <header className="flex h-14 items-center gap-1">
       {showBack && backToGroupId !== null ? (
@@ -255,8 +257,8 @@ function PersonalPageHeader({
         </Link>
       ) : showBack ? (
         <Link
-          to="/bots"
-          aria-label="Back to Bots"
+          to={backTarget.to}
+          aria-label={backTarget.label}
           className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >
           <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
@@ -292,10 +294,11 @@ function BotForm({
   groupId?: string | null;
 }): JSX.Element {
   const navigate = useNavigate();
+  const backTarget = usePersonalBackTarget();
   const addToGroup = useAtomCommand(personalGroupAddMember, { reportFailure: false });
   const leave = () =>
     groupId === null
-      ? navigate({ to: "/bots" })
+      ? navigate({ to: backTarget.to })
       : navigate({
           to: "/bots/groups/$groupId",
           params: { groupId },
@@ -925,6 +928,7 @@ export function EditBotScreen({
   fromGroupId?: string | null;
 }): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
+  const backTarget = usePersonalBackTarget();
   const list = usePersonalBotsList(environmentId);
   const bot = list.data?.bots.find((candidate) => candidate.botId === botId) ?? null;
   return (
@@ -940,8 +944,8 @@ export function EditBotScreen({
       ) : list.data !== null ? (
         <p className="mt-4 text-[15px] text-[var(--personal-text-secondary)]">
           This bot no longer exists.{" "}
-          <Link to="/bots" className="font-medium text-[var(--personal-text)] underline">
-            Back to Bots
+          <Link to={backTarget.to} className="font-medium text-[var(--personal-text)] underline">
+            {backTarget.label}
           </Link>
         </p>
       ) : environmentId === null ? (

@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -10,7 +10,7 @@ import {
   type PersonalBot,
   type PersonalBotTeam,
 } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 
 import { Sheet, SheetPopup, SheetTitle } from "~/components/ui/sheet";
@@ -19,6 +19,7 @@ import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { PersonalPageHeader } from "./BotForm";
+import { TEAM_VIEW_STATE_KEY } from "./botsBackStack";
 import { isThreadLive } from "./botSummaries";
 import { botModelShortLabel } from "./botModelLabel";
 import { commandFailureMessage } from "./commandFeedback";
@@ -58,6 +59,7 @@ import {
   type TeamDropTarget,
 } from "./teamDiagramModel";
 import { takeTeamNotice, type TeamNotice } from "./teamNotice";
+import { parseTeamView, registerTeamViewSource, type TeamView } from "./teamView";
 import { usePersonalTasks } from "./usePersonalAutomation";
 import {
   personalBotUpdate,
@@ -99,6 +101,54 @@ interface ConfirmState {
 
 const NO_BOTS: ReadonlyArray<PersonalBot> = [];
 
+/** The element the Team screen scrolls in: `main`, or the clipped column behind a chat mid-swipe. */
+function teamScroller(from: Element | null): HTMLElement | null {
+  for (let node = from?.parentElement ?? null; node !== null; node = node.parentElement) {
+    const overflowY = getComputedStyle(node).overflowY;
+    if (overflowY === "auto" || overflowY === "scroll" || overflowY === "hidden") return node;
+  }
+  return null;
+}
+
+/** How far the screen is scrolled: the top card and how far past its top edge, plus the raw offset. */
+function readTeamScroll(container: HTMLElement | null): Omit<TeamView, "membersTeam"> {
+  const scroller = teamScroller(container);
+  if (container === null || scroller === null) {
+    return { scrollTop: 0, anchorTeam: null, anchorOffset: 0 };
+  }
+  const top = scroller.getBoundingClientRect().top;
+  for (const card of container.querySelectorAll<HTMLElement>("[data-team]")) {
+    const rect = card.getBoundingClientRect();
+    if (rect.bottom > top + 8) {
+      return {
+        scrollTop: scroller.scrollTop,
+        anchorTeam: card.getAttribute("data-team"),
+        anchorOffset: Math.round(top - rect.top),
+      };
+    }
+  }
+  return { scrollTop: scroller.scrollTop, anchorTeam: null, anchorOffset: 0 };
+}
+
+/** Puts the screen back where {@link readTeamScroll} found it. False when it has nowhere to scroll yet. */
+function applyTeamScroll(container: HTMLElement | null, view: TeamView): boolean {
+  const scroller = teamScroller(container);
+  if (container === null || scroller === null) return false;
+  if (view.anchorTeam !== null) {
+    const card = container.querySelector<HTMLElement>(
+      `[data-team="${CSS.escape(view.anchorTeam)}"]`,
+    );
+    if (card !== null) {
+      const delta =
+        card.getBoundingClientRect().top - scroller.getBoundingClientRect().top + view.anchorOffset;
+      scroller.scrollTop += delta;
+      return true;
+    }
+  }
+  scroller.scrollTop = view.scrollTop;
+  return true;
+}
+
 function prefersReducedMotion(): boolean {
   return (
     typeof window.matchMedia === "function" &&
@@ -121,6 +171,7 @@ function TeamBoard({
   customTeams,
   focusTeam,
   onCreated,
+  initialView,
 }: {
   readonly bots: ReadonlyArray<PersonalBot>;
   /** Every bot, group-only ones too: the New team form checks names against all of them. */
@@ -133,6 +184,8 @@ function TeamBoard({
   /** A team just made: its card is brought into view once it is drawn. */
   readonly focusTeam: string | null;
   readonly onCreated: (notice: TeamNotice) => void;
+  /** Coming back from a page opened here: how the screen was left. */
+  readonly initialView: TeamView | null;
 }): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const focusedTeam = useRef<string | null>(null);
@@ -145,7 +198,7 @@ function TeamBoard({
   const [hint, setHint] = useState("");
   const [tapBotId, setTapBotId] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
-  const [membersTeam, setMembersTeam] = useState<string | null>(null);
+  const [membersTeam, setMembersTeam] = useState<string | null>(initialView?.membersTeam ?? null);
   const [newTeamBotId, setNewTeamBotId] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
   const updateBot = useAtomCommand(personalBotUpdate);
@@ -249,6 +302,51 @@ function TeamBoard({
     (botId: string) => dropBots.find((bot) => bot.botId === botId) ?? null,
     [dropBots],
   );
+
+  // What the screen looks like is handed to the history when a bot, a chat, an
+  // edit form or a task is opened from it (botsBackStack.ts), and put back here
+  // when Back returns: the scroll position, and the members list if it was open.
+  const membersTeamRef = useRef(membersTeam);
+  membersTeamRef.current = membersTeam;
+  useEffect(
+    () =>
+      registerTeamViewSource(() => ({
+        ...readTeamScroll(containerRef.current),
+        membersTeam: membersTeamRef.current,
+      })),
+    [],
+  );
+  useLayoutEffect(() => {
+    if (initialView === null) return;
+    const container = containerRef.current;
+    applyTeamScroll(container, initialView);
+    // The Working now card and the cards' own measuring settle just after the
+    // first paint and move things: apply again until the owner takes the scroll.
+    const scroller = teamScroller(container);
+    let stopped = false;
+    const settle = () => {
+      if (!stopped) applyTeamScroll(container, initialView);
+    };
+    const frames = [0, 0].map(() => 0);
+    frames[0] = window.requestAnimationFrame(() => {
+      settle();
+      frames[1] = window.requestAnimationFrame(settle);
+    });
+    const timer = window.setTimeout(settle, 500);
+    const stop = () => {
+      stopped = true;
+    };
+    scroller?.addEventListener("touchstart", stop, { passive: true, once: true });
+    scroller?.addEventListener("wheel", stop, { passive: true, once: true });
+    return () => {
+      stopped = true;
+      for (const frame of frames) window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      scroller?.removeEventListener("touchstart", stop);
+      scroller?.removeEventListener("wheel", stop);
+    };
+    // Once, when the screen first draws its cards.
+  }, []);
 
   const failMessage = (result: Parameters<typeof commandFailureMessage>[0], fallback: string) =>
     friendlyTurnError(commandFailureMessage(result, fallback) ?? fallback, fallback).message;
@@ -416,7 +514,7 @@ function TeamBoard({
     [applyMove, dropBot, zoneTargets],
   );
 
-  const { drag, handlersFor, cancel } = useTeamBotDrag({
+  const { drag, tokenRef, handlersFor, cancel } = useTeamBotDrag({
     zoneAt,
     onLift: useCallback(
       (botId: string) => {
@@ -497,6 +595,84 @@ function TeamBoard({
     return teamDropOutcome(bot, target, dropBots).kind === "blocked" ? "review" : "info";
   }, [drag, dropBot, dropBots, zoneTargets]);
 
+  const removeTeam = useCallback(
+    async (team: string) => {
+      if (environmentId === null || removing) return;
+      setRemoving(true);
+      setFeedback(null);
+      try {
+        const result = await saveProfile({
+          environmentId,
+          input: { teamChange: { operation: "delete", name: team.trim() } },
+        });
+        if (result._tag !== "Success") {
+          setFeedback({
+            tone: "error",
+            text: commandFailureMessage(result, "Couldn't remove the team. Try again.") ?? "",
+          });
+        }
+      } finally {
+        setRemoving(false);
+      }
+    },
+    [environmentId, removing, saveProfile],
+  );
+
+  // The cards are one memoised element. While a finger drags, the hint, the lit
+  // drop card and the banner change under it, and none of that may render the
+  // constellations again: the layout under the overlay is frozen for the drag.
+  const draggingBotId = drag?.botId ?? null;
+  const movingBotId = pending?.botId ?? null;
+  const cards = useMemo(
+    () =>
+      groups.map((group) => {
+        const lead = group.leadBotId === null ? undefined : botById.get(group.leadBotId);
+        const members = group.memberBotIds.flatMap((id) => {
+          const bot = botById.get(id);
+          return bot === undefined ? [] : [entryOf(bot)];
+        });
+        const spokes = new Map<string, ConstellationSpoke>();
+        for (const entry of counts) {
+          if (entry.from !== group.leadBotId) continue;
+          spokes.set(entry.to, { recent: entry.recent, running: entry.running > 0 });
+        }
+        const custom = customTeams.some((registered) => sameTeam(registered, group.team));
+        return (
+          <TeamConstellationCard
+            key={group.team}
+            group={group}
+            label={group.label}
+            lead={lead === undefined ? null : entryOf(lead)}
+            members={members}
+            spokes={spokes}
+            maxSpoke={maxSpoke}
+            custom={custom}
+            removable={lead === undefined && members.length === 0}
+            removeBusy={removing || offline}
+            draggingBotId={draggingBotId}
+            movingBotId={movingBotId}
+            handlersFor={handlersFor}
+            onOpenMembers={setMembersTeam}
+            onRemove={(team) => void removeTeam(team)}
+          />
+        );
+      }),
+    [
+      botById,
+      counts,
+      customTeams,
+      draggingBotId,
+      entryOf,
+      groups,
+      handlersFor,
+      maxSpoke,
+      movingBotId,
+      offline,
+      removeTeam,
+      removing,
+    ],
+  );
+
   const onPick = useCallback(
     (zoneId: string) => {
       if (tapBotId === null) return;
@@ -520,26 +696,6 @@ function TeamBoard({
           team: confirm.target.team,
           replaced: confirm.replaced,
         });
-
-  const removeTeam = async (team: string) => {
-    if (environmentId === null || removing) return;
-    setRemoving(true);
-    setFeedback(null);
-    try {
-      const result = await saveProfile({
-        environmentId,
-        input: { teamChange: { operation: "delete", name: team.trim() } },
-      });
-      if (result._tag !== "Success") {
-        setFeedback({
-          tone: "error",
-          text: commandFailureMessage(result, "Couldn't remove the team. Try again.") ?? "",
-        });
-      }
-    } finally {
-      setRemoving(false);
-    }
-  };
 
   const membersGroup =
     membersTeam === null
@@ -606,40 +762,7 @@ function TeamBoard({
 
       <TeamWorkingNow items={working} botsById={botById} nowMs={nowMs} />
 
-      <div ref={containerRef}>
-        {groups.map((group) => {
-          const lead = group.leadBotId === null ? undefined : botById.get(group.leadBotId);
-          const members = group.memberBotIds.flatMap((id) => {
-            const bot = botById.get(id);
-            return bot === undefined ? [] : [entryOf(bot)];
-          });
-          const spokes = new Map<string, ConstellationSpoke>();
-          for (const entry of counts) {
-            if (entry.from !== group.leadBotId) continue;
-            spokes.set(entry.to, { recent: entry.recent, running: entry.running > 0 });
-          }
-          const custom = customTeams.some((registered) => sameTeam(registered, group.team));
-          return (
-            <TeamConstellationCard
-              key={group.team}
-              group={group}
-              label={group.label}
-              lead={lead === undefined ? null : entryOf(lead)}
-              members={members}
-              spokes={spokes}
-              maxSpoke={maxSpoke}
-              custom={custom}
-              removable={lead === undefined && members.length === 0}
-              removeBusy={removing || offline}
-              draggingBotId={drag?.botId ?? null}
-              movingBotId={pending?.botId ?? null}
-              handlersFor={handlersFor}
-              onOpenMembers={setMembersTeam}
-              onRemove={(team) => void removeTeam(team)}
-            />
-          );
-        })}
-      </div>
+      <div ref={containerRef}>{cards}</div>
 
       {overlayBot === undefined ? null : (
         <TeamMoveOverlay
@@ -650,7 +773,7 @@ function TeamBoard({
           hotZoneId={drag?.zoneId ?? null}
           hint={hint}
           hintTone={hotTone}
-          dragPoint={drag === null ? null : drag.point}
+          tokenRef={drag === null ? null : tokenRef}
           interactive={drag === null}
           onPick={onPick}
           onNewTeam={() => onPick(NEW_TEAM_ZONE_ID)}
@@ -740,6 +863,13 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
   const profile = usePersonalProfile(environmentId);
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
   const allShells = useThreadShells();
+  // How the screen was left the last time a page was opened from it. Read once:
+  // a later visit that is not a Back starts at the top.
+  const savedView = useLocation({
+    select: (location) =>
+      parseTeamView((location.state as unknown as Record<string, unknown>)[TEAM_VIEW_STATE_KEY]),
+  });
+  const [initialView] = useState(savedView);
   const bots = useMemo(
     () => (list.data?.bots ?? NO_BOTS).toSorted((left, right) => left.sortOrder - right.sortOrder),
     [list.data],
@@ -861,6 +991,7 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
           customTeams={profile.data?.customTeams ?? []}
           focusTeam={notice?.team ?? null}
           onCreated={setNotice}
+          initialView={initialView}
         />
       ) : null}
     </div>

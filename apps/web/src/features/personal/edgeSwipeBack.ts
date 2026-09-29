@@ -1,4 +1,4 @@
-import { BOTS_BEHIND_STATE_KEY, isPersonalChatPath } from "./botsBackStack";
+import { behindOfState, isPersonalChatPath } from "./botsBackStack";
 
 /**
  * Swipe-back from a chat in the installed iPhone app.
@@ -42,8 +42,8 @@ export function chatSwipeBackEnabled(input: {
 }): boolean {
   if (!input.standalone || input.wide || input.nativeForced) return false;
   if (!isPersonalChatPath(input.pathname)) return false;
-  const state = input.state as Record<string, unknown> | null | undefined;
-  return state?.[BOTS_BEHIND_STATE_KEY] === true;
+  // The Bots list, or the Team screen when the chat was opened from it.
+  return behindOfState(input.state) !== null;
 }
 
 export type SwipeMove =

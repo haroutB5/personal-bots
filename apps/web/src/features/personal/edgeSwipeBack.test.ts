@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { BOTS_BEHIND_STATE_KEY } from "./botsBackStack";
+import { BOTS_BEHIND_STATE_KEY, TEAM_BEHIND_STATE_KEY } from "./botsBackStack";
 import {
   chatSwipeBackEnabled,
   EdgeSwipeTracker,
@@ -27,6 +27,10 @@ describe("chatSwipeBackEnabled", () => {
   it("takes over the edge swipe on bot and group chats in the installed phone app", () => {
     expect(enabled({})).toBe(true);
     expect(enabled({ pathname: "/bots/groups/group-1" })).toBe(true);
+  });
+
+  it("also takes it over on a chat opened from the Team screen, which goes back there", () => {
+    expect(enabled({ state: { [TEAM_BEHIND_STATE_KEY]: true } })).toBe(true);
   });
 
   it("leaves the native swipe everywhere else", () => {

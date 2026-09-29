@@ -6,7 +6,7 @@ import {
 } from "@tanstack/react-router";
 import { describe, expect, it } from "vite-plus/test";
 
-import { keepBotsBehindChats } from "./botsBackStack";
+import { keepBotsBehindChats, TEAM_VIEW_STATE_KEY } from "./botsBackStack";
 import {
   LAST_CHAT_MAX_AGE_MS,
   LAST_CHAT_STORAGE_KEY,
@@ -16,10 +16,12 @@ import {
   resumedChatPath,
   trackLastChat,
 } from "./resumeLastChat";
+import { registerTeamViewSource } from "./teamView";
 
 const PATHS = [
   "/",
   "/bots",
+  "/bots/team",
   "/bots/settings",
   "/bots/groups/$groupId",
   "/bots/$botId",
@@ -118,6 +120,54 @@ describe("a relaunch at /bots reopens the chat that was left", () => {
     });
     expect(resumed).toBeNull();
     expect(router.state.location.pathname).toBe("/bots");
+  });
+});
+
+describe("a chat opened from the Team screen goes back to it after a relaunch", () => {
+  const VIEW = { scrollTop: 500, anchorTeam: "Finance", anchorOffset: 30, membersTeam: null };
+
+  it("saves where the chat was opened from, and the relaunch puts the Team screen behind it", async () => {
+    const storage = memoryStorage();
+    const first = await launch("/bots/team", storage);
+    registerTeamViewSource(() => VIEW);
+    await first.router.navigate({ href: "/bots/bot-1" });
+    await first.router.navigate({ href: CHAT_A });
+    expect(JSON.parse(storage.data.get(LAST_CHAT_STORAGE_KEY) ?? "{}")).toMatchObject({
+      path: CHAT_A,
+      team: true,
+      teamView: VIEW,
+    });
+
+    // iOS ends the app; the icon opens /bots.
+    const second = await launch("/bots", storage);
+    expect(second.resumed).toBe(CHAT_A);
+    expect(second.painted).toEqual([CHAT_A]);
+    expect(await back(second.router)).toBe("/bots/team");
+    expect(
+      (second.router.state.location.state as unknown as Record<string, unknown>)[
+        TEAM_VIEW_STATE_KEY
+      ],
+    ).toEqual(VIEW);
+    expect(second.router.history.canGoBack()).toBe(false);
+  });
+
+  it("a chat opened from the Bots list still goes back to /bots", async () => {
+    const storage = memoryStorage();
+    const first = await launch("/bots", storage);
+    await first.router.navigate({ href: CHAT_A });
+    expect(JSON.parse(storage.data.get(LAST_CHAT_STORAGE_KEY) ?? "{}").team).toBeUndefined();
+    const second = await launch("/bots", storage);
+    expect(await back(second.router)).toBe("/bots");
+  });
+
+  it("the resumed chat's own Back arrow to the Team screen steps back onto it", async () => {
+    const storage = memoryStorage();
+    const first = await launch("/bots/team", storage);
+    await first.router.navigate({ href: CHAT_A });
+    const second = await launch("/bots", storage);
+    await second.router.navigate({ to: "/bots/team" });
+    expect(second.router.state.location.pathname).toBe("/bots/team");
+    expect(second.router.history.canGoBack()).toBe(false);
   });
 });
 

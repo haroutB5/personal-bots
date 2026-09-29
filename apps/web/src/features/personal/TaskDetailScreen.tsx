@@ -31,6 +31,7 @@ import {
 } from "./usePersonalAutomation";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 import { useCloseTaskNotifications } from "./staleNotifications";
+import { usePersonalBackTarget } from "./usePersonalBackTarget";
 
 export const DETAIL_CARD =
   "rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-4";
@@ -81,6 +82,8 @@ function RelatedTask({ task, bot }: { task: PersonalTask; bot: PersonalBot | und
 /** /tasks/$taskId: live status, timestamps, delegation tree, result and actions. */
 export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
+  // Opened from the Team screen, Back returns there; otherwise to Tasks.
+  const backTarget = usePersonalBackTarget();
   // The task is on screen: its "finished" notification is read.
   useCloseTaskNotifications(taskId);
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
@@ -134,8 +137,8 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
   const header = (
     <header className="flex h-14 items-center gap-1">
       <Link
-        to="/tasks"
-        aria-label="Back to Tasks"
+        to={backTarget.to === "/bots/team" ? backTarget.to : "/tasks"}
+        aria-label={backTarget.to === "/bots/team" ? backTarget.label : "Back to Tasks"}
         className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
       >
         <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
