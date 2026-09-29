@@ -118,6 +118,8 @@ import { useReportViewingThread } from "./useReportViewingThread";
 import { markMessageSent, observeChatMessages, reportChatUsable } from "./perfRum";
 import { warmHighlighterWhenIdle } from "./highlighterWarmup";
 import { PersonalComposer } from "./PersonalComposer";
+import { ProgressNoteLine } from "./ProgressNoteLine";
+import { deriveLatestProgressNote } from "./latestProgress";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { useStartBotChat } from "./startBotChat";
 import { usePersonalRelatedTasks, usePersonalTasks } from "./usePersonalAutomation";
@@ -535,6 +537,12 @@ export function ConversationScreen({
   const turnBusy =
     working || (providerWait && thread?.session !== null && thread?.session?.status !== "error");
   const latestTurn = thread?.latestTurn ?? null;
+  // One muted line of what the running turn is doing, for models that keep
+  // their progress in thinking summaries and would otherwise read as blank.
+  const progressNote = useMemo(
+    () => deriveLatestProgressNote({ working, messages, activities, latestTurn }),
+    [working, messages, activities, latestTurn],
+  );
   const latestMessageStatus = useMemo(
     () =>
       deriveLatestMessageReadStatus({ items: baseItems, activities, busy: turnBusy, latestTurn }),
@@ -938,6 +946,8 @@ export function ConversationScreen({
         onOpenChange={setRenameOpen}
         onSave={(title) => renameChat(threadId, title)}
       />
+
+      <ProgressNoteLine note={progressNote} />
 
       {thread !== null && environmentId !== null && threadRef !== null ? (
         <>

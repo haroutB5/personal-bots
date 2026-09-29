@@ -276,6 +276,8 @@ import {
   PersonalBot,
   PersonalBotArchiveThreadInput,
   PersonalBotArchiveThreadsInput,
+  PersonalBotWorkingProgressInput,
+  PersonalBotWorkingProgressResult,
   PersonalBotPrewarmThreadInput,
   PersonalBotCreateInput,
   PersonalBotCreateThreadInput,
@@ -567,6 +569,7 @@ export const WS_METHODS = {
   personalBotsArchiveThread: "personalBots.archiveThread",
   personalBotsDeleteThread: "personalBots.deleteThread",
   personalBotsArchiveThreads: "personalBots.archiveThreads",
+  personalBotsWorkingProgress: "personalBots.workingProgress",
   personalBotsDeleteThreads: "personalBots.deleteThreads",
   personalBotsPrewarmThread: "personalBots.prewarmThread",
   personalBotsGetProfile: "personalBots.getProfile",
@@ -1223,6 +1226,12 @@ const WsPersonalBotsDeleteThreadRpc = Rpc.make(WS_METHODS.personalBotsDeleteThre
 const WsPersonalBotsArchiveThreadsRpc = Rpc.make(WS_METHODS.personalBotsArchiveThreads, {
   payload: PersonalBotArchiveThreadsInput,
   success: PersonalBotThreadsBatchResult,
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsWorkingProgressRpc = Rpc.make(WS_METHODS.personalBotsWorkingProgress, {
+  payload: PersonalBotWorkingProgressInput,
+  success: PersonalBotWorkingProgressResult,
   error: PersonalBotsRpcError,
 });
 
@@ -2362,6 +2371,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalBotsArchiveThreadRpc,
   WsPersonalBotsDeleteThreadRpc,
   WsPersonalBotsArchiveThreadsRpc,
+  WsPersonalBotsWorkingProgressRpc,
   WsPersonalBotsDeleteThreadsRpc,
   WsPersonalBotsPrewarmThreadRpc,
   WsPersonalBotsGetProfileRpc,

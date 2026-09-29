@@ -45,6 +45,35 @@ describe("chats list preview", () => {
   });
 });
 
+describe("working bot preview", () => {
+  const working = (progressNote: string | null | undefined, live = true): BotSummary =>
+    ({
+      newestThread: { id: "thread-a", title: "Weekly plan" },
+      newestMessage: { id: "m", role: "assistant", text: "The last thing it said" },
+      live,
+      progressNote,
+    }) as unknown as BotSummary;
+
+  it("shows the progress note instead of the stale last message while it works", () => {
+    expect(previewOf(working("Reading the failing test"), describeTurn)).toBe(
+      "Reading the failing test",
+    );
+  });
+
+  it("goes back to the last message when it stops working, or has no note", () => {
+    expect(previewOf(working("Reading the failing test", false), describeTurn)).toBe(
+      "The last thing it said",
+    );
+    expect(previewOf(working(null), describeTurn)).toBe("The last thing it said");
+    expect(previewOf(working(undefined), describeTurn)).toBe("The last thing it said");
+    expect(previewOf(working(""), describeTurn)).toBe("The last thing it said");
+  });
+
+  it("never persists the note to the cold-start snapshot", () => {
+    expect(snapshotPreviewLabel(working("Reading the failing test"), describeTurn)).toBeNull();
+  });
+});
+
 describe("plainPreviewLine", () => {
   it("drops the markdown around the words", () => {
     expect(plainPreviewLine("## VERDICT")).toBe("VERDICT");

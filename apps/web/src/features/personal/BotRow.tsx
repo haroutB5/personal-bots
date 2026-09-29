@@ -59,12 +59,16 @@ export function selectedChatProps(
 }
 
 /**
- * First non-empty line of the newest user/assistant message, else the thread
- * title. A turn the task service wrote previews as its system-row text. The
+ * While the bot works, its latest progress note. Else the first non-empty line
+ * of the newest user/assistant message, else the thread title. A turn the task service wrote previews as its system-row text. The
  * message comes with `personalBots.list`, so the list opens no thread
  * subscription per row; the list refreshes when a thread's shell updates.
  */
 export function previewOf(summary: BotSummary, describeTurn: (turn: ServerTurn) => string): string {
+  // A working bot shows what it is doing now, not the last thing it said.
+  if (summary.live && summary.progressNote != null && summary.progressNote.length > 0) {
+    return summary.progressNote;
+  }
   const thread = summary.newestThread;
   if (thread === null) return "No chats yet";
   const message = summary.newestMessage;

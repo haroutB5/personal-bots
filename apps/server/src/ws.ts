@@ -88,6 +88,7 @@ import {
   WORKTREE_SETUP_ACTIVITY_KIND,
   worktreeSetupActivityId,
   type WorktreeSetupSnapshot,
+  PersonalBotsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -187,6 +188,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalBotService from "./personal/PersonalBotService.ts";
+import { personalWorkingProgress } from "./personal/workingProgress.ts";
 import { deletePersonalChat } from "./personal/deletePersonalChat.ts";
 import { archivePersonalChats, deletePersonalChats } from "./personal/bulkPersonalChats.ts";
 import { deletePersonalGroup } from "./personal/deletePersonalGroup.ts";
@@ -3252,6 +3254,21 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.personalBotsWorkingProgress]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsWorkingProgress,
+            personalWorkingProgress(sql, input.threadIds).pipe(
+              Effect.map((notes) => ({ notes })),
+              Effect.mapError(
+                (cause) =>
+                  new PersonalBotsError({
+                    message: "Could not read the working chats' progress.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.personalBotsDeleteThreads]: (input) =>
           observeRpcEffect(

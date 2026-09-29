@@ -29,6 +29,7 @@ export * from "./projectClone.ts";
 export * from "./pullRequest.ts";
 export * from "./orchestration.ts";
 export * from "./personalBots.ts";
+export * from "./personalProgressNote.ts";
 export * from "./personalTasks.ts";
 export * from "./personalChatNotices.ts";
 export * from "./personalGroups.ts";

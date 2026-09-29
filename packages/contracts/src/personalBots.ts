@@ -346,6 +346,22 @@ export const PersonalBotThreadsBatchResult = Schema.Struct({
 export type PersonalBotThreadsBatchResult = typeof PersonalBotThreadsBatchResult.Type;
 
 /**
+ * The chats (of the ones asked about) whose bot is working and has said or
+ * done something in this turn, each with its latest progress note: one plain
+ * line, at most `PERSONAL_PROGRESS_NOTE_MAX_CHARS` characters. What the Bots
+ * list shows under a working bot instead of its stale last message.
+ */
+export const PersonalBotWorkingProgressInput = Schema.Struct({
+  threadIds: Schema.Array(ThreadId).check(Schema.isMaxLength(PERSONAL_BOT_THREADS_BATCH_MAX)),
+});
+export type PersonalBotWorkingProgressInput = typeof PersonalBotWorkingProgressInput.Type;
+
+export const PersonalBotWorkingProgressResult = Schema.Struct({
+  notes: Schema.Array(Schema.Struct({ threadId: ThreadId, note: Schema.String })),
+});
+export type PersonalBotWorkingProgressResult = typeof PersonalBotWorkingProgressResult.Type;
+
+/**
  * The user opened this chat: start its provider session in the background so
  * the next message does not wait for it. Fire and forget; no turn starts.
  */

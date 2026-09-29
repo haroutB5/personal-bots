@@ -87,6 +87,7 @@ import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
+import { useWorkingProgressNotes } from "./useWorkingProgress";
 import { usePreloadChatRoute } from "./usePreloadChatRoute";
 import { reportChatsListPainted } from "./perfRum";
 import { perfOptimizationOn } from "./perfFlags";
@@ -476,7 +477,27 @@ export function ChatsScreen({
   // leave them out. The preview key and the review row above still see every
   // bot: a hidden bot's first private message must still refetch the list
   // (that is what brings it back), and a question it asks must still surface.
-  const listed = useMemo(() => shownInChats(summaries), [summaries]);
+  const progressTargets = useMemo(
+    () =>
+      summaries.flatMap((summary) =>
+        summary.live && summary.liveThread != null
+          ? [{ threadId: summary.liveThread.id as string, updatedAt: summary.liveThread.updatedAt }]
+          : [],
+      ),
+    [summaries],
+  );
+  const progressNotes = useWorkingProgressNotes(environmentId, progressTargets);
+  const listed = useMemo(
+    () =>
+      shownInChats(summaries).map((summary) => {
+        const note =
+          summary.live && summary.liveThread != null
+            ? progressNotes.get(summary.liveThread.id)
+            : undefined;
+        return note === undefined ? summary : { ...summary, progressNote: note };
+      }),
+    [progressNotes, summaries],
+  );
   const visible = useMemo(() => filterBotSummaries(listed, query), [query, listed]);
   const visibleGroups = useMemo(() => filterGroups(groups, query, nameOf), [groups, nameOf, query]);
   const botsById = useMemo(

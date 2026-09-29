@@ -46,6 +46,14 @@ export interface BotSummary {
   readonly threadTitles: ReadonlyArray<string>;
   /** A linked thread has a turn or session running right now (not stuck on a rate limit). */
   readonly live: boolean;
+  /** The freshest such thread, the one a working bot's progress note comes from. */
+  readonly liveThread?: EnvironmentThreadShell | null;
+  /**
+   * The latest progress note of `liveThread` (thinking summary or tool step
+   * title), set by the list from `personalBots.workingProgress`. Never written
+   * to the cold-start snapshot.
+   */
+  readonly progressNote?: string | null;
   /**
    * Live, and every live thread is still in its opening stretch with no reply
    * yet (`isTurnThinking`). One thread producing output makes the bot working.
@@ -293,6 +301,7 @@ export function buildBotSummaries(input: {
         newestThread === null ? null : (newestMessageByThread.get(newestThread.id) ?? null),
       threadTitles: shells.map((shell) => shell.title),
       live: shells.some(isThreadLive),
+      liveThread: shells.find(isThreadLive) ?? null,
       thinking: isBotThinking(shells),
       rateLimited: rateLimitedThread !== null,
       rateLimitedThread,

@@ -29,6 +29,8 @@ const state = vi.hoisted(() => ({
   navigate: vi.fn(),
   groupsData: null as { groups: unknown[]; rounds: unknown[] } | null,
   groupFeedCalls: [] as Array<string | null>,
+  progressNotes: new Map<string, string>(),
+  progressTargets: [] as Array<{ threadId: string; updatedAt: string }>,
   versionInfo: { label: "v9.9.9-test", updateAvailable: false } as {
     label: string | null;
     updateAvailable: boolean;
@@ -125,6 +127,15 @@ vi.mock("./usePersonalBots", () => ({
   usePersonalEnvironmentId: () => state.environmentId,
   usePersonalBotsList: () => ({ data: state.listData, error: null, refresh: state.refresh }),
   usePersonalProfile: () => ({ data: null }),
+}));
+vi.mock("./useWorkingProgress", () => ({
+  useWorkingProgressNotes: (
+    _environmentId: string | null,
+    targets: Array<{ threadId: string; updatedAt: string }>,
+  ) => {
+    state.progressTargets = targets;
+    return state.progressNotes;
+  },
 }));
 vi.mock("./usePersonalAutomation", () => ({
   usePersonalTasks: (environmentId: string | null) => {
@@ -239,6 +250,8 @@ afterEach(async () => {
   state.navigate.mockClear();
   state.groupsData = null;
   state.groupFeedCalls.length = 0;
+  state.progressNotes = new Map();
+  state.progressTargets = [];
   state.versionInfo = { label: "v9.9.9-test", updateAvailable: false };
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -1052,5 +1065,61 @@ describe("ChatsScreen preview refresh", () => {
     expect(state.refresh).not.toHaveBeenCalled();
     await flushTimersAfter(since);
     expect(state.refresh).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ChatsScreen working progress", () => {
+  const link = (botId: string, threadId: string) => ({
+    botId,
+    threadId,
+    createdAt: "2026-09-01T10:00:00.000Z",
+    archivedAt: null,
+    newestMessage: { id: "m-1", role: "assistant", text: "The stale last message" },
+  });
+  const shell = (id: string, session: { status: string } | null) => ({
+    id,
+    environmentId: "env-1",
+    title: `Thread ${id}`,
+    updatedAt: "2026-09-29T10:00:00.000Z",
+    archivedAt: null,
+    latestTurn: null,
+    session,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+  });
+
+  async function render() {
+    stubWindow();
+    state.listData = {
+      bots: [bot("bot-busy", "Busy Ada"), bot("bot-idle", "Idle Bo")],
+      threads: [link("bot-busy", "thread-busy"), link("bot-idle", "thread-idle")],
+      personalProjectId: null,
+    };
+    state.shells = [
+      shell("thread-busy", { status: "running" }),
+      shell("thread-idle", { status: "ready" }),
+    ];
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+  }
+
+  it("asks only about the working bot's chat, and shows its note instead of the last message", async () => {
+    state.progressNotes = new Map([["thread-busy", "Reading the failing test"]]);
+    await render();
+    const json = JSON.stringify(renderer!.toJSON());
+    expect(state.progressTargets).toEqual([
+      { threadId: "thread-busy", updatedAt: "2026-09-29T10:00:00.000Z" },
+    ]);
+    expect(json).toContain("Reading the failing test");
+    // The idle bot keeps its last message; the working one lost the stale one.
+    expect(json).toContain("The stale last message");
+    expect(json.split("The stale last message").length - 1).toBe(1);
+  });
+
+  it("keeps the last message when there is no note yet", async () => {
+    await render();
+    const json = JSON.stringify(renderer!.toJSON());
+    expect(json.split("The stale last message").length - 1).toBe(2);
   });
 });
