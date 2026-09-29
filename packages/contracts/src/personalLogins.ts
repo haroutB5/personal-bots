@@ -57,6 +57,30 @@ export type PersonalLoginUpdateInput = typeof PersonalLoginUpdateInput.Type;
 export const PersonalLoginDeleteInput = Schema.Struct({ loginId: PersonalLoginId });
 export type PersonalLoginDeleteInput = typeof PersonalLoginDeleteInput.Type;
 
+/** The most logins one bulk delete takes; the phone sends larger selections in parts. */
+export const PERSONAL_LOGINS_BATCH_MAX = 500;
+
+/** Deletes several saved logins, one at a time, each exactly as `personalLogins.delete` would. */
+export const PersonalLoginsDeleteManyInput = Schema.Struct({
+  loginIds: Schema.Array(PersonalLoginId).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PERSONAL_LOGINS_BATCH_MAX),
+  ),
+});
+export type PersonalLoginsDeleteManyInput = typeof PersonalLoginsDeleteManyInput.Type;
+
+/** What a bulk login delete did: the logins it removed, and the ones it could not, with the reason. */
+export const PersonalLoginsBatchResult = Schema.Struct({
+  done: Schema.Array(PersonalLoginId),
+  failed: Schema.Array(
+    Schema.Struct({
+      loginId: PersonalLoginId,
+      message: Schema.String,
+    }),
+  ),
+});
+export type PersonalLoginsBatchResult = typeof PersonalLoginsBatchResult.Type;
+
 /** Marks or unmarks a saved login as a sensitive site. Needs no password. */
 export const PersonalLoginSetSensitiveInput = Schema.Struct({
   loginId: PersonalLoginId,

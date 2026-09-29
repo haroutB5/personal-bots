@@ -367,6 +367,8 @@ import {
   PersonalLogin,
   PersonalLoginCreateInput,
   PersonalLoginDeleteInput,
+  PersonalLoginsBatchResult,
+  PersonalLoginsDeleteManyInput,
   PersonalLoginsError,
   PersonalLoginsListResult,
   PersonalLoginUpdateInput,
@@ -384,6 +386,9 @@ import {
   PersonalRoutine,
   PersonalRoutineCreateInput,
   PersonalRoutineIdInput,
+  PersonalRoutinesBatchResult,
+  PersonalRoutinesDeleteManyInput,
+  PersonalRoutinesSetEnabledManyInput,
   PersonalRoutineListResult,
   PersonalRoutineRunNowInput,
   PersonalRoutineRunNowResult,
@@ -653,6 +658,7 @@ export const WS_METHODS = {
   personalLoginsUpdate: "personalLogins.update",
   personalLoginsDelete: "personalLogins.delete",
   personalLoginsSetSensitive: "personalLogins.setSensitive",
+  personalLoginsDeleteMany: "personalLogins.deleteMany",
 
   // personal browser
   personalBrowserStatus: "personalBrowser.status",
@@ -671,6 +677,8 @@ export const WS_METHODS = {
   personalRoutinesDelete: "personalRoutines.delete",
   personalRoutinesPause: "personalRoutines.pause",
   personalRoutinesResume: "personalRoutines.resume",
+  personalRoutinesDeleteMany: "personalRoutines.deleteMany",
+  personalRoutinesSetEnabledMany: "personalRoutines.setEnabledMany",
   personalRoutinesRunNow: "personalRoutines.runNow",
   personalRoutinesRegenerateHook: "personalRoutines.regenerateHook",
 
@@ -1633,6 +1641,12 @@ const WsPersonalLoginsDeleteRpc = Rpc.make(WS_METHODS.personalLoginsDelete, {
   error: PersonalLoginsRpcError,
 });
 
+const WsPersonalLoginsDeleteManyRpc = Rpc.make(WS_METHODS.personalLoginsDeleteMany, {
+  payload: PersonalLoginsDeleteManyInput,
+  success: PersonalLoginsBatchResult,
+  error: PersonalLoginsRpcError,
+});
+
 const WsPersonalLoginsSetSensitiveRpc = Rpc.make(WS_METHODS.personalLoginsSetSensitive, {
   payload: PersonalLoginSetSensitiveInput,
   success: PersonalLogin,
@@ -1735,6 +1749,18 @@ const WsPersonalRoutinesPauseRpc = Rpc.make(WS_METHODS.personalRoutinesPause, {
 const WsPersonalRoutinesResumeRpc = Rpc.make(WS_METHODS.personalRoutinesResume, {
   payload: PersonalRoutineIdInput,
   success: PersonalRoutine,
+  error: PersonalRoutinesRpcError,
+});
+
+const WsPersonalRoutinesDeleteManyRpc = Rpc.make(WS_METHODS.personalRoutinesDeleteMany, {
+  payload: PersonalRoutinesDeleteManyInput,
+  success: PersonalRoutinesBatchResult,
+  error: PersonalRoutinesRpcError,
+});
+
+const WsPersonalRoutinesSetEnabledManyRpc = Rpc.make(WS_METHODS.personalRoutinesSetEnabledMany, {
+  payload: PersonalRoutinesSetEnabledManyInput,
+  success: PersonalRoutinesBatchResult,
   error: PersonalRoutinesRpcError,
 });
 
@@ -2492,6 +2518,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalLoginsUpdateRpc,
   WsPersonalLoginsDeleteRpc,
   WsPersonalLoginsSetSensitiveRpc,
+  WsPersonalLoginsDeleteManyRpc,
   // personal browser
   WsPersonalBrowserStatusRpc,
   WsPersonalBrowserTakeControlRpc,
@@ -2507,6 +2534,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalRoutinesDeleteRpc,
   WsPersonalRoutinesPauseRpc,
   WsPersonalRoutinesResumeRpc,
+  WsPersonalRoutinesDeleteManyRpc,
+  WsPersonalRoutinesSetEnabledManyRpc,
   WsPersonalRoutinesRunNowRpc,
   WsPersonalRoutinesRegenerateHookRpc,
   WsPersonalMemoryListRpc,

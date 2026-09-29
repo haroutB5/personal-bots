@@ -40,6 +40,12 @@ export const personalLoginDelete = createEnvironmentRpcCommand(connectionAtomRun
   onSuccess: refreshLogins,
 });
 
+export const personalLoginsDeleteMany = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-logins:delete-many",
+  tag: WS_METHODS.personalLoginsDeleteMany,
+  onSuccess: refreshLogins,
+});
+
 export const personalLoginSetSensitive = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-logins:set-sensitive",
   tag: WS_METHODS.personalLoginsSetSensitive,

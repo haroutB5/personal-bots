@@ -171,6 +171,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalLoginsCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalLoginsUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalLoginsDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalLoginsDeleteMany]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalLoginsSetSensitive]: AuthOrchestrationOperateScope,
   // personal browser
   [WS_METHODS.personalBrowserStatus]: AuthOrchestrationReadScope,
@@ -187,6 +188,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalRoutinesDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalRoutinesPause]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalRoutinesResume]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalRoutinesDeleteMany]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalRoutinesSetEnabledMany]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalRoutinesRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalRoutinesRegenerateHook]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalMemoryList]: AuthOrchestrationReadScope,

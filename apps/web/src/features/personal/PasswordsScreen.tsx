@@ -1,15 +1,23 @@
 import type { FormEvent, JSX } from "react";
-import { useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { PersonalLoginId, type PersonalLogin } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import * as Redacted from "effect/Redacted";
-import { ChevronLeft, Plus, Trash2 } from "lucide-react";
+import { ChevronLeft, Ellipsis, Plus, Trash2 } from "lucide-react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
-import { randomUUID } from "~/lib/utils";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { cn, randomUUID } from "~/lib/utils";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import {
+  allSelected,
+  selectedCountLabel,
+  toggleAllSelection,
+  toggleSelection,
+  visibleSelection,
+} from "./bulkSelection";
 import { commandFailureMessage } from "./commandFeedback";
 import {
   emptyPasswordDraft,
@@ -26,6 +34,18 @@ import {
   usePersonalLogins,
 } from "./usePersonalLogins";
 import { usePersonalEnvironmentId } from "./usePersonalBots";
+import {
+  BulkNoticeLine,
+  NO_TOUCH_SELECT,
+  SelectCheck,
+  SelectModeActions,
+  SelectModeDeleteButton,
+  SelectModeHeader,
+  useBulkNotice,
+  useEscapeToExit,
+} from "./SelectMode";
+import { LOGIN_NOUN, useBulkDeleteLogins } from "./useBulkDelete";
+import { useLongPress } from "./useLongPress";
 
 const FIELD_CLASS =
   "h-11 w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -253,7 +273,55 @@ function PasswordForm({
   );
 }
 
-/** /bots/settings/passwords: saved website logins, shared by every bot. */
+/** Label, origin and username: what a row shows. Never the password. */
+function LoginRowText({ login }: { login: PersonalLogin }): JSX.Element {
+  return (
+    <>
+      <span className="block truncate text-[15px] font-semibold text-[var(--personal-text)]">
+        {login.label}
+      </span>
+      <span className="block truncate text-[13px] text-[var(--personal-text-secondary)]">
+        {login.origin}
+      </span>
+      <span className="block truncate text-[13px] text-[var(--personal-text-secondary)]">
+        {login.username}
+      </span>
+    </>
+  );
+}
+
+/** The row's main button: tap to edit, press and hold to start select mode with this login. */
+function LoginEditButton({
+  login,
+  onEdit,
+  onLongPress,
+}: {
+  login: PersonalLogin;
+  onEdit: (login: PersonalLogin) => void;
+  onLongPress: (loginId: string) => void;
+}): JSX.Element {
+  const loginId = login.loginId;
+  const longPress = useLongPress(useCallback(() => onLongPress(loginId), [onLongPress, loginId]));
+  return (
+    <button
+      type="button"
+      {...longPress}
+      onClick={() => onEdit(login)}
+      className={cn(
+        "min-w-0 flex-1 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]",
+        NO_TOUCH_SELECT,
+      )}
+    >
+      <LoginRowText login={login} />
+    </button>
+  );
+}
+
+/**
+ * /bots/settings/passwords: saved website logins, shared by every bot.
+ * Select mode ("..." > Select logins, or press and hold a login) deletes
+ * several at once through the same owner-only delete as the trash button.
+ */
 export function PasswordsScreen(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const loginsQuery = usePersonalLogins(environmentId);
@@ -262,7 +330,42 @@ export function PasswordsScreen(): JSX.Element {
   const [editing, setEditing] = useState<PersonalLogin | "new" | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const logins = loginsQuery.data?.logins ?? [];
+  const logins = useMemo(() => loginsQuery.data?.logins ?? [], [loginsQuery.data]);
+
+  const deleteLogins = useBulkDeleteLogins(environmentId);
+  const [selection, setSelection] = useState<ReadonlySet<string> | null>(null);
+  const [notice, setNotice] = useBulkNotice();
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const selecting = selection !== null;
+  const shownIds = useMemo(() => logins.map((login) => login.loginId as string), [logins]);
+  const chosen = selection === null ? [] : visibleSelection(selection, shownIds);
+  const everySelected = selection !== null && allSelected(selection, shownIds);
+
+  const enterSelect = useCallback(
+    (first: string | null) => {
+      setNotice(null);
+      setError(null);
+      setEditing(null);
+      setSelection(new Set(first === null ? [] : [first]));
+    },
+    [setNotice],
+  );
+  const exitSelect = useCallback(() => setSelection(null), []);
+  useEscapeToExit(selecting, exitSelect);
+  const toggle = (loginId: string) => {
+    setSelection((current) => (current === null ? current : toggleSelection(current, loginId)));
+  };
+
+  const onBulkDelete = async () => {
+    if (chosen.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    const outcome = await deleteLogins(chosen);
+    setBulkBusy(false);
+    if (outcome.status === "cancelled") return;
+    setNotice({ text: outcome.notice, failed: outcome.anyFailed });
+    // Done: back to the plain list. Refused logins stay selected for another try.
+    setSelection(outcome.failedIds.length === 0 ? null : new Set(outcome.failedIds));
+  };
 
   const onDelete = async (login: PersonalLogin) => {
     if (environmentId === null) return;
@@ -292,38 +395,76 @@ export function PasswordsScreen(): JSX.Element {
   };
 
   return (
-    <div className="flex flex-col px-5 pb-8">
-      <header className="flex h-14 items-center gap-1">
-        <Link
-          to="/bots/settings"
-          aria-label="Back to Settings"
-          className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-        >
-          <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
-        </Link>
-        <h1 className="min-w-0 flex-1 text-[19px] font-bold text-[var(--personal-text)]">
-          Passwords
-        </h1>
-        <button
-          type="button"
-          onClick={() => setEditing("new")}
-          aria-label="Add login"
-          className="flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-        >
-          <Plus aria-hidden="true" className="size-6" strokeWidth={1.75} />
-        </button>
-      </header>
+    <div className={cn("flex flex-col px-5", selecting ? "min-h-full" : "pb-8")}>
+      {selecting ? (
+        <SelectModeHeader
+          label={selectedCountLabel(chosen.length, LOGIN_NOUN)}
+          everySelected={everySelected}
+          canSelectAll={shownIds.length > 0}
+          onCancel={exitSelect}
+          onToggleAll={() =>
+            setSelection((current) =>
+              current === null ? current : toggleAllSelection(current, shownIds),
+            )
+          }
+        />
+      ) : (
+        <header className="flex h-14 items-center gap-1">
+          <Link
+            to="/bots/settings"
+            aria-label="Back to Settings"
+            className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          >
+            <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
+          </Link>
+          <h1 className="min-w-0 flex-1 text-[19px] font-bold text-[var(--personal-text)]">
+            Passwords
+          </h1>
+          {logins.length > 0 ? (
+            <Menu>
+              <MenuTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="Login list options"
+                    className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+                  />
+                }
+              >
+                <Ellipsis aria-hidden="true" className="size-6" strokeWidth={1.75} />
+              </MenuTrigger>
+              <MenuPopup align="end" className="personal-app personal-menu min-w-48">
+                <MenuItem onClick={() => enterSelect(null)}>Select logins</MenuItem>
+              </MenuPopup>
+            </Menu>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setEditing("new")}
+            aria-label="Add login"
+            className="flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+          >
+            <Plus aria-hidden="true" className="size-6" strokeWidth={1.75} />
+          </button>
+        </header>
+      )}
 
-      <p className="text-[14px] leading-snug text-[var(--personal-text-secondary)]">
-        Any bot can use saved logins on their exact site. Passwords are encrypted on this computer,
-        but bots run under your computer account and share one signed-in browser, so only save
-        accounts you trust every bot to use.
-      </p>
-      <p className="mt-2 text-[14px] leading-snug text-[var(--personal-text-secondary)]">
-        Sensitive sites (your bank, your email): once a bot has one open, anything it does in the
-        browser that could send what it saw to a different site asks you first. Everything else runs
-        unattended.
-      </p>
+      {selecting ? null : (
+        <>
+          <p className="text-[14px] leading-snug text-[var(--personal-text-secondary)]">
+            Any bot can use saved logins on their exact site. Passwords are encrypted on this
+            computer, but bots run under your computer account and share one signed-in browser, so
+            only save accounts you trust every bot to use.
+          </p>
+          <p className="mt-2 text-[14px] leading-snug text-[var(--personal-text-secondary)]">
+            Sensitive sites (your bank, your email): once a bot has one open, anything it does in
+            the browser that could send what it saw to a different site asks you first. Everything
+            else runs unattended.
+          </p>
+        </>
+      )}
+
+      <BulkNoticeLine notice={notice} />
 
       {error === null ? null : (
         <p role="alert" className="mt-3 text-sm text-[var(--personal-error)]">
@@ -353,57 +494,74 @@ export function PasswordsScreen(): JSX.Element {
         </div>
       ) : (
         <ul className="mt-4 overflow-hidden rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] divide-y divide-[var(--personal-border)]">
-          {logins.map((login) => (
-            <li key={login.loginId} className="flex min-h-16 items-center">
-              <button
-                type="button"
-                onClick={() => setEditing(login)}
-                className="min-w-0 flex-1 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
-              >
-                <span className="block truncate text-[15px] font-semibold text-[var(--personal-text)]">
-                  {login.label}
-                </span>
-                <span className="block truncate text-[13px] text-[var(--personal-text-secondary)]">
-                  {login.origin}
-                </span>
-                <span className="block truncate text-[13px] text-[var(--personal-text-secondary)]">
-                  {login.username}
-                </span>
-              </button>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={login.sensitive}
-                aria-label={`Sensitive site: ${login.label}`}
-                disabled={busyId === login.loginId}
-                onClick={() => void onToggleSensitive(login)}
-                className="flex h-11 shrink-0 items-center gap-2 px-2 text-[13px] text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
-              >
-                <span aria-hidden="true">Sensitive</span>
-                <span
-                  aria-hidden="true"
-                  className={`relative inline-flex h-6 w-10 shrink-0 items-center rounded-full border border-[var(--personal-border)] ${login.sensitive ? "bg-[var(--personal-primary)]" : "bg-[var(--personal-fill-muted)]"}`}
+          {logins.map((login) =>
+            selecting ? (
+              <li key={login.loginId}>
+                {/* In select mode the whole row toggles: no edit, switch or trash. */}
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={selection?.has(login.loginId) === true}
+                  onClick={() => toggle(login.loginId)}
+                  className={cn(
+                    "flex min-h-16 w-full items-center gap-3 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]",
+                    NO_TOUCH_SELECT,
+                  )}
                 >
+                  <SelectCheck checked={selection?.has(login.loginId) === true} />
+                  <span className="min-w-0 flex-1">
+                    <LoginRowText login={login} />
+                  </span>
+                </button>
+              </li>
+            ) : (
+              <li key={login.loginId} className="flex min-h-16 items-center">
+                <LoginEditButton login={login} onEdit={setEditing} onLongPress={enterSelect} />
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={login.sensitive}
+                  aria-label={`Sensitive site: ${login.label}`}
+                  disabled={busyId === login.loginId}
+                  onClick={() => void onToggleSensitive(login)}
+                  className="flex h-11 shrink-0 items-center gap-2 px-2 text-[13px] text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+                >
+                  <span aria-hidden="true">Sensitive</span>
                   <span
-                    className={`inline-block size-5 rounded-full bg-[var(--personal-surface)] shadow ${login.sensitive ? "translate-x-[16px]" : "translate-x-0.5"}`}
-                  />
-                </span>
-              </button>
-              <button
-                type="button"
-                aria-label={`Delete ${login.label}`}
-                disabled={busyId === login.loginId}
-                onClick={() => void onDelete(login)}
-                className="flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-danger)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
-              >
-                <Trash2 aria-hidden="true" className="size-5" strokeWidth={1.75} />
-              </button>
-            </li>
-          ))}
+                    aria-hidden="true"
+                    className={`relative inline-flex h-6 w-10 shrink-0 items-center rounded-full border border-[var(--personal-border)] ${login.sensitive ? "bg-[var(--personal-primary)]" : "bg-[var(--personal-fill-muted)]"}`}
+                  >
+                    <span
+                      className={`inline-block size-5 rounded-full bg-[var(--personal-surface)] shadow ${login.sensitive ? "translate-x-[16px]" : "translate-x-0.5"}`}
+                    />
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Delete ${login.label}`}
+                  disabled={busyId === login.loginId}
+                  onClick={() => void onDelete(login)}
+                  className="flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-danger)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+                >
+                  <Trash2 aria-hidden="true" className="size-5" strokeWidth={1.75} />
+                </button>
+              </li>
+            ),
+          )}
         </ul>
       )}
 
-      {editing === null ? null : (
+      {selecting ? (
+        <SelectModeActions>
+          <SelectModeDeleteButton
+            disabled={chosen.length === 0}
+            busy={bulkBusy}
+            onClick={() => void onBulkDelete()}
+          />
+        </SelectModeActions>
+      ) : null}
+
+      {editing === null || selecting ? null : (
         <PasswordForm
           key={editing === "new" ? "new" : editing.loginId}
           login={editing === "new" ? null : editing}

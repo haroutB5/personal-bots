@@ -191,7 +191,13 @@ import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import { personalWorkingProgress } from "./personal/workingProgress.ts";
 import { deletePersonalChat } from "./personal/deletePersonalChat.ts";
 import { archivePersonalChats, deletePersonalChats } from "./personal/bulkPersonalChats.ts";
-import { deletePersonalFiles, deletePersonalMemories } from "./personal/bulkPersonalItems.ts";
+import {
+  deletePersonalFiles,
+  deletePersonalLogins,
+  deletePersonalMemories,
+  deletePersonalRoutines,
+  setPersonalRoutinesEnabled,
+} from "./personal/bulkPersonalItems.ts";
 import { deletePersonalGroup } from "./personal/deletePersonalGroup.ts";
 import { purgePersonalBot } from "./personal/purgePersonalBot.ts";
 import { signPersonalFiles } from "./personal/PersonalFiles.ts";
@@ -3589,6 +3595,12 @@ const makeWsRpcLayer = (
             personalLogins.remove(input).pipe(Effect.as({})),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.personalLoginsDeleteMany]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalLoginsDeleteMany,
+            deletePersonalLogins(personalLogins, input.loginIds),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalLoginsSetSensitive]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalLoginsSetSensitive,
@@ -3674,6 +3686,18 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalRoutinesResume, personalRoutines.resume(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalRoutinesDeleteMany]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalRoutinesDeleteMany,
+            deletePersonalRoutines(personalRoutines, input.routineIds),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalRoutinesSetEnabledMany]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalRoutinesSetEnabledMany,
+            setPersonalRoutinesEnabled(personalRoutines, input.routineIds, input.enabled),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalRoutinesRunNow]: (input) =>
           observeRpcEffect(WS_METHODS.personalRoutinesRunNow, personalRoutines.runNow(input), {
             "rpc.aggregate": "server",

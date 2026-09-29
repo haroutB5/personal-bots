@@ -53,11 +53,17 @@ describe("RPC authorization scopes", () => {
     );
   });
 
-  it("gives the bulk file and memory deletes the same operate scope as single delete", () => {
+  it("gives every bulk action the same operate scope as its single action", () => {
     for (const method of [
       WS_METHODS.personalFilesDeleteMany,
       WS_METHODS.personalMemoryDelete,
       WS_METHODS.personalMemoryDeleteMany,
+      WS_METHODS.personalRoutinesDelete,
+      WS_METHODS.personalRoutinesDeleteMany,
+      WS_METHODS.personalRoutinesPause,
+      WS_METHODS.personalRoutinesSetEnabledMany,
+      WS_METHODS.personalLoginsDelete,
+      WS_METHODS.personalLoginsDeleteMany,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
     }

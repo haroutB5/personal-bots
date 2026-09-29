@@ -143,6 +143,18 @@ export const personalRoutineResume = createEnvironmentRpcCommand(connectionAtomR
   onSuccess: refreshRoutines,
 });
 
+export const personalRoutinesDeleteMany = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-routines:delete-many",
+  tag: WS_METHODS.personalRoutinesDeleteMany,
+  onSuccess: refreshRoutines,
+});
+
+export const personalRoutinesSetEnabledMany = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-routines:set-enabled-many",
+  tag: WS_METHODS.personalRoutinesSetEnabledMany,
+  onSuccess: refreshRoutines,
+});
+
 export const personalRoutineRunNow = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-routines:run-now",
   tag: WS_METHODS.personalRoutinesRunNow,

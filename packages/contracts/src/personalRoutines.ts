@@ -206,6 +206,43 @@ export type PersonalRoutineUpdateInput = typeof PersonalRoutineUpdateInput.Type;
 export const PersonalRoutineIdInput = Schema.Struct({ routineId: PersonalRoutineId });
 export type PersonalRoutineIdInput = typeof PersonalRoutineIdInput.Type;
 
+/** The most routines one bulk action takes; the phone sends larger selections in parts. */
+export const PERSONAL_ROUTINES_BATCH_MAX = 500;
+
+/** Deletes several routines, one at a time, each exactly as `personalRoutines.delete` would. */
+export const PersonalRoutinesDeleteManyInput = Schema.Struct({
+  routineIds: Schema.Array(PersonalRoutineId).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PERSONAL_ROUTINES_BATCH_MAX),
+  ),
+});
+export type PersonalRoutinesDeleteManyInput = typeof PersonalRoutinesDeleteManyInput.Type;
+
+/**
+ * Pauses (`enabled: false`) or resumes several routines, one at a time, each
+ * exactly as `personalRoutines.pause` / `personalRoutines.resume` would.
+ */
+export const PersonalRoutinesSetEnabledManyInput = Schema.Struct({
+  routineIds: Schema.Array(PersonalRoutineId).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PERSONAL_ROUTINES_BATCH_MAX),
+  ),
+  enabled: Schema.Boolean,
+});
+export type PersonalRoutinesSetEnabledManyInput = typeof PersonalRoutinesSetEnabledManyInput.Type;
+
+/** What a bulk routine action did: the routines it changed, and the ones it could not, with the reason. */
+export const PersonalRoutinesBatchResult = Schema.Struct({
+  done: Schema.Array(PersonalRoutineId),
+  failed: Schema.Array(
+    Schema.Struct({
+      routineId: PersonalRoutineId,
+      message: Schema.String,
+    }),
+  ),
+});
+export type PersonalRoutinesBatchResult = typeof PersonalRoutinesBatchResult.Type;
+
 export const PersonalRoutineRunNowInput = Schema.Struct({
   routineId: PersonalRoutineId,
   /** Client-generated; a retried Run now with the same id starts one task. */
