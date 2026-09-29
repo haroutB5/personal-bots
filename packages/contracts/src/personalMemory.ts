@@ -65,6 +65,30 @@ export type PersonalMemoryUpdateInput = typeof PersonalMemoryUpdateInput.Type;
 export const PersonalMemoryDeleteInput = Schema.Struct({ memoryId: PersonalMemoryId });
 export type PersonalMemoryDeleteInput = typeof PersonalMemoryDeleteInput.Type;
 
+/** The most entries one bulk delete takes; the phone sends larger selections in parts. */
+export const PERSONAL_MEMORY_BATCH_MAX = 500;
+
+/** Deletes several entries, one at a time, each exactly as `personalMemory.delete` would. */
+export const PersonalMemoryDeleteManyInput = Schema.Struct({
+  memoryIds: Schema.Array(PersonalMemoryId).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PERSONAL_MEMORY_BATCH_MAX),
+  ),
+});
+export type PersonalMemoryDeleteManyInput = typeof PersonalMemoryDeleteManyInput.Type;
+
+/** What a bulk memory delete did: the entries it removed, and the ones it could not, with the reason. */
+export const PersonalMemoryBatchResult = Schema.Struct({
+  done: Schema.Array(PersonalMemoryId),
+  failed: Schema.Array(
+    Schema.Struct({
+      memoryId: PersonalMemoryId,
+      message: Schema.String,
+    }),
+  ),
+});
+export type PersonalMemoryBatchResult = typeof PersonalMemoryBatchResult.Type;
+
 export class PersonalMemoryError extends Schema.TaggedError<PersonalMemoryError>()(
   "PersonalMemoryError",
   {

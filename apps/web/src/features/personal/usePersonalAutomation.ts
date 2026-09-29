@@ -161,6 +161,12 @@ export const personalMemoryDelete = createEnvironmentRpcCommand(connectionAtomRu
   onSuccess: refreshMemory,
 });
 
+export const personalMemoryDeleteMany = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-memory:delete-many",
+  tag: WS_METHODS.personalMemoryDeleteMany,
+  onSuccess: refreshMemory,
+});
+
 export const personalPushSubscribe = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-push:subscribe",
   tag: WS_METHODS.personalPushSubscribe,

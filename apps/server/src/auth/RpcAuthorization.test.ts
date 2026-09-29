@@ -53,6 +53,16 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("gives the bulk file and memory deletes the same operate scope as single delete", () => {
+    for (const method of [
+      WS_METHODS.personalFilesDeleteMany,
+      WS_METHODS.personalMemoryDelete,
+      WS_METHODS.personalMemoryDeleteMany,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
   it("keeps connection management owner-operated while allowing safe listing", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.personalConnectionsList)).toBe(
       AuthOrchestrationReadScope,

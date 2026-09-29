@@ -118,6 +118,12 @@ export const personalFileDelete = createEnvironmentRpcCommand(connectionAtomRunt
   onSuccess: refreshFilesList,
 });
 
+export const personalFilesDeleteMany = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-files:delete-many",
+  tag: WS_METHODS.personalFilesDeleteMany,
+  onSuccess: refreshFilesList,
+});
+
 export const personalProfileSet = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-bots:set-profile",
   tag: WS_METHODS.personalBotsSetProfile,

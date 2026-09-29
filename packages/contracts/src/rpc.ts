@@ -289,6 +289,8 @@ import {
   PersonalBotThread,
   PersonalBotThreadsBatchResult,
   PersonalFileDeleteInput,
+  PersonalFilesBatchResult,
+  PersonalFilesDeleteManyInput,
   PersonalFilesListResult,
   PersonalBotUpdateInput,
   PersonalProfile,
@@ -390,6 +392,8 @@ import {
 } from "./personalRoutines.ts";
 import {
   PersonalMemoryDeleteInput,
+  PersonalMemoryBatchResult,
+  PersonalMemoryDeleteManyInput,
   PersonalMemoryEntry,
   PersonalMemoryError,
   PersonalMemoryListInput,
@@ -590,6 +594,7 @@ export const WS_METHODS = {
   personalLeadBotChangesList: "personalLeadBotChanges.list",
   personalLeadBotChangesDecide: "personalLeadBotChanges.decide",
   personalFilesDelete: "personalFiles.delete",
+  personalFilesDeleteMany: "personalFiles.deleteMany",
 
   // Personal tasks methods
   personalTasksList: "personalTasks.list",
@@ -674,6 +679,7 @@ export const WS_METHODS = {
   personalMemorySearch: "personalMemory.search",
   personalMemoryUpdate: "personalMemory.update",
   personalMemoryDelete: "personalMemory.delete",
+  personalMemoryDeleteMany: "personalMemory.deleteMany",
 
   // Personal Web Push methods
   personalPushPublicKey: "personalPush.publicKey",
@@ -1318,6 +1324,12 @@ const WsPersonalFilesDeleteRpc = Rpc.make(WS_METHODS.personalFilesDelete, {
   error: PersonalBotsRpcError,
 });
 
+const WsPersonalFilesDeleteManyRpc = Rpc.make(WS_METHODS.personalFilesDeleteMany, {
+  payload: PersonalFilesDeleteManyInput,
+  success: PersonalFilesBatchResult,
+  error: PersonalBotsRpcError,
+});
+
 const PersonalTasksRpcError = Schema.Union([PersonalTasksError, EnvironmentAuthorizationError]);
 
 const WsPersonalTasksListRpc = Rpc.make(WS_METHODS.personalTasksList, {
@@ -1762,6 +1774,12 @@ const WsPersonalMemoryUpdateRpc = Rpc.make(WS_METHODS.personalMemoryUpdate, {
 const WsPersonalMemoryDeleteRpc = Rpc.make(WS_METHODS.personalMemoryDelete, {
   payload: PersonalMemoryDeleteInput,
   success: Schema.Struct({}),
+  error: PersonalMemoryRpcError,
+});
+
+const WsPersonalMemoryDeleteManyRpc = Rpc.make(WS_METHODS.personalMemoryDeleteMany, {
+  payload: PersonalMemoryDeleteManyInput,
+  success: PersonalMemoryBatchResult,
   error: PersonalMemoryRpcError,
 });
 
@@ -2429,6 +2447,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalLeadBotChangesListRpc,
   WsPersonalLeadBotChangesDecideRpc,
   WsPersonalFilesDeleteRpc,
+  WsPersonalFilesDeleteManyRpc,
   WsPersonalTasksListRpc,
   WsPersonalTasksGetRpc,
   WsPersonalTasksCreateRpc,
@@ -2494,6 +2513,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalMemorySearchRpc,
   WsPersonalMemoryUpdateRpc,
   WsPersonalMemoryDeleteRpc,
+  WsPersonalMemoryDeleteManyRpc,
   WsPersonalPushPublicKeyRpc,
   WsPersonalPushGetSettingsRpc,
   WsPersonalPushSubscribeRpc,

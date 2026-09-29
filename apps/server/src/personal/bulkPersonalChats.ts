@@ -1,54 +1,22 @@
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 
 import type { PersonalBotThreadsBatchResult, ThreadId } from "@t3tools/contracts";
 
+import { forEachItem } from "./bulkPersonalItems.ts";
 import { deletePersonalChat, type PersonalChatDeleteServices } from "./deletePersonalChat.ts";
 import type * as PersonalBotService from "./PersonalBotService.ts";
 
-/**
- * The reason a single action would have shown: a `PersonalBotsError`'s own
- * message (a group member's chat, a chat already gone), else the generic line.
- * Defects never leak their internals to the phone.
- */
-function failureMessage(cause: Cause.Cause<unknown>, fallback: string): string {
-  const error = Cause.squash(cause);
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { _tag?: unknown })._tag === "PersonalBotsError" &&
-    typeof (error as { message?: unknown }).message === "string" &&
-    (error as { message: string }).message !== ""
-  ) {
-    return (error as { message: string }).message;
-  }
-  return fallback;
-}
-
-/**
- * Runs `action` for each chat in turn (never in parallel: every delete
- * dispatches through the one orchestration engine, and the order the user
- * picked is the order the log shows). One chat failing does not stop the
- * rest; an interrupt does.
- */
+/** Runs `action` for each chat in turn; see `forEachItem`. */
 const forEachChat = Effect.fn("forEachChat")(function* <E, R>(
   threadIds: ReadonlyArray<ThreadId>,
   fallback: string,
   action: (threadId: ThreadId) => Effect.Effect<unknown, E, R>,
 ) {
-  const done: Array<ThreadId> = [];
-  const failed: Array<{ threadId: ThreadId; message: string }> = [];
-  for (const threadId of new Set(threadIds)) {
-    const exit = yield* Effect.exit(action(threadId));
-    if (Exit.isSuccess(exit)) {
-      done.push(threadId);
-      continue;
-    }
-    if (Cause.hasInterruptsOnly(exit.cause)) return yield* Effect.interrupt;
-    failed.push({ threadId, message: failureMessage(exit.cause, fallback) });
-  }
-  return { done, failed } satisfies PersonalBotThreadsBatchResult;
+  const result = yield* forEachItem(threadIds, fallback, action);
+  return {
+    done: result.done,
+    failed: result.failed.map(({ id, message }) => ({ threadId: id, message })),
+  } satisfies PersonalBotThreadsBatchResult;
 });
 
 /**

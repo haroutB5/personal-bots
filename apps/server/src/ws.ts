@@ -191,6 +191,7 @@ import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import { personalWorkingProgress } from "./personal/workingProgress.ts";
 import { deletePersonalChat } from "./personal/deletePersonalChat.ts";
 import { archivePersonalChats, deletePersonalChats } from "./personal/bulkPersonalChats.ts";
+import { deletePersonalFiles, deletePersonalMemories } from "./personal/bulkPersonalItems.ts";
 import { deletePersonalGroup } from "./personal/deletePersonalGroup.ts";
 import { purgePersonalBot } from "./personal/purgePersonalBot.ts";
 import { signPersonalFiles } from "./personal/PersonalFiles.ts";
@@ -3337,6 +3338,12 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.personalFilesDeleteMany]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalFilesDeleteMany,
+            deletePersonalFiles(personalBots, input.fileIds),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalTasksList]: (input) =>
           observeRpcEffect(WS_METHODS.personalTasksList, personalTasks.list(input), {
             "rpc.aggregate": "server",
@@ -3697,6 +3704,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.personalMemoryDelete,
             personalMemory.remove(input).pipe(Effect.as({})),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalMemoryDeleteMany]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalMemoryDeleteMany,
+            deletePersonalMemories(personalMemory, input.memoryIds),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.personalPushPublicKey]: (_input) =>

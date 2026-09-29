@@ -1,11 +1,11 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Check, ChevronLeft, Ellipsis, NotebookPen, Pencil, Plus } from "lucide-react";
+import { ChevronLeft, Ellipsis, NotebookPen, Pencil, Plus } from "lucide-react";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
@@ -43,33 +43,20 @@ import {
 import { useBulkChatActions } from "./useBulkChatActions";
 import { useLongPress } from "./useLongPress";
 import { usePersonalBackTarget } from "./usePersonalBackTarget";
+import {
+  BulkNoticeLine,
+  NO_TOUCH_SELECT,
+  SELECT_TEXT_BUTTON,
+  SelectCheck,
+  SelectModeActions,
+  SelectModeDeleteButton,
+  SelectModeHeader,
+  useBulkNotice,
+  useEscapeToExit,
+} from "./SelectMode";
 
 const ICON_LINK =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
-
-const TEXT_BUTTON =
-  "flex h-11 shrink-0 items-center rounded-[var(--personal-radius-button)] px-2 text-[15px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40";
-
-// A hold on a row enters select mode, so it must not also start iOS text
-// selection on the title or its link preview.
-const NO_TOUCH_SELECT = "select-none [-webkit-touch-callout:none]";
-
-/** The round check at the left of a row in select mode. */
-function SelectCheck({ checked }: { checked: boolean }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "flex size-[22px] shrink-0 items-center justify-center rounded-full border-2",
-        checked
-          ? "border-[var(--personal-primary)] bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
-          : "border-[var(--personal-text-tertiary)]",
-      )}
-    >
-      {checked ? <Check className="size-3.5" strokeWidth={3} /> : null}
-    </span>
-  );
-}
 
 /** A row in select mode: the whole row toggles; no swipe, no opening the chat. */
 function SelectableThreadRow({
@@ -317,9 +304,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
     readonly section: ChatSection;
     readonly ids: ReadonlySet<string>;
   } | null>(null);
-  const [notice, setNotice] = useState<{ readonly text: string; readonly failed: boolean } | null>(
-    null,
-  );
+  const [notice, setNotice] = useBulkNotice();
   const [bulkBusy, setBulkBusy] = useState(false);
   const runBulk = useBulkChatActions(environmentId);
   const selecting = selection !== null;
@@ -356,22 +341,8 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
     );
   };
 
-  // Escape leaves select mode, as Cancel does.
-  useEffect(() => {
-    if (!selecting) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelection(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [selecting]);
-
-  // A plain result fades after a while; one with failures stays until the next action.
-  useEffect(() => {
-    if (notice === null || notice.failed) return;
-    const timer = window.setTimeout(() => setNotice(null), 6000);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
+  const exitSelect = useCallback(() => setSelection(null), []);
+  useEscapeToExit(selecting, exitSelect);
 
   const onBulk = async (action: BulkChatAction) => {
     if (selection === null || chosen.length === 0 || bulkBusy) return;
@@ -390,18 +361,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
     );
   };
 
-  const noticeLine =
-    notice !== null ? (
-      <p
-        role={notice.failed ? "alert" : "status"}
-        className={cn(
-          "mt-3 text-center text-sm",
-          notice.failed ? "text-[var(--personal-error)]" : "text-[var(--personal-text-secondary)]",
-        )}
-      >
-        {notice.text}
-      </p>
-    ) : null;
+  const noticeLine = <BulkNoticeLine notice={notice} />;
 
   const renderSelectable = (row: BotThreadRow) => (
     <SelectableThreadRow
@@ -416,29 +376,13 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   return (
     <div className={cn("flex min-w-0 flex-col px-5", selecting ? "min-h-full" : "pb-8")}>
       {selecting ? (
-        <header className="flex h-16 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setSelection(null)}
-            className={cn("-ml-2", TEXT_BUTTON, "font-normal text-[var(--personal-text)]")}
-          >
-            Cancel
-          </button>
-          <h1
-            aria-live="polite"
-            className="min-w-0 flex-1 truncate text-center text-[17px] font-bold text-[var(--personal-text)] tabular-nums"
-          >
-            {selectedCountLabel(chosen.length)}
-          </h1>
-          <button
-            type="button"
-            onClick={toggleAll}
-            disabled={sectionIds.length === 0}
-            className={cn("-mr-2", TEXT_BUTTON, "text-[var(--personal-text)]")}
-          >
-            {everySelected ? "Deselect all" : "Select all"}
-          </button>
-        </header>
+        <SelectModeHeader
+          label={selectedCountLabel(chosen.length)}
+          everySelected={everySelected}
+          canSelectAll={sectionIds.length > 0}
+          onCancel={exitSelect}
+          onToggleAll={toggleAll}
+        />
       ) : (
         <header className="flex h-16 items-center gap-3">
           <Link to={backTarget.to} aria-label={backTarget.label} className={`-ml-3 ${ICON_LINK}`}>
@@ -532,11 +476,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
               {sectionRows.map(renderSelectable)}
             </ul>
           )}
-          {/* Pinned to the bottom of the screen, above the home indicator. */}
-          <div
-            className="sticky bottom-0 -mx-5 mt-auto flex items-center justify-between border-t border-[var(--personal-border)] bg-[var(--personal-bg)] px-5 pt-2"
-            style={{ paddingBottom: "max(env(safe-area-inset-bottom), 8px)" }}
-          >
+          <SelectModeActions>
             <button
               type="button"
               onClick={() =>
@@ -544,20 +484,16 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
               }
               disabled={chosen.length === 0 || bulkBusy}
               aria-busy={bulkBusy}
-              className={cn("-ml-2", TEXT_BUTTON, "text-[var(--personal-text)]")}
+              className={cn("-ml-2", SELECT_TEXT_BUTTON, "text-[var(--personal-text)]")}
             >
               {selection.section === "archived" ? "Unarchive" : "Archive"}
             </button>
-            <button
-              type="button"
+            <SelectModeDeleteButton
+              disabled={chosen.length === 0}
+              busy={bulkBusy}
               onClick={() => void onBulk("delete")}
-              disabled={chosen.length === 0 || bulkBusy}
-              aria-busy={bulkBusy}
-              className={cn("-mr-2", TEXT_BUTTON, "text-[var(--personal-error)]")}
-            >
-              Delete
-            </button>
-          </div>
+            />
+          </SelectModeActions>
         </>
       ) : null}
 

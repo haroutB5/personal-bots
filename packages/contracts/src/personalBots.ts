@@ -453,6 +453,30 @@ export const PersonalFileDeleteInput = Schema.Struct({
 });
 export type PersonalFileDeleteInput = typeof PersonalFileDeleteInput.Type;
 
+/** The most files one bulk delete takes; the phone sends larger selections in parts. */
+export const PERSONAL_FILES_BATCH_MAX = 500;
+
+/** Deletes several attachments, one at a time, each exactly as `personalFiles.delete` would. */
+export const PersonalFilesDeleteManyInput = Schema.Struct({
+  fileIds: Schema.Array(TrimmedNonEmptyString).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PERSONAL_FILES_BATCH_MAX),
+  ),
+});
+export type PersonalFilesDeleteManyInput = typeof PersonalFilesDeleteManyInput.Type;
+
+/** What a bulk file delete did: the files it removed, and the ones it could not, with the reason. */
+export const PersonalFilesBatchResult = Schema.Struct({
+  done: Schema.Array(Schema.String),
+  failed: Schema.Array(
+    Schema.Struct({
+      fileId: Schema.String,
+      message: Schema.String,
+    }),
+  ),
+});
+export type PersonalFilesBatchResult = typeof PersonalFilesBatchResult.Type;
+
 export class PersonalBotsError extends Schema.TaggedError<PersonalBotsError>()(
   "PersonalBotsError",
   {
