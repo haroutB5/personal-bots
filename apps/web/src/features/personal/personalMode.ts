@@ -72,7 +72,12 @@ export type DesktopPaneLayout = "conversation" | "column" | "form";
 export function desktopPaneLayout(pathname: string): DesktopPaneLayout {
   const path = normalizePath(pathname);
   if (path === "/bots/settings" || path.startsWith("/bots/settings/")) return "form";
-  if (path === "/bots/new" || path === "/bots/groups/new" || /^\/bots\/[^/]+\/edit$/.test(path)) {
+  if (
+    path === "/bots/new" ||
+    path === "/bots/groups/new" ||
+    path === "/bots/teams/new" ||
+    /^\/bots\/[^/]+\/edit$/.test(path)
+  ) {
     return "form";
   }
   if (isRoutineEditorPath(path)) return "form";

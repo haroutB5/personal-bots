@@ -730,6 +730,7 @@ export function ChatsScreen({
               <MenuItem onClick={() => void navigate({ to: "/bots/groups/new" })}>
                 New group
               </MenuItem>
+              <MenuItem onClick={() => void navigate({ to: "/bots/teams/new" })}>New team</MenuItem>
             </MenuPopup>
           </Menu>
         </div>

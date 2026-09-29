@@ -874,7 +874,7 @@ describe("ChatsScreen groups", () => {
     expect(again.findAllByProps({ label: "Delete Ada" })).toHaveLength(0);
   });
 
-  it("offers both New bot and New group behind the one header button", async () => {
+  it("offers New bot, New group and New team behind the one header button", async () => {
     state.listData = { bots: [bot("bot-ada", "Ada")], threads: [], personalProjectId: null };
     await render();
 
@@ -888,6 +888,11 @@ describe("ChatsScreen groups", () => {
     const newGroup = items.find((button) => button.props.children === "New group")!;
     await act(async () => newGroup.props.onClick());
     expect(state.navigate).toHaveBeenCalledWith({ to: "/bots/groups/new" });
+
+    expect(labels).toContain("New team");
+    const newTeam = items.find((button) => button.props.children === "New team")!;
+    await act(async () => newTeam.props.onClick());
+    expect(state.navigate).toHaveBeenCalledWith({ to: "/bots/teams/new" });
   });
 });
 

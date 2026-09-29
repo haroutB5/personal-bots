@@ -35,7 +35,13 @@ describe("chatSwipeBackEnabled", () => {
     expect(enabled({ nativeForced: true })).toBe(false);
     expect(enabled({ state: {} })).toBe(false);
     expect(enabled({ state: undefined })).toBe(false);
-    for (const pathname of ["/bots", "/tasks/task-1", "/bots/bot-planner", "/bots/groups/new"]) {
+    for (const pathname of [
+      "/bots",
+      "/tasks/task-1",
+      "/bots/bot-planner",
+      "/bots/groups/new",
+      "/bots/teams/new",
+    ]) {
       expect(enabled({ pathname })).toBe(false);
     }
   });

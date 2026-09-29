@@ -21,6 +21,7 @@ import { isThreadLive } from "./botSummaries";
 import { commandFailureMessage } from "./commandFeedback";
 import { friendlyTurnError } from "./conversationModel";
 import { shownInTeamChart } from "./groupModel";
+import { NewTeamForm } from "./NewTeamForm";
 import { useLaptopOffline } from "./PersonalOfflineBanner";
 import {
   buildTeamConnectors,
@@ -38,6 +39,7 @@ import {
   teamDropOutcome,
   type TeamDropZone,
 } from "./teamDiagramModel";
+import { takeTeamNotice, type TeamNotice } from "./teamNotice";
 import { usePersonalTasks } from "./usePersonalAutomation";
 import {
   personalBotUpdate,
@@ -92,6 +94,7 @@ function TeamDiagram({
   liveBotIds,
   environmentId,
   customTeams,
+  focusTeam,
 }: {
   readonly bots: ReadonlyArray<PersonalBot>;
   readonly ownerName: string;
@@ -99,8 +102,11 @@ function TeamDiagram({
   readonly liveBotIds: ReadonlySet<string>;
   readonly environmentId: EnvironmentId | null;
   readonly customTeams: ReadonlyArray<PersonalBotTeam>;
+  /** A team just made: its band is brought into view once the diagram draws it. */
+  readonly focusTeam: string | null;
 }): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
+  const focusedTeam = useRef<string | null>(null);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [pending, setPending] = useState<PendingMove | null>(null);
   const [feedback, setFeedback] = useState<MoveFeedback | null>(null);
@@ -198,6 +204,21 @@ function TeamDiagram({
     () => buildTeamDropZones(layout, { width, leadSize: LEAD_SIZE, nodeSize: NODE_SIZE }),
     [layout, width],
   );
+
+  // The new team sits after the older ones, often below the fold on a phone:
+  // scroll to its band once the refreshed list has drawn it, once per team.
+  useEffect(() => {
+    if (focusTeam === null || focusedTeam.current === focusTeam) return;
+    const band = layout.bands.find((candidate) => sameTeam(candidate.team, focusTeam));
+    if (band === undefined || containerRef.current === null) return;
+    focusedTeam.current = focusTeam;
+    const reduced =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    containerRef.current
+      .querySelector(`[data-team-band="${CSS.escape(band.team)}"]`)
+      ?.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
+  }, [focusTeam, layout.bands]);
 
   const dropBots = useMemo(
     () =>
@@ -518,6 +539,7 @@ function TeamDiagram({
         {layout.bands.map((band) => (
           <div
             key={`heading:${band.team}`}
+            data-team-band={band.team}
             aria-hidden="true"
             className="absolute inset-x-0 z-[5] flex items-center gap-2"
             style={{ top: band.labelY }}
@@ -635,31 +657,29 @@ function TeamManager({
   environmentId,
   teams,
   bots,
+  onCreated,
 }: {
   readonly environmentId: EnvironmentId | null;
   readonly teams: ReadonlyArray<string>;
   readonly bots: ReadonlyArray<PersonalBot>;
+  readonly onCreated: (notice: TeamNotice) => void;
 }): JSX.Element {
   const saveProfile = useAtomCommand(personalProfileSet);
   const offline = useLaptopOffline();
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const disabled = busy || offline || environmentId === null;
-  const changeTeam = async (operation: "create" | "delete", teamName: string) => {
+  const removeTeam = async (teamName: string) => {
     if (disabled || environmentId === null) return;
     setBusy(true);
     setError(null);
     try {
       const result = await saveProfile({
         environmentId,
-        input: { teamChange: { operation, name: teamName.trim() } },
+        input: { teamChange: { operation: "delete", name: teamName.trim() } },
       });
-      if (result._tag === "Success") {
-        setName("");
-        setOpen(false);
-      } else {
+      if (result._tag !== "Success") {
         setError(commandFailureMessage(result, "Couldn't save the team. Try again."));
       }
     } finally {
@@ -677,37 +697,16 @@ function TeamManager({
         {open ? "Cancel" : "New team"}
       </button>
       {open ? (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void changeTeam("create", name);
+        <NewTeamForm
+          environmentId={environmentId}
+          bots={bots}
+          customTeams={teams}
+          onCancel={() => setOpen(false)}
+          onCreated={(notice) => {
+            setOpen(false);
+            onCreated(notice);
           }}
-          className="space-y-2"
-        >
-          <label
-            htmlFor="new-team-name"
-            className="block text-sm font-medium text-[var(--personal-text)]"
-          >
-            Team name
-          </label>
-          <input
-            id="new-team-name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            maxLength={60}
-            required
-            disabled={busy}
-            placeholder="e.g. Research"
-            className="h-11 w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-3 text-base text-[var(--personal-text)]"
-          />
-          <button
-            type="submit"
-            disabled={disabled || name.trim().length === 0}
-            className="min-h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] disabled:opacity-50"
-          >
-            {busy ? "Saving…" : "Create team"}
-          </button>
-        </form>
+        />
       ) : null}
       {teams.length > 0 ? (
         <ul className="divide-y divide-[var(--personal-border)]">
@@ -726,7 +725,7 @@ function TeamManager({
                     type="button"
                     disabled={disabled}
                     aria-label={`Remove ${team}`}
-                    onClick={() => void changeTeam("delete", team)}
+                    onClick={() => void removeTeam(team)}
                     className="min-h-11 shrink-0 px-2 text-[var(--personal-text-secondary)]"
                   >
                     Remove
@@ -783,14 +782,34 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
     );
   }, [allShells, environmentId, list.data]);
   const ownerName = profile.data?.displayName.trim() || "You";
+  // Set by the New team screen (taken once, after mount) or by the form here.
+  // The status region is always in the page and only its text arrives later,
+  // which is what makes a screen reader announce it.
+  const [notice, setNotice] = useState<TeamNotice | null>(null);
+  useEffect(() => {
+    const arrived = takeTeamNotice();
+    if (arrived !== null) setNotice(arrived);
+  }, []);
 
   return (
     <div className="flex min-h-full flex-col px-5 pb-8">
       <PersonalPageHeader title="Team" showBack={showBack} />
+      <div
+        role="status"
+        aria-live="polite"
+        className={
+          notice === null
+            ? "sr-only"
+            : "mt-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-4 py-2.5 text-[15px] leading-snug text-[var(--personal-text)]"
+        }
+      >
+        {notice?.message ?? ""}
+      </div>
       <TeamManager
         environmentId={profile.data === null ? null : environmentId}
         teams={profile.data?.customTeams ?? []}
         bots={bots}
+        onCreated={setNotice}
       />
       {profile.error !== null ? (
         <p role="alert" className="text-sm text-[var(--personal-text)]">
@@ -854,6 +873,7 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
             liveBotIds={liveBotIds}
             environmentId={environmentId}
             customTeams={profile.data?.customTeams ?? []}
+            focusTeam={notice?.team ?? null}
           />
           <div
             aria-label="Diagram key"

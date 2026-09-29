@@ -95,6 +95,7 @@ describe("desktopPaneLayout", () => {
       "/bots/new",
       "/bots/b1/edit",
       "/bots/groups/new",
+      "/bots/teams/new",
       "/bots/settings",
       "/bots/settings/connections",
       "/bots/settings/passwords",

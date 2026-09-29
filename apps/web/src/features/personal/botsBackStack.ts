@@ -20,6 +20,7 @@ export function isPersonalChatPath(pathname: string): boolean {
   if (match === null) return false;
   const [, first, second] = match;
   if (first === "groups") return second !== "new";
+  if (first === "teams") return second !== "new";
   return first !== "settings" && second !== "edit";
 }
 
