@@ -311,17 +311,21 @@ const make = Effect.gen(function* () {
         `You are speaking in the group "${group.value}". Create, edit and remove bots in your own chat with the user, not in a group.`,
       );
     }
-    return { botId: caller.botId, threadId: caller.threadId };
+    return { botId: caller.botId, threadId: caller.threadId, team: caller.team };
   });
 
   /** A bot named by id or name, among live bots; a name shared with another team's bot prefers the caller's team. */
-  const resolveBotRef = Effect.fn("BotsToolkit.resolveBotRef")(function* (ref: string) {
+  const resolveBotRef = Effect.fn("BotsToolkit.resolveBotRef")(function* (
+    ref: string,
+    team: string,
+  ) {
     const all = yield* listBots;
     const byId = all.find((bot) => bot.botId === ref);
     if (byId !== undefined) return byId.botId as string;
     const wanted = ref.trim().toLowerCase();
     const named = all.filter((bot) => bot.name.trim().toLowerCase() === wanted);
-    return named.length === 0 ? ref : (named[0]!.botId as string);
+    const pick = named.find((bot) => botTeam(bot) === team) ?? named[0];
+    return pick === undefined ? ref : (pick.botId as string);
   });
 
   return BotsToolkit.of({
@@ -589,7 +593,7 @@ const make = Effect.gen(function* () {
         const caller = yield* leadCaller();
         const { bot, ...fields } = input;
         const result = yield* leadBots
-          .update(caller, yield* resolveBotRef(bot), fields)
+          .update(caller, yield* resolveBotRef(bot, caller.team), fields)
           .pipe(Effect.mapError(readable));
         return {
           ...result,
@@ -603,7 +607,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const caller = yield* leadCaller();
         const result = yield* leadBots
-          .remove(caller, yield* resolveBotRef(input.bot))
+          .remove(caller, yield* resolveBotRef(input.bot, caller.team))
           .pipe(Effect.mapError(readable));
         return {
           ...result,
