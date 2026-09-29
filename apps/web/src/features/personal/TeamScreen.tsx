@@ -1,9 +1,9 @@
-import type { CSSProperties, JSX } from "react";
+import type { JSX } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useAtomValue } from "@effect/atom-react";
 import {
   botTeam,
-  isBotOnTeam,
   isTeamLead,
   sameTeam,
   type EnvironmentId,
@@ -11,33 +11,51 @@ import {
   type PersonalBotTeam,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import { Plus } from "lucide-react";
 
+import { Sheet, SheetPopup, SheetTitle } from "~/components/ui/sheet";
 import { useThreadShells } from "~/state/entities";
+import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { BotAvatar } from "./BotAvatar";
 import { PersonalPageHeader } from "./BotForm";
 import { isThreadLive } from "./botSummaries";
+import { botModelShortLabel } from "./botModelLabel";
 import { commandFailureMessage } from "./commandFeedback";
 import { friendlyTurnError } from "./conversationModel";
 import { shownInTeamChart } from "./groupModel";
 import { NewTeamForm } from "./NewTeamForm";
 import { useLaptopOffline } from "./PersonalOfflineBanner";
 import {
-  buildTeamConnectors,
-  buildTeamDropZones,
+  TeamConstellationCard,
+  type ConstellationBot,
+  type ConstellationSpoke,
+} from "./TeamConstellationCard";
+import { TeamLeadConfirm } from "./TeamLeadConfirm";
+import { TeamMembersSheet, type MemberListRow } from "./TeamMembersSheet";
+import { TeamMoveOverlay } from "./TeamMoveOverlay";
+import { TeamMoveToast } from "./TeamMoveToast";
+import { TeamWorkingNow } from "./TeamWorkingNow";
+import {
+  applyTeamUpdate,
+  deriveDelegationCounts,
+  deriveWorkingNow,
+  leadConfirmCopy,
+  planDrop,
+  teamMoveTargets,
+  undoMessage,
+  undoPlan,
+  type LeadReplacement,
+  type UndoStep,
+} from "./teamConstellationModel";
+import {
   buildTeamGroups,
-  buildTeamGroupsLayout,
-  countTeamMembers,
-  crossTeamDelegationPath,
-  delegationConnectorPath,
-  deriveDelegationLinks,
-  laneDelegationPath,
-  teamConnectorLanes,
-  teamDiagramSummary,
+  NEW_TEAM_ZONE_ID,
   teamDropHint,
   teamDropOutcome,
-  type TeamDropZone,
+  teamDropZoneId,
+  type TeamDropOutcome,
+  type TeamDropTarget,
 } from "./teamDiagramModel";
 import { takeTeamNotice, type TeamNotice } from "./teamNotice";
 import { usePersonalTasks } from "./usePersonalAutomation";
@@ -48,28 +66,9 @@ import {
   usePersonalEnvironmentId,
   usePersonalProfile,
 } from "./usePersonalBots";
+import { useMinuteNow } from "./useMinuteNow";
+import { useTeamHandoffTasks } from "./useTeamHandoffTasks";
 import { useTeamBotDrag } from "./useTeamBotDrag";
-
-const NODE_SIZE = 64;
-/** Leads are drawn a size up, so each team reads as one head and its members. */
-const LEAD_SIZE = 76;
-/** The `w-24` name column under every node; the connector lanes stay clear of it. */
-const LABEL_WIDTH = 96;
-const DEFAULT_WIDTH = 320;
-
-const LAYOUT_OPTIONS = {
-  leadSize: LEAD_SIZE,
-  nodeSize: NODE_SIZE,
-  gapX: 32,
-  gapY: 88,
-  bandGap: 56,
-  headingSpace: 28,
-  perRow: 4,
-};
-
-function nodeStyle(x: number, y: number, size: number): CSSProperties {
-  return { left: x, top: y - size / 2, transform: "translateX(-50%)" };
-}
 
 function initialOf(name: string): string {
   return Array.from(name.trim())[0]?.toLocaleUpperCase() ?? "Y";
@@ -87,46 +86,71 @@ interface MoveFeedback {
   readonly text: string;
 }
 
-function TeamDiagram({
+interface ToastState {
+  readonly text: string;
+  readonly undo: (() => void) | null;
+}
+
+interface ConfirmState {
+  readonly botId: string;
+  readonly target: TeamDropTarget;
+  readonly replaced: LeadReplacement;
+}
+
+const NO_BOTS: ReadonlyArray<PersonalBot> = [];
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+/**
+ * Direction B, "Constellation": every team is a card with its lead at the
+ * centre and its members around it, spokes for the lead's handoffs, and a
+ * zoomed-out set of drop cards while a bot is being moved.
+ */
+function TeamBoard({
   bots,
+  allBots,
   ownerName,
   tasks,
   liveBotIds,
   environmentId,
   customTeams,
   focusTeam,
+  onCreated,
 }: {
   readonly bots: ReadonlyArray<PersonalBot>;
+  /** Every bot, group-only ones too: the New team form checks names against all of them. */
+  readonly allBots: ReadonlyArray<PersonalBot>;
   readonly ownerName: string;
-  readonly tasks: Parameters<typeof deriveDelegationLinks>[0];
+  readonly tasks: Parameters<typeof deriveDelegationCounts>[0];
   readonly liveBotIds: ReadonlySet<string>;
   readonly environmentId: EnvironmentId | null;
   readonly customTeams: ReadonlyArray<PersonalBotTeam>;
-  /** A team just made: its band is brought into view once the diagram draws it. */
+  /** A team just made: its card is brought into view once it is drawn. */
   readonly focusTeam: string | null;
+  readonly onCreated: (notice: TeamNotice) => void;
 }): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const focusedTeam = useRef<string | null>(null);
-  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const providers = useAtomValue(primaryServerProvidersAtom);
+  const nowMs = useMinuteNow();
   const [pending, setPending] = useState<PendingMove | null>(null);
   const [feedback, setFeedback] = useState<MoveFeedback | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [liveHint, setLiveHint] = useState("");
+  const [hint, setHint] = useState("");
+  const [tapBotId, setTapBotId] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [membersTeam, setMembersTeam] = useState<string | null>(null);
+  const [newTeamBotId, setNewTeamBotId] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
   const updateBot = useAtomCommand(personalBotUpdate);
+  const saveProfile = useAtomCommand(personalProfileSet);
   const offline = useLaptopOffline();
-
-  useEffect(() => {
-    const element = containerRef.current;
-    if (element === null) return;
-    const measure = () => {
-      const next = Math.round(element.getBoundingClientRect().width);
-      if (next > 0) setWidth((current) => (current === next ? current : next));
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
 
   // The optimistic move is done the moment the refreshed list says the same
   // thing, so the overlay is dropped rather than left to fight the server.
@@ -141,84 +165,75 @@ function TeamDiagram({
     }
   }
 
-  // The node jumps to its new place the moment the finger lets go, and stays
-  // there until the server agrees. A failed move clears `pending`, so the node
-  // snaps back to where it came from.
+  // The bot jumps to its new card the moment the finger lets go, and stays
+  // there until the server agrees. A failed move clears `pending`, so it snaps
+  // back to where it came from.
   const shown = useMemo(() => {
-    if (pending === null) return bots;
-    return bots.map((bot) => {
-      if (bot.botId === pending.botId) return { ...bot, team: pending.team, lead: pending.lead };
-      // One lead per team, optimistically too: never two badges for a blink.
-      if (pending.lead && isBotOnTeam(bot, pending.team)) return { ...bot, lead: false };
-      return bot;
-    });
+    // One lead per team, optimistically too: never two badges for a blink.
+    return pending === null ? bots : applyTeamUpdate(bots, pending);
   }, [bots, pending]);
 
   const groups = useMemo(() => buildTeamGroups(shown, customTeams), [shown, customTeams]);
-  const layout = useMemo(
-    () => buildTeamGroupsLayout(groups, { ...LAYOUT_OPTIONS, width }),
-    [groups, width],
-  );
-  const botIdSet = useMemo(() => new Set(shown.map((bot) => bot.botId as string)), [shown]);
-  const teamById = useMemo(
-    () =>
-      new Map<string, PersonalBotTeam>(
-        shown.map((bot) => [bot.botId as string, botTeam(bot)] as const),
-      ),
+  const botById = useMemo(
+    () => new Map<string, PersonalBot>(shown.map((bot) => [bot.botId as string, bot] as const)),
     [shown],
   );
-  const leadIds = useMemo(
-    () => new Set(groups.flatMap((group) => (group.leadBotId === null ? [] : [group.leadBotId]))),
-    [groups],
+  const botIdSet = useMemo(() => new Set(botById.keys()), [botById]);
+  const counts = useMemo(
+    () => deriveDelegationCounts(tasks, botIdSet, nowMs),
+    [botIdSet, nowMs, tasks],
   );
-  const [openedAt] = useState(Date.now);
-  const delegationLinks = useMemo(
-    () => deriveDelegationLinks(tasks, botIdSet, openedAt),
-    [botIdSet, openedAt, tasks],
+  const working = useMemo(() => deriveWorkingNow(tasks, botIdSet), [botIdSet, tasks]);
+  const openHandoffsBy = useCallback(
+    (botId: string) => working.filter((item) => item.from === botId).length,
+    [working],
   );
-  const summary = useMemo(
-    () => teamDiagramSummary(ownerName, groups, shown, delegationLinks),
-    [shown, delegationLinks, groups, ownerName],
-  );
-  const connectors = useMemo(
+  const workingFor = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of working) {
+      const from = botById.get(item.from);
+      if (from !== undefined && !map.has(item.to)) map.set(item.to, from.name);
+    }
+    return map;
+  }, [botById, working]);
+  const modelLabels = useMemo(
     () =>
-      buildTeamConnectors(groups, layout, {
-        width,
-        leadSize: LEAD_SIZE,
-        nodeSize: NODE_SIZE,
-        labelWidth: LABEL_WIDTH,
-      }),
-    [groups, layout, width],
+      new Map(
+        shown.map((bot) => [
+          bot.botId as string,
+          botModelShortLabel(bot.modelSelection, providers),
+        ]),
+      ),
+    [providers, shown],
   );
-  const lanes = useMemo(
-    () =>
-      teamConnectorLanes(layout, {
-        width,
-        leadSize: LEAD_SIZE,
-        nodeSize: NODE_SIZE,
-        labelWidth: LABEL_WIDTH,
-      }),
-    [layout, width],
+  const entryOf = useCallback(
+    (bot: PersonalBot): ConstellationBot => ({
+      bot,
+      modelLabel: modelLabels.get(bot.botId) ?? null,
+      live: liveBotIds.has(bot.botId),
+      workingFor: workingFor.get(bot.botId) ?? null,
+    }),
+    [liveBotIds, modelLabels, workingFor],
   );
-  const dropZones = useMemo(
-    () => buildTeamDropZones(layout, { width, leadSize: LEAD_SIZE, nodeSize: NODE_SIZE }),
-    [layout, width],
+  const maxSpoke = useMemo(
+    () => counts.reduce((max, entry) => Math.max(max, entry.recent), 0),
+    [counts],
   );
 
+  const scrollToTeam = useCallback((team: string) => {
+    const card = containerRef.current?.querySelector(`[data-team="${CSS.escape(team)}"]`);
+    card?.scrollIntoView({ block: "start", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+  }, []);
+
   // The new team sits after the older ones, often below the fold on a phone:
-  // scroll to its band once the refreshed list has drawn it, once per team.
+  // scroll to its card once the refreshed list has drawn it, once per team.
   useEffect(() => {
     if (focusTeam === null || focusedTeam.current === focusTeam) return;
-    const band = layout.bands.find((candidate) => sameTeam(candidate.team, focusTeam));
-    if (band === undefined || containerRef.current === null) return;
+    if (!groups.some((group) => sameTeam(group.team, focusTeam))) return;
     focusedTeam.current = focusTeam;
-    const reduced =
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    containerRef.current
-      .querySelector(`[data-team-band="${CSS.escape(band.team)}"]`)
-      ?.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
-  }, [focusTeam, layout.bands]);
+    const group = groups.find((candidate) => sameTeam(candidate.team, focusTeam));
+    if (group !== undefined) scrollToTeam(group.team);
+  }, [focusTeam, groups, scrollToTeam]);
 
   const dropBots = useMemo(
     () =>
@@ -235,21 +250,96 @@ function TeamDiagram({
     [dropBots],
   );
 
-  const onDrop = useCallback(
-    (botId: string, zone: TeamDropZone | null) => {
+  const failMessage = (result: Parameters<typeof commandFailureMessage>[0], fallback: string) =>
+    friendlyTurnError(commandFailureMessage(result, fallback) ?? fallback, fallback).message;
+
+  const focusBot = useCallback((botId: string) => {
+    window.requestAnimationFrame(() => {
+      containerRef.current
+        ?.querySelector<HTMLElement>(`[data-bot-node="${CSS.escape(botId)}"]`)
+        ?.focus();
+    });
+  }, []);
+
+  const runUndo = useCallback(
+    async (steps: ReadonlyArray<UndoStep>, botName: string) => {
+      const last = steps.at(-1);
+      if (environmentId === null || last === undefined) return;
+      setToast(null);
+      setFeedback(null);
+      setPending({ botId: last.botId, team: last.team, lead: last.lead });
+      for (const step of steps) {
+        const result = await updateBot({
+          environmentId,
+          input: { botId: step.botId as PersonalBot["botId"], team: step.team, lead: step.lead },
+        });
+        if (result._tag !== "Success") {
+          setPending(null);
+          setFeedback({
+            tone: "error",
+            text: failMessage(result, `${botName} couldn't be moved back. Try again.`),
+          });
+          return;
+        }
+      }
+      const message = undoMessage(botName, last.team, last.lead);
+      setLiveHint(message);
+      setToast({ text: message, undo: null });
+      scrollToTeam(last.team);
+    },
+    [environmentId, scrollToTeam, updateBot],
+  );
+
+  const commitMove = useCallback(
+    async (
+      bot: {
+        readonly botId: string;
+        readonly name: string;
+        readonly team?: PersonalBotTeam;
+        readonly lead?: boolean;
+      },
+      outcome: Extract<TeamDropOutcome, { kind: "update" }>,
+      replaced: LeadReplacement | null,
+    ) => {
+      if (environmentId === null) return;
+      const before = { botId: bot.botId, team: botTeam(bot), lead: isTeamLead(bot) };
+      setFeedback(null);
+      setToast(null);
+      setPending({ botId: bot.botId, ...outcome.update });
+      requestAnimationFrame(() => scrollToTeam(outcome.update.team));
+      const result = await updateBot({
+        environmentId,
+        input: { botId: bot.botId as PersonalBot["botId"], ...outcome.update },
+      });
+      if (result._tag === "Success") {
+        setLiveHint(outcome.message);
+        const steps = undoPlan({ before, replaced, destination: outcome.update.team });
+        setToast({ text: outcome.message, undo: () => void runUndo(steps, bot.name) });
+        return;
+      }
+      setPending(null);
+      setFeedback({
+        tone: "error",
+        text: failMessage(result, `${bot.name} couldn't be moved. Try again.`),
+      });
+    },
+    [environmentId, runUndo, scrollToTeam, updateBot],
+  );
+
+  /** A drop (or a tap on a card) means `target` for `botId`; a Lead drop over a lead asks first. */
+  const applyMove = useCallback(
+    (botId: string, target: TeamDropTarget, confirmed: boolean) => {
       const bot = dropBot(botId);
       if (bot === null) return;
-      if (zone === null) {
-        setLiveHint(`${bot.name} stayed where it was.`);
+      setTapBotId(null);
+      const plan = planDrop({ bot, target, roster: dropBots, openHandoffsBy, confirmed });
+      if (plan.kind === "none") {
+        setLiveHint(plan.message);
         return;
       }
-      const outcome = teamDropOutcome(bot, zone.target, dropBots);
-      if (outcome.kind === "none") {
-        setLiveHint(outcome.message);
-        return;
-      }
-      if (outcome.kind === "blocked") {
-        setFeedback({ tone: "error", text: outcome.message });
+      if (plan.kind === "blocked") {
+        setFeedback({ tone: "error", text: plan.message });
+        setLiveHint(plan.message);
         return;
       }
       if (environmentId === null || offline) {
@@ -259,50 +349,98 @@ function TeamDiagram({
         });
         return;
       }
-      setFeedback(null);
-      setPending({ botId, ...outcome.update });
-      void (async () => {
-        const result = await updateBot({
-          environmentId,
-          input: { botId: bot.botId as PersonalBot["botId"], ...outcome.update },
-        });
-        if (result._tag === "Success") {
-          setFeedback({ tone: "info", text: outcome.message });
-          return;
-        }
-        setPending(null);
-        const fallback = `${bot.name} couldn't be moved. Try again.`;
-        setFeedback({
-          tone: "error",
-          text: friendlyTurnError(commandFailureMessage(result, fallback) ?? fallback, fallback)
-            .message,
-        });
-      })();
+      if (plan.kind === "confirm") {
+        setLiveHint(`Make ${bot.name} the lead? ${plan.replaced.oldLeadName} stops leading.`);
+        setConfirm({ botId, target, replaced: plan.replaced });
+        return;
+      }
+      void commitMove(bot, plan.outcome, plan.replaced);
     },
-    [dropBot, dropBots, environmentId, offline, updateBot],
+    [commitMove, dropBot, dropBots, environmentId, offline, openHandoffsBy],
   );
 
-  const { drag, handlersFor } = useTeamBotDrag({
-    containerRef,
-    zones: dropZones,
+  const zoneTargets = useMemo(() => {
+    const map = new Map<string, TeamDropTarget>();
+    for (const group of groups) {
+      for (const kind of ["team", "lead"] as const) {
+        const target = { kind, team: group.team };
+        map.set(teamDropZoneId(target), target);
+      }
+    }
+    return map;
+  }, [groups]);
+
+  const zoneAt = useCallback((x: number, y: number): string | null => {
+    if (typeof document.elementsFromPoint !== "function") return null;
+    for (const element of document.elementsFromPoint(x, y)) {
+      const zone = element.closest("[data-team-move-overlay] [data-drop-zone]");
+      if (zone !== null) return zone.getAttribute("data-drop-zone");
+    }
+    return null;
+  }, []);
+
+  const hintFor = useCallback(
+    (botId: string, zoneId: string | null): string => {
+      const bot = dropBot(botId);
+      if (bot === null) return "";
+      if (zoneId === NEW_TEAM_ZONE_ID) return `Let go to start a new team with ${bot.name}.`;
+      const target = zoneId === null ? undefined : zoneTargets.get(zoneId);
+      return teamDropHint(
+        bot,
+        target === undefined || zoneId === null ? null : { id: zoneId, target },
+        dropBots,
+      );
+    },
+    [dropBot, dropBots, zoneTargets],
+  );
+
+  const dropOn = useCallback(
+    (botId: string, zoneId: string | null) => {
+      const bot = dropBot(botId);
+      if (bot === null) return;
+      if (zoneId === null) {
+        // Let go over nothing: the cards stay up to tap, or cancel.
+        setTapBotId(botId);
+        setHint(`Tap a team or a lead seat to move ${bot.name}, or cancel.`);
+        setLiveHint(`${bot.name} is waiting. Tap a team or a lead seat, or cancel.`);
+        return;
+      }
+      if (zoneId === NEW_TEAM_ZONE_ID) {
+        setTapBotId(null);
+        setNewTeamBotId(botId);
+        return;
+      }
+      const target = zoneTargets.get(zoneId);
+      if (target !== undefined) applyMove(botId, target, false);
+    },
+    [applyMove, dropBot, zoneTargets],
+  );
+
+  const { drag, handlersFor, cancel } = useTeamBotDrag({
+    zoneAt,
     onLift: useCallback(
       (botId: string) => {
         const bot = dropBot(botId);
         setFeedback(null);
-        setLiveHint(
-          bot === null ? "" : `${bot.name} lifted. Drag it onto a team, or onto a lead slot.`,
-        );
+        setToast(null);
+        const text =
+          bot === null
+            ? ""
+            : `${bot.name} lifted. Drag it onto a team, or onto a round seat to lead.`;
+        setHint(text);
+        setLiveHint(bot === null ? "" : `${bot.name} lifted. Pick a team, or a lead seat.`);
       },
       [dropBot],
     ),
     onHover: useCallback(
-      (botId: string, zone: TeamDropZone | null) => {
-        const bot = dropBot(botId);
-        if (bot !== null) setLiveHint(teamDropHint(bot, zone, dropBots));
+      (botId: string, zoneId: string | null) => {
+        const text = hintFor(botId, zoneId);
+        setHint(text);
+        setLiveHint(text);
       },
-      [dropBot, dropBots],
+      [hintFor],
     ),
-    onDrop,
+    onDrop: dropOn,
     onCancel: useCallback(
       (botId: string) => {
         const bot = dropBot(botId);
@@ -312,41 +450,151 @@ function TeamDiagram({
     ),
   });
 
-  const dragged = drag === null ? null : dropBot(drag.botId);
-  /**
-   * While a bot is in the air: every landing that would change something, with
-   * the one refusal spelled out rather than dressed up as a valid target. The
-   * chief nodes are left out — the node itself lights up instead.
-   */
-  const activeZones =
-    dragged === null
-      ? []
-      : dropZones.flatMap((zone) => {
-          if (!zone.id.startsWith("band:") && !zone.id.startsWith("lead:")) return [];
-          const outcome = teamDropOutcome(dragged, zone.target, dropBots);
-          if (outcome.kind === "none") return [];
-          return [
+  const cancelMove = useCallback(() => {
+    const botId = tapBotId ?? drag?.botId ?? null;
+    const bot = botId === null ? null : dropBot(botId);
+    cancel();
+    setTapBotId(null);
+    setLiveHint(bot === null ? "" : `${bot.name} stayed where it was.`);
+    if (botId !== null) focusBot(botId);
+  }, [cancel, drag, dropBot, focusBot, tapBotId]);
+
+  const overlayBotId = drag?.botId ?? tapBotId;
+  const overlayBot = overlayBotId === null ? undefined : botById.get(overlayBotId);
+  const moveRows = useMemo(() => {
+    if (overlayBotId === null) return [];
+    const bot = dropBot(overlayBotId);
+    return bot === null ? [] : teamMoveTargets(bot, groups, dropBots, openHandoffsBy);
+  }, [dropBot, dropBots, groups, openHandoffsBy, overlayBotId]);
+  const facesByTeam = useMemo(() => {
+    const map = new Map<string, PersonalBot[]>();
+    for (const group of groups) {
+      map.set(
+        group.team,
+        [...(group.leadBotId === null ? [] : [group.leadBotId]), ...group.memberBotIds].flatMap(
+          (id) => {
+            const bot = botById.get(id);
+            return bot === undefined || id === overlayBotId ? [] : [bot];
+          },
+        ),
+      );
+    }
+    return map;
+  }, [botById, groups, overlayBotId]);
+  const leadBots = useMemo(() => {
+    const map = new Map<string, PersonalBot>();
+    for (const group of groups) {
+      const lead = group.leadBotId === null ? undefined : botById.get(group.leadBotId);
+      if (lead !== undefined) map.set(lead.botId, lead);
+    }
+    return map;
+  }, [botById, groups]);
+  const hotTone: "info" | "review" = useMemo(() => {
+    if (drag === null || drag.zoneId === null) return "info";
+    const target = zoneTargets.get(drag.zoneId);
+    const bot = dropBot(drag.botId);
+    if (target === undefined || bot === null) return "info";
+    return teamDropOutcome(bot, target, dropBots).kind === "blocked" ? "review" : "info";
+  }, [drag, dropBot, dropBots, zoneTargets]);
+
+  const onPick = useCallback(
+    (zoneId: string) => {
+      if (tapBotId === null) return;
+      if (zoneId === NEW_TEAM_ZONE_ID) {
+        setNewTeamBotId(tapBotId);
+        setTapBotId(null);
+        return;
+      }
+      const target = zoneTargets.get(zoneId);
+      if (target !== undefined) applyMove(tapBotId, target, false);
+    },
+    [applyMove, tapBotId, zoneTargets],
+  );
+
+  const confirmBot = confirm === null ? null : (botById.get(confirm.botId) ?? null);
+  const confirmCopy =
+    confirm === null || confirmBot === null
+      ? null
+      : leadConfirmCopy({
+          bot: dropBot(confirm.botId) ?? { botId: confirm.botId, name: confirmBot.name },
+          team: confirm.target.team,
+          replaced: confirm.replaced,
+        });
+
+  const removeTeam = async (team: string) => {
+    if (environmentId === null || removing) return;
+    setRemoving(true);
+    setFeedback(null);
+    try {
+      const result = await saveProfile({
+        environmentId,
+        input: { teamChange: { operation: "delete", name: team.trim() } },
+      });
+      if (result._tag !== "Success") {
+        setFeedback({
+          tone: "error",
+          text: commandFailureMessage(result, "Couldn't remove the team. Try again.") ?? "",
+        });
+      }
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  const membersGroup =
+    membersTeam === null
+      ? null
+      : (groups.find((group) => sameTeam(group.team, membersTeam)) ?? null);
+  const memberRows: ReadonlyArray<MemberListRow> = useMemo(() => {
+    if (membersGroup === null) return [];
+    const ids = [
+      ...(membersGroup.leadBotId === null ? [] : [membersGroup.leadBotId]),
+      ...membersGroup.memberBotIds,
+    ];
+    return ids.flatMap((id) => {
+      const bot = botById.get(id);
+      return bot === undefined
+        ? []
+        : [
             {
-              zone,
-              blocked: outcome.kind === "blocked",
-              label: outcome.kind === "blocked" ? "Needs a new lead first" : zone.label,
+              bot,
+              modelLabel: modelLabels.get(id) ?? null,
+              isLead: id === membersGroup.leadBotId,
+              live: liveBotIds.has(id),
             },
           ];
-        });
+    });
+  }, [botById, liveBotIds, membersGroup, modelLabels]);
+
+  const newTeamBot = newTeamBotId === null ? null : (botById.get(newTeamBotId) ?? null);
+  const dismissToast = useCallback(() => setToast(null), []);
 
   return (
     <>
-      <p className="mt-2 text-[15px] leading-5 text-[var(--personal-text-secondary)]">
-        Each team can have a lead. Press and hold a bot to move it to another team, or onto a lead
-        slot to put it in charge. You can also change this from the bot&apos;s own page.
-      </p>
+      <div className="mt-1 mb-3 flex items-center gap-2.5">
+        <span
+          aria-hidden="true"
+          className="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--personal-primary)] text-base font-bold text-[var(--personal-primary-text)]"
+        >
+          {initialOf(ownerName)}
+        </span>
+        <p className="min-w-0">
+          <span className="block truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
+            {ownerName}
+          </span>
+          <span className="block text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
+            {groups.length} {groups.length === 1 ? "team" : "teams"} · {shown.length}{" "}
+            {shown.length === 1 ? "bot" : "bots"} · hold a bot to move it
+          </span>
+        </p>
+      </div>
       <span aria-live="polite" role="status" className="sr-only">
         {liveHint}
       </span>
       {feedback === null ? null : (
         <div
           role={feedback.tone === "error" ? "alert" : "status"}
-          className={`mt-3 rounded-[var(--personal-radius-card)] border px-4 py-2.5 text-[15px] leading-snug ${
+          className={`mb-3 rounded-[var(--personal-radius-card)] border px-4 py-2.5 text-[15px] leading-snug ${
             feedback.tone === "error"
               ? "border-[var(--personal-review-border)] bg-[var(--personal-review-bg)] text-[var(--personal-text)]"
               : "border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)]"
@@ -355,400 +603,135 @@ function TeamDiagram({
           {feedback.text}
         </div>
       )}
-      <div ref={containerRef} className="relative mt-6 w-full" style={{ height: layout.svgHeight }}>
-        <svg
-          role="img"
-          aria-label={summary}
-          viewBox={`0 0 ${width} ${layout.svgHeight}`}
-          width={width}
-          height={layout.svgHeight}
-          className="pointer-events-none absolute inset-0 size-full overflow-visible"
-        >
-          <defs>
-            <marker
-              id="team-owner-arrow"
-              viewBox="0 0 10 10"
-              refX="8"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--personal-team-line)" />
-            </marker>
-            <marker
-              id="team-live-arrow"
-              viewBox="0 0 10 10"
-              refX="8"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--personal-team-live)" />
-            </marker>
-            <marker
-              id="team-recent-arrow"
-              viewBox="0 0 10 10"
-              refX="8"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--personal-team-recent)" />
-            </marker>
-            <marker
-              id="team-cross-arrow"
-              viewBox="0 0 10 10"
-              refX="8"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--personal-review)" />
-            </marker>
-          </defs>
 
-          {/*
-          You to each team's lead down the outer lane, and each lead to its own
-          members down that team's lane. Elbows, never straight centre lines:
-          a line that ran from the owner through the dev band to the
-          assistant's lead made the two teams read as one chain.
-        */}
-          {connectors.map((connector) => (
-            <path
-              key={connector.key}
-              d={connector.d}
-              fill="none"
-              stroke="var(--personal-team-line)"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              markerEnd={connector.arrow ? "url(#team-owner-arrow)" : undefined}
-              vectorEffect="non-scaling-stroke"
+      <TeamWorkingNow items={working} botsById={botById} nowMs={nowMs} />
+
+      <div ref={containerRef}>
+        {groups.map((group) => {
+          const lead = group.leadBotId === null ? undefined : botById.get(group.leadBotId);
+          const members = group.memberBotIds.flatMap((id) => {
+            const bot = botById.get(id);
+            return bot === undefined ? [] : [entryOf(bot)];
+          });
+          const spokes = new Map<string, ConstellationSpoke>();
+          for (const entry of counts) {
+            if (entry.from !== group.leadBotId) continue;
+            spokes.set(entry.to, { recent: entry.recent, running: entry.running > 0 });
+          }
+          const custom = customTeams.some((registered) => sameTeam(registered, group.team));
+          return (
+            <TeamConstellationCard
+              key={group.team}
+              group={group}
+              label={group.label}
+              lead={lead === undefined ? null : entryOf(lead)}
+              members={members}
+              spokes={spokes}
+              maxSpoke={maxSpoke}
+              custom={custom}
+              removable={lead === undefined && members.length === 0}
+              removeBusy={removing || offline}
+              draggingBotId={drag?.botId ?? null}
+              movingBotId={pending?.botId ?? null}
+              handlersFor={handlersFor}
+              onOpenMembers={setMembersTeam}
+              onRemove={(team) => void removeTeam(team)}
             />
-          ))}
-
-          {delegationLinks.map((link) => {
-            const from = layout.bots.get(link.from);
-            const to = layout.bots.get(link.to);
-            if (from === undefined || to === undefined) return null;
-            const running = link.state === "running";
-            // A handoff across teams only exists because the owner allowed it,
-            // so it is drawn apart rather than hidden.
-            const fromTeam = teamById.get(link.from);
-            const toTeam = teamById.get(link.to);
-            // Case-insensitively, so two rows spelled differently but drawn in
-            // the one band do not get the across-teams colour and lane.
-            const crossTeam =
-              fromTeam === undefined || toTeam === undefined
-                ? fromTeam !== toTeam
-                : !sameTeam(fromTeam, toTeam);
-            // Side by side in one row, the bow is the clearest line there is.
-            // Between rows it would sag across the row below and through
-            // whichever node shares that column, so it takes a lane instead.
-            const sameRow = !crossTeam && from.row === to.row;
-            const stroke = crossTeam
-              ? "var(--personal-review)"
-              : running
-                ? "var(--personal-team-live)"
-                : "var(--personal-team-recent)";
-            return (
-              <path
-                key={`${link.from}:${link.to}`}
-                d={
-                  crossTeam
-                    ? crossTeamDelegationPath(from, to, { lane: lanes.cross, nodeSize: NODE_SIZE })
-                    : sameRow
-                      ? delegationConnectorPath(from, to, NODE_SIZE)
-                      : laneDelegationPath(from, to, {
-                          lane: lanes.delegation,
-                          fromSize: leadIds.has(link.from) ? LEAD_SIZE : NODE_SIZE,
-                          toSize: leadIds.has(link.to) ? LEAD_SIZE : NODE_SIZE,
-                        })
-                }
-                fill="none"
-                stroke={stroke}
-                strokeWidth={running ? 2.5 : 1.5}
-                strokeDasharray={crossTeam ? "2 6" : running ? "8 5" : "4 7"}
-                strokeLinecap="round"
-                markerEnd={
-                  crossTeam
-                    ? "url(#team-cross-arrow)"
-                    : running
-                      ? "url(#team-live-arrow)"
-                      : "url(#team-recent-arrow)"
-                }
-                vectorEffect="non-scaling-stroke"
-              />
-            );
-          })}
-        </svg>
-
-        <div
-          className="absolute z-10 flex w-24 flex-col items-center bg-[var(--personal-bg)] text-center"
-          style={nodeStyle(layout.owner.x, layout.owner.y, LEAD_SIZE)}
-        >
-          <span className="flex size-16 items-center justify-center rounded-full bg-[var(--personal-primary)] text-2xl font-bold text-[var(--personal-primary-text)] ring-4 ring-[var(--personal-bg)]">
-            {initialOf(ownerName)}
-          </span>
-          <span className="mt-2 max-w-24 truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
-            {ownerName}
-          </span>
-          {ownerName === "You" ? null : (
-            <span className="text-xs leading-4 text-[var(--personal-text-secondary)]">You</span>
-          )}
-        </div>
-
-        {activeZones.map(({ zone, blocked, label }) => {
-          const active = drag?.zone?.id === zone.id;
-          const isLeadSlot = zone.target.kind === "lead";
-          const tone = blocked
-            ? "border-[var(--personal-review-border)] bg-[var(--personal-review-bg)]"
-            : active
-              ? "border-[var(--personal-primary)] bg-[color-mix(in_srgb,var(--personal-primary)_14%,transparent)]"
-              : "border-[var(--personal-border)] bg-[color-mix(in_srgb,var(--personal-text)_4%,transparent)]";
-          return (
-            <div
-              key={zone.id}
-              aria-hidden="true"
-              className={`pointer-events-none absolute z-20 flex rounded-[var(--personal-radius-card)] border-2 border-dashed ${
-                isLeadSlot ? "items-center justify-center" : "items-start justify-end p-2"
-              } ${tone}`}
-              style={{
-                left: zone.rect.x,
-                top: zone.rect.y,
-                width: zone.rect.width,
-                height: zone.rect.height,
-              }}
-            >
-              <span
-                className={`rounded-full px-2 py-0.5 text-center text-[11px] leading-4 font-semibold ${
-                  active && !blocked
-                    ? "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
-                    : "bg-[var(--personal-fill-muted)] text-[var(--personal-text-secondary)]"
-                }`}
-              >
-                {label}
-              </span>
-            </div>
-          );
-        })}
-
-        {layout.bands.map((band) => (
-          <div
-            key={`heading:${band.team}`}
-            data-team-band={band.team}
-            aria-hidden="true"
-            className="absolute inset-x-0 z-[5] flex items-center gap-2"
-            style={{ top: band.labelY }}
-          >
-            {/* The label knocks the owner's connectors out behind it (the page
-                colour, like the node captions); they ran straight through the
-                letters ("DEV TEAM" struck through) on every width. */}
-            <span className="min-w-0 truncate bg-[var(--personal-bg)] pr-2 text-xs font-semibold tracking-wide text-[var(--personal-section-label)] uppercase">
-              {band.label}
-            </span>
-            <span className="h-px flex-1 bg-[var(--personal-border)]" />
-          </div>
-        ))}
-
-        {shown.map((bot) => {
-          const position = layout.bots.get(bot.botId);
-          if (position === undefined) return null;
-          const live = liveBotIds.has(bot.botId);
-          const isLead = leadIds.has(bot.botId);
-          const size = isLead ? LEAD_SIZE : NODE_SIZE;
-          const lifted = drag?.botId === bot.botId;
-          // A chief node is itself a drop target: landing on it joins its team.
-          const overChief = drag !== null && drag.zone?.id === `chief:${botTeam(bot)}` && isLead;
-          const label = [
-            bot.name,
-            isLead ? "team lead" : "",
-            bot.title.trim(),
-            live ? "working" : "",
-          ]
-            .filter(Boolean)
-            .join(", ");
-          return (
-            <div
-              key={bot.botId}
-              {...handlersFor(bot.botId)}
-              className={`absolute flex w-24 flex-col items-center text-center ${
-                lifted ? "z-40" : "z-10"
-              }`}
-              style={{
-                ...nodeStyle(position.x, position.y, size),
-                // pan-y keeps a flick scrolling the page; the long press that
-                // lifts a node blocks touchmove itself once it matures.
-                touchAction: "pan-y pinch-zoom",
-                WebkitTouchCallout: "none",
-                transform: lifted
-                  ? `translateX(-50%) translate(${String(drag.delta.x)}px, ${String(drag.delta.y)}px) scale(1.06)`
-                  : "translateX(-50%)",
-                transition: drag === null ? "transform 180ms ease" : "none",
-                filter: lifted ? "drop-shadow(var(--personal-shadow-lift))" : undefined,
-                opacity: drag !== null && !lifted ? 0.65 : 1,
-              }}
-            >
-              <Link
-                to="/bots/$botId"
-                params={{ botId: bot.botId }}
-                aria-label={label}
-                draggable={false}
-                className={`relative flex shrink-0 rounded-full outline-none active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] ${
-                  overChief
-                    ? "ring-4 ring-[var(--personal-primary)] ring-offset-2 ring-offset-[var(--personal-bg)]"
-                    : isLead
-                      ? "ring-2 ring-[var(--personal-primary)] ring-offset-2 ring-offset-[var(--personal-bg)]"
-                      : ""
-                }`}
-                style={{ width: size, height: size }}
-              >
-                <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={size} label="" />
-              </Link>
-              {/*
-              Only the text carries the page background. When the whole column
-              did, it tiled with its neighbours and hid every line drawn at or
-              below the avatars.
-            */}
-              <div className="flex w-24 flex-col items-center bg-[var(--personal-bg)]">
-                {isLead ? (
-                  <span
-                    aria-hidden="true"
-                    className="mt-1 rounded-full bg-[var(--personal-primary)] px-1.5 text-[10px] leading-4 font-semibold text-[var(--personal-primary-text)]"
-                  >
-                    Lead
-                  </span>
-                ) : null}
-                <Link
-                  to="/bots/$botId/edit"
-                  params={{ botId: bot.botId }}
-                  aria-label={`Edit ${bot.name}`}
-                  draggable={false}
-                  className="flex min-h-11 max-w-24 min-w-11 items-center justify-center gap-1.5 rounded-[var(--personal-radius-button)] px-1 outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-                >
-                  {live ? (
-                    <span
-                      aria-hidden="true"
-                      className="size-2 shrink-0 rounded-full bg-[var(--personal-team-live)]"
-                    />
-                  ) : null}
-                  <span className="truncate text-[15px] leading-5 font-semibold text-[var(--personal-text)]">
-                    {bot.name}
-                  </span>
-                </Link>
-                {bot.title.trim().length > 0 ? (
-                  <span className="-mt-3 max-w-24 truncate text-xs leading-4 text-[var(--personal-text-secondary)]">
-                    {bot.title}
-                  </span>
-                ) : null}
-              </div>
-            </div>
           );
         })}
       </div>
+
+      {overlayBot === undefined ? null : (
+        <TeamMoveOverlay
+          bot={overlayBot}
+          rows={moveRows}
+          facesByTeam={facesByTeam}
+          leadBots={leadBots}
+          hotZoneId={drag?.zoneId ?? null}
+          hint={hint}
+          hintTone={hotTone}
+          dragPoint={drag === null ? null : drag.point}
+          interactive={drag === null}
+          onPick={onPick}
+          onNewTeam={() => onPick(NEW_TEAM_ZONE_ID)}
+          onCancel={cancelMove}
+        />
+      )}
+
+      {confirm === null || confirmCopy === null || confirmBot === null ? null : (
+        <TeamLeadConfirm
+          copy={confirmCopy}
+          newLead={confirmBot}
+          oldLead={botById.get(confirm.replaced.oldLeadId) ?? null}
+          busy={false}
+          onCancel={() => {
+            setLiveHint(`${confirmBot.name} stayed where it was.`);
+            setConfirm(null);
+            focusBot(confirm.botId);
+          }}
+          onConfirm={() => {
+            const { botId, target } = confirm;
+            setConfirm(null);
+            applyMove(botId, target, true);
+          }}
+        />
+      )}
+
+      {membersGroup === null ? null : (
+        <TeamMembersSheet
+          teamLabel={membersGroup.label}
+          rows={memberRows}
+          onClose={() => setMembersTeam(null)}
+          onMove={(botId) => {
+            setMembersTeam(null);
+            const bot = dropBot(botId);
+            setHint(
+              bot === null ? "" : `Tap a team or a lead seat to move ${bot.name}, or cancel.`,
+            );
+            setLiveHint(bot === null ? "" : `Move ${bot.name}. Pick a team, or a lead seat.`);
+            setTapBotId(botId);
+          }}
+        />
+      )}
+
+      {newTeamBot === null ? null : (
+        <Sheet open onOpenChange={(next) => (next ? undefined : setNewTeamBotId(null))}>
+          <SheetPopup
+            side="bottom"
+            showCloseButton={false}
+            forceBackdrop
+            backdropClassName="bg-black/[0.32] backdrop-blur-none dark:bg-black/[0.55]"
+            className="personal-app max-h-[92dvh] rounded-t-[20px] border-[var(--personal-border)] bg-[var(--personal-surface)] pb-[env(safe-area-inset-bottom)]"
+          >
+            <SheetTitle className="px-5 pt-4 text-[19px] leading-6 font-bold text-[var(--personal-text)]">
+              New team with {newTeamBot.name}
+            </SheetTitle>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-3">
+              <NewTeamForm
+                environmentId={environmentId}
+                bots={allBots}
+                customTeams={customTeams}
+                initialMemberIds={[newTeamBot.botId]}
+                onCancel={() => setNewTeamBotId(null)}
+                onCreated={(notice) => {
+                  setNewTeamBotId(null);
+                  onCreated(notice);
+                }}
+              />
+            </div>
+          </SheetPopup>
+        </Sheet>
+      )}
+
+      {toast === null ? null : (
+        <TeamMoveToast text={toast.text} onUndo={toast.undo} onDismiss={dismissToast} />
+      )}
     </>
   );
 }
 
-function TeamManager({
-  environmentId,
-  teams,
-  bots,
-  onCreated,
-}: {
-  readonly environmentId: EnvironmentId | null;
-  readonly teams: ReadonlyArray<string>;
-  readonly bots: ReadonlyArray<PersonalBot>;
-  readonly onCreated: (notice: TeamNotice) => void;
-}): JSX.Element {
-  const saveProfile = useAtomCommand(personalProfileSet);
-  const offline = useLaptopOffline();
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const disabled = busy || offline || environmentId === null;
-  const removeTeam = async (teamName: string) => {
-    if (disabled || environmentId === null) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await saveProfile({
-        environmentId,
-        input: { teamChange: { operation: "delete", name: teamName.trim() } },
-      });
-      if (result._tag !== "Success") {
-        setError(commandFailureMessage(result, "Couldn't save the team. Try again."));
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <section aria-label="Manage teams" className="my-4 space-y-3">
-      {open ? null : (
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => setOpen(true)}
-          className="min-h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] disabled:opacity-50"
-        >
-          New team
-        </button>
-      )}
-      {open ? (
-        <NewTeamForm
-          environmentId={environmentId}
-          bots={bots}
-          customTeams={teams}
-          onCancel={() => setOpen(false)}
-          onCreated={(notice) => {
-            setOpen(false);
-            onCreated(notice);
-          }}
-        />
-      ) : null}
-      {teams.length > 0 ? (
-        <ul className="divide-y divide-[var(--personal-border)]">
-          {teams.map((team) => {
-            const count = countTeamMembers(bots, team);
-            return (
-              <li
-                key={team}
-                className="flex min-h-11 items-center justify-between gap-3 text-sm text-[var(--personal-text)]"
-              >
-                <span className="min-w-0 break-words">
-                  {team} · {count} {count === 1 ? "bot" : "bots"}
-                </span>
-                {count === 0 ? (
-                  <button
-                    type="button"
-                    disabled={disabled}
-                    aria-label={`Remove ${team}`}
-                    onClick={() => void removeTeam(team)}
-                    className="min-h-11 shrink-0 px-2 text-[var(--personal-text-secondary)]"
-                  >
-                    Remove
-                  </button>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-      {error !== null ? (
-        <p role="alert" className="text-sm text-[var(--personal-text)]">
-          {error}
-        </p>
-      ) : null}
-    </section>
-  );
-}
-
 /**
- * /bots/team: teams behind their leads, and current or recent handoffs. Also
+ * /bots/team: teams as constellations, and current or recent handoffs. Also
  * the desktop pane when no chat is open, where it is the home and has no Back.
  */
 export function TeamScreen({ showBack = true }: { readonly showBack?: boolean }): JSX.Element {
@@ -758,13 +741,14 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
   const allShells = useThreadShells();
   const bots = useMemo(
-    () => (list.data?.bots ?? []).toSorted((left, right) => left.sortOrder - right.sortOrder),
+    () => (list.data?.bots ?? NO_BOTS).toSorted((left, right) => left.sortOrder - right.sortOrder),
     [list.data],
   );
   // Group-only bots stay out of the chart, as they do out of Chats (leads
-  // excepted); team management still counts every bot.
+  // excepted).
   const chartBots = useMemo(() => shownInTeamChart(bots), [bots]);
-  const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
+  const feedTasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
+  const tasks = useTeamHandoffTasks(environmentId, feedTasks, taskFeed !== null);
   const liveBotIds = useMemo(() => {
     if (list.data === null) return new Set<string>();
     const liveThreadIds = new Set(
@@ -795,24 +779,26 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
 
   return (
     <div className="flex min-h-full flex-col px-5 pb-8">
-      <PersonalPageHeader title="Team" showBack={showBack} />
+      <PersonalPageHeader title="Team" showBack={showBack}>
+        <Link
+          to="/bots/teams/new"
+          aria-label="New team"
+          className="flex size-11 shrink-0 items-center justify-center rounded-full bg-[var(--personal-fill-muted)] text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+        >
+          <Plus aria-hidden="true" className="size-[22px]" strokeWidth={2} />
+        </Link>
+      </PersonalPageHeader>
       <div
         role="status"
         aria-live="polite"
         className={
           notice === null
             ? "sr-only"
-            : "mt-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-4 py-2.5 text-[15px] leading-snug text-[var(--personal-text)]"
+            : "mb-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] px-4 py-2.5 text-[15px] leading-snug text-[var(--personal-text)]"
         }
       >
         {notice?.message ?? ""}
       </div>
-      <TeamManager
-        environmentId={profile.data === null ? null : environmentId}
-        teams={profile.data?.customTeams ?? []}
-        bots={bots}
-        onCreated={setNotice}
-      />
       {profile.error !== null ? (
         <p role="alert" className="text-sm text-[var(--personal-text)]">
           Couldn't load your teams.{" "}
@@ -865,51 +851,17 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
       ) : null}
 
       {bots.length > 0 || (profile.data?.customTeams?.length ?? 0) > 0 ? (
-        <>
-          {/* One line of help, the diagram's own ("Press and hold a bot…"): a
-              second paragraph above it said the same thing in other words. */}
-          <TeamDiagram
-            bots={chartBots}
-            ownerName={ownerName}
-            tasks={tasks}
-            liveBotIds={liveBotIds}
-            environmentId={environmentId}
-            customTeams={profile.data?.customTeams ?? []}
-            focusTeam={notice?.team ?? null}
-          />
-          <div
-            aria-label="Diagram key"
-            className="mt-2 flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs text-[var(--personal-text-secondary)]"
-          >
-            <span className="flex items-center gap-2">
-              <span aria-hidden="true" className="h-px w-6 bg-[var(--personal-team-line)]" />
-              Your bots
-            </span>
-            <span className="flex items-center gap-2">
-              <svg aria-hidden="true" width="24" height="4" viewBox="0 0 24 4">
-                <path
-                  d="M0 2H24"
-                  stroke="var(--personal-team-live)"
-                  strokeWidth="2"
-                  strokeDasharray="6 4"
-                />
-              </svg>
-              Active handoff
-            </span>
-            <span className="flex items-center gap-2">
-              <svg aria-hidden="true" width="24" height="4" viewBox="0 0 24 4">
-                <path d="M0 2H24" stroke="var(--personal-team-recent)" strokeDasharray="4 5" />
-              </svg>
-              Recent handoff
-            </span>
-            <span className="flex items-center gap-2">
-              <svg aria-hidden="true" width="24" height="4" viewBox="0 0 24 4">
-                <path d="M0 2H24" stroke="var(--personal-review)" strokeDasharray="2 6" />
-              </svg>
-              Across teams, you asked
-            </span>
-          </div>
-        </>
+        <TeamBoard
+          bots={chartBots}
+          allBots={bots}
+          ownerName={ownerName}
+          tasks={tasks}
+          liveBotIds={liveBotIds}
+          environmentId={environmentId}
+          customTeams={profile.data?.customTeams ?? []}
+          focusTeam={notice?.team ?? null}
+          onCreated={setNotice}
+        />
       ) : null}
     </div>
   );

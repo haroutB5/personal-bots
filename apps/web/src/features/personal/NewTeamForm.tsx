@@ -86,7 +86,10 @@ export function NewTeamForm({
   customTeams,
   onCreated,
   onCancel,
+  initialMemberIds = [],
 }: {
+  /** Members ticked from the start ("New team with Frontend" on the Team screen). */
+  readonly initialMemberIds?: ReadonlyArray<string>;
   readonly environmentId: EnvironmentId | null;
   readonly bots: ReadonlyArray<PersonalBot>;
   readonly customTeams: ReadonlyArray<PersonalBotTeam>;
@@ -101,7 +104,7 @@ export function NewTeamForm({
   const offline = useLaptopOffline();
   const [name, setName] = useState("");
   const [leaderId, setLeaderId] = useState<string | null>(null);
-  const [memberIds, setMemberIds] = useState<ReadonlyArray<string>>([]);
+  const [memberIds, setMemberIds] = useState<ReadonlyArray<string>>(initialMemberIds);
   const [busy, setBusy] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

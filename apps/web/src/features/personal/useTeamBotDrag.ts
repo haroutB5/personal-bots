@@ -1,24 +1,22 @@
-import type {
-  PointerEvent as ReactPointerEvent,
-  RefObject,
-  MouseEvent as ReactMouseEvent,
-} from "react";
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { hitTestTeamDropZone, type TeamDiagramPoint, type TeamDropZone } from "./teamDiagramModel";
-
-/** How long a finger has to rest on a bot before it lifts off the diagram. */
+/** How long a finger has to rest on a bot before it lifts off its card. */
 export const TEAM_DRAG_LONG_PRESS_MS = 450;
 /** Move further than this before the press matures and it was a scroll, not a lift. */
 const SCROLL_CANCEL_PX = 10;
 
+export interface TeamDragPoint {
+  readonly x: number;
+  readonly y: number;
+}
+
 export interface TeamDragState {
   readonly botId: string;
-  /** How far the node has travelled from where it was picked up, in CSS px. */
-  readonly delta: TeamDiagramPoint;
-  /** The finger, in the diagram's own coordinates. */
-  readonly point: TeamDiagramPoint;
-  readonly zone: TeamDropZone | null;
+  /** The finger, in client (viewport) pixels. */
+  readonly point: TeamDragPoint;
+  /** The drop card under the finger, or null. */
+  readonly zoneId: string | null;
 }
 
 export interface TeamDragHandlers {
@@ -44,31 +42,37 @@ interface Press {
 }
 
 /**
- * Long-press to lift a bot off the diagram, then drag it onto a team.
+ * Long-press to lift a bot off its card, then drag it over a drop card.
  *
- * Scroll versus drag. The diagram is taller than the phone, and a bot node
- * covers a lot of it, so the gesture has to decide early and only once. The
- * node keeps `touch-action: pan-y`, which means a flick scrolls the page
- * normally and the browser never waits on us. A press only becomes a drag if
- * the finger stays within {@link SCROLL_CANCEL_PX} for
- * {@link TEAM_DRAG_LONG_PRESS_MS}; any movement before that cancels the timer,
- * so a scroll can never turn into a drag. Once it does lift, the page must stop
- * scrolling — but `touch-action` is read when the gesture begins, so changing
- * it now would do nothing, and React's own `onTouchMove` is passive. So the
- * lift installs a non-passive `touchmove` listener on the window that calls
- * `preventDefault`, and takes pointer capture so the node keeps receiving moves
- * even when the finger leaves it. Both are undone on drop or cancel.
+ * Scroll versus drag. The screen is taller than the phone, and a node covers a
+ * lot of it, so the gesture decides early and only once. The node keeps
+ * `touch-action: pan-y`, so a flick scrolls the page and the browser never
+ * waits on us. A press only becomes a drag if the finger stays within
+ * {@link SCROLL_CANCEL_PX} for {@link TEAM_DRAG_LONG_PRESS_MS}; any movement
+ * before that cancels the timer, so a scroll can never turn into a drag. Once
+ * it lifts the page has to stop scrolling, but `touch-action` is read when the
+ * gesture begins and React's touch handlers are passive, so the lift installs a
+ * non-passive `touchmove` listener on the window that calls `preventDefault`.
+ *
+ * The lift also brings up the zoomed-out drop cards, and a lifted drag is
+ * followed on the window (pointermove, pointerup, pointercancel) rather than on
+ * the node, so it does not matter what re-renders under the finger. Every
+ * listener and the page's text-selection lock are undone on drop, cancel,
+ * Escape or leaving the screen.
  */
 export function useTeamBotDrag(options: {
-  readonly containerRef: RefObject<HTMLElement | null>;
-  readonly zones: ReadonlyArray<TeamDropZone>;
+  /** Which drop card is under a viewport point (the cards are read from the DOM). */
+  readonly zoneAt: (x: number, y: number) => string | null;
   readonly onLift: (botId: string) => void;
-  readonly onHover: (botId: string, zone: TeamDropZone | null) => void;
-  readonly onDrop: (botId: string, zone: TeamDropZone | null) => void;
+  readonly onHover: (botId: string, zoneId: string | null) => void;
+  /** Let go over a card, or over nothing (null), which keeps the cards open to tap. */
+  readonly onDrop: (botId: string, zoneId: string | null) => void;
   readonly onCancel: (botId: string) => void;
 }): {
   readonly drag: TeamDragState | null;
   readonly handlersFor: (botId: string) => TeamDragHandlers;
+  /** Ends a drag without dropping (the cards were closed some other way). */
+  readonly cancel: () => void;
 } {
   const [drag, setDrag] = useState<TeamDragState | null>(null);
   const press = useRef<Press | null>(null);
@@ -76,23 +80,25 @@ export function useTeamBotDrag(options: {
   // navigates into the bot the owner was only moving.
   const swallowClick = useRef(false);
   // Kept in a ref so the timer and the window listeners a lift installs read
-  // the current callbacks and drop zones rather than the ones from the render
-  // the press started on.
+  // the current callbacks rather than the ones from the render the press began on.
   const latest = useRef(options);
   useEffect(() => {
     latest.current = options;
   });
+  const windowListeners = useRef<(() => void) | null>(null);
 
   const release = useCallback(() => {
     const current = press.current;
     press.current = null;
+    windowListeners.current?.();
+    windowListeners.current = null;
     if (current === null) return current;
     if (current.timer !== null) window.clearTimeout(current.timer);
     if (current.lifted) {
       try {
         current.element.releasePointerCapture(current.pointerId);
       } catch {
-        // The pointer is already gone; nothing to release.
+        // The node is gone or the pointer is; nothing to release.
       }
       document.body.style.removeProperty("user-select");
       document.body.style.removeProperty("-webkit-user-select");
@@ -101,10 +107,11 @@ export function useTeamBotDrag(options: {
     return current;
   }, []);
 
-  // A lifted node must not also scroll the page. React's touch handlers are
+  const dragging = drag !== null;
+  // A lifted bot must not also scroll the page. React's touch handlers are
   // passive, so the block has to be a non-passive window listener.
   useEffect(() => {
-    if (drag === null) return;
+    if (!dragging) return;
     const block = (event: TouchEvent) => {
       if (event.cancelable) event.preventDefault();
     };
@@ -119,17 +126,10 @@ export function useTeamBotDrag(options: {
       window.removeEventListener("touchmove", block);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [drag, release]);
+  }, [dragging, release]);
 
   // Leaving the screen mid-drag must not leave the page unscrollable.
   useEffect(() => () => void release(), [release]);
-
-  const pointOf = useCallback((clientX: number, clientY: number): TeamDiagramPoint => {
-    const box = latest.current.containerRef.current?.getBoundingClientRect();
-    return box === undefined
-      ? { x: clientX, y: clientY }
-      : { x: clientX - box.left, y: clientY - box.top };
-  }, []);
 
   const lift = useCallback(() => {
     const current = press.current;
@@ -145,23 +145,56 @@ export function useTeamBotDrag(options: {
     document.body.style.setProperty("user-select", "none");
     document.body.style.setProperty("-webkit-user-select", "none");
     navigator.vibrate?.(8);
-    const point = pointOf(current.x, current.y);
-    const zone = hitTestTeamDropZone(latest.current.zones, point);
-    setDrag({ botId: current.botId, delta: { x: 0, y: 0 }, point, zone });
+
+    const follow = (event: PointerEvent) => {
+      const active = press.current;
+      if (active === null || active.pointerId !== event.pointerId || !active.lifted) return;
+      active.x = event.clientX;
+      active.y = event.clientY;
+      const zoneId = latest.current.zoneAt(event.clientX, event.clientY);
+      setDrag((previous) => {
+        if (previous !== null && previous.zoneId !== zoneId) {
+          latest.current.onHover(active.botId, zoneId);
+        }
+        return { botId: active.botId, point: { x: event.clientX, y: event.clientY }, zoneId };
+      });
+    };
+    const finish = (event: PointerEvent) => {
+      const active = press.current;
+      if (active === null || active.pointerId !== event.pointerId) return;
+      const zoneId = latest.current.zoneAt(event.clientX, event.clientY);
+      release();
+      latest.current.onDrop(active.botId, zoneId);
+    };
+    const abort = (event: PointerEvent) => {
+      const active = press.current;
+      if (active === null || active.pointerId !== event.pointerId) return;
+      release();
+      latest.current.onCancel(active.botId);
+    };
+    window.addEventListener("pointermove", follow);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", abort);
+    windowListeners.current = () => {
+      window.removeEventListener("pointermove", follow);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", abort);
+    };
+
+    // The cards mount on the next render, so nothing is under the finger yet.
+    setDrag({ botId: current.botId, point: { x: current.x, y: current.y }, zoneId: null });
     latest.current.onLift(current.botId);
-    latest.current.onHover(current.botId, zone);
-  }, [pointOf]);
+  }, [release]);
 
   const handlersFor = useCallback(
     (botId: string): TeamDragHandlers => ({
       onPointerDown: (event) => {
         if (event.pointerType === "mouse" && event.button !== 0) return;
         if (press.current !== null) return;
-        const element = event.currentTarget;
         press.current = {
           botId,
           pointerId: event.pointerId,
-          element,
+          element: event.currentTarget,
           startX: event.clientX,
           startY: event.clientY,
           x: event.clientX,
@@ -173,39 +206,23 @@ export function useTeamBotDrag(options: {
       },
       onPointerMove: (event) => {
         const current = press.current;
-        if (current === null || current.pointerId !== event.pointerId) return;
+        if (current === null || current.pointerId !== event.pointerId || current.lifted) return;
         current.x = event.clientX;
         current.y = event.clientY;
-        const dx = event.clientX - current.startX;
-        const dy = event.clientY - current.startY;
-        if (!current.lifted) {
-          // Still deciding: any real movement means the finger is scrolling.
-          if (Math.hypot(dx, dy) > SCROLL_CANCEL_PX) release();
-          return;
-        }
-        const point = pointOf(event.clientX, event.clientY);
-        const zone = hitTestTeamDropZone(latest.current.zones, point);
-        setDrag((previous) => {
-          if (previous !== null && previous.zone?.id !== zone?.id) {
-            latest.current.onHover(botId, zone);
-          }
-          return { botId, delta: { x: dx, y: dy }, point, zone };
-        });
+        // Still deciding: any real movement means the finger is scrolling.
+        const moved = Math.hypot(event.clientX - current.startX, event.clientY - current.startY);
+        if (moved > SCROLL_CANCEL_PX) release();
       },
+      // A press that never lifted just ends; a lifted one is finished on the window.
       onPointerUp: (event) => {
         const current = press.current;
-        if (current === null || current.pointerId !== event.pointerId) return;
-        const zone = current.lifted
-          ? hitTestTeamDropZone(latest.current.zones, pointOf(event.clientX, event.clientY))
-          : null;
-        const lifted = current.lifted;
+        if (current === null || current.pointerId !== event.pointerId || current.lifted) return;
         release();
-        if (lifted) latest.current.onDrop(botId, zone);
       },
-      onPointerCancel: () => {
-        const lifted = press.current?.lifted === true;
+      onPointerCancel: (event) => {
+        const current = press.current;
+        if (current === null || current.pointerId !== event.pointerId || current.lifted) return;
         release();
-        if (lifted) latest.current.onCancel(botId);
       },
       // The tap that ends a drag must not also open the bot. A plain tap never
       // lifts, so `swallowClick` stays false and the link behaves as before.
@@ -219,8 +236,10 @@ export function useTeamBotDrag(options: {
       // iOS raises its callout on the same long press that lifts the node.
       onContextMenu: (event) => event.preventDefault(),
     }),
-    [lift, pointOf, release],
+    [lift, release],
   );
 
-  return { drag, handlersFor };
+  const cancel = useCallback(() => void release(), [release]);
+
+  return { drag, handlersFor, cancel };
 }
