@@ -114,38 +114,21 @@ export function isProviderBroken(
 }
 
 /**
- * The chat header's status split into the part that may be squeezed out
- * (`prefix`, the provider name) and the part that never may (`status`, what
- * the bot is doing right now). The header renders them as separate spans so a
- * long bot title can never shorten "Idle" / "Working" / "Waiting for you".
+ * The chat header's status: what the bot is doing right now. The provider name
+ * is gone from the header (the model label beside it names the runtime); it
+ * only appears when a post-update test failed, where naming it is the point.
  */
-export interface ConversationHeaderParts {
-  readonly prefix: string | null;
-  readonly status: string;
-}
-
-export function conversationHeaderParts(
-  state: ConversationState,
-  stateLabel: string,
-  provider: BotProviderStatus | null,
-): ConversationHeaderParts {
-  if (provider === null) return { prefix: null, status: stateLabel };
-  // A failed post-update test replaces the state label unless the bot is
-  // waiting on the user, and then it is the whole status.
-  if (provider.broken && state !== "needs_help" && state !== "waiting") {
-    return { prefix: null, status: `Update broke ${provider.label}` };
-  }
-  return { prefix: provider.label, status: stateLabel };
-}
-
-/** The same header status as one string, for labels and tests. */
 export function conversationHeaderStatus(
   state: ConversationState,
   stateLabel: string,
   provider: BotProviderStatus | null,
 ): string {
-  const parts = conversationHeaderParts(state, stateLabel, provider);
-  return parts.prefix === null ? parts.status : `${parts.prefix} · ${parts.status}`;
+  // A failed post-update test replaces the state label unless the bot is
+  // waiting on the user.
+  if (provider?.broken === true && state !== "needs_help" && state !== "waiting") {
+    return `Update broke ${provider.label}`;
+  }
+  return stateLabel;
 }
 
 /** "Claude Code", or "Claude Code · unavailable" when the bot cannot run. */

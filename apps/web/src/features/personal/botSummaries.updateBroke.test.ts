@@ -3,12 +3,7 @@ import { PersonalBot, type PersonalBotThread, type ServerProvider } from "@t3too
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  botStatus,
-  buildBotSummaries,
-  conversationHeaderParts,
-  conversationHeaderStatus,
-} from "./botSummaries";
+import { botStatus, buildBotSummaries, conversationHeaderStatus } from "./botSummaries";
 
 const decodeBot = Schema.decodeUnknownSync(PersonalBot);
 const NOW = Date.parse("2026-09-15T10:00:00.000Z");
@@ -97,26 +92,17 @@ describe("Update broke", () => {
     const provider = { label: "Claude Code", available: true, broken: true };
     expect(conversationHeaderStatus("idle", "Idle", provider)).toBe("Update broke Claude Code");
     expect(conversationHeaderStatus("waiting", "Waiting for you", provider)).toBe(
-      "Claude Code · Waiting for you",
+      "Waiting for you",
     );
-    expect(conversationHeaderStatus("idle", "Idle", { ...provider, broken: false })).toBe(
-      "Claude Code · Idle",
-    );
+    expect(conversationHeaderStatus("idle", "Idle", { ...provider, broken: false })).toBe("Idle");
     expect(conversationHeaderStatus("idle", "Idle", null)).toBe("Idle");
   });
 
-  it("keeps the live status apart from the provider so it never truncates", () => {
+  it("no longer carries the provider name in the header status", () => {
     const provider = { label: "Claude Code", available: true, broken: false };
-    // The header renders `status` in its own shrink-0 span; sharing one span
-    // with the provider is what turned "Waiting for you" into "Wait…".
-    expect(conversationHeaderParts("waiting", "Waiting for you", provider)).toEqual({
-      prefix: "Claude Code",
-      status: "Waiting for you",
-    });
-    expect(conversationHeaderParts("idle", "Idle", null)).toEqual({ prefix: null, status: "Idle" });
-    expect(conversationHeaderParts("idle", "Idle", { ...provider, broken: true })).toEqual({
-      prefix: null,
-      status: "Update broke Claude Code",
-    });
+    expect(conversationHeaderStatus("working", "Working", provider)).toBe("Working");
+    expect(conversationHeaderStatus("delegating", "Waiting on Planner", provider)).toBe(
+      "Waiting on Planner",
+    );
   });
 });

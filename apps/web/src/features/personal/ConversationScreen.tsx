@@ -57,12 +57,10 @@ import { BotAvatar } from "./BotAvatar";
 import { botThreadRows, chatCountsLabel } from "./botThreadRows";
 import { BotMuteMenuItems, useSetBotMute } from "./BotMute";
 import { ConversationHeaderName } from "./ConversationHeaderName";
+import { ConversationSubtitle } from "./ConversationSubtitle";
 import { botMuteState } from "./botMuteModel";
-import {
-  type ConversationHeaderParts,
-  conversationHeaderParts,
-  resolveBotProvider,
-} from "./botSummaries";
+import { conversationHeaderStatus, resolveBotProvider } from "./botSummaries";
+import { botModelShortLabel } from "./botModelLabel";
 import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerLink } from "./ConversationComputerLink";
 import { ConversationDesktopLine } from "./ConversationDesktopLine";
@@ -138,57 +136,6 @@ import { renameChatInitialTitle, useRenameChat } from "./renameChat";
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
-
-const STATE_DOT: Record<ConversationState, string> = {
-  idle: "bg-[var(--personal-text-tertiary)]",
-  needs_help: "bg-[var(--personal-review)]",
-  working: "bg-[var(--personal-live)]",
-  waiting: "bg-[var(--personal-review)]",
-  // Waiting on a task: not working itself, not needing the user. A hollow ring, never the live dot.
-  delegating: "border border-[var(--personal-text-tertiary)]",
-  rate_limited: "bg-[var(--personal-review)]",
-  retrying: "bg-[var(--personal-review)]",
-  error: "bg-[var(--personal-error)]",
-};
-
-/**
- * Header subtitle: the state dot, the provider and what the bot is doing, then
- * the bot's role. Only the role truncates. The status used to share one
- * truncating span with the provider, so a long role turned "Waiting for you"
- * into "Wait…" - the one part of the line worth reading. The role came first
- * after that, which cut it to a stub ("Chief techn…") and, on the phone, left a
- * gap between it and the status; last, it just runs out at the edge.
- */
-function ConversationSubtitle({
-  state,
-  title,
-  parts,
-}: {
-  state: ConversationState;
-  title: string;
-  parts: ConversationHeaderParts;
-}): JSX.Element {
-  return (
-    <p className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
-      <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", STATE_DOT[state])} />
-      {parts.prefix === null ? null : (
-        // The provider gives way first, so a long status ("Waiting on Planner")
-        // is never the part that gets cut.
-        <span className="min-w-0 truncate whitespace-nowrap">
-          {parts.prefix}
-          <span aria-hidden="true"> ·</span>
-        </span>
-      )}
-      <span className="shrink-0 whitespace-nowrap">{parts.status}</span>
-      {title !== "" ? (
-        <span className="min-w-0 truncate">
-          <span aria-hidden="true">· </span>
-          {title}
-        </span>
-      ) : null}
-    </p>
-  );
-}
 
 const EMPTY_MESSAGES: ReadonlyArray<ChatMessage> = [];
 const EMPTY_SECRET_REQUESTS: ReadonlyArray<PersonalSecretRequest> = [];
@@ -554,7 +501,8 @@ export function ConversationScreen({
       : conversationStateLabel(conversationState, thread?.session ?? null, now);
   const provider =
     bot === null ? null : resolveBotProvider(bot.modelSelection.instanceId, providers);
-  const headerParts = conversationHeaderParts(conversationState, stateLabel, provider);
+  const headerStatus = conversationHeaderStatus(conversationState, stateLabel, provider);
+  const headerModelLabel = bot === null ? null : botModelShortLabel(bot.modelSelection, providers);
 
   const visiblePending = useMemo(
     () => pendingForThread(pending, threadId, messages),
@@ -828,8 +776,8 @@ export function ConversationScreen({
               {provider !== null || conversationState !== "idle" ? (
                 <ConversationSubtitle
                   state={conversationState}
-                  title={bot.title}
-                  parts={headerParts}
+                  modelLabel={headerModelLabel}
+                  status={headerStatus}
                 />
               ) : null}
             </div>
@@ -857,7 +805,11 @@ export function ConversationScreen({
                 </h1>
               )}
               {provider !== null || conversationState !== "idle" ? (
-                <ConversationSubtitle state={conversationState} title="" parts={headerParts} />
+                <ConversationSubtitle
+                  state={conversationState}
+                  modelLabel={null}
+                  status={headerStatus}
+                />
               ) : null}
             </div>
           </>

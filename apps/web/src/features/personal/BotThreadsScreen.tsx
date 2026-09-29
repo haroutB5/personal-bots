@@ -15,7 +15,7 @@ import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatar } from "./BotAvatar";
-import { botModelLabel } from "./botModelLabel";
+import { botModelShortLabel } from "./botModelLabel";
 import { botThreadRows, type BotThreadRow } from "./botThreadRows";
 import { commandFailureMessage } from "./commandFeedback";
 import { isThreadLive, isThreadRateLimited, threadNeedsAttention } from "./botSummaries";
@@ -251,7 +251,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   const shells = useThreadShells();
   const bot = list.data?.bots.find((candidate) => candidate.botId === botId) ?? null;
   const providers = useAtomValue(primaryServerProvidersAtom);
-  const modelLabel = bot === null ? null : botModelLabel(bot.modelSelection, providers);
+  const modelLabel = bot === null ? null : botModelShortLabel(bot.modelSelection, providers);
   const { start, starting } = useStartBotChat(environmentId, bot?.botId ?? null);
   const [now] = useState(() => Date.now());
   const [wrapupError, setWrapupError] = useState<string | null>(null);
@@ -451,23 +451,15 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
                 label={bot.name}
               />
               <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-baseline">
-                  {/* The name keeps its width; the model label gets what is left. */}
-                  <h1 className="max-w-full shrink-0 truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
-                    {bot.name}
-                  </h1>
-                  {modelLabel !== null ? (
-                    <span
-                      data-testid="bot-model-label"
-                      className="ml-1.5 min-w-0 shrink-[100] truncate text-[13px] text-[var(--personal-text-tertiary)]"
-                    >
-                      {modelLabel}
-                    </span>
-                  ) : null}
-                </div>
-                {bot.title !== "" ? (
-                  <p className="truncate text-[13px] text-[var(--personal-text-secondary)]">
-                    {bot.title}
+                <h1 className="truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
+                  {bot.name}
+                </h1>
+                {modelLabel !== null ? (
+                  <p
+                    data-testid="bot-model-label"
+                    className="truncate text-[13px] text-[var(--personal-text-secondary)]"
+                  >
+                    {modelLabel}
                   </p>
                 ) : null}
               </div>
