@@ -1921,7 +1921,7 @@ it.effect(
                   : bots
                       .softDeleteBot({
                         botId: botId(race.victim),
-                        deletedAt: DateTime.makeUnsafe(Date.now()),
+                        deletedAt: DateTime.makeUnsafe("2026-09-29T12:00:00.000Z"),
                       })
                       .pipe(
                         Effect.tap(() =>

@@ -604,13 +604,13 @@ describe("ClaudeAdapterLive", () => {
       });
       const options = harness.getLastCreateQueryInput()?.options;
       // --mcp-config is built from mcpServers, so nothing secret may be in it.
-      const config = JSON.stringify(options?.mcpServers);
-      assert.equal(config.includes("test-token"), false);
-      assert.equal(
-        (options?.mcpServers?.["t3-code"] as { headers?: Record<string, string> }).headers
-          ?.Authorization,
-        "Bearer ${T3_MCP_TOKEN}",
-      );
+      assert.deepEqual(options?.mcpServers, {
+        "t3-code": {
+          type: "http",
+          url: "http://127.0.0.1:9999/mcp",
+          headers: { Authorization: "Bearer ${T3_MCP_TOKEN}" },
+        },
+      });
       // The token is in the child's environment, where the CLI expands the placeholder.
       assert.equal(options?.env?.T3_MCP_TOKEN, "test-token");
     }).pipe(
