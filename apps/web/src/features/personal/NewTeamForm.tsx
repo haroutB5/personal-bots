@@ -48,11 +48,6 @@ function BotOption({
   readonly modelLabel: string | null;
 }): JSX.Element {
   const leads = isTeamLead(bot);
-  const detail = [
-    modelLabel,
-    leads ? `leads ${personalBotTeamLabel(botTeam(bot))}` : null,
-    bot.title.trim() === "" ? null : bot.title.trim(),
-  ].filter((part): part is string => part !== null);
   return (
     <>
       <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={34} label="" />
@@ -60,9 +55,14 @@ function BotOption({
         <span className="block truncate text-[15px] font-medium text-[var(--personal-text)]">
           {bot.name}
         </span>
-        {detail.length > 0 ? (
+        {modelLabel !== null ? (
           <span className="block truncate text-[13px] text-[var(--personal-text-secondary)]">
-            {detail.join(" · ")}
+            {modelLabel}
+          </span>
+        ) : null}
+        {leads ? (
+          <span className="block truncate text-[13px] text-[var(--personal-review-text)]">
+            Leads {personalBotTeamLabel(botTeam(bot))}
           </span>
         ) : null}
       </span>
@@ -347,9 +347,7 @@ export function NewTeamForm({
         {confirming ? (
           <div role="group" aria-label="Confirm the move" className="flex flex-col gap-2">
             <p className="text-[15px] leading-snug font-medium text-[var(--personal-text)]">
-              {leaving.length === 1
-                ? `Move ${leaving[0]!.botName} out of ${personalBotTeamLabel(leaving[0]!.fromTeam)}?`
-                : `Move ${String(leaving.length)} team leads out of their teams?`}
+              {warning}
             </p>
             <button
               ref={confirmRef}

@@ -688,14 +688,16 @@ function TeamManager({
   };
   return (
     <section aria-label="Manage teams" className="my-4 space-y-3">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen(!open)}
-        className="min-h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] disabled:opacity-50"
-      >
-        {open ? "Cancel" : "New team"}
-      </button>
+      {open ? null : (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setOpen(true)}
+          className="min-h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] disabled:opacity-50"
+        >
+          New team
+        </button>
+      )}
       {open ? (
         <NewTeamForm
           environmentId={environmentId}

@@ -189,6 +189,11 @@ describe("NewTeamForm", () => {
       tree.root.findAll((node) => node.props?.["aria-label"] === "Confirm the move"),
     ).not.toHaveLength(0);
 
+    // The confirm says the whole of it, so nothing hides behind the bar.
+    expect(
+      text(tree.root.findAll((node) => node.props?.["aria-label"] === "Confirm the move")[0]!),
+    ).toContain("CTO leads Dev team; it will move to Research, and Dev team will have no lead.");
+
     await act(async () => buttonWithText(tree, "Move CTO and create team")!.props.onClick());
     expect(commands().map((call) => call.command)).toEqual(["profile", "update"]);
     expect(commands()[1]!.input).toEqual({ botId: "cto", team: "Research", lead: true });
