@@ -151,6 +151,26 @@ describe("PersonalUsageStrip", () => {
     expect(state.refresh).toHaveBeenCalledTimes(1);
   });
 
+  it("probes a failed startup read even though it only just failed", async () => {
+    // The provider says "could not read" with a checkedAt from seconds ago:
+    // fresh by the sheet's staleness rule, but nothing to show.
+    const failed = (driver: string) =>
+      provider(driver, {
+        checkedAt: new Date().toISOString(),
+        windows: [],
+        unavailable: { reason: "probeFailed" },
+      });
+    state.providers = [failed("claudeAgent"), failed("codex")];
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+    expect(state.refresh).toHaveBeenCalledTimes(1);
+    expect(state.refresh).toHaveBeenCalledWith({
+      environmentId: "env-1",
+      input: { refreshUsage: true },
+    });
+  });
+
   it("does not spend a probe on fresh readings", async () => {
     const fresh = new Date().toISOString();
     state.providers = [

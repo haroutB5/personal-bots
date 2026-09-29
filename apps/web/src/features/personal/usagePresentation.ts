@@ -266,11 +266,12 @@ export function usageNeedsRefreshOnOpen(cards: readonly UsageCard[], now: number
  * strip could stay empty for ten minutes until the sheet was opened (the
  * sheet probes on open). The list asks for the same probe itself:
  *
- * - on the first load of the app, by the sheet's rule ({@link usageNeedsRefreshOnOpen}:
- *   nothing read yet, or a reading past a minute);
- * - later only while a card has no reading at all (a server that restarted
- *   under an open page), never because a good reading aged: the server's own
- *   cadence keeps those fresh;
+ * - whenever a card has no reading at all (the state right after such a
+ *   restart, and a server that restarts under an open page), even when that
+ *   failed probe was only seconds ago;
+ * - on the first load of the app, a card whose reading is past a minute, by
+ *   the sheet's rule ({@link usageNeedsRefreshOnOpen}); never because a good
+ *   reading aged later: the server's own cadence keeps those fresh;
  * - never twice within one server probe interval, so a probe that keeps
  *   failing costs one attempt per interval, not one per render.
  */
@@ -288,8 +289,11 @@ export function usageAutoProbeDue(input: {
   if (input.lastProbeAt !== null && input.now - input.lastProbeAt < USAGE_AUTO_PROBE_MIN_GAP_MS) {
     return false;
   }
-  if (input.firstLoad) return usageNeedsRefreshOnOpen(input.cards, input.now);
-  return input.cards.some((card) => card.status === "not-reported");
+  // A probe that failed just now still carries a fresh `checkedAt`, so the
+  // sheet's staleness rule alone would call it current: a card with no
+  // reading is due whenever it is seen.
+  if (input.cards.some((card) => card.status === "not-reported")) return true;
+  return input.firstLoad && usageNeedsRefreshOnOpen(input.cards, input.now);
 }
 
 /**
