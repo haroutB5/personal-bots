@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   AVATAR_MOTIONS,
-  cometRowIndex,
+  cometRowIndexes,
   firstContinuousMotionOnly,
   isContinuousMotion,
   motionForConversationState,
@@ -96,11 +96,16 @@ describe("continuous motion", () => {
   });
 });
 
-describe("cometRowIndex", () => {
-  it("gives the comet to the first working row only, never a thinking one", () => {
-    expect(cometRowIndex(["thinking", "idle", "working", "working"])).toBe(2);
-    expect(cometRowIndex(["thinking", "waiting", undefined])).toBe(-1);
-    expect(cometRowIndex([])).toBe(-1);
+describe("cometRowIndexes", () => {
+  it("gives the comet to every working row, never a thinking one", () => {
+    expect(cometRowIndexes(["thinking", "idle", "working", "working"])).toEqual([2, 3]);
+    expect(cometRowIndexes(["thinking", "waiting", undefined])).toEqual([]);
+    expect(cometRowIndexes([])).toEqual([]);
+  });
+
+  it("keeps the comet on the first working row under the anim-all kill switch", () => {
+    expect(cometRowIndexes(["thinking", "idle", "working", "working"], true)).toEqual([2]);
+    expect(cometRowIndexes(["idle"], true)).toEqual([]);
   });
 });
 

@@ -1,5 +1,7 @@
 import type { JSX } from "react";
 
+import type { BotAvatarShape } from "@t3tools/contracts";
+
 import {
   AVATAR_COMET_FADE_SECONDS,
   AVATAR_COMET_STOPS,
@@ -13,18 +15,40 @@ import {
 } from "./avatarComet";
 
 /**
- * The working comet's SVG (see `avatarComet.ts` for the design). One markup
- * for both callers: `BotAvatar` leaves `seconds` out and the generated CSS
- * spins the comets and drifts their hue; the Remotion Studio passes the time,
- * which bakes the same rotation and colours into attributes, so previews
- * match the app frame for frame.
+ * The working comet, for the app: HTML boxes that only ever move by
+ * `transform` and `filter`, so the compositor animates them and the main
+ * thread does nothing per frame (`avatarComet.ts`, "Compositor renderer"; the
+ * pieces are styled by `avatarMotion.generated.css`). Drawn above the body:
+ * each ring's mask already hides the stretch of orbit behind it.
  */
-interface CometTimeProps {
-  /** Studio only: time since working began. Omitted in the app (CSS animates). */
-  readonly seconds?: number | undefined;
+export function AvatarOrbitLayer({ shape }: { readonly shape: BotAvatarShape }): JSX.Element {
+  return (
+    <span className="bot-avatar-orbit" aria-hidden="true">
+      {AVATAR_COMETS.map((spec, index) => (
+        <span
+          key={`${spec.hue}-${spec.rollDeg}`}
+          className={`bot-avatar-ring bot-avatar-ring-${shape}-${index}`}
+        >
+          <span className={`bot-avatar-frame bot-avatar-frame-${index}`}>
+            <span className={`bot-avatar-conic bot-avatar-conic-${index}`} />
+          </span>
+        </span>
+      ))}
+    </span>
+  );
 }
 
-/** Gradients and half-orbit clips; `idPrefix` must be unique per avatar. */
+/**
+ * The working comet's SVG (see `avatarComet.ts` for the design), for the
+ * Remotion Studio only: it passes the time, which bakes the rotation and
+ * colours into attributes, frame by frame. The app draws `AvatarOrbitLayer`.
+ */
+interface CometTimeProps {
+  /** Time since working began. */
+  readonly seconds: number;
+}
+
+/** Gradients and half-orbit clips (Studio); `idPrefix` must be unique per avatar. */
 export function AvatarCometDefs({
   idPrefix,
   seconds,
@@ -46,11 +70,8 @@ export function AvatarCometDefs({
             {Array.from({ length: AVATAR_COMET_STOPS }, (_, stop) => (
               <stop
                 key={stop}
-                className={
-                  seconds === undefined ? `bot-avatar-comet-stop-${index}-${stop}` : undefined
-                }
                 offset={stop / (AVATAR_COMET_STOPS - 1)}
-                stopColor={avatarCometStopColor(spec, stop, seconds ?? 0)}
+                stopColor={avatarCometStopColor(spec, stop, seconds)}
               />
             ))}
           </linearGradient>
@@ -71,8 +92,8 @@ export function AvatarCometDefs({
 }
 
 /**
- * One half of every comet's orbit: `back` goes under the body, `front` over
- * it. `pixelsPerUnit` is the avatar's rendered size / 100: the strokes ignore
+ * One half of every comet's orbit (Studio): `back` goes under the body,
+ * `front` over it. `pixelsPerUnit` is the avatar's rendered size / 100: the strokes ignore
  * transforms (`non-scaling-stroke`), so their width is given in screen pixels.
  */
 export function AvatarCometLayer({
@@ -85,12 +106,9 @@ export function AvatarCometLayer({
   readonly side: "back" | "front";
   readonly pixelsPerUnit: number;
 }): JSX.Element {
-  const fade =
-    seconds === undefined
-      ? undefined
-      : Math.min(1, Math.max(0, seconds / AVATAR_COMET_FADE_SECONDS));
+  const fade = Math.min(1, Math.max(0, seconds / AVATAR_COMET_FADE_SECONDS));
   return (
-    <g className="bot-avatar-orbit" opacity={fade} aria-hidden="true">
+    <g opacity={fade} aria-hidden="true">
       {AVATAR_COMETS.map((spec, index) => (
         <g
           key={`c${spec.hue}-${spec.rollDeg}`}
@@ -98,12 +116,7 @@ export function AvatarCometLayer({
           clipPath={`url(#${idPrefix}-${side}-${index})`}
         >
           <g
-            className={
-              seconds === undefined ? `bot-avatar-comet bot-avatar-comet-${index}` : undefined
-            }
-            transform={
-              seconds === undefined ? undefined : `rotate(${avatarCometAngle(spec, seconds) % 360})`
-            }
+            transform={`rotate(${avatarCometAngle(spec, seconds) % 360})`}
             fill="none"
             stroke={`url(#${idPrefix}-comet-${index})`}
             strokeLinecap="round"

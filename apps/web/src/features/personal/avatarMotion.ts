@@ -89,12 +89,17 @@ export function firstContinuousMotionOnly(motions: ReadonlyArray<AvatarMotion>):
 }
 
 /**
- * Which row of a list draws the working comet: the first `working` one, or
- * -1. Every busy bot moves, but the comet stays on one row: measured on /bots
- * at 390x844 and 4x CPU, five working bots without comets hold ~56 fps (as
- * one does), while five comets (their colour drift repaints every frame)
- * drop the list to ~22 fps. See HANDOFF-bulk-chats.md.
+ * Which rows of a list draw the working comet: every `working` one, or, with
+ * `onlyFirst` (the `anim-all` kill switch), the first one only, or none.
+ * Since 1.57.1 the comet is built from compositor-only layers
+ * (`avatarComet.ts`), so every busy bot gets it without costing the main
+ * thread anything; until 1.56 it repainted per frame and stayed on one row
+ * (five of them dropped /bots to ~22 fps at 4x CPU).
  */
-export function cometRowIndex(motions: ReadonlyArray<AvatarMotion | undefined>): number {
-  return motions.findIndex((motion) => motion === "working");
+export function cometRowIndexes(
+  motions: ReadonlyArray<AvatarMotion | undefined>,
+  onlyFirst = false,
+): number[] {
+  const rows = motions.flatMap((motion, index) => (motion === "working" ? [index] : []));
+  return onlyFirst ? rows.slice(0, 1) : rows;
 }

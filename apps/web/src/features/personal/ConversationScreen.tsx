@@ -52,6 +52,7 @@ import { threadEnvironment, useEnvironmentThread } from "~/state/threads";
 import type { ChatMessage } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { perfOptimizationOn } from "./perfFlags";
 import { motionForConversationState } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
 import { botThreadRows, chatCountsLabel } from "./botThreadRows";
@@ -789,7 +790,7 @@ export function ConversationScreen({
               size={48}
               label={bot.name}
               motion={motionForConversationState(conversationState, turnThinking)}
-              comet
+              comet={perfOptimizationOn("anim-comet")}
             />
             <div className="min-w-0 flex-1">
               <ConversationHeaderName

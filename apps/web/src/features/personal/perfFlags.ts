@@ -18,7 +18,12 @@ export type PerfOptimization =
   | "stale-reload"
   | "lean-shell"
   // Every busy bot on the Bots list animates (1.49.0); off: only the first.
-  | "all-busy-motion";
+  | "all-busy-motion"
+  // Every working bot on the Bots list draws the comet (1.57.1, compositor-only
+  // avatars); off: the comet stays on the first working row, as in 1.49 to 1.56.
+  | "anim-all"
+  // The comet at all (any list, the chat header); off: no comet, poses only.
+  | "anim-comet";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

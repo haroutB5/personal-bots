@@ -3,12 +3,17 @@
 import {
   AVATAR_COMET_FADE_SECONDS,
   AVATAR_COMET_HUE_SECONDS,
-  AVATAR_COMET_STOPS,
   AVATAR_COMETS,
-  avatarCometStopHue,
-  avatarCometStopLightness,
+  avatarCometConicGradient,
+  avatarCometFrameBox,
+  avatarCometRingMask,
 } from "../avatarComet.ts";
 import { AVATAR_MOTIONS, type AvatarMotion } from "../avatarMotion.ts";
+import {
+  BOT_AVATAR_EYE_TILT_DEG,
+  BOT_AVATAR_ROUND_CORNER_STROKE,
+  BOT_AVATAR_SILHOUETTES,
+} from "../botAvatarShapes.ts";
 import { AVATAR_FPS, avatarPoseAtTime, avatarStateTiming } from "./avatarStates.ts";
 import { AVATAR_BODY_PIVOT_X, AVATAR_BODY_PIVOT_Y, REST_POSE, type AvatarPose } from "./pose.ts";
 
@@ -16,14 +21,20 @@ import { AVATAR_BODY_PIVOT_X, AVATAR_BODY_PIVOT_Y, REST_POSE, type AvatarPose } 
  * Turns the authored motion (`avatarStates.ts`, `avatarComet.ts`) into the
  * CSS the app ships.
  *
- * Each state is sampled at the composition's 30 fps and split into four
- * layers, one per element `BotAvatar` draws when it has a `motion`:
+ * Each state is sampled at the composition's 30 fps and split into three
+ * layers, one per element `BotAvatar` draws when it has a `motion`. They are
+ * all HTML boxes (an animation on an SVG child runs on the main thread and
+ * repaints the avatar every frame; on a box it runs on the compositor), so
+ * every value is `transform` or `opacity`, and viewBox units are percentages
+ * of the 100-unit avatar box:
  *
- * - body  (the `.bot-avatar` <svg> itself): translate, rotate and squash
- *   about the head centre, in percent of the box (= viewBox units);
- * - gaze  (`.bot-avatar-eyes`): the eye pair's translate;
- * - pill  (`.bot-avatar-pill`): each eye's size/lid scale about its own
- *   centre, and its fade into the happy arc;
+ * - body  (the `.bot-avatar` box itself, plus the `.bot-avatar-body` box
+ *   inside it for a loop's steady state): translate, rotate and squash
+ *   about the head centre;
+ * - pill  (`.bot-avatar-pill`, one per eye): the gaze translate, the eye's
+ *   tilt (fixed) and its size/lid scale about its own centre, and its fade
+ *   into the happy arc. One animation per eye instead of a gaze layer over
+ *   the pair: every animation costs the main thread a little per frame;
  * - arc   (`.bot-avatar-arc`): the happy "^" squint's opacity.
  *
  * A loop plays its spring-in from rest once (`<name>-in`), then its steady
@@ -34,8 +45,9 @@ import { AVATAR_BODY_PIVOT_X, AVATAR_BODY_PIVOT_Y, REST_POSE, type AvatarPose } 
  * changing what is drawn. `idle` is the static rest pose in the app and gets
  * no animation at all.
  *
- * The working comet gets its own rules: an orbit spin per comet, a fade-in,
- * and a hue cycle on each gradient stop.
+ * The working comet gets its own rules (`avatarComet.ts`, "Compositor
+ * renderer"): a fade-in, and per comet its static pieces plus one spin and one
+ * hue cycle on the conic gradient that holds it.
  */
 
 interface AvatarLayer {
@@ -51,10 +63,7 @@ interface AvatarLayer {
 const LAYERS: readonly AvatarLayer[] = [
   {
     name: "body",
-    // The <svg> box itself: a transform animation there can run on the
-    // compositor (as the old CSS bob did), where one on an SVG child repaints
-    // the avatar every frame. The box is the 100-unit viewBox, so viewBox
-    // units are percentages of it.
+    // The avatar box itself; its 100 units are percentages of it.
     selector: "",
     period: "body",
     channels: (p) => [p.bodyX, p.bodyY, p.bodyRotate, p.bodyScaleX, p.bodyScaleY],
@@ -64,21 +73,13 @@ const LAYERS: readonly AvatarLayer[] = [
     ],
   },
   {
-    name: "gaze",
-    selector: ".bot-avatar-eyes",
-    period: "eyes",
-    channels: (p) => [p.gazeX, p.gazeY],
-    tolerance: [0.04, 0.04],
-    declarations: ([x, y]) => [`transform: translate(${px(x!)}, ${px(y!)});`],
-  },
-  {
     name: "pill",
     selector: ".bot-avatar-pill",
     period: "eyes",
-    channels: (p) => [p.eyeWiden, p.eyeOpen, 1 - p.happy],
-    tolerance: [0.005, 0.015, 0.015],
-    declarations: ([widen, open, opacity]) => [
-      `transform: scale(${num(widen!)}, ${num(open!)});`,
+    channels: (p) => [p.gazeX, p.gazeY, p.eyeWiden, p.eyeOpen, 1 - p.happy],
+    tolerance: [0.04, 0.04, 0.005, 0.015, 0.015],
+    declarations: ([gx, gy, widen, open, opacity]) => [
+      `transform: translate(${pct(gx!)}, ${pct(gy!)}) rotate(${BOT_AVATAR_EYE_TILT_DEG}deg) scale(${num(widen!)}, ${num(open!)});`,
       `opacity: ${num(opacity!)};`,
     ],
   },
@@ -100,11 +101,6 @@ export function avatarKeyframesName(state: AvatarMotion, layer: string): string 
 function num(value: number): string {
   const rounded = Math.round(value * 1000) / 1000;
   return String(rounded === 0 ? 0 : rounded);
-}
-
-function px(value: number): string {
-  const text = num(value);
-  return text === "0" ? "0" : `${text}px`;
 }
 
 function pct(value: number): string {
@@ -226,6 +222,22 @@ function poseCss(): { rules: string[]; keyframes: string[] } {
       const intro = sampleLayer(state, layer, 0, timing.introSeconds);
       const steady = sampleLayer(state, layer, timing.introSeconds, period);
       if (!differsFromRest([...intro, ...steady], rest)) continue;
+      if (layer.name === "body") {
+        // The spring-in and the loop are two animations of the same
+        // properties; on one element Chrome refuses to composite either
+        // ("target has incompatible animations") and runs both on the main
+        // thread for good, committing every layer every frame. So the loop
+        // lives on the box inside (`.bot-avatar-body`), the spring-in on the
+        // avatar box: one animation each.
+        rules.push(
+          `${selector} {\n  animation: ${name}-in ${seconds(timing.introSeconds)} linear 1;\n}`,
+          `${selector} .bot-avatar-body {\n` +
+            `  animation: ${name} ${seconds(period)} linear ${seconds(timing.introSeconds)} infinite;\n}`,
+        );
+        keyframes.push(keyframesBlock(`${name}-in`, layer, intro));
+        keyframes.push(keyframesBlock(name, layer, steady));
+        continue;
+      }
       rules.push(
         `${selector} {\n` +
           `  animation:\n` +
@@ -240,47 +252,51 @@ function poseCss(): { rules: string[]; keyframes: string[] } {
 }
 
 function cometCss(): string[] {
-  const hueSteps = 12;
   const css: string[] = [
+    // Both comets share one hue cycle (the same phase), so it turns the whole
+    // orbit box; the fade-in only fills backwards, so it retires when done.
     ".bot-avatar-orbit {\n" +
-      `  animation: bot-avatar-comet-in ${seconds(AVATAR_COMET_FADE_SECONDS)} ease-out 1 both;\n}`,
-    ".bot-avatar-comet {\n" +
-      "  transform-box: view-box;\n" +
-      "  transform-origin: 0 0;\n" +
-      "  animation: bot-avatar-comet-orbit 2s linear infinite;\n}",
+      "  position: absolute;\n  inset: 0;\n" +
+      "  animation:\n" +
+      `    bot-avatar-comet-in ${seconds(AVATAR_COMET_FADE_SECONDS)} ease-out 1 backwards,\n` +
+      `    bot-avatar-comet-hue ${seconds(AVATAR_COMET_HUE_SECONDS)} linear infinite;\n}`,
+    ".bot-avatar-ring {\n" +
+      "  position: absolute;\n  inset: 0;\n" +
+      "  -webkit-mask-size: 100% 100%;\n  mask-size: 100% 100%;\n" +
+      "  -webkit-mask-repeat: no-repeat;\n  mask-repeat: no-repeat;\n}",
+    ".bot-avatar-frame {\n  position: absolute;\n  transform-origin: 50% 50%;\n}",
+    ".bot-avatar-conic {\n  position: absolute;\n  inset: 0;\n  will-change: transform;\n}",
   ];
   AVATAR_COMETS.forEach((spec, index) => {
+    const box = avatarCometFrameBox(spec);
     // A negative delay starts each comet part-way round its orbit.
     const delay = -((spec.startDeg / 360) * spec.orbitSeconds);
-    css.push(
-      `.bot-avatar-comet-${index} {\n` +
-        `  animation-duration: ${seconds(spec.orbitSeconds)};\n` +
-        `  animation-delay: ${seconds(delay)};\n}`,
-    );
-    for (let stop = 0; stop < AVATAR_COMET_STOPS; stop += 1) {
-      const hue = (((avatarCometStopHue(spec, stop) % 360) + 360) % 360) / 360;
+    // The ring mask knocks out the orbit where it passes behind the body, and
+    // that depends on the silhouette: one mask per shape.
+    for (const [shape, silhouette] of Object.entries(BOT_AVATAR_SILHOUETTES)) {
+      const mask = avatarCometRingMask(spec, {
+        ...silhouette,
+        cornerStroke: BOT_AVATAR_ROUND_CORNER_STROKE,
+      });
       css.push(
-        `.bot-avatar-comet-stop-${index}-${stop} {\n` +
-          `  animation: bot-avatar-comet-hue-${stop} ${seconds(AVATAR_COMET_HUE_SECONDS)} linear ` +
-          `${seconds(-hue * AVATAR_COMET_HUE_SECONDS)} infinite;\n}`,
+        `.bot-avatar-ring-${shape}-${index} {\n  -webkit-mask-image: ${mask};\n  mask-image: ${mask};\n}`,
       );
     }
+    css.push(
+      `.bot-avatar-frame-${index} {\n` +
+        `  left: ${num(50 - box / 2)}%;\n  top: ${num(50 - box / 2)}%;\n` +
+        `  width: ${num(box)}%;\n  height: ${num(box)}%;\n` +
+        `  transform: rotate(${num(spec.rollDeg)}deg) scale(1, ${num(spec.squash)});\n}`,
+    );
+    css.push(
+      `.bot-avatar-conic-${index} {\n` +
+        `  background: ${avatarCometConicGradient(spec)};\n` +
+        `  animation: bot-avatar-comet-orbit ${seconds(spec.orbitSeconds)} linear ${seconds(delay)} infinite;\n}`,
+    );
   });
   css.push("@keyframes bot-avatar-comet-in {\n  0% {\n    opacity: 0;\n  }\n}");
-  css.push(
-    "@keyframes bot-avatar-comet-orbit {\n" +
-      "  0% {\n    transform: rotate(0deg);\n  }\n" +
-      "  100% {\n    transform: rotate(360deg);\n  }\n}",
-  );
-  for (let stop = 0; stop < AVATAR_COMET_STOPS; stop += 1) {
-    const lightness = avatarCometStopLightness(stop);
-    const steps = Array.from({ length: hueSteps + 1 }, (_, step) => {
-      const percent = num((step / hueSteps) * 100);
-      const hue = (step * 360) / hueSteps;
-      return `  ${percent}% {\n    stop-color: hsl(${hue} 56% ${lightness}%);\n  }`;
-    });
-    css.push(`@keyframes bot-avatar-comet-hue-${stop} {\n${steps.join("\n")}\n}`);
-  }
+  css.push("@keyframes bot-avatar-comet-orbit {\n  100% {\n    transform: rotate(360deg);\n  }\n}");
+  css.push("@keyframes bot-avatar-comet-hue {\n  100% {\n    filter: hue-rotate(360deg);\n  }\n}");
   return css;
 }
 
@@ -296,12 +312,13 @@ export function avatarMotionCss(): string {
     " *",
     " * The guardrails (hidden-tab pause, reduced motion) live in personal.css.",
     " *",
-    " * The body moves the <svg> box (pivot: the head centre); each eye scales",
-    " * about its own centre (its parent <g> carries the eye's tilt). */",
+    " * The body moves the avatar box (pivot: the head centre); each eye's pill",
+    " * scales about its own centre, tilted by its own transform. */",
   ].join("\n");
   const origins = [
     `.bot-avatar[data-motion] {\n  transform-origin: ${AVATAR_BODY_PIVOT_X}% ${AVATAR_BODY_PIVOT_Y}%;\n}`,
-    ".bot-avatar-pill {\n  transform-box: fill-box;\n  transform-origin: center;\n}",
+    `.bot-avatar-pill {\n  transform: rotate(${BOT_AVATAR_EYE_TILT_DEG}deg);\n}`,
+    `.bot-avatar-arc {\n  position: absolute;\n  inset: 0;\n  overflow: visible;\n  transform: rotate(${BOT_AVATAR_EYE_TILT_DEG}deg);\n}`,
   ];
   return `${[header, ...origins, ...rules, ...cometCss(), ...keyframes].join("\n\n")}\n`;
 }

@@ -229,26 +229,67 @@
 
 /* Bot avatar state poses (`BotAvatar`'s `motion` prop, mapped in
  * `avatarMotion.ts`). The poses themselves are the generated keyframes
- * imported at the top of this file; this block holds the guardrails, in order
- * of how easy they are to break:
+ * imported at the top of this file; this block holds the avatar's layout and
+ * the guardrails, in order of how easy they are to break:
  *
- * 1. Only `thinking` and `working` repeat. Every busy bot in the Bots list
- *    runs its loop (before 1.49.0 only the first one did), but only the
- *    first working row draws the comet, whose colour drift repaints every
- *    frame (`cometRowIndex`); a loop scrolled out of view is paused
- *    (`data-offscreen`, `avatarOffscreen.ts`). Every
- *    other state is a one-shot into a held pose, and idle has no animation,
- *    so an idle screen repaints nothing.
- * 2. Transform and opacity only, on the avatar's inner layers, so no state can
- *    move the avatar's box or the row's layout.
- * 3. The loops pause with the document (the root gets `data-hidden` from
+ * 1. Compositor properties only. A posed avatar is a stack of HTML boxes
+ *    (never SVG children: an animation on one repaints the avatar on the main
+ *    thread every frame), and its keyframes touch `transform`, `opacity` and
+ *    the comet's `filter: hue-rotate` and nothing else, so the compositor
+ *    runs them and a busy avatar costs the main thread no style, layout or
+ *    paint per frame. `will-change` promotes each moving box up front so the
+ *    loop never starts with a repaint. Do not add `box-shadow`, `blur`,
+ *    gradients that change, SVG strokes that change or any JS per frame.
+ * 2. Only `thinking` and `working` repeat. Every busy bot in the Bots list
+ *    runs its loop and its comet; a loop scrolled out of view is paused
+ *    (`data-offscreen`, `avatarOffscreen.ts`). Every other state is a
+ *    one-shot into a held pose, and idle has no animation, so an idle screen
+ *    repaints nothing.
+ * 3. The avatar's box never moves, so no state can shift the row's layout.
+ * 4. The loops pause with the document (the root gets `data-hidden` from
  *    `useHiddenRootAttribute`), so a backgrounded tab costs nothing, and
  *    each loop pauses while its avatar is off screen.
- * 4. Reduced motion drops all of it and the layers sit at rest; the status
- *    dots still carry the state. (Only `animation` is cleared: the eyes' tilt
- *    is a transform attribute that a `transform: none` would wipe out.) The
- *    working comet is hidden outright. */
-/* The svg itself carries the body's bob, so it pauses along with its layers. */
+ * 5. Reduced motion drops all of it and the layers sit at rest; the status
+ *    dots still carry the state. The working comet is hidden outright.
+ *
+ * Kill switches (`perfFlags.ts`): bots:perf-off=anim-all gives the comet to
+ * the first working row only (the 1.49 to 1.56 rule); anim-comet draws no
+ * comet at all; all-busy-motion moves only the first busy avatar. */
+.bot-avatar[data-motion] {
+  position: relative;
+  display: block;
+}
+
+.bot-avatar-body,
+.bot-avatar-shape {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.bot-avatar-eye {
+  position: absolute;
+}
+
+.bot-avatar-pill {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+}
+
+.bot-avatar-arc {
+  opacity: 0;
+}
+
+.bot-avatar[data-motion="thinking"] .bot-avatar-body,
+.bot-avatar[data-motion="working"] .bot-avatar-body,
+.bot-avatar[data-motion="thinking"] .bot-avatar-pill,
+.bot-avatar[data-motion="working"] .bot-avatar-pill {
+  will-change: transform;
+}
+
+/* The box itself carries the body's bob, so it pauses along with its layers. */
 :root[data-hidden] .bot-avatar[data-motion="thinking"],
 :root[data-hidden] .bot-avatar[data-motion="thinking"] *,
 :root[data-hidden] .bot-avatar[data-motion="working"],

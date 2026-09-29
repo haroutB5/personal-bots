@@ -1,11 +1,11 @@
-import type { JSX } from "react";
-import { useEffect, useId, useRef, useState } from "react";
+import type { AnimationEvent, JSX } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { BotAvatarShape } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
 
-import { AvatarCometDefs, AvatarCometLayer } from "./BotAvatarComet";
+import { AvatarOrbitLayer } from "./BotAvatarComet";
 import { isContinuousMotion, type AvatarMotion } from "./avatarMotion";
 import { pauseWhileOffscreen } from "./avatarOffscreen";
 import {
@@ -54,13 +54,17 @@ export interface BotAvatarProps {
  * near-black swatches stay visible. The stored colour is never changed.
  *
  * With `motion`, the pose carries the bot's state as decoration on top of those
- * dots. The avatar is then drawn in layers (body, eye pair, each eye's pill and
- * a hidden happy arc) that `avatarMotion.generated.css` animates: the poses
- * authored in `avatarRemotion/avatarStates.ts`, sampled into CSS keyframes.
- * Transform and opacity only, so the avatar's box never moves; only `thinking`
- * and `working` repeat, and pause while scrolled out of view (see
- * `personal.css`, `avatarMotion.ts` and `avatarOffscreen.ts`). Without
- * `motion` the markup is the flat, unlayered original.
+ * dots. The avatar is then a stack of HTML boxes (body, silhouette, eye pair,
+ * each eye's pill, the happy arcs while `done`, the comet's pieces) that
+ * `avatarMotion.generated.css` animates: the poses authored in
+ * `avatarRemotion/avatarStates.ts`, sampled into CSS keyframes. Boxes, not SVG
+ * children, and `transform`, `opacity` and `filter` only: those run on the
+ * compositor, so a busy avatar costs the main thread no style, layout or paint
+ * per frame however many are on screen (an animation on an SVG child repaints
+ * the avatar every frame, on the main thread). The avatar's own box never
+ * moves; only `thinking` and `working` repeat, and pause while scrolled out of
+ * view (see `personal.css`, `avatarMotion.ts` and `avatarOffscreen.ts`).
+ * Without `motion` the markup is the flat SVG original.
  */
 export function BotAvatar({
   shape,
@@ -86,35 +90,87 @@ export function BotAvatar({
   const eyes = BOT_AVATAR_EYES[shape];
   const eyeRx = BOT_AVATAR_EYE_WIDTH / 2;
   const halo = botAvatarNeedsHalo(color);
-  // SVG ids are document-global; strip React's punctuation for url(#...).
-  const idPrefix = `bot-avatar${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const showComet = comet && pose === "working";
   // A loop scrolled out of view pauses (every busy bot in a long list moves).
-  const svgRef = useRef<SVGSVGElement | null>(null);
+  const rootRef = useRef<Element | null>(null);
+  const setRoot = useCallback((node: Element | null) => {
+    rootRef.current = node;
+  }, []);
   const looping = pose !== undefined && isContinuousMotion(pose);
   useEffect(() => {
-    const element = svgRef.current;
+    const element = rootRef.current;
     if (!looping || element === null) return;
     return pauseWhileOffscreen(element);
   }, [looping]);
+  const onAnimationEnd = settling
+    ? (event: AnimationEvent<Element>) => {
+        // Every done layer ends together; any of them retires the pose.
+        if (event.animationName.startsWith("bot-avatar-done-")) setSettling(false);
+      }
+    : undefined;
+
+  if (motion !== undefined) {
+    return (
+      <span
+        ref={setRoot}
+        role="img"
+        aria-label={label}
+        data-motion={pose}
+        onAnimationEnd={onAnimationEnd}
+        className={cn("bot-avatar shrink-0", className)}
+        style={{ width: size, height: size }}
+      >
+        <span className="bot-avatar-body">
+          <svg className="bot-avatar-shape" viewBox={BOT_AVATAR_VIEWBOX} aria-hidden="true">
+            {halo ? (
+              <SilhouetteHalo d={silhouette.d} roundCorners={silhouette.roundCorners} />
+            ) : null}
+            <SilhouetteFill d={silhouette.d} roundCorners={silhouette.roundCorners} color={color} />
+          </svg>
+          {eyes.map((eye) => (
+            <span
+              key={`${eye.cx}-${eye.cy}`}
+              className="bot-avatar-eye"
+              style={{
+                left: `${eye.cx - BOT_AVATAR_EYE_WIDTH / 2}%`,
+                top: `${eye.cy - BOT_AVATAR_EYE_HEIGHT / 2}%`,
+                width: `${BOT_AVATAR_EYE_WIDTH}%`,
+                height: `${BOT_AVATAR_EYE_HEIGHT}%`,
+              }}
+            >
+              <span className="bot-avatar-pill" style={{ backgroundColor: BOT_AVATAR_EYE_COLOR }} />
+              {pose === "done" ? (
+                <svg
+                  className="bot-avatar-arc"
+                  viewBox={`${eye.cx - BOT_AVATAR_EYE_WIDTH / 2} ${eye.cy - BOT_AVATAR_EYE_HEIGHT / 2} ${BOT_AVATAR_EYE_WIDTH} ${BOT_AVATAR_EYE_HEIGHT}`}
+                  aria-hidden="true"
+                >
+                  <path
+                    d={botAvatarHappyArcPath(eye.cx, eye.cy)}
+                    fill="none"
+                    stroke={BOT_AVATAR_EYE_COLOR}
+                    strokeWidth={5}
+                    strokeLinecap="round"
+                  />
+                </svg>
+              ) : null}
+            </span>
+          ))}
+          {/* A working avatar's comet circles the body: the ring masks hide the stretch behind it. */}
+          {showComet ? <AvatarOrbitLayer shape={shape} /> : null}
+        </span>
+      </span>
+    );
+  }
 
   return (
     <svg
-      ref={svgRef}
       role="img"
       aria-label={label}
       width={size}
       height={size}
       viewBox={BOT_AVATAR_VIEWBOX}
-      data-motion={pose}
-      onAnimationEnd={
-        settling
-          ? (event) => {
-              // Every done layer ends together; any of them retires the pose.
-              if (event.animationName.startsWith("bot-avatar-done-")) setSettling(false);
-            }
-          : undefined
-      }
+      ref={setRoot}
       className={cn("bot-avatar shrink-0", className)}
     >
       {/*
@@ -130,71 +186,22 @@ export function BotAvatar({
         #171717, and at that strength an unconditional one would make every
         saturated avatar in the chats list look deliberately bordered.
       */}
-      {motion === undefined ? (
-        <>
-          {halo ? <SilhouetteHalo d={silhouette.d} roundCorners={silhouette.roundCorners} /> : null}
-          <SilhouetteFill d={silhouette.d} roundCorners={silhouette.roundCorners} color={color} />
-          <g className="bot-avatar-eyes">
-            {eyes.map((eye) => (
-              <rect
-                key={`${eye.cx}-${eye.cy}`}
-                x={eye.cx - BOT_AVATAR_EYE_WIDTH / 2}
-                y={eye.cy - BOT_AVATAR_EYE_HEIGHT / 2}
-                width={BOT_AVATAR_EYE_WIDTH}
-                height={BOT_AVATAR_EYE_HEIGHT}
-                rx={eyeRx}
-                fill={BOT_AVATAR_EYE_COLOR}
-                transform={`rotate(${BOT_AVATAR_EYE_TILT_DEG} ${eye.cx} ${eye.cy})`}
-              />
-            ))}
-          </g>
-        </>
-      ) : (
-        // Posed layers. At rest (no animation running, e.g. idle or reduced
-        // motion) they draw exactly the flat avatar above: the eye tilt moves
-        // to the parent <g> so the pill's own CSS transform can scale it about
-        // its centre, and the happy arc sits at opacity 0 until `done`. The
-        // body's own motion moves the whole <svg> (compositor-friendly). The
-        // working comet wraps the body: back half below, front half above.
-        <>
-          {showComet ? <AvatarCometDefs idPrefix={idPrefix} /> : null}
-          {showComet ? (
-            <AvatarCometLayer idPrefix={idPrefix} side="back" pixelsPerUnit={size / 100} />
-          ) : null}
-          {halo ? <SilhouetteHalo d={silhouette.d} roundCorners={silhouette.roundCorners} /> : null}
-          <SilhouetteFill d={silhouette.d} roundCorners={silhouette.roundCorners} color={color} />
-          <g className="bot-avatar-eyes">
-            {eyes.map((eye) => (
-              <g
-                key={`${eye.cx}-${eye.cy}`}
-                transform={`rotate(${BOT_AVATAR_EYE_TILT_DEG} ${eye.cx} ${eye.cy})`}
-              >
-                <rect
-                  className="bot-avatar-pill"
-                  x={eye.cx - BOT_AVATAR_EYE_WIDTH / 2}
-                  y={eye.cy - BOT_AVATAR_EYE_HEIGHT / 2}
-                  width={BOT_AVATAR_EYE_WIDTH}
-                  height={BOT_AVATAR_EYE_HEIGHT}
-                  rx={eyeRx}
-                  fill={BOT_AVATAR_EYE_COLOR}
-                />
-                <path
-                  className="bot-avatar-arc"
-                  d={botAvatarHappyArcPath(eye.cx, eye.cy)}
-                  fill="none"
-                  stroke={BOT_AVATAR_EYE_COLOR}
-                  strokeWidth={5}
-                  strokeLinecap="round"
-                  opacity={0}
-                />
-              </g>
-            ))}
-          </g>
-          {showComet ? (
-            <AvatarCometLayer idPrefix={idPrefix} side="front" pixelsPerUnit={size / 100} />
-          ) : null}
-        </>
-      )}
+      {halo ? <SilhouetteHalo d={silhouette.d} roundCorners={silhouette.roundCorners} /> : null}
+      <SilhouetteFill d={silhouette.d} roundCorners={silhouette.roundCorners} color={color} />
+      <g className="bot-avatar-eyes">
+        {eyes.map((eye) => (
+          <rect
+            key={`${eye.cx}-${eye.cy}`}
+            x={eye.cx - BOT_AVATAR_EYE_WIDTH / 2}
+            y={eye.cy - BOT_AVATAR_EYE_HEIGHT / 2}
+            width={BOT_AVATAR_EYE_WIDTH}
+            height={BOT_AVATAR_EYE_HEIGHT}
+            rx={eyeRx}
+            fill={BOT_AVATAR_EYE_COLOR}
+            transform={`rotate(${BOT_AVATAR_EYE_TILT_DEG} ${eye.cx} ${eye.cy})`}
+          />
+        ))}
+      </g>
     </svg>
   );
 }

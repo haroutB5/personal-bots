@@ -475,7 +475,7 @@ export function PinnedBotTile({
   readonly now: number;
   /** Pose for this face (`motionForSummary`). */
   readonly motion?: AvatarMotion | undefined;
-  /** Draw the working comet; the screen gives it to one row (`cometRowIndex`). */
+  /** Draw the working comet; the list gives it to every working row (`cometRowIndexes`). */
   readonly comet?: boolean | undefined;
   readonly onUnpin: () => void;
   readonly selected?: boolean | undefined;

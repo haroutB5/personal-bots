@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { AVATAR_COMETS } from "../avatarComet";
 import { AVATAR_MOTIONS } from "../avatarMotion";
+import { BOT_AVATAR_SILHOUETTES } from "../botAvatarShapes";
 import { avatarKeyframesName, avatarMotionCss } from "./avatarKeyframes";
 import { avatarStateTiming } from "./avatarStates";
 
@@ -46,8 +47,12 @@ describe("avatarMotion.generated.css", () => {
       const rule = ruleFor(`.bot-avatar[data-motion="${state}"]`)!;
       const name = avatarKeyframesName(state, "body");
       if (avatarStateTiming(state).loop) {
-        expect(rule).toContain(`${name}-in 1.2s linear 1,`);
-        expect(rule).toMatch(new RegExp(`${name} [\\d.]+s linear 1\\.2s infinite;`));
+        // The spring-in sits on the avatar box and the loop on the box inside it: two
+        // animations of one property on one element are not composited by Chrome.
+        expect(rule).toContain(`animation: ${name}-in 1.2s linear 1;`);
+        expect(ruleFor(`.bot-avatar[data-motion="${state}"] .bot-avatar-body`)).toMatch(
+          new RegExp(`animation: ${name} [\\d.]+s linear 1\\.2s infinite;`),
+        );
       } else {
         expect(rule).toMatch(new RegExp(`animation: ${name} [\\d.]+s linear 1 both;`));
       }
@@ -63,20 +68,33 @@ describe("avatarMotion.generated.css", () => {
     expect(css).toContain(`@keyframes ${avatarKeyframesName("done", "arc")} {`);
   });
 
-  it("spins and recolours each comet, starting it part-way round", () => {
+  it("spins each comet's conic gradient, starting it part-way round, under one shared hue cycle", () => {
     AVATAR_COMETS.forEach((spec, index) => {
-      expect(ruleFor(`.bot-avatar-comet-${index}`)).toContain(
-        `animation-duration: ${spec.orbitSeconds}s;`,
+      const rule = ruleFor(`.bot-avatar-conic-${index}`)!;
+      const delay = -((spec.startDeg / 360) * spec.orbitSeconds);
+      expect(rule).toContain(
+        `bot-avatar-comet-orbit ${spec.orbitSeconds}s linear ${delay}s infinite`,
       );
-      expect(ruleFor(`.bot-avatar-comet-stop-${index}-0`)).toMatch(/infinite;/);
+      expect(rule).toContain("conic-gradient(");
+      // The ring mask is static and per silhouette.
+      for (const shape of Object.keys(BOT_AVATAR_SILHOUETTES)) {
+        expect(ruleFor(`.bot-avatar-ring-${shape}-${index}`)).toContain("mask-image: url(");
+      }
     });
+    expect(ruleFor(".bot-avatar-orbit")).toMatch(/bot-avatar-comet-hue 10s linear infinite;/);
     expect(css).toContain("@keyframes bot-avatar-comet-orbit {");
+    expect(css).toContain("@keyframes bot-avatar-comet-hue {");
   });
 
-  it("animates only transform, opacity and gradient stop colours; no filters", () => {
+  it("animates only compositor properties: transform, opacity and the comet's hue filter", () => {
     const keyframes = css.slice(css.indexOf("@keyframes"));
     const declarations = [...keyframes.matchAll(/^\s{4}([a-z-]+):/gm)].map((match) => match[1]);
-    expect(new Set(declarations)).toEqual(new Set(["transform", "opacity", "stop-color"]));
-    expect(css).not.toMatch(/filter|box-shadow|width:|height:|top:|left:/);
+    expect(new Set(declarations)).toEqual(new Set(["transform", "opacity", "filter"]));
+    // filter only inside the comet's hue cycle; no per-frame paint properties anywhere.
+    const filterKeyframes = [...css.matchAll(/@keyframes ([\w-]+) \{[^@]*?filter:/g)].map(
+      (m) => m[1],
+    );
+    expect(filterKeyframes).toEqual(["bot-avatar-comet-hue"]);
+    expect(css).not.toMatch(/box-shadow|stop-color|stroke-dash|blur\(|drop-shadow/);
   });
 });

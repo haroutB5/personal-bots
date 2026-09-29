@@ -20,7 +20,7 @@ import { useThreadShells } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 
 import {
-  cometRowIndex,
+  cometRowIndexes,
   firstContinuousMotionOnly,
   motionForSummary,
   type AvatarMotion,
@@ -527,12 +527,17 @@ export function ChatsScreen({
     );
   }, [visible]);
   const { pinned, rest } = useMemo(() => partitionPinnedSummaries(visible), [visible]);
-  // The comet stays on one row, the first working bot on screen (pinned box
-  // first, then the list): five comets drop the list from ~56 to ~22 fps.
-  const cometBotId = useMemo(() => {
+  // Every working bot draws the comet (compositor-only since 1.57.1). The
+  // kill switch bots:perf-off=anim-all keeps it on the first working row on
+  // screen (pinned box first, then the list), anim-comet draws none.
+  const cometBotIds = useMemo(() => {
+    if (!perfOptimizationOn("anim-comet")) return new Set<string>();
     const onScreen = [...pinned, ...rest];
-    const index = cometRowIndex(onScreen.map((summary) => motionByBotId.get(summary.bot.botId)));
-    return index < 0 ? null : (onScreen[index]?.bot.botId ?? null);
+    const rows = cometRowIndexes(
+      onScreen.map((summary) => motionByBotId.get(summary.bot.botId)),
+      !perfOptimizationOn("anim-all"),
+    );
+    return new Set(rows.map((index) => onScreen[index]!.bot.botId as string));
   }, [motionByBotId, pinned, rest]);
   // Groups stay together immediately after the pinned strip. Within that
   // block and the bot block, the existing activity order is preserved.
@@ -560,7 +565,7 @@ export function ChatsScreen({
       now={now}
       describeTurn={describeTurn}
       motion={motionByBotId.get(summary.bot.botId)}
-      comet={cometBotId === summary.bot.botId}
+      comet={cometBotIds.has(summary.bot.botId)}
       selected={selectedChat === botSelectionKey(summary.bot.botId)}
       onDelete={onDeleteBot}
       onTogglePin={togglePin}
@@ -816,7 +821,7 @@ export function ChatsScreen({
                       summary={summary}
                       now={now}
                       motion={motionByBotId.get(summary.bot.botId)}
-                      comet={cometBotId === summary.bot.botId}
+                      comet={cometBotIds.has(summary.bot.botId)}
                       onUnpin={() => void togglePin(summary.bot)}
                       selected={selectedChat === botSelectionKey(summary.bot.botId)}
                     />

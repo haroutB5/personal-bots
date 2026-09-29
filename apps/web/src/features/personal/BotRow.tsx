@@ -150,7 +150,7 @@ export const BotRow = memo(function BotRow({
   describeTurn: (turn: ServerTurn) => string;
   /** Avatar pose for this row (`motionForSummary`). */
   motion?: AvatarMotion | undefined;
-  /** Draw the working comet; the list gives it to one row (`cometRowIndex`). */
+  /** Draw the working comet; the list gives it to every working row (`cometRowIndexes`). */
   comet?: boolean | undefined;
   /** This bot's chat (or chats list, or editor) is open in the desktop pane. */
   selected?: boolean | undefined;
