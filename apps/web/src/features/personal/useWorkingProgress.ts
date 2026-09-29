@@ -24,7 +24,29 @@ export const personalBotsWorkingProgress = createEnvironmentRpcQueryAtomFamily(
 /** At most one read this often while a working chat keeps changing. */
 export const PROGRESS_REFRESH_MS = 2_500;
 
-const NO_NOTES: ReadonlyMap<string, string> = new Map();
+/** A note and the turn the server read it from. */
+export interface WorkingProgressEntry {
+  readonly note: string;
+  readonly turnId: string | null;
+}
+
+const NO_NOTES: ReadonlyMap<string, WorkingProgressEntry> = new Map();
+
+/**
+ * The note to show for a working chat, or undefined. Only a note read from the
+ * turn the chat's shell reports as its latest. The read is cached for a minute
+ * after its last row leaves (`idleTtlMs`), so when the same chat starts its
+ * next turn the previous turn's last note is still what the query holds until
+ * the new read lands: that stale line flashed on the row for about a second.
+ * A note from another turn is not this turn's, whatever its text.
+ */
+export function currentProgressNote(
+  entry: WorkingProgressEntry | undefined,
+  shell: { readonly latestTurn?: { readonly turnId: string } | null },
+): string | undefined {
+  if (entry === undefined) return undefined;
+  return entry.turnId === (shell.latestTurn?.turnId ?? null) ? entry.note : undefined;
+}
 
 /** How long to hold a read that is due, so reads stay at least {@link PROGRESS_REFRESH_MS} apart. */
 export function progressRefreshDelayMs(lastRefreshMs: number, nowMs: number): number {
@@ -47,7 +69,7 @@ export interface WorkingProgressTarget {
 export function useWorkingProgressNotes(
   environmentId: EnvironmentId | null,
   targets: ReadonlyArray<WorkingProgressTarget>,
-): ReadonlyMap<string, string> {
+): ReadonlyMap<string, WorkingProgressEntry> {
   const idsKey = targets
     .map((target) => target.threadId)
     .toSorted()
@@ -84,6 +106,11 @@ export function useWorkingProgressNotes(
 
   return useMemo(() => {
     if (atom === null || query.data === null) return NO_NOTES;
-    return new Map(query.data.notes.map((entry) => [entry.threadId as string, entry.note]));
+    return new Map(
+      query.data.notes.map((entry) => [
+        entry.threadId as string,
+        { note: entry.note, turnId: entry.turnId },
+      ]),
+    );
   }, [atom, query.data]);
 }

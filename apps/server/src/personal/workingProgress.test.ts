@@ -96,3 +96,54 @@ it.effect("notes for working chats only, newest of thinking and tool title, this
     expect(notes.every((entry) => !entry.note.includes(".env"))).toBe(true);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
+
+it.effect("a turn the server starts on its own shows none of the previous turn's notes", () =>
+  Effect.gen(function* () {
+    const { addThread, addReasoning, addTool, sql } = yield* seed;
+    // One owner message at 10:00; turn-1 answered it and thought and ran a tool.
+    yield* addThread("t-follow-up", "running", "2026-09-29T10:00:00.000Z");
+    yield* sql`
+      INSERT INTO projection_turns (thread_id, turn_id, state, requested_at, started_at, checkpoint_files_json)
+      VALUES ('t-follow-up', 'turn-1', 'completed', '2026-09-29T10:00:01.000Z', '2026-09-29T10:00:01.000Z', '[]')
+    `;
+    yield* sql`UPDATE projection_threads SET latest_turn_id = 'turn-1' WHERE thread_id = 't-follow-up'`;
+    yield* addReasoning(
+      "t-follow-up",
+      "r-1",
+      "**Waiting for the child**",
+      "2026-09-29T10:00:05.000Z",
+    );
+    yield* addTool(
+      "t-follow-up",
+      "a-1",
+      "MCP tool call",
+      "MCP tool call started",
+      "2026-09-29T10:00:09.000Z",
+      1,
+    );
+
+    // While turn-1 runs, its note is named after turn-1.
+    const during = yield* personalWorkingProgress(sql, [thread("t-follow-up")]);
+    expect(during).toEqual([{ threadId: "t-follow-up", turnId: "turn-1", note: "MCP tool call" }]);
+
+    // The child finishes and the server starts turn-2 with no new owner message.
+    yield* sql`
+      INSERT INTO projection_turns (thread_id, turn_id, state, requested_at, started_at, checkpoint_files_json)
+      VALUES ('t-follow-up', 'turn-2', 'running', '2026-09-29T10:05:00.000Z', '2026-09-29T10:05:00.500Z', '[]')
+    `;
+    yield* sql`UPDATE projection_threads SET latest_turn_id = 'turn-2' WHERE thread_id = 't-follow-up'`;
+    // Nothing said yet in turn-2: no note, not turn-1's.
+    expect(yield* personalWorkingProgress(sql, [thread("t-follow-up")])).toEqual([]);
+
+    // Turn-2's first words name turn-2.
+    yield* addReasoning(
+      "t-follow-up",
+      "r-2",
+      "**Checking the child's result**",
+      "2026-09-29T10:05:03.000Z",
+    );
+    expect(yield* personalWorkingProgress(sql, [thread("t-follow-up")])).toEqual([
+      { threadId: "t-follow-up", turnId: "turn-2", note: "Checking the child's result" },
+    ]);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);

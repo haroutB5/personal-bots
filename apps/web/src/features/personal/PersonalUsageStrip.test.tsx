@@ -5,7 +5,7 @@ import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { PersonalUsageStrip } from "./PersonalUsageStrip";
+import { PersonalUsageStrip, resetUsageAutoProbe } from "./PersonalUsageStrip";
 
 const NOW = Date.parse("2026-09-13T12:00:00Z");
 
@@ -71,34 +71,38 @@ function provider(driver: string, usageLimits: unknown): ServerProvider {
   } as unknown as ServerProvider;
 }
 
+const CLAUDE_WINDOWS = [
+  {
+    id: "five_hour",
+    kind: "session",
+    label: "5-hour session",
+    usedPercent: 26,
+    resetsAt: "2026-09-13T14:30:00Z",
+  },
+  {
+    id: "seven_day",
+    kind: "weekly",
+    label: "Weekly",
+    usedPercent: 8,
+    resetsAt: "2026-09-20T12:00:00Z",
+  },
+];
+const CODEX_WINDOWS = [{ id: "primary", kind: "session", label: "5-hour", usedPercent: 12 }];
+
 const CLAUDE = provider("claudeAgent", {
   checkedAt: "2026-09-13T11:59:00Z",
-  windows: [
-    {
-      id: "five_hour",
-      kind: "session",
-      label: "5-hour session",
-      usedPercent: 26,
-      resetsAt: "2026-09-13T14:30:00Z",
-    },
-    {
-      id: "seven_day",
-      kind: "weekly",
-      label: "Weekly",
-      usedPercent: 8,
-      resetsAt: "2026-09-20T12:00:00Z",
-    },
-  ],
+  windows: CLAUDE_WINDOWS,
 });
 
 const CODEX = provider("codex", {
   checkedAt: "2026-09-13T11:58:00Z",
-  windows: [{ id: "primary", kind: "session", label: "5-hour", usedPercent: 12 }],
+  windows: CODEX_WINDOWS,
 });
 
 let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
+  resetUsageAutoProbe();
   state.refresh = vi.fn(async () => ({ _tag: "Success", value: undefined }));
   state.consume = vi.fn(async () => ({ _tag: "Success", value: { outcome: "reset" } }));
 });
@@ -111,6 +115,101 @@ afterEach(async () => {
 });
 
 describe("PersonalUsageStrip", () => {
+  // A snapshot from a server that has just restarted: the startup probe could
+  // not read usage, so the provider publishes no windows at all.
+  const UNREAD = () => [provider("claudeAgent", undefined), provider("codex", undefined)];
+
+  it("takes its first usage reading itself after a restart, without the sheet being opened", async () => {
+    state.providers = UNREAD();
+    // The probe the strip asks for is the one the sheet asks for; when it
+    // lands the server publishes real readings.
+    state.refresh = vi.fn(async () => {
+      state.providers = [
+        provider("claudeAgent", { checkedAt: new Date().toISOString(), windows: CLAUDE_WINDOWS }),
+        provider("codex", { checkedAt: new Date().toISOString(), windows: CODEX_WINDOWS }),
+      ];
+      return { _tag: "Success", value: undefined };
+    });
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+    expect(state.refresh).toHaveBeenCalledTimes(1);
+    expect(state.refresh).toHaveBeenCalledWith({
+      environmentId: "env-1",
+      input: { refreshUsage: true },
+    });
+    // Nothing opened the sheet.
+    expect(renderer!.root.findAll((node) => node.props["data-slot"] === "sheet")).toHaveLength(0);
+
+    await act(async () => renderer!.update(<PersonalUsageStrip now={NOW} />));
+    const label = renderer!.root.findAllByType("button")[0]!.props["aria-label"];
+    expect(label).toBe(
+      "Usage: Claude, Session 26 percent used, Weekly 8 percent used; Codex, Session 12 percent used, Weekly not reported. Open details.",
+    );
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Not reported");
+    // The readings arriving is not a reason to probe again.
+    expect(state.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not spend a probe on fresh readings", async () => {
+    const fresh = new Date().toISOString();
+    state.providers = [
+      provider("claudeAgent", { checkedAt: fresh, windows: CLAUDE_WINDOWS }),
+      provider("codex", { checkedAt: fresh, windows: CODEX_WINDOWS }),
+    ];
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+    expect(state.refresh).not.toHaveBeenCalled();
+  });
+
+  it("asks once per probe interval while a card has nothing, not once per snapshot", async () => {
+    const at = vi.spyOn(Date, "now");
+    const start = Date.parse("2026-09-29T00:17:00Z");
+    at.mockReturnValue(start);
+    state.providers = UNREAD();
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+    expect(state.refresh).toHaveBeenCalledTimes(1);
+
+    // The probe failed: fresh snapshots keep arriving with nothing read.
+    for (const seconds of [10, 60, 240]) {
+      at.mockReturnValue(start + seconds * 1000);
+      state.providers = UNREAD();
+      await act(async () => renderer!.update(<PersonalUsageStrip now={NOW} />));
+    }
+    expect(state.refresh).toHaveBeenCalledTimes(1);
+
+    // One server probe interval later, still nothing: one more attempt.
+    at.mockReturnValue(start + 5 * 60_000 + 1000);
+    state.providers = UNREAD();
+    await act(async () => renderer!.update(<PersonalUsageStrip now={NOW} />));
+    expect(state.refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not probe a good reading just because it aged, after the first load", async () => {
+    const at = vi.spyOn(Date, "now");
+    const start = Date.parse("2026-09-29T00:17:00Z");
+    at.mockReturnValue(start);
+    const reading = (ago: number) => [
+      provider("claudeAgent", {
+        checkedAt: new Date(start - ago).toISOString(),
+        windows: CLAUDE_WINDOWS,
+      }),
+      provider("codex", { checkedAt: new Date(start - ago).toISOString(), windows: CODEX_WINDOWS }),
+    ];
+    state.providers = reading(1000);
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+    expect(state.refresh).not.toHaveBeenCalled();
+    at.mockReturnValue(start + 20 * 60_000);
+    state.providers = reading(20 * 60_000);
+    await act(async () => renderer!.update(<PersonalUsageStrip now={NOW} />));
+    expect(state.refresh).not.toHaveBeenCalled();
+  });
+
   it("renders nothing until providers arrive, so cold start never jumps", async () => {
     await act(async () => {
       renderer = create(<PersonalUsageStrip now={NOW} />);

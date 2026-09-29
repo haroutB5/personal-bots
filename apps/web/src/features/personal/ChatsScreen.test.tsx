@@ -29,7 +29,7 @@ const state = vi.hoisted(() => ({
   navigate: vi.fn(),
   groupsData: null as { groups: unknown[]; rounds: unknown[] } | null,
   groupFeedCalls: [] as Array<string | null>,
-  progressNotes: new Map<string, string>(),
+  progressNotes: new Map<string, { note: string; turnId: string | null }>(),
   progressTargets: [] as Array<{ threadId: string; updatedAt: string }>,
   versionInfo: { label: "v9.9.9-test", updateAvailable: false } as {
     label: string | null;
@@ -128,7 +128,8 @@ vi.mock("./usePersonalBots", () => ({
   usePersonalBotsList: () => ({ data: state.listData, error: null, refresh: state.refresh }),
   usePersonalProfile: () => ({ data: null }),
 }));
-vi.mock("./useWorkingProgress", () => ({
+vi.mock("./useWorkingProgress", async (importActual) => ({
+  ...(await importActual<typeof import("./useWorkingProgress")>()),
   useWorkingProgressNotes: (
     _environmentId: string | null,
     targets: Array<{ threadId: string; updatedAt: string }>,
@@ -1105,7 +1106,9 @@ describe("ChatsScreen working progress", () => {
   }
 
   it("asks only about the working bot's chat, and shows its note instead of the last message", async () => {
-    state.progressNotes = new Map([["thread-busy", "Reading the failing test"]]);
+    state.progressNotes = new Map([
+      ["thread-busy", { note: "Reading the failing test", turnId: null }],
+    ]);
     await render();
     const json = JSON.stringify(renderer!.toJSON());
     expect(state.progressTargets).toEqual([
@@ -1115,6 +1118,36 @@ describe("ChatsScreen working progress", () => {
     // The idle bot keeps its last message; the working one lost the stale one.
     expect(json).toContain("The stale last message");
     expect(json.split("The stale last message").length - 1).toBe(1);
+  });
+
+  it("never shows an earlier turn's note when a new turn starts, only the new turn's", async () => {
+    const turn = (turnId: string) => ({
+      turnId,
+      state: "running",
+      requestedAt: "2026-09-29T10:00:00.000Z",
+      startedAt: "2026-09-29T10:00:00.000Z",
+      completedAt: null,
+      assistantMessageId: null,
+    });
+    // The query still holds turn-1's last note (cached after its turn ended).
+    state.progressNotes = new Map([["thread-busy", { note: "MCP tool call", turnId: "turn-1" }]]);
+    await render();
+    state.shells = [
+      { ...shell("thread-busy", { status: "running" }), latestTurn: turn("turn-2") },
+      shell("thread-idle", { status: "ready" }),
+    ];
+    await act(async () => renderer!.update(<ChatsScreen />));
+    let json = JSON.stringify(renderer!.toJSON());
+    expect(json).not.toContain("MCP tool call");
+    expect(json.split("The stale last message").length - 1).toBe(2);
+    // The new turn's own note replaces it as soon as the read lands.
+    state.progressNotes = new Map([
+      ["thread-busy", { note: "Reading the diff", turnId: "turn-2" }],
+    ]);
+    await act(async () => renderer!.update(<ChatsScreen />));
+    json = JSON.stringify(renderer!.toJSON());
+    expect(json).toContain("Reading the diff");
+    expect(json).not.toContain("MCP tool call");
   });
 
   it("keeps the last message when there is no note yet", async () => {

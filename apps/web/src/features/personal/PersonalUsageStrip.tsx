@@ -13,6 +13,7 @@ import { usePersonalEnvironmentId } from "./usePersonalBots";
 import {
   selectUsageCards,
   usageCardEmptyText,
+  usageAutoProbeDue,
   usageNeedsRefreshOnOpen,
   type UsageCard,
   type UsageWindowRow,
@@ -30,6 +31,22 @@ import {
 // Upstream's reset-credit module brings the whole Limits tab with it; load it
 // only once a sheet shows a banked credit.
 const PersonalResetCredits = lazy(() => import("./PersonalResetCredits"));
+
+/**
+ * What this page has done about the first usage reading (see
+ * `usageAutoProbeDue`). Module state, so leaving the list and coming back does
+ * not count as a first load or start another probe.
+ */
+const autoProbe: { lastProbeAt: number | null; firstLoadSeen: boolean } = {
+  lastProbeAt: null,
+  firstLoadSeen: false,
+};
+
+/** Test hook: forget what this page has already asked for. */
+export function resetUsageAutoProbe(): void {
+  autoProbe.lastProbeAt = null;
+  autoProbe.firstLoadSeen = false;
+}
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -298,7 +315,30 @@ function UsageSheetBody({
  */
 export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Element | null {
   const providers = useAtomValue(primaryServerProvidersAtom);
+  const environmentId = usePersonalEnvironmentId();
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
   const [open, setOpen] = useState(false);
+
+  // The bars should not wait for the sheet to be opened: ask for the reading
+  // the sheet would ask for, once, when the list first has providers (and again
+  // only if a card later has nothing to show).
+  useEffect(() => {
+    if (environmentId === null) return;
+    const at = Date.now();
+    const due = usageAutoProbeDue({
+      cards: selectUsageCards(providers, at),
+      now: at,
+      lastProbeAt: autoProbe.lastProbeAt,
+      firstLoad: !autoProbe.firstLoadSeen,
+    });
+    if (providers.length > 0) autoProbe.firstLoadSeen = true;
+    if (!due) return;
+    autoProbe.lastProbeAt = at;
+    void refreshProviders({ environmentId, input: { refreshUsage: true } });
+    // Each new provider snapshot is a chance; `refreshProviders` only wraps the RPC.
+  }, [environmentId, providers]);
 
   const cards = selectUsageCards(providers, now);
   const cells = selectUsageStripCells(cards);

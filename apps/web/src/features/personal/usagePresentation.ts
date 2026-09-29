@@ -259,6 +259,40 @@ export function usageNeedsRefreshOnOpen(cards: readonly UsageCard[], now: number
 }
 
 /**
+ * The Bots list's own first reading. The server probes usage once at startup
+ * and then on its five-minute cadence, but a startup probe that could not read
+ * usage (the CLI is cold, the machine busy) leaves every bar reading "Not
+ * reported" and doubles the wait for the next probe, so after a restart the
+ * strip could stay empty for ten minutes until the sheet was opened (the
+ * sheet probes on open). The list asks for the same probe itself:
+ *
+ * - on the first load of the app, by the sheet's rule ({@link usageNeedsRefreshOnOpen}:
+ *   nothing read yet, or a reading past a minute);
+ * - later only while a card has no reading at all (a server that restarted
+ *   under an open page), never because a good reading aged: the server's own
+ *   cadence keeps those fresh;
+ * - never twice within one server probe interval, so a probe that keeps
+ *   failing costs one attempt per interval, not one per render.
+ */
+export const USAGE_AUTO_PROBE_MIN_GAP_MS = 5 * 60_000;
+
+export function usageAutoProbeDue(input: {
+  readonly cards: readonly UsageCard[];
+  readonly now: number;
+  /** When this page last asked for a probe on its own, or null if it has not. */
+  readonly lastProbeAt: number | null;
+  /** True until the first providers have been looked at on this page. */
+  readonly firstLoad: boolean;
+}): boolean {
+  if (input.cards.length === 0) return false;
+  if (input.lastProbeAt !== null && input.now - input.lastProbeAt < USAGE_AUTO_PROBE_MIN_GAP_MS) {
+    return false;
+  }
+  if (input.firstLoad) return usageNeedsRefreshOnOpen(input.cards, input.now);
+  return input.cards.some((card) => card.status === "not-reported");
+}
+
+/**
  * What a card with no bars should say.
  *
  * A probe in flight says so rather than reporting an absence as a fact: the

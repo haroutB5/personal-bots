@@ -7,6 +7,7 @@ import {
   ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
+  TurnId,
 } from "./baseSchemas.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ModelSelection, OrchestrationMessageRole } from "./orchestration.ts";
@@ -357,7 +358,14 @@ export const PersonalBotWorkingProgressInput = Schema.Struct({
 export type PersonalBotWorkingProgressInput = typeof PersonalBotWorkingProgressInput.Type;
 
 export const PersonalBotWorkingProgressResult = Schema.Struct({
-  notes: Schema.Array(Schema.Struct({ threadId: ThreadId, note: Schema.String })),
+  notes: Schema.Array(
+    Schema.Struct({
+      threadId: ThreadId,
+      /** The thread's latest turn: the turn the note was read from. */
+      turnId: Schema.NullOr(TurnId),
+      note: Schema.String,
+    }),
+  ),
 });
 export type PersonalBotWorkingProgressResult = typeof PersonalBotWorkingProgressResult.Type;
 

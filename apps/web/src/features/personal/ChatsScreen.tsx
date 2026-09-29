@@ -87,7 +87,7 @@ import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
-import { useWorkingProgressNotes } from "./useWorkingProgress";
+import { currentProgressNote, useWorkingProgressNotes } from "./useWorkingProgress";
 import { usePreloadChatRoute } from "./usePreloadChatRoute";
 import { reportChatsListPainted } from "./perfRum";
 import { perfOptimizationOn } from "./perfFlags";
@@ -492,7 +492,7 @@ export function ChatsScreen({
       shownInChats(summaries).map((summary) => {
         const note =
           summary.live && summary.liveThread != null
-            ? progressNotes.get(summary.liveThread.id)
+            ? currentProgressNote(progressNotes.get(summary.liveThread.id), summary.liveThread)
             : undefined;
         return note === undefined ? summary : { ...summary, progressNote: note };
       }),
