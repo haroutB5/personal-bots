@@ -47,6 +47,8 @@ const { state } = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children?: ReactNode }) => <a>{children}</a>,
+  useLocation: ({ select }: { select: (location: { state: unknown }) => unknown }) =>
+    select({ state: undefined }),
 }));
 vi.mock("~/components/ChatMarkdown", () => ({
   default: ({ text }: { text: string }) => <p data-markdown="">{text}</p>,

@@ -28,6 +28,8 @@ vi.mock("@tanstack/react-router", () => ({
     <a href={to}>{children}</a>
   ),
   useNavigate: () => async () => undefined,
+  useLocation: ({ select }: { select: (location: { state: unknown }) => unknown }) =>
+    select({ state: undefined }),
 }));
 vi.mock("./usePersonalBots", () => ({
   personalProfileSet: {},

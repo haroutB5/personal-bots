@@ -10,6 +10,8 @@ const state = vi.hoisted(() => ({
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
   useNavigate: () => vi.fn(),
+  useLocation: ({ select }: { select: (location: { state: unknown }) => unknown }) =>
+    select({ state: undefined }),
 }));
 vi.mock("~/components/ui/menu", () => ({
   Menu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,

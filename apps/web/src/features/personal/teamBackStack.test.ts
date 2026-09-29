@@ -176,7 +176,7 @@ describe("Back from anything opened on the Team screen returns to it", () => {
 
   it("never loads the Bots list on the way", async () => {
     const router = await walk(TEAM, BOT, CHAT);
-    expect(router.state.matches.some((match) => match.routeId === "/bots")).toBe(false);
+    expect(router.state.matches.some((match) => match.fullPath === "/bots")).toBe(false);
     expect(await back(router)).toBe(TEAM);
   });
 
