@@ -568,8 +568,15 @@ it.effect("a waiting parent releases its slot so both children run when slots ar
       "[Delegated task from Assistant]",
     );
 
+    // The first result is delivered at once, with the second still running.
     yield* runTurn(harness, threadOf(firstRunning), "Built.");
     expect((yield* reload(first.taskId)).status).toBe("completed");
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    const firstContinuation = turnStarts(harness).at(-1)!;
+    expect(firstContinuation.threadId).toBe(rootThread);
+    expect(firstContinuation.message.text).toContain("Built.");
+    expect(firstContinuation.message.text).not.toContain("Researched.");
+    yield* runTurn(harness, rootThread, "Waiting for the research.");
     expect((yield* reload(root.taskId)).status).toBe("waiting_for_agent");
 
     yield* runTurn(harness, threadOf(secondRunning), "Researched.");
@@ -578,8 +585,8 @@ it.effect("a waiting parent releases its slot so both children run when slots ar
     const continuation = turnStarts(harness).at(-1)!;
     expect(continuation.threadId).toBe(rootThread);
     expect(continuation.message.text).toContain("[Task continuation]");
-    expect(continuation.message.text).toContain("Built.");
     expect(continuation.message.text).toContain("Researched.");
+    expect(continuation.message.text).not.toContain("Built.");
 
     yield* runTurn(harness, rootThread, "All done.");
     const done = yield* reload(root.taskId);
@@ -691,6 +698,291 @@ it.effect("a child's completion re-queues its parent exactly once", () => {
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+/** The turns a task's own thread was asked to start, oldest first. */
+const startsOn = (harness: Harness, threadId: ThreadId) =>
+  turnStarts(harness).filter((command) => command.threadId === threadId);
+
+/** Opens the root's turn and returns a helper that delegates from it. */
+const rootDelegating = (harness: Harness, root: PersonalTask) =>
+  Effect.gen(function* () {
+    const rootThread = threadOf(root);
+    const turnId = yield* beginTurn(harness, rootThread);
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const delegate = (bot: BotKey, title: string) =>
+      service.delegate({
+        parentTaskId: root.taskId,
+        targetBotId: botId(bot),
+        brief: brief(title),
+      });
+    return { rootThread, turnId, delegate };
+  });
+
+it.effect("a finished child is delivered at once while its sibling is still running", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("as-they-finish");
+    const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+    const fast = yield* delegate("developer", "Fast part");
+    const slow = yield* delegate("researcher", "Slow part");
+    yield* endTurn(harness, rootThread, turnId, "Delegated both.");
+    expect((yield* reload(root.taskId)).status).toBe("waiting_for_agent");
+
+    const fastThread = threadOf(yield* reload(fast.taskId));
+    const slowThread = threadOf(yield* reload(slow.taskId));
+    yield* runTurn(harness, fastThread, "Fast result.");
+
+    // The fast result reaches the parent right away; the slow child still runs.
+    expect((yield* reload(slow.taskId)).status).toBe("running");
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    const first = startsOn(harness, rootThread).at(-1)!;
+    expect(
+      first.message.text.startsWith("[Task continuation] These delegated tasks have finished."),
+    ).toBe(true);
+    expect(first.message.text).toContain("Fast result.");
+    expect(first.message.text).toContain("Still running: Slow part.");
+    expect(first.message.text).toContain("Their results will follow");
+    expect(first.message.text).not.toContain("give your final answer");
+
+    // Ending that continuation turn parks the task again; it does not complete
+    // or send anything up.
+    yield* runTurn(harness, rootThread, "Got the fast part, waiting for the slow one.");
+    const parked = yield* reload(root.taskId);
+    expect(parked.status).toBe("waiting_for_agent");
+    expect(parked.result).toBeNull();
+    expect(startsOn(harness, rootThread).length).toBe(2);
+
+    yield* runTurn(harness, slowThread, "Slow result.");
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    const second = startsOn(harness, rootThread).at(-1)!;
+    expect(startsOn(harness, rootThread).length).toBe(3);
+    expect(second.message.text).toContain("Your delegated tasks have finished.");
+    expect(second.message.text).toContain("give your final answer");
+    expect(second.message.text).toContain("Slow result.");
+    expect(second.message.text).not.toContain("Fast result.");
+
+    // Replays of either child's terminal session and a sweep deliver nothing again.
+    for (const thread of [fastThread, slowThread]) {
+      yield* service.ingestDomainEvent(sessionEvent(harness, harness.sessions.get(thread)!));
+    }
+    yield* service.sweep;
+    yield* service.drain;
+    expect(startsOn(harness, rootThread).length).toBe(3);
+
+    // The task completes only after the last child's result was delivered.
+    yield* runTurn(harness, rootThread, "All done.");
+    const done = yield* reload(root.taskId);
+    expect(done.status).toBe("completed");
+    expect(done.result).toEqual({ summary: "All done." });
+    const detail = yield* service.get({ taskId: root.taskId });
+    expect(detail.children.map((handoff) => handoff.status)).toEqual(["delivered", "delivered"]);
+    expect(detail.attempts.map((attempt) => attempt.attempt)).toEqual([1, 2, 3]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("children finishing during the parent's turn come back in one continuation", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("during-turn");
+    const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+    const one = yield* delegate("developer", "Part one");
+    const two = yield* delegate("researcher", "Part two");
+    const three = yield* delegate("planner", "Part three");
+    yield* service.drain;
+
+    // Two children finish while the parent's own turn is still running.
+    yield* runTurn(harness, threadOf(yield* reload(one.taskId)), "One done.");
+    yield* runTurn(harness, threadOf(yield* reload(two.taskId)), "Two done.");
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    expect(startsOn(harness, rootThread).length).toBe(1);
+
+    // When the turn ends, both are delivered together, ahead of the third.
+    yield* endTurn(harness, rootThread, turnId, "Delegated three.");
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    expect(startsOn(harness, rootThread).length).toBe(2);
+    const continuation = startsOn(harness, rootThread).at(-1)!;
+    expect(continuation.message.text).toContain("One done.");
+    expect(continuation.message.text).toContain("Two done.");
+    expect(continuation.message.text).toContain("Still running: Part three.");
+    const marker = continuation.message.context?.records[0];
+    expect(marker).toMatchObject({ kind: "personal-task", payload: { turn: "continuation" } });
+    const markedChildren =
+      marker !== undefined && "payload" in marker
+        ? (marker.payload as { children: ReadonlyArray<{ taskId: string; status: string }> })
+            .children
+        : [];
+    expect(markedChildren.map((child) => [child.taskId, child.status]).toSorted()).toEqual(
+      [
+        [one.taskId, "completed"],
+        [two.taskId, "completed"],
+      ].toSorted(),
+    );
+
+    yield* runTurn(harness, rootThread, "Two of three in.");
+    expect((yield* reload(root.taskId)).status).toBe("waiting_for_agent");
+    yield* runTurn(harness, threadOf(yield* reload(three.taskId)), "Three done.");
+    expect(startsOn(harness, rootThread).length).toBe(3);
+    expect(startsOn(harness, rootThread).at(-1)!.message.text).toContain("Three done.");
+    yield* runTurn(harness, rootThread, "Everything in.");
+    expect((yield* reload(root.taskId)).status).toBe("completed");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a child finishing while the parent is queued joins the same continuation", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("queued-merge");
+    const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+    const one = yield* delegate("developer", "Part one");
+    const two = yield* delegate("researcher", "Part two");
+    yield* delegate("planner", "Part three");
+    yield* endTurn(harness, rootThread, turnId, "Delegated three.");
+    expect((yield* reload(root.taskId)).status).toBe("waiting_for_agent");
+
+    // The user is chatting in the parent's thread, so the parent cannot start.
+    const userTurn = yield* beginTurn(harness, rootThread);
+    yield* runTurn(harness, threadOf(yield* reload(one.taskId)), "One done.");
+    expect((yield* reload(root.taskId)).status).toBe("queued");
+    yield* runTurn(harness, threadOf(yield* reload(two.taskId)), "Two done.");
+    expect((yield* reload(root.taskId)).status).toBe("queued");
+    expect(startsOn(harness, rootThread).length).toBe(1);
+
+    yield* endTurn(harness, rootThread, userTurn, "Sure.");
+    yield* service.drain;
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    expect(startsOn(harness, rootThread).length).toBe(2);
+    const merged = startsOn(harness, rootThread).at(-1)!.message.text;
+    expect(merged).toContain("One done.");
+    expect(merged).toContain("Two done.");
+    expect(merged).toContain("Still running: Part three.");
+    const detail = yield* service.get({ taskId: root.taskId });
+    expect(detail.children.map((handoff) => handoff.status).toSorted()).toEqual([
+      "delivered",
+      "delivered",
+      "pending",
+    ]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a failed or interrupted child is delivered like a finished one", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const root = yield* createRoot("failed-child");
+    const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+    const failing = yield* delegate("developer", "Failing part");
+    const stopped = yield* delegate("researcher", "Stopped part");
+    const slow = yield* delegate("planner", "Slow part");
+    yield* endTurn(harness, rootThread, turnId, "Delegated three.");
+
+    yield* runTurn(harness, threadOf(yield* reload(failing.taskId)), "", {
+      status: "error",
+      lastError: "Tool crashed",
+    });
+    expect((yield* reload(failing.taskId)).status).toBe("failed");
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    const first = startsOn(harness, rootThread).at(-1)!;
+    expect(first.message.text).toContain("### Failing part (failed)");
+    expect(first.message.text).toContain("Task failed: Tool crashed");
+    // Sibling order is not fixed: handoffs created together tie on created_at.
+    expect(first.message.text).toMatch(
+      /Still running: (Stopped part, Slow|Slow part, Stopped) part\./,
+    );
+    expect(first.message.context?.records[0]).toMatchObject({
+      payload: { children: [{ taskId: failing.taskId, status: "failed" }] },
+    });
+    yield* runTurn(harness, rootThread, "Noted the failure.");
+    expect((yield* reload(root.taskId)).status).toBe("waiting_for_agent");
+
+    yield* runTurn(harness, threadOf(yield* reload(stopped.taskId)), "", {
+      status: "interrupted",
+    });
+    expect((yield* reload(stopped.taskId)).status).toBe("interrupted");
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    const second = startsOn(harness, rootThread).at(-1)!;
+    expect(second.message.text).toContain("### Stopped part (interrupted)");
+    expect(second.message.text).toContain("Task interrupted");
+    expect(second.message.text).toContain("Still running: Slow part.");
+    expect(second.message.text).not.toContain("Failing part");
+    yield* runTurn(harness, rootThread, "Noted the interruption.");
+
+    yield* runTurn(harness, threadOf(yield* reload(slow.taskId)), "Slow done.");
+    expect(startsOn(harness, rootThread).at(-1)!.message.text).toContain(
+      "Your delegated tasks have finished.",
+    );
+    yield* runTurn(harness, rootThread, "Wrapped up.");
+    expect((yield* reload(root.taskId)).status).toBe("completed");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a nested parent continues per child and reports up only when it is done", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("nested");
+    const rootThread = threadOf(root);
+    const rootTurn = yield* beginTurn(harness, rootThread);
+    const middle = yield* service.delegate({
+      parentTaskId: root.taskId,
+      targetBotId: botId("developer"),
+      brief: brief("Middle"),
+    });
+    yield* endTurn(harness, rootThread, rootTurn, "Delegated.");
+    const middleThread = threadOf(yield* reload(middle.taskId));
+    const middleTurn = yield* beginTurn(harness, middleThread);
+    const fast = yield* service.delegate({
+      parentTaskId: middle.taskId,
+      targetBotId: botId("researcher"),
+      brief: brief("Deep fast"),
+    });
+    const slow = yield* service.delegate({
+      parentTaskId: middle.taskId,
+      targetBotId: botId("planner"),
+      brief: brief("Deep slow"),
+    });
+    expect(fast.depth).toBe(2);
+    yield* endTurn(harness, middleThread, middleTurn, "Delegated deeper.");
+    expect((yield* reload(middle.taskId)).status).toBe("waiting_for_agent");
+
+    yield* runTurn(harness, threadOf(yield* reload(fast.taskId)), "Deep fast result.");
+    expect((yield* reload(middle.taskId)).status).toBe("running");
+    const partial = startsOn(harness, middleThread).at(-1)!.message.text;
+    expect(partial).toContain("Deep fast result.");
+    expect(partial).toContain("Still running: Deep slow.");
+    // The intermediate turn neither completes the middle task nor reports up.
+    yield* runTurn(harness, middleThread, "Partial: fast part in.");
+    const parked = yield* reload(middle.taskId);
+    expect(parked.status).toBe("waiting_for_agent");
+    expect(parked.result).toBeNull();
+    expect((yield* reload(root.taskId)).status).toBe("waiting_for_agent");
+    expect(startsOn(harness, rootThread).length).toBe(1);
+
+    yield* runTurn(harness, threadOf(yield* reload(slow.taskId)), "Deep slow result.");
+    expect((yield* reload(middle.taskId)).status).toBe("running");
+    expect(startsOn(harness, middleThread).at(-1)!.message.text).toContain(
+      "Your delegated tasks have finished.",
+    );
+    expect((yield* reload(root.taskId)).status).toBe("waiting_for_agent");
+    yield* runTurn(harness, middleThread, "Middle complete.");
+
+    // Only now does the root hear from the middle task, once.
+    expect((yield* reload(middle.taskId)).status).toBe("completed");
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    expect(startsOn(harness, rootThread).length).toBe(2);
+    const rootContinuation = startsOn(harness, rootThread).at(-1)!.message.text;
+    expect(rootContinuation).toContain("Middle complete.");
+    expect(rootContinuation).not.toContain("Partial: fast part in.");
+    yield* runTurn(harness, rootThread, "Root done.");
+    expect((yield* reload(root.taskId)).status).toBe("completed");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 it("the task-turn marker survives persistence decoding and never reaches the provider", () => {
   const marker = {
     taskId: PersonalTaskId.make("task-1"),
@@ -739,6 +1031,8 @@ it.effect("cancel cascades by task id, interrupts live turns and keeps completed
     });
     yield* endTurn(harness, rootThread, rootTurn, "Delegated both.");
     yield* runTurn(harness, threadOf(yield* reload(done.taskId)), "Quick part done.");
+    // The quick result continues the root at once; it parks again for the slow part.
+    yield* runTurn(harness, rootThread, "Waiting for the slow part.");
 
     const slowThread = threadOf(yield* reload(slow.taskId));
     const slowTurn = yield* beginTurn(harness, slowThread);

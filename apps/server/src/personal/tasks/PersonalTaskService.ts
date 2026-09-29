@@ -612,9 +612,12 @@ export const make = Effect.gen(function* () {
     return next;
   });
 
-  // A parent continues once, after ALL its children are terminal, with every
-  // child result in one continuation turn. The status guard makes the wake
-  // idempotent: a duplicate completion finds the parent already queued.
+  // A parent continues as soon as any child result is back, without waiting
+  // for its siblings. A parent that is in a turn (or already queued) is left
+  // alone: the result stays "returned" and the next claim, or the end of the
+  // running turn, delivers everything returned so far in one continuation.
+  // The status guard makes the wake idempotent: a second completion finds the
+  // parent already queued.
   const wakeParent = Effect.fn("PersonalTaskService.wakeParent")(function* (
     changed: Changed,
     parentTaskId: PersonalTaskId,
@@ -624,9 +627,6 @@ export const make = Effect.gen(function* () {
       return;
     }
     const handoffs = yield* repository.listHandoffsByParent(parentTaskId);
-    if (handoffs.some((handoff) => handoff.status === "pending")) {
-      return;
-    }
     if (!handoffs.some((handoff) => handoff.status === "returned")) {
       return;
     }
@@ -655,21 +655,23 @@ export const make = Effect.gen(function* () {
     yield* wakeParent(changed, handoff.value.parentTaskId);
   });
 
-  // A turn that ended cleanly: open children park the task (releasing its
-  // slot, since the attempt has ended), returned-but-undelivered results
-  // queue a continuation, and otherwise the task is done.
+  // A turn that ended cleanly: returned-but-undelivered results queue a
+  // continuation first (even while other children are still running), then
+  // open children park the task (releasing its slot, since the attempt has
+  // ended), and otherwise the task is done. Only the last of these completes
+  // the task and sends its summary to its own parent.
   const resolveAfterTurn = Effect.fn("PersonalTaskService.resolveAfterTurn")(function* (
     changed: Changed,
     task: PersonalTask,
     summary: string,
   ) {
     const handoffs = yield* repository.listHandoffsByParent(task.taskId);
-    if (handoffs.some((handoff) => handoff.status === "pending")) {
-      yield* writeTask(changed, task, { status: "waiting_for_agent" });
-      return;
-    }
     if (handoffs.some((handoff) => handoff.status === "returned")) {
       yield* writeTask(changed, task, { status: "queued" });
+      return;
+    }
+    if (handoffs.some((handoff) => handoff.status === "pending")) {
+      yield* writeTask(changed, task, { status: "waiting_for_agent" });
       return;
     }
     const completed = yield* writeTask(changed, task, {
@@ -764,6 +766,7 @@ export const make = Effect.gen(function* () {
     attemptNumber: number,
     delivered: ReadonlyArray<PersonalHandoff>,
     notes: ReadonlyArray<string>,
+    stillRunning: ReadonlyArray<PersonalHandoff>,
   ) {
     const marker = (
       turn: PersonalTaskMessageMarker["turn"],
@@ -797,10 +800,19 @@ export const make = Effect.gen(function* () {
       );
       return {
         text: [
-          "[Task continuation] Your delegated tasks have finished. Their results:",
+          stillRunning.length > 0
+            ? "[Task continuation] These delegated tasks have finished. Their results:"
+            : "[Task continuation] Your delegated tasks have finished. Their results:",
           ...results.map((result) => result.text),
+          ...(stillRunning.length > 0
+            ? [
+                `Still running: ${stillRunning.map((handoff) => handoff.brief.title).join(", ")}. Their results will follow in a later continuation.`,
+              ]
+            : []),
           ...notes,
-          "Continue the task below with these results and give your final answer.",
+          stillRunning.length > 0
+            ? "Continue the task below with these results. Do not give a final answer yet: the tasks still running will report back."
+            : "Continue the task below with these results and give your final answer.",
           ...taskSections(task, null),
         ].join("\n\n"),
         marker: marker(
@@ -860,8 +872,15 @@ export const make = Effect.gen(function* () {
     attempt: PersonalTaskAttempt,
     delivered: ReadonlyArray<PersonalHandoff>,
     notes: ReadonlyArray<string>,
+    stillRunning: ReadonlyArray<PersonalHandoff>,
   ) {
-    const { text, marker } = yield* buildTurnText(task, attempt.attempt, delivered, notes);
+    const { text, marker } = yield* buildTurnText(
+      task,
+      attempt.attempt,
+      delivered,
+      notes,
+      stillRunning,
+    );
     // A chat made for this task (or routine run) is named after it. A task
     // bound to an existing chat (a routine posting into the chat it was made
     // in, or a retry) finds the thread there and leaves its title alone.
@@ -943,7 +962,14 @@ export const make = Effect.gen(function* () {
         if (notes.length > 0) {
           yield* repository.markNotesDelivered(task.taskId, now);
         }
-        return { task: running, attempt, delivered, notes: notes.map((note) => note.text) };
+        const stillRunning = handoffs.filter((handoff) => handoff.status === "pending");
+        return {
+          task: running,
+          attempt,
+          delivered,
+          notes: notes.map((note) => note.text),
+          stillRunning,
+        };
       }),
     );
     if (claimed !== null) {
@@ -1013,7 +1039,13 @@ export const make = Effect.gen(function* () {
       if (claimed === null) {
         continue;
       }
-      yield* startTurn(claimed.task, claimed.attempt, claimed.delivered, claimed.notes).pipe(
+      yield* startTurn(
+        claimed.task,
+        claimed.attempt,
+        claimed.delivered,
+        claimed.notes,
+        claimed.stillRunning,
+      ).pipe(
         Effect.catchCause((cause) => {
           if (Cause.hasInterruptsOnly(cause)) {
             return Effect.failCause(cause);
