@@ -1,7 +1,10 @@
 import {
+  BotAvatarColor,
+  BotAvatarShape,
   McpCapabilityUnavailableError,
   PERSONAL_GROUP_VOTE_MAX_OPTIONS,
   PERSONAL_GROUP_VOTE_MIN_OPTIONS,
+  PersonalBotNotificationMute,
   PersonalGroupVoteId,
   PersonalGroupVoteStatus,
   PersonalSecretName,
@@ -279,6 +282,108 @@ export const CastVoteResult = Schema.Struct({
 });
 export type CastVoteResult = typeof CastVoteResult.Type;
 
+const LEAD_ONLY = "Team leads only.";
+const NOT_SETTABLE = "Not settable by a lead: any value is refused.";
+
+/** The fields create_bot and update_bot share. Every one is optional. */
+const BotFieldsShape = {
+  title: Schema.optional(
+    Schema.String.annotate({
+      description: "Short role label under the name, at most 60 characters.",
+    }),
+  ),
+  description: Schema.optional(
+    Schema.String.annotate({
+      description: "What the bot is for, one or two sentences (at most 500 characters).",
+    }),
+  ),
+  instructions: Schema.optional(
+    Schema.String.annotate({
+      description:
+        "The bot's standing instructions (at most 20000 characters). Never put a secret, key or password in them.",
+    }),
+  ),
+  avatarShape: Schema.optional(BotAvatarShape.annotate({ description: "Avatar shape." })),
+  avatarColor: Schema.optional(
+    BotAvatarColor.annotate({ description: "Avatar colour as a hex value such as #1A73E8." }),
+  ),
+  provider: Schema.optional(
+    Schema.String.annotate({
+      description:
+        "Provider instance the bot runs on (as list_bots shows under provider). Default: the bot's current one, or yours for a new bot.",
+    }),
+  ),
+  model: Schema.optional(
+    Schema.String.annotate({
+      description:
+        "A model slug that provider offers, for example claude-sonnet-5-5. Fable and Mythos models are refused. Default for a new bot: the standard seed model (Opus 5.5 at medium effort).",
+    }),
+  ),
+  effort: Schema.optional(
+    Schema.String.annotate({
+      description: "An effort the model offers: low, medium, high, xhigh or max.",
+    }),
+  ),
+  notificationsMute: Schema.optional(
+    PersonalBotNotificationMute.annotate({
+      description:
+        'Silence this bot\'s notifications: "indefinitely", { "forMinutes": n } or "on" to turn them back on.',
+    }),
+  ),
+  memoryAutoSave: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Let the bot save memories without the user asking each time.",
+    }),
+  ),
+  team: Schema.optional(Schema.Unknown.annotate({ description: NOT_SETTABLE })),
+  lead: Schema.optional(Schema.Unknown.annotate({ description: NOT_SETTABLE })),
+  pinned: Schema.optional(Schema.Unknown.annotate({ description: NOT_SETTABLE })),
+};
+
+export const CreateBotInput = Schema.Struct({
+  name: TrimmedNonEmptyString.annotate({
+    description: "The new bot's name, at most 60 characters. Unique among all bots.",
+  }),
+  ...BotFieldsShape,
+});
+export type CreateBotInput = typeof CreateBotInput.Type;
+
+export const UpdateBotInput = Schema.Struct({
+  bot: TrimmedNonEmptyString.annotate({
+    description: "The bot to change: its botId or name as list_bots shows it.",
+  }),
+  name: Schema.optional(
+    TrimmedNonEmptyString.annotate({ description: "A new name, at most 60 characters." }),
+  ),
+  ...BotFieldsShape,
+});
+export type UpdateBotInput = typeof UpdateBotInput.Type;
+
+export const RemoveBotInput = Schema.Struct({
+  bot: TrimmedNonEmptyString.annotate({
+    description: "The bot to remove: its botId or name as list_bots shows it.",
+  }),
+  reason: TrimmedNonEmptyString.annotate({
+    description: "Why, in one line. It shows on this tool call.",
+  }),
+});
+export type RemoveBotInput = typeof RemoveBotInput.Type;
+
+export const LeadBotResult = Schema.Struct({
+  botId: Schema.String,
+  name: Schema.String,
+  team: Schema.String,
+  model: Schema.String.annotate({ description: 'Model and effort, for example "Sonnet 5.5 · H".' }),
+  changed: Schema.Array(Schema.String).annotate({
+    description: "The fields that changed (update_bot); empty otherwise.",
+  }),
+  line: Schema.String.annotate({
+    description: "The line posted in your chat and sent to the user as a notification.",
+  }),
+  note: Schema.String,
+});
+export type LeadBotResult = typeof LeadBotResult.Type;
+
 const ListBotsTool = Tool.make("list_bots", {
   description:
     "List the personal bots on your team, the ones you can delegate work to: each one's name, what it is for, the provider and model it runs on, and which entry is you. Bots on the other team are left out; delegate_task accepts one of them only once the user's own latest message names it. The roster changes at any time (the user creates, renames and deletes bots), so call this fresh before every delegate_task and never rely on a roster from earlier in the conversation.",
@@ -447,6 +552,45 @@ const CastVoteTool = Tool.make("cast_vote", {
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, false);
 
+const CreateBotTool = Tool.make("create_bot", {
+  description: `${LEAD_ONLY} Create a new bot on your own team, always as an ordinary member: never a lead, never pinned, never on another team. It appears in list_bots at once, so you can delegate to it. Give it a clear name, a description and instructions, and pick a model and effort that fit the work (a cheaper model for simple jobs). Only models a provider actually offers are accepted, and never a Fable or Mythos model. The new bot gets no secrets or connections; the user grants those himself. Limited to 5 new bots per rolling 24 hours. Every create is posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
+  parameters: CreateBotInput,
+  success: LeadBotResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Create a bot on your team")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
+
+const UpdateBotTool = Tool.make("update_bot", {
+  description: `${LEAD_ONLY} Change a bot that is on your own team: its name, title, description, instructions, avatar shape or colour, model and effort, notification mute or memory auto-save. Only the fields you pass change. You cannot edit yourself, another lead or a bot on another team, and you cannot change anyone's team, lead flag or pinned state. Ask the user before making a large change to a bot's instructions (rewriting them, or changing what the bot may do); small tweaks are fine. Every edit is posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
+  parameters: UpdateBotInput,
+  success: LeadBotResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Edit a bot on your team")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+const RemoveBotTool = Tool.make("remove_bot", {
+  description: `${LEAD_ONLY} Remove a bot that is on your own team. It is a soft delete: the bot disappears from every list, but its chats and memories are kept and the user can restore it. ALWAYS ask the user before removing a bot, and call this only after they have said yes in their own message. Refused while the bot has an unfinished task (stop it with stop_task first) or a routine switched on, and for yourself, another lead or a bot on another team. Posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
+  parameters: RemoveBotInput,
+  success: LeadBotResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Remove a bot from your team")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
+
 export const BotsToolkit = Toolkit.make(
   ListBotsTool,
   DelegateTaskTool,
@@ -460,4 +604,7 @@ export const BotsToolkit = Toolkit.make(
   CloseBrowserTool,
   CallVoteTool,
   CastVoteTool,
+  CreateBotTool,
+  UpdateBotTool,
+  RemoveBotTool,
 );

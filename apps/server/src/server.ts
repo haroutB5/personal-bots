@@ -124,6 +124,7 @@ import * as PersonalTaskTitleBackfill from "./personal/taskTitleBackfill.ts";
 import * as PersonalTurnRetry from "./personal/PersonalTurnRetryService.ts";
 import * as PersonalChatResume from "./personal/PersonalChatResumeService.ts";
 import * as PersonalTaskChatArchive from "./personal/PersonalTaskChatArchiveService.ts";
+import * as PersonalLeadBots from "./personal/leadBots/PersonalLeadBotService.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -589,6 +590,9 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   Layer.provideMerge(PersonalTurnRetry.layer),
   Layer.provideMerge(PersonalChatResume.layer),
   Layer.provideMerge(PersonalTaskChatArchive.layer),
+  // Team leads create, edit and remove bots on their own team; consumes the
+  // bot, task and routine services below and the push service just below.
+  Layer.provideMerge(PersonalLeadBots.layer),
   Layer.provideMerge(
     PersonalPushService.layer.pipe(
       Layer.provide(PersonalPushService.transportLive),

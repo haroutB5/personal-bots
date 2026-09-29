@@ -421,6 +421,17 @@ export class PersonalPushService extends Context.Service<
     readonly inApp: (connectionId: string) => Stream.Stream<PersonalPushInAppNotification>;
     /** The page showed (or deliberately skipped) an in-app notification. */
     readonly ackInApp: (input: { readonly id: string }) => Effect.Effect<void>;
+    /**
+     * A team lead created, edited or removed a bot on its team. Always sent
+     * (no preference, and the lead's own mute does not silence it): the user
+     * asked to hear about every one. Opens the Team screen.
+     */
+    readonly notifyTeamBotChange: (input: {
+      readonly actionId: string;
+      readonly leadBotId: string;
+      readonly title: string;
+      readonly body: string;
+    }) => Effect.Effect<void, PersonalPushError>;
     /** Queues the one "provider is failing for your bots" alert for this version. */
     readonly notifyProviderBroken: (input: {
       readonly instanceId: string;
@@ -1173,6 +1184,20 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const notifyTeamBotChange: PersonalPushService["Service"]["notifyTeamBotChange"] = (input) =>
+    Effect.gen(function* () {
+      const lead = yield* botRepository.getBotById({
+        botId: input.leadBotId as PersonalBot["botId"],
+      });
+      yield* deliver(`team-bot:${input.actionId}`, {
+        title: input.title,
+        body: input.body.length > 160 ? `${input.body.slice(0, 157)}...` : input.body,
+        url: "/bots/team",
+        tag: `team-bot-${input.actionId}`,
+        ...avatarFields(botIdentity(lead)),
+      });
+    }).pipe(storageFailure("team change"));
+
   const start: PersonalPushService["Service"]["start"] = () =>
     Effect.gen(function* () {
       if (Option.isSome(tasks)) {
@@ -1214,6 +1239,7 @@ export const make = Effect.gen(function* () {
     inApp,
     ackInApp,
     notifyProviderBroken,
+    notifyTeamBotChange,
     sweep: kick,
     drain: worker.drain,
     start,

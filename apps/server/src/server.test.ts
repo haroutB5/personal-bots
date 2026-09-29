@@ -122,6 +122,7 @@ import * as WhatsAppSession from "./personal/connections/whatsapp/session.ts";
 import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
+import * as PersonalLeadBots from "./personal/leadBots/PersonalLeadBotService.ts";
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import {
@@ -817,6 +818,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(PersonalRoutineService.PersonalRoutineService)({}),
           Layer.mock(PersonalMemoryService.PersonalMemoryService)({}),
           Layer.mock(PersonalPushService.PersonalPushService)({}),
+          Layer.mock(PersonalLeadBots.PersonalLeadBotService)({}),
           Layer.mock(PersonalProviderUpdates.PersonalProviderUpdates)({}),
           Layer.mock(PersonalBotRepository.PersonalBotRepository)({}),
           // The chat-open session prewarm the WS route builds once.

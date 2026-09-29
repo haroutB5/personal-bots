@@ -33,6 +33,8 @@ import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.
 import * as PersonalBrowser from "../../../personal/browser/PersonalBrowser.ts";
 import * as PersonalGroupRepository from "../../../personal/groups/PersonalGroupRepository.ts";
 import * as PersonalGroupService from "../../../personal/groups/PersonalGroupService.ts";
+import * as PersonalLeadBotService from "../../../personal/leadBots/PersonalLeadBotService.ts";
+import * as PersonalRoutineService from "../../../personal/routines/PersonalRoutineService.ts";
 import * as PersonalBotService from "../../../personal/PersonalBotService.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
@@ -138,6 +140,10 @@ const makeLayer = (harness: Harness) =>
           }),
       }),
     ),
+    // The team-management tools (see leadBots.test.ts); the service needs the
+    // routine service to refuse removing a bot with a routine switched on.
+    Layer.provideMerge(PersonalLeadBotService.layer),
+    Layer.provideMerge(PersonalRoutineService.layer),
     Layer.provideMerge(PersonalTaskService.layer),
     Layer.provideMerge(PersonalTaskRepository.layer),
     // The real group service, not a mock: call_vote and cast_vote are thin

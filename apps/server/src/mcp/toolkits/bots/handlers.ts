@@ -22,6 +22,7 @@ import { isPersonalTaskMessageId } from "../../../personal/personalThreadTitles.
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import * as PersonalBrowser from "../../../personal/browser/PersonalBrowser.ts";
 import * as PersonalGroupService from "../../../personal/groups/PersonalGroupService.ts";
+import * as PersonalLeadBotService from "../../../personal/leadBots/PersonalLeadBotService.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
@@ -159,6 +160,7 @@ const make = Effect.gen(function* () {
   const threadMessages = yield* ProjectionThreadMessageRepository;
   const browser = yield* PersonalBrowser.PersonalBrowser;
   const groups = yield* PersonalGroupService.PersonalGroupService;
+  const leadBots = yield* PersonalLeadBotService.PersonalLeadBotService;
 
   const listBots = botRepository
     .listBots()
@@ -293,6 +295,33 @@ const make = Effect.gen(function* () {
       return yield* notInTree();
     }
     return { task, tree: yield* treeOf(task.rootTaskId) };
+  });
+
+  /**
+   * The caller for the team-management tools. Whether it is a lead is not
+   * decided here (the service reads the flag fresh and decides, on every call);
+   * this only says who is asking and refuses a group turn, where the change
+   * could not be written in a chat of the lead's own.
+   */
+  const leadCaller = Effect.fn("BotsToolkit.leadCaller")(function* () {
+    const caller = yield* callerBot();
+    const group = yield* groups.groupNameForMemberThread(caller.threadId);
+    if (Option.isSome(group)) {
+      return yield* toolError(
+        `You are speaking in the group "${group.value}". Create, edit and remove bots in your own chat with the user, not in a group.`,
+      );
+    }
+    return { botId: caller.botId, threadId: caller.threadId };
+  });
+
+  /** A bot named by id or name, among live bots; a name shared with another team's bot prefers the caller's team. */
+  const resolveBotRef = Effect.fn("BotsToolkit.resolveBotRef")(function* (ref: string) {
+    const all = yield* listBots;
+    const byId = all.find((bot) => bot.botId === ref);
+    if (byId !== undefined) return byId.botId as string;
+    const wanted = ref.trim().toLowerCase();
+    const named = all.filter((bot) => bot.name.trim().toLowerCase() === wanted);
+    return named.length === 0 ? ref : (named[0]!.botId as string);
   });
 
   return BotsToolkit.of({
@@ -544,6 +573,41 @@ const make = Effect.gen(function* () {
           status: vote.status,
           ballotsCast: vote.ballots.length,
           note: vote.status === "open" ? CAST_VOTE_OPEN_NOTE : CAST_VOTE_DECIDED_NOTE,
+        };
+      }),
+    create_bot: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* leadCaller();
+        const result = yield* leadBots.create(caller, input).pipe(Effect.mapError(readable));
+        return {
+          ...result,
+          note: "Created and posted in your chat. It is on your team now, so list_bots shows it and you can delegate to it. The user has been notified.",
+        };
+      }),
+    update_bot: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* leadCaller();
+        const { bot, ...fields } = input;
+        const result = yield* leadBots
+          .update(caller, yield* resolveBotRef(bot), fields)
+          .pipe(Effect.mapError(readable));
+        return {
+          ...result,
+          note:
+            result.changed.length === 0
+              ? "Nothing needed changing."
+              : "Changed and posted in your chat. The user has been notified.",
+        };
+      }),
+    remove_bot: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* leadCaller();
+        const result = yield* leadBots
+          .remove(caller, yield* resolveBotRef(input.bot))
+          .pipe(Effect.mapError(readable));
+        return {
+          ...result,
+          note: "Removed (soft delete): its chats are kept and the user can restore it. Posted in your chat; the user has been notified.",
         };
       }),
     close_browser: () =>

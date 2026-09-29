@@ -1193,3 +1193,47 @@ it.effect("an open chat records when it was last viewed, once a minute", () => {
     expect(yield* viewedAt).toBe("2026-09-28T20:01:00.000Z");
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+it.effect(
+  "a team lead's bot change always notifies, from the lead's avatar, even if the lead is muted",
+  () => {
+    const harness: Harness = { sent: [], status: 201 };
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-09-29T09:00:00Z"));
+      yield* seedBot;
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      yield* bots.updateBot({
+        botId: BOT,
+        notificationsMutedUntil: DateTime.makeUnsafe("9999-12-31T23:59:59.000Z"),
+        updatedAt: yield* DateTime.now,
+      });
+      const push = yield* PersonalPushService.PersonalPushService;
+      yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+
+      yield* push.notifyTeamBotChange({
+        actionId: "action-1",
+        leadBotId: BOT,
+        title: "Assistant created bot 'Tax'",
+        body: "Sonnet 5.5 · H on Finance",
+      });
+      // A replay of the same action is one notification, not two.
+      yield* push.notifyTeamBotChange({
+        actionId: "action-1",
+        leadBotId: BOT,
+        title: "Assistant created bot 'Tax'",
+        body: "Sonnet 5.5 · H on Finance",
+      });
+      yield* push.drain;
+
+      const rows = yield* outbox;
+      expect(rows).toHaveLength(1);
+      expect(JSON.parse(rows[0]!.payload)).toMatchObject({
+        title: "Assistant created bot 'Tax'",
+        body: "Sonnet 5.5 · H on Finance",
+        url: "/bots/team",
+        avatarShape: "blob",
+        avatarColor: "#1A73E8",
+      });
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);

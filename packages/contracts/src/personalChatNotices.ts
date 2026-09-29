@@ -13,10 +13,14 @@ export const PERSONAL_CHAT_NOTICE_CONTEXT_KIND = "personal-chat-notice";
  * usage-limit-paused: the turn stopped on a usage limit (an assistant-role row).
  * usage-limit-resumed: the server's continue turn after the reset (a user-role
  * turn message, since the provider needs a prompt; never the owner's words).
+ * team-bot-change: a team lead created, edited or removed a bot on its team
+ * (an assistant-role row whose text is the whole line; `provider` is unused
+ * there and carries "Team").
  */
 export const PersonalChatNoticeKind = Schema.Literals([
   "usage-limit-paused",
   "usage-limit-resumed",
+  "team-bot-change",
 ]);
 export type PersonalChatNoticeKind = typeof PersonalChatNoticeKind.Type;
 
