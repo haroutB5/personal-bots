@@ -218,9 +218,9 @@ export function avatarCometClipRect(
  */
 
 /** The ring is a little narrower than the SVG head: it is one width for the whole trail. */
-export const AVATAR_COMET_RING_WIDTH_SCALE = 0.85;
+export const AVATAR_COMET_RING_WIDTH_SCALE = 0.9;
 /** The trail's opacity rises from nothing at the tail to solid at the head as `along ** exponent`. */
-export const AVATAR_COMET_FADE_EXPONENT = 0.6;
+export const AVATAR_COMET_FADE_EXPONENT = 0.4;
 /** Degrees past the head over which the trail's front edge fades (the SVG has a round cap). */
 export const AVATAR_COMET_HEAD_FEATHER_DEG = 3;
 
