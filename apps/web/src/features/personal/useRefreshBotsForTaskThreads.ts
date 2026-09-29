@@ -48,6 +48,38 @@ export function unknownTaskThreadsKey(input: {
 }
 
 /**
+ * The bots the task feed names that the list does not have at all, as a key
+ * (sorted ids), or null. A team lead can create a bot on its own and hand it
+ * work in the same turn, so a task can name a bot this device has never
+ * listed: its card would read "Deleted bot" until something refetched. Tasks
+ * that finished long ago are ignored, like a bot deleted since.
+ */
+export function unknownTaskBotsKey(input: {
+  readonly bots: ReadonlyArray<PersonalBot> | null;
+  readonly tasks: ReadonlyArray<PersonalTask>;
+  readonly now: number;
+}): string | null {
+  const { bots, tasks, now } = input;
+  if (bots === null) return null;
+  const live = new Set<string>(bots.map((bot) => bot.botId));
+  const unknown = [
+    ...new Set(
+      tasks
+        .filter(
+          (task) =>
+            !live.has(task.botId) &&
+            !(
+              PERSONAL_TASK_TERMINAL_STATUSES.includes(task.status) &&
+              now - DateTime.toEpochMillis(task.updatedAt) > SETTLED_TASK_MS
+            ),
+        )
+        .map((task) => task.botId as string),
+    ),
+  ].toSorted();
+  return unknown.length === 0 ? null : `bots:${unknown.join(",")}`;
+}
+
+/**
  * The bots list (bot to chat links) is a query, but the server also creates
  * chats on its own: delegated tasks and routine runs. The live task feed names
  * those chats, so refetch the list whenever it names a chat of a live bot the
@@ -62,7 +94,11 @@ export function useRefreshBotsForTaskThreads(input: {
   readonly refresh: () => void;
 }): void {
   const { bots, links, tasks, refresh } = input;
-  const unknownKey = unknownTaskThreadsKey({ bots, links, tasks, now: Date.now() });
+  const now = Date.now();
+  const unknownKey =
+    [unknownTaskThreadsKey({ bots, links, tasks, now }), unknownTaskBotsKey({ bots, tasks, now })]
+      .filter((part) => part !== null)
+      .join("|") || null;
   const lastKey = useRef<string | null>(null);
   useEffect(() => {
     if (unknownKey === null || lastKey.current === unknownKey) return;

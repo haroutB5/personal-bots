@@ -128,6 +128,7 @@ import {
   usePersonalBotsList,
   usePersonalEnvironmentId,
 } from "./usePersonalBots";
+import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import { useWrapupChat } from "./wrapupChat";
 import { useDeleteChat } from "./useDeleteChat";
 import { RenameChatDialog } from "./RenameChatDialog";
@@ -295,6 +296,14 @@ export function ConversationScreen({
   const waitingLabels = useMemo(() => waitingLabelsByThread(tasks, nameOf), [tasks, nameOf]);
   const waitingLabel = waitingLabels.get(threadId) ?? null;
   const children = useMemo(() => delegatedChildren(threadId, tasks), [threadId, tasks]);
+  // A bot a team lead created and handed work in the same turn is not in this
+  // device's list yet: its card would read "Deleted bot" until the list is refetched.
+  useRefreshBotsForTaskThreads({
+    bots: list.data?.bots ?? null,
+    links: list.data?.threads ?? null,
+    tasks: children,
+    refresh: list.refresh,
+  });
 
   const messages = (thread?.messages as ReadonlyArray<ChatMessage> | undefined) ?? EMPTY_MESSAGES;
   // Real-user timings (perfRum.ts): chat usable, then send -> echo -> first reply text.

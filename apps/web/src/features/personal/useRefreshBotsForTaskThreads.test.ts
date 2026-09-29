@@ -2,7 +2,11 @@ import type { PersonalBot, PersonalBotThread, PersonalTask } from "@t3tools/cont
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { SETTLED_TASK_MS, unknownTaskThreadsKey } from "./useRefreshBotsForTaskThreads";
+import {
+  SETTLED_TASK_MS,
+  unknownTaskBotsKey,
+  unknownTaskThreadsKey,
+} from "./useRefreshBotsForTaskThreads";
 
 const NOW = Date.parse("2026-09-25T08:00:00.000Z");
 const bots = [{ botId: "bot-a" }] as unknown as ReadonlyArray<PersonalBot>;
@@ -58,6 +62,32 @@ describe("unknownTaskThreadsKey", () => {
     expect(unknownTaskThreadsKey({ bots, links, tasks, now: NOW })).toBeNull();
     expect(
       unknownTaskThreadsKey({ bots: null, links, tasks: [task("x", "running", 0)], now: NOW }),
+    ).toBeNull();
+  });
+});
+
+describe("unknownTaskBotsKey", () => {
+  it("names a bot the list has never had, such as one a team lead just created", () => {
+    expect(
+      unknownTaskBotsKey({
+        bots,
+        tasks: [task("t1", "running", 0, "bot-new"), task("t2", "queued", 0, "bot-new")],
+        now: NOW,
+      }),
+    ).toBe("bots:bot-new");
+  });
+
+  it("ignores known bots, long-finished tasks and a list that has not landed", () => {
+    expect(unknownTaskBotsKey({ bots, tasks: [task("t1", "running", 0)], now: NOW })).toBeNull();
+    expect(
+      unknownTaskBotsKey({
+        bots,
+        tasks: [task("t3", "completed", SETTLED_TASK_MS + 1, "bot-gone")],
+        now: NOW,
+      }),
+    ).toBeNull();
+    expect(
+      unknownTaskBotsKey({ bots: null, tasks: [task("t4", "running", 0, "bot-new")], now: NOW }),
     ).toBeNull();
   });
 });
