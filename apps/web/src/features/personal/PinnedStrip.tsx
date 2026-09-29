@@ -197,10 +197,13 @@ export function pinnedGroupBadge(
  */
 export function PinnedStrip({ children }: { readonly children: ReactNode }): JSX.Element {
   return (
-    <section aria-label="Pinned" className="mt-3">
+    // The scroller clips vertically, so the room a thinking face's cloud
+    // needs above it (14.4 px) is padding inside it, always there so nothing
+    // jumps. The list after the strip takes the 4 px back (`mt-2`).
+    <section aria-label="Pinned" className="mt-0">
       <ul
         className={cn(
-          "-mx-5 flex snap-x snap-proximity gap-3 overflow-x-auto overscroll-x-contain px-5 pb-1",
+          "-mx-5 flex snap-x snap-proximity gap-3 overflow-x-auto overscroll-x-contain px-5 pt-4 pb-1",
           // md+: the list pads 14px on the right (its scrollbar lane is the rest).
           "md:-mr-3.5 md:pr-3.5",
           "[justify-content:safe_center]",
@@ -501,6 +504,7 @@ export function PinnedBotTile({
           label={bot.name}
           motion={motion}
           comet={comet}
+          thought="pinned"
         />
       }
       badge={badge}

@@ -292,6 +292,19 @@ describe("botStatusLine", () => {
     expect(botStatusLine(summary({ hasPendingApprovals: true }), now)).toBe("Needs approval");
     expect(botStatusLine(summary({ hasPendingUserInput: true }), now)).toBe("Needs your reply");
     expect(botStatusLine(summary({ live: true }), now)).toBe("Working");
+    // Thinking: live with nothing out of the turn yet. The needs-you states still win.
+    expect(botStatusLine(summary({ live: true, thinking: true }), now)).toBe("Thinking");
+    expect(botStatus(summary({ live: true, thinking: true }), now).tone).toBe("normal");
+    expect(botStatusLine(summary({ live: false, thinking: true }), now)).not.toBe("Thinking");
+    expect(
+      botStatusLine(summary({ live: true, thinking: true, hasPendingApprovals: true }), now),
+    ).toBe("Needs approval");
+    expect(
+      botStatusLine(summary({ live: true, thinking: true, needsBrowserHelp: true }), now),
+    ).toBe("Needs your help");
+    expect(botStatusLine(summary({ live: true, thinking: true, usingPc: true }), now)).toBe(
+      "Using your PC",
+    );
 
     const limited = shell("limited", "2026-09-13T09:00:00.000Z", {
       session: {

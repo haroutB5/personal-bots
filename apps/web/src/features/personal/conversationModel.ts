@@ -39,6 +39,9 @@ export type ConversationState =
   | "retrying"
   | "error";
 
+/** A working turn that has produced nothing yet (`isTurnThinking`): the avatar's thinking pose, in words. */
+export const THINKING_LABEL = "Thinking";
+
 export const CONVERSATION_STATE_LABEL: Record<ConversationState, string> = {
   idle: "Idle",
   needs_help: "Needs your help",
@@ -153,6 +156,26 @@ export function contextBadgeLabel(usedTokens: number | null | undefined): string
   if (usedTokens === null || usedTokens === undefined) return null;
   if (!Number.isFinite(usedTokens) || usedTokens <= 0) return null;
   return formatContextWindowTokens(usedTokens);
+}
+
+/**
+ * The chat header's state text: "Thinking" while the turn has produced
+ * nothing (the avatar's thinking pose, same check), otherwise the state's own
+ * words. The header's "Update broke …" still wins (`conversationHeaderStatus`).
+ */
+export function conversationHeaderStateLabel(input: {
+  readonly state: ConversationState;
+  /** `isTurnThinking` for the open chat: working, nothing out of the turn yet. */
+  readonly thinking: boolean;
+  /** "Waiting on Developer", when the screen knows the bots it waits on. */
+  readonly waitingLabel: string | null;
+  readonly session: OrchestrationSession | null;
+  readonly now: Date;
+}): string {
+  if (input.thinking && input.state === "working") return THINKING_LABEL;
+  if (input.state === "delegating")
+    return input.waitingLabel ?? CONVERSATION_STATE_LABEL.delegating;
+  return conversationStateLabel(input.state, input.session, input.now);
 }
 
 /**

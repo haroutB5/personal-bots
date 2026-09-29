@@ -1,4 +1,4 @@
-import type { AnimationEvent, JSX } from "react";
+import type { AnimationEvent, CSSProperties, JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { BotAvatarShape } from "@t3tools/contracts";
@@ -8,7 +8,9 @@ import { cn } from "~/lib/utils";
 import { AvatarOrbitLayer } from "./BotAvatarComet";
 import { isContinuousMotion, type AvatarMotion } from "./avatarMotion";
 import { pauseWhileOffscreen } from "./avatarOffscreen";
+import { perfOptimizationOn } from "./perfFlags";
 import {
+  avatarThoughtCloud,
   BOT_AVATAR_EYE_COLOR,
   BOT_AVATAR_EYE_HEIGHT,
   BOT_AVATAR_EYE_TILT_DEG,
@@ -16,9 +18,12 @@ import {
   BOT_AVATAR_EYES,
   BOT_AVATAR_ROUND_CORNER_STROKE,
   BOT_AVATAR_SILHOUETTES,
+  BOT_AVATAR_THOUGHT_CLOUD_PATH,
   BOT_AVATAR_VIEWBOX,
   botAvatarHappyArcPath,
   botAvatarNeedsHalo,
+  type BotAvatarThoughtBox,
+  type BotAvatarThoughtPlace,
 } from "./botAvatarShapes";
 
 export type { BotAvatarShape } from "@t3tools/contracts";
@@ -42,7 +47,24 @@ export interface BotAvatarProps {
    * callers that can afford it opt in.
    */
   comet?: boolean | undefined;
+  /**
+   * Draw the thought cloud above the head while the pose is `thinking`, sized
+   * for this place (`avatarThoughtCloud`). Omitted: no cloud. Only the Bots
+   * rows, pinned tiles and the chat header pass it; task cards and Team nodes
+   * stay static.
+   */
+  thought?: BotAvatarThoughtPlace | undefined;
 }
+
+/** Keeps a thought layer mounted this long after thinking ends, if its leave never reports an end. */
+export const THOUGHT_LEAVE_FALLBACK_MS = 300;
+
+const boxStyle = (box: BotAvatarThoughtBox): CSSProperties => ({
+  left: box.left,
+  top: box.top,
+  width: box.width,
+  height: box.height,
+});
 
 /**
  * Flat geometric bot avatar: single-colour silhouette + two black slanted pill
@@ -74,6 +96,7 @@ export function BotAvatar({
   className,
   motion,
   comet = false,
+  thought,
 }: BotAvatarProps): JSX.Element {
   // Work stopping is the one transition that needs its own pose: dropping a
   // continuous loop would snap the avatar back to rest mid-cycle, so `done`
@@ -81,9 +104,14 @@ export function BotAvatar({
   // effect, no timer) and cleared by the done animation ending.
   const [settling, setSettling] = useState(false);
   const [lastMotion, setLastMotion] = useState(motion);
+  // Thinking ending lifts the cloud off (220 ms) instead of dropping it:
+  // set during render like `settling`, cleared by the leave ending or, where
+  // it never runs (offscreen, reduced motion), by a fallback timer.
+  const [thoughtLeaving, setThoughtLeaving] = useState(false);
   if (lastMotion !== motion) {
     setLastMotion(motion);
     setSettling(lastMotion !== undefined && isContinuousMotion(lastMotion) && motion === "idle");
+    setThoughtLeaving(lastMotion === "thinking" && motion !== "thinking");
   }
   const pose = motion === undefined ? undefined : settling ? "done" : motion;
   const silhouette = BOT_AVATAR_SILHOUETTES[shape];
@@ -91,6 +119,15 @@ export function BotAvatar({
   const eyeRx = BOT_AVATAR_EYE_WIDTH / 2;
   const halo = botAvatarNeedsHalo(color);
   const showComet = comet && pose === "working";
+  const showThought =
+    thought !== undefined &&
+    (pose === "thinking" || thoughtLeaving) &&
+    perfOptimizationOn("anim-thought");
+  useEffect(() => {
+    if (!thoughtLeaving) return;
+    const timer = setTimeout(() => setThoughtLeaving(false), THOUGHT_LEAVE_FALLBACK_MS);
+    return () => clearTimeout(timer);
+  }, [thoughtLeaving]);
   // A loop scrolled out of view pauses (every busy bot in a long list moves).
   const rootRef = useRef<Element | null>(null);
   const setRoot = useCallback((node: Element | null) => {
@@ -102,12 +139,14 @@ export function BotAvatar({
     if (!looping || element === null) return;
     return pauseWhileOffscreen(element);
   }, [looping]);
-  const onAnimationEnd = settling
-    ? (event: AnimationEvent<Element>) => {
-        // Every done layer ends together; any of them retires the pose.
-        if (event.animationName.startsWith("bot-avatar-done-")) setSettling(false);
-      }
-    : undefined;
+  const onAnimationEnd =
+    settling || thoughtLeaving
+      ? (event: AnimationEvent<Element>) => {
+          // Every done layer ends together; any of them retires the pose.
+          if (event.animationName.startsWith("bot-avatar-done-")) setSettling(false);
+          if (event.animationName === "bot-avatar-thought-leave") setThoughtLeaving(false);
+        }
+      : undefined;
 
   if (motion !== undefined) {
     return (
@@ -159,6 +198,15 @@ export function BotAvatar({
           {/* A working avatar's comet circles the body: the ring masks hide the stretch behind it. */}
           {showComet ? <AvatarOrbitLayer shape={shape} /> : null}
         </span>
+        {/* Beside the body, not in it, so the cloud does not tilt with the sway. */}
+        {showThought ? (
+          <AvatarThoughtLayer
+            shape={shape}
+            size={size}
+            place={thought}
+            leaving={pose !== "thinking"}
+          />
+        ) : null}
       </span>
     );
   }
@@ -203,6 +251,53 @@ export function BotAvatar({
         ))}
       </g>
     </svg>
+  );
+}
+
+/**
+ * The thinking pose's thought cloud: two tail dots climbing from the shoulder
+ * to a cloud at the box's top-right corner, three dots pulsing inside it (the
+ * header's mini cloud swells instead). Transform and opacity only; see
+ * `personal.css`.
+ */
+function AvatarThoughtLayer({
+  shape,
+  size,
+  place,
+  leaving,
+}: {
+  shape: BotAvatarShape;
+  size: number;
+  place: BotAvatarThoughtPlace;
+  leaving: boolean;
+}): JSX.Element {
+  const geo = avatarThoughtCloud(shape, size, place);
+  return (
+    <span
+      className="bot-avatar-thought"
+      data-ctx={place}
+      data-mini={geo.mini ? "" : undefined}
+      data-leaving={leaving ? "" : undefined}
+      style={{ "--thought-origin": geo.origin } as CSSProperties}
+      aria-hidden="true"
+    >
+      <span className="bot-avatar-tail bot-avatar-tail-1" style={boxStyle(geo.t1)} />
+      <span className="bot-avatar-tail bot-avatar-tail-2" style={boxStyle(geo.t2)} />
+      <span className="bot-avatar-cloud" style={boxStyle(geo.cloud)}>
+        <span className="bot-avatar-cloud-float">
+          <svg viewBox="0 0 100 66" preserveAspectRatio="none" aria-hidden="true">
+            <path d={BOT_AVATAR_THOUGHT_CLOUD_PATH} />
+          </svg>
+          {geo.dots.map((dot, index) => (
+            <span
+              key={dot.left}
+              className={`bot-avatar-cloud-dot bot-avatar-cloud-dot-${index + 1}`}
+              style={boxStyle(dot)}
+            />
+          ))}
+        </span>
+      </span>
+    </span>
   );
 }
 

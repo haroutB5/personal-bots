@@ -173,6 +173,7 @@ export const BotRow = memo(function BotRow({
         label={bot.name}
         motion={motion}
         comet={comet}
+        thought="row"
       />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex min-w-0 items-center">

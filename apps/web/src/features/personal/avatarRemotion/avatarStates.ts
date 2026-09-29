@@ -241,13 +241,15 @@ function idleModel(): StateModel {
 
 function thinkingModel(): StateModel {
   // thinking: d=-9+5 sin(.35r); o=5 sin(.3r); A=2.5 sin(.6r); h=1.
-  // Saccades every 1.5-2.8s to (+-(.5..1)*15, -(.4..1)*9): up and to a side.
+  // Saccades every 1.5-2.8s to (+-(.5..1)*15, -(.4..1)*9): up and to a side,
+  // to the right (at the thought cloud) 4 times in 5. Same number of draws as
+  // an even side, so the timing and blinks are unchanged.
   const bodyPeriod = 21;
   const eyePeriod = 12;
   const w = TAU / bodyPeriod;
   const random = prng(23);
   const gaze = saccades(random, eyePeriod, [1.5, 2.8], (r) => [
-    sign(r) * between(r, 0.5, 1) * 15,
+    (r() < 0.8 ? 1 : -1) * between(r, 0.5, 1) * 15,
     -between(r, 0.4, 1) * 9,
   ]);
   const blinkEvents = blinks(random, eyePeriod, [3.5, 7]);

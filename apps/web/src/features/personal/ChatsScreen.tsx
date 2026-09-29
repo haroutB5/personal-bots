@@ -123,6 +123,11 @@ export function useMinuteClock(): number {
 const UNPINNED_LIST_CLASS =
   "personal-row-list mt-3 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)] md:-mx-3";
 
+// The pinned strip carries 16 px of headroom inside its scroller for the
+// thinking cloud (PinnedStrip); the list after it gives 4 px back, so the page
+// below the strip sits where it did.
+const AFTER_PINNED_LIST_CLASS = "mt-2";
+
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)]";
 
@@ -204,7 +209,10 @@ function SnapshotBotRows({
         </PinnedStrip>
       ) : null}
       {rest.length > 0 ? (
-        <ul aria-label="Your bots" className={UNPINNED_LIST_CLASS}>
+        <ul
+          aria-label="Your bots"
+          className={cn(UNPINNED_LIST_CLASS, pinned.length > 0 && AFTER_PINNED_LIST_CLASS)}
+        >
           {rest.map((row) => (
             <SnapshotBotRow
               key={row.botId}
@@ -836,7 +844,10 @@ export function ChatsScreen({
                 </PinnedStrip>
               ) : null}
               {restRows.length > 0 ? (
-                <ul aria-label="Your chats" className={UNPINNED_LIST_CLASS}>
+                <ul
+                  aria-label="Your chats"
+                  className={cn(UNPINNED_LIST_CLASS, pinned.length > 0 && AFTER_PINNED_LIST_CLASS)}
+                >
                   {restRows.map((row) =>
                     row.kind === "bot" ? (
                       renderRow(row.summary)

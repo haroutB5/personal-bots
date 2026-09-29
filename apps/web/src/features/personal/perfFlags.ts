@@ -23,7 +23,9 @@ export type PerfOptimization =
   // avatars); off: the comet stays on the first working row, as in 1.49 to 1.56.
   | "anim-all"
   // The comet at all (any list, the chat header); off: no comet, poses only.
-  | "anim-comet";
+  | "anim-comet"
+  // The thinking pose's thought cloud (1.59.0); off: no cloud, the 1.57.3 pose.
+  | "anim-thought";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

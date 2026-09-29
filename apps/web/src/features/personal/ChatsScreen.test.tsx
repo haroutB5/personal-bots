@@ -1202,14 +1202,25 @@ describe("ChatsScreen working progress", () => {
       renderer!.root.find(
         (node) => node.props["aria-label"] === "Busy Ada" && node.props["data-motion"] != null,
       );
+    const text = () => JSON.stringify(renderer!.toJSON());
+    const thought = () =>
+      busyAvatar().findAll((node) => node.props.className === "bot-avatar-thought");
     expect(busyAvatar().props["data-motion"]).toBe("thinking");
     expect(busyAvatar().findAll((node) => node.props.className === "bot-avatar-orbit")).toEqual([]);
+    // The status text and the thought cloud follow the same tool-aware check.
+    // (A pinned face has no visible status line; its label is on the mocked link.)
+    expect(thought()).toHaveLength(1);
+    if (!pinned) expect(text()).toContain("Thinking");
+    expect(text()).not.toContain('"Working"');
     // The turn starts a tool step: working, comet on.
     state.progressNotes = new Map([
       ["thread-busy", { note: "Command run", turnId: "turn-1", toolStep: true }],
     ]);
     await act(async () => renderer!.update(<ChatsScreen />));
     expect(busyAvatar().props["data-motion"]).toBe("working");
+    if (!pinned) expect(text()).toContain("Working");
+    expect(text()).not.toContain("Thinking");
+    expect(thought()[0]?.props["data-leaving"]).toBe("");
     expect(
       busyAvatar().findAll((node) => node.props.className === "bot-avatar-orbit"),
     ).toHaveLength(1);

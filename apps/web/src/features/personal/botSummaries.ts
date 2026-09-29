@@ -19,6 +19,7 @@ import {
   conversationStateLabel,
   isTurnThinking,
   providerWaitState,
+  THINKING_LABEL,
 } from "./conversationModel";
 import { botModelLabel, botModelShortLabel } from "./botModelLabel";
 import { chatActivityMs } from "./chatActivity";
@@ -200,7 +201,12 @@ export function botStatus(
   // Above Working: a bot in line for the PC is live but not getting anywhere.
   if (summary.waitingForPc === true) return { label: "Waiting for the computer", tone: "normal" };
   if (summary.usingPc === true) return { label: "Using your PC", tone: "normal" };
-  if (summary.live) return { label: "Working", tone: "normal" };
+  // Thinking: live, and nothing out of the turn yet. In the Bots list the
+  // flag is tool-aware (a tool step clears it, `currentTurnHasToolStep`), so
+  // the text, the pose and the chat header agree.
+  if (summary.live) {
+    return { label: summary.thinking ? THINKING_LABEL : "Working", tone: "normal" };
+  }
   if (summary.rateLimitedThread !== null) {
     return {
       label: conversationStateLabel(

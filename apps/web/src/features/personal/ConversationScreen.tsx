@@ -75,9 +75,8 @@ import {
   autoRetryNotice,
   buildConversationItems,
   contextBadgeLabel,
-  CONVERSATION_STATE_LABEL,
+  conversationHeaderStateLabel,
   type ConversationState,
-  conversationStateLabel,
   deriveConversationState,
   friendlyTurnError,
   isTurnThinking,
@@ -517,10 +516,13 @@ export function ConversationScreen({
       deriveLatestMessageReadStatus({ items: baseItems, activities, busy: turnBusy, latestTurn }),
     [baseItems, activities, turnBusy, latestTurn],
   );
-  const stateLabel =
-    conversationState === "delegating"
-      ? (waitingLabel ?? CONVERSATION_STATE_LABEL.delegating)
-      : conversationStateLabel(conversationState, thread?.session ?? null, now);
+  const stateLabel = conversationHeaderStateLabel({
+    state: conversationState,
+    thinking: turnThinking,
+    waitingLabel,
+    session: thread?.session ?? null,
+    now,
+  });
   const provider =
     bot === null ? null : resolveBotProvider(bot.modelSelection.instanceId, providers);
   const headerStatus = conversationHeaderStatus(conversationState, stateLabel, provider);
@@ -782,7 +784,7 @@ export function ConversationScreen({
             to="/bots/$botId/edit"
             params={{ botId: bot.botId }}
             aria-label={`Edit ${bot.name}${botMuted ? ", notifications muted" : ""}`}
-            className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-[var(--personal-radius-button)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            className="flex min-h-11 min-w-0 flex-1 items-center gap-4 rounded-[var(--personal-radius-button)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
           >
             <BotAvatar
               shape={bot.avatarShape}
@@ -791,6 +793,7 @@ export function ConversationScreen({
               label={bot.name}
               motion={motionForConversationState(conversationState, turnThinking)}
               comet={perfOptimizationOn("anim-comet")}
+              thought="header"
             />
             <div className="min-w-0 flex-1">
               <ConversationHeaderName

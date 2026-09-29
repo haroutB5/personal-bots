@@ -266,3 +266,103 @@ export function botAvatarNeedsHalo(color: string): boolean {
   if (!/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color.trim())) return true;
   return contrastRatio(color, DARK_CARD_SURFACE) < 3;
 }
+
+/**
+ * Where the thinking pose's thought cloud sits (Designer spec B · Cloud,
+ * `dev-team/design/hbots/thinking-bubbles/SPEC-b-cloud.md`). Only the three
+ * animated places get one; task cards and Team nodes stay static.
+ */
+export type BotAvatarThoughtPlace = "row" | "pinned" | "header";
+
+/**
+ * The cloud's fixed box per place, the same for every shape: `top` is px
+ * above (negative) the avatar box, `right` how far past its right edge the
+ * cloud reaches, `dot` the inner dots' diameter (0: the mini cloud, no dots),
+ * `tail` the two tail dots' diameters, small one first.
+ */
+export const BOT_AVATAR_THOUGHT_CLOUDS: Record<
+  BotAvatarThoughtPlace,
+  {
+    readonly w: number;
+    readonly h: number;
+    readonly dot: number;
+    readonly tail: readonly [number, number];
+    readonly top: number;
+    readonly right: number;
+  }
+> = {
+  row: { w: 26, h: 17, dot: 3, tail: [3.5, 5], top: -14.5, right: 12 },
+  pinned: { w: 22, h: 14.5, dot: 2.5, tail: [3, 4.5], top: -13.5, right: 12 },
+  header: { w: 17, h: 11, dot: 0, tail: [2.5, 3.5], top: -6.2, right: 10 },
+};
+
+/** The small tail dot's centre per shape, in viewBox units: just off the right shoulder, 2-4 units clear of the silhouette. */
+export const BOT_AVATAR_THOUGHT_ANCHORS: Record<BotAvatarShape, readonly [number, number]> = {
+  blob: [91, 29],
+  roundedSquare: [96, 31],
+  pill: [93, 24],
+  triangle: [70, 30],
+  roundedHexagon: [93, 26],
+  scallopedCloud: [90, 28],
+  droplet: [72, 30],
+};
+
+/** A 5-bump thought cloud in a `0 0 100 66` box, a flat fill. */
+export const BOT_AVATAR_THOUGHT_CLOUD_PATH =
+  "M22 60C9 60 2 52 4 43C5 36 11 32 17 32C15 21 24 12 35 15C40 5 55 3 62 11C70 5 84 9 85 20C95 21 99 31 96 39C100 48 93 58 82 58C78 64 68 66 61 61C55 66 44 66 38 61C33 63 27 63 22 60Z";
+
+/** A box in px from the avatar box's top-left. */
+export interface BotAvatarThoughtBox {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface BotAvatarThoughtGeometry {
+  readonly t1: BotAvatarThoughtBox;
+  readonly t2: BotAvatarThoughtBox;
+  readonly cloud: BotAvatarThoughtBox;
+  /** The inner dots, relative to the cloud box; empty for the mini cloud. */
+  readonly dots: ReadonlyArray<BotAvatarThoughtBox>;
+  readonly mini: boolean;
+  /** t1's centre as a percentage of the avatar box: the leave's transform origin. */
+  readonly origin: string;
+}
+
+const round2 = (value: number) => Math.round(value * 100) / 100;
+const circle = (x: number, y: number, d: number): BotAvatarThoughtBox => ({
+  left: round2(x - d / 2),
+  top: round2(y - d / 2),
+  width: d,
+  height: d,
+});
+
+/**
+ * The thought layer's layout for one avatar, in px. Pure and computed during
+ * render; nothing here is animated. A port of the prototype's `cloudGeometry`:
+ * the cloud is pinned to the box's top-right corner, the tail runs from the
+ * shape's shoulder (t1) halfway (t2) to the bottom of the cloud's lower-left bump.
+ */
+export function avatarThoughtCloud(
+  shape: BotAvatarShape,
+  size: number,
+  place: BotAvatarThoughtPlace,
+): BotAvatarThoughtGeometry {
+  const spec = BOT_AVATAR_THOUGHT_CLOUDS[place];
+  const unit = size / BOT_AVATAR_VIEWBOX_SIZE;
+  const cloudLeft = size + spec.right - spec.w;
+  const tip = { x: cloudLeft + 0.3 * spec.w, y: spec.top + 0.92 * spec.h };
+  const [ax, ay] = BOT_AVATAR_THOUGHT_ANCHORS[shape];
+  const t1 = { x: ax * unit, y: ay * unit };
+  const t2 = { x: (t1.x + tip.x) / 2, y: (t1.y + tip.y) / 2 };
+  const mini = spec.dot === 0;
+  return {
+    t1: circle(t1.x, t1.y, spec.tail[0]),
+    t2: circle(t2.x, t2.y, spec.tail[1]),
+    cloud: { left: cloudLeft, top: spec.top, width: spec.w, height: spec.h },
+    dots: mini ? [] : [0.3, 0.5, 0.7].map((f) => circle(spec.w * f, spec.h * 0.52, spec.dot)),
+    mini,
+    origin: `${((t1.x / size) * 100).toFixed(1)}% ${((t1.y / size) * 100).toFixed(1)}%`,
+  };
+}

@@ -25,6 +25,7 @@ import {
   placeSecretRequestCards,
   providerWaitState,
   resolveConversationHeaderName,
+  conversationHeaderStateLabel,
 } from "./conversationModel";
 import type { QuestionCardItem } from "./questionCards";
 import type { SecretRequestCardItem } from "./secretRequestCards";
@@ -814,5 +815,32 @@ describe("isTurnThinking", () => {
       }),
     ).toBe(false);
     expect(isTurnThinking({ session: null, latestTurn: null })).toBe(false);
+  });
+});
+
+describe("conversationHeaderStateLabel", () => {
+  const now = new Date("2026-09-30T10:00:00.000Z");
+  const label = (
+    state: Parameters<typeof conversationHeaderStateLabel>[0]["state"],
+    thinking: boolean,
+  ) =>
+    conversationHeaderStateLabel({
+      state,
+      thinking,
+      waitingLabel: "Waiting on Ada",
+      session: null,
+      now,
+    });
+
+  it("reads Thinking while the working turn has produced nothing, Working after", () => {
+    expect(label("working", true)).toBe("Thinking");
+    expect(label("working", false)).toBe("Working");
+  });
+
+  it("leaves every other state's words alone", () => {
+    expect(label("delegating", true)).toBe("Waiting on Ada");
+    expect(label("waiting", true)).toBe("Waiting for you");
+    expect(label("needs_help", true)).toBe("Needs your help");
+    expect(label("idle", false)).toBe("Idle");
   });
 });
