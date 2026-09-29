@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   PROGRESS_REFRESH_MS,
   currentProgressNote,
+  currentTurnHasToolStep,
   progressRefreshDelayMs,
 } from "./useWorkingProgress";
 
@@ -38,5 +39,23 @@ describe("currentProgressNote", () => {
 
   it("has nothing to show without a note", () => {
     expect(currentProgressNote(undefined, { latestTurn: { turnId: "turn-1" } })).toBeUndefined();
+  });
+});
+
+describe("currentTurnHasToolStep", () => {
+  it("is true only for a tool step read from the shell's latest turn", () => {
+    const entry = { note: "Command run", turnId: "turn-1", toolStep: true };
+    expect(currentTurnHasToolStep(entry, { latestTurn: { turnId: "turn-1" } })).toBe(true);
+    expect(currentTurnHasToolStep(entry, { latestTurn: { turnId: "turn-2" } })).toBe(false);
+    expect(currentTurnHasToolStep(entry, { latestTurn: null })).toBe(false);
+  });
+
+  it("is false for thinking-only notes, an older server's notes and no note", () => {
+    const shell = { latestTurn: { turnId: "turn-1" } };
+    expect(
+      currentTurnHasToolStep({ note: "Planning", turnId: "turn-1", toolStep: false }, shell),
+    ).toBe(false);
+    expect(currentTurnHasToolStep({ note: "Planning", turnId: "turn-1" }, shell)).toBe(false);
+    expect(currentTurnHasToolStep(undefined, shell)).toBe(false);
   });
 });

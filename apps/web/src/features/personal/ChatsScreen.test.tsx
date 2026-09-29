@@ -29,7 +29,7 @@ const state = vi.hoisted(() => ({
   navigate: vi.fn(),
   groupsData: null as { groups: unknown[]; rounds: unknown[] } | null,
   groupFeedCalls: [] as Array<string | null>,
-  progressNotes: new Map<string, { note: string; turnId: string | null }>(),
+  progressNotes: new Map<string, { note: string; turnId: string | null; toolStep?: boolean }>(),
   progressTargets: [] as Array<{ threadId: string; updatedAt: string }>,
   versionInfo: { label: "v9.9.9-test", updateAvailable: false } as {
     label: string | null;
@@ -1159,5 +1159,65 @@ describe("ChatsScreen working progress", () => {
     await render();
     const json = JSON.stringify(renderer!.toJSON());
     expect(json.split("The stale last message").length - 1).toBe(2);
+  });
+
+  /**
+   * Harout's 1.57.3 screenshot: a pinned CFO mid-turn showed the live dot but
+   * no comet. Its turn had run tools for 95 s without a line of text, and the
+   * list read that as thinking (shells only know reply text). A tool step in
+   * the live turn now makes it working, in the strip and in the list alike.
+   */
+  it.each([
+    ["pinned", true],
+    ["listed", false],
+  ])("a %s bot whose turn went straight to tools gets the working comet", async (_, pinned) => {
+    stubWindow();
+    state.listData = {
+      bots: [bot("bot-busy", "Busy Ada", { pinned }), bot("bot-idle", "Idle Bo")],
+      threads: [link("bot-busy", "thread-busy"), link("bot-idle", "thread-idle")],
+      personalProjectId: null,
+    };
+    state.shells = [
+      {
+        ...shell("thread-busy", { status: "running" }),
+        latestTurn: {
+          turnId: "turn-1",
+          state: "running",
+          requestedAt: "2026-09-29T10:00:00.000Z",
+          startedAt: "2026-09-29T10:00:00.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      },
+      shell("thread-idle", { status: "ready" }),
+    ];
+    // Thinking only so far: the thinking pose, no comet.
+    state.progressNotes = new Map([
+      ["thread-busy", { note: "Planning the fix", turnId: "turn-1", toolStep: false }],
+    ]);
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+    const busyAvatar = () =>
+      renderer!.root.find(
+        (node) => node.props["aria-label"] === "Busy Ada" && node.props["data-motion"] != null,
+      );
+    expect(busyAvatar().props["data-motion"]).toBe("thinking");
+    expect(busyAvatar().findAll((node) => node.props.className === "bot-avatar-orbit")).toEqual([]);
+    // The turn starts a tool step: working, comet on.
+    state.progressNotes = new Map([
+      ["thread-busy", { note: "Command run", turnId: "turn-1", toolStep: true }],
+    ]);
+    await act(async () => renderer!.update(<ChatsScreen />));
+    expect(busyAvatar().props["data-motion"]).toBe("working");
+    expect(
+      busyAvatar().findAll((node) => node.props.className === "bot-avatar-orbit"),
+    ).toHaveLength(1);
+    // A tool step from an earlier turn does not count for this one.
+    state.progressNotes = new Map([
+      ["thread-busy", { note: "Command run", turnId: "turn-0", toolStep: true }],
+    ]);
+    await act(async () => renderer!.update(<ChatsScreen />));
+    expect(busyAvatar().props["data-motion"]).toBe("thinking");
   });
 });

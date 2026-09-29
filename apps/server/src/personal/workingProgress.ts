@@ -15,7 +15,9 @@ import type * as SqlClient from "effect/unstable/sql/SqlClient";
  *   summary), never its detail, arguments or output.
  *
  * `pickProgressNote` (shared with the client) picks the newer, trims it to one
- * line and blanks secret-looking runs. Each note carries the id of the turn it
+ * line and blanks secret-looking runs. `toolStep` says the turn has started a
+ * tool step, which the list's shells cannot see: it turns a bot from thinking
+ * to working (the comet) before its first line of text. Each note carries the id of the turn it
  * was read from (the thread's latest turn, the one its shell reports), so a
  * client holding a note from an earlier turn can tell it is not this turn's. A thread whose session is not running
  * has no row, so a note never outlives its turn.
@@ -81,6 +83,7 @@ export const personalWorkingProgress = (
       readonly threadId: ThreadId;
       readonly turnId: TurnId | null;
       readonly note: string;
+      readonly toolStep: boolean;
     }> = [];
     for (const row of rows) {
       const toolText = toolStepNoteText(row.toolTitle, row.toolSummary);
@@ -96,6 +99,7 @@ export const personalWorkingProgress = (
           threadId: row.threadId as ThreadId,
           turnId: row.turnId === null ? null : (row.turnId as TurnId),
           note,
+          toolStep: row.toolAt !== null,
         });
       }
     }

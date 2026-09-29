@@ -364,6 +364,13 @@ export const PersonalBotWorkingProgressResult = Schema.Struct({
       /** The thread's latest turn: the turn the note was read from. */
       turnId: Schema.NullOr(TurnId),
       note: Schema.String,
+      /**
+       * That turn has started a tool step. The list has shells only, which
+       * know a turn's first reply text but not its tool calls, so without this
+       * a turn that goes straight to tools read as thinking (no comet) until
+       * its first line of text. Optional: an older server leaves it out.
+       */
+      toolStep: Schema.optional(Schema.Boolean),
     }),
   ),
 });

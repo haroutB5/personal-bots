@@ -91,6 +91,12 @@ it.effect("notes for working chats only, newest of thinking and tool title, this
       "t-summary": "Searching the repo",
     });
     expect(yield* personalWorkingProgress(sql, [])).toEqual([]);
+    // A tool step in the turn says the bot is working, whichever note won.
+    expect(Object.fromEntries(notes.map((entry) => [entry.threadId, entry.toolStep]))).toEqual({
+      "t-working": true,
+      "t-thinking": false,
+      "t-summary": true,
+    });
 
     // The tool's detail (a command, a path) never reaches the note.
     expect(notes.every((entry) => !entry.note.includes(".env"))).toBe(true);
@@ -124,7 +130,9 @@ it.effect("a turn the server starts on its own shows none of the previous turn's
 
     // While turn-1 runs, its note is named after turn-1.
     const during = yield* personalWorkingProgress(sql, [thread("t-follow-up")]);
-    expect(during).toEqual([{ threadId: "t-follow-up", turnId: "turn-1", note: "MCP tool call" }]);
+    expect(during).toEqual([
+      { threadId: "t-follow-up", turnId: "turn-1", note: "MCP tool call", toolStep: true },
+    ]);
 
     // The child finishes and the server starts turn-2 with no new owner message.
     yield* sql`
@@ -143,7 +151,12 @@ it.effect("a turn the server starts on its own shows none of the previous turn's
       "2026-09-29T10:05:03.000Z",
     );
     expect(yield* personalWorkingProgress(sql, [thread("t-follow-up")])).toEqual([
-      { threadId: "t-follow-up", turnId: "turn-2", note: "Checking the child's result" },
+      {
+        threadId: "t-follow-up",
+        turnId: "turn-2",
+        note: "Checking the child's result",
+        toolStep: false,
+      },
     ]);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );

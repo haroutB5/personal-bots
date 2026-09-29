@@ -28,6 +28,8 @@ export const PROGRESS_REFRESH_MS = 2_500;
 export interface WorkingProgressEntry {
   readonly note: string;
   readonly turnId: string | null;
+  /** The turn has started a tool step (the server's `toolStep`). */
+  readonly toolStep?: boolean | undefined;
 }
 
 const NO_NOTES: ReadonlyMap<string, WorkingProgressEntry> = new Map();
@@ -46,6 +48,21 @@ export function currentProgressNote(
 ): string | undefined {
   if (entry === undefined) return undefined;
   return entry.turnId === (shell.latestTurn?.turnId ?? null) ? entry.note : undefined;
+}
+
+/**
+ * The chat's current turn has started a tool step, so it is working, not
+ * thinking, even before its first line of text. The list's shells only know
+ * the reply text (`isTurnThinking`), so without this a turn that went straight
+ * to tools kept the thinking pose, and no comet, until it said something.
+ * Same turn check as {@link currentProgressNote}.
+ */
+export function currentTurnHasToolStep(
+  entry: WorkingProgressEntry | undefined,
+  shell: { readonly latestTurn?: { readonly turnId: string } | null },
+): boolean {
+  if (entry === undefined || entry.toolStep !== true) return false;
+  return entry.turnId === (shell.latestTurn?.turnId ?? null);
 }
 
 /** How long to hold a read that is due, so reads stay at least {@link PROGRESS_REFRESH_MS} apart. */
@@ -109,7 +126,7 @@ export function useWorkingProgressNotes(
     return new Map(
       query.data.notes.map((entry) => [
         entry.threadId as string,
-        { note: entry.note, turnId: entry.turnId },
+        { note: entry.note, turnId: entry.turnId, toolStep: entry.toolStep },
       ]),
     );
   }, [atom, query.data]);

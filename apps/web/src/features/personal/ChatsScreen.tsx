@@ -87,7 +87,11 @@ import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { PersonalUsageStrip } from "./PersonalUsageStrip";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
-import { currentProgressNote, useWorkingProgressNotes } from "./useWorkingProgress";
+import {
+  currentProgressNote,
+  currentTurnHasToolStep,
+  useWorkingProgressNotes,
+} from "./useWorkingProgress";
 import { usePreloadChatRoute } from "./usePreloadChatRoute";
 import { reportChatsListPainted } from "./perfRum";
 import { perfOptimizationOn } from "./perfFlags";
@@ -490,11 +494,14 @@ export function ChatsScreen({
   const listed = useMemo(
     () =>
       shownInChats(summaries).map((summary) => {
-        const note =
-          summary.live && summary.liveThread != null
-            ? currentProgressNote(progressNotes.get(summary.liveThread.id), summary.liveThread)
-            : undefined;
-        return note === undefined ? summary : { ...summary, progressNote: note };
+        if (!summary.live || summary.liveThread == null) return summary;
+        const entry = progressNotes.get(summary.liveThread.id);
+        const note = currentProgressNote(entry, summary.liveThread);
+        // A tool step in the live turn makes the bot working (the comet), the
+        // way the open chat's header already reads it from its activities.
+        const thinking = summary.thinking && !currentTurnHasToolStep(entry, summary.liveThread);
+        if (note === undefined && thinking === summary.thinking) return summary;
+        return { ...summary, ...(note === undefined ? {} : { progressNote: note }), thinking };
       }),
     [progressNotes, summaries],
   );

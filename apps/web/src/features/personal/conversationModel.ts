@@ -111,9 +111,11 @@ export function deriveConversationState(input: {
  * reducer both set it on the turn's first assistant message (streaming or
  * not) and never clear it within the turn. A session that is running a turn
  * the shell has not caught up with yet (or still starting one) is thinking too.
- * The chats list has shells only, so a turn that goes straight to tools reads
- * as thinking there until its first line of text; the conversation header,
- * which has the activities, switches to working on the first tool call.
+ * The chats list has shells only, so on its own this reads a turn that goes
+ * straight to tools as thinking until its first line of text; the list clears
+ * that with the working-progress read's `toolStep` (`currentTurnHasToolStep`).
+ * The conversation header, which has the activities, switches to working on
+ * the first tool call.
  */
 export function isTurnThinking(input: {
   readonly session: Pick<OrchestrationSession, "status" | "activeTurnId"> | null;
