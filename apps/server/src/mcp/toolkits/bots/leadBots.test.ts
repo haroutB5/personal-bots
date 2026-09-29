@@ -35,7 +35,10 @@ import * as PersonalBrowser from "../../../personal/browser/PersonalBrowser.ts";
 import * as PersonalGroupService from "../../../personal/groups/PersonalGroupService.ts";
 import * as PersonalLeadBotService from "../../../personal/leadBots/PersonalLeadBotService.ts";
 import { LEAD_BOT_CREATES_PER_DAY } from "../../../personal/leadBots/leadBotPolicy.ts";
-import { PERSONAL_LEAD_ANSWER_MESSAGE_ID_PREFIX } from "../../../personal/leadBots/leadBotConfirm.ts";
+import {
+  PERSONAL_LEAD_ANSWER_MESSAGE_ID_PREFIX,
+  leadBotChangeHash,
+} from "../../../personal/leadBots/leadBotConfirm.ts";
 import * as PersonalPushService from "../../../personal/push/PersonalPushService.ts";
 import * as PersonalRoutineService from "../../../personal/routines/PersonalRoutineService.ts";
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
@@ -1003,6 +1006,78 @@ describe("team lead bot tools", () => {
           yield* Effect.flip(call("remove_bot", { bot: "Analyst", reason: "x" })),
         ).toMatchObject({
           reason: expect.stringContaining("Ask Harout to request this in chat"),
+        });
+      }),
+    ),
+  );
+
+  it.effect("the card carries the whole new text the tap would store, and nothing shortened", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup;
+        userSays(harness, CFO_THREAD, "Rewrite Analyst please.");
+        const instructions = [
+          "You are the analyst.",
+          "",
+          "  Keep <b>markup</b>, **stars** and [links](https://example.test) as they are.",
+          `${"Long line. ".repeat(60)}end`,
+        ].join("\n");
+        const description = "Reads the numbers.\nThen explains them.";
+        yield* call("update_bot", {
+          bot: "Analyst",
+          name: "Analyst Pro",
+          title: "Senior analyst",
+          description,
+          instructions,
+        });
+
+        const update = (yield* pendingChanges)[0]!;
+        const before = (yield* liveBots).find((bot) => bot.botId === botId("analyst"))!;
+        // Exactly the values the request stores (and the hash covers), against the bot as it is now.
+        expect(update.fields).toEqual([
+          { field: "name", before: before.name, after: "Analyst Pro" },
+          { field: "title", before: before.title, after: "Senior analyst" },
+          { field: "description", before: before.description, after: description },
+          { field: "instructions", before: before.instructions, after: instructions },
+        ]);
+        expect(update.lines).toContain(`name: '${before.name}' → 'Analyst Pro'`);
+        expect(update.changeHash).toBe(
+          leadBotChangeHash({
+            botId: update.targetBotId,
+            action: "update",
+            values: {
+              name: "Analyst Pro",
+              title: "Senior analyst",
+              description,
+              instructions,
+            },
+          }),
+        );
+        // What was shown is what is stored on a Yes.
+        yield* tap("approved");
+        const after = (yield* liveBots).find((bot) => bot.botId === botId("analyst"))!;
+        expect(after).toMatchObject({
+          name: "Analyst Pro",
+          title: "Senior analyst",
+          description,
+          instructions,
+        });
+        const service = yield* PersonalLeadBotService.PersonalLeadBotService;
+        const settled = (yield* service.listChanges()).changes.find(
+          (change) => change.changeId === update.changeId,
+        );
+        expect(settled?.status).toBe("approved");
+        expect(settled?.fields).toEqual([]);
+
+        // A removal has no text to read; the reason is the lead's own words.
+        userSays(harness, CFO_THREAD, "Remove Analyst Pro please.");
+        yield* call("remove_bot", { bot: "Analyst Pro", reason: "Duplicate of Tax." });
+        const [removal] = yield* pendingChanges;
+        expect(removal).toMatchObject({
+          action: "remove",
+          leadName: "CFO",
+          reason: "Duplicate of Tax.",
+          fields: [],
         });
       }),
     ),

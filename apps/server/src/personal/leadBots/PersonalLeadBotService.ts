@@ -239,9 +239,6 @@ type Patch = { -readonly [K in keyof PersonalBotUpdateInput]?: PersonalBotUpdate
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
-const clip = (text: string, max = 60): string =>
-  text.length > max ? `${text.slice(0, max - 1)}…` : text;
-
 /** The bot's own current value of every field a patch touches (a stale-card guard). */
 const baseOf = (current: PersonalBot, patch: Patch): Record<string, unknown> => {
   const base: Record<string, unknown> = {};
@@ -272,10 +269,10 @@ const diffLines = (
 ): ReadonlyArray<string> => {
   const lines: Array<string> = [];
   if (patch.name !== undefined) {
-    lines.push(`name: '${clip(current.name)}' → '${clip(patch.name)}'`);
+    lines.push(`name: '${current.name}' → '${patch.name}'`);
   }
   if (patch.title !== undefined) {
-    lines.push(`title: '${clip(current.title)}' → '${clip(patch.title)}'`);
+    lines.push(`title: '${current.title}' → '${patch.title}'`);
   }
   if (patch.description !== undefined) {
     lines.push(`description: ${current.description.length} → ${patch.description.length} chars`);
@@ -343,6 +340,31 @@ const linesOf = (row: ConfirmationRow): ReadonlyArray<string> => {
   }
 };
 
+const TEXT_FIELDS = ["name", "title", "description", "instructions"] as const;
+
+/**
+ * The text an open update would store, next to the text now in the bot, both from
+ * the stored request (payload_json is what `change_hash` covers). Only a pending
+ * card shows them, so a settled row does not carry up to 40 KB it will not draw.
+ */
+const fieldsOf = (row: ConfirmationRow): PersonalLeadBotChange["fields"] => {
+  if (row.action !== "update" || row.status !== "pending") return [];
+  try {
+    const after = decodeJson(row.payloadJson) as Record<string, unknown>;
+    const before = decodeJson(row.baseJson) as Record<string, unknown>;
+    const fields: Array<PersonalLeadBotChange["fields"][number]> = [];
+    for (const field of TEXT_FIELDS) {
+      const next = after[field];
+      if (typeof next !== "string") continue;
+      const now = before[field];
+      fields.push({ field, before: typeof now === "string" ? now : "", after: next });
+    }
+    return fields;
+  } catch {
+    return [];
+  }
+};
+
 const toChange = (row: ConfirmationRow): PersonalLeadBotChange => ({
   changeId: PersonalLeadBotChangeId.make(row.confirmationId),
   changeHash: row.changeHash,
@@ -354,6 +376,7 @@ const toChange = (row: ConfirmationRow): PersonalLeadBotChange => ({
   team: row.team,
   threadId: row.threadId as ThreadId,
   lines: linesOf(row),
+  fields: fieldsOf(row),
   reason: row.reason,
   status: row.status,
   outcome: row.outcome,

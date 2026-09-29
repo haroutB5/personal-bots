@@ -1,6 +1,7 @@
 import { useState, type JSX } from "react";
 
-import { Check, ShieldAlert, X } from "lucide-react";
+import type { PersonalLeadBotChangeField } from "@t3tools/contracts";
+import { Check, ChevronDown, ShieldAlert, X } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
@@ -9,6 +10,7 @@ import {
   leadBotChangeMinutesLeft,
   type LeadBotChangeCardItem,
 } from "./leadBotChangeCards";
+import { leadBotTextDiff } from "./leadBotTextDiff";
 
 const CARD_CLASS =
   "rounded-[var(--personal-radius-card)] border border-[var(--personal-review-border)] bg-[var(--personal-review-bg)] p-3.5";
@@ -18,6 +20,74 @@ const BUTTON_CLASS =
   "h-11 rounded-[var(--personal-radius-button)] px-3.5 text-[15px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40";
 
 type Decision = "approved" | "declined";
+
+/** Long text the owner can open to read whole; name and title already show in full in the lines. */
+const READABLE_FIELDS = ["description", "instructions"] as const;
+
+const DIFF_LINE_CLASS: Record<"same" | "removed" | "added", string> = {
+  same: "text-[var(--personal-text-secondary)]",
+  removed: "bg-[var(--personal-danger-bg)] text-[var(--personal-danger)]",
+  added: "bg-[var(--personal-fill-muted)] font-medium text-[var(--personal-text)]",
+};
+const DIFF_MARK: Record<"same" | "removed" | "added", string> = {
+  same: " ",
+  removed: "-",
+  added: "+",
+};
+
+/**
+ * The whole new text of one field, collapsed until the owner opens it: the lines
+ * it removes and adds, as plain text (never markdown, never HTML), in a box that
+ * scrolls inside the card. The marks are characters as well as colours.
+ */
+function LeadBotTextChange({ item }: { item: PersonalLeadBotChangeField }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const diff = open ? leadBotTextDiff(item.before, item.after) : [];
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex min-h-11 items-center gap-1.5 rounded-[var(--personal-radius-button)] text-[15px] font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+      >
+        <ChevronDown
+          aria-hidden="true"
+          className={cn("size-4 shrink-0 transition-transform", open ? "rotate-180" : "")}
+          strokeWidth={2}
+        />
+        {open ? `Hide new ${item.field}` : `Show new ${item.field}`}
+      </button>
+      {open ? (
+        <div
+          role="group"
+          aria-label={`New ${item.field}, removed and added lines`}
+          className="mt-1 max-h-72 overflow-auto overscroll-contain rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-surface)] py-1 text-[13px] leading-[1.45]"
+        >
+          {diff.length === 0 ? (
+            <p className="px-2 py-1 text-[var(--personal-text-secondary)]">
+              The new text is empty.
+            </p>
+          ) : (
+            diff.map((line, index) => (
+              <div key={index} className={cn("flex gap-1.5 px-2", DIFF_LINE_CLASS[line.kind])}>
+                <span aria-hidden="true" className="shrink-0 select-none font-mono">
+                  {DIFF_MARK[line.kind]}
+                </span>
+                <span
+                  data-diff-kind={line.kind}
+                  className="min-h-[1.45em] min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+                >
+                  {line.text}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /** "remove Tax" / "change Tax: name: 'A' → 'B', model: ..." for the one-line endings. */
 function summaryOf(card: LeadBotChangeCardItem): string {
@@ -66,6 +136,9 @@ export function LeadBotChangeCard({
   const title = `${change.leadName} asks to ${verb} ${change.targetName}`;
   const lines = change.lines.filter((line) => line.trim().length > 0);
   const reason = change.reason?.trim() ?? "";
+  const readable = change.fields.filter((item) =>
+    (READABLE_FIELDS as ReadonlyArray<string>).includes(item.field),
+  );
   const minutes = leadBotChangeMinutesLeft(change, nowMs);
 
   const answer = async (decision: Decision) => {
@@ -93,9 +166,12 @@ export function LeadBotChangeCard({
           ))}
         </ul>
       ) : null}
+      {readable.map((item) => (
+        <LeadBotTextChange key={item.field} item={item} />
+      ))}
       {reason !== "" ? (
         <p className="mt-1.5 text-[13px] leading-[1.4] break-words text-[var(--personal-text-secondary)]">
-          Reason: {reason}
+          {`${change.leadName}'s reason: ${reason}`}
         </p>
       ) : null}
       <p className="mt-1.5 text-[13px] leading-[1.4] text-[var(--personal-text-secondary)]">

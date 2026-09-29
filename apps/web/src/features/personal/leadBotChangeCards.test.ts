@@ -24,6 +24,7 @@ const leadBotChange = (overrides: Partial<PersonalLeadBotChange> = {}): Personal
   team: "Finance",
   threadId: ThreadId.make("thread-1"),
   lines: ["instructions: 412 → 530 chars"],
+  fields: [],
   reason: null,
   status: "pending",
   outcome: null,

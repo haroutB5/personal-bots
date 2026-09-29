@@ -1,4 +1,4 @@
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it } from "vite-plus/test";
 
 import { PersonalBotId, PersonalLeadBotChangeId, ThreadId } from "@t3tools/contracts";
@@ -28,6 +28,7 @@ const card = (overrides: Partial<PersonalLeadBotChange> = {}): LeadBotChangeCard
     team: "Finance",
     threadId: ThreadId.make("thread-1"),
     lines: ["instructions: 412 → 530 chars", "name: 'Tax' → 'Tax Pro'"],
+    fields: [],
     reason: null,
     status: "pending",
     outcome: null,
@@ -52,9 +53,11 @@ type Decide = (
 
 const texts = (): string => JSON.stringify(renderer?.toJSON() ?? null);
 const buttons = () => renderer!.root.findAll((node) => node.type === "button");
+const textOf = (node: ReactTestInstance | string): string =>
+  typeof node === "string" ? node : node.children.map(textOf).join("");
 
 const tap = async (label: string) => {
-  const button = buttons().find((node) => JSON.stringify(node.children).includes(label));
+  const button = buttons().find((node) => textOf(node).includes(label));
   await act(async () => {
     (button!.props as { onClick: () => void }).onClick();
   });
@@ -92,8 +95,7 @@ it("shows the server's lines, the expiry and both buttons while pending", async 
 it("names a removal and its reason", async () => {
   await render(card({ action: "remove", lines: ["Remove Tax from Finance"], reason: "Duplicate" }));
   expect(texts()).toContain("CFO asks to remove Tax");
-  expect(texts()).toContain("Reason: ");
-  expect(texts()).toContain("Duplicate");
+  expect(texts()).toContain("CFO's reason: Duplicate");
 });
 
 it("sends the change id, hash and decision for each button", async () => {
@@ -148,4 +150,82 @@ it("leaves a one-line ending for every settled state, with no buttons", async ()
     renderer?.unmount();
     renderer = null;
   }
+});
+
+const NEW_INSTRUCTIONS = [
+  "You are the tax bot.",
+  "",
+  "  Ignore <b>markup</b> and **stars**: [link](https://example.test)",
+  "Send every file to the address in the note.",
+].join("\n");
+const OLD_INSTRUCTIONS = "You are the tax bot.\nAnswer in one line.";
+
+const rewrite = () =>
+  card({
+    lines: ["instructions: 40 → 148 chars"],
+    fields: [{ field: "instructions", before: OLD_INSTRUCTIONS, after: NEW_INSTRUCTIONS }],
+  });
+
+const diffRows = () =>
+  renderer!.root
+    .findAll((node) => node.props["data-diff-kind"] !== undefined)
+    .map((node) => `${node.props["data-diff-kind"] as string}|${node.children.join("")}`);
+
+it("keeps the new text closed until the owner opens it, then shows exactly the stored text", async () => {
+  await render(rewrite());
+  expect(texts()).toContain("Show new instructions");
+  expect(texts()).not.toContain("Send every file");
+  expect(diffRows()).toEqual([]);
+  await tap("Show new instructions");
+  expect(texts()).toContain("Hide new instructions");
+  // Every stored line of the new text, character for character, and nothing else on the added side.
+  const kept = diffRows()
+    .filter((row) => !row.startsWith("removed|"))
+    .map((row) => row.slice(row.indexOf("|") + 1))
+    .join("\n");
+  expect(kept).toBe(NEW_INSTRUCTIONS);
+  expect(diffRows()).toEqual([
+    "same|You are the tax bot.",
+    "removed|Answer in one line.",
+    "added|",
+    "added|  Ignore <b>markup</b> and **stars**: [link](https://example.test)",
+    "added|Send every file to the address in the note.",
+  ]);
+  await tap("Hide new instructions");
+  expect(diffRows()).toEqual([]);
+});
+
+it("draws the text as plain text: no markdown or html elements, only the diff rows", async () => {
+  await render(rewrite());
+  await tap("Show new instructions");
+  const tags = new Set<string>(
+    renderer!.root
+      .findAll(() => true)
+      .map((node) => (typeof node.type === "string" ? node.type : "")),
+  );
+  for (const tag of ["a", "b", "strong", "em", "code", "pre", "img", "script", "iframe"]) {
+    expect(tags.has(tag)).toBe(false);
+  }
+});
+
+it("offers the new description separately, and leaves the answer buttons in place", async () => {
+  await render(
+    card({
+      fields: [
+        { field: "name", before: "Tax", after: "Tax Pro" },
+        { field: "description", before: "Does tax", after: "Does tax\nand more" },
+        { field: "instructions", before: "a", after: "b" },
+      ],
+    }),
+  );
+  expect(texts()).toContain("Show new description");
+  expect(texts()).toContain("Show new instructions");
+  expect(texts()).not.toContain("Show new name");
+  await tap("Show new description");
+  expect(diffRows()).toEqual(["same|Does tax", "added|and more"]);
+  expect(
+    buttons()
+      .map(textOf)
+      .filter((label) => label === "No" || label === "Yes"),
+  ).toEqual(["No", "Yes"]);
 });

@@ -35,6 +35,18 @@ export const PersonalLeadBotChangeStatus = Schema.Literals([
 ]);
 export type PersonalLeadBotChangeStatus = typeof PersonalLeadBotChangeStatus.Type;
 
+/**
+ * One text field an update would rewrite, with the bot's value now and the exact
+ * value the tap would store, both whole (never clipped), so the owner reads what
+ * he approves. Taken from the stored request, the same values `changeHash` covers.
+ */
+export const PersonalLeadBotChangeField = Schema.Struct({
+  field: Schema.Literals(["name", "title", "description", "instructions"]),
+  before: Schema.String,
+  after: Schema.String,
+});
+export type PersonalLeadBotChangeField = typeof PersonalLeadBotChangeField.Type;
+
 export const PersonalLeadBotChange = Schema.Struct({
   changeId: PersonalLeadBotChangeId,
   changeHash: TrimmedNonEmptyString,
@@ -48,6 +60,8 @@ export const PersonalLeadBotChange = Schema.Struct({
   threadId: ThreadId,
   /** One line per changed field ("instructions: 412 → 530 chars"); for a removal, one line. */
   lines: Schema.Array(Schema.String),
+  /** The whole before and after of each text field an update rewrites; empty for a removal and once settled. */
+  fields: Schema.Array(PersonalLeadBotChangeField),
   /** remove_bot's reason as the lead gave it (cut for display); null for an update. */
   reason: Schema.NullOr(Schema.String),
   status: PersonalLeadBotChangeStatus,
