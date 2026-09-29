@@ -64,6 +64,14 @@ Sonnet 5.5 chats look blank while they work: the progress is in thinking summari
 
 Throwaway evidence (`~/.personal-bots/qa/backend-153/progress-shots.mjs`, `progress-poll.mjs`, `progress-snap.mjs`; fake Claude CLI that streams a thinking block "**Reading the failing test**", a Bash step, then "**Planning the fix**"): 390x844 screenshots `progress-chat-{thinking,tool-step,thinking-2,after-turn}-{dark,light}.png` and `progress-list-{working,after-turn}-{dark,light}.png`. While working: chat header line "Reading the failing test" (both schemes), Planner row "Working / Reading the failing test" with the live dot; after the turn: no line, row back to "Ready / Done with the progress demo.". Found on the way (not changed): a reasoning block only reaches the projection when the block ends (the next block, a tool step, text, or the turn end), so the note advances at block boundaries, which is how real Claude thinking blocks arrive; and an already-open Bots page in the headless throwaway did not pick up "Working" on its own within 30 s on 1.51 either (a fresh navigation does), so the list evidence is from navigations during the turn.
 
-## Gates (on the merged head)
+## Gates (head 1cd64bf10e, release 1cd64bf10eb5)
 
-See the sheet entry for exit codes and file counts.
+- server: `vp test run src/auth src/personal src/persistence/Migrations src/orchestration/Layers/ProviderRuntimeIngestion.activity.test.ts` exit 0 (147 files, 1191 tests); `src/server.test.ts -t "transfer budgets"` exit 0 (thread snapshot 7,338 B of 7,500 B); `tsc --noEmit` exit 0 (the effect language service reports its rules as errors: no `new Date()` or `JSON.parse/stringify` in Effect code; the first gate run caught 9 and they were fixed).
+- web: `vp test run --project unit src/features/personal` exit 0 (118 files, 1145 tests); `tsc --noEmit` exit 0.
+- contracts: `vp test run` exit 0 (30 files, 493 tests).
+- Build: `scripts/personal/build.ps1 -CopyExternals -NoActivate` exit 0, release 1cd64bf10eb5, VERSION 1.53.0.
+- Not run: the whole-repo checks (CI owns them).
+
+## Release
+
+Staged, not activated. Waiter `~/.personal-bots/run/restart-1.53.0.ps1` (PID 76348, in restart-1.53.0.pid): idle 3x20 s, up to 48 h, or the go-ahead file `restart-1.53.0.now` / `restart-1.52.0.now` once 90 s old; then `restart.ps1 -Release 1cd64bf10eb5` and `smoke.ps1 -ExpectRelease 1cd64bf10eb5`, log `~/.personal-bots/logs/restart-1.53.0.log`. Frontend's 1.52.0 waiter (PID 35432, release 2841d1093066) was stopped by that PID on the CTO's word: 1.53.0 contains it. Rollback: 1.51.0 = 4ca62451a269 (live now). Throwaway root `%TEMP%/hbots-153-e2e` deleted; evidence stays in `~/.personal-bots/qa/backend-153/`.
