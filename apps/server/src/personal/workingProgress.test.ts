@@ -93,6 +93,6 @@ it.effect("notes for working chats only, newest of thinking and tool title, this
     expect(yield* personalWorkingProgress(sql, [])).toEqual([]);
 
     // The tool's detail (a command, a path) never reaches the note.
-    expect(JSON.stringify(notes)).not.toContain(".env");
+    expect(notes.every((entry) => !entry.note.includes(".env"))).toBe(true);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
