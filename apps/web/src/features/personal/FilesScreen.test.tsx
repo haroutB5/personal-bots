@@ -1,6 +1,6 @@
 import { PersonalBot, PersonalFile } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { FilesScreen } from "./FilesScreen";
@@ -200,9 +200,9 @@ describe("FilesScreen select mode", () => {
       .find((node) => node.findAll((child) => child.children.includes(name)).length > 0)!;
   const button = (text: string) =>
     renderer!.root.findAll((node) => node.type === "button" && node.props.children === text)[0]!;
-  const click = async (node: { props: { onClick: () => unknown } }) => {
+  const click = async (node: ReactTestInstance) => {
     await act(async () => {
-      await node.props.onClick();
+      await (node.props.onClick as () => unknown)();
     });
   };
 
