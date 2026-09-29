@@ -78,8 +78,25 @@ const makeHarness = (): Harness => ({
 });
 
 /** `dbPath` rebuilds the service over a file database, simulating a restart. */
-const makeLayer = (harness: Harness, dbPath?: string) =>
+const makeLayer = (
+  harness: Harness,
+  dbPath?: string,
+  /** Wraps the bot repository the task service (and the test) sees, to stage a race. */
+  decorateBots?: (
+    bots: PersonalBotRepository.PersonalBotRepository["Service"],
+  ) => PersonalBotRepository.PersonalBotRepository["Service"],
+) =>
   PersonalTaskService.layer.pipe(
+    Layer.provideMerge(
+      decorateBots === undefined
+        ? Layer.empty
+        : Layer.effect(
+            PersonalBotRepository.PersonalBotRepository,
+            Effect.gen(function* () {
+              return decorateBots(yield* PersonalBotRepository.PersonalBotRepository);
+            }),
+          ),
+    ),
     Layer.provideMerge(PersonalTaskRepository.layer),
     Layer.provideMerge(PersonalBotService.layer),
     Layer.provideMerge(PersonalBotRepository.layer),
@@ -1838,3 +1855,85 @@ it.effect("a chat resuming after a usage limit takes a slot from the same cap as
     expect(PersonalTaskService.PERSONAL_TASKS_CONCURRENCY).toBe(5);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+it.effect(
+  "a bot removed between the live check and the insert gets no task (createTask, delegate, relay)",
+  () => {
+    const harness = makeHarness();
+    // The first list the service reads still shows the bot; the row is soft-deleted
+    // right after, as a remove_bot that committed in between would do.
+    const race = { victim: null as BotKey | null };
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const root = yield* service.createTask({
+        idempotencyKey: "race-root",
+        botId: botId("assistant"),
+        title: "Root",
+        objective: "Root objective",
+      });
+
+      race.victim = "developer";
+      const delegated = yield* Effect.result(
+        service.delegate({
+          parentTaskId: root.taskId,
+          targetBotId: botId("developer"),
+          brief: brief("Child"),
+        }),
+      );
+      expect(delegated._tag).toBe("Failure");
+      expect((yield* bots.listBots()).some((bot) => bot.botId === botId("developer"))).toBe(false);
+
+      race.victim = "planner";
+      const created = yield* Effect.result(
+        service.createTask({
+          idempotencyKey: "race-create",
+          botId: botId("planner"),
+          title: "Late",
+          objective: "Too late",
+        }),
+      );
+      expect(created._tag).toBe("Failure");
+
+      race.victim = "researcher";
+      const relayed = yield* Effect.result(
+        service.relay({
+          idempotencyKey: "race-relay",
+          botId: botId("researcher"),
+          title: "Routine",
+          text: "Late routine",
+        }),
+      );
+      expect(relayed._tag).toBe("Failure");
+
+      const all = (yield* service.list({})).tasks.map((task) => task.botId);
+      expect(all).toEqual([botId("assistant")]);
+    }).pipe(
+      Effect.provide(
+        makeLayer(harness, undefined, (bots) => ({
+          ...bots,
+          listBots: () =>
+            bots.listBots().pipe(
+              Effect.tap(() =>
+                race.victim === null
+                  ? Effect.void
+                  : bots
+                      .softDeleteBot({
+                        botId: botId(race.victim),
+                        deletedAt: DateTime.makeUnsafe(Date.now()),
+                      })
+                      .pipe(
+                        Effect.tap(() =>
+                          Effect.sync(() => {
+                            race.victim = null;
+                          }),
+                        ),
+                      ),
+              ),
+            ),
+        })),
+      ),
+    );
+  },
+);

@@ -574,6 +574,29 @@ export const make = Effect.gen(function* () {
     return bot;
   });
 
+  /**
+   * The same test as {@link requireLiveBot}, but meant to run INSIDE the
+   * transaction that inserts a task: the bot's `deleted_at` is read again on the
+   * writing connection, so a `remove_bot` that committed after the first check
+   * cannot leave a queued task on a removed bot. (SQLite runs one writer at a
+   * time; a removal that commits between this read and the insert makes the
+   * transaction fail rather than insert, and one that commits after sees the
+   * task in its own busy check.)
+   */
+  const requireLiveBotInTransaction = Effect.fn("PersonalTaskService.requireLiveBotInTransaction")(
+    function* (botId: PersonalBotId) {
+      // `getBotById` returns tombstoned rows too, so the live list is the test.
+      const live = yield* botRepository
+        .listBots()
+        .pipe(Effect.mapError((cause) => fail("Personal tasks bot lookup failed.", cause)));
+      const bot = live.find((entry) => entry.botId === botId);
+      if (bot === undefined) {
+        return yield* fail(`Personal bot '${botId}' was not found.`);
+      }
+      return bot;
+    },
+  );
+
   /** Writes `patch` while the row still has the status `task` was read with. */
   const writeTask = Effect.fn("PersonalTaskService.writeTask")(function* (
     changed: Changed,
@@ -1476,7 +1499,12 @@ export const make = Effect.gen(function* () {
             startedAt: null,
             completedAt: null,
           };
-          const inserted = yield* repository.insertTask(task);
+          const inserted = yield* repository.transaction(
+            Effect.gen(function* () {
+              yield* requireLiveBotInTransaction(input.botId);
+              return yield* repository.insertTask(task);
+            }),
+          );
           // A concurrent create with the same key may have won the insert.
           const stored = yield* repository.getTaskByIdempotencyKey(input.idempotencyKey);
           if (Option.isNone(stored)) {
@@ -1575,7 +1603,12 @@ export const make = Effect.gen(function* () {
             startedAt: now,
             completedAt: now,
           };
-          const inserted = yield* repository.insertTask(task);
+          const inserted = yield* repository.transaction(
+            Effect.gen(function* () {
+              yield* requireLiveBotInTransaction(input.botId);
+              return yield* repository.insertTask(task);
+            }),
+          );
           const stored = yield* repository.getTaskByIdempotencyKey(input.idempotencyKey);
           if (Option.isNone(stored)) {
             return yield* fail("Personal task could not be read after creation.");
@@ -1672,6 +1705,7 @@ export const make = Effect.gen(function* () {
           };
           const inserted = yield* repository.transaction(
             Effect.gen(function* () {
+              yield* requireLiveBotInTransaction(input.targetBotId);
               const insertedTask = yield* repository.insertTask(child);
               if (insertedTask) {
                 yield* repository.insertHandoff({
