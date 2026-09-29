@@ -21,3 +21,17 @@
 **Throwaway check** (`~/.personal-bots/qa/frontend-158/`, release 1362ea6b9081 on port 38658, root %TEMP%/hbots-158-e2e, PERSONAL_SEED_MODEL=claude-sonnet-5-5, fake Claude CLI, test files and memories seeded by seed.mjs; server stopped by captured PID, root deleted). `flow.mjs` at 390x844 touch: files dark 20/20, light 20/20; memory dark 12/12, light 12/12; partial failure 8/8 (a file held open by another process is refused: "Deleted 6 files. 1 file couldn't be deleted: Personal file deletion failed.", it stays selected, the others are gone from disk, retry after release deletes it). Screenshots in shots/.
 
 **Not built, but would fit.** The Chats tab (all bots' chats, already has swipe delete) has no select mode; Routines and Saved logins have single delete only.
+
+## Working comet for a turn that goes straight to tools (same release)
+
+CTO task d744c695. Harout's iPhone, 23:26 BST on 1.57.3: the pinned CFO tile had the green live dot but no comet, while the Frontend and Designer rows had one.
+
+**Root cause.** Not the strip. The Bots list decides thinking vs working from thread shells only (`botSummaries.ts:171` `isBotThinking` -> `conversationModel.ts:120` `isTurnThinking`), and a shell knows a turn's first reply text (`latestTurn.assistantMessageId`) but not its tool calls. CFO's turn ran tools from 22:24:44Z to 22:26:19Z before its first line of text, so it read as thinking for those 95 s, and thinking draws no comet. A list row in the same state showed the same thing. The open chat's header was right all along (it has the activities).
+
+**Fix.** `personalBots.workingProgress` (already querying the running turn's tool steps for the row's progress note) now returns `toolStep` per note (`workingProgress.ts`; contract field optional, `personalBots.ts`). `currentTurnHasToolStep` (`useWorkingProgress.ts`) checks it against the shell's latest turn, and `ChatsScreen.tsx` clears `thinking` for that bot, so its avatar is `working` with the comet in both the strip and the list. No animation code changed: still transform/opacity/filter only; the extra comets are the ones 1.57.3 already budgeted for (every working bot).
+
+**Other avatar places.** Only three draw motion: list rows and pinned tiles (both fixed through the same summary) and the chat header (already correct from its activities). Task cards, Team screen, Tasks, delegation cards and the rest draw the static avatar by design, with no motion to fail.
+
+**Tests.** Web: useWorkingProgress.test.ts +2, ChatsScreen.test.tsx +2 (pinned and listed: thinking -> working with one orbit layer on a tool step; an earlier turn's tool step does not count). Server: workingProgress.test.ts asserts `toolStep`. Also fixed a web tsc error in FilesScreen.test.tsx's click helper type (select-mode commit).
+
+**Throwaway check** (`~/.personal-bots/qa/frontend-158-pin/`, port 38659, root %TEMP%/hbots-158-pin, PERSONAL_SEED_MODEL=claude-sonnet-5-5, fake Claude CLI copy with a TOOLRUN prompt that streams a Bash tool_use and no text; 7 bots pinned so the strip scrolls; server stopped by captured PID). `pinned-repro.mjs` at 390x844, dark and light: release 1362ea6b9081 (before) shows the tool-first pinned tiles and row as `thinking`, no comet; release 0613484867a8 (after) shows them `working`, comet running; scrolled offscreen they pause, scrolled back into view they run again. Montage `shots/pinned-montage.png`. The only console error is Clerk's 400 for the 127.0.0.1 origin, present before and after.
