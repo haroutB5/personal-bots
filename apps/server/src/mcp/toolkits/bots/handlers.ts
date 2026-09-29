@@ -41,6 +41,11 @@ export const STEERED_NOTE =
   "Delivered into the task's running turn; the bot continues with it and keeps its progress. Its result still arrives on its own.";
 export const STEER_QUEUED_NOTE =
   "The task is not in a turn right now; the update opens its next one, so for a queued task it is part of the brief it starts with.";
+export const STEER_REOPENED_NOTE =
+  "The task had ended, so it is reopened in its own chat: the bot continues there from where it stopped, with your update. Its new result comes back to the task that delegated it, like the first one; end your turn now.";
+
+/** How long after it ended a task outside the caller's current tree can still be reopened. */
+export const REOPEN_WINDOW_MS = 24 * 60 * 60_000;
 
 /**
  * A tool call is not a viewer session, so there is no session id to pass.
@@ -327,6 +332,46 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * A finished task steer_task may reopen that {@link reachableTask} does not
+   * reach (the request that delegated it is over, so the caller's chat now
+   * works in a newer tree). It must have ended within {@link REOPEN_WINDOW_MS}
+   * and either have been delegated from the caller's own chat (its parent task
+   * ran there), or, for a team lead, belong to a bot on its own team. Anything
+   * else reads as absent, like reachableTask.
+   */
+  const reopenableTask = Effect.fn("BotsToolkit.reopenableTask")(function* (
+    caller: { readonly threadId: ThreadId; readonly team: string; readonly lead: boolean },
+    taskId: PersonalTask["taskId"],
+  ) {
+    const detail = yield* tasks.get({ taskId }).pipe(Effect.option);
+    if (Option.isNone(detail)) {
+      return yield* notInTree();
+    }
+    const task = detail.value.task;
+    const endedAt = task.completedAt ?? task.updatedAt;
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+    if (
+      !PERSONAL_TASK_TERMINAL_STATUSES.includes(task.status) ||
+      nowMs - DateTime.toEpochMillis(endedAt) > REOPEN_WINDOW_MS
+    ) {
+      return yield* notInTree();
+    }
+    if (task.parentTaskId !== null) {
+      const parent = yield* tasks.get({ taskId: task.parentTaskId }).pipe(Effect.option);
+      if (Option.isSome(parent) && parent.value.task.threadId === caller.threadId) {
+        return task;
+      }
+    }
+    if (caller.lead) {
+      const bot = (yield* listBots).find((entry) => entry.botId === task.botId);
+      if (bot !== undefined && botTeam(bot) === caller.team) {
+        return task;
+      }
+    }
+    return yield* notInTree();
+  });
+
+  /**
    * The caller for the team-management tools. Whether it is a lead is not
    * decided here (the service reads the flag fresh and decides, on every call);
    * this only says who is asking and refuses a group turn, where the change
@@ -499,7 +544,10 @@ const make = Effect.gen(function* () {
     steer_task: (input) =>
       Effect.gen(function* () {
         const caller = yield* callerTask();
-        const { task: target } = yield* reachableTask(caller, input.taskId);
+        const target = yield* reachableTask(caller, input.taskId).pipe(
+          Effect.map((reached) => reached.task),
+          Effect.catch(() => reopenableTask(caller, input.taskId)),
+        );
         if (target.taskId === caller.task.taskId) {
           return yield* toolError("That is your own task; just carry on with the change yourself.");
         }
@@ -510,7 +558,12 @@ const make = Effect.gen(function* () {
           taskId: steered.task.taskId,
           outcome: steered.outcome,
           status: steered.task.status,
-          note: steered.outcome === "steered" ? STEERED_NOTE : STEER_QUEUED_NOTE,
+          note:
+            steered.outcome === "steered"
+              ? STEERED_NOTE
+              : steered.outcome === "reopened"
+                ? STEER_REOPENED_NOTE
+                : STEER_QUEUED_NOTE,
         };
       }),
     request_secret: (input) =>

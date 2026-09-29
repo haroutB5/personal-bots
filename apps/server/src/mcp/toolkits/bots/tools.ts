@@ -138,10 +138,13 @@ export const StopTaskResult = Schema.Struct({
 export type StopTaskResult = typeof StopTaskResult.Type;
 
 export const SteerTaskInput = Schema.Struct({
-  taskId: PersonalTaskId.annotate({ description: "A task id from delegate_task or list_tasks." }),
+  taskId: PersonalTaskId.annotate({
+    description:
+      "A task id from delegate_task, list_tasks or an earlier result (a finished task keeps its id).",
+  }),
   message: TrimmedNonEmptyString.annotate({
     description:
-      "The update, written to the bot doing the task: what to change, narrow, add or drop. It arrives as 'Update from <your name>: <message>', so make it make sense on its own.",
+      "The update, written to the bot doing the task: what to change, narrow, add or drop, or for a finished task what is still left to do. It arrives as 'Update from <your name>: <message>', so make it make sense on its own.",
   }),
 });
 
@@ -150,8 +153,9 @@ export const SteerTaskResult = Schema.Struct({
   /**
    * steered: delivered into the running turn now. queued: the task is not in
    * a turn; the update opens its next one (a queued task starts with it).
+   * reopened: the task had ended; it continues in its own chat with the update.
    */
-  outcome: Schema.Literals(["steered", "queued"]),
+  outcome: Schema.Literals(["steered", "queued", "reopened"]),
   status: PersonalTaskStatus,
   note: Schema.String,
 });
@@ -462,13 +466,13 @@ const StopTaskTool = Tool.make("stop_task", {
 
 const SteerTaskTool = Tool.make("steer_task", {
   description:
-    "Send an update into a task that is still unfinished, without restarting it: the bot keeps its context and everything it has done so far. A running task gets it in its live turn now; a queued or waiting task gets it at the start of its next turn (a queued task starts with it as part of its brief). Prefer this over stop_task to narrow, correct or add to the work. The update shows in that bot's chat and on the task (get_task). You can steer tasks in your own request's task tree, and a team lead any unfinished task of a bot on its own team, whoever started it; never your own, and never a finished task.",
+    "Send an update into a task that is still unfinished, without restarting it: the bot keeps its context and everything it has done so far. A running task gets it in its live turn now; a queued or waiting task gets it at the start of its next turn (a queued task starts with it as part of its brief). Prefer this over stop_task to narrow, correct or add to the work. The update shows in that bot's chat and on the task (get_task). It also reopens a task that has ended (completed, failed, interrupted or cancelled): the same bot continues in the same chat and session from where it stopped, with your update, and its new result comes back to you like the first one. Reopen when a task stopped short (it was paused or interrupted, ended with a mid-work line, or missed part of the brief) and the same work should carry on; this does not count against the delegation limit, so do not delegate a new task or make a routine for it. Delegate a new task only for genuinely new work. You can steer tasks in your own request's task tree, and a team lead any unfinished task of a bot on its own team, whoever started it; a finished one you can reopen within 24 hours if it was delegated from this chat, or, for a team lead, if its bot is on your team. Never your own task, and not a task of a deleted bot.",
   parameters: SteerTaskInput,
   success: SteerTaskResult,
   failure: BotsToolFailure,
   dependencies,
 })
-  .annotate(Tool.Title, "Steer a running task")
+  .annotate(Tool.Title, "Steer or reopen a task")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)

@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import type { Tool } from "effect/unstable/ai";
 
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
@@ -49,6 +50,7 @@ import {
   DELEGATE_NOTE,
   messageNamesBot,
   shortenBrowserHelpReason,
+  STEER_REOPENED_NOTE,
 } from "./handlers.ts";
 import { BotsToolkit } from "./tools.ts";
 
@@ -529,24 +531,160 @@ describe("bots toolkit handlers", () => {
     ),
   );
 
-  it.effect("steer_task refuses a finished task", () =>
+  it.effect("steer_task reopens a stopped task of the caller's request in its own chat", () =>
     withHarness((harness) =>
       Effect.gen(function* () {
         const { call } = yield* setup(harness);
+        const tasks = yield* PersonalTaskService.PersonalTaskService;
         const child = yield* call("delegate_task", {
           targetBot: "developer",
           objective: "Fix the build.",
         });
-        yield* (yield* PersonalTaskService.PersonalTaskService).drain;
-        yield* call("stop_task", { taskId: child.childTaskId as never, reason: "Done." });
+        yield* tasks.drain;
+        const childThread = (yield* tasks.get({ taskId: child.childTaskId as never })).task
+          .threadId;
+        yield* call("stop_task", { taskId: child.childTaskId as never, reason: "Paused." });
+
+        const steered = yield* call("steer_task", {
+          taskId: child.childTaskId as never,
+          message: "Carry on with the server package.",
+        });
+
+        expect(steered).toMatchObject({ outcome: "reopened", note: STEER_REOPENED_NOTE });
+        yield* tasks.drain;
+        const reopened = (yield* tasks.get({ taskId: child.childTaskId as never })).task;
+        expect(reopened).toMatchObject({ status: "running", threadId: childThread });
+        const turn = harness.dispatched.at(-1)!;
+        expect(turn).toMatchObject({ type: "thread.turn.start", threadId: childThread });
+        const text = turn.type === "thread.turn.start" ? turn.message.text : "";
+        expect(text.startsWith("[Task continuation]")).toBe(true);
+        expect(text).toContain("Update from Assistant: Carry on with the server package.");
+        expect(text).toContain("Continue where you stopped.");
+      }),
+    ),
+  );
+
+  it.effect("steer_task reopens a task delegated from this chat after that request ended", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const tasks = yield* PersonalTaskService.PersonalTaskService;
+        const child = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Animate the avatars.",
+        });
+        yield* tasks.drain;
+        const childTask = (yield* tasks.get({ taskId: child.childTaskId as never })).task;
+        const oldRoot = childTask.parentTaskId!;
+        // The request ends (the child is stopped with it), then the user
+        // writes again in the same chat: a new turn, so a new root.
+        yield* tasks.cancel({ taskId: oldRoot });
+        harness.sessions.set(CALLER_THREAD, {
+          ...runningSession(CALLER_THREAD),
+          activeTurnId: TurnId.make("turn-2"),
+        });
+        const steered = yield* call("steer_task", {
+          taskId: child.childTaskId as never,
+          message: "Continue the animation work.",
+        });
+
+        expect(steered.outcome).toBe("reopened");
+        // Reached through this chat, not the caller's current request tree.
+        const listed = yield* call("list_tasks", {});
+        expect(listed.tasks.map((entry) => entry.taskId)).not.toContain(child.childTaskId);
+        yield* tasks.drain;
+        const detail = yield* tasks.get({ taskId: child.childTaskId as never });
+        expect(detail.task).toMatchObject({ status: "running", threadId: childTask.threadId });
+        expect(detail.handoff?.status).toBe("pending");
+        // The old request waits for the result in this same chat.
+        const root = (yield* tasks.get({ taskId: oldRoot })).task;
+        expect(root).toMatchObject({ status: "waiting_for_agent", threadId: CALLER_THREAD });
+      }),
+    ),
+  );
+
+  it.effect("steer_task cannot reopen a finished task outside the caller's reach", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const tasks = yield* PersonalTaskService.PersonalTaskService;
+        // Another chat's work: a routine task of a team mate, now finished.
+        const task = yield* routineTask(harness, "researcher", "finished-elsewhere");
+        yield* tasks.cancel({ taskId: task.taskId });
         const before = harness.dispatched.length;
 
-        const error = yield* call("steer_task", {
-          taskId: child.childTaskId as never,
-          message: "One more thing.",
-        }).pipe(Effect.flip);
+        const error = yield* Effect.flip(
+          call("steer_task", { taskId: task.taskId, message: "Carry on." }),
+        );
 
-        expect(error.message).toContain("already cancelled");
+        expect(error.message).toBe("That task is not in your task tree.");
+        expect((yield* tasks.get({ taskId: task.taskId })).task.status).toBe("cancelled");
+        expect(harness.dispatched.length).toBe(before);
+      }),
+    ),
+  );
+
+  it.effect("a team lead reopens a team task that ended in the last 24 hours only", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        yield* makeAssistantLead;
+        const tasks = yield* PersonalTaskService.PersonalTaskService;
+        const recent = yield* routineTask(harness, "researcher", "lead-reopen");
+        yield* tasks.cancel({ taskId: recent.taskId });
+        // The stopped turn has ended, so the chat is free for the continuation.
+        harness.sessions.set(recent.threadId!, {
+          ...runningSession(recent.threadId!),
+          status: "ready",
+          activeTurnId: null,
+        });
+
+        const steered = yield* call("steer_task", {
+          taskId: recent.taskId,
+          message: "Finish the last page.",
+        });
+        expect(steered.outcome).toBe("reopened");
+        yield* tasks.drain;
+        expect((yield* tasks.get({ taskId: recent.taskId })).task).toMatchObject({
+          status: "running",
+          threadId: recent.threadId,
+        });
+
+        const old = yield* routineTask(harness, "planner", "lead-too-old");
+        yield* tasks.cancel({ taskId: old.taskId });
+        yield* TestClock.adjust("25 hours");
+        const error = yield* Effect.flip(
+          call("steer_task", { taskId: old.taskId, message: "Finish it." }),
+        );
+        expect(error.message).toBe("That task is not in your task tree.");
+      }),
+    ),
+  );
+
+  it.effect("steer_task refuses to reopen a task of a deleted bot", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const tasks = yield* PersonalTaskService.PersonalTaskService;
+        const child = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Fix the build.",
+        });
+        yield* tasks.drain;
+        yield* call("stop_task", { taskId: child.childTaskId as never, reason: "Paused." });
+        yield* (yield* PersonalBotService.PersonalBotService).remove({
+          botId: botId("developer"),
+        });
+        const before = harness.dispatched.length;
+
+        const error = yield* Effect.flip(
+          call("steer_task", { taskId: child.childTaskId as never, message: "Carry on." }),
+        );
+
+        expect(error.message).toContain("bot has been deleted");
+        expect((yield* tasks.get({ taskId: child.childTaskId as never })).task.status).toBe(
+          "cancelled",
+        );
         expect(harness.dispatched.length).toBe(before);
       }),
     ),

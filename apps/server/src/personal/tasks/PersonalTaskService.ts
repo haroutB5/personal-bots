@@ -178,9 +178,11 @@ export interface PersonalTaskSteerInput {
  * steered: delivered into the task's running turn, which keeps going.
  * queued: the task is not in a turn now; the update opens its next turn (for
  * a queued task, the brief it starts with).
+ * reopened: the task had ended; it is queued again in its own chat and the
+ * update opens a continuation turn there.
  */
 export interface PersonalTaskSteerResult {
-  readonly outcome: "steered" | "queued";
+  readonly outcome: "steered" | "queued" | "reopened";
   readonly task: PersonalTask;
   readonly text: string;
 }
@@ -219,8 +221,11 @@ export class PersonalTaskService extends Context.Service<
     /**
      * Sends an instruction into an unfinished task without restarting it: a
      * running turn is steered (the bot keeps its context and progress), any
-     * other unfinished task gets it at the start of its next turn. Recorded
-     * on the task either way; a finished task is refused.
+     * other unfinished task gets it at the start of its next turn. A finished
+     * task (completed, failed, interrupted, cancelled) is reopened in its own
+     * chat with the update as a continuation turn; its result goes back to its
+     * parent again, and finished ancestors reopen to receive it (see
+     * `reopen`). Recorded on the task either way.
      */
     readonly steer: (
       input: PersonalTaskSteerInput,
@@ -380,6 +385,13 @@ const sessionIsAlive = (session: OrchestrationSession | null | undefined) =>
   session.status !== "error";
 
 const isTerminal = (status: PersonalTaskStatus) => PERSONAL_TASK_TERMINAL_STATUSES.includes(status);
+
+/** Id prefix of the note that tells a reopened task it is continuing. */
+const PERSONAL_TASK_REOPEN_NOTE_PREFIX = "reopen:";
+
+/** Ends a reopened task's continuation turn text, after the steer that reopened it. */
+export const reopenNote = (status: PersonalTaskStatus) =>
+  `This task had ${status === "completed" ? "finished" : `ended (${status})`} and has been reopened in this same chat. Continue where you stopped.`;
 
 /**
  * Finished tasks replayed to a new subscriber; older ones come from
@@ -1910,6 +1922,125 @@ export const make = Effect.gen(function* () {
       ? message.trim()
       : `Update from ${fromName.trim() || "your delegator"}: ${message.trim()}`;
 
+  /** Whether a bot is live, read on the writing connection (see requireLiveBotInTransaction). */
+  const botIsLive = (botId: PersonalBotId) =>
+    requireLiveBotInTransaction(botId).pipe(
+      Effect.as(true),
+      Effect.catchTag("PersonalTasksError", () => Effect.succeed(false)),
+    );
+
+  /** Puts a task's handoff to its parent back to pending, so its next result returns. */
+  const reopenHandoff = Effect.fn("PersonalTaskService.reopenHandoff")(function* (
+    taskId: PersonalTaskId,
+    now: DateTime.Utc,
+  ) {
+    const handoff = yield* repository.getHandoffByChild(taskId);
+    if (Option.isSome(handoff) && handoff.value.status !== "pending") {
+      yield* repository.writeHandoff({
+        ...handoff.value,
+        status: "pending",
+        resultSummary: null,
+        updatedAt: now,
+      });
+    }
+  });
+
+  /**
+   * Reopens a finished task in its own chat: it is queued again on the same
+   * thread (so the next attempt resumes the same provider session where the
+   * provider allows), with the steer and a "continue where you stopped" note
+   * as its continuation turn. No task is created, so the per-request
+   * delegation limit is untouched, and the slot cap applies as to any queued
+   * task.
+   *
+   * The result must reach whoever delegated the task. Its handoff goes back
+   * to pending, and every finished ancestor up to the first unfinished one is
+   * reopened as waiting_for_agent with its own handoff pending too. From there
+   * it is the ordinary delegation path: the result wakes the parent with a
+   * continuation in the parent's own chat (after any turn running there), the
+   * parent answers and completes, and its answer climbs the same way. An
+   * unfinished ancestor just gets the pending handoff and parks or continues
+   * as usual. Refused when the task's bot, or the bot of an ancestor that
+   * would have to reopen, has been deleted.
+   */
+  const reopen = Effect.fn("PersonalTaskService.reopen")(function* (
+    task: PersonalTask,
+    steerNoteId: string,
+    steerId: string,
+    text: string,
+  ) {
+    const ancestors: Array<PersonalTask> = [];
+    let cursor = task;
+    while (cursor.parentTaskId !== null) {
+      const parent = yield* requireTask(cursor.parentTaskId);
+      if (!isTerminal(parent.status)) break;
+      ancestors.push(parent);
+      cursor = parent;
+    }
+    const changed: Changed = [];
+    const reopenPatch = {
+      result: null,
+      errorCategory: null,
+      errorMessage: null,
+      availableAt: null,
+      completedAt: null,
+    } satisfies Partial<PersonalTask>;
+    const reopened = yield* repository.transaction(
+      Effect.gen(function* () {
+        if (!(yield* botIsLive(task.botId))) {
+          return yield* fail(
+            "That task's bot has been deleted, so the task cannot be reopened. Delegate a new task to another bot.",
+          );
+        }
+        for (const ancestor of ancestors) {
+          if (!(yield* botIsLive(ancestor.botId))) {
+            return yield* fail(
+              "The task this one reports to belongs to a deleted bot, so it cannot be reopened. Delegate a new task instead.",
+            );
+          }
+        }
+        const now = yield* DateTime.now;
+        const queued = yield* writeTask(changed, task, { ...reopenPatch, status: "queued" });
+        if (queued === null) {
+          return yield* fail("That task changed while it was being reopened; try again.");
+        }
+        yield* reopenHandoff(task.taskId, now);
+        for (const ancestor of ancestors) {
+          const waiting = yield* writeTask(changed, ancestor, {
+            ...reopenPatch,
+            status: "waiting_for_agent",
+          });
+          if (waiting === null) {
+            return yield* fail(
+              "A task above this one changed while it was being reopened; try again.",
+            );
+          }
+          yield* reopenHandoff(ancestor.taskId, now);
+        }
+        // The steer is recorded like any other (get_task lists it); the
+        // reopen note follows it in the same continuation turn.
+        yield* repository.insertResumeNote({
+          noteId: steerNoteId,
+          taskId: task.taskId,
+          text,
+          restartSession: false,
+          createdAt: now,
+        });
+        yield* repository.insertResumeNote({
+          noteId: `${PERSONAL_TASK_REOPEN_NOTE_PREFIX}${steerId}`,
+          taskId: task.taskId,
+          text: reopenNote(task.status),
+          restartSession: false,
+          createdAt: now,
+        });
+        return queued;
+      }),
+    );
+    yield* publish(changed);
+    yield* worker.enqueue({ type: "pump" });
+    return reopened;
+  });
+
   // Under the service lock, like claim and settle: the task cannot start,
   // settle or be cancelled between the status read and the delivery.
   const steer: PersonalTaskService["Service"]["steer"] = (input) =>
@@ -1920,15 +2051,14 @@ export const make = Effect.gen(function* () {
           if (input.message.trim().length === 0) {
             return yield* fail("The update is empty; say what should change.");
           }
-          if (isTerminal(task.status)) {
-            return yield* fail(
-              `That task is already ${task.status}, so there is nothing to steer. Delegate a new task if more work is needed.`,
-            );
-          }
           const now = yield* DateTime.now;
           const steerId = NodeCrypto.randomUUID().replaceAll("-", "");
           const noteId = `${PersonalTaskRepository.PERSONAL_TASK_STEER_NOTE_PREFIX}${steerId}`;
           const text = steerText(input.fromName, input.message);
+          if (isTerminal(task.status)) {
+            const reopened = yield* reopen(task, noteId, steerId, text);
+            return { outcome: "reopened" as const, task: reopened, text };
+          }
           if (task.status !== "running") {
             // Opens its next turn: for a queued task that is its first, so the
             // update is part of the brief it starts with.

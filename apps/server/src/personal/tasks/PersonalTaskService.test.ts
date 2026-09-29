@@ -1707,20 +1707,207 @@ it.effect("steer on a queued task lands in the brief it starts with", () => {
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
-it.effect("steer refuses a finished task", () => {
+it.effect(
+  "steer reopens a completed child in its own chat and its result returns to the parent",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("reopen-completed");
+      const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+      const child = yield* delegate("developer", "Animate avatars");
+      yield* endTurn(harness, rootThread, turnId, "Delegated.");
+      const childThread = threadOf(yield* reload(child.taskId));
+      yield* runTurn(harness, childThread, "Paused halfway: two of four avatars done.");
+      yield* runTurn(harness, rootThread, "Frontend stopped halfway.");
+      expect((yield* reload(root.taskId)).status).toBe("completed");
+      expect((yield* reload(child.taskId)).status).toBe("completed");
+
+      const steered = yield* service.steer({
+        taskId: child.taskId,
+        fromName: "Assistant",
+        message: "Finish the other two avatars.",
+      });
+      expect(steered.outcome).toBe("reopened");
+      expect(steered.task).toMatchObject({ status: "queued", threadId: childThread, result: null });
+      yield* service.drain;
+
+      // The same task, chat and thread continue: attempt 2 on the child's thread.
+      const detail = yield* service.get({ taskId: child.taskId });
+      expect(detail.task).toMatchObject({ status: "running", threadId: childThread });
+      expect(detail.attempts.map((attempt) => [attempt.attempt, attempt.providerThreadId])).toEqual(
+        [
+          [1, childThread],
+          [2, childThread],
+        ],
+      );
+      expect(detail.handoff?.status).toBe("pending");
+      expect((yield* reload(root.taskId)).status).toBe("waiting_for_agent");
+      const continuation = startsOn(harness, childThread).at(-1)!;
+      expect(continuation.message.text).toBe(
+        [
+          "[Task continuation]",
+          "Update from Assistant: Finish the other two avatars.",
+          PersonalTaskService.reopenNote("completed"),
+          "Continue the task below.",
+          `Task id: ${child.taskId}`,
+          "Title: Animate avatars",
+          "Objective:\nAnimate avatars objective",
+        ].join("\n\n"),
+      );
+      expect(yield* service.steers({ taskId: child.taskId })).toEqual([
+        expect.objectContaining({ text: "Update from Assistant: Finish the other two avatars." }),
+      ]);
+
+      // Its new result goes back to the parent, in the parent's own chat.
+      yield* runTurn(harness, childThread, "All four avatars animate.");
+      expect((yield* reload(child.taskId)).result?.summary).toBe("All four avatars animate.");
+      expect((yield* reload(root.taskId)).status).toBe("running");
+      const parentTurn = startsOn(harness, rootThread).at(-1)!;
+      expect(parentTurn.message.text).toContain("### Animate avatars (completed)");
+      expect(parentTurn.message.text).toContain("All four avatars animate.");
+      expect(parentTurn.message.text).toContain("give your final answer");
+      yield* runTurn(harness, rootThread, "Avatars done.");
+      const finalRoot = yield* service.get({ taskId: root.taskId });
+      expect(finalRoot.task).toMatchObject({
+        status: "completed",
+        result: { summary: "Avatars done." },
+      });
+      expect(finalRoot.children.map((handoff) => handoff.status)).toEqual(["delivered"]);
+
+      // No new chat or thread anywhere: every turn ran on the two original ones.
+      expect(new Set(turnStarts(harness).map((command) => command.threadId))).toEqual(
+        new Set([rootThread, childThread]),
+      );
+      expect(startsOn(harness, childThread)).toHaveLength(2);
+      expect(startsOn(harness, rootThread)).toHaveLength(3);
+      expect((yield* service.list({})).tasks).toHaveLength(2);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("steer reopens an interrupted or cancelled child while its parent still runs", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
     yield* seedBots;
     const service = yield* PersonalTaskService.PersonalTaskService;
-    const root = yield* createRoot("steer-finished");
+    const root = yield* createRoot("reopen-stopped");
+    const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+    const interrupted = yield* delegate("developer", "Interrupted part");
+    const cancelled = yield* delegate("researcher", "Cancelled part");
+    yield* endTurn(harness, rootThread, turnId, "Delegated two.");
+
+    const interruptedThread = threadOf(yield* reload(interrupted.taskId));
+    yield* runTurn(harness, interruptedThread, "", { status: "interrupted" });
+    expect((yield* reload(interrupted.taskId)).status).toBe("interrupted");
+    const cancelledThread = threadOf(yield* reload(cancelled.taskId));
+    yield* service.cancel({ taskId: cancelled.taskId });
+    yield* service.drain;
+    // The root is taking in the two results in its continuation turn.
+    expect((yield* reload(root.taskId)).status).toBe("running");
+
+    for (const [task, thread, status] of [
+      [interrupted, interruptedThread, "interrupted"],
+      [cancelled, cancelledThread, "cancelled"],
+    ] as const) {
+      const steered = yield* service.steer({
+        taskId: task.taskId,
+        fromName: "Assistant",
+        message: "Pick it up again.",
+      });
+      expect(steered.outcome).toBe("reopened");
+      yield* service.drain;
+      const reopened = yield* reload(task.taskId);
+      expect(reopened).toMatchObject({ status: "running", threadId: thread, errorMessage: null });
+      expect(startsOn(harness, thread).at(-1)!.message.text).toContain(
+        PersonalTaskService.reopenNote(status),
+      );
+    }
+    // The running parent is left alone and parks on the reopened children.
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    yield* runTurn(harness, rootThread, "Noted both.");
+    expect((yield* reload(root.taskId)).status).toBe("waiting_for_agent");
+
+    yield* runTurn(harness, interruptedThread, "Interrupted part done.");
+    yield* runTurn(harness, rootThread, "One back.");
+    yield* runTurn(harness, cancelledThread, "Cancelled part done.");
+    const last = startsOn(harness, rootThread).at(-1)!;
+    expect(last.message.text).toContain("Cancelled part done.");
+    yield* runTurn(harness, rootThread, "Both done.");
+    expect((yield* reload(root.taskId)).status).toBe("completed");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a reopen does not count toward the per-request delegation limit", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("reopen-limit");
+    const { rootThread, turnId, delegate } = yield* rootDelegating(harness, root);
+    const children = [];
+    for (let index = 1; index <= PersonalTaskService.PERSONAL_TASKS_DEFAULT_MAX_CHILDREN; index++) {
+      children.push(yield* delegate(index % 2 === 0 ? "developer" : "researcher", `Part ${index}`));
+    }
+    yield* endTurn(harness, rootThread, turnId, "Delegated the limit.");
+    const limited = yield* delegate("planner", "One too many").pipe(Effect.flip);
+    expect(limited.message).toContain("Delegation limit reached");
+
+    const first = children[0]!;
+    yield* service.cancel({ taskId: first.taskId });
+    const steered = yield* service.steer({
+      taskId: first.taskId,
+      fromName: "Assistant",
+      message: "Carry on.",
+    });
+    expect(steered.outcome).toBe("reopened");
+    expect((yield* service.list({ rootTaskId: root.taskId })).tasks).toHaveLength(
+      1 + PersonalTaskService.PERSONAL_TASKS_DEFAULT_MAX_CHILDREN,
+    );
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a reopened task waits for a free slot like any queued task", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const done = yield* createRoot("reopen-slot-done", "researcher");
+    yield* runTurn(harness, threadOf(done), "Done early.");
+    const first = yield* createRoot("reopen-slot-1");
+    for (let slot = 2; slot <= PersonalTaskService.PERSONAL_TASKS_CONCURRENCY; slot++) {
+      yield* createRoot(`reopen-slot-${slot}`, "developer");
+    }
+
+    yield* service.steer({ taskId: done.taskId, fromName: "Assistant", message: "More please." });
+    yield* service.drain;
+    expect((yield* reload(done.taskId)).status).toBe("queued");
+
+    yield* runTurn(harness, threadOf(first), "First done.");
+    expect(yield* reload(done.taskId)).toMatchObject({
+      status: "running",
+      threadId: threadOf(done),
+    });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("steer refuses to reopen a task whose bot was deleted", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("reopen-deleted", "developer");
     yield* runTurn(harness, threadOf(root), "Done.");
+    yield* (yield* PersonalBotService.PersonalBotService).remove({ botId: botId("developer") });
     const before = turnStarts(harness).length;
 
     const error = yield* service
       .steer({ taskId: root.taskId, fromName: "CTO", message: "One more thing." })
       .pipe(Effect.flip);
 
-    expect(error.message).toContain("already completed");
+    expect(error.message).toContain("bot has been deleted");
+    expect((yield* reload(root.taskId)).status).toBe("completed");
     expect(turnStarts(harness).length).toBe(before);
     expect(yield* service.steers({ taskId: root.taskId })).toHaveLength(0);
   }).pipe(Effect.provide(makeLayer(harness)));
