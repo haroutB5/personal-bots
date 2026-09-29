@@ -49,3 +49,15 @@ Tables `personal_lead_bot_confirmations`, `personal_bot_team_moves`, `personal_b
 ## Release
 
 Staged, NOT activated. Release 70bb16c1fc0a (1.57.0), rollback 1.56.1 = dd3e98877796 (live). Migration 088 applies on the next start; back up first (a snapshot of the live DB is in qa/backend-157/pre-088-state-20260929.sqlite, 771 MB). After it goes live: /version.txt 1.57.0; ask CFO to remove or rewrite a Harout-made bot and tap Yes/No on the iPhone; Settings > Removed bots after a removal.
+
+## Follow-up: the card shows the whole new text (Security's must-fix, commit b5158a1b08)
+
+Before, an update card said only "instructions: 412 -> 530 chars", so a Yes could approve text Harout never read. Now:
+
+- `PersonalLeadBotChange.fields` (contract): for a pending update, the whole before and after of name, title, description and instructions, read from the stored request (payload_json = what change_hash covers; base_json = the bot as it was). Empty for a removal and once settled. The hash and the stored payload are unchanged. Name and title lines are no longer clipped.
+- Card: description and instructions stay closed behind "Show new description" / "Show new instructions"; opened, they show a plain-text line diff (removed, added and shared lines; marks are + and - as well as colour) in a box that scrolls inside the card (max-h 288 px). React-escaped text only, no markdown or HTML. New `leadBotTextDiff.ts`.
+- A removal's reason reads "<Lead name>'s reason: ...".
+- Tests: leadBots.test.ts (fields equal the stored values and the hash covers exactly them; what was shown is what a Yes stores; a removal carries none), LeadBotChangeCard.test.tsx (closed by default, opened text equals the stored text line for line, plain text only, buttons intact, "CFO's reason:"), leadBotTextDiff.test.ts.
+- Gates: server src/personal + src/mcp + Migrations + src/auth + ClaudeAdapter.test 168 files, 1570 tests, exit 0; transfer budgets 0; server tsc 0; web personal 132 files, 1279 tests, 0; web tsc 0; contracts 30 files, 493 tests, 0 and tsc 0.
+- Throwaway (release b5158a1b080d, fake Claude CLI, PERSONAL_SEED_MODEL=claude-sonnet-5-5, 390x844, root deleted, server stopped by its captured PID; `~/.personal-bots/qa/backend-157b/`, report.txt, shots/): an update of title, description and instructions (2395 chars, markdown-looking text, a long unbroken URL): collapsed card shows sizes only; opened, 31 rows, the non-removed rows equal the stored text exactly; box scrolls (286 px visible of 1082), page width stays 390, No/Yes 48x44 and 50x44; dark and light. Remove card shows "CFO's reason: ...".
+- Release: staged b5158a1b080d (1.57.0, not activated; supersedes 70bb16c1fc0a). Rollback 1.56.1 = dd3e98877796 (live).
