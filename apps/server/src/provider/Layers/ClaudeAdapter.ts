@@ -5172,17 +5172,22 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         extraArgs["thinking-display"] = "summarized";
       }
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-      const sessionEnvironment = McpProviderSession.withProviderSessionEnvironment(
-        claudeEnvironment,
-        mcpSession,
-      );
+      // The bearer token rides in the child's environment, not in --mcp-config on
+      // its command line (see claudeMcpAuthorization).
+      const mcpAuthorization = mcpSession
+        ? McpProviderSession.claudeMcpAuthorization(mcpSession)
+        : undefined;
+      const sessionEnvironment: NodeJS.ProcessEnv = {
+        ...McpProviderSession.withProviderSessionEnvironment(claudeEnvironment, mcpSession),
+        ...mcpAuthorization?.environment,
+      };
       const mcpServers: ClaudeQueryOptions["mcpServers"] = mcpSession
         ? {
             "t3-code": {
               type: "http",
               url: mcpSession.endpoint,
               headers: {
-                Authorization: mcpSession.authorizationHeader,
+                Authorization: mcpAuthorization!.header,
               },
             },
           }

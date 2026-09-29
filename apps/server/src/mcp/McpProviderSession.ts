@@ -56,6 +56,38 @@ export function withAgentDeviceEnvironment(
   };
 }
 
+/** Environment variable that carries a Claude CLI's MCP bearer token (see {@link claudeMcpAuthorization}). */
+export const MCP_TOKEN_ENV_NAME = "T3_MCP_TOKEN";
+
+/**
+ * How a Claude CLI session presents the session's bearer token to the t3-code
+ * MCP server.
+ *
+ * The SDK writes the whole `mcpServers` option into `--mcp-config '{...}'` on
+ * the CLI's command line, and any process of this account can read a command
+ * line (Get-CimInstance Win32_Process). So the header carries the placeholder
+ * `Bearer ${T3_MCP_TOKEN}` and the token itself goes only in the child's
+ * environment; the CLI expands `${VAR}` in MCP headers from its own env
+ * (checked with a real Sonnet 5.5 turn: every MCP request authenticated and the
+ * command line held only the placeholder).
+ *
+ * Kill switch: `PERSONAL_MCP_TOKEN_ON_ARGV=1` puts the token back on the command
+ * line, the behaviour before 1.57.
+ */
+export function claudeMcpAuthorization(
+  config: Pick<McpProviderSessionConfig, "authorizationHeader">,
+  env: NodeJS.ProcessEnv = process.env,
+): { readonly header: string; readonly environment: Readonly<Record<string, string>> } {
+  const token = config.authorizationHeader.replace(/^Bearer\s+/i, "");
+  if (env.PERSONAL_MCP_TOKEN_ON_ARGV === "1" || token === config.authorizationHeader) {
+    return { header: config.authorizationHeader, environment: {} };
+  }
+  return {
+    header: `Bearer \${${MCP_TOKEN_ENV_NAME}}`,
+    environment: { [MCP_TOKEN_ENV_NAME]: token },
+  };
+}
+
 const sessionsByThread = new Map<ThreadId, McpProviderSessionConfig>();
 
 export function setMcpProviderSession(config: McpProviderSessionConfig): void {

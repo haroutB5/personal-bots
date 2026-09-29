@@ -590,6 +590,56 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("keeps the MCP bearer token off the CLI's command line", () => {
+    const threadId = ThreadId.make("thread-personal-bot-claude-token");
+    const harness = makeHarness({ environment: { PATH: "/usr/bin" } });
+    setT3McpSession(threadId);
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        personalBot: true,
+      });
+      const options = harness.getLastCreateQueryInput()?.options;
+      // --mcp-config is built from mcpServers, so nothing secret may be in it.
+      const config = JSON.stringify(options?.mcpServers);
+      assert.equal(config.includes("test-token"), false);
+      assert.equal(
+        (options?.mcpServers?.["t3-code"] as { headers?: Record<string, string> }).headers
+          ?.Authorization,
+        "Bearer ${T3_MCP_TOKEN}",
+      );
+      // The token is in the child's environment, where the CLI expands the placeholder.
+      assert.equal(options?.env?.T3_MCP_TOKEN, "test-token");
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it("uses the token on the command line only when the kill switch is set", () => {
+    const config = { authorizationHeader: "Bearer abc123" };
+    assert.deepEqual(McpProviderSession.claudeMcpAuthorization(config, {}), {
+      header: "Bearer ${T3_MCP_TOKEN}",
+      environment: { T3_MCP_TOKEN: "abc123" },
+    });
+    assert.deepEqual(
+      McpProviderSession.claudeMcpAuthorization(config, { PERSONAL_MCP_TOKEN_ON_ARGV: "1" }),
+      { header: "Bearer abc123", environment: {} },
+    );
+    // A header that is not a bearer token is left exactly as it is.
+    assert.deepEqual(
+      McpProviderSession.claudeMcpAuthorization({ authorizationHeader: "Basic x" }, {}),
+      {
+        header: "Basic x",
+        environment: {},
+      },
+    );
+  });
+
   it.effect("keeps a personal bot's MCP config strict and empty without a T3 credential", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
