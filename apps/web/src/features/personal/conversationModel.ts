@@ -1,4 +1,5 @@
 import type { PendingApproval, PendingUserInput } from "@t3tools/client-runtime/pending-requests";
+import { PROVIDER_DISPLAY_NAMES, type ProviderDriverKind } from "@t3tools/contracts";
 import type {
   OrchestrationLatestTurn,
   OrchestrationSession,
@@ -238,10 +239,12 @@ export function friendlyTurnError(
       .split("\n")
       .map((line) => line.trim())
       .find((line) => line.length > 0) ?? "";
-  const withoutStack = firstLine
-    .replace(/\s+at\s+\S+\s+\(file:\/\/.*$/i, "")
-    .replace(/\s+at\s+file:\/\/.*$/i, "")
-    .trim();
+  const withoutStack = redactSecrets(
+    firstLine
+      .replace(/\s+at\s+\S+\s+\(file:\/\/.*$/i, "")
+      .replace(/\s+at\s+file:\/\/.*$/i, "")
+      .trim(),
+  );
   const detail =
     withoutStack.length === 0 || withoutStack === "The last turn failed."
       ? null
@@ -290,6 +293,132 @@ export function friendlyTurnError(
 }
 
 /**
+ * Credentials a provider error can echo back (an API key in a 401, a bearer
+ * header in a proxy error). The chat shows the error's first line, so these
+ * are masked before it ever reaches the screen.
+ */
+const SECRET_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [hidden]"],
+  [
+    /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|authorization)(["']?\s*[:=]\s*["']?)[^\s"',;]{4,}/gi,
+    "$1$2[hidden]",
+  ],
+  [/\bsk-[A-Za-z0-9_-]{8,}/g, "[hidden]"],
+  [/\bgh[pousr]_[A-Za-z0-9]{16,}/g, "[hidden]"],
+  [/\bxox[abprs]-[A-Za-z0-9-]{8,}/g, "[hidden]"],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, "[hidden]"],
+];
+
+function redactSecrets(line: string): string {
+  let out = line;
+  for (const [pattern, replacement] of SECRET_PATTERNS) out = out.replace(pattern, replacement);
+  return out;
+}
+
+/** "Couldn't send: …" when nothing more specific than the provider's own line is known. */
+const START_FAILURE_FALLBACK = "the bot couldn't start a reply. Try again.";
+
+/**
+ * The red line under a failed message. A turn that never started (the owner's
+ * message has no turn) reads "Couldn't send: <short reason>", the reason being
+ * the known failure's sentence or else the provider's own sanitised first line,
+ * so it is never a bare "something failed". A turn that started and then failed
+ * keeps {@link friendlyTurnError}'s wording.
+ */
+export function failedTurnError(input: {
+  readonly raw: string;
+  /** False when the owner's last message never got a turn. */
+  readonly turnStarted: boolean;
+}): FriendlyTurnError {
+  if (input.turnStarted) return friendlyTurnError(input.raw);
+  const known = friendlyTurnError(input.raw, "");
+  if (known.message.length > 0) {
+    return { message: `Couldn't send: ${known.message}`, detail: known.detail };
+  }
+  const reason = known.detail ?? START_FAILURE_FALLBACK;
+  return { message: `Couldn't send: ${reason}`, detail: null };
+}
+
+/**
+ * "Claude", "Codex": the plain name of a provider driver kind, or null for one
+ * this build has no name for.
+ */
+export function providerFriendlyLabel(provider: string | null | undefined): string | null {
+  if (provider === null || provider === undefined) return null;
+  return PROVIDER_DISPLAY_NAMES[provider as ProviderDriverKind] ?? null;
+}
+
+/**
+ * The server found the provider's conversation for this chat gone and is
+ * re-running the turn on a new one by itself. Not a failure yet.
+ */
+export function isSessionRenewalPending(
+  retry: OrchestrationSessionProviderRetry | null | undefined,
+): boolean {
+  return retry?.reason === "session_renewed" && retry.auto === "pending";
+}
+
+/**
+ * Whether the chat's notice is a failure (red, with Retry) or an automatic
+ * retry the server is still running (neutral, nothing for the owner to do).
+ */
+export function turnNoticeTone(
+  retry: OrchestrationSessionProviderRetry | null | undefined,
+): "danger" | "info" {
+  return retry?.auto === "pending" ? "info" : "danger";
+}
+
+export interface TurnErrorNotice {
+  /** The line under the failed message. */
+  readonly message: string;
+  /** The provider's sanitised line, behind "Details". */
+  readonly detail: string | null;
+  readonly tone: "danger" | "info";
+  /** Offer Retry: a settled failure of a message the owner sent. */
+  readonly canRetry: boolean;
+}
+
+/**
+ * The notice under a failed or auto-retrying turn, or null when the chat has
+ * nothing to say. While the server retries by itself (a renewed session or a
+ * transient failure) the notice is neutral and offers no Retry; once the
+ * failure is final it is red, reads "Couldn't send: …" for a message that
+ * never got a turn, and offers Retry when the owner's own message is there to
+ * re-send. The server clears the error on the next good turn, and so does this.
+ */
+export function turnErrorNotice(input: {
+  readonly state: ConversationState;
+  readonly session: OrchestrationSession | null;
+  /**
+   * Whether the owner's last message got a turn (`turnId` set); null when the
+   * last user-role message is not the owner's, so there is nothing to retry.
+   */
+  readonly lastMessageTurnStarted: boolean | null;
+}): TurnErrorNotice | null {
+  const { session, state } = input;
+  const retry = session?.providerRetry;
+  const failedOnLimit = state === "rate_limited" && session?.status === "error";
+  const notice = autoRetryNotice(retry);
+  if (state !== "error" && !failedOnLimit && notice === null) return null;
+  const raw = session?.lastError ?? "The last turn failed.";
+  if (turnNoticeTone(retry) === "info" && notice !== null) {
+    return {
+      message: notice,
+      detail: friendlyTurnError(raw).detail,
+      tone: "info",
+      canRetry: false,
+    };
+  }
+  const info = failedTurnError({ raw, turnStarted: input.lastMessageTurnStarted ?? true });
+  return {
+    message: notice ?? info.message,
+    detail: info.detail,
+    tone: "danger",
+    canRetry: state === "error" && input.lastMessageTurnStarted !== null,
+  };
+}
+
+/**
  * What the chat says about a failed reply the server is retrying by itself.
  * Null when no automatic retry is in play, so the caller keeps its own text.
  *
@@ -302,6 +431,12 @@ export function autoRetryNotice(
   retry: OrchestrationSessionProviderRetry | null | undefined,
 ): string | null {
   if (retry === null || retry === undefined || retry.auto === undefined) return null;
+  if (isSessionRenewalPending(retry)) {
+    const provider = providerFriendlyLabel(retry.provider);
+    return provider === null
+      ? "This chat's old session has ended. Retrying on a new session…"
+      : `The old ${provider} session for this chat has ended. Retrying on a new session…`;
+  }
   const max = retry.maxAttempts ?? 0;
   if (retry.auto === "pending") {
     const attempt = retry.attempt ?? 1;

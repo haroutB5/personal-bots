@@ -418,6 +418,8 @@ export function MessageList({
   approvalsNowMs,
   errorText,
   errorDetail = null,
+  errorTone = "danger",
+  errorRetry = null,
   loadEarlier,
   now,
   describeTurn,
@@ -470,6 +472,13 @@ export function MessageList({
   errorText: string | null;
   /** The provider's own line, shown behind a "Details" toggle under `errorText`. */
   errorDetail?: string | null;
+  /**
+   * `info` for a retry the server is running by itself: a neutral notice, not
+   * a failure, so it is not an alert and offers nothing to press.
+   */
+  errorTone?: "danger" | "info";
+  /** Retry for the failed message; hidden when null. Disabled while `busy`. */
+  errorRetry?: { readonly onRetry: () => void; readonly busy: boolean } | null;
   loadEarlier: { readonly loading: boolean; readonly onLoad: () => void } | null;
   now: Date;
 }): JSX.Element {
@@ -943,8 +952,14 @@ export function MessageList({
 
           {errorText !== null ? (
             <div
-              role="alert"
-              className="max-w-[90%] rounded-[var(--personal-radius-card)] border border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] px-3.5 py-2.5 text-sm break-words text-[var(--personal-danger)]"
+              role={errorTone === "info" ? "status" : "alert"}
+              data-tone={errorTone}
+              className={cn(
+                "max-w-[90%] rounded-[var(--personal-radius-card)] border px-3.5 py-2.5 text-sm break-words",
+                errorTone === "info"
+                  ? "border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[var(--personal-text-secondary)]"
+                  : "border-[var(--personal-danger-border)] bg-[var(--personal-danger-bg)] text-[var(--personal-danger)]",
+              )}
             >
               <p>{errorText}</p>
               {errorDetail ? (
@@ -956,6 +971,16 @@ export function MessageList({
                     {errorDetail}
                   </p>
                 </details>
+              ) : null}
+              {errorTone === "danger" && errorRetry !== null ? (
+                <button
+                  type="button"
+                  onClick={errorRetry.onRetry}
+                  disabled={errorRetry.busy}
+                  className="mt-2 min-h-9 rounded-[var(--personal-radius-button)] border border-[var(--personal-danger-border)] px-3 text-[13px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-danger)] active:opacity-70 disabled:opacity-50"
+                >
+                  {errorRetry.busy ? "Retrying…" : "Retry"}
+                </button>
               ) : null}
             </div>
           ) : null}

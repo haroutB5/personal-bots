@@ -63,6 +63,11 @@ export interface BotSummary {
   /** A linked thread is stuck on a provider rate limit. */
   readonly rateLimited: boolean;
   readonly rateLimitedThread: EnvironmentThreadShell | null;
+  /**
+   * The newest linked chat, when its last turn failed and is not being retried
+   * (`isThreadErrored`). Optional: the cold-start snapshot predates it.
+   */
+  readonly erroredThread?: EnvironmentThreadShell | null;
   /** Linked threads waiting on the user (approval or requested input). */
   readonly attentionThreads: ReadonlyArray<EnvironmentThreadShell>;
   readonly hasPendingApprovals: boolean;
@@ -158,6 +163,18 @@ export function isThreadRateLimited(shell: EnvironmentThreadShell): boolean {
   return providerWaitState(shell.session) === "rate_limited";
 }
 
+/**
+ * The chat's last turn failed and nothing is retrying it: the header's
+ * "Error". The server keeps the session in `error` until the next good turn.
+ */
+export function isThreadErrored(shell: EnvironmentThreadShell): boolean {
+  if (providerWaitState(shell.session) !== null || isThreadLive(shell)) return false;
+  return shell.session?.status === "error" || shell.latestTurn?.state === "error";
+}
+
+/** The Bots list's words for a bot whose chat failed to reply. */
+export const BOT_ERROR_LABEL = "Couldn't reply";
+
 /** Running right now. A turn parked on a rate limit is not live, however long it "runs". */
 export function isThreadLive(shell: EnvironmentThreadShell): boolean {
   if (isThreadRateLimited(shell)) return false;
@@ -217,6 +234,9 @@ export function botStatus(
       tone: "review",
     };
   }
+  // Below working, a rate limit and every needs-you state: the reply failed
+  // and the owner has to send it again.
+  if (summary.erroredThread != null) return { label: BOT_ERROR_LABEL, tone: "review" };
   if (summary.waitingFor !== null) return { label: summary.waitingFor, tone: "waiting" };
   if (summary.nextRoutine !== null) {
     return {
@@ -284,6 +304,10 @@ export function buildBotSummaries(input: {
     );
     const newestThread = shells[0] ?? null;
     const rateLimitedThread = shells.find(isThreadRateLimited) ?? null;
+    // Only the newest chat: an old chat whose last reply failed must not pin
+    // the bot at "Couldn't reply" after the owner moved on.
+    const erroredThread =
+      newestThread !== null && isThreadErrored(newestThread) ? newestThread : null;
     const nextRoutine =
       (input.routines ?? [])
         .filter(
@@ -311,6 +335,7 @@ export function buildBotSummaries(input: {
       thinking: isBotThinking(shells),
       rateLimited: rateLimitedThread !== null,
       rateLimitedThread,
+      erroredThread,
       attentionThreads: shells.filter(threadNeedsAttention),
       hasPendingApprovals: shells.some((shell) => shell.hasPendingApprovals),
       hasPendingUserInput: shells.some((shell) => shell.hasPendingUserInput),

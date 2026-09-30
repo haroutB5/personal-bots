@@ -32,6 +32,8 @@ export interface BotMotionInput {
   /** Live, but no linked turn has produced a reply yet (`isBotThinking`). */
   readonly thinking?: boolean | undefined;
   readonly rateLimited: boolean;
+  /** A linked chat's last reply failed (`BotSummary.erroredThread`). */
+  readonly erroredThread?: unknown;
   readonly attentionThreads: ReadonlyArray<unknown>;
   readonly waitingFor: string | null;
 }
@@ -44,7 +46,10 @@ export interface BotMotionInput {
 export function motionForSummary(summary: BotMotionInput): AvatarMotion {
   if (summary.live) return summary.thinking === true ? "thinking" : "working";
   if (summary.rateLimited) return "blocked";
-  if (summary.attentionThreads.length > 0 || summary.waitingFor !== null) return "waiting";
+  if (summary.attentionThreads.length > 0) return "waiting";
+  // A failed reply, like the header's "Error": blocked until it is sent again.
+  if (summary.erroredThread != null) return "blocked";
+  if (summary.waitingFor !== null) return "waiting";
   return "idle";
 }
 

@@ -71,7 +71,6 @@ import { useComputerFeed } from "./computer/computerState";
 import { ConversationRoutinesPanel } from "./ConversationRoutinesPanel";
 import { CONVERSATION_SIDE_PANEL_ID, ConversationSidePanel } from "./ConversationSidePanel";
 import {
-  autoRetryNotice,
   buildConversationItems,
   contextBadgeLabel,
   conversationHeaderStateLabel,
@@ -85,6 +84,7 @@ import {
   placeConnectionApprovalCards,
   placeLeadBotChangeCards,
   resolveConversationHeaderName,
+  turnErrorNotice,
 } from "./conversationModel";
 import { deriveLatestMessageReadStatus } from "./messageReadStatus";
 import { DelegationCard } from "./DelegationCard";
@@ -135,6 +135,7 @@ import { useDeleteChat } from "./useDeleteChat";
 import { RenameChatDialog } from "./RenameChatDialog";
 import { pendingForThread } from "./pendingOutgoing";
 import { renameChatInitialTitle, useRenameChat } from "./renameChat";
+import { findRetryTarget, useRetryFailedTurn } from "./retryFailedTurn";
 import { usePersonalBackTarget } from "./usePersonalBackTarget";
 
 const ICON_BUTTON =
@@ -503,6 +504,16 @@ export function ConversationScreen({
     [messages, pending, threadId],
   );
 
+  // The owner's last message, for the failed-turn notice's Retry.
+  const retryTarget = useMemo(() => findRetryTarget(messages), [messages]);
+  const failedTurnRetry = useRetryFailedTurn({
+    environmentId,
+    thread,
+    botModelSelection: bot?.modelSelection ?? null,
+    target: retryTarget,
+    failureKey: thread?.session?.updatedAt ?? null,
+  });
+
   const onInterrupt = useCallback(async (): Promise<string | null> => {
     if (environmentId === null || interruptInput === null) return null;
     const result = await interruptTurn({ environmentId, input: interruptInput });
@@ -703,17 +714,15 @@ export function ConversationScreen({
       : null;
 
   const botName = headerName.status === "ready" ? headerName.name : null;
-  const failedOnLimit = conversationState === "rate_limited" && thread?.session?.status === "error";
-  // The server retries a transient reply failure on its own. Say so while it
-  // waits, and say it gave up once the attempts are spent; either way the
-  // provider's own line stays behind "Details".
-  const retryNotice = autoRetryNotice(thread?.session?.providerRetry);
-  const sessionError =
-    conversationState === "error" || failedOnLimit || retryNotice !== null
-      ? (thread?.session?.lastError ?? "The last turn failed.")
-      : null;
-  // Never a raw exception in the chat: a plain sentence, the provider's line behind "Details".
-  const sessionErrorInfo = sessionError === null ? null : friendlyTurnError(sessionError);
+  // The server retries a transient reply failure (or a vanished provider
+  // session) on its own: a neutral notice while it does, a red one with Retry
+  // once the failure is final. Never a raw exception in the chat: a plain
+  // sentence, the provider's line behind "Details".
+  const turnNotice = turnErrorNotice({
+    state: conversationState,
+    session: thread?.session ?? null,
+    lastMessageTurnStarted: retryTarget?.turnStarted ?? null,
+  });
   // Offline: sending is blocked and the draft stays in this device's draft store.
   const disabledReason = laptopOffline
     ? connectionPhase === "offline" || connectionPhase === "error"
@@ -929,8 +938,21 @@ export function ConversationScreen({
               void onDecideConnectionApproval(approvalId, decision)
             }
             approvalsNowMs={now.getTime()}
-            errorText={actionError ?? retryNotice ?? sessionErrorInfo?.message ?? null}
-            errorDetail={actionError === null ? (sessionErrorInfo?.detail ?? null) : null}
+            errorText={actionError ?? turnNotice?.message ?? null}
+            errorDetail={actionError === null ? (turnNotice?.detail ?? null) : null}
+            errorTone={actionError === null ? (turnNotice?.tone ?? "danger") : "danger"}
+            errorRetry={
+              turnNotice?.canRetry === true && !turnBusy
+                ? {
+                    onRetry: () => {
+                      void failedTurnRetry.retry().then((ok) => {
+                        setActionError(ok ? null : "Couldn't retry that message. Try again.");
+                      });
+                    },
+                    busy: failedTurnRetry.busy,
+                  }
+                : null
+            }
             loadEarlier={loadEarlier}
             now={now}
             describeTurn={describeTurn}
