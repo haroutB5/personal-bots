@@ -44,6 +44,14 @@ export const SHOWN_NOTIFICATIONS_MAX_AGE_MS = 24 * 60 * 60_000;
  * the one tapped when none has left Notification Center.
  */
 export const RECENT_TAP_WINDOW_MS = 2 * 60_000;
+/**
+ * The one notification that left Notification Center is taken as the tap
+ * only if it was shown during this away period and at most this long ago:
+ * iOS does not reliably tell the worker about swipe-aways, so an old swiped
+ * notification must not take over a later launch (QA 1 Oct 00:42, opened a
+ * gone entry 137 s old on a cold relaunch with no away limit).
+ */
+export const GONE_TAP_MAX_AGE_MS = 15 * 60_000;
 
 export interface ShownNotification {
   /** The notification's tag, or its url when it has none. */
@@ -82,6 +90,8 @@ export type LostTapReason =
   | "recent"
   | "none-shown"
   | "several-gone"
+  | "gone-too-old"
+  | "gone-before-away"
   | "none-recent"
   | "several-recent"
   | "not-openable"
@@ -125,11 +135,22 @@ export function decideLostTap(
       ? { tapped: entry, reason, ...counts }
       : { tapped: null, reason: "not-openable", ...counts };
   if (fresh.length === 0) return { tapped: null, reason: "none-shown", ...counts };
-  if (gone.length === 1) return pick(gone[0]!, "one-gone");
+  const onlyGone = gone.length === 1 ? gone[0]! : null;
+  if (onlyGone !== null && onlyGone.at >= awaySince && now - onlyGone.at <= GONE_TAP_MAX_AGE_MS) {
+    return pick(onlyGone, "one-gone");
+  }
   // Several gone (Clear All, or iOS listing none: 22:16 had listed 0 with two
   // on the list) says nothing on its own; only a recent one can still tell.
   if (recent.length === 0) {
-    return { tapped: null, reason: gone.length > 1 ? "several-gone" : "none-recent", ...counts };
+    const reason: LostTapReason =
+      onlyGone === null
+        ? gone.length > 1
+          ? "several-gone"
+          : "none-recent"
+        : onlyGone.at < awaySince
+          ? "gone-before-away"
+          : "gone-too-old";
+    return { tapped: null, reason, ...counts };
   }
   if (new Set(recent.map((entry) => entry.url)).size > 1) {
     return { tapped: null, reason: "several-recent", ...counts };

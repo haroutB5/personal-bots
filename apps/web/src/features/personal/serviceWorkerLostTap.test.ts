@@ -10,6 +10,7 @@ import {
   type NotificationLister,
   RECENT_TAP_WINDOW_MS,
 } from "./lostNotificationTaps";
+import { createNotificationTapController, LOST_TAP_GRACE_MS } from "./notificationTap";
 
 const source = NodeFS.readFileSync(new URL("../../../public/sw.js", import.meta.url), "utf8");
 
@@ -130,7 +131,16 @@ function phone(options: { readonly stalePage?: boolean } = {}) {
     });
     await Promise.all(pending);
   };
-  return { center, registration, push, take, run };
+  /** Starts a handler without waiting for it (a click waits for the page's ack). */
+  const start = (name: string, notification: Shown) => {
+    const pending: Promise<unknown>[] = [];
+    handlers.get(name)!({
+      notification: { ...notification, close: () => undefined },
+      waitUntil: (value: Promise<unknown>) => pending.push(value),
+    });
+    return Promise.all(pending);
+  };
+  return { center, registration, push, take, run, start, worker, caches };
 }
 
 const ASSISTANT_TASK = "/tasks/50cd83dc-e90e-440c-9876-a9d9a8865dd6";
@@ -273,6 +283,71 @@ describe("worker and page find a tap iOS dropped", () => {
     expect(await findLostTap(app.registration, { awaySince })).toEqual(
       expect.objectContaining({ url: CTO_CHAT, reason: "recent", gone: 2, listed: 0 }),
     );
+  });
+
+  // QA could not get Windows to deliver a real click (case 3). With the real
+  // worker: a click that does arrive navigates once, and the lost-tap look
+  // after it (and on the next return) opens nothing, because the click took
+  // the notification off the list.
+  it("does not navigate again after a real notificationclick", async () => {
+    const app = phone({ stalePage: true });
+    const page = { path: "/bots" };
+    const navigate = vi.fn((path: string) => {
+      page.path = path;
+    });
+    const reports: Record<string, unknown>[] = [];
+    const taps = createNotificationTapController({
+      navigate,
+      currentPath: () => page.path,
+      takePending: async () => {
+        const cache = await app.caches.open("bots-pending-nav");
+        const saved = await cache.match("/__bots-pending-nav__");
+        if (saved === undefined) return null;
+        await cache.delete("/__bots-pending-nav__");
+        const { url, id } = (await saved.json()) as { url: string; id: string };
+        return { url, id };
+      },
+      isVisible: () => true,
+      visibility: () => "visible",
+      now: () => Date.now(),
+      setInterval: (callback, ms) => setInterval(callback, ms),
+      clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
+      // eslint-disable-next-line unicorn/require-post-message-target-origin -- ServiceWorker.postMessage has no targetOrigin.
+      ack: (ack) => app.worker.postMessage(ack),
+      report: (record) => reports.push(record),
+      lostTap: {
+        find: ({ awaySince }) => findLostTap(app.registration, { awaySince }),
+        after: (callback, ms) => void setTimeout(callback, ms),
+      },
+    });
+    taps.away();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await app.push({ title: "Assistant", url: ASSISTANT_CHAT });
+    const clicked = app.start("notificationclick", app.take(ASSISTANT_CHAT));
+    await vi.advanceTimersByTimeAsync(0);
+    await taps.check("cache-visible");
+    await vi.advanceTimersByTimeAsync(LOST_TAP_GRACE_MS);
+    await clicked;
+    expect(navigate).toHaveBeenCalledExactlyOnceWith(ASSISTANT_CHAT);
+    expect(reports).toContainEqual(
+      expect.objectContaining({ event: "lost-tap-check", outcome: "tap-arrived" }),
+    );
+    // Back to the list, away and back: the clicked one is not opened again.
+    page.path = "/bots";
+    taps.away();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await taps.check("cache-visible");
+    await vi.advanceTimersByTimeAsync(LOST_TAP_GRACE_MS);
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(reports.at(-1)).toEqual(
+      expect.objectContaining({
+        event: "lost-tap-check",
+        reason: "none-shown",
+        store: "worker",
+        outcome: "none",
+      }),
+    );
+    taps.dispose();
   });
 
   it("opens the tapped chat on a cold launch too", async () => {

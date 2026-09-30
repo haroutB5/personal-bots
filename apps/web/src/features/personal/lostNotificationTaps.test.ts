@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  GONE_TAP_MAX_AGE_MS,
   LOST_TAP_GRACE_MS,
   RECENT_TAP_WINDOW_MS,
   SHOWN_NOTIFICATIONS_MAX_AGE_MS,
@@ -32,6 +33,32 @@ describe("decideLostTap", () => {
         tapped: shown("task-a", ASSISTANT_TASK, now - 60_000),
       }),
     );
+  });
+
+  // QA 1 Oct 00:42: a gone entry opened on a cold relaunch with no age or
+  // away limit. It counts only when shown while away, at most 15 min ago.
+  it("opens the one gone notification shown while away 137 s ago", () => {
+    const now = Date.now();
+    const result = decideLostTap(
+      [shown("chat-b", CTO_CHAT, now - 137_000)],
+      [],
+      now,
+      now - 5 * 60_000,
+    );
+    expect(result).toEqual(expect.objectContaining({ reason: "one-gone", recent: 0 }));
+  });
+
+  it("does not open a gone notification 16 minutes old", () => {
+    const now = Date.now();
+    const result = decideLostTap([shown("chat-b", CTO_CHAT, now - 16 * 60_000)], [], now, 0);
+    expect(GONE_TAP_MAX_AGE_MS).toBe(15 * 60_000);
+    expect(result).toEqual(expect.objectContaining({ tapped: null, reason: "gone-too-old" }));
+  });
+
+  it("does not open a gone notification shown before the app went away", () => {
+    const now = Date.now();
+    const result = decideLostTap([shown("chat-b", CTO_CHAT, now - 60_000)], [], now, now - 30_000);
+    expect(result).toEqual(expect.objectContaining({ tapped: null, reason: "gone-before-away" }));
   });
 
   it("guesses nothing when several left at once (Clear All)", () => {
@@ -160,6 +187,20 @@ function resumedPage(options: { path: string; lostTap: string | null }) {
   return { state, navigate, reports, controller, findLostTap };
 }
 
+function resumedPageDeps() {
+  return {
+    navigate: () => undefined,
+    currentPath: () => "/bots",
+    takePending: async () => null,
+    isVisible: () => true,
+    visibility: () => "visible",
+    now: () => Date.now(),
+    setInterval: (callback: () => void, ms: number) => setInterval(callback, ms),
+    clearInterval: (handle: unknown) => clearInterval(handle as ReturnType<typeof setInterval>),
+    ack: () => undefined,
+  };
+}
+
 describe("a tap iOS never hands to the worker", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -236,6 +277,30 @@ describe("a tap iOS never hands to the worker", () => {
       expect.objectContaining({ event: "lost-tap-check", outcome: "user-moved" }),
     ]);
     app.controller.dispose();
+  });
+
+  it("remembers when the app went away across a cold launch", async () => {
+    const saved = { at: 0 };
+    const store = { read: () => saved.at, write: (at: number) => void (saved.at = at) };
+    const first = createNotificationTapController({
+      ...resumedPageDeps(),
+      awayStore: store,
+    });
+    first.away();
+    const awayAt = Date.now();
+    expect(saved.at).toBe(awayAt);
+    first.dispose();
+    await vi.advanceTimersByTimeAsync(60_000);
+    const find = vi.fn(async () => ({ url: null, reason: "none-shown" }));
+    const relaunched = createNotificationTapController({
+      ...resumedPageDeps(),
+      awayStore: store,
+      lostTap: { find, after: (callback, ms) => void setTimeout(callback, ms) },
+    });
+    await relaunched.check("cache-load");
+    await vi.advanceTimersByTimeAsync(LOST_TAP_GRACE_MS);
+    expect(find).toHaveBeenCalledWith({ awaySince: awayAt });
+    relaunched.dispose();
   });
 
   it("tells the look when the app went away, 0 before the first time", async () => {

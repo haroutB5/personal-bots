@@ -55,6 +55,14 @@ export interface NotificationTapDeps {
    * went to the background (0 if it has not since launch) and returns the
    * deep link to open, or null, plus why, for the lost-tap-check line.
    */
+  /**
+   * Where the last move to the background is kept across launches, so a cold
+   * launch after iOS ended the app still knows when it went away.
+   */
+  readonly awayStore?: {
+    readonly read: () => number;
+    readonly write: (at: number) => void;
+  };
   readonly lostTap?: {
     readonly find: (context: { readonly awaySince: number }) => Promise<LostTapLook>;
     readonly after: (callback: () => void, ms: number) => void;
@@ -113,7 +121,14 @@ export function createNotificationTapController(
   // Bumped by every delivered tap, so a lost-tap look knows one arrived.
   let deliveries = 0;
   let lookingForLostTap = false;
-  let awaySince = 0;
+  let awaySince = (() => {
+    try {
+      const at = deps.awayStore?.read() ?? 0;
+      return Number.isFinite(at) && at > 0 ? at : 0;
+    } catch {
+      return 0;
+    }
+  })();
 
   const deliver = (url: string, id: string | null, via: TapRoute): void => {
     deliveries += 1;
@@ -233,6 +248,11 @@ export function createNotificationTapController(
     watch: (ms) => startWatch(ms, "manual"),
     away: () => {
       awaySince = deps.now();
+      try {
+        deps.awayStore?.write(awaySince);
+      } catch {
+        // Storage refused: this launch still knows; the next one starts at 0.
+      }
     },
     dispose: stop,
   };

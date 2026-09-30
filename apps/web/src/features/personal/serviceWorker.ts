@@ -97,6 +97,9 @@ function reportTap(record: Record<string, unknown>): void {
   }
 }
 
+/** When the app last went to the background (notificationTap.ts awayStore). */
+const LAST_AWAY_KEY = "bots:last-away-at";
+
 /** Worker messages worth a diag line: the tap itself and the push-shown nudge. */
 export function workerMessageDiag(
   data: unknown,
@@ -164,6 +167,10 @@ export function registerPersonalServiceWorker(
         .catch(() => undefined);
     },
     report: reportTap,
+    awayStore: {
+      read: () => Number(window.localStorage.getItem(LAST_AWAY_KEY) ?? 0),
+      write: (at) => window.localStorage.setItem(LAST_AWAY_KEY, String(at)),
+    },
     lostTap: {
       find: ({ awaySince }) =>
         notificationRegistration().then((registration) => findLostTap(registration, { awaySince })),
@@ -216,6 +223,7 @@ export function registerPersonalServiceWorker(
     void taps.check("cache-visible");
     checkForNewWorker();
   });
+  window.addEventListener("pagehide", () => taps.away());
   window.addEventListener("pageshow", () => {
     if (document.visibilityState === "visible") void taps.check("cache-pageshow");
   });
