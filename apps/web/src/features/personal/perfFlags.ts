@@ -29,6 +29,9 @@ export type PerfOptimization =
   // inset's first measurement, the viewing report, the session prewarm) runs
   // after the first paint (afterPaint, 1.59.5); off: in the opening tap.
   | "chat-open-after-paint"
+  // Opening a chat paints its header first and mounts the conversation right
+  // after that paint (ConversationShellFirst, 1.59.5); off: all in the tap.
+  | "chat-shell-first"
   | "snapshot-early"
   | "warm-highlighter"
   | "rum"
