@@ -65,6 +65,7 @@ import {
   activeGroupMembers,
   filterGroups,
   groupRelayThreadIds,
+  isGroupRelayLink,
   roundForGroup,
   shownInChats,
 } from "./groupModel";
@@ -72,7 +73,6 @@ import { GroupRow } from "./GroupRow";
 import { PinnedBotTile, PinnedSnapshotTile, PinnedStrip } from "./PinnedStrip";
 import {
   mergePersonalGroups,
-  personalGroupsSettled,
   usePersonalGroupsFeed,
   usePersonalGroupsList,
 } from "./usePersonalGroups";
@@ -346,16 +346,9 @@ export function ChatsScreen({
   // fetch needs, with O(n) map copies per 50ms batch. Arm it a frame after the
   // first paint (snapshot, skeleton or live list) so it cannot contend with
   // that paint; the timeout covers background tabs where rAF never fires.
-  // Groups ride the same gate as the tasks feed: the list query is cheap and
-  // lands with the bots, the subscription replays every group and round and so
-  // must not contend with the first paint.
-  const groupsQuery = usePersonalGroupsList(environmentId);
-  // Live rows wait for the groups list too (or its failure): built before it,
-  // a bot's row could preview its group relay for a moment (H7). The snapshot
-  // or skeleton covers the wait; both queries go out together.
-  const loaded =
-    list.data !== null &&
-    personalGroupsSettled({ listData: groupsQuery.data, listError: groupsQuery.error, feed: null });
+  // Live rows paint with the bots list alone: its `groupRelay` flags hide the
+  // relays (H7) without waiting for the groups, which cost the first tap (H8).
+  const loaded = list.data !== null;
   const showingSnapshot = !loaded && snapshot !== null && snapshot.rows.length > 0;
   const firstPaintReady = loaded || showingSnapshot || list.error !== null;
   // From the first paint, snapshot rows included: they are tappable too, and
@@ -389,6 +382,10 @@ export function ChatsScreen({
     };
   }, [tasksArmed, firstPaintReady]);
   const { tasks: taskFeed } = usePersonalTasks(tasksArmed ? environmentId : null);
+  // Groups ride the same gate as the tasks feed: the list query is cheap and
+  // lands with the bots, the subscription replays every group and round and so
+  // must not contend with the first paint.
+  const groupsQuery = usePersonalGroupsList(environmentId);
   const { feed: groupsFeed } = usePersonalGroupsFeed(tasksArmed ? environmentId : null);
   const { groups, archivedGroups, rounds } = useMemo(
     () => mergePersonalGroups(groupsQuery.data ?? null, groupsFeed ?? null),
@@ -431,7 +428,7 @@ export function ChatsScreen({
         ? []
         : buildBotSummaries({
             bots: list.data.bots,
-            links: list.data.threads.filter((link) => !memberThreadIds.has(link.threadId)),
+            links: list.data.threads.filter((link) => !isGroupRelayLink(link, memberThreadIds)),
             shells,
             providers,
             waitingByThread,

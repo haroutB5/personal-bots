@@ -2,6 +2,7 @@ import type { PersonalBotThread } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 import { chatActivityMs } from "./chatActivity";
+import { isGroupRelayLink } from "./groupModel";
 
 export interface BotThreadRow {
   readonly link: PersonalBotThread;
@@ -22,7 +23,7 @@ export function botThreadRows(
 ): { active: BotThreadRow[]; archived: BotThreadRow[] } {
   const shellsById = new Map(shells.map((shell) => [shell.id as string, shell] as const));
   const rows = links.flatMap((link): BotThreadRow[] => {
-    if (link.botId !== botId || relayThreadIds.has(link.threadId)) return [];
+    if (link.botId !== botId || isGroupRelayLink(link, relayThreadIds)) return [];
     const shell = shellsById.get(link.threadId);
     if (shell === undefined) return [];
     // Real conversation activity, never `updatedAt` (see chatActivity.ts).

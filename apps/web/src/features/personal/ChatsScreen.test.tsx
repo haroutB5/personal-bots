@@ -116,8 +116,6 @@ vi.mock("./usePersonalGroups", () => ({
     state.groupFeedCalls.push(environmentId);
     return { feed: null, error: null };
   },
-  personalGroupsSettled: (input: { listData: unknown; listError: unknown; feed: unknown }) =>
-    (input.listData ?? null) !== null || (input.feed ?? null) !== null || input.listError !== null,
   mergePersonalGroups: (list: { groups: unknown[]; rounds: unknown[] } | null) => ({
     groups: (list?.groups ?? []).filter(
       (group) => (group as { archivedAt: unknown }).archivedAt === null,
@@ -787,7 +785,7 @@ describe("ChatsScreen groups", () => {
     expect(JSON.stringify(renderer!.toJSON())).not.toContain("Relay of Launch crew");
   });
 
-  it("waits for the groups before live rows, so a relay never previews for a moment (H7)", async () => {
+  it("paints live rows before the groups load, and a relay the list marks never previews (H7, H8)", async () => {
     state.listData = {
       bots: [bot("bot-ada", "Ada")],
       threads: [
@@ -796,6 +794,7 @@ describe("ChatsScreen groups", () => {
           threadId: "member-thread-ada",
           createdAt: "2026-09-19T09:00:00.000Z",
           archivedAt: null,
+          groupRelay: true,
         },
       ],
       personalProjectId: null,
@@ -814,11 +813,6 @@ describe("ChatsScreen groups", () => {
       },
     ];
     state.groupsData = null;
-    await render();
-    expect(renderer!.root.findAllByProps({ "aria-label": "Your chats" })).toHaveLength(0);
-    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Relay of Launch crew");
-
-    state.groupsData = { groups: [group()], rounds: [] };
     await render();
     expect(renderer!.root.findAllByProps({ "aria-label": "Your chats" })).toHaveLength(1);
     expect(JSON.stringify(renderer!.toJSON())).not.toContain("Relay of Launch crew");

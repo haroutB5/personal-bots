@@ -266,6 +266,7 @@ const PersonalBotThreadListDbRow = Schema.Struct({
   newestRole: Schema.NullOr(OrchestrationMessageRole),
   newestText: Schema.NullOr(Schema.String),
   newestContext: Schema.NullOr(Schema.fromJsonString(OrchestrationMessageContext)),
+  groupRelay: Schema.Number,
 });
 
 const PersonalBotThreadListRawDbRow = Schema.Struct({
@@ -275,6 +276,7 @@ const PersonalBotThreadListRawDbRow = Schema.Struct({
   newestRole: Schema.Unknown,
   newestText: Schema.Unknown,
   newestContext: Schema.Unknown,
+  groupRelay: Schema.Unknown,
 });
 
 const PersonalMetaDbRow = Schema.Struct({
@@ -385,7 +387,13 @@ function toPersonalBotThreadWithPreview(
           text: row.newestText,
           ...(row.newestContext !== null ? { context: row.newestContext } : {}),
         };
-  return { ...toPersonalBotThread(row), lastActivityAt: row.lastActivityAt, newestMessage };
+  return {
+    ...toPersonalBotThread(row),
+    lastActivityAt: row.lastActivityAt,
+    newestMessage,
+    // Only when true, so the list stays the same size for every other chat.
+    ...(row.groupRelay === 1 ? { groupRelay: true } : {}),
+  };
 }
 
 function toPersistenceSqlOrDecodeError(
@@ -711,7 +719,12 @@ export const make = Effect.gen(function* () {
           m.message_id AS "newestMessageId",
           m.role AS "newestRole",
           substr(m.text, 1, 400) AS "newestText",
-          m.context_json AS "newestContext"
+          m.context_json AS "newestContext",
+          -- A group member's relay, past or present (listGroupPresence reads
+          -- relays the same way): no bot chat list shows one.
+          EXISTS (
+            SELECT 1 FROM personal_group_members relay WHERE relay.thread_id = r.thread_id
+          ) AS "groupRelay"
         FROM ranked r
         LEFT JOIN projection_thread_messages m
           ON r.eligible = 1

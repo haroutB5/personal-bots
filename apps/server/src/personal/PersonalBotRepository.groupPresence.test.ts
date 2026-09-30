@@ -142,6 +142,23 @@ it.effect("derives group presence, ignoring relay threads and empty chats", () =
     yield* makeBot("gone");
     yield* sql`UPDATE personal_bots SET deleted_at = ${at} WHERE bot_id = 'gone'`;
 
+    // The list marks every relay (past or present, any group state), and only relays.
+    const links = yield* repository.listThreadLinks();
+    expect(
+      links
+        .filter((link) => link.groupRelay === true)
+        .map((link) => link.threadId)
+        .toSorted(),
+    ).toEqual([
+      "luna-left-relay",
+      "luna-old-relay",
+      "luna-relay",
+      "sol-relay",
+      "vega-old-relay",
+      "vega-relay",
+    ]);
+    expect(links.find((link) => link.threadId === "sol-private")).not.toHaveProperty("groupRelay");
+
     const presence = yield* repository.listGroupPresence();
     expect(
       Object.fromEntries(

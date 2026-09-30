@@ -246,6 +246,13 @@ export const PersonalBotThread = Schema.Struct({
    * which any metadata write moves (auto-settle, a session stop, a rename).
    */
   lastActivityAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  /**
+   * Only on `personalBots.list`, and only when true: the thread is a group
+   * member's relay (the bot's private thread a group talks through), which
+   * no bot chat list shows. Sent with the list so clients can hide relays
+   * from the first paint, without waiting for the groups.
+   */
+  groupRelay: Schema.optional(Schema.Boolean),
 });
 export type PersonalBotThread = typeof PersonalBotThread.Type;
 

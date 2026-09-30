@@ -88,4 +88,14 @@ describe("botThreadRows order", () => {
     expect(rows.active.map((row) => row.link.threadId)).toEqual(["own"]);
     expect(rows.archived).toEqual([]);
   });
+
+  it("leaves out a relay the bots list marks, with no groups loaded", () => {
+    const relay = { ...link("relay", "cto"), groupRelay: true } as unknown as PersonalBotThread;
+    const rows = botThreadRows(
+      "cto",
+      [link("own", "cto"), relay],
+      [shell("own", "2026-09-24T10:00:00.000Z"), shell("relay", "2026-09-25T10:00:00.000Z")],
+    );
+    expect(rows.active.map((row) => row.link.threadId)).toEqual(["own"]);
+  });
 });

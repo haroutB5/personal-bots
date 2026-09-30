@@ -25,8 +25,6 @@ export function AllChatsCount({
   const shells = useThreadShells();
   const relayThreadIds = usePersonalGroupRelayThreadIds(environmentId);
   const counts = useMemo(() => {
-    // Until the groups load, a count would include the bot's group relays.
-    if (relayThreadIds === null) return null;
     const rows = botThreadRows(
       botId,
       links,
@@ -37,14 +35,7 @@ export function AllChatsCount({
   }, [botId, environmentId, links, relayThreadIds, shells]);
   return (
     <span className="ml-auto pl-4 text-[13px] text-[var(--personal-text-tertiary)] tabular-nums">
-      {counts === null ? (
-        // Same box as "0 open", unseen: the menu width does not jump when the number lands.
-        <span aria-hidden="true" data-chat-count-pending="" className="invisible">
-          {chatCountsLabel({ open: 0, archived: 0 })}
-        </span>
-      ) : (
-        chatCountsLabel(counts)
-      )}
+      {chatCountsLabel(counts)}
     </span>
   );
 }

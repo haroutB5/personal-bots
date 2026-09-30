@@ -81,6 +81,18 @@ export function groupRelayThreadIds(merged: {
   return groupMemberThreadIds([...merged.groups, ...merged.archivedGroups]);
 }
 
+/**
+ * Whether a bot's thread link is a group relay: the bots list marks every
+ * relay it knows (`groupRelay`, from the first paint on), and the groups
+ * cover a relay made since the list loaded (a member's first reply).
+ */
+export function isGroupRelayLink(
+  link: { readonly threadId: string; readonly groupRelay?: boolean | undefined },
+  relayThreadIds: ReadonlySet<string>,
+): boolean {
+  return link.groupRelay === true || relayThreadIds.has(link.threadId);
+}
+
 /** "Ada, Grace and Alan" — the member names under a group's name in the list. */
 export function groupSubtitle(
   group: PersonalGroup,
@@ -489,7 +501,7 @@ export function reusablePrivateChat(input: {
   const shellsById = new Map(input.shells.map((shell) => [shell.id as string, shell] as const));
   const candidates = input.links.flatMap((link) => {
     if (link.botId !== input.botId || link.archivedAt !== null) return [];
-    if (input.relayThreadIds.has(link.threadId)) return [];
+    if (isGroupRelayLink(link, input.relayThreadIds)) return [];
     if (link.newestMessage != null) return [];
     const shell = shellsById.get(link.threadId);
     if (shell === undefined || shell.archivedAt !== null) return [];

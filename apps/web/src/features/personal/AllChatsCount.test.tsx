@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 
 import { AllChatsCount } from "./AllChatsCount";
 
-const state = vi.hoisted(() => ({ relays: null as ReadonlySet<string> | null }));
+const state = vi.hoisted(() => ({ relays: new Set<string>() as ReadonlySet<string> }));
 
 vi.mock("~/state/entities", () => ({
   useThreadShells: () =>
@@ -22,11 +22,13 @@ vi.mock("./usePersonalGroups", () => ({
   usePersonalGroupRelayThreadIds: () => state.relays,
 }));
 
-const links = ["own", "relay"].map((threadId) => ({
-  threadId,
-  botId: "bot-a",
-  archivedAt: null,
-})) as never;
+const links = (flagged: boolean) =>
+  ["own", "relay"].map((threadId) => ({
+    threadId,
+    botId: "bot-a",
+    archivedAt: null,
+    ...(flagged && threadId === "relay" ? { groupRelay: true } : {}),
+  })) as never;
 
 let renderer: ReactTestRenderer | undefined;
 afterEach(async () => {
@@ -35,31 +37,25 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-const render = async () => {
+const render = async (flagged: boolean) => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   await act(async () => {
     renderer = create(
-      <AllChatsCount environmentId={"env-1" as never} botId="bot-a" links={links} />,
+      <AllChatsCount environmentId={"env-1" as never} botId="bot-a" links={links(flagged)} />,
     );
   });
   return renderer!;
 };
 
-it("shows no number while the groups load, so a relay is never counted (H7)", async () => {
-  state.relays = null;
-  const tree = await render();
-  const pending = tree.root.findAll((node) => node.props["data-chat-count-pending"] !== undefined);
-  expect(pending).toHaveLength(1);
-  expect(pending[0]!.props["aria-hidden"]).toBe("true");
-  expect(pending[0]!.props.className).toContain("invisible");
+it("never counts a relay the bots list marks, before the groups load (H7)", async () => {
+  state.relays = new Set();
+  const tree = await render(true);
+  expect(JSON.stringify(tree.toJSON())).toContain("1 open");
   expect(JSON.stringify(tree.toJSON())).not.toContain("2 open");
 });
 
-it("counts only the bot's own chats once the groups are in", async () => {
+it("also leaves out a relay only the groups know (made since the list loaded)", async () => {
   state.relays = new Set(["relay"]);
-  const tree = await render();
+  const tree = await render(false);
   expect(JSON.stringify(tree.toJSON())).toContain("1 open");
-  expect(
-    tree.root.findAll((node) => node.props["data-chat-count-pending"] !== undefined),
-  ).toHaveLength(0);
 });
