@@ -388,6 +388,53 @@ it.effect("preserves bounded request and remote selector diagnostics", () => {
   );
 });
 
+it.effect("shows the model the server browser's own words, never a desktop host's", () => {
+  const hostText = "The page opened a confirm dialog: 'Really delete?'. It is still open.";
+  const answer =
+    (broker: PreviewAutomationBroker.PreviewAutomationBroker["Service"], clientId: string) =>
+    (request: RoutedRequest) =>
+      broker.respond({
+        clientId,
+        connectionId: request.connectionId,
+        requestId: request.requestId,
+        ok: false,
+        error: { _tag: "PreviewAutomationExecutionError", message: hostText },
+      });
+
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const desktop = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(desktop, answer(broker, "client-1")).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      const fromDesktop = yield* broker
+        .invoke<void>({ scope, operation: "click", input: { locator: "#b" } })
+        .pipe(Effect.flip);
+      expect(fromDesktop.message).toBe("Preview automation click failed on client client-1.");
+      expect("hostMessage" in fromDesktop && fromDesktop.hostMessage).toBeFalsy();
+    }),
+  ).pipe(
+    Effect.andThen(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const broker = yield* makeBroker;
+          const server = requestsFrom(
+            yield* broker.connect(makeHost({ clientId: "server-browser", kind: "server" })),
+          );
+          yield* Stream.runForEach(server, answer(broker, "server-browser")).pipe(
+            Effect.forkScoped,
+          );
+          yield* Effect.yieldNow;
+          const fromServer = yield* broker
+            .invoke<void>({ scope, operation: "click", input: { locator: "#b" } })
+            .pipe(Effect.flip);
+          expect(fromServer.message).toBe(hostText);
+        }),
+      ),
+    ),
+  );
+});
+
 it.effect("classifies a remote non-editable target without collapsing it to execution", () => {
   const remoteError = {
     _tag: "PreviewAutomationTargetNotEditableError",

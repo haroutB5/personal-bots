@@ -197,12 +197,17 @@ function remoteDetailKind(detail: unknown): RemoteDetailKind {
 const classifyResponseError = (
   context: PreviewAutomationRequestErrorContext,
   error: NonNullable<PreviewAutomationResponse["error"]>,
+  trustedHost = false,
 ): PreviewAutomationError => {
   const remoteDiagnostics = {
     remoteTag: error._tag,
     remoteMessageLength: error.message.length,
     ...(error.detail === undefined ? {} : { remoteDetailKind: remoteDetailKind(error.detail) }),
     cause: error,
+    // Only the in-process server browser's own words reach the model: it says
+    // what happened (a dialog it is holding open, a stalled page) in text it
+    // wrote and redacted itself.
+    ...(trustedHost && error.message.length > 0 ? { hostMessage: error.message } : {}),
   };
   switch (error._tag) {
     case "PreviewAutomationRecordingDesktopUpdateRequiredError":
@@ -457,7 +462,11 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       }
       const next = new Map(current.pending);
       next.delete(response.requestId);
-      return [entry, { ...current, pending: next }] as const;
+      const trustedHost = current.clients.get(entry.context.clientId)?.kind === "server";
+      return [
+        { ...entry, trustedHost },
+        { ...current, pending: next },
+      ] as const;
     });
     if (!pending) return;
     if (response.ok) {
@@ -466,7 +475,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       yield* Deferred.fail(
         pending.deferred,
         response.error
-          ? classifyResponseError(pending.context, response.error)
+          ? classifyResponseError(pending.context, response.error, pending.trustedHost)
           : new PreviewAutomationMalformedResponseError(pending.context),
       );
     }

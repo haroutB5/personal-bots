@@ -705,6 +705,12 @@ const PreviewAutomationRemoteDiagnosticFields = {
     Schema.Literals(["null", "array", "object", "string", "number", "boolean"]),
   ),
   cause: Schema.Defect(),
+  /**
+   * The host's own message, carried only for the in-process server browser:
+   * its text is written and redacted by this server. A desktop host's message
+   * can carry page text, so it never reaches the model.
+   */
+  hostMessage: Schema.optional(Schema.String),
 };
 
 const PreviewAutomationOptionalRemoteDiagnosticFields = {
@@ -714,6 +720,12 @@ const PreviewAutomationOptionalRemoteDiagnosticFields = {
     Schema.Literals(["null", "array", "object", "string", "number", "boolean"]),
   ),
   cause: Schema.optional(Schema.Defect()),
+  /**
+   * The host's own message, carried only for the in-process server browser:
+   * its text is written and redacted by this server. A desktop host's message
+   * can carry page text, so it never reaches the model.
+   */
+  hostMessage: Schema.optional(Schema.String),
 };
 
 export class PreviewAutomationNoAvailableHostError extends Schema.TaggedError<PreviewAutomationNoAvailableHostError>()(
@@ -768,7 +780,7 @@ export class PreviewAutomationTimeoutError extends Schema.TaggedError<PreviewAut
 ) {
   override get message(): string {
     const summary = `Preview automation ${this.operation} timed out after ${this.timeoutMs}ms.`;
-    return summary;
+    return this.hostMessage ?? summary;
   }
 }
 
@@ -792,7 +804,9 @@ export class PreviewAutomationExecutionError extends Schema.TaggedError<PreviewA
   },
 ) {
   override get message(): string {
-    return `Preview automation ${this.operation} failed on client ${this.clientId}.`;
+    return (
+      this.hostMessage ?? `Preview automation ${this.operation} failed on client ${this.clientId}.`
+    );
   }
 }
 

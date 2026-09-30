@@ -134,10 +134,8 @@ it.effect(
         yield* TestClock.adjust(15_000 - ServerBrowserHost.BROKER_DEADLINE_MARGIN_MS);
         const error = yield* Fiber.join(click);
         expect(error).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
-        // The host's own text travels to the bot as the error's cause.
-        expect(error).toMatchObject({
-          cause: { message: expect.stringContaining("still available") },
-        });
+        // The host's own words are what the bot reads.
+        expect(error.message).toContain("still available");
 
         // No eviction, no reconnect gap: the very next call is served at once.
         const status = yield* broker.invoke<BrowserStatus>({
