@@ -59,6 +59,10 @@ class FakePage implements BrowserPage {
   stoppedScreencasts = 0;
   gotoGate: Promise<void> | null = null;
   onGoto: ((url: string) => void) | null = null;
+  onOriginChangeListener: (() => void) | null = null;
+  onOriginChange(listener: () => void) {
+    this.onOriginChangeListener = listener;
+  }
   locatorCount = 0;
 
   url() {
@@ -74,6 +78,7 @@ class FakePage implements BrowserPage {
     this.gotos.push(url);
     this.onGoto?.(url);
     if (this.gotoGate !== null) await this.gotoGate;
+    if (new URL(this.currentUrl).origin !== new URL(url).origin) this.onOriginChangeListener?.();
     this.currentUrl = url;
   }
   async goBack() {}
@@ -1486,6 +1491,37 @@ describe("PersonalBrowser", () => {
         baseLayer(fake.driver, PersonalBrowserLeaseRepository.layer, protections.layer),
       ),
     );
+  });
+
+  it.effect("invalidates a login card after its tab leaves the origin and returns", () => {
+    const fake = makeFakeDriver();
+    asLoginBrowser(fake);
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(
+        request("navigate", { url: "https://example.com/login" }),
+      );
+      const binding = yield* browser.loginPage(threadId);
+      expect(binding).not.toBeNull();
+      yield* browser.handleAutomationRequest(
+        request("navigate", { url: "https://other.example/login" }),
+      );
+      yield* browser.handleAutomationRequest(
+        request("navigate", { url: "https://example.com/login" }),
+      );
+      const error = yield* browser
+        .fillLogin({
+          threadId,
+          label: "Example",
+          expectedOrigin: "https://example.com",
+          expectedTabId: binding!.tabId,
+          username: "fixture-user",
+          password: "fixture-password",
+        })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("requesting tab changed");
+      expect(fake.state.pages.flatMap((page) => page.filled)).toEqual([]);
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 
   // Audit #2: the tab the bot has been driving is never the fill target, so a

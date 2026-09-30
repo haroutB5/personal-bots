@@ -12,6 +12,7 @@ import * as PersonalBrowser from "../browser/PersonalBrowser.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalLoginService from "./PersonalLoginService.ts";
 import * as LoginRequests from "./PersonalLoginRequestService.ts";
+import { HostOperationError } from "../browser/pageOperations.ts";
 
 const input = {
   taskId: PersonalTaskId.make("task"),
@@ -20,6 +21,7 @@ const input = {
   origin: "https://example.com",
   reason: "Sign in to continue",
 };
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const fixture = () => {
   const state = {
     page: { tabId: "tab", origin: input.origin } as { tabId: string; origin: string } | null,
@@ -27,6 +29,7 @@ const fixture = () => {
     fills: [] as unknown[],
     notes: [] as string[],
     existing: false,
+    failFill: false,
   };
   const layer = LoginRequests.layerLive.pipe(
     Layer.provide(
@@ -34,10 +37,17 @@ const fixture = () => {
         Layer.mock(PersonalBrowser.PersonalBrowser)({
           loginPage: () => Effect.sync(() => state.page),
           fillLogin: (value) =>
-            Effect.sync(() => {
-              state.fills.push(value);
-              return ["username", "password"] as const;
-            }),
+            state.failFill
+              ? Effect.fail(
+                  new HostOperationError(
+                    "PreviewAutomationExecutionError",
+                    "fixture-user fixture-password",
+                  ),
+                )
+              : Effect.sync(() => {
+                  state.fills.push(value);
+                  return ["username", "password"] as const;
+                }),
         }),
         Layer.mock(PersonalLoginService.PersonalLoginService)({
           list: () =>
@@ -74,6 +84,37 @@ const credentials = (requestId: string, save?: boolean) => ({
 });
 
 describe("secure in-chat login requests", () => {
+  it.effect("closes a failed fill without forwarding a driver's credential-bearing error", () => {
+    const { state, layer } = fixture();
+    return Effect.gen(function* () {
+      const service = yield* LoginRequests.PersonalLoginRequestService;
+      const request = yield* service.request(input);
+      state.failFill = true;
+      const result = yield* service.submit(credentials(request.requestId));
+      expect(result.status).toBe("fill-failed");
+      expect(result.saved).toBe(false);
+      expect(state.saved).toHaveLength(0);
+      expect(yield* encodeJson([result, state.notes])).not.toMatch(/fixture-user|fixture-password/);
+      yield* service.submit(credentials(request.requestId)).pipe(Effect.flip);
+    }).pipe(Effect.provide(layer));
+  });
+  it.effect("serializes simultaneous submissions so only one can fill and save", () => {
+    const { state, layer } = fixture();
+    return Effect.gen(function* () {
+      const service = yield* LoginRequests.PersonalLoginRequestService;
+      const request = yield* service.request(input);
+      const results = yield* Effect.all(
+        [
+          service.submit(credentials(request.requestId)).pipe(Effect.result),
+          service.submit(credentials(request.requestId)).pipe(Effect.result),
+        ],
+        { concurrency: "unbounded" },
+      );
+      expect(results.filter((result) => result._tag === "Success")).toHaveLength(1);
+      expect(state.fills).toHaveLength(1);
+      expect(state.saved).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
   it.effect("refuses a different origin and an existing saved login before making a card", () => {
     const { state, layer } = fixture();
     return Effect.gen(function* () {
@@ -100,9 +141,7 @@ describe("secure in-chat login requests", () => {
       expect(result.saved).toBe(true);
       expect(state.saved).toHaveLength(1);
       expect(state.fills).toHaveLength(1);
-      expect(
-        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))([result, state.notes]),
-      ).not.toMatch(/fixture-user|fixture-password/);
+      expect(yield* encodeJson([result, state.notes])).not.toMatch(/fixture-user|fixture-password/);
       yield* service.submit(credentials(request.requestId)).pipe(Effect.flip);
       expect(state.fills).toHaveLength(1);
     }).pipe(Effect.provide(layer));
