@@ -27,3 +27,15 @@ Staged, not activated: release `1f2049611a77` (version commit `1f2049611a`, on 1
 - Server stopped by captured PID; root deleted after a junction check (0).
 
 Not checked: physical iPhone Safari (Chrome touch emulation only), desktop mouse pass.
+
+## 1.59.2: H7, All chats count waits for groups
+
+Staged, not activated: release `c0ad253f2963` (commits `99e24f722f` fix, `c0ad253f29` version). Live is 1.59.1 `1f2049611a77`, the rollback. QA's retest found "All chats" in Chat options briefly counting the bot's hidden group relays after a cold load (the relay-id hook returned an empty set while the groups loaded).
+
+- `usePersonalGroupRelayThreadIds` returns null until the groups list or feed answers, or the list fails (`personalGroupsSettled`).
+- All chats count (now `AllChatsCount.tsx`): an invisible "0 open" of the same size until the number is right.
+- The bot's chat list: no rows until the relays are known.
+- Bots list: live rows wait for the groups list as well as the bots (the cold-start snapshot or skeleton stays up); search uses the same rows. Message privately only runs on a loaded group.
+- Tests: `AllChatsCount.test.tsx` (pending state, settled count), `personalGroupsSettled`, and a ChatsScreen test with groups arriving after the bots.
+- Gates: web personal 0 (138 files, 1366 tests), web tsc 0; build exit 0.
+- Throwaway (same harness, QA's retest-count-race.mjs adapted as `h7race.mjs`, 4 cold loads per theme, dark and light): 1.59.1 showed "3 open · 1 archived" in 8/8 runs (two relays); 1.59.2 in 0/8 (the pending placeholder, then "1 open · 1 archived" about 20 ms later). H1 and H4 re-checked on 1.59.2. Evidence `~/.personal-bots/qa/frontend-1591/h7-old.json`, `h7-new.json`. Server stopped by PID, root deleted (0 junctions).
