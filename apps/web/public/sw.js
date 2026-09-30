@@ -15,6 +15,12 @@ const SHELL_KEY = "/__bots-shell__";
 // Deep link from the last notification tap; see the notificationclick handler.
 const PENDING_NAV_CACHE = "bots-pending-nav";
 const PENDING_NAV_KEY = "/__bots-pending-nav__";
+// Notifications shown and not yet tapped, dismissed or closed by the page, for
+// taps iOS never dispatches. Must match src/features/personal/lostNotificationTaps.ts.
+const SHOWN_CACHE = "bots-shown-notifications";
+const SHOWN_KEY = "/__bots-shown__";
+const SHOWN_MAX = 50;
+const SHOWN_MAX_AGE_MS = 24 * 60 * 60_000;
 // Second delivery route for notification taps that does not depend on
 // clients.matchAll(). Must match NAV_CHANNEL in src/features/personal/serviceWorker.ts.
 const NAV_CHANNEL = "bots-nav";
@@ -307,6 +313,43 @@ function notificationTag(data, url) {
   return typeof data.tag === "string" && data.tag.length > 0 ? data.tag : undefined;
 }
 
+/**
+ * The list of shown notifications the page checks when it comes back without
+ * a tap (see lostNotificationTaps.ts). `change` gets the list and returns the
+ * new one. Best-effort: a failure only loses the fallback, never a banner.
+ */
+async function updateShown(change) {
+  try {
+    const cache = await caches.open(SHOWN_CACHE);
+    const saved = await cache.match(SHOWN_KEY);
+    const parsed = saved ? await saved.json() : [];
+    const now = Date.now();
+    const list = (Array.isArray(parsed) ? parsed : []).filter(
+      (entry) =>
+        entry &&
+        typeof entry.key === "string" &&
+        typeof entry.at === "number" &&
+        now - entry.at < SHOWN_MAX_AGE_MS,
+    );
+    await cache.put(SHOWN_KEY, new Response(JSON.stringify(change(list).slice(-SHOWN_MAX))));
+  } catch {
+    // The tap routes themselves do not depend on this list.
+  }
+}
+
+function shownKey(tag, url) {
+  return typeof tag === "string" && tag.length > 0 ? tag : url;
+}
+
+function forgetShown(notification) {
+  const url =
+    notification.data && typeof notification.data.url === "string"
+      ? notification.data.url
+      : "/bots";
+  const key = shownKey(notification.tag, url);
+  return updateShown((list) => list.filter((entry) => entry.key !== key));
+}
+
 self.addEventListener("push", (event) => {
   let data = {};
   try {
@@ -353,6 +396,12 @@ self.addEventListener("push", (event) => {
       } finally {
         if (iconUrl !== null) URL.revokeObjectURL(iconUrl);
       }
+      // A newer notification with the same tag replaces the older one here too.
+      const key = shownKey(tag, url);
+      await updateShown((list) => [
+        ...list.filter((entry) => entry.key !== key),
+        { key, url, at: Date.now() },
+      ]);
       // An open app watches for the tap for a while after this (see
       // serviceWorker.ts): iOS gives a foreground app no event when the
       // banner is tapped, so the page polls the saved deep link instead.
@@ -549,6 +598,8 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(
     (async () => {
       const diag = { event: "notificationclick", sw: VERSION, id, url, cache: false };
+      // This tap reached the worker, so the page must not guess it later.
+      const forgotten = forgetShown(event.notification);
       // Listen before anything is sent, so a fast page cannot answer too early.
       const ack = waitForAck(id, NAV_ACK_TIMEOUT_WAKING_MS);
       // The saved copy covers a page that misses both messages. Its cache name
@@ -614,8 +665,14 @@ self.addEventListener("notificationclick", (event) => {
       } else if (front !== undefined) {
         diag.route = "page";
       }
+      await forgotten;
       diag.ms = Date.now() - started;
       await sendDiag(diag);
     })(),
   );
+});
+
+// A notification swiped away was not tapped: off the list, where the platform says so.
+self.addEventListener("notificationclose", (event) => {
+  event.waitUntil(forgetShown(event.notification));
 });

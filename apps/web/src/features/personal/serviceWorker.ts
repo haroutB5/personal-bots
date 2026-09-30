@@ -2,11 +2,13 @@ import { APP_VERSION } from "~/branding";
 import { isElectron } from "~/env";
 
 import { runningClientEntry } from "./appVersion";
+import { findLostTap } from "./lostNotificationTaps";
 import {
   createNotificationTapController,
   isNavigablePath,
   type PendingTap,
 } from "./notificationTap";
+import { notificationRegistration } from "./staleNotifications";
 
 export interface ServiceWorkerEnvironment {
   readonly production: boolean;
@@ -162,6 +164,10 @@ export function registerPersonalServiceWorker(
         .catch(() => undefined);
     },
     report: reportTap,
+    lostTap: {
+      find: () => notificationRegistration().then((registration) => findLostTap(registration)),
+      after: (callback, ms) => void window.setTimeout(callback, ms),
+    },
   });
   const onWorkerMessage = (data: unknown, via: "message" | "broadcast") => {
     const diag = workerMessageDiag(data, via);

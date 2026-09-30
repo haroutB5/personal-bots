@@ -9,6 +9,8 @@
  * when its banner is tapped. So besides the two messages, the page reads the
  * saved copy when it becomes visible or gains focus, and polls it for a short
  * while after the worker says a notification was shown or the app came back.
+ * When the app comes back and no tap arrives at all, a tap iOS never handed to
+ * the worker is looked for (see lostNotificationTaps.ts).
  */
 
 export interface PendingTap {
@@ -24,7 +26,8 @@ export type TapRoute =
   | "cache-focus"
   | "cache-pageshow"
   | "cache-poll"
-  | "cache-load";
+  | "cache-load"
+  | "inferred";
 
 export interface TapAck {
   readonly type: "bots:navigate-ack";
@@ -46,6 +49,15 @@ export interface NotificationTapDeps {
   readonly ack: (ack: TapAck) => void;
   /** One line per delivered tap for the server log; best-effort. */
   readonly report?: (record: Record<string, unknown>) => void;
+  /**
+   * Finds a tap that reached no route: `find` returns the deep link of the
+   * one notification that left Notification Center, run `after` a grace
+   * period on each return to the app.
+   */
+  readonly lostTap?: {
+    readonly find: () => Promise<string | null>;
+    readonly after: (callback: () => void, ms: number) => void;
+  };
 }
 
 /** How long the page watches for a tap after a push was shown. */
@@ -54,6 +66,12 @@ export const TAP_WATCH_AFTER_PUSH_MS = 60_000;
 export const TAP_WATCH_AFTER_RESUME_MS = 10_000;
 export const TAP_POLL_INTERVAL_MS = 750;
 const HANDLED_IDS_MAX = 50;
+/**
+ * How long the page waits after coming back for a real tap before it looks
+ * for a lost one (lostNotificationTaps.ts). A delivered click reaches a waking
+ * page within about a second in the server logs.
+ */
+export const LOST_TAP_GRACE_MS = 2_500;
 
 /** Deep links the worker may ask the page to open: same-origin paths only. */
 export function isNavigablePath(value: unknown): value is string {
@@ -83,8 +101,12 @@ export function createNotificationTapController(
   let watchUntil = 0;
   let watchStartedBy: string | null = null;
   let timer: unknown = null;
+  // Bumped by every delivered tap, so a lost-tap look knows one arrived.
+  let deliveries = 0;
+  let lookingForLostTap = false;
 
   const deliver = (url: string, id: string | null, via: TapRoute): void => {
+    deliveries += 1;
     if (id !== null) {
       if (handled.includes(id)) return;
       handled.push(id);
@@ -102,6 +124,25 @@ export function createNotificationTapController(
       navigated: from !== url,
       watching: watchStartedBy,
     });
+  };
+
+  const lookForLostTap = () => {
+    const lostTap = deps.lostTap;
+    if (lostTap === undefined || lookingForLostTap) return;
+    lookingForLostTap = true;
+    const before = deliveries;
+    lostTap.after(() => {
+      void lostTap
+        .find()
+        .catch(() => null)
+        .then((url) => {
+          lookingForLostTap = false;
+          // A real tap landed meanwhile: it wins. The look still ran, so the
+          // list forgets the notification that tap removed.
+          if (url === null || deliveries !== before || !isNavigablePath(url)) return;
+          deliver(url, null, "inferred");
+        });
+    }, LOST_TAP_GRACE_MS);
   };
 
   const check = async (via: TapRoute): Promise<void> => {
@@ -149,6 +190,10 @@ export function createNotificationTapController(
     check: async (via) => {
       if (via === "cache-visible" || via === "cache-focus" || via === "cache-pageshow") {
         startWatch(TAP_WATCH_AFTER_RESUME_MS, via);
+      }
+      // A return to the app or a launch, not a mere focus change.
+      if (via === "cache-visible" || via === "cache-pageshow" || via === "cache-load") {
+        lookForLostTap();
       }
       await check(via);
     },

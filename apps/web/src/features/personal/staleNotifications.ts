@@ -21,6 +21,8 @@
  */
 import { useEffect } from "react";
 
+import { forgetShownNotifications, listedNotificationKey } from "./lostNotificationTaps";
+
 /**
  * How long after the app comes back before an open chat's notifications are
  * closed. A tap's click reaches the worker within about a second of the resume
@@ -98,15 +100,20 @@ export async function closeNotifications(
     return 0;
   }
   let closed = 0;
+  const closedKeys: string[] = [];
   for (const notification of list) {
     if (!match(notification)) continue;
     try {
       notification.close();
       closed += 1;
+      const key = listedNotificationKey(notification);
+      if (key !== null) closedKeys.push(key);
     } catch {
       // One that will not close must not keep the rest open.
     }
   }
+  // Closed here, not tapped: never a lost tap (lostNotificationTaps.ts).
+  void forgetShownNotifications(closedKeys);
   return closed;
 }
 
