@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX } from "react";
-import { Activity, lazy, Suspense, useMemo, useRef } from "react";
+import { Activity, lazy, Suspense, useDeferredValue, useMemo, useRef } from "react";
 
 import { Outlet, useLocation, useParams, useRouterState } from "@tanstack/react-router";
 
@@ -86,6 +86,13 @@ export function PersonalShell(): JSX.Element {
   const keptList = useKeptBotsList(renderedPath, isWide);
   useKeptBotsListScroll(mainRef, keptList);
   const keptListElement = useMemo(() => <ChatsScreen />, []);
+  // Hiding the list in Activity disconnects every row's effects, which cost
+  // the opening tap as much as the unmount it replaces. The tap only takes it
+  // out of the page (display: none on a display: contents wrapper, so layout
+  // is unchanged); Activity hides it in a deferred render after the chat has
+  // painted. Showing it again is immediate.
+  const keptListDeferredShown = useDeferredValue(keptList.shown);
+  const keptListMode = keptList.shown || keptListDeferredShown ? "visible" : "hidden";
 
   if (!isWide) {
     return (
@@ -102,7 +109,9 @@ export function PersonalShell(): JSX.Element {
             className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
           >
             {keptList.kept ? (
-              <Activity mode={keptList.shown ? "visible" : "hidden"}>{keptListElement}</Activity>
+              <div style={{ display: keptList.shown ? "contents" : "none" }}>
+                <Activity mode={keptListMode}>{keptListElement}</Activity>
+              </div>
             ) : null}
             {keptList.shown ? null : <Outlet />}
           </main>
