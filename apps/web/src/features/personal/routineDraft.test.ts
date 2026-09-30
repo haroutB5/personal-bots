@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { draftFromRoutine, sameSchedule, scheduleFromDraft, todayInZone } from "./routineDraft";
+import {
+  defaultRoutineBotId,
+  draftFromRoutine,
+  sameSchedule,
+  scheduleFromDraft,
+  todayInZone,
+} from "./routineDraft";
 
 const blank = draftFromRoutine(null, "bot-1", "2026-09-14");
 
@@ -48,5 +54,18 @@ describe("routine drafts", () => {
   it("reads today's date in the routine's zone", () => {
     // 23:30 UTC on the 14th is already the 15th in London (BST).
     expect(todayInZone(Date.parse("2026-09-14T23:30:00Z"), "Europe/London")).toBe("2026-09-15");
+  });
+});
+
+describe("defaultRoutineBotId", () => {
+  const bot = (botId: string, name: string) => ({ botId, name });
+
+  it("is Planner when there is one, wherever it sorts", () => {
+    expect(defaultRoutineBotId([bot("a", "Assistant"), bot("p", "Planner")])).toBe("p");
+  });
+
+  it("falls back to the first bot, and to nothing before the list loads", () => {
+    expect(defaultRoutineBotId([bot("a", "Assistant"), bot("c", "CTO")])).toBe("a");
+    expect(defaultRoutineBotId([])).toBe("");
   });
 });

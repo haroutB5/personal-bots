@@ -5,6 +5,11 @@ import { RoutineForm } from "./RoutineForm";
 
 const state = vi.hoisted(() => ({
   calls: [] as Array<{ readonly command: string; readonly target: unknown }>,
+  bots: [{ botId: "bot-a", name: "Planner", sortOrder: 0 }] as Array<{
+    botId: string;
+    name: string;
+    sortOrder: number;
+  }> | null,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -14,7 +19,7 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("./usePersonalBots", () => ({
   usePersonalEnvironmentId: () => "env-1",
   usePersonalBotsList: () => ({
-    data: { bots: [{ botId: "bot-a", name: "Planner", sortOrder: 0 }] },
+    data: state.bots === null ? null : { bots: state.bots },
   }),
 }));
 vi.mock("./usePersonalAutomation", () => ({
@@ -34,6 +39,7 @@ afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = undefined;
   state.calls = [];
+  state.bots = [{ botId: "bot-a", name: "Planner", sortOrder: 0 }];
   vi.unstubAllGlobals();
 });
 
@@ -137,5 +143,30 @@ describe("RoutineForm trigger picker", () => {
     expect(input.schedule).toEqual({ kind: "daily", time: "09:00" });
     expect(input.trigger).toBeUndefined();
     expect(input.eventLabel).toBeUndefined();
+  });
+});
+
+describe("RoutineForm default bot", () => {
+  const botSelect = (tree: ReactTestRenderer) => tree.root.findByType("select");
+  const loaded = [
+    { botId: "bot-assistant", name: "Assistant", sortOrder: 0 },
+    { botId: "bot-planner", name: "Planner", sortOrder: 1 },
+  ];
+
+  it("picks Planner once a cold list loads, as a warm open does", async () => {
+    state.bots = null;
+    const tree = await renderForm();
+    state.bots = loaded;
+    await act(async () => tree.update(<RoutineForm routine={null} />));
+    expect(botSelect(tree).props.value).toBe("bot-planner");
+  });
+
+  it("keeps the owner's pick when the list refreshes", async () => {
+    state.bots = loaded;
+    const tree = await renderForm();
+    await act(async () => botSelect(tree).props.onChange({ target: { value: "bot-assistant" } }));
+    state.bots = [...loaded];
+    await act(async () => tree.update(<RoutineForm routine={null} />));
+    expect(botSelect(tree).props.value).toBe("bot-assistant");
   });
 });

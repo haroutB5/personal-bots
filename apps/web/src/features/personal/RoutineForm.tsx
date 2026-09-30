@@ -17,6 +17,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
 import {
+  defaultRoutineBotId,
   draftFromRoutine,
   type RoutineDraft,
   type RoutineScheduleKind,
@@ -99,12 +100,11 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
   const create = useAtomCommand(personalRoutineCreate);
   const update = useAtomCommand(personalRoutineUpdate);
   const [routineId] = useState(() => routine?.routineId ?? PersonalRoutineId.make(randomUUID()));
+  // No bot is seeded: on a cold open the list is still empty here, and
+  // seeding from it pinned the first bot that arrived. `botId` below resolves
+  // the default once the list is in, until the owner picks one.
   const [draft, setDraft] = useState<RoutineDraft>(() =>
-    draftFromRoutine(
-      routine,
-      bots.find((bot) => bot.name === "Planner")?.botId ?? bots[0]?.botId ?? "",
-      todayInZone(Date.now(), routine?.timeZone ?? "Europe/London"),
-    ),
+    draftFromRoutine(routine, "", todayInZone(Date.now(), routine?.timeZone ?? "Europe/London")),
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -116,7 +116,7 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
       const { [field]: _cleared, ...rest } = current;
       return rest;
     });
-  const botId = draft.botId || bots[0]?.botId || "";
+  const botId = draft.botId || defaultRoutineBotId(bots);
   const set = <K extends keyof RoutineDraft>(key: K, value: RoutineDraft[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
 

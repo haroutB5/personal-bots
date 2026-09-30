@@ -46,6 +46,13 @@ export function todayInZone(now: number, timeZone: string): string {
   }).format(now);
 }
 
+/** A new routine's bot until the owner picks one: Planner, else the first bot. */
+export function defaultRoutineBotId(
+  bots: ReadonlyArray<{ readonly botId: string; readonly name: string }>,
+): string {
+  return (bots.find((bot) => bot.name === "Planner") ?? bots[0])?.botId ?? "";
+}
+
 export function draftFromRoutine(
   routine: PersonalRoutine | null,
   fallbackBotId: string,
