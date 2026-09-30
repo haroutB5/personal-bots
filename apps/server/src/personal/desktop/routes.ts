@@ -86,6 +86,7 @@ export function makeDesktopSocketHandler(
   const limiter = new InputRateLimiter({ ...REMOTE_INPUT_RATE, now });
   let session: RemoteControlSession | null = null;
   let taking = false;
+  let controlEpoch = 0;
   let closed = false;
   let lastRefusalAt = Number.NEGATIVE_INFINITY;
   const focusCheckMs = options.focusCheckMs ?? FOCUS_CHECK_MS;
@@ -174,6 +175,7 @@ export function makeDesktopSocketHandler(
       return;
     }
     taking = true;
+    const epoch = ++controlEpoch;
     const thisSession: { current: RemoteControlSession | null } = { current: null };
     void Effect.runPromiseExit(
       desktop.takeControl({
@@ -185,37 +187,48 @@ export function makeDesktopSocketHandler(
             send({ _tag: "Control", on: false, ...(detail === undefined ? {} : { detail }) });
         },
       }),
-    ).then((exit) => {
-      taking = false;
-      if (Exit.isSuccess(exit)) {
-        thisSession.current = exit.value;
-        if (closed) {
-          exit.value.end("closed");
+    )
+      .then(async (exit) => {
+        if (Exit.isSuccess(exit)) {
+          thisSession.current = exit.value;
+          if (closed || epoch !== controlEpoch) {
+            exit.value.end("closed");
+            return;
+          }
+          session = exit.value;
+          // Grant the interactive surface only after its first map. The first
+          // UIA scan runs beside input; a failed provider keeps the pill fallback.
+          if (exit.value.regions !== undefined) {
+            const rects = await exit.value.regions().catch(() => []);
+            if (closed || session !== exit.value || !exit.value.active()) return;
+            regionsKey = JSON.stringify(rects);
+            send({ _tag: "EditableRegions", rects });
+          }
+          viewer.setControl(true);
+          send({ _tag: "Control", on: true });
+          // Focus may already be in a field (an address bar left selected).
+          checkFocus(exit.value);
+          checkRegions(exit.value);
           return;
         }
-        session = exit.value;
-        viewer.setControl(true);
-        send({ _tag: "Control", on: true });
-        // Focus may already be in a field (an address bar left selected).
-        checkFocus(exit.value);
-        regionsKey = null;
-        checkRegions(exit.value);
-        return;
-      }
-      if (closed) return;
-      const error = Cause.squash(exit.cause);
-      send({
-        _tag: "Control",
-        on: false,
-        detail:
-          error instanceof PersonalDesktopActionError
-            ? error.reason
-            : "The PC could not be taken over right now.",
+        if (closed) return;
+        const error = Cause.squash(exit.cause);
+        send({
+          _tag: "Control",
+          on: false,
+          detail:
+            error instanceof PersonalDesktopActionError
+              ? error.reason
+              : "The PC could not be taken over right now.",
+        });
+      })
+      .finally(() => {
+        taking = false;
       });
-    });
   };
 
   const releaseControl = () => {
+    ++controlEpoch;
     const current = session;
     session = null;
     clearTimeout(regionsTimer);

@@ -718,7 +718,9 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
           );
           syncOverlay();
           publish();
+          let firstRegions = true;
           const handle: RemoteControlSession = {
+            // The first map is awaited by the socket before it grants Control.
             active: () => remote === session,
             pending: () => session.pending,
             end: (reason) => {
@@ -733,7 +735,9 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
             },
             regions: async () => {
               if (remote !== session) return [];
-              const result = await driver.request("regions", {}, FOCUS_TIMEOUT_MS);
+              const wait = firstRegions;
+              firstRegions = false;
+              const result = await driver.request("regions", { wait }, FOCUS_TIMEOUT_MS);
               if (remote !== session) return [];
               return editableRegionsReport(result, await remoteMonitor(session));
             },

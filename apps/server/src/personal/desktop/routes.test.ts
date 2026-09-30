@@ -95,6 +95,8 @@ function socketFixture(
   options: {
     takeFails?: PersonalDesktopActionError;
     focus?: () => Promise<RemoteFocus | null>;
+    regions?: RemoteControlSession["regions"];
+    onSend?: (message: PersonalDesktopViewMessage) => void;
   } = {},
 ) {
   const seen: string[] = [];
@@ -146,10 +148,14 @@ function socketFixture(
           active: () => session.active(),
           pending: () => session.pending(),
           ...(options.focus === undefined ? {} : { focus: options.focus }),
+          ...(options.regions === undefined ? {} : { regions: options.regions }),
         } satisfies RemoteControlSession);
       },
     },
-    send: (message) => sent.push(message),
+    send: (message) => {
+      sent.push(message);
+      options.onSend?.(message);
+    },
     now: () => clock,
     focusCheckMs: { first: 1, again: 10 },
   });
@@ -178,6 +184,34 @@ function socketFixture(
 const json = (value: unknown) => JSON.stringify(value);
 
 describe("personal desktop live view socket", () => {
+  it("delivers the initial map before granting interactive control, even after repeated requests", async () => {
+    const requested = Promise.withResolvers<void>();
+    const map =
+      Promise.withResolvers<Awaited<ReturnType<NonNullable<RemoteControlSession["regions"]>>>>();
+    const granted = Promise.withResolvers<void>();
+    const socket = socketFixture({
+      regions: () => {
+        requested.resolve();
+        return map.promise;
+      },
+      onSend: (message) => {
+        if (message._tag === "Control" && message.on) granted.resolve();
+      },
+    });
+    socket.handler.handle(json({ _tag: "Control", on: true }));
+    await requested.promise;
+    socket.handler.handle(json({ _tag: "Control", on: true }));
+    expect(socket.sent).toEqual([]);
+    const rects = [{ rect: { x: 0.1, y: 0.2, width: 0.3, height: 0.1 } }];
+    map.resolve(rects);
+    await granted.promise;
+    expect(socket.sent).toEqual([
+      { _tag: "EditableRegions", rects },
+      { _tag: "Control", on: true },
+    ]);
+    socket.handler.close();
+  });
+
   it("while watching, acts on acks and the viewport box and refuses input without doing anything", async () => {
     const socket = socketFixture();
     socket.handler.handle(json({ _tag: "Ack" }));

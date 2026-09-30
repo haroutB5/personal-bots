@@ -183,6 +183,7 @@ public static class PbDesktopHelper {
   static long regionsUntil = 0;
   static int regionsDirty = 1;
   static readonly object regionsLock = new object();
+  static readonly BlockingCollection<object> regionsWaiters = new BlockingCollection<object>();
   static IntPtr regionsWindow = IntPtr.Zero;
   static Dictionary<string, object> regionsSnapshot = Dict("rects", new object[0], "ms", 0);
 
@@ -325,8 +326,12 @@ public static class PbDesktopHelper {
             if (BoolOr(req, "refresh", false)) Interlocked.Exchange(ref regionsDirty, 1);
             Dictionary<string, object> answer;
             lock (regionsLock) {
-              answer = Native.GetForegroundWindow() == regionsWindow
+              answer = Native.GetForegroundWindow() == regionsWindow && regionsWindow != IntPtr.Zero
                 ? new Dictionary<string, object>(regionsSnapshot) : Dict("rects", new object[0], "ms", 0);
+            }
+            if (BoolOr(req, "wait", false) && !answer.ContainsKey("ready")) {
+              regionsWaiters.Add(req.ContainsKey("id") ? req["id"] : null);
+              continue;
             }
             answer["id"] = req.ContainsKey("id") ? req["id"] : null;
             answer["ok"] = true;
@@ -488,7 +493,14 @@ public static class PbDesktopHelper {
       if (Native.GetForegroundWindow() != window) continue;
       lock (regionsLock) {
         regionsWindow = window;
-        regionsSnapshot = Dict("rects", rects.ToArray(), "ms", Math.Round(MsSince(started), 2));
+        regionsSnapshot = Dict("rects", rects.ToArray(), "ms", Math.Round(MsSince(started), 2), "ready", true);
+        object id;
+        while (regionsWaiters.TryTake(out id)) {
+          Dictionary<string, object> answer = new Dictionary<string, object>(regionsSnapshot);
+          answer["id"] = id;
+          answer["ok"] = true;
+          Emit(answer);
+        }
       }
     }
   }

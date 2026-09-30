@@ -340,9 +340,9 @@ export function DesktopPane(props: {
             onControl={(on, detail) => {
               setControlOn(on);
               setPcFocus(null);
-              setEditableRegions([]);
               autoOpenedRef.current = false;
               if (!on) {
+                setEditableRegions([]);
                 if (detail !== null) {
                   setNotice(detail);
                   setControlWanted(false);
