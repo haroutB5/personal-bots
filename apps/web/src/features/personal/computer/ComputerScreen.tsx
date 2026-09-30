@@ -889,6 +889,7 @@ function LiveViewport(props: {
   } | null>(null);
   const [aspect, setAspect] = useState<number | null>(null);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [remoteEditable, setRemoteEditable] = useState(false);
   // The user asked for the keyboard by name, so a tap that lands on a link must
   // not take it away again.
   const keyboardPinnedRef = useRef(false);
@@ -943,6 +944,7 @@ function LiveViewport(props: {
           setNotice(reason);
         },
         onFocusChanged: (editable, field) => {
+          setRemoteEditable(editable);
           // The tap that raised this keyboard did not land on a field, so put
           // it back down. Focusing had to happen inside the touch handler; only
           // the correction can wait for the laptop to answer.
@@ -1266,6 +1268,10 @@ function LiveViewport(props: {
             type="button"
             aria-label={keyboardOpen ? "Hide keyboard" : "Show keyboard"}
             aria-pressed={keyboardOpen}
+            aria-description={
+              remoteEditable && !keyboardOpen ? "A text field is ready for typing" : undefined
+            }
+            onPointerDown={(event) => event.preventDefault()}
             onClick={() => {
               if (keyboardOpen) {
                 keyboardPinnedRef.current = false;
@@ -1280,6 +1286,7 @@ function LiveViewport(props: {
               keyboardOpen
                 ? "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
                 : "bg-[var(--personal-surface)]",
+              remoteEditable && !keyboardOpen && "personal-keyboard-ready",
             )}
           >
             <Keyboard className="size-5" strokeWidth={ICON_STROKE} />

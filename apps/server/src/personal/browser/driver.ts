@@ -217,7 +217,26 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
   // so one control session per page carries emulation, AX and screencast.
   let control: Promise<Playwright.CDPSession> | null = null;
   const cdp = () => {
-    control ??= page.context().newCDPSession(page);
+    control ??= page
+      .context()
+      .newCDPSession(page)
+      .then(async (session) => {
+        // Windows passkey dialogs run above the remote helper's integrity level.
+        // An empty, unverified authenticator rejects sign-in in the page instead
+        // of handing it to Windows Security. Keep it on this page's CDP session.
+        await session.send("WebAuthn.enable", { enableUI: false });
+        await session.send("WebAuthn.addVirtualAuthenticator", {
+          options: {
+            protocol: "ctap2",
+            transport: "internal",
+            hasResidentKey: true,
+            hasUserVerification: true,
+            isUserVerified: false,
+            automaticPresenceSimulation: true,
+          },
+        });
+        return session;
+      });
     return control;
   };
 
@@ -279,6 +298,7 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
     title: () => page.title(),
     isClosed: () => page.isClosed(),
     goto: async (url, options) => {
+      await cdp();
       await page.goto(url, { waitUntil: options.waitUntil, timeout: options.timeoutMs });
     },
     goBack: async () => {
@@ -351,7 +371,10 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
     },
     waitForUrlIncludes: (fragment, timeoutMs) =>
       page.waitForURL((url) => url.href.includes(fragment), { timeout: timeoutMs }),
-    evaluate: (expression) => page.evaluate(expression),
+    evaluate: async (expression) => {
+      await cdp();
+      return page.evaluate(expression);
+    },
     screenshotPng: async () => new Uint8Array(await page.screenshot({ type: "png", scale: "css" })),
     accessibilityTree: async () => {
       const tree = await (await cdp()).send("Accessibility.getFullAXTree");
@@ -394,14 +417,22 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
       const listener = (event: {
         readonly data: string;
         readonly sessionId: number;
-        readonly metadata: { readonly deviceWidth: number; readonly deviceHeight: number };
+        readonly metadata: {
+          readonly deviceWidth: number;
+          readonly deviceHeight: number;
+          readonly pageScaleFactor?: number;
+        };
       }) => {
         void session
           .send("Page.screencastFrameAck", { sessionId: event.sessionId })
           .catch(() => {});
+        // A desktop-width page without a mobile viewport shrinks into the
+        // device. CDP mouse coordinates still use its layout CSS pixels.
+        const scale = event.metadata.pageScaleFactor ?? 1;
+        const pageScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
         onFrame(Buffer.from(event.data, "base64"), {
-          width: event.metadata.deviceWidth,
-          height: event.metadata.deviceHeight,
+          width: event.metadata.deviceWidth / pageScale,
+          height: event.metadata.deviceHeight / pageScale,
           deviceScaleFactor,
         });
       };
@@ -471,7 +502,12 @@ export const makePlaywrightDriver = (): BrowserDriver => ({
       // Follow the real window; per-tab overrides go through CDP emulation.
       viewport: null,
       acceptDownloads: true,
-      args: ["--no-first-run", "--no-default-browser-check"],
+      args: [
+        "--no-first-run",
+        "--no-default-browser-check",
+        // Covers the brief CDP attach window of a script-opened popup too.
+        "--disable-features=WebAuthenticationUseNativeWinApi",
+      ],
     });
     const wrappers = new WeakMap<Playwright.Page, BrowserPage>();
     const wrap = (page: Playwright.Page) => {
@@ -502,9 +538,15 @@ export const makePlaywrightDriver = (): BrowserDriver => ({
     // someone to answer rather than Playwright dismissing them unseen.
     context.pages().forEach(wrap);
     context.on("page", wrap);
+    // Finish interception before exposing initial or newly-created pages.
+    await Promise.all(context.pages().map((page) => wrap(page).evaluate("undefined")));
     return {
       pages: () => context.pages().map(wrap),
-      newPage: async () => wrap(await context.newPage()),
+      newPage: async () => {
+        const page = wrap(await context.newPage());
+        await page.evaluate("undefined");
+        return page;
+      },
       onClose: (listener) => {
         context.once("close", listener);
       },
