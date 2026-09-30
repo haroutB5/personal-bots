@@ -405,7 +405,9 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
       {selecting ? null : (
         <nav
           aria-label="Task lists"
-          className="mt-3 grid h-11 grid-cols-4 gap-0.5 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)] p-0.5"
+          // No padding on the track: each tab is the full 44 px high, and its
+          // own 2 px padding draws the inset pill (was 40 px targets).
+          className="mt-3 grid h-11 grid-cols-4 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)]"
         >
           {TASK_LIST_FILTERS.map((filter) => {
             const active = filter.id === view;
@@ -416,24 +418,28 @@ export function TasksScreen({ view }: { view: TaskListFilter }): JSX.Element {
                 search={{ view: filter.id }}
                 replace
                 aria-current={active ? "page" : undefined}
-                className={`flex min-w-0 items-center justify-center gap-[3px] rounded-lg text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] ${
-                  active
-                    ? "bg-[var(--personal-surface)] font-semibold text-[var(--personal-text)] shadow-[var(--personal-shadow-card)]"
-                    : "text-[var(--personal-text-secondary)]"
-                }`}
+                className="flex h-11 min-w-0 rounded-[var(--personal-radius-button)] p-0.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-inset"
               >
-                <span className="truncate">{filter.label}</span>
-                {/* Every list shows its count, zero included, so the row reads at a glance. */}
                 <span
-                  className={`min-w-[18px] shrink-0 rounded-full px-[5px] text-center text-[11px] leading-[18px] font-semibold tabular-nums ${
-                    active ? "bg-[var(--personal-fill-muted)]" : "bg-[var(--personal-surface)]"
-                  } ${
-                    counts[filter.id] > 0 && taskListCountNeedsAttention(filter.id)
-                      ? "text-[var(--personal-text)]"
+                  className={`flex min-w-0 flex-1 items-center justify-center gap-[3px] rounded-lg ${
+                    active
+                      ? "bg-[var(--personal-surface)] font-semibold text-[var(--personal-text)] shadow-[var(--personal-shadow-card)]"
                       : "text-[var(--personal-text-secondary)]"
                   }`}
                 >
-                  {counts[filter.id]}
+                  <span className="truncate">{filter.label}</span>
+                  {/* Every list shows its count, zero included, so the row reads at a glance. */}
+                  <span
+                    className={`min-w-[18px] shrink-0 rounded-full px-[5px] text-center text-[11px] leading-[18px] font-semibold tabular-nums ${
+                      active ? "bg-[var(--personal-fill-muted)]" : "bg-[var(--personal-surface)]"
+                    } ${
+                      counts[filter.id] > 0 && taskListCountNeedsAttention(filter.id)
+                        ? "text-[var(--personal-text)]"
+                        : "text-[var(--personal-text-secondary)]"
+                    }`}
+                  >
+                    {counts[filter.id]}
+                  </span>
                 </span>
               </Link>
             );

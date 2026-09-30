@@ -273,7 +273,9 @@ export function ComputerScreen({
         role="tablist"
         aria-label="Computer view"
         className={cn(
-          "mt-3 grid h-11 rounded-[10px] bg-[var(--personal-fill-muted)] p-0.5 md:h-9",
+          // No track padding on the phone: each tab is the full 44 px, its
+          // own padding draws the inset pill (was 40 px targets).
+          "mt-3 grid h-11 rounded-[10px] bg-[var(--personal-fill-muted)] md:h-9",
           segments.length === 3 ? "grid-cols-3" : "grid-cols-2",
           fullScreen && "hidden",
         )}
@@ -285,13 +287,18 @@ export function ComputerScreen({
             role="tab"
             aria-selected={shownSegment === value}
             onClick={() => setSegment(value)}
-            className={
-              shownSegment === value
-                ? "rounded-[8px] bg-[var(--personal-surface)] text-[14px] font-semibold shadow-[var(--personal-shadow-card)]"
-                : "rounded-[8px] text-[14px] text-[var(--personal-text-secondary)]"
-            }
+            className="flex h-11 rounded-[10px] p-0.5 text-[14px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-inset md:h-9"
           >
-            {SEGMENT_LABELS[value]}
+            <span
+              className={cn(
+                "flex flex-1 items-center justify-center rounded-[8px]",
+                shownSegment === value
+                  ? "bg-[var(--personal-surface)] font-semibold shadow-[var(--personal-shadow-card)]"
+                  : "text-[var(--personal-text-secondary)]",
+              )}
+            >
+              {SEGMENT_LABELS[value]}
+            </span>
           </button>
         ))}
       </div>

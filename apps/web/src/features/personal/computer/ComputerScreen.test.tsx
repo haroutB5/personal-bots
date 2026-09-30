@@ -6,7 +6,7 @@ import {
   ThreadId,
   type PersonalBrowserStatus,
 } from "@t3tools/contracts";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { addressBarValue, ComputerBrowserPane, ComputerScreen } from "./ComputerScreen";
@@ -435,8 +435,9 @@ describe("ComputerScreen Desktop segment", () => {
     });
     vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
   };
-  const tabs = () =>
-    renderer!.root.findAllByProps({ role: "tab" }).map((tab) => String(tab.props.children));
+  // The label sits in the tab's inner pill (the tab itself is the 44 px target).
+  const tabText = (tab: ReactTestInstance) => String(tab.findByType("span").props.children);
+  const tabs = () => renderer!.root.findAllByProps({ role: "tab" }).map(tabText);
 
   it("offers Browser, Desktop and Files, and shows the PC's live view on Desktop", async () => {
     stubDocument();
@@ -450,7 +451,7 @@ describe("ComputerScreen Desktop segment", () => {
     expect(renderer!.root.findAllByProps({ "aria-label": "Desktop pane" })).toHaveLength(0);
     const desktopTab = renderer!.root
       .findAllByProps({ role: "tab" })
-      .find((tab) => tab.props.children === "Desktop");
+      .find((tab) => tabText(tab) === "Desktop");
     await act(async () => desktopTab!.props.onClick());
     const pane = renderer!.root.findByProps({ "aria-label": "Desktop pane" });
     expect(pane.props["data-full-screen"]).toBe(false);
