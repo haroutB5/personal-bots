@@ -1,7 +1,7 @@
 import type { CSSProperties, JSX } from "react";
 import { Activity, lazy, Suspense, useMemo, useRef } from "react";
 
-import { Outlet, useLocation, useParams } from "@tanstack/react-router";
+import { Outlet, useLocation, useParams, useRouterState } from "@tanstack/react-router";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 
@@ -76,8 +76,14 @@ export function PersonalShell(): JSX.Element {
   // Phone: the Bots list stays mounted under the pages opened from it
   // (keptBotsList.ts). One element for the life of the shell, so the shell's
   // own re-renders (every navigation) never re-render the hidden list.
+  // Keyed off the page the router has rendered, not the address: while a tap's
+  // navigation is pending the Outlet still renders the /bots match, and
+  // switching to it then mounted a second, visible Bots list for a moment.
+  const renderedPath = useRouterState({
+    select: (state) => state.matches.at(-1)?.pathname ?? state.location.pathname,
+  });
   const mainRef = useRef<HTMLElement | null>(null);
-  const keptList = useKeptBotsList(pathname, isWide);
+  const keptList = useKeptBotsList(renderedPath, isWide);
   useKeptBotsListScroll(mainRef, keptList);
   const keptListElement = useMemo(() => <ChatsScreen />, []);
 
