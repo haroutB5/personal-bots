@@ -209,6 +209,7 @@ import {
 } from "./personal/sessionPrewarm.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
+import * as PersonalLoginRequestService from "./personal/secrets/PersonalLoginRequestService.ts";
 import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
 import * as PersonalLeadBotService from "./personal/leadBots/PersonalLeadBotService.ts";
 import * as PersonalConnectionService from "./personal/connections/service.ts";
@@ -765,6 +766,7 @@ const makeWsRpcLayer = (
       const personalGroups = yield* PersonalGroupService.PersonalGroupService;
       const personalSecrets = yield* PersonalSecretService.PersonalSecretService;
       const personalLogins = yield* PersonalLoginService.PersonalLoginService;
+      const loginRequests = yield* PersonalLoginRequestService.PersonalLoginRequestService;
       const personalConnections = yield* PersonalConnectionService.PersonalConnectionService;
       const personalConnectionApprovals =
         yield* PersonalConnectionApprovalService.PersonalConnectionApprovalService;
@@ -3581,6 +3583,18 @@ const makeWsRpcLayer = (
             "rpc.aggregate": "server",
           }),
         // Password is Redacted by RPC decoding and every response omits it.
+        [WS_METHODS.personalLoginRequestsList]: (input) =>
+          observeRpcEffect(WS_METHODS.personalLoginRequestsList, loginRequests.list(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalLoginRequestsSubmit]: (input) =>
+          observeRpcEffect(WS_METHODS.personalLoginRequestsSubmit, loginRequests.submit(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalLoginRequestsCancel]: (input) =>
+          observeRpcEffect(WS_METHODS.personalLoginRequestsCancel, loginRequests.cancel(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.personalLoginsCreate]: (input) =>
           observeRpcEffect(WS_METHODS.personalLoginsCreate, personalLogins.create(input), {
             "rpc.aggregate": "server",

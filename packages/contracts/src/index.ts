@@ -38,6 +38,7 @@ export * from "./personalSecrets.ts";
 export * from "./personalConnections.ts";
 export * from "./personalCreateApp.ts";
 export * from "./personalLogins.ts";
+export * from "./personalLoginRequests.ts";
 export * from "./personalBrowser.ts";
 export * from "./personalDesktop.ts";
 export * from "./personalRoutines.ts";

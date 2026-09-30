@@ -42,6 +42,7 @@ import {
 import * as PersonalPushService from "../../../personal/push/PersonalPushService.ts";
 import * as PersonalRoutineService from "../../../personal/routines/PersonalRoutineService.ts";
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
+import * as PersonalLoginRequestService from "../../../personal/secrets/PersonalLoginRequestService.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
 import * as PersonalTaskRepository from "../../../personal/tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
@@ -133,6 +134,7 @@ const makeLayer = (harness: Harness) =>
   PersonalSecretService.layerLive.pipe(
     Layer.provideMerge(Layer.mock(PersonalBrowser.PersonalBrowser)({})),
     Layer.provideMerge(Layer.mock(PersonalLoginService.PersonalLoginService)({})),
+    Layer.provideMerge(Layer.mock(PersonalLoginRequestService.PersonalLoginRequestService)({})),
     Layer.provideMerge(PersonalLeadBotService.layer),
     // After the lead service, so it finds the push service when it is built.
     Layer.provideMerge(

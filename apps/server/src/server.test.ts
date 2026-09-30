@@ -114,6 +114,7 @@ import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
+import * as PersonalLoginRequestService from "./personal/secrets/PersonalLoginRequestService.ts";
 import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
 import * as PersonalConnectionCredentialStore from "./personal/connections/credentialStore.ts";
 import * as PersonalConnectionService from "./personal/connections/service.ts";
@@ -807,6 +808,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(PersonalGroupService.PersonalGroupService)({}),
           Layer.mock(PersonalSecretService.PersonalSecretService)({}),
           Layer.mock(PersonalLoginService.PersonalLoginService)({}),
+          Layer.mock(PersonalLoginRequestService.PersonalLoginRequestService)({}),
           Layer.mock(PersonalConnectionService.PersonalConnectionService)({}),
           Layer.mock(PersonalConnectionApprovalService.PersonalConnectionApprovalService)({}),
           Layer.mock(PersonalConnectionCredentialStore.PersonalConnectionCredentialStore)({}),

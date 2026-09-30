@@ -9,6 +9,7 @@ import type {
   PersonalChatNoticeMarker,
   PersonalGroupSystemEvent,
   PersonalTask,
+  PersonalLoginRequest,
 } from "@t3tools/contracts";
 import { classifyTurnFailure } from "@t3tools/shared/turnFailure";
 
@@ -598,6 +599,7 @@ export type ConversationItem =
   | { readonly kind: "question"; readonly id: string; readonly card: QuestionCardItem }
   /** A secret the bot asked for, at the point in the chat where it asked. */
   | { readonly kind: "secret"; readonly id: string; readonly card: SecretRequestCardItem }
+  | { readonly kind: "login"; readonly id: string; readonly request: PersonalLoginRequest }
   | {
       readonly kind: "connection-approval";
       readonly id: string;
@@ -792,6 +794,8 @@ function itemTimeMs(item: ConversationItem): number {
       return taskCreatedMs(item.task);
     case "question":
       return Date.parse(item.card.createdAt);
+    case "login":
+      return Date.parse(item.request.createdAt);
     case "secret":
     case "connection-approval":
     case "lead-bot-change":
@@ -908,6 +912,20 @@ export function placeSecretRequestCards(
       item: { kind: "secret", id: `secret:${card.requestId}`, card } as const,
       atMs: card.createdAtMs,
       pending: card.kind === "pending",
+    })),
+  );
+}
+
+export function placeLoginRequestCards(
+  items: ReadonlyArray<ConversationItem>,
+  requests: ReadonlyArray<PersonalLoginRequest>,
+): ConversationItem[] {
+  return placeTimedCards(
+    items,
+    requests.map((request) => ({
+      item: { kind: "login", id: `login:${request.requestId}`, request } as const,
+      atMs: Date.parse(request.createdAt),
+      pending: request.status === "pending" || request.status === "filling",
     })),
   );
 }

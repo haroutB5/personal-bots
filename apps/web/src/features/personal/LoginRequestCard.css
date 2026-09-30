@@ -1,0 +1,147 @@
+.personal-login-card {
+  border: 1px solid var(--personal-review-border);
+  border-radius: var(--personal-radius-card);
+  background: var(--personal-review-bg);
+  padding: 14px;
+  color: var(--personal-text);
+  overflow-wrap: anywhere;
+}
+
+.personal-login-settled {
+  border-color: var(--personal-border);
+  background: var(--personal-surface);
+}
+
+.personal-login-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--personal-text-secondary);
+}
+
+.personal-login-origin {
+  margin-top: 6px;
+  font-size: 15px;
+}
+
+.personal-login-help {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--personal-text-secondary);
+}
+
+.personal-login-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 15px;
+}
+
+.personal-login-label {
+  display: block;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.personal-login-input {
+  margin-top: 4px;
+  height: 44px;
+  width: 100%;
+  border: 1px solid var(--personal-border);
+  border-radius: var(--personal-radius-button);
+  background: var(--personal-surface);
+  padding-inline: 12px;
+  font-size: 16px;
+  color: var(--personal-text);
+  outline: none;
+}
+
+.personal-login-button {
+  min-height: 44px;
+  border-radius: var(--personal-radius-button);
+  padding-inline: 14px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--personal-text-secondary);
+  outline: none;
+}
+
+.personal-login-password {
+  padding-inline-end: 48px;
+}
+
+.personal-login-submit {
+  margin-inline-start: auto;
+  min-width: 96px;
+  background: var(--personal-primary);
+  color: var(--personal-primary-text);
+}
+
+.personal-login-button:disabled {
+  opacity: 0.4;
+}
+
+.personal-login-visibility {
+  position: absolute;
+  inset-inline-end: 0;
+  top: 4px;
+  display: flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--personal-radius-button);
+  color: var(--personal-text-secondary);
+  outline: none;
+}
+
+.personal-login-input:focus-visible,
+.personal-login-button:focus-visible,
+.personal-login-visibility:focus-visible,
+.personal-login-switch:focus-visible {
+  outline: 2px solid var(--personal-text);
+  outline-offset: 2px;
+}
+
+.personal-login-save {
+  margin-top: 12px;
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 15px;
+}
+
+.personal-login-switch {
+  appearance: none;
+  flex-shrink: 0;
+  width: 44px;
+  height: 26px;
+  border: 1px solid var(--personal-border);
+  border-radius: 999px;
+  background: var(--personal-fill-muted);
+  cursor: pointer;
+}
+
+.personal-login-switch::before {
+  content: "";
+  display: block;
+  width: 20px;
+  height: 20px;
+  margin: 2px;
+  border-radius: 999px;
+  background: var(--personal-text-secondary);
+}
+
+.personal-login-switch:checked {
+  background: var(--personal-primary);
+}
+
+.personal-login-switch:checked::before {
+  transform: translateX(18px);
+  background: var(--personal-primary-text);
+}

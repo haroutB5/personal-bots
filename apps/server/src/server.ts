@@ -92,6 +92,7 @@ import * as PersonalGroupService from "./personal/groups/PersonalGroupService.ts
 import * as PersonalTaskService from "./personal/tasks/PersonalTaskService.ts";
 import * as PersonalSecretService from "./personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "./personal/secrets/PersonalLoginService.ts";
+import * as PersonalLoginRequestService from "./personal/secrets/PersonalLoginRequestService.ts";
 import * as PersonalConnectionApprovalService from "./personal/connections/approvalService.ts";
 import * as PersonalConnectionService from "./personal/connections/service.ts";
 import * as WhatsAppSendLog from "./personal/connections/whatsapp/sendLog.ts";
@@ -642,49 +643,52 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
 );
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
-  // The approval service is shared: the owner answers a card over RPC while
-  // the gateway asked for it over MCP, and both read the same rows.
-  Layer.provideMerge(PersonalConnectionApprovalService.layerLive),
-  Layer.provideMerge(PersonalConnectionService.layerLive),
-  // WhatsApp is a browser-session connection, so its adapter is built from the
-  // shared browser and a persisted send ledger rather than from a token. Merged
-  // as one step because a single pipe accepts at most 20; both still resolve
-  // their own requirements from the steps below.
-  Layer.provideMerge(Layer.mergeAll(WhatsAppSession.layer, WhatsAppSendLog.layer)),
-  Layer.provideMerge(PersonalLoginService.layerLive),
-  // personal browser: the service needs the lease (-> its repository ->
-  // SqlClient), PreviewManager and PersonalBotRepository, all provided by
-  // later steps below.
-  // The user's real PC sits beside the browser (one step: the pipe is full).
-  // It needs the orchestration engine (turn ends free it) from later steps.
-  Layer.provideMerge(Layer.mergeAll(PersonalBrowser.layer, PersonalDesktop.layer)),
-  Layer.provideMerge(PersonalBrowserLease.layer),
-  Layer.provideMerge(PersonalBrowserLeaseRepository.layer),
-  Layer.provideMerge(PersonalBrowserProtectionRepository.layer),
-  // The browser's egress guard reads which saved logins are sensitive sites.
-  Layer.provideMerge(PersonalLoginRepository.layer),
-  // Personal bots. Order matters: each step's output feeds requirements
-  // opened by EARLIER steps, so consumers come first — the seed needs the
-  // service, the service needs the repository, the repository needs SqlClient
-  // (provided by PersistenceLayerLive further below). Tasks come first: they
-  // consume the bot service and repository. Secrets consume tasks, so they
-  // come before them.
-  Layer.provideMerge(PersonalTasksDispatcherLive),
-  Layer.provideMerge(PersonalGroupsDispatcherLive),
-  Layer.provideMerge(PersonalSecretService.layerLive),
-  Layer.provideMerge(PersonalTaskService.layerLive),
-  Layer.provideMerge(PersonalGroupService.layerLive),
-  Layer.provideMerge(PersonalBotsSeedLive),
-  Layer.provideMerge(PersonalBotService.layer),
-  Layer.provideMerge(PersonalBotRepository.layer),
-  // consume the bot service and repository.
-  Layer.provideMerge(PersonalLayerLive),
-  // Two independent background sweeps share a step: a pipe takes at most 20.
-  Layer.provideMerge(Layer.mergeAll(AntigravityInstallationRefreshLive, ReplayMarkers.layer)),
-  Layer.provideMerge(ProviderAuthServiceLive),
-  // Split into a second pipe: a single pipe accepts at most 20 steps. The
-  // order is unchanged, so provideMerge still feeds earlier steps first.
+  Layer.provideMerge(PersonalLoginRequestService.layerLive),
 )
+  .pipe(
+    // The approval service is shared: the owner answers a card over RPC while
+    // the gateway asked for it over MCP, and both read the same rows.
+    Layer.provideMerge(PersonalConnectionApprovalService.layerLive),
+    Layer.provideMerge(PersonalConnectionService.layerLive),
+    // WhatsApp is a browser-session connection, so its adapter is built from the
+    // shared browser and a persisted send ledger rather than from a token. Merged
+    // as one step because a single pipe accepts at most 20; both still resolve
+    // their own requirements from the steps below.
+    Layer.provideMerge(Layer.mergeAll(WhatsAppSession.layer, WhatsAppSendLog.layer)),
+    Layer.provideMerge(PersonalLoginService.layerLive),
+    // personal browser: the service needs the lease (-> its repository ->
+    // SqlClient), PreviewManager and PersonalBotRepository, all provided by
+    // later steps below.
+    // The user's real PC sits beside the browser (one step: the pipe is full).
+    // It needs the orchestration engine (turn ends free it) from later steps.
+    Layer.provideMerge(Layer.mergeAll(PersonalBrowser.layer, PersonalDesktop.layer)),
+    Layer.provideMerge(PersonalBrowserLease.layer),
+    Layer.provideMerge(PersonalBrowserLeaseRepository.layer),
+    Layer.provideMerge(PersonalBrowserProtectionRepository.layer),
+    // The browser's egress guard reads which saved logins are sensitive sites.
+    Layer.provideMerge(PersonalLoginRepository.layer),
+    // Personal bots. Order matters: each step's output feeds requirements
+    // opened by EARLIER steps, so consumers come first — the seed needs the
+    // service, the service needs the repository, the repository needs SqlClient
+    // (provided by PersistenceLayerLive further below). Tasks come first: they
+    // consume the bot service and repository. Secrets consume tasks, so they
+    // come before them.
+    Layer.provideMerge(PersonalTasksDispatcherLive),
+    Layer.provideMerge(PersonalGroupsDispatcherLive),
+    Layer.provideMerge(PersonalSecretService.layerLive),
+    Layer.provideMerge(PersonalTaskService.layerLive),
+    Layer.provideMerge(PersonalGroupService.layerLive),
+    Layer.provideMerge(PersonalBotsSeedLive),
+    Layer.provideMerge(PersonalBotService.layer),
+    Layer.provideMerge(PersonalBotRepository.layer),
+    // consume the bot service and repository.
+    Layer.provideMerge(PersonalLayerLive),
+    // Two independent background sweeps share a step: a pipe takes at most 20.
+    Layer.provideMerge(Layer.mergeAll(AntigravityInstallationRefreshLive, ReplayMarkers.layer)),
+    Layer.provideMerge(ProviderAuthServiceLive),
+    // Split into a second pipe: a single pipe accepts at most 20 steps. The
+    // order is unchanged, so provideMerge still feeds earlier steps first.
+  )
   .pipe(
     // Core Services
     Layer.provideMerge(ServerSettingsLayerLive),

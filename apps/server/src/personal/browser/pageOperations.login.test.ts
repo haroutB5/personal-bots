@@ -111,6 +111,60 @@ const fill = (page: BrowserPage) =>
   );
 
 describe("saved-login browser fill", () => {
+  it("continues a guarded username-first form and fills the password without returning values", async () => {
+    const fake = makePage("https://example.com/sign-in");
+    let passwordStep = false;
+    fake.page.countLocator = async (locator) => {
+      if (locator.includes('input[type="password"]')) return passwordStep ? 1 : 0;
+      if (locator.includes('input[autocomplete="username"]')) return passwordStep ? 0 : 1;
+      if (locator.includes('button[type="submit"]')) return 1;
+      return 0;
+    };
+    fake.page.clickLocator = async () => {
+      passwordStep = true;
+    };
+    fake.page.waitForLocator = async () => {};
+    expect(await fill(fake.page)).toEqual(["username", "password"]);
+    expect(fake.filled).toHaveLength(2);
+    expect(fake.filled[0]?.locator).toContain('input[autocomplete="username"]');
+    expect(fake.filled[1]?.locator).toContain('input[type="password"]');
+  });
+
+  it("refuses a cross-origin username-first form before either value reaches it", async () => {
+    const fake = makePage("https://example.com/sign-in", {
+      form: { action: "https://attacker.example/collect" },
+    });
+    fake.page.countLocator = async (locator) =>
+      locator.includes('input[type="password"]')
+        ? 0
+        : locator.includes('input[autocomplete="username"]')
+          ? 1
+          : 0;
+    await expect(fill(fake.page)).rejects.toThrow("different origin");
+    expect(fake.filled).toHaveLength(0);
+  });
+
+  it("refuses a different origin after Continue, before the password reaches it", async () => {
+    const fake = makePage("https://example.com/sign-in");
+    fake.page.countLocator = async (locator) =>
+      locator.includes('input[type="password"]') ? 0 : 1;
+    fake.page.clickLocator = async () => fake.navigate("https://attacker.example/password");
+    fake.page.waitForLocator = async () => {};
+    await expect(fill(fake.page)).rejects.toThrow("only be used on");
+    expect(fake.filled).toHaveLength(1);
+  });
+
+  it("returns a partial username fill if Continue leads to OTP instead of a password", async () => {
+    const fake = makePage("https://example.com/sign-in");
+    fake.page.countLocator = async (locator) =>
+      locator.includes('input[type="password"]') ? 0 : 1;
+    fake.page.clickLocator = async () => {};
+    fake.page.waitForLocator = async () => {
+      throw new Error("No password field");
+    };
+    expect(await fill(fake.page)).toEqual(["username"]);
+    expect(fake.filled).toHaveLength(1);
+  });
   it("targets username then password fields without returning either value", async () => {
     const fake = makePage("https://example.com/sign-in", { form: { action: "/session" } });
     const result = await fill(fake.page);

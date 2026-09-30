@@ -178,13 +178,13 @@ const PASSWORD_FILL_TIMEOUT_MS = 2_000;
  * password field, preferring the form that holds the focus — so what is
  * validated is what is filled.
  */
-const FORM_DESTINATIONS_SCRIPT = `(() => {
+const formDestinationsScript = (fieldSelector: string) => `(() => {
   const visible = (element) => {
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
     return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
   };
-  const fields = Array.from(document.querySelectorAll('input[type="password"]'))
+  const fields = Array.from(document.querySelectorAll('${fieldSelector}'))
     .filter((element) => !element.disabled && visible(element));
   if (fields.length === 0) return { found: false, hasForm: false, baseUri: document.baseURI, action: null, submitters: [] };
   const focused = fields.find((element) => element.form !== null && element.form.contains(document.activeElement));
@@ -230,10 +230,14 @@ const crossOriginError = (expectedOrigin: string, what: string) =>
  * model-provided script is a separate, taint-tracked tool call, and a saved
  * login is refused on any origin where one has run.
  */
-async function assertFormDestinations(page: BrowserPage, expectedOrigin: string): Promise<void> {
+async function assertFormDestinations(
+  page: BrowserPage,
+  expectedOrigin: string,
+  fieldSelector = 'input[type="password"]',
+): Promise<void> {
   let resolved: FormDestinations;
   try {
-    resolved = (await page.evaluate(FORM_DESTINATIONS_SCRIPT)) as FormDestinations;
+    resolved = (await page.evaluate(formDestinationsScript(fieldSelector))) as FormDestinations;
   } catch (cause) {
     throw new HostOperationError(
       "PreviewAutomationExecutionError",
@@ -287,6 +291,41 @@ export async function performFillLogin(
   timeoutMs: number,
 ): Promise<ReadonlyArray<PersonalLoginFilledField>> {
   pageOrigin(page, input.expectedOrigin);
+  // Username-first sign-in pages use the same destination and origin guards.
+  // Only continue a login form, never guess an OTP or passkey control.
+  let usernameFirst = false;
+  if ((await page.countLocator(LOGIN_PASSWORD_INPUT)) === 0) {
+    for (const candidate of LOGIN_USERNAME_INPUTS) {
+      const firstStep = `form:has(${candidate})`;
+      const usernameLocator = `${firstStep} ${candidate}`;
+      if ((await page.countLocator(usernameLocator)) === 0) continue;
+      const fieldSelector = candidate.replace(":visible", "").replace(":not([disabled])", "");
+      await assertFormDestinations(page, input.expectedOrigin, fieldSelector);
+      const field = await page.resolveElement(usernameLocator, timeoutMs);
+      if (field === null) continue;
+      try {
+        pageOrigin(page, input.expectedOrigin);
+        await assertFormDestinations(page, input.expectedOrigin, fieldSelector);
+        await field.fill(input.username, PASSWORD_FILL_TIMEOUT_MS);
+      } finally {
+        await field.dispose().catch(() => undefined);
+      }
+      usernameFirst = true;
+      pageOrigin(page, input.expectedOrigin);
+      await assertFormDestinations(page, input.expectedOrigin, fieldSelector);
+      const next = `${firstStep} :is(button[type="submit"], input[type="submit"], button:text-matches("^(continue|next)$", "i"))`;
+      if ((await page.countLocator(next)) === 0) return ["username"];
+      await page.clickLocator(next, timeoutMs);
+      try {
+        await page.waitForLocator(LOGIN_PASSWORD_INPUT, timeoutMs);
+      } catch {
+        pageOrigin(page, input.expectedOrigin);
+        return ["username"];
+      }
+      pageOrigin(page, input.expectedOrigin);
+      break;
+    }
+  }
   const focusedForm = `form:has(:focus):has(${LOGIN_PASSWORD_INPUT})`;
   const loginForm = `form:has(${LOGIN_PASSWORD_INPUT})`;
   const formSelector =
@@ -306,8 +345,9 @@ export async function performFillLogin(
   }
   await assertFormDestinations(page, input.expectedOrigin);
 
-  const fields: PersonalLoginFilledField[] = [];
+  const fields: PersonalLoginFilledField[] = usernameFirst ? ["username"] : [];
   for (const candidate of LOGIN_USERNAME_INPUTS) {
+    if (usernameFirst) break;
     const locator = `${scope}${candidate}`;
     if ((await page.countLocator(locator)) === 0) continue;
     pageOrigin(page, input.expectedOrigin);

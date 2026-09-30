@@ -81,6 +81,7 @@ import {
   placeDelegationCards,
   placeQuestionCards,
   placeSecretRequestCards,
+  placeLoginRequestCards,
   placeConnectionApprovalCards,
   placeLeadBotChangeCards,
   resolveConversationHeaderName,
@@ -105,6 +106,7 @@ import {
 import { deriveSecretRequestCards, type SecretRequestOutcome } from "./secretRequestCards";
 import { useConnectionApprovalCards } from "./useConnectionApprovalCards";
 import { useLeadBotChangeCards } from "./useLeadBotChangeCards";
+import { useLoginRequestCards } from "./useLoginRequests";
 import {
   personalSecretCancel,
   personalSecretFulfill,
@@ -425,20 +427,24 @@ export function ConversationScreen({
   // A team lead asking to remove or rewrite a bot it did not create.
   const leadBotChanges = useLeadBotChangeCards(environmentId, threadId);
   const leadBotChangeCards = leadBotChanges.cards;
+  const loginRequests = useLoginRequestCards(environmentId, threadId);
   // The cards the bot put in the conversation belong in it: an answered
   // question keeps the spot where it was asked, so the bot's next reply reads
   // below it instead of above a card stuck at the bottom of the chat.
   const items = useMemo(
     () =>
-      placeLeadBotChangeCards(
-        placeConnectionApprovalCards(
-          placeSecretRequestCards(
-            placeQuestionCards(delegationItems, questionCards),
-            secretRequestCards,
+      placeLoginRequestCards(
+        placeLeadBotChangeCards(
+          placeConnectionApprovalCards(
+            placeSecretRequestCards(
+              placeQuestionCards(delegationItems, questionCards),
+              secretRequestCards,
+            ),
+            connectionApprovalCards,
           ),
-          connectionApprovalCards,
+          leadBotChangeCards,
         ),
-        leadBotChangeCards,
+        loginRequests.cards,
       ),
     [
       connectionApprovalCards,
@@ -446,6 +452,7 @@ export function ConversationScreen({
       leadBotChangeCards,
       questionCards,
       secretRequestCards,
+      loginRequests.cards,
     ],
   );
 
@@ -934,6 +941,8 @@ export function ConversationScreen({
               void onProvideSecret(requestId, value, shared)
             }
             onDeclineSecret={(requestId) => void onDeclineSecret(requestId)}
+            onProvideLogin={loginRequests.provide}
+            onCancelLogin={(requestId) => void loginRequests.cancel(requestId)}
             onDecideConnectionApproval={(approvalId, decision) =>
               void onDecideConnectionApproval(approvalId, decision)
             }

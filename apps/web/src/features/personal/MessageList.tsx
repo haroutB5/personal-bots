@@ -29,6 +29,7 @@ import { groupSystemLabel, readGroupMarker } from "./groupModel";
 import { QuestionCard } from "./QuestionCard";
 import type { UserInputAnswers } from "./questionCards";
 import { SecretRequestCard } from "./SecretRequestCard";
+import { LoginRequestCard, type ProvideLogin } from "./LoginRequestCard";
 import { ConnectionApprovalCard } from "./ConnectionApprovalCard";
 import { approvalHasExpired } from "./connectionApprovalCards";
 import { LeadBotChangeCard } from "./LeadBotChangeCard";
@@ -411,6 +412,8 @@ export function MessageList({
   onDismissQuestion,
   onProvideSecret,
   onDeclineSecret,
+  onProvideLogin,
+  onCancelLogin,
   onDecideConnectionApproval,
   approvalRespondingIds,
   onDecideLeadBotChange,
@@ -458,6 +461,8 @@ export function MessageList({
   /** The value goes straight to the fulfil RPC; nothing here stores it. */
   onProvideSecret: (requestId: string, value: string, shared: boolean) => void;
   onDeclineSecret: (requestId: string) => void;
+  onProvideLogin?: ProvideLogin;
+  onCancelLogin?: (requestId: string) => void;
   onDecideConnectionApproval: (approvalId: string, decision: "approved" | "denied") => void;
   approvalRespondingIds: ReadonlySet<string>;
   /** One-to-one chat only. Resolves to an error message for the card, or null. */
@@ -842,6 +847,16 @@ export function MessageList({
                     responding={respondingIds.has(item.card.requestId)}
                     onProvide={onProvideSecret}
                     onDecline={onDeclineSecret}
+                  />
+                );
+              case "login":
+                return (
+                  <LoginRequestCard
+                    key={item.id}
+                    request={item.request}
+                    botName={botName}
+                    onProvide={(...args) => onProvideLogin?.(...args)}
+                    onCancel={(requestId) => onCancelLogin?.(requestId)}
                   />
                 );
               case "connection-approval":

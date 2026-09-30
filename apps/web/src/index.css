@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./features/personal/personal.css";
+@import "./features/personal/LoginRequestCard.css";
 
 @custom-variant dark (&:is(.dark, .dark *));
 @custom-variant light (&:not(.dark, .dark *));

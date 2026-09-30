@@ -39,6 +39,7 @@ import * as PersonalRoutineService from "../../../personal/routines/PersonalRout
 import * as PersonalBotService from "../../../personal/PersonalBotService.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
+import * as PersonalLoginRequestService from "../../../personal/secrets/PersonalLoginRequestService.ts";
 import * as PersonalTaskRepository from "../../../personal/tasks/PersonalTaskRepository.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
 import * as ProviderRegistry from "../../../provider/Services/ProviderRegistry.ts";
@@ -143,6 +144,7 @@ const makeLayer = (harness: Harness) =>
       }),
     ),
     // The team-management tools (see leadBots.test.ts); the service needs the
+    Layer.provideMerge(Layer.mock(PersonalLoginRequestService.PersonalLoginRequestService)({})),
     // routine service to refuse removing a bot with a routine switched on.
     Layer.provideMerge(PersonalLeadBotService.layer),
     Layer.provideMerge(PersonalRoutineService.layer),

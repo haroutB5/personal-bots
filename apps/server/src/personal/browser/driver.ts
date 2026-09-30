@@ -120,6 +120,8 @@ export interface BrowserPage {
     onFrame: (jpeg: Uint8Array, meta: ScreencastMeta) => void,
   ): Promise<() => Promise<void>>;
   onClose(listener: () => void): void;
+  /** Main-frame origin changes, including an away-and-back navigation. */
+  onOriginChange?(listener: () => void): void;
   /** The native dialog blocking this page, or null. Dialogs are never answered on their own. */
   pendingDialog(): PageDialog | null;
   /** Fires when a native dialog opens, and with null when it closes. Returns an unsubscribe. */
@@ -445,6 +447,17 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
     },
     onClose: (listener) => {
       page.once("close", listener);
+    },
+    onOriginChange: (listener) => {
+      let previous = new URL(page.url()).origin;
+      page.on("framenavigated", (frame) => {
+        if (frame !== page.mainFrame()) return;
+        const next = new URL(frame.url()).origin;
+        if (next !== previous) {
+          previous = next;
+          listener();
+        }
+      });
     },
     pendingDialog: () => dialog?.info ?? null,
     onDialogChange: (listener) => {

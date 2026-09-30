@@ -506,6 +506,28 @@ const UseLoginTool = Tool.make("use_login", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const RequestLoginTool = Tool.make("request_login", {
+  description:
+    "On a website sign-in page with no saved login, ask the user through an in-chat username/password card. Pass the exact HTTPS origin of your current shared-browser tab, with an optional one-line reason or label. Never ask for a password or username in chat, never type a password, and never use request_secret for website logins. If a saved login matches, use use_login instead. End your turn after requesting the card: the server fills the form itself, saves by default unless the user turns saving off, and resumes you with only filled, cancelled, expired, origin-mismatch or fill-failed plus whether saved. Credentials never reach you. A filled form still needs a known submit button or Enter. Use request_browser_help for CAPTCHA, 2FA/OTP and passkeys.",
+  parameters: Schema.Struct({
+    origin: TrimmedNonEmptyString,
+    reason: Schema.optional(Schema.String),
+    label: Schema.optional(TrimmedNonEmptyString),
+  }),
+  success: Schema.Struct({
+    requestId: Schema.String,
+    status: Schema.Literal("pending"),
+    note: Schema.String,
+  }),
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Request a website login")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 const CloseBrowserTool = Tool.make("close_browser", {
   description:
     "Close the shared browser when you are done with it, or when the user asks you to. Every tab is closed, Chrome is stopped and the session ends, so do this only when no further browsing is expected; the browser starts again on the next browser tool call. Refused while the user is controlling the browser themselves. Closing an already-closed browser is safe and does nothing.",
@@ -611,6 +633,7 @@ export const BotsToolkit = Toolkit.make(
   SteerTaskTool,
   RequestSecretTool,
   UseLoginTool,
+  RequestLoginTool,
   RequestBrowserHelpTool,
   CloseBrowserTool,
   CallVoteTool,

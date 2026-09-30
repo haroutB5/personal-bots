@@ -27,6 +27,7 @@ import { isOwnerMessageId } from "../../../personal/leadBots/leadBotConfirm.ts";
 import * as PersonalLeadBotService from "../../../personal/leadBots/PersonalLeadBotService.ts";
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
+import * as PersonalLoginRequestService from "../../../personal/secrets/PersonalLoginRequestService.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import {
@@ -165,6 +166,7 @@ const make = Effect.gen(function* () {
   const botRepository = yield* PersonalBotRepository.PersonalBotRepository;
   const secrets = yield* PersonalSecretService.PersonalSecretService;
   const logins = yield* PersonalLoginService.PersonalLoginService;
+  const loginRequests = yield* PersonalLoginRequestService.PersonalLoginRequestService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const threadMessages = yield* ProjectionThreadMessageRepository;
   const browser = yield* PersonalBrowser.PersonalBrowser;
@@ -600,6 +602,23 @@ const make = Effect.gen(function* () {
             labelOrOrigin: input.login,
           })
           .pipe(Effect.mapError(readable));
+      }),
+    request_login: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* callerTask();
+        const row = yield* loginRequests
+          .request({
+            taskId: caller.task.taskId,
+            threadId: caller.threadId,
+            botId: caller.botId,
+            ...input,
+          })
+          .pipe(Effect.mapError(readable));
+        return {
+          requestId: row.requestId,
+          status: "pending" as const,
+          note: "The login card is in this chat. End your turn; the result arrives without credentials. Never ask for passwords in chat.",
+        };
       }),
     request_browser_help: (input) =>
       Effect.gen(function* () {

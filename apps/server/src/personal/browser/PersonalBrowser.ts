@@ -185,7 +185,13 @@ export class PersonalBrowser extends Context.Service<
       readonly expectedOrigin: string;
       readonly username: string;
       readonly password: string;
+      /** A login card is bound to the requesting tab's origin generation. */
+      readonly expectedTabId?: string;
     }) => Effect.Effect<ReadonlyArray<PersonalLoginFilledField>, HostOperationError>;
+    /** Server-only binding, with no page text, credential or signed URL. */
+    readonly loginPage: (
+      threadId: ThreadId,
+    ) => Effect.Effect<{ readonly tabId: string; readonly origin: string } | null>;
     readonly attachViewer: (input: {
       readonly sessionId: string;
       readonly canOperate: boolean;
@@ -231,6 +237,7 @@ interface TabEntry {
   scriptTainted: boolean;
   /** The answer `preview_type` gave the open prompt dialog, sent with Enter. */
   dialogPromptText: string | null;
+  loginOriginRevision: number;
 }
 
 const RECENT_ACTIVITY_LIMIT = 30;
@@ -1215,9 +1222,13 @@ export const make = (options: PersonalBrowserOptions) =>
           credentialFormUrl: null,
           scriptTainted: false,
           dialogPromptText: null,
+          loginOriginRevision: 0,
         };
         runtime.tabs.set(tab.tabId, tab);
         page.onClose(() => runFork(onTabPageClosed(tab)));
+        page.onOriginChange?.(() => {
+          tab.loginOriginRevision++;
+        });
         watchDialogs(page);
         page.onDialogChange(() => {
           tab.dialogPromptText = null;
@@ -1786,10 +1797,21 @@ export const make = (options: PersonalBrowserOptions) =>
         );
     };
 
+    const loginPage: PersonalBrowser["Service"]["loginPage"] = (threadId) =>
+      Effect.sync(() => {
+        const tab = latestTabForThread(threadId);
+        if (tab === undefined || !openPage(tab.page)) return null;
+        const origin = originOf(tab.page.url());
+        return origin === null
+          ? null
+          : { tabId: `${tab.tabId}:${tab.loginOriginRevision}`, origin };
+      });
+
     const fillLogin: PersonalBrowser["Service"]["fillLogin"] = (input) => {
       // Learned before any driver call, so even an error raised mid-fill that
       // echoes the value is masked on its way out.
       redactor.remember(input.password);
+      redactor.remember(input.username);
       const execute = Effect.gen(function* () {
         yield* clearHelpForAgentSwitch(input.threadId);
         const source = latestTabForThread(input.threadId);
@@ -1798,6 +1820,17 @@ export const make = (options: PersonalBrowserOptions) =>
             new HostOperationError(
               "PreviewAutomationTabNotFoundError",
               "No open browser tab for this thread. Open the matching site first.",
+            ),
+          );
+        }
+        if (
+          input.expectedTabId !== undefined &&
+          input.expectedTabId !== `${source.tabId}:${source.loginOriginRevision}`
+        ) {
+          return yield* Effect.fail(
+            new HostOperationError(
+              "PreviewAutomationExecutionError",
+              "Login origin mismatch: the requesting tab changed.",
             ),
           );
         }
@@ -2556,6 +2589,7 @@ export const make = (options: PersonalBrowserOptions) =>
       activity,
       handleAutomationRequest,
       fillLogin,
+      loginPage,
       attachViewer,
       handleViewerMessage,
     });

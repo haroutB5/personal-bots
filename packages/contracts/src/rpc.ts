@@ -375,6 +375,13 @@ import {
   PersonalLoginSetSensitiveInput,
 } from "./personalLogins.ts";
 import { PersonalDesktopError, PersonalDesktopStatus } from "./personalDesktop.ts";
+import {
+  PersonalLoginRequest,
+  PersonalLoginRequestsListInput,
+  PersonalLoginRequestsListResult,
+  PersonalLoginRequestsSubmitInput,
+  PersonalLoginRequestsCancelInput,
+} from "./personalLoginRequests.ts";
 // personal browser
 import {
   PersonalBrowserError,
@@ -654,6 +661,9 @@ export const WS_METHODS = {
 
   // Personal saved logins (passwords are write-only and never appear in results)
   personalLoginsList: "personalLogins.list",
+  personalLoginRequestsList: "personalLoginRequests.list",
+  personalLoginRequestsSubmit: "personalLoginRequests.submit",
+  personalLoginRequestsCancel: "personalLoginRequests.cancel",
   personalLoginsCreate: "personalLogins.create",
   personalLoginsUpdate: "personalLogins.update",
   personalLoginsDelete: "personalLogins.delete",
@@ -1629,6 +1639,22 @@ const WsPersonalLoginsCreateRpc = Rpc.make(WS_METHODS.personalLoginsCreate, {
   error: PersonalLoginsRpcError,
 });
 
+const WsPersonalLoginRequestsListRpc = Rpc.make(WS_METHODS.personalLoginRequestsList, {
+  payload: PersonalLoginRequestsListInput,
+  success: PersonalLoginRequestsListResult,
+  error: PersonalLoginsRpcError,
+});
+const WsPersonalLoginRequestsSubmitRpc = Rpc.make(WS_METHODS.personalLoginRequestsSubmit, {
+  payload: PersonalLoginRequestsSubmitInput,
+  success: PersonalLoginRequest,
+  error: PersonalLoginsRpcError,
+});
+const WsPersonalLoginRequestsCancelRpc = Rpc.make(WS_METHODS.personalLoginRequestsCancel, {
+  payload: PersonalLoginRequestsCancelInput,
+  success: PersonalLoginRequest,
+  error: PersonalLoginsRpcError,
+});
+
 const WsPersonalLoginsUpdateRpc = Rpc.make(WS_METHODS.personalLoginsUpdate, {
   payload: PersonalLoginUpdateInput,
   success: PersonalLogin,
@@ -2514,6 +2540,9 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalConnectionApprovalsDecideRpc,
   WsPersonalConnectionApprovalsCancelRpc,
   WsPersonalLoginsListRpc,
+  WsPersonalLoginRequestsListRpc,
+  WsPersonalLoginRequestsSubmitRpc,
+  WsPersonalLoginRequestsCancelRpc,
   WsPersonalLoginsCreateRpc,
   WsPersonalLoginsUpdateRpc,
   WsPersonalLoginsDeleteRpc,
