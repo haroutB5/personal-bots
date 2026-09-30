@@ -1271,7 +1271,7 @@ function LiveViewport(props: {
             aria-description={
               remoteEditable && !keyboardOpen ? "A text field is ready for typing" : undefined
             }
-            onPointerDown={(event) => event.preventDefault()}
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               if (keyboardOpen) {
                 keyboardPinnedRef.current = false;
