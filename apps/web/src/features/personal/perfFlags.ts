@@ -15,6 +15,10 @@ export type PerfOptimization =
   // The chat preload starts from the list's first paint (snapshot included)
   // with a 250 ms idle deadline (1.59.3, H8); off: the 3 s default deadline.
   | "preload-chat-soon"
+  // The T3 Connect onboarding wizard mounts only when an in-session sign-in
+  // asks for it, keeping its session and link-state reads off boot (1.59.4);
+  // off: mounted at boot.
+  | "defer-connect-wizard"
   | "snapshot-early"
   | "warm-highlighter"
   | "rum"

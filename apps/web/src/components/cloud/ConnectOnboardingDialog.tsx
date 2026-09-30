@@ -8,6 +8,7 @@ import {
   EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
 } from "~/cloud/connectOnboarding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { perfOptimizationOn } from "~/features/personal/perfFlags";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { usePrimarySessionState } from "~/environments/primary";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -37,10 +38,66 @@ export function ConnectOnboardingDialog() {
 
 type OnboardingStep = "publish" | "devices";
 
+/**
+ * Watches Clerk for in-session sign-ins and mounts the wizard only once one
+ * asks for it. The wizard reads the session's scopes and the relay link state
+ * (two HTTP calls); on a cold load, which never opens it, they used to run on
+ * the boot path for nothing. Kill switch: bots:perf-off = "defer-connect-wizard"
+ * (the wizard mounts at boot, as before).
+ */
 function ConfiguredConnectOnboardingDialog() {
   // Mirrors ManagedRelayAuthProvider: a pending Clerk session must not read as
   // signed-out, or its later activation would look like a fresh sign-in.
   const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
+  const [requestedAccount, setRequestedAccount] = useState<string | null>(null);
+  const observedAccountRef = useRef<string | null | undefined>(undefined);
+  // Once mounted the wizard stays mounted, so its close animation and its
+  // state across a later sign-in behave exactly as before.
+  const [wizardMounted, setWizardMounted] = useState(
+    () => !perfOptimizationOn("defer-connect-wizard"),
+  );
+
+  // Every sign-in or account switch that completes during this session
+  // requests the wizard — account transitions clear the connected relay
+  // environments, so each new session starts with no devices to reach. A cold
+  // load observes undefined → account and must not re-prompt.
+  useEffect(() => {
+    if (!isLoaded) return;
+    // A loaded-but-incomplete snapshot (signed in, user id not yet populated)
+    // must not be recorded as signed-out — the next render would then look
+    // like a fresh sign-in on a cold load.
+    if (isSignedIn && !userId) return;
+    const previousAccount = observedAccountRef.current;
+    const nextAccount = isSignedIn && userId ? userId : null;
+    observedAccountRef.current = nextAccount;
+    if (previousAccount !== undefined && previousAccount !== nextAccount && nextAccount !== null) {
+      setRequestedAccount(nextAccount);
+      setWizardMounted(true);
+    }
+  }, [isLoaded, isSignedIn, userId]);
+
+  if (!wizardMounted) return null;
+  return (
+    <ConnectOnboardingWizard
+      isSignedIn={isSignedIn ?? false}
+      userId={userId ?? null}
+      requestedAccount={requestedAccount}
+      setRequestedAccount={setRequestedAccount}
+    />
+  );
+}
+
+function ConnectOnboardingWizard({
+  isSignedIn,
+  userId,
+  requestedAccount,
+  setRequestedAccount,
+}: {
+  readonly isSignedIn: boolean;
+  readonly userId: string | null;
+  readonly requestedAccount: string | null;
+  readonly setRequestedAccount: (account: string | null) => void;
+}) {
   const [optOutState, setOptOutState] = useLocalStorage(
     CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
     EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
@@ -70,7 +127,6 @@ function ConfiguredConnectOnboardingDialog() {
     ? ["publish", "devices"]
     : ["devices"];
 
-  const [requestedAccount, setRequestedAccount] = useState<string | null>(null);
   const [openForAccount, setOpenForAccount] = useState<string | null>(null);
   const [step, setStep] = useState<OnboardingStep>("devices");
   const [exposeEnvironment, setExposeEnvironment] = useState(true);
@@ -78,27 +134,8 @@ function ConfiguredConnectOnboardingDialog() {
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const prefilledFromLinkStateRef = useRef(false);
-  const observedAccountRef = useRef<string | null | undefined>(undefined);
 
   const optOutAccounts = optOutState.optOutAccounts;
-
-  // Every sign-in or account switch that completes during this session
-  // requests the wizard — account transitions clear the connected relay
-  // environments, so each new session starts with no devices to reach. A cold
-  // load observes undefined → account and must not re-prompt.
-  useEffect(() => {
-    if (!isLoaded) return;
-    // A loaded-but-incomplete snapshot (signed in, user id not yet populated)
-    // must not be recorded as signed-out — the next render would then look
-    // like a fresh sign-in on a cold load.
-    if (isSignedIn && !userId) return;
-    const previousAccount = observedAccountRef.current;
-    const nextAccount = isSignedIn && userId ? userId : null;
-    observedAccountRef.current = nextAccount;
-    if (previousAccount !== undefined && previousAccount !== nextAccount && nextAccount !== null) {
-      setRequestedAccount(nextAccount);
-    }
-  }, [isLoaded, isSignedIn, userId]);
 
   // A manageable session implies a primary environment, so when the scopes
   // allow publishing, wait for the connection target too — otherwise the
