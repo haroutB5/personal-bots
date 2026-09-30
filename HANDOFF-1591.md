@@ -71,3 +71,39 @@ J1-warm wall / longTaskMs, J1-deep wall / longTaskMs, light fixture: 1.30.1 1834
 - H7/H4/H1 re-proved on this code (h7race 0/8 wrong counts, count right from first render; H4 0 relay rows; H1 pass).
 - Evidence `~/.personal-bots/qa/frontend-1593/` (`bisect.mjs`, `check-*.log`, probes: `probe-*.mjs`, `ws-*.json`, `profile-*.json`). Every throwaway stopped by its PID, roots deleted after junction checks. Bisect worktree `C:/Claude/AI/_wt/hbots-bisect` (detached, 1.30.1) left for reuse.
 - Not done: J1 boot work itself. Profiling shows the boot runs a serial HTTP chain before the socket opens (version.txt, auth/session x2, client-diag, environment x2, link-state; about 1.3 s at 4x CPU) and most main-thread time is parse/compile/style ("program"). That is a bigger, separate job.
+
+## 1.59.4: lighter boot, recalibrated J1 budgets
+
+Staged, not activated: release `4db8bb035114` (on 1.59.3; live is 1.59.2 `c0ad253f2963`, the rollback; 1.59.3 `2a1b2f1ca439` was never shipped and is included). Web only on top of 1.59.3; no migration.
+
+What the "serial chain" was: each boot call returns in about 6 ms; the gaps between them are main-thread work (module evaluation, ~1 s at 4x CPU before the first rows). Real duplicates: `/api/auth/session` (auth gate, then the Connect wizard's scope read), `/.well-known/t3/environment` (connection registration, then prepare), plus `/api/connect/link-state` from the wizard. `version.txt` is already fire-and-forget; the auth gate must precede the first render; the Clerk shell (a key is baked into the build, and relay auth needs it) is awaited before render by design. Those were left as they are. Auth, pairing and relay code paths are unchanged.
+
+| Commit       | Change                                                                                                                                                                                    | Kill switch            | Before -> after (throwaway, 5 runs, 4x CPU)                                                                                                                                                 |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dcb6b2bc40` | Connect wizard: a light watcher keeps the sign-in transition logic; the wizard (session scopes + link state reads) mounts only when an in-session sign-in asks for it                     | `defer-connect-wizard` | J1-deep requests 196 -> 194; wall/long tasks noise                                                                                                                                          |
+| `5f96e4a7e9` | Root dialogs and hosts (preview automation, Electron host, quit overlay, Connect/relay-install/SSH dialogs, theme editor) lazy, mounted by `DeferredMount` (>= 3 s after boot, then idle) | `lean-boot`            | J1-warm wall 1440.5 -> 1264.5, long tasks 1381 -> 1247, requests 145 -> 121, jsKB 2391 -> 2187.5; J1-deep requests 194 -> 178. Mounting them at first paint cost J2 403 ms, hence the delay |
+| `f973d0b3cb` | A second descriptor read within 2 s reuses the first successful answer (web fetch wrapper; failures never reused)                                                                         | `descriptor-reuse`     | requests -1 (J1-warm 120, J1-deep 176); time within noise                                                                                                                                   |
+
+Budgets (`b0bd35d4a5`, `d0169e4575`, CTO decision): the four J1 wall/longTaskMs ceilings reset once to 1.30.1's measured-today p50 (1834/1729, 2656/2202; repeat 1874.2/1851, 2641.2/2196), then ratcheted to 1.59.4's p50 x (1 + headroom) where lower: J1-warm.wall 1834 -> 1785; the other three stayed (candidates 1756, 3165, 2598 were higher). The seven other ceilings are untouched. README "Recalibration, 2026-09-30" and budget.json `recalibration` record it.
+
+### Final 11-budget table (p50)
+
+| Metric             | Old ceiling | New ceiling | QA live 1.59.2 | Throwaway 1.59.2, 400 chats | 1.59.4 gate (committed budget.json) | 1.59.4, 400 chats |
+| ------------------ | ----------- | ----------- | -------------- | --------------------------- | ----------------------------------- | ----------------- |
+| J1-warm.wall       | 1138        | 1785        | 1572.6         | 1386.1                      | 1269.7 ok                           | 1352.2            |
+| J1-warm.longTaskMs | 960         | 1729        | 1521           | 1313                        | 1231 ok                             | 1231              |
+| J1-warm.requests   | 196         | 196         | 145            | 145                         | 120 ok                              | 120               |
+| J1-warm.jsKB       | 3632        | 3632        | 2390.7         | 2390.7                      | 2187.6 ok                           | 2187.6            |
+| J2.chatShell       | 228         | 228         | 1133.1         | 567.5                       | 83.9 ok                             | 173.4             |
+| J2.requests        | 4           | 4           | 50             | 50                          | 3 ok                                | 3                 |
+| J2.jsKB            | 20          | 20          | 1198.2         | 1198.2                      | 0 ok                                | 0                 |
+| J1-deep.wall       | 1478        | 2656        | 2450.1         | 2083.1                      | 2095.1 ok                           | 2094.4            |
+| J1-deep.longTaskMs | 1130        | 2202        | 2122           | 1757                        | 1704 ok                             | 1730              |
+| J1-deep.requests   | 246         | 246         | 196            | 196                         | 176 ok                              | 176               |
+| J1-deep.jsKB       | 4321        | 4321        | 3588.7         | 3588.7                      | 3430.5 ok                           | 3430.5            |
+
+`check.mjs` with the committed budget.json against the staged release: exit 0 (`~/.personal-bots/qa/frontend-1593/check-final1594.log`). Live data runs heavier than the throwaway (QA's 1.59.2 J1-deep long tasks were 2122 against the new 2202), so QA's live check is the one to watch.
+
+- Gates: web `src/features/personal`, `src/lib`, `src/components/cloud` 0 (185 files, 1845 tests); web tsc 0; also `src/authBootstrap.test.ts`, `src/cloud`, `src/connection`, `src/environments`: 3 failures in `src/cloud/connectCliAuth.test.ts`, identical on untouched 1.59.0 (pre-existing, env-dependent). Server not touched since 1.59.3 (server personal 0, tsc 0 then). Build exit 0.
+- H7 0/8 wrong counts, H4 0 relay rows, H1 pass, on the staged release. Deferred pieces load after about 3 s; the only console errors are the known Clerk `/v1/client` 400s.
+- Every throwaway stopped by its PID, roots deleted after junction checks. Bisect worktree removed (`git worktree remove`, then `rmdir` with `\?\`).
