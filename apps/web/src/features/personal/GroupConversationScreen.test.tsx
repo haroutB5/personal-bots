@@ -1,3 +1,4 @@
+import * as Option from "effect/Option";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
@@ -28,8 +29,9 @@ vi.mock("~/state/entities", () => ({
 vi.mock("~/state/threads", () => ({
   useEnvironmentThread: (_environmentId: string | null, threadId: string | null) => {
     state.threadRequests.push(threadId);
-    return {};
+    return { status: "empty", data: Option.none(), error: Option.none(), page: Option.none() };
   },
+  useRetryEnvironmentThread: () => () => undefined,
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("./usePersonalBots", () => ({

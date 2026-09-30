@@ -21,7 +21,7 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/compone
 import { cn, randomUUID } from "~/lib/utils";
 import { deriveTimelineEntriesWithState, type TimelineEntriesProjection } from "~/session-logic";
 import { useThreadDetail, useThreadShells, useThreadStatus } from "~/state/entities";
-import { useEnvironmentThread } from "~/state/threads";
+import { useEnvironmentThread, useRetryEnvironmentThread } from "~/state/threads";
 import type { ChatMessage } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -44,6 +44,8 @@ import {
   reusablePrivateChat,
   roundForGroup,
 } from "./groupModel";
+import { CHAT_PROBLEM_BUTTON, ChatLoadProblem } from "./ChatLoadProblem";
+import { threadLoadProblem } from "./threadLoadProblem";
 import {
   MessageList,
   type GroupSpeakerPresentation,
@@ -150,6 +152,8 @@ export function GroupConversationScreen({
   const thread = useThreadDetail(threadRef);
   const status = useThreadStatus(threadRef);
   const threadState = useEnvironmentThread(environmentId, threadId);
+  const loadProblem = threadLoadProblem(threadState);
+  const retryThread = useRetryEnvironmentThread(environmentId, threadId);
   // Reopened by a relaunch but deleted since: back to Bots without a word.
   useLeaveResumedChatIfGone(
     `/bots/groups/${groupId}`,
@@ -678,13 +682,18 @@ export function GroupConversationScreen({
                 Back to Bots
               </Link>
             </p>
-          ) : status === "deleted" ? (
-            <p>
-              This group's conversation was deleted.{" "}
-              <Link to="/bots" className="font-medium text-[var(--personal-text)] underline">
-                Back to Bots
-              </Link>
-            </p>
+          ) : loadProblem !== null ? (
+            <ChatLoadProblem
+              problem={loadProblem}
+              missingText="This group's conversation no longer exists."
+              errorText="Couldn't load this group."
+              back={
+                <Link to="/bots" className={CHAT_PROBLEM_BUTTON}>
+                  Back to Bots
+                </Link>
+              }
+              onRetry={retryThread}
+            />
           ) : (
             <p aria-live="polite">Loading group</p>
           )}

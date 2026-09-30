@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
 import {
@@ -48,6 +48,21 @@ export function useEnvironmentThread(
     AsyncResult.value(result),
     () => EMPTY_ENVIRONMENT_THREAD_STATE,
   ) as EnvironmentThreadState;
+}
+
+/**
+ * Asks for a thread again now, for a Retry button: the stream already retries
+ * on its own, but keeps the error on screen until an attempt succeeds.
+ */
+export function useRetryEnvironmentThread(
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
+): () => void {
+  const atom =
+    environmentId !== null && threadId !== null
+      ? environmentThreads.stateAtom(environmentId, threadId)
+      : EMPTY_THREAD_STATE_ATOM;
+  return useAtomRefresh(atom);
 }
 
 type KeptThreads = ReadonlyMap<EnvironmentId, ReadonlySet<ThreadId>>;

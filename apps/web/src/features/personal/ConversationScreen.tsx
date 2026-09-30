@@ -48,7 +48,11 @@ import {
   useThreadStatus,
 } from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
-import { threadEnvironment, useEnvironmentThread } from "~/state/threads";
+import {
+  threadEnvironment,
+  useEnvironmentThread,
+  useRetryEnvironmentThread,
+} from "~/state/threads";
 import type { ChatMessage } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -57,6 +61,8 @@ import { motionForConversationState } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
 import { botThreadRows, chatCountsLabel } from "./botThreadRows";
 import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
+import { CHAT_PROBLEM_BUTTON, ChatLoadProblem } from "./ChatLoadProblem";
+import { threadLoadProblem } from "./threadLoadProblem";
 import { BotMuteMenuItems, useSetBotMute } from "./BotMute";
 import { ConversationHeaderName } from "./ConversationHeaderName";
 import { ConversationSubtitle } from "./ConversationSubtitle";
@@ -244,6 +250,8 @@ export function ConversationScreen({
     refreshBotsList();
   }, [listNeedsRefresh, listRefreshKey, refreshBotsList]);
   const threadState = useEnvironmentThread(environmentId, threadId);
+  const loadProblem = threadLoadProblem(threadState);
+  const retryThread = useRetryEnvironmentThread(environmentId, threadId);
   const providers = useAtomValue(primaryServerProvidersAtom);
   const project = useProject(
     environmentId !== null && thread !== null
@@ -1018,17 +1026,18 @@ export function ConversationScreen({
                 Open Connections
               </Link>
             </p>
-          ) : status === "deleted" ? (
-            <p>
-              This chat was deleted.{" "}
-              <Link
-                to="/bots/$botId"
-                params={{ botId }}
-                className="font-medium text-[var(--personal-text)] underline"
-              >
-                See other chats
-              </Link>
-            </p>
+          ) : loadProblem !== null ? (
+            <ChatLoadProblem
+              problem={loadProblem}
+              missingText="This chat no longer exists."
+              errorText="Couldn't load this chat."
+              back={
+                <Link to="/bots/$botId" params={{ botId }} className={CHAT_PROBLEM_BUTTON}>
+                  {bot === null ? "Back to Bots" : `${bot.name}'s chats`}
+                </Link>
+              }
+              onRetry={retryThread}
+            />
           ) : (
             <p aria-live="polite">Loading chat</p>
           )}
