@@ -30,7 +30,7 @@
     },
     "J2": {
       "chatShell": {
-        "max": 228,
+        "max": 185,
         "headroom": 0.4
       },
       "requests": {
@@ -66,7 +66,7 @@
     }
   },
   "ratchetedAt": "2026-09-30",
-  "ratchetedFrom": "version=1.59.4 release=4db8bb035114 (throwaway bench, p50 x (1 + headroom), the four J1 wall/longTaskMs ceilings only)",
+  "ratchetedFrom": "version=1.59.5 release=bf1e6cebf0c4 (J2.chatShell only, fixed probe, live-shaped synthetic data); earlier J1 ratchet from 1.59.4 4db8bb035114",
   "recalibratedAt": "2026-09-30",
-  "recalibration": "J1-warm.wall, J1-warm.longTaskMs, J1-deep.wall and J1-deep.longTaskMs were set from 1.30.1 on 2026-09-23. Re-measured 2026-09-30 with the same bench (5 runs + warm-up, 4x CPU, 390x844, throwaway server, fake CLI), 1.30.1 itself gave 1834.5/1729 and 2655.9/2202 (repeat: 1874.2/1851, 2641.2/2196): the old ceilings (1138/960, 1478/1130) were out of date for this laptop and Chrome, not beaten by a regression (1.53.1 to 1.59.2 were flat and faster than 1.30.1). These four were raised to 1.30.1's first re-measure, once, by CTO decision; every other ceiling is unchanged. Evidence: ~/.personal-bots/qa/frontend-1593/check-v1301.log, check-v1301b.log and HANDOFF-1591.md (1.59.3/1.59.4). Budgets go down only from here."
+  "recalibration": "J1-warm.wall, J1-warm.longTaskMs, J1-deep.wall and J1-deep.longTaskMs were set from 1.30.1 on 2026-09-23. Re-measured 2026-09-30 with the same bench (5 runs + warm-up, 4x CPU, 390x844, throwaway server, fake CLI), 1.30.1 itself gave 1834.5/1729 and 2655.9/2202 (repeat: 1874.2/1851, 2641.2/2196): the old ceilings (1138/960, 1478/1130) were out of date for this laptop and Chrome, not beaten by a regression (1.53.1 to 1.59.2 were flat and faster than 1.30.1). These four were raised to 1.30.1's first re-measure, once, by CTO decision; every other ceiling is unchanged. Evidence: ~/.personal-bots/qa/frontend-1593/check-v1301.log, check-v1301b.log and HANDOFF-1591.md (1.59.3/1.59.4). Budgets go down only from here. 2026-09-30 (1.59.5): J2.chatShell's mark was fixed (probe.js: a click task landing between a frame's rAF and its post-paint check made the mark read the earlier frame, so 228 had been set on a partly early reading). Re-measured with the fixed probe on the same live-shaped SYNTHETIC data (20 bots, 391 chats, 258 archived, 16.2k messages; seeded by qa/frontend-1593/seed.mjs, never a live copy): 1.30.1 p50 630.2 and 682.2 ms, so the ceiling was reset once to 630, then ratcheted to 1.59.5 (bf1e6cebf0c4) p50 132.3 x 1.4 = 185. The other ten ceilings are unchanged. Evidence: qa/frontend-1593/check-cal1301a.log, check-cal1301b.log, check-cal1595.log."
 }

@@ -108,6 +108,19 @@ ceilings were reset once to 1.30.1's measured-today p50, then ratcheted as usual
 other seven ceilings were not touched. Numbers and logs: HANDOFF-1591.md and
 `~/.personal-bots/qa/frontend-1593/`.
 
+**J2.chatShell fix and recalibration, 2026-09-30 (1.59.5).** The probe stamps
+each mark with the rAF time of the frame whose post-paint check first sees
+the element. A tap's click task can run between that rAF and the check, so the
+chat header it inserts (painted in the next frame) was stamped with the
+earlier frame, sometimes before the tap was handled: the same build read
+120-200 ms or 325-385 ms at random. `chatShell` now requires the header to be in
+the DOM at a frame's rAF and marks that frame (other marks unchanged). The 228
+ms ceiling had been set with the old reading, so it was recalibrated like the
+J1 ones: 1.30.1 re-measured with the fixed probe on the same live-shaped
+synthetic data (seed.mjs; 20 bots, 391 chats, 16.2k messages) gave p50 630.2
+and 682.2 ms; the ceiling was reset once to 630, then ratcheted to 1.59.5's p50
+132.3 ms x 1.4 = 185. The other ten ceilings were not touched.
+
 ## Kill switches
 
 Every optimization that changes when work happens is on by default and can be
