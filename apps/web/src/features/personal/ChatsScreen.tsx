@@ -64,7 +64,7 @@ import {
 import {
   activeGroupMembers,
   filterGroups,
-  groupMemberThreadIds,
+  groupRelayThreadIds,
   roundForGroup,
   shownInChats,
 } from "./groupModel";
@@ -388,7 +388,10 @@ export function ChatsScreen({
   // A member thread is the bot's private relay of a group, not a chat the owner
   // started: it must not show up as one of that bot's chats (§8.8 — hidden
   // client-side in v1).
-  const memberThreadIds = useMemo(() => groupMemberThreadIds(groups), [groups]);
+  const memberThreadIds = useMemo(
+    () => groupRelayThreadIds({ groups, archivedGroups }),
+    [archivedGroups, groups],
+  );
   const tasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
   useRefreshBotsForTaskThreads({
     bots: list.data?.bots ?? null,

@@ -73,4 +73,19 @@ describe("botThreadRows order", () => {
     expect(rows.active.map((row) => row.link.threadId)).toEqual(["yesterday", "old-settled"]);
     expect(rows.active[1]?.updatedMs).toBe(Date.parse("2026-09-25T20:09:17.316Z"));
   });
+
+  it("leaves out the bot's group relay threads, open or archived", () => {
+    const rows = botThreadRows(
+      "cto",
+      [link("own", "cto"), link("relay", "cto"), link("old-relay", "cto", true)],
+      [
+        shell("own", "2026-09-24T10:00:00.000Z"),
+        shell("relay", "2026-09-25T10:00:00.000Z"),
+        shell("old-relay", "2026-09-25T10:00:00.000Z"),
+      ],
+      new Set(["relay", "old-relay"]),
+    );
+    expect(rows.active.map((row) => row.link.threadId)).toEqual(["own"]);
+    expect(rows.archived).toEqual([]);
+  });
 });

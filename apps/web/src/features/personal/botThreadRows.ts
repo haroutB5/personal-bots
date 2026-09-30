@@ -9,15 +9,20 @@ export interface BotThreadRow {
   readonly updatedMs: number;
 }
 
-/** A bot's chats split into open and archived, newest first: the rows of /bots/$botId. */
+/**
+ * A bot's chats split into open and archived, newest first: the rows of
+ * /bots/$botId. `relayThreadIds` (groupRelayThreadIds) are the bot's private
+ * relays of its groups: they belong to the group screen, never to this list.
+ */
 export function botThreadRows(
   botId: string,
   links: ReadonlyArray<PersonalBotThread>,
   shells: ReadonlyArray<EnvironmentThreadShell>,
+  relayThreadIds: ReadonlySet<string> = new Set(),
 ): { active: BotThreadRow[]; archived: BotThreadRow[] } {
   const shellsById = new Map(shells.map((shell) => [shell.id as string, shell] as const));
   const rows = links.flatMap((link): BotThreadRow[] => {
-    if (link.botId !== botId) return [];
+    if (link.botId !== botId || relayThreadIds.has(link.threadId)) return [];
     const shell = shellsById.get(link.threadId);
     if (shell === undefined) return [];
     // Real conversation activity, never `updatedAt` (see chatActivity.ts).

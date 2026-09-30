@@ -55,7 +55,8 @@ export function activeGroupMembers(group: PersonalGroup): PersonalGroup["members
  * The member threads every group owns, so the Chats list can hide them from
  * the bots' own chat lists: a member thread is the bot's private relay of the
  * group, not a chat the owner started, and showing it would put the same
- * conversation on screen twice.
+ * conversation on screen twice. Pass archived groups too (see
+ * `groupRelayThreadIds`): archiving hides the group, not its relays.
  */
 export function groupMemberThreadIds(groups: ReadonlyArray<PersonalGroup>): ReadonlySet<string> {
   const ids = new Set<string>();
@@ -65,6 +66,19 @@ export function groupMemberThreadIds(groups: ReadonlyArray<PersonalGroup>): Read
     }
   }
   return ids;
+}
+
+/**
+ * The one source for "which bot threads are group relays": every group's
+ * member threads, archived groups included. Every list of a bot's chats (the
+ * Bots list rows, the bot's chat list, its "All chats" count, the Message
+ * privately reuse) filters these out.
+ */
+export function groupRelayThreadIds(merged: {
+  readonly groups: ReadonlyArray<PersonalGroup>;
+  readonly archivedGroups: ReadonlyArray<PersonalGroup>;
+}): ReadonlySet<string> {
+  return groupMemberThreadIds([...merged.groups, ...merged.archivedGroups]);
 }
 
 /** "Ada, Grace and Alan" — the member names under a group's name in the list. */

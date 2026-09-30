@@ -35,7 +35,7 @@ import { GroupVoteCard } from "./GroupVoteCard";
 import {
   activeGroupMembers,
   groupDeleteCandidates,
-  groupMemberThreadIds,
+  groupRelayThreadIds,
   groupRoundCard,
   groupVoteCard,
   groupStatusLine,
@@ -437,7 +437,7 @@ export function GroupConversationScreen({
         botId,
         links: botsList.data?.threads ?? [],
         shells: allShells.filter((shell) => shell.environmentId === environmentId),
-        relayThreadIds: groupMemberThreadIds(groups),
+        relayThreadIds: groupRelayThreadIds({ groups, archivedGroups }),
       });
       let threadId = reuse === null ? null : ThreadId.make(reuse);
       if (threadId === null) {

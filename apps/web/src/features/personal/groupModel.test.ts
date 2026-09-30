@@ -15,6 +15,7 @@ import {
   groupDeleteSummary,
   groupLastActivityMs,
   groupMemberThreadIds,
+  groupRelayThreadIds,
   groupPreviewLine,
   groupRoundCard,
   groupStatusLine,
@@ -178,6 +179,18 @@ describe("group membership", () => {
   it("skips members that never spoke and so have no thread", () => {
     const silent = group({ members: [member("bot-ada", 0, { threadId: null })] });
     expect(groupMemberThreadIds([silent]).size).toBe(0);
+  });
+
+  it("keeps an archived group's relays hidden too", () => {
+    const open = group({ members: [member("bot-ada", 0)] });
+    const archived = group({
+      groupId: "group-2",
+      archivedAt: "2026-09-30T08:00:00.000Z",
+      members: [member("bot-grace", 0)],
+    });
+    expect(
+      [...groupRelayThreadIds({ groups: [open], archivedGroups: [archived] })].toSorted(),
+    ).toEqual(["member-thread-bot-ada", "member-thread-bot-grace"]);
   });
 });
 

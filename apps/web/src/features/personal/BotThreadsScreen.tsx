@@ -17,6 +17,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { BotAvatar } from "./BotAvatar";
 import { botModelShortLabel } from "./botModelLabel";
 import { botThreadRows, type BotThreadRow } from "./botThreadRows";
+import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
 import { commandFailureMessage } from "./commandFeedback";
 import { isThreadLive, isThreadRateLimited, threadNeedsAttention } from "./botSummaries";
 import { formatRelativeTime } from "./relativeTime";
@@ -254,6 +255,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
     refresh: list.refresh,
   });
 
+  const relayThreadIds = usePersonalGroupRelayThreadIds(environmentId);
   const rows = useMemo(
     () =>
       bot === null || list.data === null
@@ -262,8 +264,9 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
             bot.botId,
             list.data.threads,
             shells.filter((shell) => shell.environmentId === environmentId),
+            relayThreadIds,
           ),
-    [bot, environmentId, list.data, shells],
+    [bot, environmentId, list.data, relayThreadIds, shells],
   );
 
   // Wrapup acts on the most recent non-archived chat (rows.active is newest

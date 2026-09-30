@@ -56,6 +56,7 @@ import { perfOptimizationOn } from "./perfFlags";
 import { motionForConversationState } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
 import { botThreadRows, chatCountsLabel } from "./botThreadRows";
+import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
 import { BotMuteMenuItems, useSetBotMute } from "./BotMute";
 import { ConversationHeaderName } from "./ConversationHeaderName";
 import { ConversationSubtitle } from "./ConversationSubtitle";
@@ -162,14 +163,16 @@ function AllChatsCount({
   links: ReadonlyArray<PersonalBotThread>;
 }): JSX.Element {
   const shells = useThreadShells();
+  const relayThreadIds = usePersonalGroupRelayThreadIds(environmentId);
   const counts = useMemo(() => {
     const rows = botThreadRows(
       botId,
       links,
       shells.filter((shell) => shell.environmentId === environmentId),
+      relayThreadIds,
     );
     return { open: rows.active.length, archived: rows.archived.length };
-  }, [botId, environmentId, links, shells]);
+  }, [botId, environmentId, links, relayThreadIds, shells]);
   return (
     <span className="ml-auto pl-4 text-[13px] text-[var(--personal-text-tertiary)] tabular-nums">
       {chatCountsLabel(counts)}

@@ -17,6 +17,7 @@ import { useMemo } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { useEnvironmentQuery } from "../../state/query";
+import { groupRelayThreadIds } from "./groupModel";
 import { personalBotsList } from "./usePersonalBots";
 
 /** Groups and their live rounds for one environment. */
@@ -183,6 +184,7 @@ export function usePersonalGroupsFeed(environmentId: EnvironmentId | null) {
 }
 
 const NO_GROUPS: ReadonlyArray<PersonalGroup> = [];
+const NO_THREAD_IDS: ReadonlySet<string> = new Set();
 const NO_ROUNDS: ReadonlyArray<PersonalGroupRound> = [];
 const NO_VOTES: ReadonlyArray<PersonalGroupVote> = [];
 
@@ -228,4 +230,23 @@ export function mergePersonalGroups(
     rounds: Object.freeze([...rounds.values()]),
     votes: Object.freeze([...votes.values()]),
   };
+}
+
+/**
+ * Group relay thread ids for a screen that lists a bot's chats but has no
+ * other use for groups. Same list-then-feed merge as the Chats screen, so a
+ * relay created after the list loaded (a member's first reply) is hidden too.
+ */
+export function usePersonalGroupRelayThreadIds(
+  environmentId: EnvironmentId | null,
+): ReadonlySet<string> {
+  const list = usePersonalGroupsList(environmentId);
+  const { feed } = usePersonalGroupsFeed(environmentId);
+  return useMemo(
+    () =>
+      list.data === null && feed === null
+        ? NO_THREAD_IDS
+        : groupRelayThreadIds(mergePersonalGroups(list.data ?? null, feed ?? null)),
+    [list.data, feed],
+  );
 }
