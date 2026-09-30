@@ -8,17 +8,21 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
 import {
+  ARCHIVED_BUSY_CHATS_SQL,
   decideTaskChatArchive,
   TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL,
   TASK_CHAT_AUTO_ARCHIVE_META_KEY,
   TASK_CHAT_AUTO_ARCHIVE_SWEEP_MS,
+  TASK_CHAT_OPEN_WORK_SQL,
   taskChatAutoArchiveEnabled,
   type TaskChatArchiveCandidate,
 } from "./taskChatAutoArchivePolicy.ts";
@@ -36,6 +40,14 @@ import {
  *
  * A sweep at startup and every 5 minutes; all state is in the database, so a
  * restart just runs the next sweep. One log line per sweep.
+ *
+ * The other direction: a chat that gets a new turn is unarchived (link
+ * `archived_at` and `auto_archived_at` cleared), so a reopened or steered
+ * task, a routine run or the owner's message is never working out of sight
+ * (QA's reopened bug hunt ran for an hour in an archived chat while its row
+ * said Ready). One place covers every source: the turn-start event. Each
+ * sweep also unarchives an archived chat whose newer turn is still running,
+ * whatever the Settings toggle says.
  */
 export class PersonalTaskChatArchive extends Context.Service<
   PersonalTaskChatArchive,
@@ -44,6 +56,11 @@ export class PersonalTaskChatArchive extends Context.Service<
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     /** One sweep. Returns how many chats it archived. */
     readonly sweep: Effect.Effect<number>;
+    /**
+     * A turn is starting on this chat: unarchive it if it is archived (not a
+     * group relay). True when it was archived.
+     */
+    readonly unarchiveForTurn: (threadId: ThreadId) => Effect.Effect<boolean>;
   }
 >()("t3/personal/PersonalTaskChatArchiveService/PersonalTaskChatArchive") {}
 
@@ -56,6 +73,7 @@ interface CandidateRow extends Omit<TaskChatArchiveCandidate, "pendingRequests">
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
   const repository = yield* PersonalBotRepository.PersonalBotRepository;
   const bots = yield* PersonalBotService.PersonalBotService;
   // A startup sweep and a timed one never overlap.
@@ -89,6 +107,13 @@ export const make = Effect.gen(function* () {
         },
       );
       if (decision.kind !== "archive") return false;
+      // The candidate list was read at the start of the sweep; a task reopened
+      // since then has work again.
+      const [openWork] = yield* sql.unsafe<{ readonly open: number | boolean }>(
+        TASK_CHAT_OPEN_WORK_SQL,
+        [threadId, threadId],
+      );
+      if (openWork !== undefined && Boolean(openWork.open)) return false;
       yield* bots.archiveThread({ threadId, archived: true });
       const now = DateTime.formatIso(DateTime.makeUnsafe(nowMs));
       yield* sql`
@@ -108,7 +133,52 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const unarchiveForTurn: PersonalTaskChatArchiveShape["unarchiveForTurn"] = (threadId) =>
+    Effect.gen(function* () {
+      const rows = yield* sql<{ readonly threadId: string }>`
+        UPDATE personal_bot_threads
+        SET archived_at = NULL, auto_archived_at = NULL
+        WHERE thread_id = ${threadId}
+          AND archived_at IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM personal_group_members gm WHERE gm.thread_id = ${threadId}
+          )
+        RETURNING thread_id AS "threadId"
+      `;
+      if (rows.length === 0) return false;
+      yield* Effect.logInfo("personal chat unarchived: a turn started in it", { threadId });
+      return true;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal chat unarchive on turn start failed", {
+              threadId,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as(false)),
+      ),
+    );
+
+  /** Archived chats whose newer turn is still running (`ARCHIVED_BUSY_CHATS_SQL`). */
+  const healArchivedBusy = Effect.gen(function* () {
+    const busy = yield* sql.unsafe<{ readonly threadId: string }>(ARCHIVED_BUSY_CHATS_SQL);
+    let healed = 0;
+    for (const row of busy) {
+      if (yield* unarchiveForTurn(row.threadId as ThreadId)) healed += 1;
+    }
+    return healed;
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.interrupt
+        : Effect.logWarning("personal archived busy chat check failed", {
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(0)),
+    ),
+  );
+
   const runSweep = Effect.gen(function* () {
+    yield* healArchivedBusy;
     if (!(yield* enabled)) {
       yield* Effect.logInfo("personal task chat auto-archive sweep: off in Settings");
       return 0;
@@ -138,6 +208,13 @@ export const make = Effect.gen(function* () {
   const start: PersonalTaskChatArchiveShape["start"] = Effect.fn("PersonalTaskChatArchive.start")(
     function* () {
       yield* forkParked(
+        Stream.runForEach(engine.streamDomainEvents, (event) =>
+          event.type === "thread.turn-start-requested"
+            ? unarchiveForTurn(event.payload.threadId).pipe(Effect.asVoid)
+            : Effect.void,
+        ),
+      );
+      yield* forkParked(
         runSweep.pipe(
           Effect.repeat(Schedule.spaced(TASK_CHAT_AUTO_ARCHIVE_SWEEP_MS)),
           Effect.asVoid,
@@ -146,7 +223,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return { start, sweep: runSweep } satisfies PersonalTaskChatArchiveShape;
+  return { start, sweep: runSweep, unarchiveForTurn } satisfies PersonalTaskChatArchiveShape;
 });
 
 export const layer = Layer.effect(PersonalTaskChatArchive, make);

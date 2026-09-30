@@ -4,6 +4,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -12,6 +14,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type OrchestrationCommand,
+  type OrchestrationEvent,
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
@@ -39,9 +42,18 @@ interface LiveShell {
 interface Harness {
   readonly dispatched: Array<OrchestrationCommand>;
   readonly shells: Map<string, LiveShell>;
+  /** The engine's domain event stream (set once the layer is built). */
+  events: Queue.Queue<OrchestrationEvent> | null;
+  /** Runs when the sweep reads a chat's live state, before it archives. */
+  beforeShell: Effect.Effect<unknown> | null;
 }
 
-const makeHarness = (): Harness => ({ dispatched: [], shells: new Map() });
+const makeHarness = (): Harness => ({
+  dispatched: [],
+  shells: new Map(),
+  events: null,
+  beforeShell: null,
+});
 
 /**
  * The real bot service (so the archive is the manual one) and the real
@@ -54,13 +66,21 @@ const makeLayer = (harness: Harness) =>
     Layer.provideMerge(PersonalBotRepository.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(
-      Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-        dispatch: (command: OrchestrationCommand) =>
-          Effect.sync(() => {
-            harness.dispatched.push(command);
-            return { sequence: harness.dispatched.length };
-          }),
-      } as unknown as OrchestrationEngine.OrchestrationEngineShape),
+      Layer.effect(
+        OrchestrationEngine.OrchestrationEngineService,
+        Effect.gen(function* () {
+          const events = yield* Queue.unbounded<OrchestrationEvent>();
+          harness.events = events;
+          return {
+            dispatch: (command: OrchestrationCommand) =>
+              Effect.sync(() => {
+                harness.dispatched.push(command);
+                return { sequence: harness.dispatched.length };
+              }),
+            streamDomainEvents: Stream.fromQueue(events),
+          } as unknown as OrchestrationEngine.OrchestrationEngineShape;
+        }),
+      ),
     ),
     Layer.provideMerge(
       Layer.succeed(ProviderRegistry.ProviderRegistry, {
@@ -72,19 +92,23 @@ const makeLayer = (harness: Harness) =>
         getProjectShellById: () => Effect.succeed(Option.none()),
         getProjectShells: () => Effect.succeed([]),
         getThreadShellById: (threadId: ThreadId) =>
-          Effect.sync(() => {
-            const shell = harness.shells.get(threadId);
-            if (shell === undefined) return Option.none();
-            return Option.some({
-              id: threadId,
-              session: shell.session === null ? null : { threadId, ...shell.session },
-              backgroundLiveness: shell.backgroundLiveness,
-              latestTurn:
-                shell.latestTurnCompletedAt === null
-                  ? null
-                  : { completedAt: shell.latestTurnCompletedAt },
-            });
-          }),
+          Effect.suspend(() => harness.beforeShell ?? Effect.void).pipe(
+            Effect.flatMap(() =>
+              Effect.sync(() => {
+                const shell = harness.shells.get(threadId);
+                if (shell === undefined) return Option.none();
+                return Option.some({
+                  id: threadId,
+                  session: shell.session === null ? null : { threadId, ...shell.session },
+                  backgroundLiveness: shell.backgroundLiveness,
+                  latestTurn:
+                    shell.latestTurnCompletedAt === null
+                      ? null
+                      : { completedAt: shell.latestTurnCompletedAt },
+                });
+              }),
+            ),
+          ),
       } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape),
     ),
     Layer.provideMerge(
@@ -225,6 +249,55 @@ const sweepAt = (ms: number) =>
     return yield* (yield* PersonalTaskChatArchive.PersonalTaskChatArchive).sweep;
   });
 
+const linkState = (threadId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql<{
+      readonly archivedAt: string | null;
+      readonly autoArchivedAt: string | null;
+    }>`
+      SELECT archived_at AS "archivedAt", auto_archived_at AS "autoArchivedAt"
+      FROM personal_bot_threads WHERE thread_id = ${threadId}
+    `;
+    return row;
+  });
+
+/** A turn-start event as the engine publishes it; only what the listener reads matters. */
+const turnStartEvent = (threadId: string, commandId: string, sequence: number) =>
+  ({
+    sequence,
+    type: "thread.turn-start-requested",
+    commandId,
+    aggregateKind: "thread",
+    aggregateId: threadId,
+    payload: { threadId, messageId: `${commandId}-message`, createdAt: iso(T0) },
+  }) as unknown as OrchestrationEvent;
+
+/** Lets the forked listener catch up with what was offered. */
+const settle = (check: Effect.Effect<boolean>) =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (yield* check) return true;
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 5)));
+    }
+    return false;
+  });
+
+/** A turn requested at `requestedMs` and still running on the chat. */
+const runTurn = (threadId: string, requestedMs: number) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO projection_turns (thread_id, turn_id, state, requested_at, started_at, checkpoint_files_json)
+      VALUES (${threadId}, ${`${threadId}-turn`}, 'running', ${iso(requestedMs)}, ${iso(requestedMs)}, '[]')
+    `;
+    yield* sql`
+      UPDATE projection_thread_sessions
+      SET status = 'running', active_turn_id = ${`${threadId}-turn`}
+      WHERE thread_id = ${threadId}
+    `;
+  });
+
 describe("PersonalTaskChatArchive", () => {
   it.effect(
     "archives a finished task chat after 30 idle minutes, the way a manual archive does",
@@ -353,6 +426,128 @@ describe("PersonalTaskChatArchive", () => {
       yield* TestClock.setTime(due + 24 * 60 * MIN);
       expect(yield* restarted.sweep).toBe(0);
       expect(yield* archivedIds).toEqual([]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect(
+    "a new turn unarchives the chat: a reopened or steered task, a routine run, a message",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const chats = ["chat-reopen", "chat-steer", "chat-routine", "chat-owner"];
+        yield* seed(harness, [...chats.map((id) => ({ id })), { id: "chat-quiet" }]);
+        expect(yield* sweepAt(TASK_DONE_MS + TASK_CHAT_AUTO_ARCHIVE_IDLE_MS)).toBe(5);
+        // A group relay the owner archived stays hidden whatever runs in it.
+        const sql = yield* SqlClient.SqlClient;
+        const bots = yield* PersonalBotService.PersonalBotService;
+        yield* bots.createThread({ botId: BOT, threadId: ThreadId.make("chat-relay") });
+        yield* sql`
+          INSERT INTO personal_groups (group_id, name, thread_id, max_bot_turns, created_at, updated_at)
+          VALUES ('group-1', 'Crew', 'group-thread', 8, ${iso(T0)}, ${iso(T0)})
+        `;
+        yield* sql`
+          INSERT INTO personal_group_members (group_id, bot_id, thread_id, joined_at)
+          VALUES ('group-1', ${BOT}, 'chat-relay', ${iso(T0)})
+        `;
+        yield* bots.archiveThread({ threadId: ThreadId.make("chat-relay"), archived: true });
+        // The new turns are live, as they are once started: `start` also runs
+        // a sweep, which must leave them be.
+        for (const id of chats) {
+          harness.shells.get(id)!.session = { status: "running", activeTurnId: `${id}-turn` };
+        }
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* (yield* PersonalTaskChatArchive.PersonalTaskChatArchive).start();
+            const events = harness.events!;
+            // The command ids of each source: task continuation, steer, routine, the app.
+            yield* Queue.offer(
+              events,
+              turnStartEvent("chat-reopen", "personal-task:t1:2:turn.start", 1),
+            );
+            yield* Queue.offer(events, turnStartEvent("chat-steer", "personal-steer:t2:s1", 2));
+            yield* Queue.offer(
+              events,
+              turnStartEvent("chat-routine", "personal-routine:r1:run-1", 3),
+            );
+            yield* Queue.offer(events, turnStartEvent("chat-owner", "client-message-1", 4));
+            yield* Queue.offer(events, turnStartEvent("chat-relay", "personal-group:g1:1", 5));
+            const done = yield* settle(
+              archivedIds.pipe(
+                Effect.map((ids) => ids.join(",") === "chat-quiet,chat-relay"),
+                Effect.orElseSucceed(() => false),
+              ),
+            );
+            expect(done).toBe(true);
+          }),
+        );
+        // Both marks cleared: an ordinary chat again, so once this new work
+        // has finished and sat idle it can archive again.
+        for (const id of chats) {
+          expect(yield* linkState(id)).toEqual({ archivedAt: null, autoArchivedAt: null });
+        }
+        expect((yield* linkState("chat-quiet"))?.autoArchivedAt).not.toBeNull();
+        const listed = (yield* bots.list()).threads.find((link) => link.threadId === "chat-reopen");
+        expect(listed?.archivedAt).toBeNull();
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect("unarchiveForTurn leaves an open chat as it is", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seed(harness, [{ id: "chat-open" }]);
+      const service = yield* PersonalTaskChatArchive.PersonalTaskChatArchive;
+      expect(yield* service.unarchiveForTurn(ThreadId.make("chat-open"))).toBe(false);
+      expect(yield* linkState("chat-open")).toEqual({ archivedAt: null, autoArchivedAt: null });
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("the sweep skips a chat whose task reopened after the list was read", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seed(harness, [{ id: "chat-reopened" }, { id: "chat-child" }, { id: "chat-done" }]);
+      const sql = yield* SqlClient.SqlClient;
+      // Between reading the candidates and archiving: one task is reopened and
+      // another chat's task delegates a child that is still running.
+      harness.beforeShell = Effect.gen(function* () {
+        yield* sql`
+          UPDATE personal_tasks SET status = 'queued', completed_at = NULL
+          WHERE thread_id = 'chat-reopened'
+        `;
+        yield* sql`
+          INSERT OR IGNORE INTO personal_tasks (
+            task_id, root_task_id, parent_task_id, bot_id, thread_id, title, objective, status,
+            source, idempotency_key, depth, max_depth, max_children, created_at, updated_at
+          )
+          VALUES (
+            'late-child', 'chat-child-task-0', 'chat-child-task-0', 'bot-other', 'elsewhere',
+            'Child', 'Do it', 'running', 'delegation', 'late-child', 2, 3, 4, ${iso(T0)}, ${iso(T0)}
+          )
+        `;
+      }).pipe(Effect.orDie);
+      expect(yield* sweepAt(TASK_DONE_MS + 2 * TASK_CHAT_AUTO_ARCHIVE_IDLE_MS)).toBe(1);
+      expect(yield* archivedIds).toEqual(["chat-done"]);
+      expect(sessionStops(harness).map((command) => command.threadId)).toEqual(["chat-done"]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("the sweep unarchives an archived chat whose newer turn is running", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seed(harness, [{ id: "chat-busy" }, { id: "chat-stopping" }, { id: "chat-idle" }]);
+      const due = TASK_DONE_MS + TASK_CHAT_AUTO_ARCHIVE_IDLE_MS;
+      expect(yield* sweepAt(due)).toBe(3);
+      // Reopened after the archive and still going (QA's bug hunt on 30 Sep).
+      yield* runTurn("chat-busy", due + 10 * MIN);
+      // A turn from before the archive is the one the archive is stopping.
+      yield* runTurn("chat-stopping", due - MIN);
+      // Whatever the Settings toggle says.
+      const bots = yield* PersonalBotService.PersonalBotService;
+      yield* bots.setProfile({ autoArchiveTaskChats: false });
+      expect(yield* sweepAt(due + 20 * MIN)).toBe(0);
+      expect(yield* archivedIds).toEqual(["chat-idle", "chat-stopping"]);
+      expect(yield* linkState("chat-busy")).toEqual({ archivedAt: null, autoArchivedAt: null });
     }).pipe(Effect.provide(makeLayer(harness)));
   });
 });

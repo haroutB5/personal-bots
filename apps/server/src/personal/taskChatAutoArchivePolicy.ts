@@ -21,6 +21,26 @@ export const TASK_CHAT_AUTO_ARCHIVE_META_KEY = "taskChatAutoArchive";
 export const TASK_TERMINAL_STATUSES = ["completed", "failed", "cancelled"] as const;
 
 /**
+ * Whether a chat still has unfinished work: one of its tasks, or a child task
+ * one of them delegated, is open. Re-read for each candidate right before it
+ * is archived, since a task can be reopened after the candidate list was read.
+ */
+export const TASK_CHAT_OPEN_WORK_SQL = `
+  SELECT
+    EXISTS (
+      SELECT 1 FROM personal_tasks o
+      WHERE o.thread_id = ?
+        AND o.status NOT IN ('completed', 'failed', 'cancelled')
+    )
+    OR EXISTS (
+      SELECT 1 FROM personal_tasks c
+      JOIN personal_tasks parent ON parent.task_id = c.parent_task_id
+      WHERE parent.thread_id = ?
+        AND c.status NOT IN ('completed', 'failed', 'cancelled')
+    ) AS "open"
+`;
+
+/**
  * Candidate chats: only a chat created for a delegated task (the thread came
  * after the task), every task on it finished, none of its child tasks still
  * open, and it is not archived (now or ever by this sweep), pinned, a
@@ -88,6 +108,27 @@ export const TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL = `
     AND NOT EXISTS (SELECT 1 FROM personal_routines r WHERE r.thread_id = bt.thread_id)
     AND NOT EXISTS (SELECT 1 FROM personal_group_members gm WHERE gm.thread_id = bt.thread_id)
   ORDER BY bt.created_at ASC, bt.thread_id ASC
+`;
+
+/**
+ * Archived bot chats that are working anyway: a turn started after the chat
+ * was archived and is still running. A reopened or steered task, a routine
+ * run and the owner's own message all start a turn, and the turn-start
+ * listener unarchives the chat then; this catches one it missed (a turn that
+ * began before this release, or while the listener was down). A turn older
+ * than the archive is the one the archive is stopping, so it never counts.
+ * Group relays stay hidden either way.
+ */
+export const ARCHIVED_BUSY_CHATS_SQL = `
+  SELECT bt.thread_id AS "threadId"
+  FROM personal_bot_threads bt
+  JOIN projection_thread_sessions s ON s.thread_id = bt.thread_id
+  JOIN projection_turns t ON t.thread_id = s.thread_id AND t.turn_id = s.active_turn_id
+  WHERE bt.archived_at IS NOT NULL
+    AND s.status IN ('running', 'starting')
+    AND t.requested_at > bt.archived_at
+    AND NOT EXISTS (SELECT 1 FROM personal_group_members gm WHERE gm.thread_id = bt.thread_id)
+  ORDER BY bt.thread_id ASC
 `;
 
 /** One row of `TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL`. */
