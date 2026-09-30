@@ -95,6 +95,19 @@ move down: `--ratchet` lowers a beaten budget to p75 x (1 + headroom), using p75
 so that one quick run cannot set a budget the next ordinary run fails. Each
 lowering is committed with the change that earned it.
 
+**Recalibration, 2026-09-30 (1.59.4).** The one exception to "only down". The
+four J1 wall and long-task ceilings came from 1.30.1 on 2026-09-23, and by
+2026-09-30 1.30.1 itself missed them on this laptop: with the same bench (5 runs
+plus a warm-up, 4x CPU, 390x844, a throwaway server with the fake Claude CLI),
+1.30.1 measured J1-warm wall/longTaskMs 1834.5/1729 and J1-deep 2655.9/2202
+(a repeat: 1874.2/1851 and 2641.2/2196). A bisect across 1.53.1, 1.57.2, 1.57.3,
+1.58.1, 1.59.0, 1.59.1 and 1.59.2 found no regression; every one was faster than
+1.30.1. The machine and Chrome moved, not the code. By CTO decision those four
+ceilings were reset once to 1.30.1's measured-today p50, then ratcheted as usual
+(p50 x (1 + headroom), by CTO decision for this step) against 1.59.4; the
+other seven ceilings were not touched. Numbers and logs: HANDOFF-1591.md and
+`~/.personal-bots/qa/frontend-1593/`.
+
 ## Kill switches
 
 Every optimization that changes when work happens is on by default and can be
