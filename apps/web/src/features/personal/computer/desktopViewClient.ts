@@ -38,7 +38,15 @@ export interface DesktopViewCallbacks {
   readonly onControl?: (on: boolean, detail: string | null) => void;
   /** One input was refused; nothing was done on the PC. */
   readonly onInputRefused?: (detail: string) => void;
+  /** Where keyboard focus is on the PC now (after a click or a key), while in control. */
+  readonly onFocus?: (focus: DesktopFocus) => void;
 }
+
+/** Whether the PC's focused element takes typing, and where it is (monitor fractions). */
+export type DesktopFocus = Omit<
+  Extract<PersonalDesktopViewMessage, { readonly _tag: "FocusChanged" }>,
+  "_tag"
+>;
 
 export interface DesktopViewClient {
   /**
@@ -108,6 +116,11 @@ export function connectDesktopView(
         case "InputRefused":
           callbacks.onInputRefused?.(message.detail);
           return;
+        case "FocusChanged": {
+          const { _tag: _, ...focus } = message;
+          callbacks.onFocus?.(focus);
+          return;
+        }
       }
       return;
     }

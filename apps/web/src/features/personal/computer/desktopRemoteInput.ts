@@ -242,3 +242,29 @@ export function mouseWheelUnits(delta: number, deltaMode: number): number {
 export function mouseButton(button: number): "left" | "middle" | "right" {
   return button === 2 ? "right" : button === 1 ? "middle" : "left";
 }
+
+/** How far round a reported field a tap still counts as on it, as a share of the monitor. */
+const FIELD_TAP_SLOP = 0.01;
+
+/**
+ * Does a tap at (`x`, `y`), as fractions of the monitor, land on the text
+ * field the PC last reported focused? A little slop around it, since a
+ * caret-only report is a sliver and a finger is not.
+ */
+export function tapOnField(
+  x: number,
+  y: number,
+  field: {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  },
+): boolean {
+  return (
+    x >= field.x - FIELD_TAP_SLOP &&
+    x <= field.x + field.width + FIELD_TAP_SLOP &&
+    y >= field.y - FIELD_TAP_SLOP &&
+    y <= field.y + field.height + FIELD_TAP_SLOP
+  );
+}

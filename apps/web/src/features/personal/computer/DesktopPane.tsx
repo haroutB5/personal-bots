@@ -61,6 +61,7 @@ import {
   mouseButton,
   mouseWheelUnits,
   panView,
+  tapOnField,
   textInputs,
   touchScrollWheel,
   type ViewTransform,
@@ -72,7 +73,7 @@ import {
   desktopStreamUrl,
   useDesktopStatus,
 } from "./desktopState";
-import { connectDesktopView, type DesktopViewClient } from "./desktopViewClient";
+import { connectDesktopView, type DesktopFocus, type DesktopViewClient } from "./desktopViewClient";
 import {
   regionPlacement,
   type ScreenRegion,
@@ -108,6 +109,19 @@ export const REMOTE_LOCKED_TEXT = "PC is locked; it can't be unlocked remotely."
 const DROPPED_TEXT = "The connection dropped, so remote control ended.";
 
 type SendInput = (message: PersonalDesktopViewInput) => void;
+
+/**
+ * The phone keyboard while in control: the offscreen field that raises it,
+ * whether it is up, and what the PC last said about its own focus. The
+ * picture reads it to raise the keyboard in the tap itself (iOS only shows
+ * it for a focus inside the user's gesture) when the tap lands on the field
+ * the PC already reported focused.
+ */
+interface TypingState {
+  readonly fieldRef: { readonly current: HTMLInputElement | null };
+  readonly open: boolean;
+  readonly focus: DesktopFocus | null;
+}
 
 export function usePageVisible(): boolean {
   const [visible, setVisible] = useState(() => document.visibilityState === "visible");
@@ -148,6 +162,10 @@ export function DesktopPane(props: {
   const [notice, setNotice] = useState<string | null>(null);
   const [sticky, setSticky] = useState<ReadonlySet<PersonalDesktopModifier>>(() => new Set());
   const sendRef = useRef<SendInput | null>(null);
+  const keyboardFieldRef = useRef<HTMLInputElement | null>(null);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  /** The PC's last word on its focus; cleared whenever control starts or ends. */
+  const [pcFocus, setPcFocus] = useState<DesktopFocus | null>(null);
 
   // Leaving full screen, backgrounding the app or the PC locking ends control
   // for good: coming back never quietly resumes it. (State adjusted during
@@ -295,8 +313,11 @@ export function DesktopPane(props: {
             takeSticky={takeSticky}
             sendRef={sendRef}
             onViewState={setViewState}
+            typing={{ fieldRef: keyboardFieldRef, open: keyboardOpen, focus: pcFocus }}
+            onFocus={setPcFocus}
             onControl={(on, detail) => {
               setControlOn(on);
+              setPcFocus(null);
               if (!on) {
                 if (detail !== null) {
                   setNotice(detail);
@@ -335,6 +356,10 @@ export function DesktopPane(props: {
           }
           takeSticky={takeSticky}
           rail={rail}
+          fieldRef={keyboardFieldRef}
+          keyboardOpen={keyboardOpen}
+          onKeyboardOpen={setKeyboardOpen}
+          offerKeyboard={pcFocus?.editable === true}
         />
       ) : null}
 
@@ -444,10 +469,16 @@ function ControlBar(props: {
   readonly takeSticky: () => ReadonlySet<PersonalDesktopModifier>;
   /** Laid out under the picture in the landscape rail layout. */
   readonly rail?: boolean;
+  /** The offscreen field that raises the phone keyboard (the picture focuses it too). */
+  readonly fieldRef: { current: HTMLInputElement | null };
+  readonly keyboardOpen: boolean;
+  readonly onKeyboardOpen: (open: boolean) => void;
+  /** The PC's focus is in a text field: offer the keyboard while it is down. */
+  readonly offerKeyboard: boolean;
 }) {
-  const { send } = props;
-  const fieldRef = useRef<HTMLInputElement | null>(null);
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const { send, fieldRef, keyboardOpen } = props;
+  const setKeyboardOpen = props.onKeyboardOpen;
+  const openKeyboard = () => fieldRef.current?.focus({ preventScroll: true });
 
   const press = (key: string) => {
     send({ _tag: "Keys", keys: comboString(props.takeSticky(), key) });
@@ -485,10 +516,27 @@ function ControlBar(props: {
   return (
     <div
       className={cn(
-        "shrink-0 border-t border-[var(--personal-border)] bg-[var(--personal-bg)] pt-1.5",
+        "relative shrink-0 border-t border-[var(--personal-border)] bg-[var(--personal-bg)] pt-1.5",
         props.rail === true && "col-start-2 row-start-3",
       )}
     >
+      {props.offerKeyboard && !keyboardOpen ? (
+        // A real tap, so iOS lets it raise the keyboard (the PC's focus report
+        // arrives too late to do that by itself).
+        <button
+          type="button"
+          onMouseDown={keepFocus}
+          onClick={openKeyboard}
+          className={cn(
+            "absolute bottom-full left-1/2 z-10 mb-2 flex min-h-11 -translate-x-1/2 items-center gap-2 rounded-full px-4 text-[14px] font-semibold whitespace-nowrap outline-none",
+            "bg-[var(--personal-primary)] text-[var(--personal-primary-text)] shadow-[var(--personal-shadow-card)]",
+            "focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] active:opacity-80",
+          )}
+        >
+          <Keyboard className="size-[18px]" strokeWidth={ICON_STROKE} aria-hidden />
+          Tap to type
+        </button>
+      ) : null}
       <input
         ref={fieldRef}
         type="text"
@@ -533,7 +581,7 @@ function ControlBar(props: {
             const field = fieldRef.current;
             if (field === null) return;
             if (keyboardOpen) field.blur();
-            else field.focus({ preventScroll: true });
+            else openKeyboard();
           }}
         />
         <Divider />
@@ -711,6 +759,8 @@ function LiveDesktop(props: {
   readonly onViewState: (state: PersonalDesktopViewState | null) => void;
   readonly onControl: (on: boolean, detail: string | null) => void;
   readonly onInputRefused: (detail: string) => void;
+  readonly typing: TypingState;
+  readonly onFocus: (focus: DesktopFocus) => void;
 }) {
   const { environmentId, active, fit, controlWanted, interactive } = props;
   const access = useComputerAccess(environmentId);
@@ -828,6 +878,7 @@ function LiveDesktop(props: {
         },
         onControl: (on, detail) => callbacksRef.current.onControl(on, detail),
         onInputRefused: (detail) => callbacksRef.current.onInputRefused(detail),
+        onFocus: (focus) => callbacksRef.current.onFocus(focus),
         onClosed: (opened) => {
           clientRef.current = null;
           setLiveClient(null);
@@ -970,6 +1021,7 @@ function LiveDesktop(props: {
           setView={updateView}
           sticky={props.sticky}
           takeSticky={props.takeSticky}
+          typing={props.typing}
           send={(message) => clientRef.current?.send(message)}
           onRipple={(ripple) => {
             setRipples((current) => [...current, ripple]);
@@ -1278,6 +1330,7 @@ function ControlSurface(props: {
   readonly setView: (update: (view: ViewTransform) => ViewTransform) => void;
   readonly sticky: ReadonlySet<PersonalDesktopModifier>;
   readonly takeSticky: () => ReadonlySet<PersonalDesktopModifier>;
+  readonly typing: TypingState;
   readonly send: SendInput;
   readonly onRipple: (ripple: Ripple) => void;
 }) {
@@ -1399,11 +1452,30 @@ function ControlSurface(props: {
     });
   };
 
+  /**
+   * A tap on the field the PC says has focus raises the phone keyboard right
+   * here, inside the tap, where iOS allows it. Only on that field, so a tap
+   * anywhere else never flashes the keyboard up; there the "Tap to type"
+   * button follows the PC's report instead.
+   */
+  const raiseKeyboardFor = (clientX: number, clientY: number) => {
+    const { fieldRef, open, focus } = latest.current.typing;
+    const field = fieldRef.current;
+    const space = props.spaceRef.current;
+    if (open || field === null || focus?.editable !== true || focus.rect === undefined) return;
+    if (space === null || !space.screen) return;
+    const point = pointAt(clientX, clientY);
+    if (point === null) return;
+    if (!tapOnField(point.x / space.width, point.y / space.height, focus.rect)) return;
+    field.focus({ preventScroll: true });
+  };
+
   const onGesture = (action: GestureAction) => {
     const picture = props.pictureRef.current;
     switch (action.type) {
       case "click":
         ripple(action.x, action.y);
+        if (action.button === "left") raiseKeyboardFor(action.x, action.y);
         clickAt(action.x, action.y, action.button);
         return;
       case "press":

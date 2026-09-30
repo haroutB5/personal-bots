@@ -51,6 +51,7 @@ function setup(decode: (jpeg: Uint8Array) => Promise<ImageBitmap>) {
     onClosed: vi.fn(),
     onControl: vi.fn(),
     onInputRefused: vi.fn(),
+    onFocus: vi.fn(),
   };
   const client = connectDesktopView("wss://pc.example/api/personal/desktop/stream", callbacks, {
     createSocket: () => socket as unknown as WebSocket,
@@ -197,5 +198,18 @@ describe("desktop live view client", () => {
       "PC is locked; it can't be unlocked remotely.",
     );
     expect(callbacks.onState).not.toHaveBeenCalled();
+  });
+
+  it("passes on where focus is on the PC, and ignores a malformed report", async () => {
+    const { socket, callbacks } = setup(() => Promise.resolve(bitmap()));
+    socket.open();
+    const rect = { x: 0.1, y: 0.05, width: 0.8, height: 0.02 };
+    socket.emit("message", JSON.stringify({ _tag: "FocusChanged", editable: true, rect }));
+    socket.emit("message", JSON.stringify({ _tag: "FocusChanged", editable: false }));
+    socket.emit("message", JSON.stringify({ _tag: "FocusChanged", editable: "yes" }));
+    expect(callbacks.onFocus.mock.calls).toEqual([
+      [{ editable: true, rect }],
+      [{ editable: false }],
+    ]);
   });
 });

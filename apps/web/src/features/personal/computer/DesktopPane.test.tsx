@@ -92,6 +92,8 @@ const visibilityListeners = new Set<() => void>();
 let landscape = false;
 const mediaListeners = new Set<() => void>();
 const drawImage = vi.fn();
+/** The offscreen field that raises the phone keyboard. */
+const keyboardField = { focus: vi.fn(), blur: vi.fn() };
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -144,20 +146,22 @@ const pictureRect = () => {
 };
 
 const nodeMock = (element: { type: unknown; props: unknown }) =>
-  element.type === "canvas"
-    ? {
-        width: 0,
-        height: 0,
-        getContext: () => ({ drawImage }),
-        getBoundingClientRect: pictureRect,
-      }
-    : (element.props as Record<string, unknown>)["data-testid"] === "desktop-picture"
-      ? { getBoundingClientRect: pictureRect }
-      : {
-          getBoundingClientRect: () => ({ left: 0, top: 0, width: 390, height: 244 }),
-          addEventListener: vi.fn(),
-          removeEventListener: vi.fn(),
-        };
+  element.type === "input"
+    ? keyboardField
+    : element.type === "canvas"
+      ? {
+          width: 0,
+          height: 0,
+          getContext: () => ({ drawImage }),
+          getBoundingClientRect: pictureRect,
+        }
+      : (element.props as Record<string, unknown>)["data-testid"] === "desktop-picture"
+        ? { getBoundingClientRect: pictureRect }
+        : {
+            getBoundingClientRect: () => ({ left: 0, top: 0, width: 390, height: 244 }),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+          };
 
 /** The picture's canvas (a second one holds zoomed-in frames). */
 const pictureCanvas = () => renderer!.root.findAllByType("canvas")[0]!;
@@ -647,6 +651,74 @@ describe("DesktopPane remote control", () => {
     expect(sentOf().at(-1)).toEqual({ _tag: "Keys", keys: "tab" });
     await act(async () => key("Start menu (Win)").props.onClick());
     expect(sentOf().at(-1)).toEqual({ _tag: "Keys", keys: "win" });
+  });
+
+  it("offers 'Tap to type' while the PC's focus is in a text field and the keyboard is down", async () => {
+    await inControl();
+    const pill = () =>
+      renderer!.root.findAll((node) => node.type === "button" && textOf(node) === "Tap to type");
+    expect(pill()).toHaveLength(0);
+    await act(async () => state.sockets[0]!.callbacks.onFocus?.({ editable: true }));
+    expect(pill()).toHaveLength(1);
+    // Its tap is a real gesture: it focuses the field that raises the keyboard.
+    await act(async () => pill()[0]!.props.onClick());
+    expect(keyboardField.focus).toHaveBeenCalledTimes(1);
+    const field = renderer!.root.findByProps({ "aria-label": "Type on your PC" });
+    await act(async () =>
+      field.props.onFocus({ currentTarget: { value: "", setSelectionRange: vi.fn() } }),
+    );
+    expect(pill()).toHaveLength(0);
+    expect(
+      renderer!.root.findByProps({ "aria-label": "Hide keyboard" }).props["aria-pressed"],
+    ).toBe(true);
+    // The keyboard stays up across taps on the picture: a tap never blurs it.
+    const surface = renderer!.root.findByProps({ role: "application" });
+    await act(async () => {
+      surface.props.onPointerDown(pointer("touch", 100, 100));
+      surface.props.onPointerUp(pointer("touch", 100, 100));
+    });
+    expect(keyboardField.blur).not.toHaveBeenCalled();
+    // The done key (blur) puts it down; the pill comes back while focus is in a field...
+    await act(async () => field.props.onBlur());
+    expect(pill()).toHaveLength(1);
+    // ...and goes when focus leaves the field.
+    await act(async () => state.sockets[0]!.callbacks.onFocus?.({ editable: false }));
+    expect(pill()).toHaveLength(0);
+    // Control ending forgets the PC's focus.
+    await act(async () => state.sockets[0]!.callbacks.onFocus?.({ editable: true }));
+    await act(async () => state.sockets[0]!.callbacks.onControl?.(false, null));
+    await act(async () => state.sockets[0]!.callbacks.onControl?.(true, null));
+    expect(pill()).toHaveLength(0);
+  });
+
+  it("a tap on the field the PC reported focused raises the keyboard in the tap itself", async () => {
+    const surface = await inControl();
+    await drawFrame(WHOLE_FRAME);
+    // The field spans the middle of the monitor, a band 10% high.
+    await act(async () =>
+      state.sockets[0]!.callbacks.onFocus?.({
+        editable: true,
+        rect: { x: 0.25, y: 0.45, width: 0.5, height: 0.1 },
+      }),
+    );
+    // A tap elsewhere never raises it (no flicker on non-text taps).
+    await act(async () => {
+      surface.props.onPointerDown(pointer("touch", 20, 20));
+      surface.props.onPointerUp(pointer("touch", 20, 20));
+    });
+    expect(keyboardField.focus).not.toHaveBeenCalled();
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 400)));
+    await act(async () => {
+      surface.props.onPointerDown(pointer("touch", 195, 121.875));
+      surface.props.onPointerUp(pointer("touch", 195, 121.875));
+    });
+    expect(keyboardField.focus).toHaveBeenCalledTimes(1);
+    // The click still goes to the PC.
+    expect(sentOf().findLast((message) => message._tag === "Pointer")).toMatchObject({
+      action: "click",
+      x: 1536,
+      y: 960,
+    });
   });
 
   it("typing on the phone keyboard sends text, and an emptied field is a Backspace", async () => {
