@@ -92,21 +92,39 @@
   // Checked once per frame, after that frame's layout has run (a message
   // posted from rAF lands after paint), so the probe never forces a layout
   // itself. The mark is the frame's rAF time: when that content painted.
+  //
+  // chatShell only: the element must already be in the DOM at the frame's rAF.
+  // A tap's click task can run between a frame's rAF and its post-paint check;
+  // the header it inserts then paints in the NEXT frame, but the check saw it
+  // and recorded the earlier frame's time, before the tap had even been
+  // handled (J2.chatShell read 120-200 ms or 325-385 ms at random, 2026-09-30).
+  // Presence is read in rAF with querySelector only (no layout), and the mark
+  // is the start of the first frame the header was in the DOM for.
+  const PRESENT_AT_RAF = new Set(["chatShell"]);
+  const presentAt = {};
   const channel = new MessageChannel();
   let frameAt = 0;
   channel.port1.addEventListener("message", () => {
     for (const [name, find] of P.watchers) {
       if (P.marks[name] !== undefined) continue;
+      if (PRESENT_AT_RAF.has(name) && presentAt[name] === undefined) continue;
       let hit = false;
       try {
         hit = visible(find());
       } catch {}
-      if (hit) P.marks[name] = frameAt;
+      if (hit) P.marks[name] = PRESENT_AT_RAF.has(name) ? presentAt[name] : frameAt;
     }
   });
   channel.port1.start();
   const tick = (at) => {
     frameAt = at;
+    for (const [name, find] of P.watchers) {
+      if (!PRESENT_AT_RAF.has(name) || P.marks[name] !== undefined) continue;
+      if (presentAt[name] !== undefined) continue;
+      try {
+        if (find()) presentAt[name] = at;
+      } catch {}
+    }
     channel.port2.postMessage(0);
     requestAnimationFrame(tick);
   };
@@ -116,6 +134,7 @@
   P.reset = () => {
     P.t0 = performance.now();
     P.marks = {};
+    for (const name of Object.keys(presentAt)) delete presentAt[name];
     P.commits = 0;
     P.commitTimes = [];
   };
