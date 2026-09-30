@@ -276,9 +276,8 @@ async function assertFormDestinations(
 /**
  * Types a login without putting either value in an evaluate expression or a
  * model-visible result. The origin is rechecked immediately before each
- * field, so a username-triggered navigation cannot carry the password onto a
- * different origin, and the password is written through an element handle
- * resolved on the checked page: a cross-document navigation inside the fill
+ * field. Both values are written through element handles resolved on the
+ * checked page: a cross-document navigation inside the fill
  * window detaches the handle and aborts instead of retargeting the new page.
  */
 export async function performFillLogin(
@@ -350,8 +349,28 @@ export async function performFillLogin(
     if (usernameFirst) break;
     const locator = `${scope}${candidate}`;
     if ((await page.countLocator(locator)) === 0) continue;
-    pageOrigin(page, input.expectedOrigin);
-    await page.typeText({ locator, text: input.username, clear: true, timeoutMs });
+    const usernameField = await page.resolveElement(locator, timeoutMs);
+    if (usernameField === null) {
+      throw new HostOperationError(
+        "PreviewAutomationTargetNotEditableError",
+        "The username field disappeared before the username could be filled.",
+        { selectorKind: "login-username-field" },
+      );
+    }
+    try {
+      pageOrigin(page, input.expectedOrigin);
+      const fieldSelector = candidate.replace(":visible", "").replace(":not([disabled])", "");
+      await assertFormDestinations(page, input.expectedOrigin, fieldSelector);
+      await usernameField.fill(input.username, PASSWORD_FILL_TIMEOUT_MS);
+    } catch (cause) {
+      if (cause instanceof HostOperationError) throw cause;
+      throw new HostOperationError(
+        "PreviewAutomationExecutionError",
+        `The username was not filled: the login field on ${input.expectedOrigin} became unavailable before the fill completed.`,
+      );
+    } finally {
+      await usernameField.dispose().catch(() => undefined);
+    }
     fields.push("username");
     break;
   }

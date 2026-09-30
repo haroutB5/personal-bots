@@ -208,7 +208,7 @@ const configureLoginPage = (page: FakePage) => {
   // ordinary login form posts back to the page it is on. Anything else the
   // server evaluates here is a snapshot.
   page.evaluateImpl = async (expression: string) =>
-    expression.includes('input[type="password"]')
+    expression.includes("submitters")
       ? {
           found: true,
           hasForm: true,
@@ -830,9 +830,12 @@ describe("PersonalBrowser", () => {
     // into every page this browser creates, not just the one the bot opened.
     fake.state.onNewPage = (page) => {
       configureLoginPage(page);
-      page.typeText = async () => {
-        throw new Error("late fill failure");
-      };
+      page.resolveElementImpl = () => ({
+        fill: async () => {
+          throw new Error("late fill failure");
+        },
+        dispose: async () => {},
+      });
     };
     return Effect.gen(function* () {
       const browser = yield* PersonalBrowser.PersonalBrowser;
@@ -1550,7 +1553,7 @@ describe("PersonalBrowser", () => {
       expect(botPage?.closed).toBe(true);
       // The fill tab is a fresh document the server navigated itself.
       expect(fillPage?.gotos).toEqual(["https://example.com/sign-in"]);
-      expect(fillPage?.filled).toHaveLength(1);
+      expect(fillPage?.filled).toHaveLength(2);
 
       // And the thread's next tool call routes to the fill tab, not the
       // retired one, so the bot can still submit the form.

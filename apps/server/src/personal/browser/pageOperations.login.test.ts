@@ -26,6 +26,8 @@ interface FormFixture {
 interface FakeOptions {
   /** Called when the password handle is resolved; lets a test navigate first. */
   readonly onResolve?: () => void;
+  readonly onUsernameResolve?: () => void;
+  readonly onUsernameFill?: () => void;
   readonly detached?: boolean;
   readonly form?: FormFixture;
 }
@@ -76,12 +78,15 @@ const makePage = (url: string, options: FakeOptions = {}) => {
       typed.push(input);
     },
     resolveElement: async (locator: string): Promise<BrowserElementHandle | null> => {
-      options.onResolve?.();
+      if (locator.endsWith('input[type="password"]:visible:not([disabled])')) options.onResolve?.();
+      else options.onUsernameResolve?.();
       return {
         fill: async (text: string) => {
           // Playwright invalidates a handle whose element left the document.
           if (options.detached === true) throw new Error("Element is not attached to the DOM");
           filled.push({ locator, text });
+          if (!locator.endsWith('input[type="password"]:visible:not([disabled])'))
+            options.onUsernameFill?.();
         },
         dispose: async () => {
           disposed.push(locator);
@@ -172,11 +177,11 @@ describe("saved-login browser fill", () => {
     const result = await fill(fake.page);
 
     expect(result).toEqual(["username", "password"]);
-    expect(fake.typed).toHaveLength(1);
-    expect(fake.typed[0]?.locator).toContain('input[autocomplete="username"]');
-    expect(fake.filled).toHaveLength(1);
-    expect(fake.filled[0]?.locator).toContain('input[type="password"]');
-    expect(fake.disposed).toHaveLength(1);
+    expect(fake.typed).toHaveLength(0);
+    expect(fake.filled).toHaveLength(2);
+    expect(fake.filled[0]?.locator).toContain('input[autocomplete="username"]');
+    expect(fake.filled[1]?.locator).toContain('input[type="password"]');
+    expect(fake.disposed).toHaveLength(2);
     expect(JSON.stringify(result)).not.toContain("person@example.com");
     expect(JSON.stringify(result)).not.toContain("not-model-visible");
   });
@@ -224,22 +229,20 @@ describe("saved-login browser fill", () => {
         const fake = makePage(url);
 
         await expect(fill(fake.page)).resolves.toEqual(["username", "password"]);
-        expect(fake.filled).toHaveLength(1);
+        expect(fake.filled).toHaveLength(2);
       });
     }
   });
 
   it("rechecks origin after username entry before typing the password", async () => {
-    const fake = makePage("https://example.com/sign-in");
-    fake.page.typeText = async (input) => {
-      fake.typed.push(input);
-      fake.navigate("https://attacker.example/sign-in");
-    };
+    const fake = makePage("https://example.com/sign-in", {
+      onUsernameFill: () => fake.navigate("https://attacker.example/sign-in"),
+    });
 
     await expect(fill(fake.page)).rejects.toThrow("only be used on https://example.com");
-    expect(fake.typed).toHaveLength(1);
-    expect(fake.typed[0]?.text).toBe("person@example.com");
-    expect(fake.filled).toEqual([]);
+    expect(fake.typed).toHaveLength(0);
+    expect(fake.filled).toHaveLength(1);
+    expect(fake.filled[0]?.text).toBe("person@example.com");
   });
 
   // I2: a navigation that lands *after* the last origin check used to be
@@ -262,7 +265,28 @@ describe("saved-login browser fill", () => {
     navigate = redirecting.navigate;
 
     await expect(fill(redirecting.page)).rejects.toThrow("only be used on https://example.com");
-    expect(redirecting.filled).toEqual([]);
+    expect(redirecting.filled).toHaveLength(1);
+    expect(redirecting.filled[0]?.locator).toContain('input[autocomplete="username"]');
+  });
+
+  it("checks origin after resolving the username and disposes its handle without filling", async () => {
+    const fake = makePage("https://example.com/sign-in", {
+      onUsernameResolve: () => fake.navigate("https://attacker.example/sign-in"),
+    });
+    await expect(fill(fake.page)).rejects.toThrow("only be used on https://example.com");
+    expect(fake.typed).toEqual([]);
+    expect(fake.filled).toEqual([]);
+    expect(fake.disposed).toHaveLength(1);
+  });
+
+  it("rechecks form destinations after resolving the username before filling it", async () => {
+    const fake = makePage("https://example.com/sign-in", {
+      onUsernameResolve: () => fake.rewriteForm({ action: "https://attacker.example/collect" }),
+    });
+    await expect(fill(fake.page)).rejects.toThrow("submits to a different origin");
+    expect(fake.typed).toEqual([]);
+    expect(fake.filled).toEqual([]);
+    expect(fake.disposed).toHaveLength(1);
   });
 
   // I4 / audit #4: origin equality ignores the path, and the model picks the
@@ -303,7 +327,7 @@ describe("saved-login browser fill", () => {
       });
 
       await expect(fill(fake.page)).resolves.toEqual(["username", "password"]);
-      expect(fake.filled).toHaveLength(1);
+      expect(fake.filled).toHaveLength(2);
     });
 
     it("allows a password field that is not inside a form", async () => {
@@ -316,14 +340,22 @@ describe("saved-login browser fill", () => {
     // was typed, and typing is an event the page reacts to.
     it("refuses an action the username keystrokes rewrote", async () => {
       const fake = makePage("https://example.com/sign-in", { form: { action: "/session" } });
-      fake.page.typeText = async (input) => {
-        fake.typed.push(input);
-        fake.rewriteForm({ action: "https://collector.example/take" });
+      const resolveElement = fake.page.resolveElement;
+      fake.page.resolveElement = async (locator, timeoutMs) => {
+        const handle = await resolveElement(locator, timeoutMs);
+        if (handle === null) return null;
+        return {
+          fill: async (text, timeout) => {
+            await handle.fill(text, timeout);
+            fake.rewriteForm({ action: "https://collector.example/take" });
+          },
+          dispose: () => handle.dispose(),
+        };
       };
 
       await expect(fill(fake.page)).rejects.toThrow("submits to a different origin");
-      expect(fake.typed).toHaveLength(1);
-      expect(fake.filled).toEqual([]);
+      expect(fake.typed).toHaveLength(0);
+      expect(fake.filled).toHaveLength(1);
     });
 
     it("fails closed when the page stops reporting the password field", async () => {
