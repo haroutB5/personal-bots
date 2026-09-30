@@ -107,3 +107,43 @@ Budgets (`b0bd35d4a5`, `d0169e4575`, CTO decision): the four J1 wall/longTaskMs 
 - Gates: web `src/features/personal`, `src/lib`, `src/components/cloud` 0 (185 files, 1845 tests); web tsc 0; also `src/authBootstrap.test.ts`, `src/cloud`, `src/connection`, `src/environments`: 3 failures in `src/cloud/connectCliAuth.test.ts`, identical on untouched 1.59.0 (pre-existing, env-dependent). Server not touched since 1.59.3 (server personal 0, tsc 0 then). Build exit 0.
 - H7 0/8 wrong counts, H4 0 relay rows, H1 pass, on the staged release. Deferred pieces load after about 3 s; the only console errors are the known Clerk `/v1/client` 400s.
 - Every throwaway stopped by its PID, roots deleted after junction checks. Bisect worktree removed (`git worktree remove`, then `rmdir` with `\?\`).
+
+## 1.59.5: first tap on live-sized data (J2)
+
+Staged, not activated: release `bf1e6cebf0c4` (HEAD `bf1e6cebf0`; an earlier 1.59.5 staging `6b783e89944d` is superseded). Live is 1.59.4 `4db8bb035114`, the rollback. Web only, no server change, no migration.
+
+Live-shaped throwaway, synthetic only (shape read-only from live: 19 bots, 389 chat links with 264 archived, messages per chat p50 9 / p90 116 / max 461). Built by `~/.personal-bots/qa/frontend-1593/seed.mjs` with a fake-CLI `BULK n` turn: 20 bots, 391 chats (258 archived), 16.2k messages (p50 9, p90 61, max 396). Lower than live: activities (389 vs 124k), turns (390 vs 1299), tasks (0 vs 487), memories (0 vs 518). Never a copy of the live database.
+
+| Commit       | Change                                                                                                                                                                  | Kill switch             | Effect (live-shaped, committed budget.json, 5 runs 4x CPU)      |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | --------------------------------------------------------------- |
+| `378bb431bf` | Electron-only hosts (preview automation, webview host, quit overlay) no longer load outside Electron; DeferredMount waits for quiet (input pushes it back)              | `lean-boot`             | chatShell 285.7 -> 194.5                                        |
+| `3448c339db` | Keyboard inset first measurement, viewing report and session prewarm run after the chat's first paint (`afterPaint`)                                                    | `chat-open-after-paint` | J2 long tasks 567 -> 517, requests 5 -> 4                       |
+| `c96ce0fc5d` | Chat route paints `ConversationShellHeader` (same Back link, avatar, name, model line; geometry identical, checked dark and light) and mounts the chat after that paint | `chat-shell-first`      | click task ~300 -> 160-216 ms at 4x; chatShell 331.1 -> 160.3   |
+| `95dd0d87fa` | Deferred dialogs wait at least 8 s after launch                                                                                                                         | `lean-boot`             | no measurable change alone                                      |
+| `bf1e6cebf0` | Client spans export every 5 s (was 1 s, which posted during nearly every chat opening)                                                                                  | `trace-batch`           | requests 5 -> 4 (per run 2-4), chatShell 336.8/266.7 -> 168/154 |
+
+Tried and reverted: a MessageChannel yield after paint instead of setTimeout (chatShell got worse, 352 p50).
+
+### Final table (p50; staged release; live-shaped copy unless noted)
+
+| Metric             | Ceiling | QA live 1.59.4 | 1.59.4 live-shaped | 1.59.5 gate A  | 1.59.5 gate B | 1.59.5 small list |
+| ------------------ | ------- | -------------- | ------------------ | -------------- | ------------- | ----------------- |
+| J1-warm.wall       | 1785    | 1504.5         | 1327.1             | 1396.3         | 1396.3        | pass              |
+| J1-warm.longTaskMs | 1729    | 1360           | 1306               | 1326           | 1320          | pass              |
+| J1-warm.requests   | 196     | 120            | 120                | 120            | 120           | pass              |
+| J1-warm.jsKB       | 3632    | 2187.6         | 2187.6             | 2188           | 2188          | pass              |
+| J2.chatShell       | 228     | 771.9          | 285.7              | **347.6 FAIL** | 200.8         | pass              |
+| J2.requests        | 4       | 16             | 5                  | 4              | 4             | pass              |
+| J2.jsKB            | 20      | 103.8          | 0                  | 0              | 0             | pass              |
+| J1-deep.wall       | 2656    | 2232.8         | 2111.7             | 2023.4         | 2187.8        | pass              |
+| J1-deep.longTaskMs | 2202    | 1905           | 1764               | 1635           | 1745          | pass              |
+| J1-deep.requests   | 246     | 176            | 176                | 176            | 176           | pass              |
+| J1-deep.jsKB       | 4321    | 3430.5         | 3430.5             | 3433.4         | 3433.4        | pass              |
+
+Gate A exit 1 (chatShell only), gate B exit 0, small list exit 0. J2 requests and jsKB are fixed; chatShell is not reliably under 228 on live-sized data.
+
+Why chatShell is bimodal: the probe records the rAF time of the frame whose post-paint check first sees the header. When the tap's click task runs between a frame's rAF and its check, the mark reads that earlier frame (runs of 120-200 ms); otherwise it reads the frame after the click task (325-385 ms). Traces show a real paint right after the click in every run. Playwright's tap itself takes 90-160 ms after the bench's t0 (actionability checks), which leaves about 100 ms for the click task in the slow mode; the click is 160-216 ms at 4x (React commit and ChatsScreen unmount ~58 ms, router ~40 ms, shell layout ~13 ms). Passing reliably needs that click roughly halved, e.g. keeping the Bots list mounted (hidden) instead of unmounting it on every tap, or the probe fixed to read the real paint time and J2 re-baselined. Both are CTO decisions.
+
+- Gates: web personal + lib + cloud 0 (187 files, 1851 tests), web tsc 0. Build exit 0.
+- H7 0/8 wrong counts, H4 0 relay rows, H1 pass, on the staged release.
+- Throwaways stopped by PID; e2e and golden roots deleted after junction checks (0).
