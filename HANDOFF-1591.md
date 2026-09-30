@@ -39,3 +39,35 @@ Staged, not activated: release `c0ad253f2963` (commits `99e24f722f` fix, `c0ad25
 - Tests: `AllChatsCount.test.tsx` (pending state, settled count), `personalGroupsSettled`, and a ChatsScreen test with groups arriving after the bots.
 - Gates: web personal 0 (138 files, 1366 tests), web tsc 0; build exit 0.
 - Throwaway (same harness, QA's retest-count-race.mjs adapted as `h7race.mjs`, 4 cold loads per theme, dark and light): 1.59.1 showed "3 open · 1 archived" in 8/8 runs (two relays); 1.59.2 in 0/8 (the pending placeholder, then "1 open · 1 archived" about 20 ms later). H1 and H4 re-checked on 1.59.2. Evidence `~/.personal-bots/qa/frontend-1591/h7-old.json`, `h7-new.json`. Server stopped by PID, root deleted (0 junctions).
+
+## 1.59.3: H8, first tap no longer waits (perf budgets)
+
+Staged, not activated: release `2a1b2f1ca439` (commits `c7a12cf7d4` preload, `a94f2453e3` relay flag, `2a1b2f1ca4` version). Live is 1.59.2 `c0ad253f2963`, the rollback. QA's live check failed 7 of 11 budget.json limits. Server + web + contracts change, additive, no migration.
+
+- **Chat preload from the first paint** (`c7a12cf7d4`): `usePreloadChatRoute(firstPaintReady)` (snapshot rows count) with a 250 ms idle deadline (`PRELOAD_CHAT_IDLE_MS`). Kill switch `bots:perf-off=preload-chat-soon`. Before, it waited for live rows plus an idle moment (up to 3 s), so with a long list the first tap loaded ~48 chunks / 1.2 MB.
+- **Bots list marks relays** (`a94f2453e3`): `personalBots.list` sends `groupRelay: true` on each group relay link (same rule as group presence: any `personal_group_members.thread_id`). `isGroupRelayLink` (flag, or a relay the groups know that is newer than the list) is the one rule for the Bots rows and search, a bot's chat list, All chats and Message privately. The 1.59.2 loading gates are removed: live rows paint with the bots list, so a tap no longer lands on the groups-triggered render. H7 stays fixed: the count is right from its first render.
+
+### Bisect (throwaway, fake CLI, Sonnet seed, 5 runs + warm-up, QA's r1592 ceilings, bot Researcher)
+
+J1-warm wall / longTaskMs, J1-deep wall / longTaskMs, light fixture: 1.30.1 1834/1729, 2656/2202 (the release the budgets were ratcheted from, 23 Sep); 1.53.1 1393/1337, 2148/1808; 1.57.2 1383/1356, 2085/1739; 1.57.3 1362/1138, 2075/1725; 1.58.1 1388/1386, 2086/1715; 1.59.0 1393/1366, 2049/1689; 1.59.1 1390/1125, 2085/1754; 1.59.2 1389/1338, 2104/1721. No regression across 1.53-1.59; 1.30.1 itself misses these four ceilings today by more than 1.59.x. They are out of date for this machine/Chrome, not a code regression, and were left unchanged. J2 depends on list size: it passes on every build with a small list, and with 400 extra chats fails on both 1.59.1 and 1.59.2 (50 requests / 1198 KB).
+
+### Budget table (p50; limit in brackets)
+
+| Metric                    | QA live 1.59.2 | Throwaway 1.59.2, 400 chats | 1.59.3, 400 chats | 1.59.3, light |
+| ------------------------- | -------------- | --------------------------- | ----------------- | ------------- |
+| J1-warm.wall (1138)       | 1572.6 FAIL    | 1386.1 FAIL                 | 1488.1 FAIL       | 1384.6 FAIL   |
+| J1-warm.longTaskMs (960)  | 1521 FAIL      | 1313 FAIL                   | 1406 FAIL         | 1336 FAIL     |
+| J1-warm.requests (196)    | 145            | 145                         | 145               | 145           |
+| J1-warm.jsKB (3632)       | 2390.7         | 2390.7                      | 2390.4            | 2390.4        |
+| J2.chatShell (228)        | 1133.1 FAIL    | 567.5 FAIL                  | 170.5             | 108.2         |
+| J2.requests (4)           | 50 FAIL        | 50 FAIL                     | 3                 | 2             |
+| J2.jsKB (20)              | 1198.2 FAIL    | 1198.2 FAIL                 | 0                 | 0             |
+| J1-deep.wall (1478)       | 2450.1 FAIL    | 2083.1 FAIL                 | 2164.9 FAIL       | 2096.8 FAIL   |
+| J1-deep.longTaskMs (1130) | 2122 FAIL      | 1757 FAIL                   | 1760 FAIL         | 1723 FAIL     |
+| J1-deep.requests (246)    | 196            | 196                         | 196               | 196           |
+| J1-deep.jsKB (4321)       | 3588.7         | 3588.7                      | 3588.4            | 3588.4        |
+
+- Gates: web personal 0 (139 files, 1368), web tsc 0, server `src/personal` 0 (97 files, 1069), server tsc 0, contracts 0 (493), contracts tsc 0. Build exit 0.
+- H7/H4/H1 re-proved on this code (h7race 0/8 wrong counts, count right from first render; H4 0 relay rows; H1 pass).
+- Evidence `~/.personal-bots/qa/frontend-1593/` (`bisect.mjs`, `check-*.log`, probes: `probe-*.mjs`, `ws-*.json`, `profile-*.json`). Every throwaway stopped by its PID, roots deleted after junction checks. Bisect worktree `C:/Claude/AI/_wt/hbots-bisect` (detached, 1.30.1) left for reuse.
+- Not done: J1 boot work itself. Profiling shows the boot runs a serial HTTP chain before the socket opens (version.txt, auth/session x2, client-diag, environment x2, link-state; about 1.3 s at 4x CPU) and most main-thread time is parse/compile/style ("program"). That is a bigger, separate job.
