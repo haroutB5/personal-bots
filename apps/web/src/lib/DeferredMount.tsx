@@ -2,8 +2,12 @@ import { type ReactNode, Suspense, useEffect, useState } from "react";
 
 import { perfOptimizationOn, whenIdle } from "~/features/personal/perfFlags";
 
-/** How long after mount the deferred boot pieces wait at the least. */
-export const DEFERRED_MOUNT_MIN_MS = 3_000;
+/**
+ * How long after mount the deferred boot pieces wait at the least. Long enough
+ * that an owner who opens a chat soon after launch (a few seconds in, before
+ * touching anything else) does so before this code loads, not during it.
+ */
+export const DEFERRED_MOUNT_MIN_MS = 8_000;
 /** How long the owner must leave the screen alone before they load. */
 export const DEFERRED_MOUNT_QUIET_MS = 2_000;
 
