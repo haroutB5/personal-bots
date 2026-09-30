@@ -1,6 +1,7 @@
 import { RouterProvider } from "@tanstack/react-router";
 import { lazy } from "react";
 
+import { isElectron } from "./env";
 import { DeferredMount } from "./lib/DeferredMount";
 import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import type { AppRouter } from "./router";
@@ -32,11 +33,15 @@ export function AppRoot({ router }: { readonly router: AppRouter }) {
   return (
     <AppAtomRegistryProvider>
       <RouterProvider router={router} />
-      <DeferredMount>
-        <PreviewAutomationHosts />
-        <ElectronBrowserHost />
-        <QuitHoldOverlay />
-      </DeferredMount>
+      {/* All three need the desktop bridge and render nothing without it, so
+          the browser and the phone PWA never load them. */}
+      {isElectron ? (
+        <DeferredMount>
+          <PreviewAutomationHosts />
+          <ElectronBrowserHost />
+          <QuitHoldOverlay />
+        </DeferredMount>
+      ) : null}
     </AppAtomRegistryProvider>
   );
 }
