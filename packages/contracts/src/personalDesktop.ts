@@ -215,6 +215,17 @@ export const PersonalDesktopViewMessage = Schema.Union([
   }),
   /** One input was refused (outside the frame, too fast, PC locked); nothing was done. */
   Schema.TaggedStruct("InputRefused", { detail: Schema.String }),
+  /**
+   * Where keyboard focus is on the PC, sent to the controlling socket after a
+   * click or a focus-moving key: whether it is a text field (so the phone can
+   * offer its keyboard), whether that field is a password, and where the
+   * field is, as fractions of the monitor, when the PC says. Never its text.
+   */
+  Schema.TaggedStruct("FocusChanged", {
+    editable: Schema.Boolean,
+    password: Schema.optional(Schema.Boolean),
+    rect: Schema.optional(PersonalDesktopViewRegion),
+  }),
 ]);
 export type PersonalDesktopViewMessage = typeof PersonalDesktopViewMessage.Type;
 

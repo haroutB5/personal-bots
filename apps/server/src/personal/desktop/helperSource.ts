@@ -76,6 +76,8 @@ static class Native {
   [DllImport("gdi32.dll")] public static extern bool StretchBlt(IntPtr dst, int dx, int dy, int dw, int dh, IntPtr src, int sx, int sy, int sw, int sh, uint rop);
   [DllImport("gdi32.dll")] public static extern int SetStretchBltMode(IntPtr hdc, int mode);
   [DllImport("gdi32.dll")] public static extern bool SetBrushOrgEx(IntPtr hdc, int x, int y, IntPtr previous);
+  [DllImport("user32.dll")] public static extern bool GetGUIThreadInfo(uint thread, ref GUITHREADINFO info);
+  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hwnd, ref POINT p);
 
   public delegate bool MonitorEnumProc(IntPtr monitor, IntPtr hdc, ref RECT rect, IntPtr data);
   public delegate IntPtr HookProc(int code, IntPtr w, IntPtr l);
@@ -94,6 +96,11 @@ static class Native {
   [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
   [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public INPUTUNION u; }
   [StructLayout(LayoutKind.Sequential)] public struct KBDLLHOOKSTRUCT { public uint vkCode; public uint scanCode; public uint flags; public uint time; public IntPtr extra; }
+  [StructLayout(LayoutKind.Sequential)]
+  public struct GUITHREADINFO {
+    public int cbSize; public uint flags; public IntPtr hwndActive; public IntPtr hwndFocus; public IntPtr hwndCapture;
+    public IntPtr hwndMenuOwner; public IntPtr hwndMoveSize; public IntPtr hwndCaret; public RECT rcCaret;
+  }
   [StructLayout(LayoutKind.Sequential)] public struct MSLLHOOKSTRUCT { public POINT pt; public uint mouseData; public uint flags; public uint time; public IntPtr extra; }
 }
 
@@ -170,6 +177,8 @@ public static class PbDesktopHelper {
   static IntPtr injectTag = SelfTag;
   static bool remoteCmd = false;
   static readonly BlockingCollection<string> work = new BlockingCollection<string>();
+  // "focus" asks, answered on their own thread so a slow app never holds up input.
+  static readonly BlockingCollection<object> focusWork = new BlockingCollection<object>();
 
   // 0: the person at the PC (hardware, or another program); 1: a bot, through
   // this helper; 2: the owner's remote control, through this helper.
@@ -293,9 +302,21 @@ public static class PbDesktopHelper {
     Thread worker = new Thread(WorkLoop);
     worker.IsBackground = true;
     worker.Start();
+    Thread focuser = new Thread(FocusLoop);
+    focuser.IsBackground = true;
+    focuser.Start();
     string line;
     while ((line = input.ReadLine()) != null) {
       if (line.Trim().Length == 0) continue;
+      if (line.IndexOf("\"focus\"", StringComparison.Ordinal) >= 0) {
+        try {
+          Dictionary<string, object> req = json.Deserialize<Dictionary<string, object>>(line);
+          if (Str(req, "cmd") == "focus") {
+            focusWork.Add(req.ContainsKey("id") ? req["id"] : null);
+            continue;
+          }
+        } catch (Exception) { }
+      }
       if (line.IndexOf("\"abort\"", StringComparison.Ordinal) >= 0) {
         object id = null;
         try {
@@ -334,6 +355,95 @@ public static class PbDesktopHelper {
         Emit(Dict("id", id, "ok", false, "code", "internal", "error", e.GetType().Name + ": " + e.Message));
       }
     }
+  }
+
+  // Answers "focus": only the newest ask is looked into, older ones queued
+  // behind a slow answer are told they were skipped.
+  static void FocusLoop() {
+    Native.SetThreadDpiAwarenessContext(new IntPtr(-4));
+    foreach (object first in focusWork.GetConsumingEnumerable()) {
+      object id = first;
+      object newer;
+      while (focusWork.TryTake(out newer)) {
+        Emit(Dict("id", id, "ok", true, "skipped", true));
+        id = newer;
+      }
+      try {
+        Dictionary<string, object> result = FocusInfo();
+        result["id"] = id;
+        result["ok"] = true;
+        Emit(result);
+      } catch (Exception e) {
+        Emit(Dict("id", id, "ok", false, "code", "internal", "error", e.GetType().Name + ": " + e.Message));
+      }
+    }
+  }
+
+  static Dictionary<string, object> RectDict(int x, int y, int w, int h) {
+    return Dict("x", x, "y", y, "width", Math.Max(1, w), "height", Math.Max(1, h));
+  }
+
+  // Is keyboard focus in something that takes typing? UI Automation's focused
+  // element decides (an Edit, or a Document or combo box whose value is
+  // writable); the foreground thread's system caret only counts when UI
+  // Automation can't say. Never reads the field's value. Coordinates are
+  // physical pixels on the virtual screen.
+  static Dictionary<string, object> FocusInfo() {
+    long started = DateTime.UtcNow.Ticks;
+    Dictionary<string, object> d = Dict();
+    bool caret = false;
+    IntPtr fg = Native.GetForegroundWindow();
+    uint pid;
+    uint thread = fg == IntPtr.Zero ? 0 : Native.GetWindowThreadProcessId(fg, out pid);
+    if (thread != 0) {
+      Native.GUITHREADINFO gti = new Native.GUITHREADINFO();
+      gti.cbSize = Marshal.SizeOf(typeof(Native.GUITHREADINFO));
+      if (Native.GetGUIThreadInfo(thread, ref gti) && gti.hwndCaret != IntPtr.Zero) {
+        caret = true;
+        Native.POINT a = new Native.POINT(); a.X = gti.rcCaret.Left; a.Y = gti.rcCaret.Top;
+        Native.POINT b = new Native.POINT(); b.X = gti.rcCaret.Right; b.Y = gti.rcCaret.Bottom;
+        Native.ClientToScreen(gti.hwndCaret, ref a);
+        Native.ClientToScreen(gti.hwndCaret, ref b);
+        d["caret"] = RectDict(a.X, a.Y, b.X - a.X, b.Y - a.Y);
+      }
+    }
+    string verdict = null;
+    try {
+      System.Windows.Automation.AutomationElement element = System.Windows.Automation.AutomationElement.FocusedElement;
+      if (element != null) {
+        System.Windows.Automation.AutomationElement.AutomationElementInformation info = element.Current;
+        System.Windows.Automation.ControlType type = info.ControlType;
+        object pattern;
+        bool hasValue = element.TryGetCurrentPattern(System.Windows.Automation.ValuePattern.Pattern, out pattern);
+        bool readOnly = hasValue && ((System.Windows.Automation.ValuePattern)pattern).Current.IsReadOnly;
+        object textPattern;
+        bool hasText = element.TryGetCurrentPattern(System.Windows.Automation.TextPattern.Pattern, out textPattern);
+        bool text;
+        if (type == System.Windows.Automation.ControlType.Edit) text = !readOnly;
+        else if (type == System.Windows.Automation.ControlType.Document || type == System.Windows.Automation.ControlType.ComboBox
+          || type == System.Windows.Automation.ControlType.Group || type == System.Windows.Automation.ControlType.Custom
+          || type == System.Windows.Automation.ControlType.Pane) {
+          // A rich editor (Notepad's page) has a value the user may change; a
+          // web page's contenteditable is a group with text but no value (the
+          // page itself is a Document with text and a read-only value).
+          text = (hasValue && !readOnly) || (type == System.Windows.Automation.ControlType.Group && hasText && !hasValue);
+        } else text = false;
+        verdict = text ? (info.IsPassword ? "password" : "text") : "none";
+        d["control"] = type.ProgrammaticName.Replace("ControlType.", "");
+        d["className"] = info.ClassName;
+        System.Windows.Rect r = info.BoundingRectangle;
+        if (text && !r.IsEmpty && r.Width > 0 && r.Height > 0) {
+          d["rect"] = RectDict((int)Math.Round(r.X), (int)Math.Round(r.Y), (int)Math.Round(r.Width), (int)Math.Round(r.Height));
+        }
+      }
+    } catch (Exception e) {
+      d["uiaError"] = e.GetType().Name;
+    }
+    if (verdict == null) verdict = caret ? "text" : "none";
+    d["editable"] = verdict != "none";
+    if (verdict == "password") d["password"] = true;
+    d["ms"] = Math.Round(MsSince(started));
+    return d;
   }
 
   class HelperError : Exception {

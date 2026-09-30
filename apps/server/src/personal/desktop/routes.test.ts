@@ -22,6 +22,7 @@ import {
   type RemoteControlOptions,
   type RemoteControlSession,
 } from "./PersonalDesktop.ts";
+import type { RemoteFocus } from "./desktopRemote.ts";
 import { makeDesktopSocketHandler, personalDesktopStreamRouteLayer } from "./routes.ts";
 
 const disposers: Array<() => Promise<void>> = [];
@@ -90,7 +91,12 @@ describe("personal desktop live view route", () => {
 
 const point = { x: 10, y: 10, frameWidth: 1170, frameHeight: 731 };
 
-function socketFixture(options: { takeFails?: PersonalDesktopActionError } = {}) {
+function socketFixture(
+  options: {
+    takeFails?: PersonalDesktopActionError;
+    focus?: () => Promise<RemoteFocus | null>;
+  } = {},
+) {
   const seen: string[] = [];
   const sent: PersonalDesktopViewMessage[] = [];
   const inputs: unknown[] = [];
@@ -139,11 +145,13 @@ function socketFixture(options: { takeFails?: PersonalDesktopActionError } = {})
           end: (reason) => session.end(reason),
           active: () => session.active(),
           pending: () => session.pending(),
+          ...(options.focus === undefined ? {} : { focus: options.focus }),
         } satisfies RemoteControlSession);
       },
     },
     send: (message) => sent.push(message),
     now: () => clock,
+    focusCheckMs: { first: 1, again: 10 },
   });
   const flush = () => new Promise((resolve) => setTimeout(resolve, 5));
   return {
@@ -273,5 +281,75 @@ describe("personal desktop live view socket", () => {
       _tag: "InputRefused",
       detail: "That point is outside the picture of your PC.",
     });
+  });
+
+  it("says whether focus is in a text field after taking control and after a click", async () => {
+    let focus: RemoteFocus | null = {
+      editable: true,
+      rect: { x: 0.1, y: 0.05, width: 0.8, height: 0.02 },
+    };
+    let looks = 0;
+    const socket = socketFixture({
+      focus: () => {
+        looks++;
+        return Promise.resolve(focus);
+      },
+    });
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    socket.handler.handle(json({ _tag: "Control", on: true }));
+    await wait(20);
+    expect(socket.sent).toEqual([
+      { _tag: "Control", on: true },
+      {
+        _tag: "FocusChanged",
+        editable: true,
+        rect: { x: 0.1, y: 0.05, width: 0.8, height: 0.02 },
+      },
+    ]);
+
+    // A password field says so (and nothing else about it).
+    focus = { editable: true, password: true };
+    socket.handler.handle(json({ _tag: "Pointer", action: "click", ...point }));
+    await wait(20);
+    expect(socket.sent.at(-1)).toEqual({ _tag: "FocusChanged", editable: true, password: true });
+
+    // "Not a field" is only said after a second look.
+    focus = { editable: false };
+    looks = 0;
+    socket.handler.handle(json({ _tag: "Pointer", action: "click", ...point }));
+    await wait(40);
+    expect(looks).toBe(2);
+    expect(socket.sent.at(-1)).toEqual({ _tag: "FocusChanged", editable: false });
+
+    // Scrolls and plain moves never ask; a failed or superseded look says nothing.
+    const before = socket.sent.length;
+    looks = 0;
+    socket.handler.handle(json({ _tag: "Scroll", ...point, deltaX: 0, deltaY: 120 }));
+    socket.handler.handle(json({ _tag: "Pointer", action: "move", ...point }));
+    await wait(20);
+    expect(looks).toBe(0);
+    focus = null;
+    socket.handler.handle(json({ _tag: "Keys", keys: "tab" }));
+    await wait(40);
+    expect(looks).toBe(1);
+    expect(socket.sent).toHaveLength(before);
+  });
+
+  it("drops an older look's answer when a newer click asks again", async () => {
+    const answers: Array<(focus: RemoteFocus) => void> = [];
+    const socket = socketFixture({
+      focus: () => new Promise((resolve) => answers.push(resolve)),
+    });
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    socket.handler.handle(json({ _tag: "Control", on: true }));
+    await wait(10);
+    socket.handler.handle(json({ _tag: "Pointer", action: "click", ...point }));
+    await wait(10);
+    answers[0]!({ editable: true });
+    answers[1]!({ editable: true, password: true });
+    await wait(5);
+    expect(socket.sent.filter((message) => message._tag === "FocusChanged")).toEqual([
+      { _tag: "FocusChanged", editable: true, password: true },
+    ]);
   });
 });

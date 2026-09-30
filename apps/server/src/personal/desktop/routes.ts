@@ -12,6 +12,7 @@
  * socket; nothing typed is ever logged.
  */
 // @effect-diagnostics globalDate:off - refusal throttling uses a plain millisecond clock.
+// @effect-diagnostics globalTimers:off - focus checks follow callback-based input a beat later.
 import {
   AuthOrchestrationOperateScope,
   PERSONAL_DESKTOP_STREAM_PATH,
@@ -33,7 +34,9 @@ import {
   InputRateLimiter,
   isDroppableInput,
   isRemoteDesktopInput,
+  movesFocus,
   REMOTE_INPUT_RATE,
+  type RemoteFocus,
 } from "./desktopRemote.ts";
 import {
   PersonalDesktop,
@@ -49,12 +52,19 @@ const encodeMessage = Schema.encodeSync(Schema.fromJsonString(PersonalDesktopVie
 const MAX_MOVE_BACKLOG = 6;
 /** At most one refusal message per this long, so a flood never crowds out frames. */
 const REFUSAL_SPACING_MS = 1_000;
+/**
+ * After an input that may move focus: a first look once the app has had a
+ * moment, and, when that finds no text field, a second look (an app that
+ * focuses its box a beat late, like Windows search opening).
+ */
+export const FOCUS_CHECK_MS = { first: 60, again: 300 } as const;
 
 export interface DesktopSocketHandlerOptions {
   readonly viewer: LiveViewer;
   readonly desktop: Pick<PersonalDesktopShape, "takeControl">;
   readonly send: (message: PersonalDesktopViewMessage) => void;
   readonly now?: () => number;
+  readonly focusCheckMs?: { readonly first: number; readonly again: number };
 }
 
 export interface DesktopSocketHandler {
@@ -78,6 +88,47 @@ export function makeDesktopSocketHandler(
   let taking = false;
   let closed = false;
   let lastRefusalAt = Number.NEGATIVE_INFINITY;
+  const focusCheckMs = options.focusCheckMs ?? FOCUS_CHECK_MS;
+  /** Bumped by every focus-moving input: an older look's answer is dropped. */
+  let focusGeneration = 0;
+  let focusTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const sendFocus = (focus: RemoteFocus) => {
+    send({
+      _tag: "FocusChanged",
+      editable: focus.editable,
+      ...(focus.password === true ? { password: true } : {}),
+      ...(focus.rect === undefined ? {} : { rect: focus.rect }),
+    });
+  };
+
+  /**
+   * Tells the controlling app whether focus is now in a text field. A look
+   * that fails says nothing: the app keeps what it had rather than guess.
+   */
+  const checkFocus = (current: RemoteControlSession) => {
+    const probe = current.focus;
+    if (probe === undefined) return;
+    const generation = ++focusGeneration;
+    clearTimeout(focusTimer);
+    const look = (again: boolean) => {
+      focusTimer = undefined;
+      if (closed || generation !== focusGeneration || !current.active()) return;
+      probe().then(
+        (focus) => {
+          if (closed || generation !== focusGeneration || !current.active()) return;
+          if (focus === null) return;
+          if (!focus.editable && !again) {
+            focusTimer = setTimeout(() => look(true), focusCheckMs.again);
+            return;
+          }
+          sendFocus(focus);
+        },
+        () => undefined,
+      );
+    };
+    focusTimer = setTimeout(() => look(false), focusCheckMs.first);
+  };
 
   const refuse = (detail: string) => {
     const at = now();
@@ -115,6 +166,8 @@ export function makeDesktopSocketHandler(
         session = exit.value;
         viewer.setControl(true);
         send({ _tag: "Control", on: true });
+        // Focus may already be in a field (an address bar left selected).
+        checkFocus(exit.value);
         return;
       }
       if (closed) return;
@@ -175,7 +228,10 @@ export function makeDesktopSocketHandler(
         return;
       }
       current.input(message).then(
-        () => viewer.nudge(),
+        () => {
+          viewer.nudge();
+          if (movesFocus(message)) checkFocus(current);
+        },
         (error: unknown) => {
           if (closed || droppable) return;
           refuse(
@@ -188,6 +244,7 @@ export function makeDesktopSocketHandler(
     },
     close: () => {
       closed = true;
+      clearTimeout(focusTimer);
       const current = session;
       session = null;
       current?.end("closed");

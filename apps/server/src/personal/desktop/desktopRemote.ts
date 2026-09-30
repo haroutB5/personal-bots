@@ -159,3 +159,71 @@ export class InputRateLimiter {
 }
 
 export const REMOTE_INPUT_RATE = { capacity: 60, perSecond: 40 } as const;
+
+/** Where keyboard focus is on the PC, as the controlling socket hears it. */
+export interface RemoteFocus {
+  readonly editable: boolean;
+  readonly password?: boolean;
+  /** The focused field, as fractions of the monitor (only the part on it). */
+  readonly rect?: { x: number; y: number; width: number; height: number };
+}
+
+const isRect = (value: unknown): value is DesktopRect =>
+  typeof value === "object" &&
+  value !== null &&
+  ["x", "y", "width", "height"].every(
+    (key) => typeof (value as Record<string, unknown>)[key] === "number",
+  );
+
+/**
+ * The helper's `focus` answer as a report for the app, or null when there is
+ * nothing to say (a newer ask superseded it). The field's rect is clipped to
+ * `monitor` and given as fractions of it; a field off the monitor (a
+ * minimised window, another screen) has no rect.
+ */
+export function focusReport(
+  result: Readonly<Record<string, unknown>>,
+  monitor: DesktopRect,
+): RemoteFocus | null {
+  if (result.skipped === true || typeof result.editable !== "boolean") return null;
+  if (!result.editable) return { editable: false };
+  const field = isRect(result.rect) ? result.rect : isRect(result.caret) ? result.caret : null;
+  let rect: RemoteFocus["rect"];
+  if (field !== null && monitor.width > 0 && monitor.height > 0) {
+    const left = Math.max(field.x, monitor.x);
+    const top = Math.max(field.y, monitor.y);
+    const right = Math.min(field.x + field.width, monitor.x + monitor.width);
+    const bottom = Math.min(field.y + field.height, monitor.y + monitor.height);
+    if (right > left && bottom > top) {
+      rect = {
+        x: (left - monitor.x) / monitor.width,
+        y: (top - monitor.y) / monitor.height,
+        width: (right - left) / monitor.width,
+        height: (bottom - top) / monitor.height,
+      };
+    }
+  }
+  return {
+    editable: true,
+    ...(result.password === true ? { password: true } : {}),
+    ...(rect === undefined ? {} : { rect }),
+  };
+}
+
+/**
+ * Could this input have moved keyboard focus? A click or button release
+ * (tap, mouse), any key (Tab, Enter, Esc, Alt+Tab, Win), and text with a
+ * newline (Enter submits a form or opens a result).
+ */
+export function movesFocus(input: RemoteDesktopInput): boolean {
+  switch (input._tag) {
+    case "Pointer":
+      return input.action === "click" || input.action === "up";
+    case "Keys":
+      return true;
+    case "Text":
+      return input.text.includes("\n");
+    case "Scroll":
+      return false;
+  }
+}

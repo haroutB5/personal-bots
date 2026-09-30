@@ -44,7 +44,12 @@ import {
 import { DesktopLiveViewHub, type LiveViewer, type LiveViewSink } from "./DesktopLiveView.ts";
 import { DesktopCoordinateError, type DesktopRect, type ScreenFrame } from "./desktopGeometry.ts";
 import { DesktopKeyError } from "./desktopKeys.ts";
-import { planRemoteInput, type RemoteDesktopInput } from "./desktopRemote.ts";
+import {
+  focusReport,
+  planRemoteInput,
+  type RemoteDesktopInput,
+  type RemoteFocus,
+} from "./desktopRemote.ts";
 
 /**
  * How long one tool call waits in line. Claude's MCP client gives up on a
@@ -127,6 +132,11 @@ export interface RemoteControlSession {
   readonly active: () => boolean;
   /** Inputs queued or running (the socket drops plain moves past a backlog). */
   readonly pending: () => number;
+  /**
+   * Is keyboard focus on the PC in a text field? Answered beside the input
+   * queue (never behind a long text), null when there is nothing to say.
+   */
+  readonly focus?: () => Promise<RemoteFocus | null>;
 }
 
 export interface RemoteControlOptions {
@@ -210,6 +220,8 @@ export interface DesktopServiceOptions {
 const iso = (millis: number) => new Date(millis).toISOString();
 
 const REMOTE_MONITOR_TTL_MS = 10_000;
+/** A focus answer later than this is stale; the next click asks again. */
+const FOCUS_TIMEOUT_MS = 2_000;
 
 /** The primary monitor's physical rect from the helper's `info` reply. */
 function primaryMonitor(info: Record<string, unknown>): DesktopRect {
@@ -710,6 +722,12 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
             end: (reason) => {
               if (remote !== session) return;
               applyHandOver(lock.release(REMOTE_USER.threadId, now()), reason);
+            },
+            focus: async () => {
+              if (remote !== session) return null;
+              const result = await driver.request("focus", {}, FOCUS_TIMEOUT_MS);
+              if (remote !== session) return null;
+              return focusReport(result, await remoteMonitor(session));
             },
             input: async (input) => {
               if (remote !== session) throw ended();

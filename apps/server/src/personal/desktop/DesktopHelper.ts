@@ -32,7 +32,7 @@ export class DesktopHelperError extends Error {
 }
 
 const HOST_SCRIPT = `$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Drawing, System.Windows.Forms, System.Web.Extensions
+Add-Type -AssemblyName System.Drawing, System.Windows.Forms, System.Web.Extensions, UIAutomationClient, UIAutomationTypes, WindowsBase
 $bytes = [System.IO.File]::ReadAllBytes($env:PB_DESKTOP_HELPER_DLL)
 $assembly = [System.Reflection.Assembly]::Load($bytes)
 $entry = if ($env:PB_DESKTOP_HELPER_ENTRY) { $env:PB_DESKTOP_HELPER_ENTRY } else { 'Run' }
@@ -85,6 +85,10 @@ export function ensureHelperCompiled(dir: string): { dllPath: string; hostPath: 
       "-r:System.Drawing.dll",
       "-r:System.Windows.Forms.dll",
       "-r:System.Web.Extensions.dll",
+      // UI Automation, for "is the focused element a text field" (focus).
+      `-r:${frameworkTool(NodePath.join("WPF", "UIAutomationClient.dll"))}`,
+      `-r:${frameworkTool(NodePath.join("WPF", "UIAutomationTypes.dll"))}`,
+      `-r:${frameworkTool(NodePath.join("WPF", "WindowsBase.dll"))}`,
       sourcePath,
     ],
     { windowsHide: true, encoding: "utf8", timeout: 120_000 },

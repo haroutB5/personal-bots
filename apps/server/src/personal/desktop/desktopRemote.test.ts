@@ -3,8 +3,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { DesktopCoordinateError } from "./desktopGeometry.ts";
 import { DesktopKeyError } from "./desktopKeys.ts";
 import {
+  focusReport,
   InputRateLimiter,
   isDroppableInput,
+  movesFocus,
   planRemoteInput,
   type RemoteDesktopInput,
 } from "./desktopRemote.ts";
@@ -168,5 +170,63 @@ describe("InputRateLimiter", () => {
       true,
       false,
     ]);
+  });
+});
+
+describe("focus reports", () => {
+  const monitor = { x: 0, y: 0, width: 3072, height: 1920 };
+
+  it("gives a field's rect as fractions of the monitor, clipped to it", () => {
+    expect(
+      focusReport(
+        { editable: true, rect: { x: 248, y: 96, width: 2418, height: 48 }, control: "Edit" },
+        monitor,
+      ),
+    ).toEqual({
+      editable: true,
+      rect: { x: 248 / 3072, y: 96 / 1920, width: 2418 / 3072, height: 48 / 1920 },
+    });
+    const clipped = focusReport(
+      { editable: true, rect: { x: 62, y: 1800, width: 2280, height: 1108 } },
+      monitor,
+    );
+    expect(clipped?.rect?.height).toBeCloseTo(120 / 1920);
+    // A minimised window's field is off every monitor: no rect, still a field.
+    expect(
+      focusReport(
+        { editable: true, rect: { x: -31988, y: -31852, width: 2280, height: 1108 } },
+        monitor,
+      ),
+    ).toEqual({ editable: true });
+  });
+
+  it("falls back to the caret, flags passwords, and says nothing for a skipped ask", () => {
+    expect(
+      focusReport({ editable: true, caret: { x: 94, y: 230, width: 1, height: 34 } }, monitor)
+        ?.rect,
+    ).toEqual({ x: 94 / 3072, y: 230 / 1920, width: 1 / 3072, height: 34 / 1920 });
+    expect(focusReport({ editable: true, password: true }, monitor)).toEqual({
+      editable: true,
+      password: true,
+    });
+    expect(
+      focusReport({ editable: false, rect: { x: 0, y: 0, width: 5, height: 5 } }, monitor),
+    ).toEqual({
+      editable: false,
+    });
+    expect(focusReport({ skipped: true }, monitor)).toBeNull();
+    expect(focusReport({}, monitor)).toBeNull();
+  });
+
+  it("asks after clicks, releases, keys and Enter in text, not after moves or scrolls", () => {
+    const at = { x: 1, y: 1, frameWidth: 10, frameHeight: 10 };
+    expect(movesFocus({ _tag: "Pointer", action: "click", ...at })).toBe(true);
+    expect(movesFocus({ _tag: "Pointer", action: "up", ...at })).toBe(true);
+    expect(movesFocus({ _tag: "Pointer", action: "down", ...at })).toBe(false);
+    expect(movesFocus({ _tag: "Pointer", action: "move", ...at })).toBe(false);
+    expect(movesFocus({ _tag: "Scroll", ...at, deltaX: 0, deltaY: 120 })).toBe(false);
+    expect(movesFocus({ _tag: "Keys", keys: "tab" })).toBe(true);
+    expect(movesFocus({ _tag: "Text", text: "hello" })).toBe(false);
+    expect(movesFocus({ _tag: "Text", text: "hello\n" })).toBe(true);
   });
 });
