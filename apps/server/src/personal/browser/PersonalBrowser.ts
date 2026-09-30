@@ -2277,43 +2277,105 @@ export const make = (options: PersonalBrowserOptions) =>
       );
 
     /**
-     * Is the focused element one a phone keyboard is for? Evaluated in the page
-     * rather than inferred from a hit test, so a custom editor that moves focus
-     * in its own click handler is judged by where focus actually ended up.
+     * Which phone keyboard the focused element wants, or false for none.
+     * Evaluated in the page rather than inferred from a hit test, so a custom
+     * editor that moves focus in its own click handler is judged by where focus
+     * actually ended up. It follows focus into open shadow roots and
+     * same-origin frames, where sign-in and search fields often live; a
+     * cross-origin frame hides its focus, and a tap into one (a hosted sign-in
+     * or card form) most likely hit a field, so it counts as text.
      */
     const FOCUS_PROBE = `(() => {
-      const element = document.activeElement;
+      let element = document.activeElement;
+      for (let depth = 0; depth < 10 && element; depth++) {
+        if (element.shadowRoot && element.shadowRoot.activeElement) {
+          element = element.shadowRoot.activeElement;
+          continue;
+        }
+        if (element.tagName === "IFRAME" || element.tagName === "FRAME") {
+          let inner = null;
+          try {
+            inner = element.contentDocument ? element.contentDocument.activeElement : null;
+          } catch (error) {
+            inner = null;
+          }
+          if (!inner) return "text";
+          if (inner === element.contentDocument.body) return false;
+          element = inner;
+          continue;
+        }
+        break;
+      }
       if (!element || element === document.body) return false;
-      if (element.isContentEditable === true) return true;
-      const tag = element.tagName;
+      if (element.isContentEditable === true) return "text";
       if (element.disabled === true || element.readOnly === true) return false;
-      if (tag === "TEXTAREA") return true;
-      if (tag !== "INPUT") return false;
+      const tag = element.tagName;
+      if (tag !== "INPUT" && tag !== "TEXTAREA") return false;
+      const mode = String(element.getAttribute("inputmode") || "").toLowerCase();
+      if (["numeric","decimal","tel","email","url","search"].indexOf(mode) !== -1) return mode;
+      if (tag === "TEXTAREA") return "text";
       const type = String(element.getAttribute("type") || "text").toLowerCase();
-      return ["button","checkbox","color","file","hidden","image","radio","range","reset","submit"].indexOf(type) === -1;
+      if (["button","checkbox","color","file","hidden","image","radio","range","reset","submit"].indexOf(type) !== -1) return false;
+      if (type === "password") return "password";
+      if (type === "email" || type === "tel" || type === "url" || type === "search") return type;
+      if (type === "number") return "decimal";
+      return "text";
     })()`;
 
-    /**
-     * Tell the tapping viewer whether its keyboard should stay up. A probe that
-     * fails says nothing: leaving an already-raised keyboard alone is far less
-     * disruptive than yanking it down on a guess.
-     */
-    const reportFocus = (viewer: ViewerHandle, page: BrowserPage) =>
+    /** A page that focuses its field a beat after the click (a search box that opens first). */
+    const FOCUS_RECHECK_MS = 250;
+
+    const PHONE_FIELDS: ReadonlySet<string> = new Set([
+      "text",
+      "email",
+      "numeric",
+      "decimal",
+      "tel",
+      "url",
+      "search",
+      "password",
+    ]);
+
+    const probeFocus = (page: BrowserPage) =>
       Effect.tryPromise({
         try: () => page.evaluate(FOCUS_PROBE),
         catch: (cause) => classifyPageError(cause),
-      }).pipe(
-        Effect.option,
-        Effect.flatMap((probed) =>
-          Option.isNone(probed)
-            ? Effect.void
-            : Queue.offer(
-                viewer.outbox,
-                JSON.stringify({ _tag: "FocusChanged", editable: probed.value === true }),
-              ),
-        ),
-        Effect.asVoid,
-      );
+      }).pipe(Effect.option);
+
+    const offerFocus = (viewer: ViewerHandle, probed: unknown) => {
+      const field = typeof probed === "string" && PHONE_FIELDS.has(probed) ? probed : undefined;
+      const editable = field !== undefined || probed === true;
+      return Queue.offer(
+        viewer.outbox,
+        JSON.stringify({
+          _tag: "FocusChanged",
+          editable,
+          ...(field === undefined ? {} : { field }),
+        }),
+      ).pipe(Effect.asVoid);
+    };
+
+    /**
+     * Tell the tapping viewer whether its keyboard should stay up, and which
+     * one. A probe that fails says nothing: leaving an already-raised keyboard
+     * alone is far less disruptive than yanking it down on a guess. "No field"
+     * is only said after a second look, off the input path, so a page that
+     * focuses its field a beat late keeps the keyboard the tap raised.
+     */
+    const reportFocus = (viewer: ViewerHandle, page: BrowserPage) =>
+      Effect.gen(function* () {
+        const probed = yield* probeFocus(page);
+        if (Option.isNone(probed)) return;
+        if (probed.value !== false) return yield* offerFocus(viewer, probed.value);
+        runFork(
+          Effect.gen(function* () {
+            yield* Effect.sleep(FOCUS_RECHECK_MS);
+            if (page.isClosed() || page.pendingDialog() !== null) return;
+            const again = yield* probeFocus(page);
+            if (Option.isSome(again)) yield* offerFocus(viewer, again.value);
+          }),
+        );
+      });
 
     const dispatchHumanInput = async (page: BrowserPage, message: PersonalBrowserInputMessage) => {
       switch (message._tag) {
@@ -2423,9 +2485,14 @@ export const make = (options: PersonalBrowserOptions) =>
           yield* rejectInput(viewer, error instanceof Error ? error.message : "Input failed.");
           return;
         }
-        // A tap is the only input that can move focus on the page, and the only
-        // one the phone raises its own keyboard for.
-        if (message._tag === "Pointer" && message.action === "tap") {
+        // A tap is what the phone raises its own keyboard for; Tab and Enter
+        // move focus on (the next field, or off the form it submitted).
+        const movesFocus =
+          (message._tag === "Pointer" && message.action === "tap") ||
+          (message._tag === "Key" &&
+            (message.key === "Tab" || message.key === "Enter") &&
+            (message.modifiers?.length ?? 0) <= 1);
+        if (movesFocus) {
           if (page.pendingDialog() !== null) return yield* notify;
           yield* reportFocus(viewer, page);
         }

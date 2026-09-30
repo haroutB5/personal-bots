@@ -924,8 +924,26 @@ describe("PersonalBrowser", () => {
             encodeViewer({ _tag: "FocusChanged", editable: true }),
           );
 
+          // The kind of field picks the phone's keyboard.
+          focused = "password";
+          yield* tap();
+          expect(yield* Queue.take(viewer.outbox)).toBe(
+            encodeViewer({ _tag: "FocusChanged", editable: true, field: "password" }),
+          );
+
+          // "No field" waits for a second look: this page focuses its search
+          // box a beat after the click, so the keyboard stays up.
           focused = false;
           yield* tap();
+          focused = "search";
+          yield* TestClock.adjust("250 millis");
+          expect(yield* Queue.take(viewer.outbox)).toBe(
+            encodeViewer({ _tag: "FocusChanged", editable: true, field: "search" }),
+          );
+
+          focused = false;
+          yield* tap();
+          yield* TestClock.adjust("250 millis");
           expect(yield* Queue.take(viewer.outbox)).toBe(
             encodeViewer({ _tag: "FocusChanged", editable: false }),
           );

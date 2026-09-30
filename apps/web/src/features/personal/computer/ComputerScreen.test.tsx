@@ -9,7 +9,14 @@ import {
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { addressBarValue, ComputerBrowserPane, ComputerScreen } from "./ComputerScreen";
+import {
+  addressBarValue,
+  ComputerBrowserPane,
+  ComputerScreen,
+  insertTextChunks,
+  keyboardInputMode,
+  PageDialogCard,
+} from "./ComputerScreen";
 
 const state = vi.hoisted(() => ({
   takeControl: vi.fn(async () => ({ _tag: "Success", value: undefined })),
@@ -198,6 +205,7 @@ function touchEvent(pointerId: number, clientX: number, clientY: number) {
     clientY,
     pointerType: "touch",
     currentTarget: { setPointerCapture: vi.fn(), focus: vi.fn() },
+    preventDefault: vi.fn(),
   };
 }
 
@@ -239,6 +247,68 @@ describe("takeover keyboard", () => {
     // Focus must stay on the field: moving it to the canvas dismisses the
     // keyboard on the very next tap.
     expect(canvas.props.tabIndex).toBe(0);
+  });
+
+  // The canvas is focusable for hardware keys, so a tap's compatibility
+  // mousedown focused it straight after the field and iOS dropped the keyboard
+  // (v1.59, Harout's iPhone). Cancelling the touch's pointerdown stops that.
+  it("cancels a touch's pointerdown so the tap cannot focus the canvas", async () => {
+    const field = makeField();
+    await renderInControl(field);
+    const canvas = renderer!.root.findByType("canvas");
+    const down = touchEvent(3, 10, 20);
+    await act(async () => {
+      canvas.props.onPointerDown(down);
+    });
+    expect(down.preventDefault).toHaveBeenCalled();
+    expect(down.currentTarget.focus).not.toHaveBeenCalled();
+  });
+
+  it("sends IME and dictation text once, when the composition ends", async () => {
+    const field = makeField();
+    await renderInControl(field);
+    const input = renderer!.root.findByType("input");
+    await act(async () => {
+      input.props.onFocus({ currentTarget: field });
+      input.props.onCompositionStart();
+    });
+    // Mid-composition input is the IME's, not the page's: the field is not re-parked.
+    field.value = "\u200bnih";
+    await act(async () => {
+      input.props.onInput({ currentTarget: field, nativeEvent: { isComposing: true } });
+    });
+    expect(field.value).toBe("\u200bnih");
+    field.value = "\u200b\u4f60\u597d";
+    await act(async () => {
+      input.props.onCompositionEnd({ currentTarget: field });
+    });
+    expect(field.value).toBe("\u200b");
+  });
+
+  it("pastes as text, in pieces the server accepts", async () => {
+    const field = makeField();
+    await renderInControl(field);
+    const input = renderer!.root.findByType("input");
+    const preventDefault = vi.fn();
+    await act(async () => {
+      input.props.onPaste({
+        clipboardData: { getData: () => "pasted" },
+        preventDefault,
+      });
+    });
+    expect(preventDefault).toHaveBeenCalled();
+    expect(insertTextChunks("x".repeat(9_000)).map((chunk) => chunk.length)).toEqual([
+      4_000, 4_000, 1_000,
+    ]);
+    expect(insertTextChunks("")).toEqual([]);
+  });
+
+  it("asks for the keyboard that matches the remote field", () => {
+    expect(keyboardInputMode("email")).toBe("email");
+    expect(keyboardInputMode("decimal")).toBe("decimal");
+    expect(keyboardInputMode("numeric")).toBe("numeric");
+    expect(keyboardInputMode("password")).toBe("text");
+    expect(keyboardInputMode(undefined)).toBe("text");
   });
 
   it("leaves the keyboard alone when the tap turned into a scroll", async () => {
@@ -295,15 +365,91 @@ describe("takeover keyboard", () => {
     // the next keystroke is measurable again.
     field.value = "\u200ba";
     await act(async () => {
-      input.props.onInput({ currentTarget: field });
+      input.props.onInput({ currentTarget: field, nativeEvent: {} });
     });
     expect(field.value).toBe("\u200b");
 
     field.value = "";
     await act(async () => {
-      input.props.onInput({ currentTarget: field });
+      input.props.onInput({ currentTarget: field, nativeEvent: {} });
     });
     expect(field.value).toBe("\u200b");
+  });
+});
+
+describe("page dialog", () => {
+  const confirmDialog = {
+    type: "confirm" as const,
+    message: "Really delete store?",
+    defaultValue: "",
+  };
+
+  it("shows the page's dialog over the live view, answerable only in control", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("document", {
+      visibilityState: "visible",
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    await act(async () => {
+      renderer = create(
+        <ComputerBrowserPane
+          environmentId={EnvironmentId.make("env-1")}
+          status={{ ...STATUS, dialog: confirmDialog }}
+          events={[]}
+          reachable
+        />,
+      );
+    });
+    const card = renderer!.root.findByType(PageDialogCard);
+    expect(card.props.canAnswer).toBe(false);
+    const text = JSON.stringify(renderer!.toJSON());
+    expect(text).toContain("Really delete store?");
+    expect(text).toContain("Take control to answer it.");
+  });
+
+  it("answers OK, Cancel, and a prompt's text", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const onAnswer = vi.fn();
+    await act(async () => {
+      renderer = create(<PageDialogCard dialog={confirmDialog} canAnswer onAnswer={onAnswer} />);
+    });
+    const buttons = () => renderer!.root.findAllByType("button");
+    expect(buttons().map((button) => button.children.join(""))).toEqual(["Cancel", "OK"]);
+    await act(async () => buttons()[0]!.props.onClick());
+    await act(async () => buttons()[1]!.props.onClick());
+    expect(onAnswer.mock.calls).toEqual([[false], [true, undefined]]);
+
+    onAnswer.mockClear();
+    await act(async () => {
+      renderer!.update(
+        <PageDialogCard
+          dialog={{ type: "prompt", message: "Store name?", defaultValue: "a" }}
+          canAnswer
+          onAnswer={onAnswer}
+        />,
+      );
+    });
+    const field = renderer!.root.findByType("input");
+    await act(async () => field.props.onChange({ currentTarget: { value: "my-store" } }));
+    await act(async () => buttons()[1]!.props.onClick());
+    expect(onAnswer).toHaveBeenCalledWith(true, "my-store");
+  });
+
+  it("words a leave-page dialog as leave or stay", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    await act(async () => {
+      renderer = create(
+        <PageDialogCard
+          dialog={{ type: "beforeunload", message: "", defaultValue: "" }}
+          canAnswer
+          onAnswer={vi.fn()}
+        />,
+      );
+    });
+    expect(
+      renderer!.root.findAllByType("button").map((button) => button.children.join("")),
+    ).toEqual(["Stay", "Leave page"]);
   });
 });
 

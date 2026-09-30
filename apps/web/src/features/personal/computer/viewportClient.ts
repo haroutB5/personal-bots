@@ -18,11 +18,18 @@ export interface ViewportClientCallbacks {
   readonly onRejected: (reason: string) => void;
   /** Frames are withheld (a saved password is on screen); the next frame ends it. */
   readonly onHidden: (reason: string) => void;
-  /** Whether the last tap left a typable element focused on the remote page. */
-  readonly onFocusChanged: (editable: boolean) => void;
+  /**
+   * Whether the last tap left a typable element focused on the remote page,
+   * and which kind (older servers never say).
+   */
+  readonly onFocusChanged: (editable: boolean, field: RemoteField | undefined) => void;
   /** `opened=false` means the upgrade was refused (usually an expired ticket). */
   readonly onClosed: (opened: boolean) => void;
 }
+
+export type RemoteField = NonNullable<
+  Extract<PersonalBrowserViewerMessage, { readonly _tag: "FocusChanged" }>["field"]
+>;
 
 export interface ViewportClient {
   readonly send: (message: PersonalBrowserInputMessage) => void;
@@ -72,7 +79,7 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
           callbacks.onHidden(message.value.reason);
           return;
         case "FocusChanged":
-          callbacks.onFocusChanged(message.value.editable);
+          callbacks.onFocusChanged(message.value.editable, message.value.field);
           return;
         default:
           callbacks.onRejected(message.value.reason);

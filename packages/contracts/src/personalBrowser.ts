@@ -263,7 +263,16 @@ export const PersonalBrowserViewerMessage = Schema.Union([
    * this to put the keyboard straight back down when the tap turned out to hit
    * a link or a button. Older clients do not decode this tag and ignore it.
    */
-  Schema.TaggedStruct("FocusChanged", { editable: Schema.Boolean }),
+  Schema.TaggedStruct("FocusChanged", {
+    editable: Schema.Boolean,
+    /**
+     * The kind of field focused, so the phone shows the matching keyboard
+     * (`inputmode`). "password" also means: suggest and learn nothing.
+     */
+    field: Schema.optional(
+      Schema.Literals(["text", "email", "numeric", "decimal", "tel", "url", "search", "password"]),
+    ),
+  }),
 ]);
 export type PersonalBrowserViewerMessage = typeof PersonalBrowserViewerMessage.Type;
 

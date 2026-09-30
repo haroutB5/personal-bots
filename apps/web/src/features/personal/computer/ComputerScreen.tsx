@@ -15,6 +15,7 @@ import type {
   PersonalBrowserFrameMeta,
   PersonalBrowserInputMessage,
   PersonalBrowserStatus,
+  PersonalBrowserDialog,
 } from "@t3tools/contracts";
 import {
   Bot,
@@ -86,7 +87,7 @@ import {
 } from "./computerState";
 import { DesktopPane } from "./DesktopPane";
 import { useDesktopStatus } from "./desktopState";
-import { connectViewport, type ViewportClient } from "./viewportClient";
+import { connectViewport, type RemoteField, type ViewportClient } from "./viewportClient";
 
 export interface ComputerScreenProps {
   /** Null when no agent holds the browser: fall back to the chats list. */
@@ -147,6 +148,38 @@ const DOT_COLORS: Record<ComputerDotTone, string> = {
   problem: "var(--personal-error)",
   idle: "var(--personal-text-tertiary)",
 };
+
+/**
+ * The phone keyboard for the remote field. A password field gets the plain
+ * text keyboard: nothing the proxy holds is ever shown (it is invisible and
+ * emptied after every keystroke), and the remote page does its own masking.
+ */
+export function keyboardInputMode(field: RemoteField | undefined): KeyboardInputMode {
+  switch (field) {
+    case "email":
+    case "numeric":
+    case "decimal":
+    case "tel":
+    case "url":
+    case "search":
+      return field;
+    default:
+      return "text";
+  }
+}
+
+type KeyboardInputMode = "text" | "email" | "numeric" | "decimal" | "tel" | "url" | "search";
+
+/** InsertText carries at most this much; a longer paste goes in pieces. */
+const INSERT_TEXT_CHUNK = 4_000;
+
+export function insertTextChunks(text: string): ReadonlyArray<string> {
+  const chunks: string[] = [];
+  for (let start = 0; start < text.length; start += INSERT_TEXT_CHUNK) {
+    chunks.push(text.slice(start, start + INSERT_TEXT_CHUNK));
+  }
+  return chunks;
+}
 
 /**
  * Park the offscreen field back on just the sentinel with the caret after it,
@@ -478,6 +511,20 @@ export function ComputerBrowserPane(props: {
             fill={fullScreen || compact}
           />
         )}
+        {!compact && status?.dialog != null ? (
+          <PageDialogCard
+            key={`${status.dialog.type}:${status.dialog.message}`}
+            dialog={status.dialog}
+            canAnswer={inControl && inputReady}
+            onAnswer={(accept, promptText) => {
+              send({
+                _tag: "AnswerDialog",
+                accept,
+                ...(promptText === undefined ? {} : { promptText }),
+              });
+            }}
+          />
+        ) : null}
         {compact ? (
           <>
             <button
@@ -689,6 +736,81 @@ function BrowserToolbar(props: {
  * pane, two thirds of the chat's side panel) and pushed Take control and the
  * routines out of sight. Full screen and the compact preview keep their box.
  */
+/**
+ * A native dialog open on the remote page (confirm, alert, prompt, leave
+ * page). The screencast cannot show browser dialogs, and the page is paused
+ * until one is answered, so it is drawn here for the person in control.
+ */
+export function PageDialogCard(props: {
+  readonly dialog: PersonalBrowserDialog;
+  readonly canAnswer: boolean;
+  readonly onAnswer: (accept: boolean, promptText?: string) => void;
+}) {
+  const { dialog, canAnswer, onAnswer } = props;
+  const [answer, setAnswer] = useState(dialog.defaultValue);
+  const leave = dialog.type === "beforeunload";
+  const okLabel = leave ? "Leave page" : "OK";
+  const cancelLabel = leave ? "Stay" : "Cancel";
+  const message = leave ? "This page asks whether you want to leave it." : dialog.message;
+  const buttonClass =
+    "flex h-11 flex-1 items-center justify-center rounded-[10px] px-4 text-[15px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50";
+  return (
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 p-4">
+      <div
+        role="alertdialog"
+        aria-modal="false"
+        aria-label="The page opened a dialog"
+        className="w-full max-w-[340px] rounded-[14px] bg-[var(--personal-surface)] p-4 shadow-[var(--personal-shadow-card)]"
+      >
+        <p className="text-[13px] text-[var(--personal-text-secondary)]">
+          The page is waiting for an answer
+        </p>
+        <p className="mt-1.5 max-h-[40vh] overflow-y-auto text-[15px] break-words whitespace-pre-wrap">
+          {message.length > 0 ? message : "(no message)"}
+        </p>
+        {dialog.type === "prompt" ? (
+          <input
+            type="text"
+            aria-label="Your answer"
+            value={answer}
+            disabled={!canAnswer}
+            onChange={(event) => setAnswer(event.currentTarget.value)}
+            className="mt-3 h-11 w-full rounded-[10px] border border-[var(--personal-border)] bg-[var(--personal-bg)] px-3 text-[16px]"
+          />
+        ) : null}
+        <div className="mt-4 flex gap-2">
+          {dialog.type === "alert" ? null : (
+            <button
+              type="button"
+              disabled={!canAnswer}
+              onClick={() => onAnswer(false)}
+              className={cn(buttonClass, "border border-[var(--personal-border)]")}
+            >
+              {cancelLabel}
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={!canAnswer}
+            onClick={() => onAnswer(true, dialog.type === "prompt" ? answer : undefined)}
+            className={cn(
+              buttonClass,
+              "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]",
+            )}
+          >
+            {okLabel}
+          </button>
+        </div>
+        {canAnswer ? null : (
+          <p className="mt-2.5 text-[13px] text-[var(--personal-text-secondary)]">
+            Take control to answer it.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ViewportPlaceholder(props: {
   readonly status: PersonalBrowserStatus | null;
   readonly reachable: boolean;
@@ -770,6 +892,11 @@ function LiveViewport(props: {
   // The user asked for the keyboard by name, so a tap that lands on a link must
   // not take it away again.
   const keyboardPinnedRef = useRef(false);
+  const [inputMode, setInputMode] = useState<KeyboardInputMode>("text");
+  // An IME or dictation is building text in the field; it is sent whole at compositionend.
+  const composingRef = useRef(false);
+  // Set by a touch tap's pointerup for the touchend that follows it.
+  const tapFocusRef = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   // `attempt` re-runs the effect after a drop; consecutive failures live in a
   // ref so a successful open never restarts a healthy socket.
@@ -815,11 +942,12 @@ function LiveViewport(props: {
           hiddenNotice = reason;
           setNotice(reason);
         },
-        onFocusChanged: (editable) => {
+        onFocusChanged: (editable, field) => {
           // The tap that raised this keyboard did not land on a field, so put
           // it back down. Focusing had to happen inside the touch handler; only
           // the correction can wait for the laptop to answer.
           if (!editable && !keyboardPinnedRef.current) keyboardRef.current?.blur();
+          if (editable) setInputMode(keyboardInputMode(field));
         },
         onClosed: (opened) => {
           clientRef.current = null;
@@ -845,6 +973,27 @@ function LiveViewport(props: {
       setLiveClient(null);
     };
   }, [access, active, attempt, environmentId, gaveUp, onClient]);
+
+  // iOS raises the keyboard for a focus() made while it handles the touch,
+  // and the compatibility mouse events that follow a tap would focus the
+  // (focusable) canvas and take the keyboard straight back down. So the tap's
+  // touchend focuses the field again and cancels those mouse events.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!interactive || canvas === null) return;
+    const onTouchEnd = (event: TouchEvent) => {
+      if (!tapFocusRef.current) return;
+      tapFocusRef.current = false;
+      event.preventDefault();
+      const field = keyboardRef.current;
+      if (field !== null && document.activeElement !== field) {
+        field.focus({ preventScroll: true });
+        resetKeyboardField(field);
+      }
+    };
+    canvas.addEventListener("touchend", onTouchEnd, { passive: false });
+    return () => canvas.removeEventListener("touchend", onTouchEnd);
+  }, [interactive]);
 
   // Full screen measures its box: the frame is letterboxed into it, and in
   // control the page is laid out for it. The compact preview is never measured.
@@ -925,8 +1074,11 @@ function LiveViewport(props: {
     event.currentTarget.setPointerCapture(event.pointerId);
     // Touch keeps focus on the offscreen field: moving it to the canvas is what
     // dismisses the keyboard on iOS the moment you tap the page. A mouse has no
-    // such keyboard and wants the canvas focused for hardware keys.
+    // such keyboard and wants the canvas focused for hardware keys. Cancelling
+    // a touch's pointerdown stops its compatibility mousedown, which would
+    // otherwise focus the canvas anyway (v1.59: the keyboard never stayed up).
     if (event.pointerType === "mouse") event.currentTarget.focus({ preventScroll: true });
+    else event.preventDefault();
     gestureRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -976,7 +1128,10 @@ function LiveViewport(props: {
     const tapped = event.pointerType !== "mouse" && !gesture.scrolling;
     // Raise the keyboard first: iOS only honours `focus()` while this handler
     // is still running, so it must not sit behind a mapping that can bail out.
-    if (tapped) openKeyboard();
+    if (tapped) {
+      openKeyboard();
+      tapFocusRef.current = true;
+    }
     const point = pointAt(event.clientX, event.clientY);
     if (point === null) return;
     if (event.pointerType === "mouse") send({ _tag: "Pointer", action: "up", ...point });
@@ -1056,6 +1211,8 @@ function LiveViewport(props: {
             type="text"
             aria-label="Type into the shared browser"
             className="absolute bottom-0 left-0 size-px opacity-0"
+            inputMode={inputMode}
+            enterKeyHint="go"
             autoCapitalize="off"
             autoCorrect="off"
             autoComplete="off"
@@ -1067,9 +1224,31 @@ function LiveViewport(props: {
             onBlur={() => {
               setKeyboardOpen(false);
               keyboardPinnedRef.current = false;
+              composingRef.current = false;
             }}
-            onKeyDown={onKeyDown}
+            onKeyDown={(event) => {
+              // Keys inside an IME composition belong to it, not the page.
+              if (event.nativeEvent.isComposing || composingRef.current) return;
+              onKeyDown(event);
+            }}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={(event) => {
+              composingRef.current = false;
+              const field = event.currentTarget;
+              const text = field.value.split(KEYBOARD_SENTINEL).join("");
+              resetKeyboardField(field);
+              for (const chunk of insertTextChunks(text)) send({ _tag: "InsertText", text: chunk });
+            }}
+            onPaste={(event) => {
+              const text = event.clipboardData.getData("text/plain");
+              event.preventDefault();
+              for (const chunk of insertTextChunks(text)) send({ _tag: "InsertText", text: chunk });
+            }}
             onInput={(event) => {
+              // Mid-composition the field holds unfinished text; wait for compositionend.
+              if (composingRef.current || (event.nativeEvent as InputEvent).isComposing) return;
               const field = event.currentTarget;
               const raw = field.value;
               resetKeyboardField(field);
@@ -1080,7 +1259,7 @@ function LiveViewport(props: {
                 return;
               }
               const text = raw.split(KEYBOARD_SENTINEL).join("");
-              if (text.length > 0) send({ _tag: "InsertText", text });
+              for (const chunk of insertTextChunks(text)) send({ _tag: "InsertText", text: chunk });
             }}
           />
           <button
