@@ -32,6 +32,9 @@ export type PerfOptimization =
   // Opening a chat paints its header first and mounts the conversation right
   // after that paint (ConversationShellFirst, 1.59.5); off: all in the tap.
   | "chat-shell-first"
+  // Client tracing exports every 5 s instead of every second (1.59.5), so a
+  // batch does not post during a chat opening; off: every second.
+  | "trace-batch"
   | "snapshot-early"
   | "warm-highlighter"
   | "rum"

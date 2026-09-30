@@ -589,9 +589,19 @@ function errorReport(error: unknown, pathname: string): string {
   return lines.join("\n");
 }
 
+/**
+ * Client spans go out every 5 s rather than every second (1.59.5): a navigation
+ * produces spans, so a 1 s exporter posted one batch during nearly every chat
+ * opening, inside the tap it was measured by. Nothing is dropped; spans only
+ * wait longer. Kill switch: bots:perf-off = "trace-batch" (every second).
+ */
+const CLIENT_TRACE_EXPORT_MS = 5_000;
+
 function AuthenticatedTracingBootstrap() {
   useEffect(() => {
-    void configureClientTracing();
+    void configureClientTracing(
+      perfOptimizationOn("trace-batch") ? { exportIntervalMs: CLIENT_TRACE_EXPORT_MS } : {},
+    );
   }, []);
 
   return null;
