@@ -144,7 +144,7 @@ export const PreviewSnapshotTool = readonlyBrowserTool(
 const PreviewClickTool = browserTool(
   Tool.make("preview_click", {
     description:
-      "Click exactly one target in the tab selected by tabId, or this agent session's current tab when omitted. Prefer a Playwright locator; selector accepts legacy CSS; x and y must be supplied together.",
+      "Click exactly one target in the tab selected by tabId, or this agent session's current tab when omitted. Prefer a Playwright locator; selector accepts legacy CSS; x and y must be supplied together. If the click opens a native dialog it fails at once saying so, and the dialog stays open until answered.",
     parameters: PreviewAutomationClickInput,
     success: PreviewActionResult,
     failure: PreviewAutomationError,
@@ -166,7 +166,7 @@ const PreviewTypeTool = browserTool(
 const PreviewPressTool = browserTool(
   Tool.make("preview_press", {
     description:
-      "Press one keyboard key in the tab selected by tabId, or this agent session's current tab when omitted. Examples: {key:'Enter'}, {key:'Escape'}, or {key:'a',modifiers:['Meta']}.",
+      "Press one keyboard key in the tab selected by tabId, or this agent session's current tab when omitted. Examples: {key:'Enter'}, {key:'Escape'}, or {key:'a',modifiers:['Meta']}. When the page has a native dialog open (alert, confirm, prompt, leave-page), {key:'Enter'} answers OK and {key:'Escape'} answers Cancel; for a prompt, preview_type sets the answer first. Never OK a destructive confirm on your own judgement: hand it to the user with request_browser_help.",
     parameters: PreviewAutomationPressInput,
     success: PreviewActionResult,
     failure: PreviewAutomationError,

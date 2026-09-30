@@ -84,6 +84,7 @@ import {
   type BrowserDriver,
   type BrowserPage,
   makePlaywrightDriver,
+  type PageDialog,
   type ScreencastMeta,
   type ViewportOverride,
   type ViewportSize,
@@ -228,6 +229,8 @@ interface TabEntry {
    * an input listener behind that reads a value the tool result never returns.
    */
   scriptTainted: boolean;
+  /** The answer `preview_type` gave the open prompt dialog, sent with Enter. */
+  dialogPromptText: string | null;
 }
 
 const RECENT_ACTIVITY_LIMIT = 30;
@@ -252,6 +255,53 @@ const RESTORE_NAVIGATE_TIMEOUT_MS = 30_000;
 /** The server's own navigation of the fresh tab a saved login is filled into. */
 const FILL_NAVIGATE_TIMEOUT_MS = 20_000;
 const TIMELINE_LIMIT = 20;
+/**
+ * The broker treats a request it has not heard back on within its timeout as
+ * a dead host and evicts it, which fails every bot's next call until the host
+ * re-registers. So the host always answers first: a whole request (lease wait
+ * and Chrome start included) finishes this long before the broker's deadline,
+ * and driver calls get a further margin so their own, more specific, timeout
+ * message is what the bot sees.
+ */
+export const HOST_REPLY_MARGIN_MS = 750;
+const DRIVER_TIMEOUT_MARGIN_MS = 1_500;
+const MIN_DRIVER_TIMEOUT_MS = 250;
+/** How long `unstick` waits for a page to answer before stopping its script. */
+const UNSTICK_PROBE_MS = 1_000;
+
+/** The driver's budget within a request's broker timeout. */
+export const driverTimeoutFor = (requestTimeoutMs: number, inputTimeoutMs?: number) =>
+  Math.max(
+    MIN_DRIVER_TIMEOUT_MS,
+    Math.min(inputTimeoutMs ?? requestTimeoutMs, requestTimeoutMs) - DRIVER_TIMEOUT_MARGIN_MS,
+  );
+
+const describeDialog = (dialog: PageDialog) => {
+  const text = dialog.message.replace(/\s+/g, " ").trim().slice(0, 300);
+  switch (dialog.type) {
+    case "beforeunload":
+      return "The page opened a leave-page dialog (it asks to confirm leaving)";
+    case "alert":
+      return `The page opened an alert dialog: '${text}'`;
+    default:
+      return `The page opened a ${dialog.type} dialog: '${text}'`;
+  }
+};
+
+/**
+ * What a bot is told when a native dialog is (or becomes) open on its tab.
+ * The dialog is left open on purpose: a destructive confirm is Harout's call.
+ */
+export const dialogOpenError = (dialog: PageDialog) =>
+  new HostOperationError(
+    "PreviewAutomationExecutionError",
+    `${describeDialog(dialog)}. It is still open and the page is paused until it is answered. ` +
+      "Hand over to Harout with request_browser_help, or answer it with preview_press: " +
+      `key 'Enter' for OK or 'Escape' for Cancel${
+        dialog.type === "prompt" ? " (preview_type first sets the prompt's answer)" : ""
+      }.`,
+    { dialog },
+  );
 const PAGE_INFO_REFRESH_MS = 1_500;
 const MAX_LISTED_FILES = 300;
 /** A 390px phone gets 780px frames: exactly the screencast's maxWidth, so crisp and uncapped. */
@@ -712,6 +762,14 @@ export const make = (options: PersonalBrowserOptions) =>
       return runtime.context?.pages().find((page) => !page.isClosed()) ?? null;
     };
 
+    /** The panel draws a page's dialog, so it hears about it opening and closing. */
+    const dialogWatched = new WeakSet<BrowserPage>();
+    const watchDialogs = (page: BrowserPage) => {
+      if (dialogWatched.has(page)) return;
+      dialogWatched.add(page);
+      page.onDialogChange(() => runFork(notify));
+    };
+
     const titleFor = (page: BrowserPage) => {
       for (const tab of runtime.tabs.values()) if (tab.page === page) return tab.title;
       return pageTitles.get(page) ?? "";
@@ -768,6 +826,7 @@ export const make = (options: PersonalBrowserOptions) =>
           generation: view.generation,
           page: pageInfo,
           helpRequest: activeHelp?.request ?? null,
+          dialog: page === null ? null : redactor.redact(page.pendingDialog()),
           lastAgent,
           viewers: viewers.size,
         } satisfies PersonalBrowserStatus;
@@ -827,6 +886,7 @@ export const make = (options: PersonalBrowserOptions) =>
           screencast = null;
           yield* Effect.promise(() => stop().catch(() => undefined));
         }
+        if (target !== null) watchDialogs(target);
         if (target !== null && screencast === null) {
           const stop = yield* Effect.tryPromise(() =>
             target.startScreencast((jpeg, meta) => onFrame(target, jpeg, meta)),
@@ -1154,9 +1214,14 @@ export const make = (options: PersonalBrowserOptions) =>
           loginProtected: false,
           credentialFormUrl: null,
           scriptTainted: false,
+          dialogPromptText: null,
         };
         runtime.tabs.set(tab.tabId, tab);
         page.onClose(() => runFork(onTabPageClosed(tab)));
+        watchDialogs(page);
+        page.onDialogChange(() => {
+          tab.dialogPromptText = null;
+        });
         return tab;
       });
 
@@ -1299,9 +1364,62 @@ export const make = (options: PersonalBrowserOptions) =>
     const rejectUrl = (reason: string) =>
       Effect.fail(new HostOperationError("PreviewAutomationExecutionError", reason));
 
+    /**
+     * A tab with a native dialog open cannot be read or driven: every page
+     * call waits on the dialog. Enter and Escape answer it, typing fills a
+     * prompt, and anything else says what is open instead of hanging.
+     */
+    const operateOnDialog = (
+      request: PreviewAutomationRequest,
+      tab: TabEntry,
+      dialog: PageDialog,
+    ): Effect.Effect<{ readonly tab: TabEntry; readonly result: unknown }, HostOperationError> =>
+      Effect.gen(function* () {
+        if (request.operation === "press") {
+          const input = request.input as PreviewAutomationPressInput;
+          const plain = (input.modifiers?.length ?? 0) === 0;
+          if (plain && (input.key === "Enter" || input.key === "Escape")) {
+            const accept = input.key === "Enter";
+            const promptText =
+              accept && dialog.type === "prompt" ? (tab.dialogPromptText ?? undefined) : undefined;
+            const answered = yield* Effect.promise(() => tab.page.answerDialog(accept, promptText));
+            tab.dialogPromptText = null;
+            yield* notify;
+            if (!answered) {
+              return yield* rejectUrl(
+                "The dialog had already closed; take a snapshot to continue.",
+              );
+            }
+            return { tab, result: { tabId: tab.tabId } };
+          }
+        }
+        if (request.operation === "type" && dialog.type === "prompt") {
+          const input = request.input as PreviewAutomationTypeInput;
+          yield* guardEgress(request.threadId, { kind: "type", page: webOrigin(tab.page.url()) });
+          tab.dialogPromptText = input.text;
+          return { tab, result: { tabId: tab.tabId } };
+        }
+        return yield* Effect.fail(dialogOpenError(dialog));
+      });
+
+    /** Fails as soon as a dialog opens on `page`; never completes otherwise. */
+    const dialogOpens = (page: BrowserPage) =>
+      Effect.callback<never, HostOperationError>((resume) => {
+        // The op may have opened it before this side of the race subscribed.
+        const already = page.pendingDialog();
+        if (already !== null) {
+          resume(Effect.fail(dialogOpenError(already)));
+          return;
+        }
+        const unsubscribe = page.onDialogChange((dialog) => {
+          if (dialog !== null) resume(Effect.fail(dialogOpenError(dialog)));
+        });
+        return Effect.sync(unsubscribe);
+      });
+
     const runOperation = (request: PreviewAutomationRequest) =>
       Effect.gen(function* () {
-        const timeoutMs = request.timeoutMs;
+        const timeoutMs = driverTimeoutFor(request.timeoutMs);
         switch (request.operation) {
           case "open": {
             const input = request.input as PreviewAutomationOpenInput;
@@ -1312,6 +1430,10 @@ export const make = (options: PersonalBrowserOptions) =>
               yield* guardEgress(request.threadId, { kind: "navigate", target: webOrigin(url) });
             }
             const reused = input.reuseExistingTab === false ? undefined : tabForRequest(request);
+            const reusedDialog = reused?.page.pendingDialog() ?? null;
+            if (url !== undefined && reusedDialog !== null) {
+              return yield* Effect.fail(dialogOpenError(reusedDialog));
+            }
             const tab = reused ?? (yield* createTab(request.threadId, url));
             if (url !== undefined) yield* navigateTab(tab, url, "load", timeoutMs);
             yield* setActive(tab);
@@ -1332,11 +1454,13 @@ export const make = (options: PersonalBrowserOptions) =>
             // Navigating a thread with no tab yet opens one, like a fresh browser window.
             const tab =
               tabForRequest(request) ?? (yield* createTab(request.threadId, resolved.url));
+            const pending = tab.page.pendingDialog();
+            if (pending !== null) return yield* Effect.fail(dialogOpenError(pending));
             yield* navigateTab(
               tab,
               resolved.url,
               input.readiness ?? "load",
-              input.timeoutMs ?? timeoutMs,
+              driverTimeoutFor(request.timeoutMs, input.timeoutMs),
             );
             yield* setActive(tab);
             yield* syncPreviewStatus(tab);
@@ -1346,6 +1470,8 @@ export const make = (options: PersonalBrowserOptions) =>
             break;
         }
         const tab = yield* requireTab(request);
+        const pendingDialog = tab.page.pendingDialog();
+        if (pendingDialog !== null) return yield* operateOnDialog(request, tab, pendingDialog);
         refreshCredentialProtection(tab);
         yield* setActive(tab);
         if (runtime.loginUsed && request.operation === "evaluate") {
@@ -1387,13 +1513,15 @@ export const make = (options: PersonalBrowserOptions) =>
               );
             }
             yield* attempt(input, () =>
-              performClick(tab.page, input, input.timeoutMs ?? timeoutMs),
+              performClick(tab.page, input, driverTimeoutFor(request.timeoutMs, input.timeoutMs)),
             );
             return { tab, result: { tabId: tab.tabId } };
           }
           case "type": {
             const input = request.input as PreviewAutomationTypeInput;
-            yield* attempt(input, () => performType(tab.page, input, input.timeoutMs ?? timeoutMs));
+            yield* attempt(input, () =>
+              performType(tab.page, input, driverTimeoutFor(request.timeoutMs, input.timeoutMs)),
+            );
             return { tab, result: { tabId: tab.tabId } };
           }
           case "press": {
@@ -1446,7 +1574,7 @@ export const make = (options: PersonalBrowserOptions) =>
           case "waitFor": {
             const input = request.input as PreviewAutomationWaitForInput;
             yield* attempt(input, () =>
-              performWaitFor(tab.page, input, input.timeoutMs ?? timeoutMs),
+              performWaitFor(tab.page, input, driverTimeoutFor(request.timeoutMs, input.timeoutMs)),
             );
             return { tab, result: { tabId: tab.tabId } };
           }
@@ -1526,6 +1654,29 @@ export const make = (options: PersonalBrowserOptions) =>
       }
     };
 
+    const isDriverTimeout = (cause: Cause.Cause<unknown>) => {
+      const error = Cause.squash(cause);
+      return error instanceof HostOperationError && error.tag === "PreviewAutomationTimeoutError";
+    };
+
+    /**
+     * After a timeout, make sure the page answers again: a script spinning on
+     * its main thread would otherwise time out every later call on the tab.
+     */
+    const unstickPage = (page: BrowserPage) =>
+      Effect.promise(() =>
+        page.unstick(UNSTICK_PROBE_MS).catch(() => "unresponsive" as const),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome === "responsive"
+            ? Effect.void
+            : Effect.logWarning("Personal browser page stalled after a timed-out operation.", {
+                outcome,
+              }),
+        ),
+        Effect.andThen(notify),
+      );
+
     const handleAutomationRequest: PersonalBrowser["Service"]["handleAutomationRequest"] = (
       request,
     ) => {
@@ -1537,24 +1688,40 @@ export const make = (options: PersonalBrowserOptions) =>
         yield* clearHelpForAgentSwitch(request.threadId);
         const startedAt = yield* nowIso;
         // Belt and braces: no operation may outlive its own budget while
-        // holding the lease, even one whose driver call ignores timeouts.
+        // holding the lease, even one whose driver call ignores timeouts, and
+        // the budget ends before the broker's so the host is never evicted.
         // (Effect.timeoutFail does not exist in this Effect version; a
         // timeoutOption mapped to the broker's timeout tag is equivalent.)
         yield* refreshSensitiveOrigins;
-        const bounded = runOperation(request).pipe(
-          Effect.timeoutOption(request.timeoutMs + 1_000),
-          Effect.flatMap((result) =>
-            Option.isSome(result)
-              ? Effect.succeed(result.value)
-              : Effect.fail(
-                  new HostOperationError(
-                    "PreviewAutomationTimeoutError",
-                    `Browser operation timed out after ${request.timeoutMs}ms.`,
-                  ),
-                ),
-          ),
+        // A dialog opened by this very op (a click on a delete button, a
+        // navigation away from a page with unsaved work) parks the page, and
+        // the driver call would wait out its whole timeout. Report it at once.
+        const target = tabForRequest(request);
+        const watched =
+          target !== undefined && target.page.pendingDialog() === null
+            ? Effect.raceFirst(runOperation(request), dialogOpens(target.page))
+            : runOperation(request);
+        let timedOut = false;
+        const bounded = watched.pipe(
+          Effect.timeoutOption(Math.max(0, request.timeoutMs - HOST_REPLY_MARGIN_MS)),
+          Effect.flatMap((result) => {
+            if (Option.isSome(result)) return Effect.succeed(result.value);
+            timedOut = true;
+            return Effect.fail(
+              new HostOperationError(
+                "PreviewAutomationTimeoutError",
+                `Browser operation timed out after ${request.timeoutMs}ms. The browser is ` +
+                  "checking the page and stops a stuck script; take a snapshot to continue.",
+              ),
+            );
+          }),
         );
         const exit = yield* Effect.exit(Effect.andThen(ensureLaunched, bounded));
+        const stalled = Exit.isFailure(exit) && (timedOut || isDriverTimeout(exit.cause));
+        if (stalled && target !== undefined && openPage(target.page)) {
+          // Off the reply path: the broker is waiting on this answer.
+          runFork(unstickPage(target.page));
+        }
         const tab = Exit.isSuccess(exit) ? exit.value.tab : tabForRequest(request);
         // Whatever the op returned, the bot has now had this page open; a failed
         // or timed-out op may still have loaded it.
@@ -2178,8 +2345,35 @@ export const make = (options: PersonalBrowserOptions) =>
         case "Viewport":
           // Handled by syncHumanViewport before dispatch; never a page action.
           return;
+        case "AnswerDialog":
+          // Handled before dispatch too: it is the one input a dialog allows.
+          return;
       }
     };
+
+    /**
+     * Settles with `run`, or as soon as a dialog opens on the page: the tap
+     * that opened it would otherwise wait until someone answers it, and the
+     * panel only learns to draw the dialog once the input has settled.
+     */
+    const untilDialog = <A>(page: BrowserPage, run: () => Promise<A>): Promise<void> =>
+      new Promise<void>((resolve, reject) => {
+        const unsubscribe = page.onDialogChange((dialog) => {
+          if (dialog === null) return;
+          unsubscribe();
+          resolve();
+        });
+        run().then(
+          () => {
+            unsubscribe();
+            resolve();
+          },
+          (cause: unknown) => {
+            unsubscribe();
+            reject(cause);
+          },
+        );
+      });
 
     const handleViewerMessage: PersonalBrowser["Service"]["handleViewerMessage"] = (viewer, raw) =>
       Effect.gen(function* () {
@@ -2206,9 +2400,21 @@ export const make = (options: PersonalBrowserOptions) =>
         }
         const page = runtime.phase === "connected" ? viewportPage() : null;
         if (page === null) return yield* rejectInput(viewer, "The browser has no open page yet.");
+        if (message._tag === "AnswerDialog") {
+          const answered = yield* Effect.promise(() =>
+            page.answerDialog(message.accept, message.promptText),
+          );
+          yield* notify;
+          if (!answered) yield* rejectInput(viewer, "That dialog has already closed.");
+          return;
+        }
+        if (page.pendingDialog() !== null) {
+          // Every page input waits on the dialog, so it has to be answered first.
+          return yield* rejectInput(viewer, "Answer the page's dialog first.");
+        }
         const exit = yield* Effect.exit(
           Effect.tryPromise({
-            try: () => dispatchHumanInput(page, message),
+            try: () => untilDialog(page, () => dispatchHumanInput(page, message)),
             catch: (cause) => classifyPageError(cause),
           }),
         );
@@ -2220,6 +2426,7 @@ export const make = (options: PersonalBrowserOptions) =>
         // A tap is the only input that can move focus on the page, and the only
         // one the phone raises its own keyboard for.
         if (message._tag === "Pointer" && message.action === "tap") {
+          if (page.pendingDialog() !== null) return yield* notify;
           yield* reportFocus(viewer, page);
         }
       });

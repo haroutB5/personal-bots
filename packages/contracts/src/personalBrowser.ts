@@ -57,6 +57,18 @@ export const PersonalBrowserAgentRef = Schema.Struct({
 });
 export type PersonalBrowserAgentRef = typeof PersonalBrowserAgentRef.Type;
 
+/**
+ * A native JavaScript dialog open on the page the viewport shows. The page is
+ * paused until it is answered, and a screencast cannot show browser dialogs,
+ * so the client draws it and answers with `AnswerDialog`.
+ */
+export const PersonalBrowserDialog = Schema.Struct({
+  type: Schema.Literals(["alert", "confirm", "prompt", "beforeunload"]),
+  message: Schema.String,
+  defaultValue: Schema.String,
+});
+export type PersonalBrowserDialog = typeof PersonalBrowserDialog.Type;
+
 export const PersonalBrowserStatus = Schema.Struct({
   state: PersonalBrowserState,
   /** Human-readable reason for crashed/locked states, e.g. "Locked by pid 4312". */
@@ -69,6 +81,8 @@ export const PersonalBrowserStatus = Schema.Struct({
   page: Schema.NullOr(PersonalBrowserPage),
   /** A bot blocked on the shared page until the user takes over and returns it. */
   helpRequest: Schema.NullOr(PersonalBrowserHelpRequest),
+  /** The dialog open on the viewport page. Optional: older servers never send it. */
+  dialog: Schema.optional(Schema.NullOr(PersonalBrowserDialog)),
   /**
    * The last bot to drive this browser, kept after its agent lease lapses and
    * across a human takeover, until the browser closes (or the chat is
@@ -221,6 +235,11 @@ export const PersonalBrowserInputMessage = Schema.Union([
   Schema.TaggedStruct("Viewport", {
     width: ViewportExtent,
     height: ViewportExtent,
+  }),
+  /** OK (`accept`) or Cancel on the open dialog; `promptText` answers a prompt. */
+  Schema.TaggedStruct("AnswerDialog", {
+    accept: Schema.Boolean,
+    promptText: Schema.optional(Schema.String.check(Schema.isMaxLength(4000))),
   }),
 ]);
 export type PersonalBrowserInputMessage = typeof PersonalBrowserInputMessage.Type;

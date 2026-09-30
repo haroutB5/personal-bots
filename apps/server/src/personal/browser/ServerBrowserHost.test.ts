@@ -103,6 +103,54 @@ const awaitHostReady = (broker: Broker) =>
     return yield* Effect.die(new Error("The server browser never re-registered with the broker."));
   });
 
+it.effect(
+  "answers a stalled operation itself, before the broker gives up, and stays registered",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const connects = { count: 0 };
+        const clickReceived = yield* Deferred.make<void>();
+        const context = yield* Layer.build(
+          hostLayer(
+            (request) =>
+              request.operation === "click"
+                ? Deferred.succeed(clickReceived, undefined).pipe(
+                    // A page parked in a dialog or a runaway script: never answers.
+                    Effect.andThen(Effect.never),
+                  )
+                : Effect.succeed({ available: true }),
+            connects,
+          ),
+        );
+        const broker = yield* Effect.service(PreviewAutomationBroker.PreviewAutomationBroker).pipe(
+          Effect.provide(context),
+        );
+        yield* awaitHostReady(broker);
+
+        const click = yield* broker
+          .invoke<BrowserStatus>({ scope, operation: "click", input: { locator: "#b" } })
+          .pipe(Effect.flip, Effect.forkScoped);
+        yield* Deferred.await(clickReceived);
+        yield* TestClock.adjust(15_000 - ServerBrowserHost.BROKER_DEADLINE_MARGIN_MS);
+        const error = yield* Fiber.join(click);
+        expect(error).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+        // The host's own text travels to the bot as the error's cause.
+        expect(error).toMatchObject({
+          cause: { message: expect.stringContaining("still available") },
+        });
+
+        // No eviction, no reconnect gap: the very next call is served at once.
+        const status = yield* broker.invoke<BrowserStatus>({
+          scope,
+          operation: "status",
+          input: {},
+        });
+        expect(status).toMatchObject({ available: true });
+        expect(connects.count).toBe(1);
+      }),
+    ),
+);
+
 it.effect("re-registers after an unanswered request disconnects it from the broker", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -114,7 +162,9 @@ it.effect("re-registers after an unanswered request disconnects it from the brok
           (request) =>
             request.operation === "open"
               ? Deferred.succeed(openReceived, undefined).pipe(
-                  Effect.andThen(Deferred.await(stall)),
+                  // Uninterruptible: a host so wedged it cannot even answer
+                  // with its own timeout, which is what the broker evicts.
+                  Effect.andThen(Effect.uninterruptible(Deferred.await(stall))),
                   Effect.as({ available: true }),
                 )
               : Effect.succeed({ available: true }),
@@ -140,6 +190,7 @@ it.effect("re-registers after an unanswered request disconnects it from the brok
       // whole server was restarted.
       expect(yield* awaitHostReady(broker)).toMatchObject({ available: true });
       expect(connects.count).toBe(2);
+      yield* Deferred.succeed(stall, undefined);
     }),
   ),
 );
@@ -156,7 +207,9 @@ it.effect("stops reconnecting once the layer scope closes", () =>
           (request) =>
             request.operation === "open"
               ? Deferred.succeed(openReceived, undefined).pipe(
-                  Effect.andThen(Deferred.await(stall)),
+                  // Uninterruptible: a host so wedged it cannot even answer
+                  // with its own timeout, which is what the broker evicts.
+                  Effect.andThen(Effect.uninterruptible(Deferred.await(stall))),
                   Effect.as({ available: true }),
                 )
               : Effect.succeed({ available: true }),
@@ -177,6 +230,8 @@ it.effect("stops reconnecting once the layer scope closes", () =>
       yield* TestClock.adjust("15 seconds");
       yield* Fiber.join(timedOut);
       const afterDisconnect = connects.count;
+      // The wedged op finishing lets the scope close; it must not reconnect.
+      yield* Deferred.succeed(stall, undefined);
 
       yield* Scope.close(layerScope, Exit.void);
       yield* TestClock.adjust("1 minute");

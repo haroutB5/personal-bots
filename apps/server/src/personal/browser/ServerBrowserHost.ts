@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
@@ -55,6 +56,31 @@ export const toRemoteError = (
     message: error instanceof Error ? error.message : "Server browser operation failed.",
   };
 };
+
+/**
+ * The broker evicts a host that leaves a request unanswered past its timeout,
+ * so every request is answered this long before that deadline, whatever it
+ * was doing (waiting for the lease, starting Chrome, a stuck page).
+ */
+export const BROKER_DEADLINE_MARGIN_MS = 250;
+
+export const answerBeforeBrokerDeadline = <A, E, R>(
+  timeoutMs: number,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | HostOperationError, R> =>
+  effect.pipe(
+    Effect.timeoutOption(Math.max(0, timeoutMs - BROKER_DEADLINE_MARGIN_MS)),
+    Effect.flatMap((result) =>
+      Option.isSome(result)
+        ? Effect.succeed(result.value)
+        : Effect.fail(
+            new HostOperationError(
+              "PreviewAutomationTimeoutError",
+              `The browser did not finish within ${timeoutMs}ms. It is still available; take a snapshot to see where the page is.`,
+            ),
+          ),
+    ),
+  );
 
 /** First pause before re-registering, doubled per consecutive failed attempt. */
 export const RECONNECT_INITIAL_DELAY_MS = 250;
@@ -98,7 +124,10 @@ export const layer = Layer.effectDiscard(
           const { request } = event;
           return FiberSet.run(
             inFlight,
-            browser.handleAutomationRequest(request).pipe(
+            answerBeforeBrokerDeadline(
+              request.timeoutMs,
+              browser.handleAutomationRequest(request),
+            ).pipe(
               Effect.exit,
               Effect.flatMap((exit) =>
                 broker.respond({

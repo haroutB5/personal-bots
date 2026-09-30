@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Playwright boundary: download copies and the profile dir are plain Node I/O.
 // @effect-diagnostics globalDate:off - page event callbacks run outside Effect and stamp wall-clock times.
+// @effect-diagnostics globalTimers:off - probe deadlines race plain Playwright promises.
 /**
  * The narrow browser surface the personal browser uses. The Playwright
  * implementation below is the only one that launches Chrome; tests supply a
@@ -46,6 +47,20 @@ export interface NavigationHistory {
 }
 
 export type WaitUntil = "load" | "domcontentloaded" | "commit";
+
+/**
+ * A native JavaScript dialog (alert, confirm, prompt, beforeunload). While one
+ * is open the page's main thread is parked inside it, so every page read and
+ * input waits until someone answers it.
+ */
+export interface PageDialog {
+  readonly type: "alert" | "confirm" | "prompt" | "beforeunload";
+  readonly message: string;
+  readonly defaultValue: string;
+}
+
+/** What `unstick` found: a live page, a runaway script it stopped, or neither. */
+export type UnstickOutcome = "responsive" | "stopped-script" | "unresponsive";
 
 /**
  * A handle to one already-resolved element. Unlike a locator it never
@@ -105,6 +120,17 @@ export interface BrowserPage {
     onFrame: (jpeg: Uint8Array, meta: ScreencastMeta) => void,
   ): Promise<() => Promise<void>>;
   onClose(listener: () => void): void;
+  /** The native dialog blocking this page, or null. Dialogs are never answered on their own. */
+  pendingDialog(): PageDialog | null;
+  /** Fires when a native dialog opens, and with null when it closes. Returns an unsubscribe. */
+  onDialogChange(listener: (dialog: PageDialog | null) => void): () => void;
+  /** Answers the open dialog. False when none was open (it may have closed meanwhile). */
+  answerDialog(accept: boolean, promptText?: string): Promise<boolean>;
+  /**
+   * Called after an operation timed out: checks the page still answers, and if
+   * a script is spinning on its main thread, stops it so the page does again.
+   */
+  unstick(probeMs: number): Promise<UnstickOutcome>;
   close(): Promise<void>;
 }
 
@@ -137,6 +163,8 @@ const SCREENCAST_OPTIONS = {
   maxHeight: 1_690,
   everyNthFrame: 1,
 } as const;
+
+const TIMED_OUT = Symbol("timed-out");
 
 const pushRing = <A>(ring: A[], value: A) => {
   ring.push(value);
@@ -192,6 +220,59 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
     control ??= page.context().newCDPSession(page);
     return control;
   };
+
+  // With no "dialog" listener Playwright dismisses every dialog itself, which
+  // silently answers Cancel to a confirm the bot never saw. Holding it open
+  // instead lets the bot report it and a person answer it.
+  let dialog: { readonly handle: Playwright.Dialog; readonly info: PageDialog } | null = null;
+  const dialogListeners: Array<(dialog: PageDialog | null) => void> = [];
+  const setDialog = (next: typeof dialog) => {
+    if (dialog === next) return;
+    dialog = next;
+    for (const listener of dialogListeners) listener(next?.info ?? null);
+  };
+  page.on("dialog", (opened) => {
+    setDialog({
+      handle: opened,
+      info: {
+        type: opened.type() as PageDialog["type"],
+        message: opened.message().slice(0, 2_000),
+        defaultValue: opened.defaultValue().slice(0, 2_000),
+      },
+    });
+  });
+  page.once("close", () => setDialog(null));
+  // Someone answering it in the headed window closes it without us. Closes
+  // we caused are skipped: a page that opens its next dialog straight away
+  // would otherwise have that one cleared by the late event for the first.
+  let ownCloses = 0;
+  void cdp()
+    .then(async (session) => {
+      session.on("Page.javascriptDialogClosed", () => {
+        if (ownCloses > 0) ownCloses--;
+        else setDialog(null);
+      });
+      await session.send("Page.enable");
+    })
+    .catch(() => undefined);
+
+  const withTimeout = <A>(promise: Promise<A>, ms: number): Promise<A | typeof TIMED_OUT> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    return Promise.race([
+      promise,
+      new Promise<typeof TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => resolve(TIMED_OUT), ms);
+      }),
+    ]).finally(() => clearTimeout(timer));
+  };
+  const answers = (ms: number) =>
+    withTimeout(
+      page.evaluate("1").then(
+        () => true,
+        () => false,
+      ),
+      ms,
+    ).then((result) => result === true);
 
   return {
     url: () => page.url(),
@@ -334,6 +415,44 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
     onClose: (listener) => {
       page.once("close", listener);
     },
+    pendingDialog: () => dialog?.info ?? null,
+    onDialogChange: (listener) => {
+      dialogListeners.push(listener);
+      return () => {
+        const index = dialogListeners.indexOf(listener);
+        if (index !== -1) dialogListeners.splice(index, 1);
+      };
+    },
+    answerDialog: async (accept, promptText) => {
+      const open = dialog;
+      if (open === null) return false;
+      ownCloses++;
+      try {
+        if (accept) await open.handle.accept(promptText);
+        else await open.handle.dismiss();
+        return true;
+      } catch {
+        // Already answered elsewhere, or the page went away with it.
+        ownCloses = Math.max(0, ownCloses - 1);
+        return false;
+      } finally {
+        if (dialog === open) setDialog(null);
+      }
+    },
+    unstick: async (probeMs) => {
+      if (page.isClosed() || dialog !== null) return "unresponsive";
+      if (await answers(probeMs)) return "responsive";
+      // A script spinning on the main thread starves every CDP call that
+      // needs the page. Terminating it is what a person does with "Page
+      // unresponsive > Stop"; the page keeps its DOM and answers again.
+      const session = await withTimeout(cdp(), probeMs);
+      if (session === TIMED_OUT) return "unresponsive";
+      await withTimeout(
+        session.send("Runtime.terminateExecution").catch(() => undefined),
+        probeMs,
+      );
+      return (await answers(probeMs)) ? "stopped-script" : "unresponsive";
+    },
     close: () => page.close(),
   };
 }
@@ -379,6 +498,10 @@ export const makePlaywrightDriver = (): BrowserDriver => ({
     };
     context.pages().forEach(watchDownloads);
     context.on("page", watchDownloads);
+    // Wrapped as they appear, so every page holds its dialogs open for
+    // someone to answer rather than Playwright dismissing them unseen.
+    context.pages().forEach(wrap);
+    context.on("page", wrap);
     return {
       pages: () => context.pages().map(wrap),
       newPage: async () => wrap(await context.newPage()),

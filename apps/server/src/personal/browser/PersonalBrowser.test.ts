@@ -39,6 +39,8 @@ import type {
   NetworkRecord,
   ScreencastMeta,
   ViewportOverride,
+  PageDialog,
+  UnstickOutcome,
 } from "./driver.ts";
 import * as PersonalBrowser from "./PersonalBrowser.ts";
 import * as PersonalBrowserLeaseRepository from "./PersonalBrowserLeaseRepository.ts";
@@ -157,6 +159,36 @@ class FakePage implements BrowserPage {
   onClose() {}
   async close() {
     this.closed = true;
+  }
+  dialog: PageDialog | null = null;
+  readonly dialogListeners = new Set<(dialog: PageDialog | null) => void>();
+  readonly dialogAnswers: Array<{ readonly accept: boolean; readonly promptText?: string }> = [];
+  pendingDialog() {
+    return this.dialog;
+  }
+  onDialogChange(listener: (dialog: PageDialog | null) => void) {
+    this.dialogListeners.add(listener);
+    return () => {
+      this.dialogListeners.delete(listener);
+    };
+  }
+  /** The page script calling confirm()/alert(): parks the page until answered. */
+  openDialog(dialog: PageDialog) {
+    this.dialog = dialog;
+    for (const listener of [...this.dialogListeners]) listener(dialog);
+  }
+  async answerDialog(accept: boolean, promptText?: string) {
+    if (this.dialog === null) return false;
+    this.dialogAnswers.push({ accept, ...(promptText === undefined ? {} : { promptText }) });
+    this.dialog = null;
+    for (const listener of [...this.dialogListeners]) listener(null);
+    return true;
+  }
+  unstickCalls = 0;
+  unstickOutcome: UnstickOutcome = "responsive";
+  async unstick() {
+    this.unstickCalls++;
+    return this.unstickOutcome;
   }
 }
 
@@ -420,6 +452,188 @@ describe("PersonalBrowser", () => {
       expect(done).toMatchObject({ tabId: during.tabId, url: "https://example.com/" });
       expect(fake.state.launches).toBe(1);
     }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  describe("native dialogs", () => {
+    const confirmDialog = {
+      type: "confirm" as const,
+      message: "Really delete store?",
+      defaultValue: "",
+    };
+
+    it.effect("a click that opens a confirm reports it at once and leaves it open", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const page = fake.state.page;
+        // The page's click handler calls confirm(): the click never settles.
+        page.clickLocator = () => {
+          page.openDialog(confirmDialog);
+          return new Promise<void>(() => {});
+        };
+        const error = yield* browser
+          .handleAutomationRequest(
+            request("click", { locator: "role=button[name='Delete Store']" }),
+          )
+          .pipe(Effect.asVoid, Effect.flip);
+        expect(error.message).toBe(
+          "The page opened a confirm dialog: 'Really delete store?'. It is still open and the " +
+            "page is paused until it is answered. Hand over to Harout with request_browser_help, " +
+            "or answer it with preview_press: key 'Enter' for OK or 'Escape' for Cancel.",
+        );
+        // Never answered on the bot's behalf.
+        expect(page.dialogAnswers).toEqual([]);
+        expect(page.pendingDialog()).toEqual(confirmDialog);
+        // The panel is told, so Harout can answer it there.
+        expect((yield* browser.status("session-1")).dialog).toEqual(confirmDialog);
+
+        // Reads say what is open instead of hanging on the parked page.
+        const snapshot = yield* browser
+          .handleAutomationRequest(request("snapshot"))
+          .pipe(Effect.asVoid, Effect.flip);
+        expect(snapshot.message).toContain("confirm dialog: 'Really delete store?'");
+        const status = (yield* browser.handleAutomationRequest(
+          request("status"),
+        )) as PreviewAutomationStatus;
+        expect(status.url).toBe("https://example.com/");
+
+        // Escape is Cancel; afterwards the page reads normally again.
+        yield* browser.handleAutomationRequest(request("press", { key: "Escape" }));
+        expect(page.dialogAnswers).toEqual([{ accept: false }]);
+        expect((yield* browser.status("session-1")).dialog).toBeNull();
+        page.evaluateImpl = async () => ({
+          url: page.currentUrl,
+          title: "Fake page",
+          loading: false,
+          visibleText: "",
+          interactiveElements: [],
+        });
+        const after = (yield* browser.handleAutomationRequest(request("snapshot"))) as {
+          readonly url: string;
+        };
+        expect(after.url).toBe("https://example.com/");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect(
+      "a navigation held by a beforeunload dialog reports it; Enter leaves the page",
+      () => {
+        const fake = makeFakeDriver();
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+          const page = fake.state.page;
+          page.gotoGate = new Promise(() => {});
+          page.onGoto = () =>
+            page.openDialog({ type: "beforeunload", message: "", defaultValue: "" });
+          const error = yield* browser
+            .handleAutomationRequest(request("navigate", { url: "example.org" }))
+            .pipe(Effect.asVoid, Effect.flip);
+          expect(error.message).toContain("leave-page dialog");
+          // A second navigation does not queue behind the parked one.
+          const again = yield* browser
+            .handleAutomationRequest(request("navigate", { url: "example.org" }))
+            .pipe(Effect.asVoid, Effect.flip);
+          expect(again.message).toContain("leave-page dialog");
+
+          yield* browser.handleAutomationRequest(request("press", { key: "Enter" }));
+          expect(page.dialogAnswers).toEqual([{ accept: true }]);
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      },
+    );
+
+    it.effect("a prompt takes its answer from preview_type and sends it with Enter", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const page = fake.state.page;
+        page.openDialog({ type: "prompt", message: "Type the store name", defaultValue: "" });
+        const error = yield* browser
+          .handleAutomationRequest(request("click", { x: 10, y: 10 }))
+          .pipe(Effect.asVoid, Effect.flip);
+        expect(error.message).toContain("preview_type first sets the prompt's answer");
+        yield* browser.handleAutomationRequest(request("type", { text: "my-store" }));
+        yield* browser.handleAutomationRequest(request("press", { key: "Enter" }));
+        expect(page.dialogAnswers).toEqual([{ accept: true, promptText: "my-store" }]);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("the person in control answers the dialog from the panel", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const page = fake.state.page;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({
+              sessionId: "session-1",
+              canOperate: true,
+            });
+            yield* browser.takeControl("session-1");
+            // Harout's own tap opens the dialog: the tap settles instead of hanging.
+            page.mouseClick = async () => {
+              page.openDialog(confirmDialog);
+              await new Promise<void>(() => {});
+            };
+            yield* browser.handleViewerMessage(
+              viewer,
+              encodeInput({ _tag: "Pointer", action: "tap", x: 5, y: 5 }),
+            );
+            expect((yield* browser.status("session-1")).dialog).toEqual(confirmDialog);
+            // Other input is refused until it is answered, rather than wedging on the page.
+            yield* browser.handleViewerMessage(viewer, encodeInput({ _tag: "Reload" }));
+            expect(yield* Queue.take(viewer.outbox)).toContain("Answer the page's dialog first");
+            yield* browser.handleViewerMessage(
+              viewer,
+              encodeInput({ _tag: "AnswerDialog", accept: true }),
+            );
+            expect(page.dialogAnswers).toEqual([{ accept: true }]);
+            expect((yield* browser.status("session-1")).dialog).toBeNull();
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("a stalled click answers before the broker deadline and unsticks the page", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        // Let the boot restore fiber see an empty lease first; run later it
+        // would reopen the page this test navigates to in a second tab.
+        for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const page = fake.state.page;
+        // A runaway script: the click ignores its own timeout.
+        let clicks = 0;
+        page.clickLocator = () => {
+          clicks++;
+          return new Promise<void>(() => {});
+        };
+        page.unstickOutcome = "stopped-script";
+        const click = yield* browser
+          .handleAutomationRequest(request("click", { locator: "#loop" }, 15_000))
+          .pipe(Effect.asVoid, Effect.flip, Effect.forkChild);
+        yield* awaitCondition(Effect.sync(() => clicks === 1));
+        yield* TestClock.adjust(15_000 - PersonalBrowser.HOST_REPLY_MARGIN_MS);
+        const error = yield* Fiber.join(click);
+        expect(error.tag).toBe("PreviewAutomationTimeoutError");
+        expect(error.message).toContain("stops a stuck script");
+        yield* awaitCondition(Effect.sync(() => page.unstickCalls === 1));
+        // The lease is free again: the next op runs.
+        page.clickLocator = async () => {};
+        yield* browser.handleAutomationRequest(request("click", { locator: "#ok" }));
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it("gives driver calls a budget inside the broker's", () => {
+      expect(PersonalBrowser.driverTimeoutFor(15_000)).toBe(13_500);
+      expect(PersonalBrowser.driverTimeoutFor(15_000, 30_000)).toBe(13_500);
+      expect(PersonalBrowser.driverTimeoutFor(30_000, 30_000)).toBe(28_500);
+      expect(PersonalBrowser.driverTimeoutFor(500)).toBe(250);
+    });
   });
 
   it.effect("a wedged evaluate times out and releases the browser for the next op", () => {
