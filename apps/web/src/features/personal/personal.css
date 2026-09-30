@@ -739,6 +739,16 @@
 /* Computer > Desktop in control: where a tap, click or long press landed on
  * the PC. It sits on the PC's own picture, not the app's surface, so it is a
  * white ring with a dark edge that reads on any content in either theme. */
+/* Keyboard available, but closed. Static in both motion modes. */
+.personal-app .personal-keyboard-ready {
+  color: var(--personal-primary);
+  border-color: color-mix(in srgb, var(--personal-primary) 45%, var(--personal-border));
+  background-color: color-mix(in srgb, var(--personal-primary) 7%, var(--personal-surface));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--personal-primary) 22%, transparent),
+    0 0 8px color-mix(in srgb, var(--personal-primary) 16%, transparent);
+}
+
 .personal-desktop-tap {
   position: absolute;
   z-index: 2;

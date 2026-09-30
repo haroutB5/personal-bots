@@ -540,27 +540,10 @@ function ControlBar(props: {
   return (
     <div
       className={cn(
-        "relative shrink-0 border-t border-[var(--personal-border)] bg-[var(--personal-bg)] pt-1.5",
+        "relative shrink-0 border-t border-[var(--personal-border)] bg-[var(--personal-bg)]",
         props.rail === true && "col-start-2 row-start-3",
       )}
     >
-      {props.offerKeyboard && !keyboardOpen ? (
-        // A real tap, so iOS lets it raise the keyboard (the PC's focus report
-        // arrives too late to do that by itself).
-        <button
-          type="button"
-          onMouseDown={keepFocus}
-          onClick={openKeyboard}
-          className={cn(
-            "absolute bottom-full left-1/2 z-10 mb-2 flex min-h-11 -translate-x-1/2 items-center gap-2 rounded-full px-4 text-[14px] font-semibold whitespace-nowrap outline-none",
-            "bg-[var(--personal-primary)] text-[var(--personal-primary-text)] shadow-[var(--personal-shadow-card)]",
-            "focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] active:opacity-80",
-          )}
-        >
-          <Keyboard className="size-[18px]" strokeWidth={ICON_STROKE} aria-hidden />
-          Tap to type
-        </button>
-      ) : null}
       <input
         ref={fieldRef}
         type="text"
@@ -594,12 +577,13 @@ function ControlBar(props: {
       <div
         role="toolbar"
         aria-label="Keys for your PC"
-        className="personal-scroll-quiet flex items-center gap-1.5 overflow-x-auto px-3 pb-1.5"
+        className="personal-scroll-quiet flex items-center gap-1.5 overflow-x-auto px-3 py-1.5"
       >
         <KeyButton
           label={<Keyboard className="size-[18px]" strokeWidth={ICON_STROKE} />}
           aria={keyboardOpen ? "Hide keyboard" : "Show keyboard"}
           pressed={keyboardOpen}
+          attention={props.offerKeyboard && !keyboardOpen}
           keepFocus={keepFocus}
           onPress={() => {
             const field = fieldRef.current;
@@ -677,6 +661,7 @@ function KeyButton(props: {
   readonly label: ReactNode;
   readonly aria: string;
   readonly pressed?: boolean;
+  readonly attention?: boolean;
   readonly onPress: () => void;
   readonly keepFocus: (event: { preventDefault: () => void }) => void;
 }) {
@@ -685,6 +670,7 @@ function KeyButton(props: {
       type="button"
       aria-label={props.aria}
       aria-pressed={props.pressed}
+      aria-description={props.attention ? "A text field is ready for typing" : undefined}
       onMouseDown={props.keepFocus}
       onClick={props.onPress}
       className={cn(
@@ -693,6 +679,7 @@ function KeyButton(props: {
         props.pressed === true
           ? "border-transparent bg-[var(--personal-primary)] text-[var(--personal-primary-text)]"
           : "border-[var(--personal-border)] bg-[var(--personal-surface)]",
+        props.attention && "personal-keyboard-ready",
       )}
     >
       {props.label}
@@ -1481,8 +1468,8 @@ function ControlSurface(props: {
   /**
    * A tap on the field the PC says has focus raises the phone keyboard right
    * here, inside the tap, where iOS allows it. Only on that field, so a tap
-   * anywhere else never flashes the keyboard up; there the "Tap to type"
-   * button follows the PC's report instead.
+   * anywhere else never flashes the keyboard up; there the keyboard button's
+   * accent follows the PC's report instead.
    */
   const raiseKeyboardFor = (clientX: number, clientY: number) => {
     const { fieldRef, open, focus, regions, autoOpened } = latest.current.typing;

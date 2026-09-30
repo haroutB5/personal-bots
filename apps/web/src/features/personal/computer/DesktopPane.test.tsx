@@ -653,21 +653,28 @@ describe("DesktopPane remote control", () => {
     expect(sentOf().at(-1)).toEqual({ _tag: "Keys", keys: "win" });
   });
 
-  it("offers 'Tap to type' while the PC's focus is in a text field and the keyboard is down", async () => {
+  it("accents the existing keyboard button while a PC text field is focused and the keyboard is down", async () => {
     await inControl();
-    const pill = () =>
-      renderer!.root.findAll((node) => node.type === "button" && textOf(node) === "Tap to type");
-    expect(pill()).toHaveLength(0);
+    const button = () =>
+      renderer!.root.find(
+        (node) =>
+          node.type === "button" &&
+          ["Show keyboard", "Hide keyboard"].includes(node.props["aria-label"]),
+      );
+    const ready = () => button().props.className.includes("personal-keyboard-ready");
+    expect(ready()).toBe(false);
     await act(async () => state.sockets[0]!.callbacks.onFocus?.({ editable: true }));
-    expect(pill()).toHaveLength(1);
-    // Its tap is a real gesture: it focuses the field that raises the keyboard.
-    await act(async () => pill()[0]!.props.onClick());
+    expect(ready()).toBe(true);
+    expect(button().props["aria-description"]).toBe("A text field is ready for typing");
+    expect(text()).not.toContain("Tap to type");
+    // The existing button's tap focuses the field that raises the keyboard.
+    await act(async () => button().props.onClick());
     expect(keyboardField.focus).toHaveBeenCalledTimes(1);
     const field = renderer!.root.findByProps({ "aria-label": "Type on your PC" });
     await act(async () =>
       field.props.onFocus({ currentTarget: { value: "", setSelectionRange: vi.fn() } }),
     );
-    expect(pill()).toHaveLength(0);
+    expect(ready()).toBe(false);
     expect(
       renderer!.root.findByProps({ "aria-label": "Hide keyboard" }).props["aria-pressed"],
     ).toBe(true);
@@ -678,17 +685,17 @@ describe("DesktopPane remote control", () => {
       surface.props.onPointerUp(pointer("touch", 100, 100));
     });
     expect(keyboardField.blur).not.toHaveBeenCalled();
-    // The done key (blur) puts it down; the pill comes back while focus is in a field...
+    // The done key brings the accent back while PC focus remains in a field...
     await act(async () => field.props.onBlur());
-    expect(pill()).toHaveLength(1);
+    expect(ready()).toBe(true);
     // ...and goes when focus leaves the field.
     await act(async () => state.sockets[0]!.callbacks.onFocus?.({ editable: false }));
-    expect(pill()).toHaveLength(0);
+    expect(ready()).toBe(false);
     // Control ending forgets the PC's focus.
     await act(async () => state.sockets[0]!.callbacks.onFocus?.({ editable: true }));
     await act(async () => state.sockets[0]!.callbacks.onControl?.(false, null));
     await act(async () => state.sockets[0]!.callbacks.onControl?.(true, null));
-    expect(pill()).toHaveLength(0);
+    expect(ready()).toBe(false);
   });
 
   it("a tap on the field the PC reported focused raises the keyboard in the tap itself", async () => {
