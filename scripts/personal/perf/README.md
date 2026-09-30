@@ -127,6 +127,19 @@ synthetic data (seed.mjs; 20 bots, 391 chats, 16.2k messages) gave p50 630.2
 and 682.2 ms; the ceiling was reset once to 630, then ratcheted to 1.59.5's p50
 132.3 ms x 1.4 = 185. The other ten ceilings were not touched.
 
+**J2.chatShell re-ratchet from a median, 2026-09-30 (CTO decision).** 185 came
+from one 1.59.5 reading (132.3), and chatShell is bimodal per run, so 1.59.5
+itself failed it about half the time. Ratchets come from a stable median: the
+committed gate ran 5 times on 1.59.5 (`bf1e6cebf0c4`) and 5 times on 1.60.0
+(`47f1670e01f9`), interleaved, on the same live-shaped synthetic data, each run
+started only with the CPU under 12% and no build, test or bench running, and
+re-done when it was loaded at its start or end. Per-run chatShell p50 (ms):
+1.59.5 196.8, 186.0, 147.4, 169.3, 159.2 (median 169.3); 1.60.0 287.6, 128.1,
+248.5, 189.2, 154.9 (median 189.2). 1.60.0's median is not lower, so the
+ceiling is 1.59.5's median x 1.4 = 237. The other ten ceilings are unchanged.
+Evidence: `~/.personal-bots/qa/frontend-160/calib.json`, `calib.log`,
+`check-cal-*.log`.
+
 ## Kill switches
 
 Every optimization that changes when work happens is on by default and can be
