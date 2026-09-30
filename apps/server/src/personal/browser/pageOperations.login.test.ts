@@ -148,7 +148,9 @@ describe("saved-login browser fill", () => {
     const fake = makePage("https://example.com/sign-in");
     fake.page.countLocator = async (locator) =>
       locator.includes('input[type="password"]') ? 0 : 1;
-    fake.page.clickLocator = async () => fake.navigate("https://attacker.example/password");
+    fake.page.clickLocator = async () => {
+      fake.navigate("https://attacker.example/password");
+    };
     fake.page.waitForLocator = async () => {};
     await expect(fill(fake.page)).rejects.toThrow("only be used on");
     expect(fake.filled).toHaveLength(1);
