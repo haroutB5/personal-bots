@@ -1,3 +1,4 @@
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useEffect, useRef } from "react";
 
 import {
@@ -7,6 +8,8 @@ import {
   type PersonalTask,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+
+import { isThreadLive } from "./botSummaries";
 
 /** A task can name its chat a moment before the server links it to the bot. */
 const RETRY_AFTER_MS = 3_000;
@@ -80,23 +83,54 @@ export function unknownTaskBotsKey(input: {
 }
 
 /**
+ * Chats the list still has as archived while a turn runs in them, as a key
+ * (thread@turn, sorted), or null. The server unarchives a chat when a turn
+ * starts in it (a reopened or steered task, a routine run), but only the
+ * thread shells tell this device that the turn started.
+ */
+export function archivedLiveThreadsKey(input: {
+  readonly links: ReadonlyArray<PersonalBotThread> | null;
+  readonly shells: ReadonlyArray<EnvironmentThreadShell> | undefined;
+}): string | null {
+  const { links, shells } = input;
+  if (links === null || shells === undefined) return null;
+  const archived = new Set<string>(
+    links.filter((link) => link.archivedAt !== null).map((link) => link.threadId),
+  );
+  if (archived.size === 0) return null;
+  const live = shells
+    .filter((shell) => archived.has(shell.id) && isThreadLive(shell))
+    .map((shell) => `${shell.id}@${shell.latestTurn?.turnId ?? ""}`)
+    .toSorted();
+  return live.length === 0 ? null : `archived:${live.join(",")}`;
+}
+
+/**
  * The bots list (bot to chat links) is a query, but the server also creates
  * chats on its own: delegated tasks and routine runs. The live task feed names
  * those chats, so refetch the list whenever it names a chat of a live bot the
  * list does not know yet, again on each later update of that task, and once
  * more shortly after in case the link was still being written. Without this a
- * delegated bot looks chat-less and tapping it starts an empty chat.
+ * delegated bot looks chat-less and tapping it starts an empty chat. The same
+ * for a chat the list has as archived that a turn has started in: the server
+ * has unarchived it.
  */
 export function useRefreshBotsForTaskThreads(input: {
   readonly bots: ReadonlyArray<PersonalBot> | null;
   readonly links: ReadonlyArray<PersonalBotThread> | null;
   readonly tasks: ReadonlyArray<PersonalTask>;
   readonly refresh: () => void;
+  /** The thread shells, where the screen has them (see `archivedLiveThreadsKey`). */
+  readonly shells?: ReadonlyArray<EnvironmentThreadShell>;
 }): void {
-  const { bots, links, tasks, refresh } = input;
+  const { bots, links, tasks, refresh, shells } = input;
   const now = Date.now();
   const unknownKey =
-    [unknownTaskThreadsKey({ bots, links, tasks, now }), unknownTaskBotsKey({ bots, tasks, now })]
+    [
+      unknownTaskThreadsKey({ bots, links, tasks, now }),
+      unknownTaskBotsKey({ bots, tasks, now }),
+      archivedLiveThreadsKey({ links, shells }),
+    ]
       .filter((part) => part !== null)
       .join("|") || null;
   const lastKey = useRef<string | null>(null);

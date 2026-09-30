@@ -883,17 +883,13 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
     if (list.data === null) return new Set<string>();
     const liveThreadIds = new Set(
       allShells
-        .filter(
-          (shell) =>
-            shell.environmentId === environmentId &&
-            shell.archivedAt === null &&
-            isThreadLive(shell),
-        )
+        .filter((shell) => shell.environmentId === environmentId && isThreadLive(shell))
         .map((shell) => shell.id as string),
     );
+    // Archived chats count too: a bot working in one is still working.
     return new Set(
       list.data.threads
-        .filter((thread) => thread.archivedAt === null && liveThreadIds.has(thread.threadId))
+        .filter((thread) => liveThreadIds.has(thread.threadId))
         .map((thread) => thread.botId as string),
     );
   }, [allShells, environmentId, list.data]);

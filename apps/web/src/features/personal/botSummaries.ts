@@ -284,22 +284,35 @@ export function buildBotSummaries(input: {
   const activityMs = (shell: EnvironmentThreadShell) =>
     chatActivityMs(shell, linksByThread.get(shell.id));
   const shellsByBot = new Map<string, EnvironmentThreadShell[]>();
+  // Every linked chat, archived or not: what the bot is doing counts wherever
+  // it happens. A task reopened in a chat auto-archive had put away ran for an
+  // hour while the row said Ready. The row's chat, preview and order stay on
+  // the visible chats.
+  const busyShellsByBot = new Map<string, EnvironmentThreadShell[]>();
+  const push = (
+    byBot: Map<string, EnvironmentThreadShell[]>,
+    botId: string,
+    shell: EnvironmentThreadShell,
+  ) => {
+    const list = byBot.get(botId);
+    if (list === undefined) byBot.set(botId, [shell]);
+    else list.push(shell);
+  };
   const newestMessageByThread = new Map<string, PersonalBotThreadNewestMessage>();
   for (const link of input.links) {
     if (link.newestMessage != null) newestMessageByThread.set(link.threadId, link.newestMessage);
-    if (link.archivedAt !== null) continue;
     const shell = shellsById.get(link.threadId);
-    if (shell === undefined || shell.archivedAt !== null) continue;
-    const list = shellsByBot.get(link.botId);
-    if (list === undefined) {
-      shellsByBot.set(link.botId, [shell]);
-    } else {
-      list.push(shell);
-    }
+    if (shell === undefined) continue;
+    push(busyShellsByBot, link.botId, shell);
+    if (link.archivedAt !== null || shell.archivedAt !== null) continue;
+    push(shellsByBot, link.botId, shell);
   }
 
   const summaries = input.bots.map((bot): BotSummary => {
     const shells = (shellsByBot.get(bot.botId) ?? []).toSorted(
+      (left, right) => activityMs(right) - activityMs(left),
+    );
+    const busyShells = (busyShellsByBot.get(bot.botId) ?? []).toSorted(
       (left, right) => activityMs(right) - activityMs(left),
     );
     const newestThread = shells[0] ?? null;
@@ -330,9 +343,9 @@ export function buildBotSummaries(input: {
       newestMessage:
         newestThread === null ? null : (newestMessageByThread.get(newestThread.id) ?? null),
       threadTitles: shells.map((shell) => shell.title),
-      live: shells.some(isThreadLive),
-      liveThread: shells.find(isThreadLive) ?? null,
-      thinking: isBotThinking(shells),
+      live: busyShells.some(isThreadLive),
+      liveThread: busyShells.find(isThreadLive) ?? null,
+      thinking: isBotThinking(busyShells),
       rateLimited: rateLimitedThread !== null,
       rateLimitedThread,
       erroredThread,
@@ -354,7 +367,7 @@ export function buildBotSummaries(input: {
           (input.secretRequestThreadIds?.has(link.threadId) ?? false),
       ),
       waitingFor:
-        shells
+        busyShells
           .map((shell) => input.waitingByThread?.get(shell.id) ?? null)
           .find((label) => label !== null) ?? null,
       usingPc: input.links.some(

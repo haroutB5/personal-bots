@@ -161,6 +161,54 @@ describe("buildBotSummaries", () => {
     expect(planner.lastActivityMs).toBeNull();
   });
 
+  it("counts a turn running in an archived chat: the row says Working, never Ready", () => {
+    // QA on 30 Sep: its bug hunt was reopened in a chat auto-archive had put
+    // away, and every visible chat was idle.
+    const qa = [bot("qa", "QA", "codex", 0)];
+    const qaLinks = [
+      link("qa", "t-hunt", "2026-09-30T00:55:44.000Z"),
+      link("qa", "t-idle"),
+      link("qa", "t-put-away", "2026-09-29T10:00:00.000Z"),
+    ];
+    const hunt = shell("t-hunt", "2026-09-30T12:38:39.000Z", {
+      latestTurn: { state: "running", assistantMessageId: "reply-1" },
+      session: { status: "running" },
+    });
+    const qaShells = [
+      hunt,
+      shell("t-idle", "2026-09-30T09:00:00.000Z"),
+      shell("t-put-away", "2026-09-29T09:00:00.000Z", {
+        archivedAt: "2026-09-29T10:00:00.000Z",
+      }),
+    ];
+    const [summary] = buildBotSummaries({
+      bots: qa,
+      links: qaLinks,
+      shells: qaShells,
+      providers: [provider("codex")],
+      waitingByThread: new Map([["t-put-away", "Waiting on Developer"]]),
+    });
+    expect(summary!.live).toBe(true);
+    expect(summary!.liveThread?.id).toBe("t-hunt");
+    expect(botStatusLine(summary!, Date.parse("2026-09-30T13:00:00.000Z"))).toBe("Working");
+    // Which chat the row opens and previews stays on the visible ones.
+    expect(summary!.newestThread?.id).toBe("t-idle");
+    expect(summary!.threadTitles).toEqual(["Thread t-idle"]);
+
+    // Idle, the archived chat still says what the bot is waiting on.
+    const [waiting] = buildBotSummaries({
+      bots: qa,
+      links: qaLinks,
+      shells: qaShells.slice(1),
+      providers: [provider("codex")],
+      waitingByThread: new Map([["t-put-away", "Waiting on Developer"]]),
+    });
+    expect(waiting!.live).toBe(false);
+    expect(botStatusLine(waiting!, Date.parse("2026-09-30T13:00:00.000Z"))).toBe(
+      "Waiting on Developer",
+    );
+  });
+
   it("shows a thread parked on a rate limit as rate limited, not live", () => {
     const wait = (kind: "rate_limited" | "retrying") => ({
       kind,

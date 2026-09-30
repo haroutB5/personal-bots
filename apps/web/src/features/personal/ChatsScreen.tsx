@@ -407,6 +407,7 @@ export function ChatsScreen({
     links: list.data?.threads ?? null,
     tasks,
     refresh: list.refresh,
+    shells,
   });
   const namesById = useMemo(
     () => new Map((list.data?.bots ?? []).map((entry) => [entry.botId as string, entry.name])),

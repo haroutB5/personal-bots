@@ -253,6 +253,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
     links: list.data?.threads ?? null,
     tasks,
     refresh: list.refresh,
+    shells,
   });
 
   const relayThreadIds = usePersonalGroupRelayThreadIds(environmentId);

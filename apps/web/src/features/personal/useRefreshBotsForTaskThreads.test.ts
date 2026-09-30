@@ -2,7 +2,10 @@ import type { PersonalBot, PersonalBotThread, PersonalTask } from "@t3tools/cont
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+
 import {
+  archivedLiveThreadsKey,
   SETTLED_TASK_MS,
   unknownTaskBotsKey,
   unknownTaskThreadsKey,
@@ -89,5 +92,41 @@ describe("unknownTaskBotsKey", () => {
     expect(
       unknownTaskBotsKey({ bots: null, tasks: [task("t4", "running", 0, "bot-new")], now: NOW }),
     ).toBeNull();
+  });
+});
+
+describe("archivedLiveThreadsKey", () => {
+  const chats = [
+    { botId: "bot-a", threadId: "open", archivedAt: null },
+    { botId: "bot-a", threadId: "put-away", archivedAt: "2026-09-25T07:00:00.000Z" },
+  ] as unknown as ReadonlyArray<PersonalBotThread>;
+  const shell = (id: string, state: string | null, turnId = "turn-1") =>
+    ({
+      id,
+      latestTurn: state === null ? null : { state, turnId },
+      session: null,
+    }) as unknown as EnvironmentThreadShell;
+
+  it("names an archived chat a turn is running in, once per turn", () => {
+    expect(
+      archivedLiveThreadsKey({
+        links: chats,
+        shells: [shell("open", "running"), shell("put-away", "running")],
+      }),
+    ).toBe("archived:put-away@turn-1");
+    expect(
+      archivedLiveThreadsKey({ links: chats, shells: [shell("put-away", "running", "turn-2")] }),
+    ).toBe("archived:put-away@turn-2");
+  });
+
+  it("is null when no archived chat is working, or without shells", () => {
+    expect(
+      archivedLiveThreadsKey({
+        links: chats,
+        shells: [shell("open", "running"), shell("put-away", "completed")],
+      }),
+    ).toBeNull();
+    expect(archivedLiveThreadsKey({ links: chats, shells: undefined })).toBeNull();
+    expect(archivedLiveThreadsKey({ links: null, shells: [] })).toBeNull();
   });
 });
