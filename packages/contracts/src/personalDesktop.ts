@@ -226,6 +226,15 @@ export const PersonalDesktopViewMessage = Schema.Union([
     password: Schema.optional(Schema.Boolean),
     rect: Schema.optional(PersonalDesktopViewRegion),
   }),
+  /** Editable geometry before a tap, in monitor fractions, independent of stream scale/zoom. */
+  Schema.TaggedStruct("EditableRegions", {
+    rects: Schema.Array(
+      Schema.Struct({
+        rect: PersonalDesktopViewRegion,
+        password: Schema.optional(Schema.Boolean),
+      }),
+    ).check(Schema.isMaxLength(200)),
+  }),
 ]);
 export type PersonalDesktopViewMessage = typeof PersonalDesktopViewMessage.Type;
 

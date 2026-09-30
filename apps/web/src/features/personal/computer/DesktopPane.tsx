@@ -73,7 +73,12 @@ import {
   desktopStreamUrl,
   useDesktopStatus,
 } from "./desktopState";
-import { connectDesktopView, type DesktopFocus, type DesktopViewClient } from "./desktopViewClient";
+import {
+  connectDesktopView,
+  type DesktopFocus,
+  type DesktopViewClient,
+  type DesktopEditableRegions,
+} from "./desktopViewClient";
 import {
   regionPlacement,
   type ScreenRegion,
@@ -121,6 +126,8 @@ interface TypingState {
   readonly fieldRef: { readonly current: HTMLInputElement | null };
   readonly open: boolean;
   readonly focus: DesktopFocus | null;
+  readonly regions: DesktopEditableRegions;
+  readonly autoOpened: { current: boolean };
 }
 
 export function usePageVisible(): boolean {
@@ -166,6 +173,8 @@ export function DesktopPane(props: {
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   /** The PC's last word on its focus; cleared whenever control starts or ends. */
   const [pcFocus, setPcFocus] = useState<DesktopFocus | null>(null);
+  const [editableRegions, setEditableRegions] = useState<DesktopEditableRegions>([]);
+  const autoOpenedRef = useRef(false);
 
   // Leaving full screen, backgrounding the app or the PC locking ends control
   // for good: coming back never quietly resumes it. (State adjusted during
@@ -313,11 +322,26 @@ export function DesktopPane(props: {
             takeSticky={takeSticky}
             sendRef={sendRef}
             onViewState={setViewState}
-            typing={{ fieldRef: keyboardFieldRef, open: keyboardOpen, focus: pcFocus }}
-            onFocus={setPcFocus}
+            typing={{
+              fieldRef: keyboardFieldRef,
+              open: keyboardOpen,
+              focus: pcFocus,
+              regions: editableRegions,
+              autoOpened: autoOpenedRef,
+            }}
+            onRegions={setEditableRegions}
+            onFocus={(focus) => {
+              setPcFocus(focus);
+              if (autoOpenedRef.current) {
+                autoOpenedRef.current = false;
+                if (!focus.editable) keyboardFieldRef.current?.blur();
+              }
+            }}
             onControl={(on, detail) => {
               setControlOn(on);
               setPcFocus(null);
+              setEditableRegions([]);
+              autoOpenedRef.current = false;
               if (!on) {
                 if (detail !== null) {
                   setNotice(detail);
@@ -761,6 +785,7 @@ function LiveDesktop(props: {
   readonly onInputRefused: (detail: string) => void;
   readonly typing: TypingState;
   readonly onFocus: (focus: DesktopFocus) => void;
+  readonly onRegions: (rects: DesktopEditableRegions) => void;
 }) {
   const { environmentId, active, fit, controlWanted, interactive } = props;
   const access = useComputerAccess(environmentId);
@@ -879,6 +904,7 @@ function LiveDesktop(props: {
         onControl: (on, detail) => callbacksRef.current.onControl(on, detail),
         onInputRefused: (detail) => callbacksRef.current.onInputRefused(detail),
         onFocus: (focus) => callbacksRef.current.onFocus(focus),
+        onRegions: (rects) => callbacksRef.current.onRegions(rects),
         onClosed: (opened) => {
           clientRef.current = null;
           setLiveClient(null);
@@ -1459,14 +1485,20 @@ function ControlSurface(props: {
    * button follows the PC's report instead.
    */
   const raiseKeyboardFor = (clientX: number, clientY: number) => {
-    const { fieldRef, open, focus } = latest.current.typing;
+    const { fieldRef, open, focus, regions, autoOpened } = latest.current.typing;
     const field = fieldRef.current;
     const space = props.spaceRef.current;
-    if (open || field === null || focus?.editable !== true || focus.rect === undefined) return;
+    if (open || field === null) return;
     if (space === null || !space.screen) return;
     const point = pointAt(clientX, clientY);
     if (point === null) return;
-    if (!tapOnField(point.x / space.width, point.y / space.height, focus.rect)) return;
+    const x = point.x / space.width;
+    const y = point.y / space.height;
+    const known = regions.some(({ rect }) => tapOnField(x, y, rect));
+    const focused =
+      focus?.editable === true && focus.rect !== undefined && tapOnField(x, y, focus.rect);
+    if (!known && !focused) return;
+    autoOpened.current = true;
     field.focus({ preventScroll: true });
   };
 

@@ -46,6 +46,7 @@ import { DesktopCoordinateError, type DesktopRect, type ScreenFrame } from "./de
 import { DesktopKeyError } from "./desktopKeys.ts";
 import {
   focusReport,
+  editableRegionsReport,
   planRemoteInput,
   type RemoteDesktopInput,
   type RemoteFocus,
@@ -137,6 +138,7 @@ export interface RemoteControlSession {
    * queue (never behind a long text), null when there is nothing to say.
    */
   readonly focus?: () => Promise<RemoteFocus | null>;
+  readonly regions?: () => Promise<ReturnType<typeof editableRegionsReport>>;
 }
 
 export interface RemoteControlOptions {
@@ -728,6 +730,12 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
               const result = await driver.request("focus", {}, FOCUS_TIMEOUT_MS);
               if (remote !== session) return null;
               return focusReport(result, await remoteMonitor(session));
+            },
+            regions: async () => {
+              if (remote !== session) return [];
+              const result = await driver.request("regions", {}, FOCUS_TIMEOUT_MS);
+              if (remote !== session) return [];
+              return editableRegionsReport(result, await remoteMonitor(session));
             },
             input: async (input) => {
               if (remote !== session) throw ended();

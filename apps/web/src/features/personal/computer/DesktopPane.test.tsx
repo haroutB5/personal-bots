@@ -721,6 +721,31 @@ describe("DesktopPane remote control", () => {
     });
   });
 
+  it("opens synchronously on the first mapped-field tap, and closes an incorrect prediction", async () => {
+    const surface = await inControl();
+    await drawFrame(WHOLE_FRAME);
+    await act(async () =>
+      state.sockets[0]!.callbacks.onRegions?.([
+        { rect: { x: 0.25, y: 0.45, width: 0.5, height: 0.1 }, password: true },
+      ]),
+    );
+    // No focused-field report exists. Plain taps must never focus the proxy.
+    await act(async () => {
+      surface.props.onPointerDown(pointer("touch", 20, 20));
+      surface.props.onPointerUp(pointer("touch", 20, 20));
+      expect(keyboardField.focus).not.toHaveBeenCalled();
+    });
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 400)));
+    await act(async () => {
+      surface.props.onPointerDown(pointer("touch", 195, 121.875));
+      surface.props.onPointerUp(pointer("touch", 195, 121.875));
+      // Assertion inside the tap's stack, before any asynchronous focus report.
+      expect(keyboardField.focus).toHaveBeenCalledTimes(1);
+    });
+    await act(async () => state.sockets[0]!.callbacks.onFocus?.({ editable: false }));
+    expect(keyboardField.blur).toHaveBeenCalledTimes(1);
+  });
+
   it("typing on the phone keyboard sends text, and an emptied field is a Backspace", async () => {
     await inControl();
     const field = renderer!.root.findByProps({ "aria-label": "Type on your PC" });

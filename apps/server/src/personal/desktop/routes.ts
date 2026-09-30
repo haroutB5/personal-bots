@@ -92,6 +92,36 @@ export function makeDesktopSocketHandler(
   /** Bumped by every focus-moving input: an older look's answer is dropped. */
   let focusGeneration = 0;
   let focusTimer: ReturnType<typeof setTimeout> | undefined;
+  let regionsTimer: ReturnType<typeof setTimeout> | undefined;
+  let regionsKey: string | null = null;
+
+  // Poll the cheap snapshot, not UIA. Sends only changes, including an empty map
+  // as soon as the foreground window changes. Runs even on an unchanged frame.
+  const checkRegions = (current: RemoteControlSession) => {
+    const probe = current.regions;
+    if (probe === undefined) return;
+    clearTimeout(regionsTimer);
+    const look = () => {
+      if (closed || session !== current || !current.active()) return;
+      probe()
+        .then(
+          (rects) => {
+            if (closed || session !== current || !current.active()) return;
+            const key = JSON.stringify(rects);
+            if (key !== regionsKey) {
+              regionsKey = key;
+              send({ _tag: "EditableRegions", rects });
+            }
+          },
+          () => undefined,
+        )
+        .finally(() => {
+          if (!closed && session === current && current.active())
+            regionsTimer = setTimeout(look, 250);
+        });
+    };
+    look();
+  };
 
   const sendFocus = (focus: RemoteFocus) => {
     send({
@@ -168,6 +198,8 @@ export function makeDesktopSocketHandler(
         send({ _tag: "Control", on: true });
         // Focus may already be in a field (an address bar left selected).
         checkFocus(exit.value);
+        regionsKey = null;
+        checkRegions(exit.value);
         return;
       }
       if (closed) return;
@@ -186,6 +218,7 @@ export function makeDesktopSocketHandler(
   const releaseControl = () => {
     const current = session;
     session = null;
+    clearTimeout(regionsTimer);
     if (current !== null) {
       current.end("released");
       viewer.setControl(false);
@@ -227,6 +260,10 @@ export function makeDesktopSocketHandler(
         if (!droppable) refuse("Too many inputs at once; that one was skipped.");
         return;
       }
+      if (movesFocus(message)) {
+        ++focusGeneration;
+        clearTimeout(focusTimer);
+      }
       current.input(message).then(
         () => {
           viewer.nudge();
@@ -245,6 +282,7 @@ export function makeDesktopSocketHandler(
     close: () => {
       closed = true;
       clearTimeout(focusTimer);
+      clearTimeout(regionsTimer);
       const current = session;
       session = null;
       current?.end("closed");

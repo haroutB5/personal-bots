@@ -4,6 +4,7 @@ import { DesktopCoordinateError } from "./desktopGeometry.ts";
 import { DesktopKeyError } from "./desktopKeys.ts";
 import {
   focusReport,
+  editableRegionsReport,
   InputRateLimiter,
   isDroppableInput,
   movesFocus,
@@ -175,6 +176,35 @@ describe("InputRateLimiter", () => {
 
 describe("focus reports", () => {
   const monitor = { x: 0, y: 0, width: 3072, height: 1920 };
+
+  it("clips editable regions on offset monitors and excludes invalid geometry and contents", () => {
+    const fields = editableRegionsReport(
+      {
+        rects: [
+          {
+            x: -110,
+            y: 20,
+            width: 50,
+            height: 30,
+            password: true,
+            value: "never sent",
+            name: "never sent",
+          },
+          { x: 1000, y: 20, width: 10, height: 20 },
+          { x: NaN, y: 20, width: 10, height: 20 },
+          { x: 0, y: 20, width: -10, height: 20 },
+        ],
+      },
+      { x: -100, y: 0, width: 200, height: 100 },
+    );
+    expect(fields).toEqual([{ rect: { x: 0, y: 0.2, width: 0.2, height: 0.3 }, password: true }]);
+    expect(
+      editableRegionsReport(
+        { rects: Array.from({ length: 250 }, () => ({ x: 0, y: 0, width: 1, height: 1 })) },
+        monitor,
+      ),
+    ).toHaveLength(200);
+  });
 
   it("gives a field's rect as fractions of the monitor, clipped to it", () => {
     expect(

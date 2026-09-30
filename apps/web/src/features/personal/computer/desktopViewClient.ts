@@ -40,6 +40,7 @@ export interface DesktopViewCallbacks {
   readonly onInputRefused?: (detail: string) => void;
   /** Where keyboard focus is on the PC now (after a click or a key), while in control. */
   readonly onFocus?: (focus: DesktopFocus) => void;
+  readonly onRegions?: (rects: DesktopEditableRegions) => void;
 }
 
 /** Whether the PC's focused element takes typing, and where it is (monitor fractions). */
@@ -47,6 +48,10 @@ export type DesktopFocus = Omit<
   Extract<PersonalDesktopViewMessage, { readonly _tag: "FocusChanged" }>,
   "_tag"
 >;
+export type DesktopEditableRegions = Extract<
+  PersonalDesktopViewMessage,
+  { readonly _tag: "EditableRegions" }
+>["rects"];
 
 export interface DesktopViewClient {
   /**
@@ -121,6 +126,9 @@ export function connectDesktopView(
           callbacks.onFocus?.(focus);
           return;
         }
+        case "EditableRegions":
+          callbacks.onRegions?.(message.rects);
+          return;
       }
       return;
     }

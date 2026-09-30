@@ -172,7 +172,9 @@ const isRect = (value: unknown): value is DesktopRect =>
   typeof value === "object" &&
   value !== null &&
   ["x", "y", "width", "height"].every(
-    (key) => typeof (value as Record<string, unknown>)[key] === "number",
+    (key) =>
+      typeof (value as Record<string, unknown>)[key] === "number" &&
+      Number.isFinite((value as Record<string, number>)[key]),
   );
 
 /**
@@ -208,6 +210,28 @@ export function focusReport(
     ...(result.password === true ? { password: true } : {}),
     ...(rect === undefined ? {} : { rect }),
   };
+}
+
+/** Validate, clip and scale geometry only; discard every other helper property. */
+export function editableRegionsReport(
+  result: Readonly<Record<string, unknown>>,
+  monitor: DesktopRect,
+): ReadonlyArray<{ readonly rect: NonNullable<RemoteFocus["rect"]>; readonly password?: boolean }> {
+  if (!Array.isArray(result.rects)) return [];
+  return result.rects.slice(0, 200).flatMap((field: unknown) => {
+    if (!isRect(field) || field.width <= 0 || field.height <= 0) return [];
+    const focus = focusReport(
+      {
+        editable: true,
+        rect: field,
+        password: (field as unknown as Record<string, unknown>).password === true,
+      },
+      monitor,
+    );
+    return focus?.rect === undefined
+      ? []
+      : [{ rect: focus.rect, ...(focus.password ? { password: true } : {}) }];
+  });
 }
 
 /**

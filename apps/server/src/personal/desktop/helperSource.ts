@@ -38,6 +38,7 @@ using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
+using System.Windows.Automation;
 
 static class Native {
   [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
@@ -179,6 +180,11 @@ public static class PbDesktopHelper {
   static readonly BlockingCollection<string> work = new BlockingCollection<string>();
   // "focus" asks, answered on their own thread so a slow app never holds up input.
   static readonly BlockingCollection<object> focusWork = new BlockingCollection<object>();
+  static long regionsUntil = 0;
+  static int regionsDirty = 1;
+  static readonly object regionsLock = new object();
+  static IntPtr regionsWindow = IntPtr.Zero;
+  static Dictionary<string, object> regionsSnapshot = Dict("rects", new object[0], "ms", 0);
 
   // 0: the person at the PC (hardware, or another program); 1: a bot, through
   // this helper; 2: the owner's remote control, through this helper.
@@ -305,9 +311,30 @@ public static class PbDesktopHelper {
     Thread focuser = new Thread(FocusLoop);
     focuser.IsBackground = true;
     focuser.Start();
+    Thread mapper = new Thread(RegionsLoop);
+    mapper.IsBackground = true;
+    mapper.Start();
     string line;
     while ((line = input.ReadLine()) != null) {
       if (line.Trim().Length == 0) continue;
+      if (line.IndexOf("\"regions\"", StringComparison.Ordinal) >= 0) {
+        try {
+          Dictionary<string, object> req = json.Deserialize<Dictionary<string, object>>(line);
+          if (Str(req, "cmd") == "regions") {
+            Interlocked.Exchange(ref regionsUntil, DateTime.UtcNow.AddSeconds(3).Ticks);
+            if (BoolOr(req, "refresh", false)) Interlocked.Exchange(ref regionsDirty, 1);
+            Dictionary<string, object> answer;
+            lock (regionsLock) {
+              answer = Native.GetForegroundWindow() == regionsWindow
+                ? new Dictionary<string, object>(regionsSnapshot) : Dict("rects", new object[0], "ms", 0);
+            }
+            answer["id"] = req.ContainsKey("id") ? req["id"] : null;
+            answer["ok"] = true;
+            Emit(answer);
+            continue;
+          }
+        } catch (Exception) { }
+      }
       if (line.IndexOf("\"focus\"", StringComparison.Ordinal) >= 0) {
         try {
           Dictionary<string, object> req = json.Deserialize<Dictionary<string, object>>(line);
@@ -346,6 +373,9 @@ public static class PbDesktopHelper {
         Dictionary<string, object> req = json.Deserialize<Dictionary<string, object>>(line);
         id = req.ContainsKey("id") ? req["id"] : null;
         Dictionary<string, object> result = Handle(req);
+        string cmd = Str(req, "cmd");
+        if (cmd == "click" || cmd == "button" || cmd == "keys" || cmd == "type" || cmd == "wheel")
+          Interlocked.Exchange(ref regionsDirty, 1);
         result["id"] = id;
         result["ok"] = true;
         Emit(result);
@@ -381,6 +411,109 @@ public static class PbDesktopHelper {
 
   static Dictionary<string, object> RectDict(int x, int y, int w, int h) {
     return Dict("x", x, "y", y, "width", Math.Max(1, w), "height", Math.Max(1, h));
+  }
+
+  // Geometry only. No Name, Value or TextRange is requested, including for passwords.
+  // UIA providers can block: this worker never shares the click/typing queue.
+  static void RegionsLoop() {
+    Native.SetThreadDpiAwarenessContext(new IntPtr(-4));
+    AutomationElement root = null;
+    IntPtr window = IntPtr.Zero;
+    long refreshed = 0;
+    AutomationFocusChangedEventHandler focusChanged = delegate { Interlocked.Exchange(ref regionsDirty, 1); };
+    StructureChangedEventHandler structureChanged = delegate { Interlocked.Exchange(ref regionsDirty, 1); };
+    AutomationPropertyChangedEventHandler geometryChanged = delegate { Interlocked.Exchange(ref regionsDirty, 1); };
+    bool subscribed = false;
+    while (true) {
+      Thread.Sleep(100);
+      bool active = DateTime.UtcNow.Ticks < Interlocked.Read(ref regionsUntil);
+      IntPtr foreground = active ? Native.GetForegroundWindow() : IntPtr.Zero;
+      if (foreground != window || (!active && subscribed)) {
+        if (subscribed) {
+          try { Automation.RemoveAutomationFocusChangedEventHandler(focusChanged); } catch (Exception) { }
+          try { Automation.RemoveStructureChangedEventHandler(root, structureChanged); } catch (Exception) { }
+          try { Automation.RemoveAutomationPropertyChangedEventHandler(root, geometryChanged); } catch (Exception) { }
+          subscribed = false;
+        }
+        window = foreground;
+        root = null;
+        lock (regionsLock) { regionsWindow = IntPtr.Zero; regionsSnapshot = Dict("rects", new object[0], "ms", 0); }
+        if (window != IntPtr.Zero) {
+          try {
+            root = AutomationElement.FromHandle(window);
+            Automation.AddAutomationFocusChangedEventHandler(focusChanged);
+            subscribed = true;
+            Automation.AddStructureChangedEventHandler(root, TreeScope.Subtree, structureChanged);
+            Automation.AddAutomationPropertyChangedEventHandler(root, TreeScope.Subtree, geometryChanged,
+              AutomationElement.BoundingRectangleProperty, AutomationElement.IsOffscreenProperty,
+              AutomationElement.IsEnabledProperty, ValuePattern.IsReadOnlyProperty);
+          } catch (Exception) { }
+        }
+        Interlocked.Exchange(ref regionsDirty, 1);
+        refreshed = 0;
+      }
+      if (!active || root == null || MsSince(refreshed) < 200) continue;
+      // The safety refresh also catches providers that omit scroll/geometry events.
+      if (Interlocked.Exchange(ref regionsDirty, 0) == 0 && MsSince(refreshed) < 1000) continue;
+      long started = DateTime.UtcNow.Ticks;
+      List<object> rects = new List<object>();
+      try {
+        CacheRequest cache = new CacheRequest();
+        cache.TreeScope = TreeScope.Element;
+        cache.Add(AutomationElement.ControlTypeProperty);
+        cache.Add(AutomationElement.BoundingRectangleProperty);
+        cache.Add(AutomationElement.IsOffscreenProperty);
+        cache.Add(AutomationElement.IsEnabledProperty);
+        cache.Add(AutomationElement.IsPasswordProperty);
+        cache.Add(AutomationElement.IsValuePatternAvailableProperty);
+        cache.Add(AutomationElement.IsTextPatternAvailableProperty);
+        cache.Add(ValuePattern.IsReadOnlyProperty);
+        ControlType[] types = { ControlType.Edit, ControlType.Document, ControlType.ComboBox,
+          ControlType.Group, ControlType.Custom, ControlType.Pane };
+        List<Condition> conditions = new List<Condition>();
+        foreach (ControlType type in types) conditions.Add(new PropertyCondition(AutomationElement.ControlTypeProperty, type));
+        using (cache.Activate()) {
+          AutomationElementCollection elements = root.FindAll(TreeScope.Subtree, new OrCondition(conditions.ToArray()));
+          // Prioritise focus so a huge page cannot push its active field past the cap.
+          AutomationElement focused = AutomationElement.FocusedElement;
+          if (focused != null && focused.Current.ProcessId == root.Current.ProcessId)
+            AddEditableRegion(focused.GetUpdatedCache(cache), rects);
+          foreach (AutomationElement element in elements) {
+            if (rects.Count >= 200) break;
+            AddEditableRegion(element, rects);
+          }
+        }
+      } catch (Exception) { }
+      refreshed = DateTime.UtcNow.Ticks;
+      if (Native.GetForegroundWindow() != window) continue;
+      lock (regionsLock) {
+        regionsWindow = window;
+        regionsSnapshot = Dict("rects", rects.ToArray(), "ms", Math.Round(MsSince(started), 2));
+      }
+    }
+  }
+
+  static void AddEditableRegion(AutomationElement element, List<object> rects) {
+    try {
+      if (element.Cached.IsOffscreen || !element.Cached.IsEnabled) return;
+      ControlType type = element.Cached.ControlType;
+      bool value = (bool)element.GetCachedPropertyValue(AutomationElement.IsValuePatternAvailableProperty);
+      bool text = (bool)element.GetCachedPropertyValue(AutomationElement.IsTextPatternAvailableProperty);
+      object readOnly = element.GetCachedPropertyValue(ValuePattern.IsReadOnlyProperty, true);
+      bool writable = value && readOnly is bool && !(bool)readOnly;
+      bool editable = type == ControlType.Edit ? (!value || writable)
+        : writable || (type == ControlType.Group && text && !value);
+      if (!editable) return;
+      System.Windows.Rect r = element.Cached.BoundingRectangle;
+      if (r.IsEmpty || r.Width <= 0 || r.Height <= 0 || double.IsInfinity(r.Width) || double.IsNaN(r.X)) return;
+      Dictionary<string, object> rect = RectDict((int)Math.Round(r.X), (int)Math.Round(r.Y),
+        (int)Math.Round(r.Width), (int)Math.Round(r.Height));
+      if (element.Cached.IsPassword) rect["password"] = true;
+      foreach (Dictionary<string, object> previous in rects)
+        if (Int(previous, "x") == Int(rect, "x") && Int(previous, "y") == Int(rect, "y")
+          && Int(previous, "width") == Int(rect, "width") && Int(previous, "height") == Int(rect, "height")) return;
+      rects.Add(rect);
+    } catch (Exception) { }
   }
 
   // Is keyboard focus in something that takes typing? UI Automation's focused
