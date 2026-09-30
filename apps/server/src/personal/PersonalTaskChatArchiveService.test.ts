@@ -274,11 +274,11 @@ const turnStartEvent = (threadId: string, commandId: string, sequence: number) =
   }) as unknown as OrchestrationEvent;
 
 /** Lets the forked listener catch up with what was offered. */
-const settle = (check: Effect.Effect<boolean>) =>
+const settle = <R>(check: Effect.Effect<boolean, never, R>) =>
   Effect.gen(function* () {
     for (let attempt = 0; attempt < 200; attempt += 1) {
       if (yield* check) return true;
-      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 5)));
+      yield* TestClock.withLive(Effect.sleep("5 millis"));
     }
     return false;
   });
