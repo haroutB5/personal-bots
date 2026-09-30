@@ -31,6 +31,33 @@ import type { AttachmentUploadState, ReadyAttachmentUpload } from "./attachmentU
 
 const MAX_UPLOADS_PER_ENVIRONMENT = 3;
 const UPLOAD_TIMEOUT_MS = 5 * 60_000;
+/** Waits before the automatic second and third tries of a transient failure. */
+export const UPLOAD_AUTO_RETRY_DELAYS_MS = [1_000, 3_000] as const;
+let autoRetryDelaysMs: ReadonlyArray<number> = UPLOAD_AUTO_RETRY_DELAYS_MS;
+
+/** Tests only: the automatic retry waits ([] turns them off). */
+export function setUploadAutoRetryDelaysForTesting(delaysMs: ReadonlyArray<number>): void {
+  autoRetryDelaysMs = delaysMs;
+}
+
+/**
+ * A failure worth trying again on its own: the connection dropped or timed out
+ * (including an abort this queue did not ask for: the browser or the OS ended
+ * the request), the server had a moment (5xx, 408, 429), or it was not
+ * connected yet. A refusal of the file itself (other 4xx) is final. The queue's
+ * own cancel never gets here: the caller checks `job.cancelled` first.
+ */
+export function isTransientUploadFailure(result: {
+  readonly step: "mint" | "resolve-url" | "transfer";
+  readonly error: unknown;
+}): boolean {
+  if (result.step !== "transfer") return true;
+  const message = result.error instanceof Error ? result.error.message : "";
+  const status = /Upload rejected \((\d{3})\)/.exec(message)?.[1];
+  if (status === undefined) return true;
+  const code = Number(status);
+  return code >= 500 || code === 408 || code === 429;
+}
 
 interface AttachmentUploadStore {
   readonly uploadsByImageId: Readonly<Record<string, AttachmentUploadState>>;
@@ -259,59 +286,81 @@ async function runUpload(job: UploadJob): Promise<void> {
     return;
   }
 
-  let lastStep = -1;
-  const result = await runAttachmentUploadCycle({
-    registry: appAtomRegistry,
-    createUploadUrl: attachmentEnvironment.createUploadUrl,
-    remove: attachmentEnvironment.remove,
-    environmentId: job.environmentId,
-    upload: {
-      ...(job.image.type === "file" ? { type: "file" as const } : {}),
-      name: job.image.name,
-      mimeType,
-      sizeBytes: file.size,
-    },
-    // Awaited, not read: nothing on a brand-new chat's screen subscribes to
-    // the prepared connection, and a bare read of that atom answers `null`
-    // forever when no one has mounted it. Reading it here is what made a
-    // first attachment in a new chat fail with the bytes never leaving the
-    // device. The wait also covers a reconnect mid-attach.
-    resolveUploadUrl: async (relativeUrl) => {
-      const connection = await awaitPreparedConnection(job.environmentId);
-      if (job.cancelled) return null;
-      return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
-    },
-    transport: (url) =>
-      uploadBytes({
-        url,
-        file,
+  const attempt = async () => {
+    let lastStep = -1;
+    const cycle = await runAttachmentUploadCycle({
+      registry: appAtomRegistry,
+      createUploadUrl: attachmentEnvironment.createUploadUrl,
+      remove: attachmentEnvironment.remove,
+      environmentId: job.environmentId,
+      upload: {
+        ...(job.image.type === "file" ? { type: "file" as const } : {}),
+        name: job.image.name,
         mimeType,
-        onProgress: (progress) => {
-          const step = Math.floor(progress * 20);
-          if (step === lastStep || job.cancelled) {
-            return;
-          }
-          lastStep = step;
-          setUploadState(job.image.id, {
-            status: "uploading",
-            environmentId: job.environmentId,
-            progress,
-            ...(job.previous ? { previous: job.previous } : {}),
-          });
-        },
-      }),
-    onMinted: (attachmentId) => {
-      if (job.cancelled) {
-        return "cancel";
-      }
-      job.attachmentId = attachmentId;
-      return "continue";
-    },
-    onTransferStart: (abort) => {
-      job.abort = abort;
-    },
-  });
-  job.abort = null;
+        sizeBytes: file.size,
+      },
+      // Awaited, not read: nothing on a brand-new chat's screen subscribes to
+      // the prepared connection, and a bare read of that atom answers `null`
+      // forever when no one has mounted it. Reading it here is what made a
+      // first attachment in a new chat fail with the bytes never leaving the
+      // device. The wait also covers a reconnect mid-attach.
+      resolveUploadUrl: async (relativeUrl) => {
+        const connection = await awaitPreparedConnection(job.environmentId);
+        if (job.cancelled) return null;
+        return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
+      },
+      transport: (url) =>
+        uploadBytes({
+          url,
+          file,
+          mimeType,
+          onProgress: (progress) => {
+            const step = Math.floor(progress * 20);
+            if (step === lastStep || job.cancelled) {
+              return;
+            }
+            lastStep = step;
+            setUploadState(job.image.id, {
+              status: "uploading",
+              environmentId: job.environmentId,
+              progress,
+              ...(job.previous ? { previous: job.previous } : {}),
+            });
+          },
+        }),
+      onMinted: (attachmentId) => {
+        if (job.cancelled) {
+          return "cancel";
+        }
+        job.attachmentId = attachmentId;
+        return "continue";
+      },
+      onTransferStart: (abort) => {
+        job.abort = abort;
+      },
+    });
+    job.abort = null;
+    return cycle;
+  };
+  // A dropped connection mid-transfer (the relay reported "Incoming request
+  // ended abruptly: context canceled" on an iPhone, 2026-09-30) failed the
+  // upload at once, and a manual Retry then worked. Transient failures are
+  // retried here with a fresh upload URL, the chip still reading Uploading.
+  let result = await attempt();
+  for (const wait of autoRetryDelaysMs) {
+    if (job.cancelled || result.status !== "failed" || !isTransientUploadFailure(result)) break;
+    if (result.attachmentId) deletePendingUpload(job.environmentId, result.attachmentId);
+    job.attachmentId = null;
+    setUploadState(job.image.id, {
+      status: "uploading",
+      environmentId: job.environmentId,
+      progress: 0,
+      ...(job.previous ? { previous: job.previous } : {}),
+    });
+    await new Promise((resolve) => setTimeout(resolve, wait));
+    if (job.cancelled) return;
+    result = await attempt();
+  }
   if (result.status === "cancelled" || job.cancelled) {
     return;
   }

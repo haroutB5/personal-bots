@@ -59,8 +59,11 @@ import {
   releaseDraftAttachment,
   releaseDraftAttachments,
   releasePersistedAttachmentUpload,
+  isTransientUploadFailure,
   retryAttachmentUpload,
+  setUploadAutoRetryDelaysForTesting,
   startAttachmentUpload,
+  UPLOAD_AUTO_RETRY_DELAYS_MS,
   useAttachmentUploadStore,
 } from "./attachmentUploadQueue";
 
@@ -209,9 +212,12 @@ describe("attachmentUploadQueue", () => {
       },
     );
     vi.stubGlobal("XMLHttpRequest", TestXmlHttpRequest);
+    // The automatic retries have their own tests below; the rest see one try.
+    setUploadAutoRetryDelaysForTesting([]);
   });
 
   afterEach(() => {
+    setUploadAutoRetryDelaysForTesting(UPLOAD_AUTO_RETRY_DELAYS_MS);
     for (const imageId of Object.keys(useAttachmentUploadStore.getState().uploadsByImageId)) {
       releaseAttachmentUpload(imageId);
     }
@@ -982,6 +988,99 @@ describe("attachmentUploadQueue", () => {
       status: "failed",
       reason: "Not connected",
       attachmentId: "pending-environment-1-image-offline.png",
+    });
+  });
+
+  describe("automatic retries", () => {
+    const failWith = (request: TestXmlHttpRequest, event: "error" | "timeout" | "abort") =>
+      request.listeners.get(event)?.();
+    async function nextRequest(count: number): Promise<TestXmlHttpRequest> {
+      for (let tick = 0; tick < 50 && TestXmlHttpRequest.requests.length < count; tick += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(TestXmlHttpRequest.requests).toHaveLength(count);
+      return TestXmlHttpRequest.requests[count - 1]!;
+    }
+
+    it("sorts failures into transient and final", () => {
+      const transfer = (message: string) => ({
+        step: "transfer" as const,
+        error: new Error(message),
+      });
+      expect(isTransientUploadFailure(transfer("Upload failed"))).toBe(true);
+      expect(isTransientUploadFailure(transfer("Upload timed out"))).toBe(true);
+      expect(isTransientUploadFailure(transfer("Upload rejected (503)"))).toBe(true);
+      expect(isTransientUploadFailure(transfer("Upload rejected (429)"))).toBe(true);
+      expect(isTransientUploadFailure(transfer("Upload rejected (413)"))).toBe(false);
+      expect(isTransientUploadFailure(transfer("Upload cancelled"))).toBe(true);
+      expect(isTransientUploadFailure({ step: "resolve-url", error: null })).toBe(true);
+      expect(isTransientUploadFailure({ step: "mint", error: null })).toBe(true);
+    });
+
+    it("tries a dropped upload again, still uploading, and lands it", async () => {
+      setUploadAutoRetryDelaysForTesting([0, 0]);
+      const image = makeImage("dropped");
+      startAttachmentUpload({ environmentId: firstEnvironment, image });
+      const settled = awaitAttachmentUploads([image.id]);
+      const first = await nextRequest(1);
+      first.progress(1, 3);
+      // The relay ends the request mid-transfer: the browser reports a network error.
+      failWith(first, "error");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(readAttachmentUpload(image.id)?.status).toBe("uploading");
+      const second = await nextRequest(2);
+      failWith(second, "timeout");
+      (await nextRequest(3)).complete();
+      await settled;
+      expect(readAttachmentUpload(image.id)).toMatchObject({ status: "ready" });
+      expect(
+        getUploadedAttachments({ environmentId: firstEnvironment, images: [image] }),
+      ).not.toBeNull();
+    });
+
+    it("shows Upload failed only after the third try, with Retry still working", async () => {
+      setUploadAutoRetryDelaysForTesting([0, 0]);
+      const image = makeImage("flaky");
+      startAttachmentUpload({ environmentId: firstEnvironment, image });
+      const settled = awaitAttachmentUploads([image.id]);
+      for (let count = 1; count <= 3; count += 1) failWith(await nextRequest(count), "error");
+      await settled;
+      expect(TestXmlHttpRequest.requests).toHaveLength(3);
+      expect(readAttachmentUpload(image.id)).toMatchObject({
+        status: "failed",
+        reason: "Upload failed",
+      });
+      expect(
+        getUploadedAttachments({ environmentId: firstEnvironment, images: [image] }),
+      ).toBeNull();
+
+      retryAttachmentUpload({ environmentId: firstEnvironment, image });
+      const retried = awaitAttachmentUploads([image.id]);
+      (await nextRequest(4)).complete();
+      await retried;
+      expect(readAttachmentUpload(image.id)).toMatchObject({ status: "ready" });
+    });
+
+    it("does not retry a file the server refused", async () => {
+      setUploadAutoRetryDelaysForTesting([0, 0]);
+      const image = makeImage("refused");
+      startAttachmentUpload({ environmentId: firstEnvironment, image });
+      const settled = awaitAttachmentUploads([image.id]);
+      (await nextRequest(1)).complete(413);
+      await settled;
+      expect(TestXmlHttpRequest.requests).toHaveLength(1);
+      expect(readAttachmentUpload(image.id)).toMatchObject({ status: "failed" });
+    });
+
+    it("stops retrying once the attachment is removed during the wait", async () => {
+      setUploadAutoRetryDelaysForTesting([20, 20]);
+      const image = makeImage("removed-mid-retry");
+      startAttachmentUpload({ environmentId: firstEnvironment, image });
+      failWith(await nextRequest(1), "error");
+      releaseAttachmentUpload(image.id);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(TestXmlHttpRequest.requests).toHaveLength(1);
+      expect(readAttachmentUpload(image.id)).toBeUndefined();
     });
   });
 });
