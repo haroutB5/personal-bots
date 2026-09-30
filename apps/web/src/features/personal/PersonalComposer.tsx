@@ -94,6 +94,26 @@ function isCoarsePointer(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 }
 
+const NO_IDS: ReadonlySet<string> = new Set();
+/** How long after Send a keyboard event re-applying the sent text is dropped. */
+const SENT_ECHO_WINDOW_MS = 1_500;
+
+/**
+ * Whether `value` is the message just sent coming back from the keyboard: the
+ * same text, or the same text with its last word committed differently
+ * (predictive text, autocorrect). Anything else is new typing.
+ */
+export function isSentTextEcho(value: string, sent: string): boolean {
+  const typed = value.trim();
+  const message = sent.trim();
+  if (typed.length === 0 || message.length === 0) return false;
+  if (typed === message) return true;
+  const lastBreak = message.search(/\s\S*$/);
+  if (lastBreak <= 0) return false;
+  const stem = message.slice(0, lastBreak + 1);
+  return typed.startsWith(stem) && !/\s/.test(typed.slice(stem.length));
+}
+
 /**
  * Composer (ui-spec Screen 2): "+" attachments, a 16px auto-growing input and
  * a black send button that becomes Stop while a turn runs. Draft text and
@@ -194,10 +214,32 @@ export function PersonalComposer({
   const [queuedAtMs, setQueuedAtMs] = useState<number | null>(null);
 
   const prompt = draft.prompt;
+  // Attachments of a send still in flight leave the composer at once (with
+  // its text) and come back only if the send fails; the draft store keeps them
+  // until the server accepts, so a failure loses nothing.
+  const [inFlightIds, setInFlightIds] = useState<ReadonlySet<string>>(NO_IDS);
   const attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment> = useMemo(
-    () => [...draft.images, ...draft.files],
-    [draft.files, draft.images],
+    () => [...draft.images, ...draft.files].filter((attachment) => !inFlightIds.has(attachment.id)),
+    [draft.files, draft.images, inFlightIds],
   );
+  /** The text just sent, while a late keyboard event could put it back. */
+  const sentEchoRef = useRef<{ readonly text: string; readonly until: number } | null>(null);
+  /**
+   * True (and the field emptied) when `value` is the keyboard re-applying the
+   * message that was just sent: iOS can commit a predictive-text word or end a
+   * composition after Send cleared the field.
+   */
+  const dropSentEcho = (value: string): boolean => {
+    const echo = sentEchoRef.current;
+    if (echo === null) return false;
+    // The field reading empty (React having put it back) is not new typing.
+    if (value.trim().length === 0) return false;
+    if (Date.now() > echo.until || !isSentTextEcho(value, echo.text)) {
+      sentEchoRef.current = null;
+      return false;
+    }
+    return true;
+  };
   const [preview, setPreview] = useState<AttachmentPreviewData | null>(null);
   const uploadsByAttachmentId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   const attachmentChips = attachments.map((attachment) => ({
@@ -391,13 +433,41 @@ export function PersonalComposer({
   const send = async () => {
     if (!canSend || sendingRef.current || preparingRef.current) return;
     sendingRef.current = true;
+    const sentPrompt = prompt;
     const text = prompt.trim();
     const snapshot = [...attachments];
+    const snapshotIds = new Set(snapshot.map((attachment) => attachment.id));
     const messageId = newMessageId();
     const midTurn = working;
     setSending(true);
     setError(null);
     setQueuedAtMs(null);
+    // The composer empties the moment Send is tapped, draft store included;
+    // a failed send puts everything back below.
+    setPrompt(threadRef, "");
+    sentEchoRef.current =
+      text.length > 0 ? { text: sentPrompt, until: Date.now() + SENT_ECHO_WINDOW_MS } : null;
+    if (snapshotIds.size > 0) {
+      setInFlightIds((current) => new Set([...current, ...snapshotIds]));
+    }
+    const releaseInFlight = () => {
+      if (snapshotIds.size === 0) return;
+      setInFlightIds((current) => {
+        const next = new Set(current);
+        for (const id of snapshotIds) next.delete(id);
+        return next.size === 0 ? NO_IDS : next;
+      });
+    };
+    const restoreDraft = () => {
+      sentEchoRef.current = null;
+      releaseInFlight();
+      if (sentPrompt.trim().length === 0) return;
+      const typedSince = useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt ?? "";
+      setPrompt(
+        threadRef,
+        typedSince.trim().length === 0 ? sentPrompt : `${sentPrompt}\n${typedSince}`,
+      );
+    };
     try {
       for (const attachment of snapshot) {
         startAttachmentUpload({ environmentId, image: attachment, draftTarget: threadRef });
@@ -407,6 +477,7 @@ export function PersonalComposer({
         snapshot.length === 0 ? [] : getUploadedAttachments({ environmentId, images: snapshot });
       if (uploaded === null) {
         setSending(false);
+        restoreDraft();
         setError("An attachment didn't upload. Remove it or try again.");
         return;
       }
@@ -486,18 +557,17 @@ export function PersonalComposer({
       const landed = result._tag !== "Failure" || sendFailedBecauseItAlreadyLanded(result);
       if (!landed) {
         onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
+        restoreDraft();
         setError(`${botName ?? "The bot"} didn't get that message. Try sending it again.`);
       } else {
         setQueuedAtMs(midTurn ? Date.now() : null);
-        // Keep the draft (including attachments) until the server accepts it.
-        // Only consume the submitted content, preserving edits made during upload.
-        const current = useComposerDraftStore.getState().getComposerDraft(threadRef);
-        if (current?.prompt === prompt) setPrompt(threadRef, "");
         for (const attachment of snapshot) removeAttachment(attachment);
+        releaseInFlight();
       }
     } catch {
       setRetrying(false);
       onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
+      restoreDraft();
       setError("Couldn't send that message. Your draft is still saved; try again.");
     } finally {
       sendingRef.current = false;
@@ -708,8 +778,16 @@ export function PersonalComposer({
             rows={1}
             value={prompt}
             onChange={(event) => {
+              // React puts the field back to the (empty) draft on its own.
+              if (dropSentEcho(event.target.value)) return;
               setPrompt(threadRef, event.target.value);
               setCaret(event.target.selectionStart ?? event.target.value.length);
+            }}
+            onCompositionEnd={(event) => {
+              // A composition that ends with no input event after it can leave
+              // the sent text in the field while the draft is already empty.
+              const field = event.currentTarget;
+              if (dropSentEcho(field.value) && prompt.length === 0) field.value = "";
             }}
             onKeyDown={onKeyDown}
             // The caret can move without the text changing (tap, arrow keys),

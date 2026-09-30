@@ -4,7 +4,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import type { AttachmentUploadState } from "~/lib/attachmentUploadState";
 import type { Thread } from "~/types";
-import { PersonalComposer } from "./PersonalComposer";
+import { isSentTextEcho, PersonalComposer } from "./PersonalComposer";
 
 vi.mock("./AttachmentPreview", () => ({
   AttachmentPreview: ({
@@ -187,6 +187,59 @@ describe("personal composer sends", () => {
     vi.useRealTimers();
   });
 
+  it("empties the composer the moment Send is tapped, before a slow upload or ack", async () => {
+    let land!: (value: { _tag: string }) => void;
+    state.start.mockReturnValue(new Promise((resolve) => (land = resolve)));
+    await act(async () => {
+      void renderer.root.findByProps({ "aria-label": "Send" }).props.onClick();
+    });
+    // Still waiting on the server: text and chips are already gone.
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(state.draft.prompt).toBe("");
+    expect(renderer.root.findAllByProps({ "aria-label": "Open notes.txt" })).toHaveLength(0);
+    await act(async () => land({ _tag: "Success" }));
+    expect(state.draft.files).toEqual([]);
+  });
+
+  it("puts the text and attachments back when the send fails, keeping what was typed since", async () => {
+    vi.useFakeTimers();
+    state.start.mockResolvedValue({ _tag: "Failure" });
+    await act(async () => {
+      void renderer.root.findByProps({ "aria-label": "Send" }).props.onClick();
+      await Promise.resolve();
+    });
+    expect(state.draft.prompt).toBe("");
+    state.draft.prompt = "and one more thing";
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(state.draft.prompt).toBe("Send this\nand one more thing");
+    expect(renderer.root.findAllByProps({ "aria-label": "Open notes.txt" })).toHaveLength(1);
+    vi.useRealTimers();
+  });
+
+  it("drops the keyboard re-applying the sent text, then takes new typing", async () => {
+    let land!: (value: { _tag: string }) => void;
+    state.start.mockReturnValue(new Promise((resolve) => (land = resolve)));
+    await act(async () => {
+      void renderer.root.findByProps({ "aria-label": "Send" }).props.onClick();
+    });
+    const field = () => renderer.root.findByType("textarea");
+    const type = (value: string) =>
+      act(async () => field().props.onChange({ target: { value, selectionStart: value.length } }));
+    // iOS commits the predictive word after Send cleared the field; an event
+    // reading the emptied field in between must not end the guard.
+    await type("");
+    await type("Send this ");
+    expect(state.draft.prompt).toBe("");
+    await type("Send thisss");
+    expect(state.draft.prompt).toBe("");
+    await type("A new message");
+    expect(state.draft.prompt).toBe("A new message");
+    await act(async () => land({ _tag: "Success" }));
+    expect(state.draft.prompt).toBe("A new message");
+  });
+
   it("preserves edits made during upload and releases accepted attachments", async () => {
     let resolveUpload!: () => void;
     const upload = {
@@ -197,7 +250,8 @@ describe("personal composer sends", () => {
     };
     state.waitUploads.mockReturnValue(upload.promise);
     await act(async () => renderer.root.findByProps({ "aria-label": "Send" }).props.onClick());
-    expect(state.draft.prompt).toBe("Send this");
+    // Cleared on the tap, not when the upload and the server are done.
+    expect(state.draft.prompt).toBe("");
     state.draft.prompt = "My next message";
     await act(async () => {
       upload.resolve();
@@ -462,5 +516,17 @@ describe("personal composer queues while the bot works", () => {
       renderer.update(<PersonalComposer {...working} working={false} canInterrupt={false} />),
     );
     expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(0);
+  });
+});
+
+describe("isSentTextEcho", () => {
+  it("matches the sent text, or it with the last word committed differently", () => {
+    expect(isSentTextEcho("saying the issue", "saying the issue")).toBe(true);
+    expect(isSentTextEcho("saying the issue ", "saying the issue")).toBe(true);
+    expect(isSentTextEcho("saying the issues", "saying the issu")).toBe(true);
+    expect(isSentTextEcho("saying the issue and more", "saying the issue")).toBe(false);
+    expect(isSentTextEcho("something else", "saying the issue")).toBe(false);
+    expect(isSentTextEcho("", "saying the issue")).toBe(false);
+    expect(isSentTextEcho("Hi", "Hello")).toBe(false);
   });
 });
