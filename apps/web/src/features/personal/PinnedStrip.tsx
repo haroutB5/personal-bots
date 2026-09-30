@@ -26,6 +26,7 @@ import type { ChatsSnapshotRow } from "./chatsSnapshot";
 import { GroupAvatarCluster } from "./GroupAvatarCluster";
 import { activeGroupMembers, groupStatusLine, isGroupRoundLive, groupSubtitle } from "./groupModel";
 import { useStartBotChat } from "./startBotChat";
+import { usePressOpenedMenuGuard } from "./pressOpenedMenuGuard";
 
 /**
  * Favourites strip: the pinned chats as one horizontal row of faces above the
@@ -264,6 +265,8 @@ export function PinnedTile({
   const pressOrigin = useRef<{ readonly x: number; readonly y: number } | null>(null);
   // A long press that opened the menu must not also follow the link underneath.
   const openedByPress = useRef(false);
+  // ...and the finger lifting must not read as a press outside the menu.
+  const menuGuard = usePressOpenedMenuGuard();
 
   const cancelPress = useCallback(() => {
     if (pressTimer.current !== 0) {
@@ -285,6 +288,7 @@ export function PinnedTile({
             pressTimer.current = window.setTimeout(() => {
               pressTimer.current = 0;
               openedByPress.current = true;
+              menuGuard.armUntilLift();
               setMenuOpen(true);
             }, LONG_PRESS_MS);
           },
@@ -419,7 +423,13 @@ export function PinnedTile({
         </div>
       )}
       {onUnpin === null ? null : (
-        <Menu open={menuOpen} onOpenChange={setMenuOpen}>
+        <Menu
+          open={menuOpen}
+          onOpenChange={(open, details) => {
+            if (!open && !menuGuard.mayClose(details.reason)) return;
+            setMenuOpen(open);
+          }}
+        >
           {/*
             The keyboard and VoiceOver route to the same menu the long press
             opens. `sr-only` keeps a button out of a strip whose whole point is

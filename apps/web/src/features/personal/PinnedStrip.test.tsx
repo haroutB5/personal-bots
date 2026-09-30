@@ -9,14 +9,25 @@ import { PinnedGroupTile, PinnedSnapshotTile, PinnedStrip, PinnedTile } from "./
 const state = vi.hoisted(() => ({
   timeouts: new Map<number, () => void>(),
   nextTimeoutId: 1,
+  documentListeners: new Map<string, Set<() => void>>(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
 }));
 vi.mock("~/components/ui/menu", () => ({
-  Menu: ({ open, children }: { open?: boolean; children: React.ReactNode }) => (
-    <div data-menu-open={String(open === true)}>{children}</div>
+  Menu: ({
+    open,
+    onOpenChange,
+    children,
+  }: {
+    open?: boolean;
+    onOpenChange?: (open: boolean, details: { reason: string }) => void;
+    children: React.ReactNode;
+  }) => (
+    <div data-menu-open={String(open === true)} data-on-open-change={onOpenChange}>
+      {children}
+    </div>
   ),
   MenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   MenuGroup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -44,6 +55,16 @@ function stubWindow() {
       state.timeouts.delete(id);
     },
   });
+  vi.stubGlobal("document", {
+    addEventListener: (type: string, listener: () => void) => {
+      const set = state.documentListeners.get(type) ?? new Set();
+      set.add(listener);
+      state.documentListeners.set(type, set);
+    },
+    removeEventListener: (type: string, listener: () => void) => {
+      state.documentListeners.get(type)?.delete(listener);
+    },
+  });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 }
 
@@ -53,6 +74,7 @@ afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = undefined;
   state.timeouts.clear();
+  state.documentListeners.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -319,6 +341,55 @@ describe("PinnedStrip", () => {
       });
     });
     expect(defaultPrevented).toBe(true);
+  });
+
+  it("keeps a long-press menu open when the finger lifts, until a real outside tap", async () => {
+    stubWindow();
+    let now = 1_000;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    await act(async () => {
+      renderer = create(
+        <PinnedStrip>
+          <PinnedTile
+            name="CTO"
+            avatar={<BotAvatar shape="pill" color="#E8711A" size={56} label="CTO" />}
+            badge={null}
+            statusLabel="Ready"
+            target={{ kind: "none" }}
+            onUnpin={() => undefined}
+          />
+        </PinnedStrip>,
+      );
+    });
+    const face = renderer!.root.findByProps({ "aria-label": "CTO, Ready" });
+    const menu = () =>
+      renderer!.root.findAll((node) => node.props["data-menu-open"] !== undefined)[0]!;
+    const requestClose = (reason: string) =>
+      act(() => menu().props["data-on-open-change"](false, { reason }));
+
+    act(() => face.props.onPointerDown({ pointerType: "touch", clientX: 0, clientY: 0 }));
+    act(() => {
+      for (const run of state.timeouts.values()) run();
+    });
+    expect(menu().props["data-menu-open"]).toBe("true");
+
+    // Base UI reads the holding finger as a press outside the new popup.
+    requestClose("outside-press");
+    expect(menu().props["data-menu-open"]).toBe("true");
+
+    // The lift itself, and the moment after it.
+    act(() => {
+      face.props.onPointerUp();
+      for (const release of state.documentListeners.get("pointerup") ?? []) release();
+    });
+    now += 100;
+    requestClose("outside-press");
+    expect(menu().props["data-menu-open"]).toBe("true");
+
+    // A deliberate tap elsewhere, later, still closes it.
+    now += 400;
+    requestClose("outside-press");
+    expect(menu().props["data-menu-open"]).toBe("false");
   });
 
   it("cancels the long press when the strip is scrolled instead", async () => {
