@@ -147,3 +147,11 @@ Why chatShell is bimodal: the probe records the rAF time of the frame whose post
 - Gates: web personal + lib + cloud 0 (187 files, 1851 tests), web tsc 0. Build exit 0.
 - H7 0/8 wrong counts, H4 0 relay rows, H1 pass, on the staged release.
 - Throwaways stopped by PID; e2e and golden roots deleted after junction checks (0).
+
+### 1.59.5 gate made honest (CTO decision)
+
+- Probe fix (`c188c78105`, scripts only): `chatShell` now requires the header to be in the DOM at a frame's rAF and marks that frame. Before, a tap's click task running between a frame's rAF and its post-paint check got the earlier frame's time.
+- Recalibration (`ef21bde1a7`): with the fixed probe on the same live-shaped synthetic data, seeded fresh for each build, 1.30.1 measured chatShell p50 630.2 and 682.2 ms (48 requests, 667.5 KB: its preload loses the race on this data). Ceiling reset once to 630, then ratcheted to 1.59.5's p50 132.3 x 1.4 = 185. The other ten ceilings are unchanged.
+- Committed gate on the staged release `bf1e6cebf0c4` (no app change, no rebuild), live-shaped data: run A exit 0 (chatShell 173, J1-warm wall 1704.6), run B exit 0 (chatShell 134.2, J1-warm wall 1632.4). Logs: `~/.personal-bots/qa/frontend-1593/check-gate1595a.log`, `check-gate1595b.log`; calibration `check-cal1301a.log`, `check-cal1301b.log`, `check-cal1595.log`.
+- Watch: on live-shaped data J1-warm.wall sits at 1632-1705 against 1785. The calibration run had 2 of 5 warm relaunches without the cold-start snapshot (3.7-4.1 s, 28-30 commits), giving p50 1893 in that one run.
+- Proposal for Harout (not built): keep the Bots list mounted (hidden) while a chat is open, so opening a chat no longer unmounts it (~58 ms of the click at 4x) and Back is instant.
