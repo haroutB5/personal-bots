@@ -44,8 +44,8 @@ export function LoginRequestCard({
   }
   const status = request.status === "pending" ? "expired" : request.status;
   const text = {
-    filling: `Signing in to ${host}…`,
-    filled: `Signed in to ${host}`,
+    filling: `Sending details to ${request.origin}…`,
+    filled: `Details sent to ${request.origin}${request.saved ? " · saved" : ""}`,
     cancelled: "Cancelled",
     expired: "This sign-in request expired.",
     "origin-mismatch": "The browser left this site. Request sign-in again on the matching site.",
@@ -62,7 +62,6 @@ export function LoginRequestCard({
         ) : null}
         <span>{text}</span>
       </p>
-      {request.saved ? <p className="personal-login-help">Saved for next time</p> : null}
     </section>
   );
 }

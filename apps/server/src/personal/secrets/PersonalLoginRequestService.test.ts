@@ -142,6 +142,8 @@ describe("secure in-chat login requests", () => {
       expect(state.saved).toHaveLength(1);
       expect(state.fills).toHaveLength(1);
       expect(yield* encodeJson([result, state.notes])).not.toMatch(/fixture-user|fixture-password/);
+      expect(state.notes.at(-1)).toContain("Submit with a known button or Enter");
+      expect(state.notes.at(-1)).toContain("then report in chat whether sign-in worked");
       yield* service.submit(credentials(request.requestId)).pipe(Effect.flip);
       expect(state.fills).toHaveLength(1);
     }).pipe(Effect.provide(layer));

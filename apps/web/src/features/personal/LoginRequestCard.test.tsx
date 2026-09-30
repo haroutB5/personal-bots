@@ -131,6 +131,18 @@ it.each(["filling", "filled", "cancelled", "expired", "origin-mismatch", "fill-f
     expect(renderer.root.findAllByProps({ role: "status" })).toHaveLength(1);
   },
 );
+it.each([false, true])(
+  "reports details sent without claiming authentication, saved=%s",
+  async (saved) => {
+    await render({ ...REQUEST, status: "filled", saved });
+    const status = renderer.root.findByProps({ role: "status" });
+    expect(status.findByType("span").children).toEqual([
+      `Details sent to https://example.test${saved ? " · saved" : ""}`,
+    ]);
+    expect(JSON.stringify(renderer.toJSON())).not.toContain("Signed in");
+    expect(renderer.root.findAllByType("input")).toHaveLength(0);
+  },
+);
 it("places open requests last and puts completed requests back at their original time", () => {
   const items = [
     { kind: "divider" as const, id: "before", at: new Date(NOW - 1_000) },

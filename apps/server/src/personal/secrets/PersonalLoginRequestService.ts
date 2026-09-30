@@ -69,7 +69,7 @@ export const layer = Layer.effect(
           restartSession: false,
           note: `Login request result: ${row.status}; saved: ${row.saved}. Credentials were not sent to you. ${
             row.status === "filled"
-              ? "The form is filled. Submit with a known button or Enter. For 2FA, OTP or passkeys, call request_browser_help."
+              ? "The form is filled. Submit with a known button or Enter, then report in chat whether sign-in worked after checking the result. For 2FA, OTP or passkeys, call request_browser_help."
               : row.status === "fill-failed"
                 ? "The form could not be completely filled. Use request_browser_help for the user to finish."
                 : ""
