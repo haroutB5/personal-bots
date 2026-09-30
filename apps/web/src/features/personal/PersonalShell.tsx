@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX } from "react";
-import { Activity, lazy, Suspense, useDeferredValue, useMemo, useRef } from "react";
+import { Activity, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { Outlet, useLocation, useParams, useRouterState } from "@tanstack/react-router";
 
@@ -17,6 +17,7 @@ import {
 } from "./desktopColumns";
 import { InAppNotifications } from "./InAppNotifications";
 import { useKeptBotsList, useKeptBotsListScroll } from "./keptBotsList";
+import { whenIdle } from "./perfFlags";
 import { installPerfRum } from "./perfRum";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
 import {
@@ -89,10 +90,15 @@ export function PersonalShell(): JSX.Element {
   // Hiding the list in Activity disconnects every row's effects, which cost
   // the opening tap as much as the unmount it replaces. The tap only takes it
   // out of the page (display: none on a display: contents wrapper, so layout
-  // is unchanged); Activity hides it in a deferred render after the chat has
-  // painted. Showing it again is immediate.
-  const keptListDeferredShown = useDeferredValue(keptList.shown);
-  const keptListMode = keptList.shown || keptListDeferredShown ? "visible" : "hidden";
+  // is unchanged); Activity puts it to sleep once the main thread is idle,
+  // after the chat has painted and mounted. Showing it again is immediate.
+  const [keptListAsleep, setKeptListAsleep] = useState(false);
+  if (keptList.shown && keptListAsleep) setKeptListAsleep(false);
+  useEffect(() => {
+    if (!keptList.kept || keptList.shown) return;
+    return whenIdle(() => setKeptListAsleep(true), 1_000);
+  }, [keptList.kept, keptList.shown]);
+  const keptListMode = keptList.shown || !keptListAsleep ? "visible" : "hidden";
 
   if (!isWide) {
     return (
