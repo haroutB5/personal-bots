@@ -47,7 +47,7 @@ vi.mock("./usePersonalGroups", () => ({
   personalGroupRemoveMember: {},
   usePersonalGroupsList: () => ({ data: { groups: [], rounds: [], votes: [] }, error: null }),
   usePersonalGroupsFeed: () => ({ feed: null }),
-  mergePersonalGroups: () => ({ groups: [], rounds: [], votes: [] }),
+  mergePersonalGroups: () => ({ groups: [], archivedGroups: [], rounds: [], votes: [] }),
 }));
 vi.mock("./PersonalOfflineBanner", () => ({
   useLaptopOffline: () => false,

@@ -201,6 +201,12 @@ export function mergePersonalGroups(
   feed: PersonalGroupsFeedState | null,
 ): {
   readonly groups: ReadonlyArray<PersonalGroup>;
+  /**
+   * Archived is "hide, not delete": the server still lists them (only a
+   * deleted group drops out), so they stay reachable from the Bots list's
+   * Archived groups section, search and a saved link.
+   */
+  readonly archivedGroups: ReadonlyArray<PersonalGroup>;
   readonly rounds: ReadonlyArray<PersonalGroupRound>;
   readonly votes: ReadonlyArray<PersonalGroupVote>;
 } {
@@ -215,8 +221,10 @@ export function mergePersonalGroups(
   for (const [voteId, vote] of feed?.votes ?? new Map()) votes.set(voteId, vote);
   // Frozen so callers - and the React compiler - can treat the result as a
   // value: nothing downstream has any business sorting or splicing it in place.
+  const all = [...groups.values()];
   return {
-    groups: Object.freeze([...groups.values()].filter((group) => group.archivedAt === null)),
+    groups: Object.freeze(all.filter((group) => group.archivedAt === null)),
+    archivedGroups: Object.freeze(all.filter((group) => group.archivedAt !== null)),
     rounds: Object.freeze([...rounds.values()]),
     votes: Object.freeze([...votes.values()]),
   };

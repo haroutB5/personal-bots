@@ -30,6 +30,7 @@ export const GroupRow = memo(function GroupRow({
   bots,
   now,
   selected = false,
+  archived = false,
 }: {
   readonly group: PersonalGroup;
   /** The group's live round, or null. Drives the working dot and the status. */
@@ -39,6 +40,8 @@ export const GroupRow = memo(function GroupRow({
   readonly now: number;
   /** This group's chat is open in the desktop pane. */
   readonly selected?: boolean | undefined;
+  /** Shown in the Archived groups section or a search hit: tagged "Archived". */
+  readonly archived?: boolean | undefined;
 }): JSX.Element {
   const members = activeGroupMembers(group);
   const nameOf = (botId: string) =>
@@ -53,7 +56,7 @@ export const GroupRow = memo(function GroupRow({
       params={{ groupId: group.groupId }}
       // The cluster says "group" visually; this says it to a screen reader,
       // which would otherwise hear a row that looks like every bot row.
-      aria-label={`${group.name}, group chat`}
+      aria-label={`${group.name}, ${archived ? "archived " : ""}group chat`}
       className={cn(ROW_CLASS, selected && SELECTED_ROW_CLASS)}
       {...selectedChatProps(selected)}
     >
@@ -63,6 +66,11 @@ export const GroupRow = memo(function GroupRow({
           <span className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
             {group.name}
           </span>
+          {archived ? (
+            <span className="ml-2 shrink-0 rounded-full bg-[var(--personal-fill-muted)] px-2 text-[12px] leading-5 font-medium text-[var(--personal-text-secondary)]">
+              Archived
+            </span>
+          ) : null}
           {live ? (
             <span className="ml-2 flex shrink-0 items-center">
               <span aria-hidden="true" className="size-2 rounded-full bg-[var(--personal-live)]" />

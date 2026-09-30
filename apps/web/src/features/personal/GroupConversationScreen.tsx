@@ -15,7 +15,7 @@ import {
   type PersonalBotId,
 } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, Ellipsis } from "lucide-react";
+import { Archive, ChevronLeft, Ellipsis } from "lucide-react";
 
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { cn, randomUUID } from "~/lib/utils";
@@ -127,11 +127,17 @@ export function GroupConversationScreen({
   useCloseGroupNotifications(groupId);
   const groupsQuery = usePersonalGroupsList(environmentId);
   const { feed } = usePersonalGroupsFeed(environmentId);
-  const { groups, rounds, votes } = useMemo(
+  const { groups, archivedGroups, rounds, votes } = useMemo(
     () => mergePersonalGroups(groupsQuery.data ?? null, feed ?? null),
     [groupsQuery.data, feed],
   );
-  const group = groups.find((candidate) => candidate.groupId === groupId) ?? null;
+  // An archived group is hidden, not gone: its saved link still opens it,
+  // read-only, with Unarchive. Only a deleted group drops out of the list.
+  const group =
+    groups.find((candidate) => candidate.groupId === groupId) ??
+    archivedGroups.find((candidate) => candidate.groupId === groupId) ??
+    null;
+  const archived = group !== null && group.archivedAt !== null;
   const round = roundForGroup(rounds, groupId);
   const botsList = usePersonalBotsList(environmentId);
 
@@ -350,6 +356,23 @@ export function GroupConversationScreen({
     await navigate({ to: "/bots", replace: true });
   };
 
+  const [unarchiving, setUnarchiving] = useState(false);
+  /** Stays on the conversation: the feed moves the group back into the list. */
+  const onUnarchive = async () => {
+    if (environmentId === null) return;
+    setUnarchiving(true);
+    setActionError(null);
+    const result = await updateGroup({
+      environmentId,
+      input: { groupId: PersonalGroupId.make(groupId), archived: false },
+    });
+    setUnarchiving(false);
+    const failure = commandFailureMessage(result, "Couldn't unarchive this group. Try again.");
+    if (failure !== null) {
+      setActionError(failure);
+    }
+  };
+
   /**
    * Only the bots the owner ticked are named, and the server refuses any id
    * that is not a current member - so a sheet built from a stale list can never
@@ -520,7 +543,13 @@ export function GroupConversationScreen({
               </MenuItem>
             ) : null}
             <MenuSeparator />
-            <MenuItem onClick={() => void onArchive()}>Archive group</MenuItem>
+            {archived ? (
+              <MenuItem disabled={unarchiving} onClick={() => void onUnarchive()}>
+                Unarchive group
+              </MenuItem>
+            ) : (
+              <MenuItem onClick={() => void onArchive()}>Archive group</MenuItem>
+            )}
             <MenuItem
               variant="destructive"
               onClick={() => {
@@ -582,21 +611,51 @@ export function GroupConversationScreen({
               <GroupRoundCard card={card} onAct={onContinue} />
             </div>
           ) : null}
-          <PersonalComposer
-            key={group.threadId}
-            environmentId={environmentId}
-            threadId={ThreadId.make(group.threadId)}
-            thread={thread}
-            botName={group.name}
-            disabledReason={disabledReason}
-            working={live}
-            botLastSpokeAtMs={null}
-            canInterrupt={live}
-            onInterrupt={onStop}
-            onPendingChange={(update) => setPending((current) => update(current))}
-            send={send}
-            mentionCandidates={mentionCandidates}
-          />
+          {archived ? (
+            /* Read-only: the history stays, the composer waits for Unarchive. */
+            <div className="personal-column shrink-0 px-4 pb-2">
+              <div
+                role="status"
+                className="flex min-h-14 items-center gap-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] py-2 pr-2 pl-4"
+              >
+                <Archive
+                  aria-hidden="true"
+                  className="size-5 shrink-0 text-[var(--personal-text-secondary)]"
+                  strokeWidth={1.75}
+                />
+                <p className="min-w-0 flex-1 text-[15px] leading-5 text-[var(--personal-text)]">
+                  <span className="font-semibold">Archived.</span>{" "}
+                  <span className="text-[var(--personal-text-secondary)]">
+                    Unarchive to send messages again.
+                  </span>
+                </p>
+                <button
+                  type="button"
+                  disabled={unarchiving || laptopOffline}
+                  onClick={() => void onUnarchive()}
+                  className="flex h-11 shrink-0 items-center rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50"
+                >
+                  {unarchiving ? "Unarchiving…" : "Unarchive"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <PersonalComposer
+              key={group.threadId}
+              environmentId={environmentId}
+              threadId={ThreadId.make(group.threadId)}
+              thread={thread}
+              botName={group.name}
+              disabledReason={disabledReason}
+              working={live}
+              botLastSpokeAtMs={null}
+              canInterrupt={live}
+              onInterrupt={onStop}
+              onPendingChange={(update) => setPending((current) => update(current))}
+              send={send}
+              mentionCandidates={mentionCandidates}
+            />
+          )}
         </>
       ) : (
         <div className="flex flex-1 items-center justify-center px-8 text-center text-[15px] text-[var(--personal-text-secondary)]">

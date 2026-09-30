@@ -120,6 +120,9 @@ vi.mock("./usePersonalGroups", () => ({
     groups: (list?.groups ?? []).filter(
       (group) => (group as { archivedAt: unknown }).archivedAt === null,
     ),
+    archivedGroups: (list?.groups ?? []).filter(
+      (group) => (group as { archivedAt: unknown }).archivedAt !== null,
+    ),
     rounds: list?.rounds ?? [],
   }),
 }));
@@ -793,7 +796,7 @@ describe("ChatsScreen groups", () => {
     expect(state.groupFeedCalls.at(-1)).toBe("env-1");
   });
 
-  it("keeps an archived group out of the list", async () => {
+  it("keeps an archived group out of the list but in Archived groups and search", async () => {
     state.listData = { bots: [bot("bot-ada", "Ada")], threads: [], personalProjectId: null };
     state.groupsData = {
       groups: [group({ archivedAt: "2026-09-19T10:00:00.000Z" })],
@@ -801,7 +804,23 @@ describe("ChatsScreen groups", () => {
     };
     await render();
 
-    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Launch crew");
+    const list = renderer!.root.findByProps({ "aria-label": "Your chats" });
+    expect(list.findAllByProps({ "aria-label": "Launch crew, archived group chat" })).toHaveLength(
+      0,
+    );
+    const archived = renderer!.root.findByProps({ "aria-label": "Archived groups" });
+    expect(
+      archived.findAllByProps({ "aria-label": "Launch crew, archived group chat" }).length,
+    ).toBeGreaterThan(0);
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Archived groups (");
+
+    const search = renderer!.root.findByProps({ "aria-label": "Search bots and chats" });
+    await act(async () => search.props.onChange({ target: { value: "launch" } }));
+    const hits = renderer!.root.findByProps({ "aria-label": "Your chats" });
+    expect(
+      hits.findAllByProps({ "aria-label": "Launch crew, archived group chat" }).length,
+    ).toBeGreaterThan(0);
+    expect(renderer!.root.findAllByProps({ "aria-label": "Archived groups" })).toHaveLength(0);
   });
 
   // A bot only in groups lives inside them: out of the list, the strip, the

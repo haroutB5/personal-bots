@@ -381,7 +381,7 @@ export function ChatsScreen({
   // must not contend with the first paint.
   const groupsQuery = usePersonalGroupsList(environmentId);
   const { feed: groupsFeed } = usePersonalGroupsFeed(tasksArmed ? environmentId : null);
-  const { groups, rounds } = useMemo(
+  const { groups, archivedGroups, rounds } = useMemo(
     () => mergePersonalGroups(groupsQuery.data ?? null, groupsFeed ?? null),
     [groupsQuery.data, groupsFeed],
   );
@@ -515,6 +515,12 @@ export function ChatsScreen({
   );
   const visible = useMemo(() => filterBotSummaries(listed, query), [query, listed]);
   const visibleGroups = useMemo(() => filterGroups(groups, query, nameOf), [groups, nameOf, query]);
+  // Archived groups stay out of the list, but a search reaches them (tagged
+  // "Archived"), as does the collapsed section at the bottom.
+  const searchedArchivedGroups = useMemo(
+    () => (query.trim().length === 0 ? [] : filterGroups(archivedGroups, query, nameOf)),
+    [archivedGroups, nameOf, query],
+  );
   const botsById = useMemo(
     () => new Map((list.data?.bots ?? []).map((entry) => [entry.botId as string, entry] as const)),
     [list.data],
@@ -564,11 +570,15 @@ export function ChatsScreen({
             kind: "group",
             key: group.groupId,
             group,
+            archived: false,
           }) as const,
       ),
       ...rest.map((summary) => ({ kind: "bot", key: summary.bot.botId, summary }) as const),
+      ...searchedArchivedGroups.map(
+        (group) => ({ kind: "group", key: group.groupId, group, archived: true }) as const,
+      ),
     ],
-    [rest, visibleGroups],
+    [rest, searchedArchivedGroups, visibleGroups],
   );
   const togglePin = useTogglePinBot(environmentId);
   const setMute = useSetBotMute(environmentId);
@@ -792,7 +802,7 @@ export function ChatsScreen({
         </p>
       ) : null}
 
-      {loaded && listed.length === 0 && groups.length === 0 ? (
+      {loaded && listed.length === 0 && groups.length === 0 && archivedGroups.length === 0 ? (
         <div className="mt-10 flex flex-col items-center gap-3 text-center">
           <p className="text-lg font-semibold text-[var(--personal-text)]">No bots yet</p>
           <p className="max-w-[280px] text-[15px] leading-snug text-[var(--personal-text-secondary)]">
@@ -807,7 +817,7 @@ export function ChatsScreen({
         </div>
       ) : null}
 
-      {loaded && (listed.length > 0 || groups.length > 0) ? (
+      {loaded && (listed.length > 0 || groups.length > 0 || archivedGroups.length > 0) ? (
         <>
           <div className="relative mt-2.5">
             <Search
@@ -825,7 +835,7 @@ export function ChatsScreen({
             />
           </div>
 
-          {visible.length > 0 || visibleGroups.length > 0 ? (
+          {visible.length > 0 || visibleGroups.length > 0 || searchedArchivedGroups.length > 0 ? (
             <>
               {pinned.length > 0 ? (
                 <PinnedStrip>
@@ -859,6 +869,7 @@ export function ChatsScreen({
                           bots={memberBotsOf(row.group)}
                           now={now}
                           selected={selectedChat === groupSelectionKey(row.group.groupId)}
+                          archived={row.archived}
                         />
                       </li>
                     ),
@@ -866,11 +877,34 @@ export function ChatsScreen({
                 </ul>
               ) : null}
             </>
-          ) : (
+          ) : query.trim().length > 0 ? (
             <p className="mt-6 text-center text-[15px] text-[var(--personal-text-secondary)]">
               No bots or chats match "{query.trim()}".
             </p>
-          )}
+          ) : null}
+
+          {query.trim().length === 0 && archivedGroups.length > 0 ? (
+            /* Like a bot's Archived chats: collapsed, at the bottom, one tap away. */
+            <details className="mt-6">
+              <summary className="flex min-h-11 cursor-pointer items-center text-[15px] font-medium text-[var(--personal-text-secondary)]">
+                Archived groups ({archivedGroups.length})
+              </summary>
+              <ul aria-label="Archived groups" className={UNPINNED_LIST_CLASS}>
+                {archivedGroups.map((group) => (
+                  <li key={group.groupId}>
+                    <GroupRow
+                      group={group}
+                      round={roundForGroup(rounds, group.groupId)}
+                      bots={memberBotsOf(group)}
+                      now={now}
+                      selected={selectedChat === groupSelectionKey(group.groupId)}
+                      archived
+                    />
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
 
           {firstReviewTarget !== null ? (
             <Link

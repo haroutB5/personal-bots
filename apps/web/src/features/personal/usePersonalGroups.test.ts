@@ -122,6 +122,28 @@ describe("mergePersonalGroups", () => {
     expect(merged.votes.map((entry) => entry.status)).toEqual(["rejected"]);
   });
 
+  it("keeps archived groups apart instead of dropping them", () => {
+    const archivedAt = "2026-09-30T08:00:00.000Z";
+    const merged = mergePersonalGroups(
+      { groups: [group(), group({ groupId: "group-2", archivedAt })], rounds: [] },
+      null,
+    );
+    expect(merged.groups.map((entry) => entry.groupId)).toEqual(["group-1"]);
+    expect(merged.archivedGroups.map((entry) => entry.groupId)).toEqual(["group-2"]);
+  });
+
+  it("moves a group back to the open list when the feed unarchives it", () => {
+    const archivedAt = "2026-09-30T08:00:00.000Z";
+    const merged = mergePersonalGroups(
+      { groups: [group({ archivedAt })], rounds: [] },
+      foldPersonalGroupsFeed(EMPTY_PERSONAL_GROUPS_FEED, [
+        { type: "group", group: group({ archivedAt: null }) },
+      ]),
+    );
+    expect(merged.groups.map((entry) => entry.groupId)).toEqual(["group-1"]);
+    expect(merged.archivedGroups).toEqual([]);
+  });
+
   it("survives a list that predates votes entirely", () => {
     // `votes` is optional on the input: a cached list response from before this
     // feature simply has none, and must not throw on the way to the screen.
