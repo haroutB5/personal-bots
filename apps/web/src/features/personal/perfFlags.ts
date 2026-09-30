@@ -25,6 +25,10 @@ export type PerfOptimization =
   // A second environment descriptor read within 2 s reuses the first answer
   // (withDescriptorReuse, 1.59.4); off: every read goes to the network.
   | "descriptor-reuse"
+  // A chat's mount-time work that the first frame does not need (the keyboard
+  // inset's first measurement, the viewing report, the session prewarm) runs
+  // after the first paint (afterPaint, 1.59.5); off: in the opening tap.
+  | "chat-open-after-paint"
   | "snapshot-early"
   | "warm-highlighter"
   | "rum"

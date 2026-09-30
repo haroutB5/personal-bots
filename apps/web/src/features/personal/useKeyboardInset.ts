@@ -1,6 +1,8 @@
 import type { RefObject } from "react";
 import { useEffect, useState } from "react";
 
+import { afterPaint } from "./afterPaint";
+
 /** Input types the on-screen keyboard never opens for. */
 const NON_TEXT_INPUT_TYPES = new Set([
   "button",
@@ -157,13 +159,17 @@ export function useKeyboardInset(shellRef?: RefObject<HTMLElement | null>): numb
       });
     };
 
-    update();
+    // The first measurement waits for the chat's first paint: nothing is
+    // focused yet (no keyboard, inset 0), and measuring now forced a layout
+    // of the whole new chat inside the tap that opened it.
+    const cancelFirst = afterPaint(update);
     viewport.addEventListener("resize", update);
     viewport.addEventListener("scroll", update);
     window.addEventListener("resize", update);
     document.addEventListener("focusin", update);
     document.addEventListener("focusout", onFocusOut);
     return () => {
+      cancelFirst();
       if (collapseFrame !== undefined) cancelAnimationFrame(collapseFrame);
       probe?.remove();
       viewport.removeEventListener("resize", update);

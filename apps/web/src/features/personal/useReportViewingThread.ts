@@ -3,6 +3,8 @@ import { useEffect } from "react";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { useAtomCommand } from "~/state/use-atom-command";
+
+import { afterPaint } from "./afterPaint";
 import { personalPushReportViewing } from "./usePersonalAutomation";
 
 /**
@@ -38,7 +40,8 @@ export function useReportViewingThread(
       void report({ environmentId, input: { threadId: viewing ? threadId : null } });
     };
     const sendCurrent = () => send(document.visibilityState === "visible");
-    sendCurrent();
+    // After the chat's first paint: the tap that opened it runs this effect.
+    const cancelFirst = afterPaint(sendCurrent);
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") send(true);
     }, VIEWING_HEARTBEAT_MS);
@@ -48,6 +51,7 @@ export function useReportViewingThread(
     // Page Lifecycle: a frozen page reports nothing more, so say so first.
     document.addEventListener("freeze", onPageHide);
     return () => {
+      cancelFirst();
       // Leaving the chat: say so before tearing down, or this connection
       // would keep the chat "open" until its lease expires.
       send(false);

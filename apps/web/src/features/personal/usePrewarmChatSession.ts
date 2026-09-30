@@ -3,6 +3,8 @@ import { useEffect } from "react";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { useAtomCommand } from "~/state/use-atom-command";
+
+import { afterPaint } from "./afterPaint";
 import { personalBotsPrewarmThread } from "./usePersonalAutomation";
 
 /**
@@ -30,8 +32,12 @@ export function usePrewarmChatSession(
       if (document.visibilityState === "visible")
         void prewarm({ environmentId, input: { threadId } });
     };
-    send();
+    // After the chat's first paint: the tap that opened it runs this effect.
+    const cancelFirst = afterPaint(send);
     document.addEventListener("visibilitychange", send);
-    return () => document.removeEventListener("visibilitychange", send);
+    return () => {
+      cancelFirst();
+      document.removeEventListener("visibilitychange", send);
+    };
   }, [environmentId, threadId, connected, prewarm]);
 }
