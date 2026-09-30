@@ -12,6 +12,9 @@ export const PERF_OFF_STORAGE_KEY = "bots:perf-off";
 
 export type PerfOptimization =
   | "preload-chat"
+  // The chat preload starts from the list's first paint (snapshot included)
+  // with a 250 ms idle deadline (1.59.3, H8); off: the 3 s default deadline.
+  | "preload-chat-soon"
   | "snapshot-early"
   | "warm-highlighter"
   | "rum"

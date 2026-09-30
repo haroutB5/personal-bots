@@ -356,9 +356,12 @@ export function ChatsScreen({
   const loaded =
     list.data !== null &&
     personalGroupsSettled({ listData: groupsQuery.data, listError: groupsQuery.error, feed: null });
-  usePreloadChatRoute(loaded);
   const showingSnapshot = !loaded && snapshot !== null && snapshot.rows.length > 0;
   const firstPaintReady = loaded || showingSnapshot || list.error !== null;
+  // From the first paint, snapshot rows included: they are tappable too, and
+  // with a long list the live rows can land after the owner's first tap, which
+  // then paid for ~50 chat chunks (H8). Only the relay-hiding waits for groups.
+  usePreloadChatRoute(firstPaintReady);
   const rowsPainted = showingSnapshot || (list.data !== null && list.data.bots.length > 0);
   useEffect(() => {
     if (rowsPainted) reportChatsListPainted(!loaded);
