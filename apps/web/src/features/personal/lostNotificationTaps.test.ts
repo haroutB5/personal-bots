@@ -36,8 +36,9 @@ describe("decideLostTap", () => {
 
   it("guesses nothing when several left at once (Clear All)", () => {
     const now = Date.now();
+    const old = now - RECENT_TAP_WINDOW_MS - 1;
     const result = decideLostTap(
-      [shown("task-a", ASSISTANT_TASK, now), shown("chat-b", CTO_CHAT, now)],
+      [shown("task-a", ASSISTANT_TASK, old), shown("chat-b", CTO_CHAT, old)],
       [],
       now,
       0,

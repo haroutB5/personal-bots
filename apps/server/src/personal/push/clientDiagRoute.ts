@@ -161,6 +161,8 @@ const FIELDS: Record<string, Read> = {
   gone: count,
   recent: count,
   awayMs: count,
+  // Which store answered the list: worker, cache-fallback or cache.
+  store: token(16),
   clients: (value) =>
     Array.isArray(value)
       ? value

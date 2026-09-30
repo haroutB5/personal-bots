@@ -33,13 +33,43 @@ function memoryCaches() {
   return { open, keys: async () => [...stores.keys()], match: async () => undefined };
 }
 
+/**
+ * The page's view of the same storage as iOS showed it on 30 Sep: whatever it
+ * read first it keeps reading, so later writes by the worker never reach it
+ * (22:37:55 push-shown, 22:37:57 lost-tap-check shown:0). Its own writes go
+ * through.
+ */
+function stalePageView(shared: ReturnType<typeof memoryCaches>) {
+  const seen = new Map<string, string | undefined>();
+  const open = async (name: string) => {
+    const cache = await shared.open(name);
+    return {
+      match: async (key: string) => {
+        const id = `${name} ${key}`;
+        if (!seen.has(id)) {
+          const response = await cache.match(key);
+          seen.set(id, response === undefined ? undefined : await response.text());
+        }
+        const body = seen.get(id);
+        return body === undefined ? undefined : new Response(body);
+      },
+      put: async (key: string, response: Response) => {
+        const body = await response.text();
+        seen.set(`${name} ${key}`, body);
+        await cache.put(key, new Response(body));
+      },
+    };
+  };
+  return { open, keys: shared.keys, match: shared.match };
+}
+
 interface Shown {
   readonly title: string;
   readonly tag?: string;
   readonly data: { readonly url: string };
 }
 
-function phone() {
+function phone(options: { readonly stalePage?: boolean } = {}) {
   const caches = memoryCaches();
   const center: Shown[] = [];
   const handlers = new Map<string, (event: unknown) => void>();
@@ -66,7 +96,19 @@ function phone() {
     clearTimeout,
     caches,
   });
-  vi.stubGlobal("caches", caches);
+  vi.stubGlobal("caches", options.stalePage ? stalePageView(caches) : caches);
+  // The page's controller: messages reach the worker's message handler, with
+  // their ports, as on the phone.
+  const worker = {
+    postMessage: (message: unknown, transfer: Transferable[] = []) => {
+      handlers.get("message")!({
+        data: message,
+        ports: transfer,
+        waitUntil: (value: Promise<unknown>) => void value,
+      });
+    },
+  };
+  vi.stubGlobal("navigator", { serviceWorker: { controller: worker } });
   const registration = { getNotifications: async () => [...center] };
   const push = async (payload: Record<string, unknown>) => {
     const pending: Promise<unknown>[] = [];
@@ -183,6 +225,54 @@ describe("worker and page find a tap iOS dropped", () => {
     );
     // Once only, even though iOS keeps listing it.
     expect(await lostUrl(app)).toBeNull();
+  });
+
+  // 30 Sep, live 1.60.9: the app launched at 22:37:02 (list read, empty), went
+  // away at 22:37:39, CTO's reply was shown at 22:37:55 and tapped at once.
+  // The resumed page read shown:0 at 22:37:57: its own view of the worker's
+  // Cache Storage never saw the write.
+  it("finds the tap when the resumed page's own storage view is stale", async () => {
+    const app = phone({ stalePage: true });
+    expect(await lostUrl(app)).toBeNull();
+    await vi.advanceTimersByTimeAsync(37_000);
+    const awaySince = Date.now();
+    await vi.advanceTimersByTimeAsync(15_800);
+    await app.push({ title: "CTO", url: CTO_CHAT });
+    app.take(CTO_CHAT); // tapped; iOS listed nothing (22:16: listed 0)
+    await vi.advanceTimersByTimeAsync(2_500);
+    const look = await findLostTap(app.registration, { awaySince });
+    expect(look).toEqual(
+      expect.objectContaining({ url: CTO_CHAT, reason: "one-gone", shown: 1, store: "worker" }),
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await lostUrl(app, { awaySince: Date.now() })).toBeNull();
+  });
+
+  it("finds it through the worker when iOS still lists the tapped notification", async () => {
+    const app = phone({ stalePage: true });
+    expect(await lostUrl(app)).toBeNull();
+    const awaySince = Date.now();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await app.push({ title: "Assistant", url: ASSISTANT_CHAT });
+    await app.push({ title: "Assistant", url: ASSISTANT_CHAT });
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(await findLostTap(app.registration, { awaySince })).toEqual(
+      expect.objectContaining({ url: ASSISTANT_CHAT, reason: "recent", listed: 1 }),
+    );
+  });
+
+  it("opens a recent tap even when iOS lists none of several on the list", async () => {
+    const app = phone({ stalePage: true });
+    await app.push({ title: "Assistant", url: ASSISTANT_TASK, tag: "task-1" });
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    const awaySince = Date.now();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await app.push({ title: "CTO", url: CTO_CHAT });
+    app.center.length = 0;
+    await vi.advanceTimersByTimeAsync(2_500);
+    expect(await findLostTap(app.registration, { awaySince })).toEqual(
+      expect.objectContaining({ url: CTO_CHAT, reason: "recent", gone: 2, listed: 0 }),
+    );
   });
 
   it("opens the tapped chat on a cold launch too", async () => {

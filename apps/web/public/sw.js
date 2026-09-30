@@ -12,7 +12,7 @@ const VERSION = new URL(self.location.href).searchParams.get("v") || "dev";
 // VERSION is the package version and has not changed across releases, so the
 // diag lines carry this too: bump it with every change to this file, so the
 // server log shows which worker the phone is running.
-const SW_REVISION = "2026-09-30-recent-tap";
+const SW_REVISION = "2026-09-30-worker-list";
 const CACHE_PREFIX = "bots-shell-";
 const CACHE_NAME = `${CACHE_PREFIX}${VERSION}`;
 const SHELL_KEY = "/__bots-shell__";
@@ -341,6 +341,50 @@ async function updateShown(change) {
   }
 }
 
+/** Entries left after `gone` ({key, at} each). Must match withoutForgotten in lostNotificationTaps.ts. */
+function forgetEntries(list, gone) {
+  return list.filter(
+    (entry) => !gone.some((item) => item && item.key === entry.key && entry.at <= item.at),
+  );
+}
+
+/*
+ * The page reads and trims the list through these messages rather than its
+ * own Cache Storage: on iOS a page that was already running does not see this
+ * worker's later writes (30 Sep 22:37: empty two seconds after push-shown).
+ * Each request carries a MessagePort for the answer.
+ */
+function answerShownRequest(event) {
+  const data = event.data;
+  const port = event.ports && event.ports[0];
+  if (!data || !port) return false;
+  if (data.type === "bots:shown-read") {
+    event.waitUntil(
+      (async () => {
+        let entries = [];
+        await updateShown((list) => {
+          entries = list;
+          return list;
+        });
+        port.postMessage({ type: "bots:shown", entries });
+      })(),
+    );
+    return true;
+  }
+  if (data.type === "bots:shown-forget" && Array.isArray(data.gone)) {
+    const gone = data.gone.filter(
+      (item) => item && typeof item.key === "string" && typeof item.at === "number",
+    );
+    event.waitUntil(
+      updateShown((list) => forgetEntries(list, gone)).then(() =>
+        port.postMessage({ type: "bots:shown-forgotten" }),
+      ),
+    );
+    return true;
+  }
+  return false;
+}
+
 function shownKey(tag, url) {
   return typeof tag === "string" && tag.length > 0 ? tag : url;
 }
@@ -463,7 +507,10 @@ function settleAck(data) {
   });
 }
 
-self.addEventListener("message", (event) => settleAck(event.data));
+self.addEventListener("message", (event) => {
+  if (answerShownRequest(event)) return;
+  settleAck(event.data);
+});
 
 function waitForAck(id, ms) {
   return new Promise((resolve) => {

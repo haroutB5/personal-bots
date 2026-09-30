@@ -268,6 +268,7 @@ describe("client diagnostics route", () => {
           recent: 1,
           waitedMs: 2502,
           awayMs: 330_000,
+          store: "worker",
           page: "index-abc.js",
           visibility: "visible",
           notes: "dropped",
@@ -285,6 +286,7 @@ describe("client diagnostics route", () => {
       recent: 1,
       waitedMs: 2502,
       awayMs: 330_000,
+      store: "worker",
       page: "index-abc.js",
       visibility: "visible",
     });

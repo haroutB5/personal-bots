@@ -15,15 +15,17 @@
  * what is still in Notification Center: exactly one missing entry is the one
  * the user tapped.
  *
- * That alone never fired on the phone. On 30 Sep (21:33, live 1.60.8) the
- * tapped Assistant notification was not missing: when iOS drops the click it
- * also leaves the notification in getNotifications() (the resume cleanups of
- * 24-26 Sep found and closed exactly the just-tapped one, closed:1). So when
- * nothing is missing, a notification shown in the last RECENT_TAP_WINDOW_MS,
- * while the app was away, is taken as the tap, if every such notification
- * opens one place. Several places, several missing, or only older ones open
- * nothing. The cost: opening the app from its icon within that window after a
- * banner also opens the banner's chat.
+ * That alone never fired on the phone, and what Notification Center reports
+ * is not dependable either: the 24-26 Sep resume cleanups found the
+ * just-tapped notification still listed (closed:1), while on 30 Sep at 22:16
+ * getNotifications() listed none with two on the list. So a notification
+ * shown in the last RECENT_TAP_WINDOW_MS, while the app was away, is also
+ * taken as the tap, if every such notification opens one place. Several
+ * places, or only older ones, open nothing. The cost: opening the app from
+ * its icon within that window after a banner also opens the banner's chat.
+ *
+ * The list itself is read through the worker (see "Where the list is read"
+ * below): the page's own view of it went stale on iOS.
  *
  * Every look reports its decision (lost-tap-check in the server log), so a
  * tap that still goes nowhere shows why.
@@ -124,13 +126,53 @@ export function decideLostTap(
       : { tapped: null, reason: "not-openable", ...counts };
   if (fresh.length === 0) return { tapped: null, reason: "none-shown", ...counts };
   if (gone.length === 1) return pick(gone[0]!, "one-gone");
-  // Clear All, or several swiped away unseen: no way to tell which was tapped.
-  if (gone.length > 1) return { tapped: null, reason: "several-gone", ...counts };
-  if (recent.length === 0) return { tapped: null, reason: "none-recent", ...counts };
+  // Several gone (Clear All, or iOS listing none: 22:16 had listed 0 with two
+  // on the list) says nothing on its own; only a recent one can still tell.
+  if (recent.length === 0) {
+    return { tapped: null, reason: gone.length > 1 ? "several-gone" : "none-recent", ...counts };
+  }
   if (new Set(recent.map((entry) => entry.url)).size > 1) {
     return { tapped: null, reason: "several-recent", ...counts };
   }
   return pick(recent.at(-1)!, "recent");
+}
+
+/*
+ * Where the list is read and trimmed.
+ *
+ * The worker writes the list, and on iOS a page that was already running when
+ * it wrote does not see the write in its own Cache Storage: on 30 Sep the
+ * resumed page read an empty list at 21:34 and at 22:37:57, two seconds after
+ * the worker had recorded the tapped notification (push-shown 22:37:55),
+ * while a page loaded fresh at 22:16 read both entries still there. So the
+ * page asks the worker, which reads its own writes, and uses Cache Storage
+ * directly only when no worker answers.
+ */
+
+/** Messages for the worker's list. Must match public/sw.js. */
+export const SHOWN_READ_MESSAGE = "bots:shown-read";
+export const SHOWN_FORGET_MESSAGE = "bots:shown-forget";
+/** How long the page waits for the worker before it reads Cache Storage itself. */
+export const SHOWN_WORKER_TIMEOUT_MS = 3_000;
+
+export interface ForgetShown {
+  readonly key: string;
+  readonly at: number;
+}
+
+/** Entries left after `gone`. Must match forgetEntries in public/sw.js. */
+export function withoutForgotten(
+  entries: ReadonlyArray<ShownNotification>,
+  gone: ReadonlyArray<ForgetShown>,
+): ShownNotification[] {
+  return entries.filter((entry) => !gone.some((g) => g.key === entry.key && entry.at <= g.at));
+}
+
+export interface ShownStore {
+  /** "worker" or "cache", for the log line: which one answered. */
+  readonly read: () => Promise<{ readonly entries: ShownNotification[]; readonly via: string }>;
+  /** Drops each entry under `key` recorded at or before `at`; a newer one for the same key stays. */
+  readonly forget: (gone: ReadonlyArray<ForgetShown>) => Promise<void>;
 }
 
 type CacheLike = Pick<Cache, "match" | "put">;
@@ -149,8 +191,89 @@ async function readShown(cache: CacheLike): Promise<ShownNotification[]> {
   return response === undefined ? [] : parseShown(await response.json());
 }
 
-async function writeShown(cache: CacheLike, entries: ReadonlyArray<ShownNotification>) {
-  await cache.put(SHOWN_KEY, new Response(JSON.stringify(entries)));
+/** The list straight from this page's Cache Storage (may be stale on iOS). */
+export const cacheShownStore: ShownStore = {
+  read: async () => {
+    const cache = await openShownCache();
+    if (cache === null) throw new Error("no-storage");
+    return { entries: await readShown(cache), via: "cache" };
+  },
+  forget: async (gone) => {
+    const cache = await openShownCache();
+    if (cache === null) return;
+    const entries = await readShown(cache);
+    const kept = withoutForgotten(entries, gone);
+    if (kept.length !== entries.length) {
+      await cache.put(SHOWN_KEY, new Response(JSON.stringify(kept)));
+    }
+  },
+};
+
+export interface WorkerLike {
+  readonly postMessage: (message: unknown, transfer: Transferable[]) => void;
+}
+
+/** Sends one request to the worker and resolves with its answer, or rejects. */
+function askWorker(worker: WorkerLike, message: object, timeoutMs: number): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const channel = new MessageChannel();
+    const timer = setTimeout(() => {
+      channel.port1.close();
+      reject(new Error("worker-timeout"));
+    }, timeoutMs);
+    channel.port1.addEventListener("message", (event: MessageEvent) => {
+      clearTimeout(timer);
+      channel.port1.close();
+      resolve(event.data);
+    });
+    channel.port1.start();
+    try {
+      worker.postMessage(message, [channel.port2]);
+    } catch (error) {
+      clearTimeout(timer);
+      channel.port1.close();
+      reject(error);
+    }
+  });
+}
+
+/** Asks `worker` for the list; falls back to Cache Storage if it does not answer. */
+export function workerShownStore(
+  worker: WorkerLike,
+  timeoutMs: number = SHOWN_WORKER_TIMEOUT_MS,
+): ShownStore {
+  return {
+    read: async () => {
+      try {
+        const answer = (await askWorker(worker, { type: SHOWN_READ_MESSAGE }, timeoutMs)) as {
+          entries?: unknown;
+        } | null;
+        if (answer !== null && typeof answer === "object" && Array.isArray(answer.entries)) {
+          return { entries: parseShown(answer.entries), via: "worker" };
+        }
+      } catch {
+        // Fall through to the page's own view.
+      }
+      const fallback = await cacheShownStore.read();
+      return { entries: fallback.entries, via: "cache-fallback" };
+    },
+    forget: async (gone) => {
+      try {
+        await askWorker(worker, { type: SHOWN_FORGET_MESSAGE, gone }, timeoutMs);
+      } catch {
+        await cacheShownStore.forget(gone);
+      }
+    },
+  };
+}
+
+/** The worker controlling this page when there is one, else Cache Storage. */
+export function defaultShownStore(): ShownStore {
+  const worker =
+    typeof navigator !== "undefined" && "serviceWorker" in navigator
+      ? navigator.serviceWorker.controller
+      : null;
+  return worker ? workerShownStore(worker) : cacheShownStore;
 }
 
 export interface NotificationLister {
@@ -162,10 +285,12 @@ export interface LostTapResult extends Omit<LostTapDecision, "tapped"> {
   readonly url: string | null;
   /** Notifications Notification Center listed; null when it could not be read. */
   readonly listed: number | null;
+  /** Which store answered: worker, cache-fallback or cache. */
+  readonly store: string | null;
 }
 
-function noLostTap(reason: LostTapReason): LostTapResult {
-  return { url: null, reason, shown: 0, listed: null, gone: 0, recent: 0 };
+function noLostTap(reason: LostTapReason, store: string | null): LostTapResult {
+  return { url: null, reason, shown: 0, listed: null, gone: 0, recent: 0, store };
 }
 
 /**
@@ -176,18 +301,25 @@ function noLostTap(reason: LostTapReason): LostTapResult {
  */
 export async function findLostTap(
   source: NotificationLister | null,
-  options: { readonly now?: number; readonly awaySince?: number } = {},
+  options: {
+    readonly now?: number;
+    readonly awaySince?: number;
+    readonly store?: ShownStore;
+  } = {},
 ): Promise<LostTapResult> {
   const now = options.now ?? Date.now();
-  const cache = await openShownCache();
-  if (cache === null) return noLostTap("no-storage");
+  const store = options.store ?? defaultShownStore();
   let entries: ShownNotification[];
+  let via: string;
   try {
-    entries = await readShown(cache);
-  } catch {
-    return noLostTap("failed");
+    ({ entries, via } = await store.read());
+  } catch (error) {
+    return noLostTap(
+      error instanceof Error && error.message === "no-storage" ? "no-storage" : "failed",
+      null,
+    );
   }
-  if (entries.length === 0) return noLostTap("none-shown");
+  if (entries.length === 0) return noLostTap("none-shown", via);
   let listed: ReadonlyArray<ListedNotification> | null = null;
   if (source != null && typeof source.getNotifications === "function") {
     try {
@@ -205,30 +337,31 @@ export async function findLostTap(
         });
   const { tapped, ...decision } = decideLostTap(entries, presentKeys, now, options.awaySince ?? 0);
   const present = presentKeys === null ? null : new Set(presentKeys);
-  const kept = entries.filter(
-    (entry) =>
-      now - entry.at < SHOWN_NOTIFICATIONS_MAX_AGE_MS &&
-      entry !== tapped &&
-      (present === null || present.has(entry.key)),
+  const dropped = entries.filter(
+    (entry) => entry === tapped || (present !== null && !present.has(entry.key)),
   );
   try {
-    if (kept.length !== entries.length) await writeShown(cache, kept);
+    if (dropped.length > 0) await store.forget(dropped.map(({ key, at }) => ({ key, at })));
   } catch {
     // Worst case the same entry is considered again on the next return.
   }
-  return { ...decision, url: tapped?.url ?? null, listed: listed === null ? null : listed.length };
+  return {
+    ...decision,
+    url: tapped?.url ?? null,
+    listed: listed === null ? null : listed.length,
+    store: via,
+  };
 }
 
 /** Takes notifications the page closed off the list: they were not tapped. */
-export async function forgetShownNotifications(keys: ReadonlyArray<string>): Promise<void> {
+export async function forgetShownNotifications(
+  keys: ReadonlyArray<string>,
+  store: ShownStore = defaultShownStore(),
+): Promise<void> {
   if (keys.length === 0) return;
-  const cache = await openShownCache();
-  if (cache === null) return;
   try {
-    const gone = new Set(keys);
-    const entries = await readShown(cache);
-    const kept = entries.filter((entry) => !gone.has(entry.key));
-    if (kept.length !== entries.length) await writeShown(cache, kept);
+    const at = Date.now();
+    await store.forget(keys.map((key) => ({ key, at })));
   } catch {
     // The entry ages out; worst case it is never guessed (several gone at once).
   }
