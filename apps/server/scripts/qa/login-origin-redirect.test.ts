@@ -1,6 +1,7 @@
 /** Run with node apps/server/scripts/qa/login-origin-redirect.test.ts (local Chrome required). */
 import * as NodeAssert from "node:assert/strict";
 import * as NodeModule from "node:module";
+import * as NodeProcess from "node:process";
 import type { BrowserPage } from "../../src/personal/browser/driver.ts";
 import { performFillLogin } from "../../src/personal/browser/pageOperations.ts";
 
@@ -61,7 +62,9 @@ try {
     const usernameWritten =
       (await page.locator('input[autocomplete="username"]').inputValue()) !== "";
     const passwordWritten = (await page.locator('input[type="password"]').inputValue()) !== "";
-    console.log(JSON.stringify({ usernameFirst, failed, usernameWritten, passwordWritten }));
+    NodeProcess.stdout.write(
+      `${JSON.stringify({ usernameFirst, failed, usernameWritten, passwordWritten })}\n`,
+    );
     NodeAssert.equal(failed, true);
     NodeAssert.equal(usernameWritten, false, "username reached a replacement origin");
     NodeAssert.equal(passwordWritten, false, "password reached a replacement origin");
