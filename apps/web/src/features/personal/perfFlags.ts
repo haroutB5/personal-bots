@@ -22,6 +22,9 @@ export type PerfOptimization =
   // Root dialogs and hosts that draw nothing at first load after the app has
   // settled (DeferredMount, 1.59.4); off: at once.
   | "lean-boot"
+  // A second environment descriptor read within 2 s reuses the first answer
+  // (withDescriptorReuse, 1.59.4); off: every read goes to the network.
+  | "descriptor-reuse"
   | "snapshot-early"
   | "warm-highlighter"
   | "rum"
