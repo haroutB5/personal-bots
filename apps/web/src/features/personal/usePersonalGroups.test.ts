@@ -6,6 +6,7 @@ import {
   EMPTY_PERSONAL_GROUPS_FEED,
   foldPersonalGroupsFeed,
   mergePersonalGroups,
+  personalGroupsSettled,
 } from "./usePersonalGroups";
 
 const decodeGroup = Schema.decodeUnknownSync(PersonalGroup);
@@ -149,5 +150,19 @@ describe("mergePersonalGroups", () => {
     // feature simply has none, and must not throw on the way to the screen.
     const merged = mergePersonalGroups({ groups: [group()], rounds: [round()] }, null);
     expect(merged.votes).toEqual([]);
+  });
+});
+
+describe("personalGroupsSettled", () => {
+  it("is not settled before the list or the feed answers", () => {
+    expect(personalGroupsSettled({ listData: null, listError: null, feed: null })).toBe(false);
+  });
+
+  it("settles on the list, the feed, or a failed list", () => {
+    expect(personalGroupsSettled({ listData: { groups: [] }, listError: null, feed: null })).toBe(
+      true,
+    );
+    expect(personalGroupsSettled({ listData: null, listError: null, feed: {} })).toBe(true);
+    expect(personalGroupsSettled({ listData: null, listError: "offline", feed: null })).toBe(true);
   });
 });

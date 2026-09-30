@@ -233,20 +233,40 @@ export function mergePersonalGroups(
 }
 
 /**
+ * Whether the groups are known yet: the list or the feed has answered, or the
+ * list failed (then nothing will come, and waiting would hide a bot's chats
+ * for good). Until then an empty relay set means "not loaded", not "none".
+ */
+export function personalGroupsSettled(input: {
+  readonly listData: unknown;
+  readonly listError: string | null;
+  readonly feed: unknown;
+}): boolean {
+  return (
+    (input.listData ?? null) !== null || (input.feed ?? null) !== null || input.listError !== null
+  );
+}
+
+/**
  * Group relay thread ids for a screen that lists a bot's chats but has no
  * other use for groups. Same list-then-feed merge as the Chats screen, so a
  * relay created after the list loaded (a member's first reply) is hidden too.
+ *
+ * Null while the groups are still loading: a count or list built from an
+ * empty set would briefly include the relays (H7), so callers wait instead.
  */
 export function usePersonalGroupRelayThreadIds(
   environmentId: EnvironmentId | null,
-): ReadonlySet<string> {
+): ReadonlySet<string> | null {
   const list = usePersonalGroupsList(environmentId);
   const { feed } = usePersonalGroupsFeed(environmentId);
   return useMemo(
     () =>
-      list.data === null && feed === null
-        ? NO_THREAD_IDS
-        : groupRelayThreadIds(mergePersonalGroups(list.data ?? null, feed ?? null)),
-    [list.data, feed],
+      !personalGroupsSettled({ listData: list.data, listError: list.error, feed })
+        ? null
+        : list.data === null && feed === null
+          ? NO_THREAD_IDS
+          : groupRelayThreadIds(mergePersonalGroups(list.data ?? null, feed ?? null)),
+    [list.data, list.error, feed],
   );
 }

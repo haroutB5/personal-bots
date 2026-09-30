@@ -256,9 +256,12 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   });
 
   const relayThreadIds = usePersonalGroupRelayThreadIds(environmentId);
+  // Until the groups load the relays can't be told apart: show no rows rather
+  // than rows that include them for a moment.
+  const rowsReady = relayThreadIds !== null;
   const rows = useMemo(
     () =>
-      bot === null || list.data === null
+      bot === null || list.data === null || relayThreadIds === null
         ? { active: [], archived: [] }
         : botThreadRows(
             bot.botId,
@@ -539,7 +542,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
           ) : null}
           {noticeLine}
 
-          {rows.active.length === 0 ? (
+          {!rowsReady ? null : rows.active.length === 0 ? (
             <p className="mt-6 text-center text-[15px] text-[var(--personal-text-secondary)]">
               No chats with {bot.name} yet.
             </p>

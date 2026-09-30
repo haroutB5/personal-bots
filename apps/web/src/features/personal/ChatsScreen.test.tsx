@@ -27,7 +27,7 @@ const state = vi.hoisted(() => ({
   togglePin: vi.fn(),
   setMute: vi.fn(async (_bot: unknown, _mute: unknown) => true),
   navigate: vi.fn(),
-  groupsData: null as { groups: unknown[]; rounds: unknown[] } | null,
+  groupsData: { groups: [], rounds: [] } as { groups: unknown[]; rounds: unknown[] } | null,
   groupFeedCalls: [] as Array<string | null>,
   progressNotes: new Map<string, { note: string; turnId: string | null; toolStep?: boolean }>(),
   progressTargets: [] as Array<{ threadId: string; updatedAt: string }>,
@@ -116,6 +116,8 @@ vi.mock("./usePersonalGroups", () => ({
     state.groupFeedCalls.push(environmentId);
     return { feed: null, error: null };
   },
+  personalGroupsSettled: (input: { listData: unknown; listError: unknown; feed: unknown }) =>
+    (input.listData ?? null) !== null || (input.feed ?? null) !== null || input.listError !== null,
   mergePersonalGroups: (list: { groups: unknown[]; rounds: unknown[] } | null) => ({
     groups: (list?.groups ?? []).filter(
       (group) => (group as { archivedAt: unknown }).archivedAt === null,
@@ -252,7 +254,7 @@ afterEach(async () => {
   state.timeouts.clear();
   state.reload.mockClear();
   state.navigate.mockClear();
-  state.groupsData = null;
+  state.groupsData = { groups: [], rounds: [] };
   state.groupFeedCalls.length = 0;
   state.progressNotes = new Map();
   state.progressTargets = [];
@@ -782,6 +784,43 @@ describe("ChatsScreen groups", () => {
     await render();
 
     // Without the filter the bot row would preview the group's relay thread.
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Relay of Launch crew");
+  });
+
+  it("waits for the groups before live rows, so a relay never previews for a moment (H7)", async () => {
+    state.listData = {
+      bots: [bot("bot-ada", "Ada")],
+      threads: [
+        {
+          botId: "bot-ada",
+          threadId: "member-thread-ada",
+          createdAt: "2026-09-19T09:00:00.000Z",
+          archivedAt: null,
+        },
+      ],
+      personalProjectId: null,
+    };
+    state.shells = [
+      {
+        id: "member-thread-ada",
+        environmentId: "env-1",
+        title: "Relay of Launch crew",
+        updatedAt: "2026-09-19T09:05:00.000Z",
+        archivedAt: null,
+        latestTurn: null,
+        session: null,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      },
+    ];
+    state.groupsData = null;
+    await render();
+    expect(renderer!.root.findAllByProps({ "aria-label": "Your chats" })).toHaveLength(0);
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Relay of Launch crew");
+
+    state.groupsData = { groups: [group()], rounds: [] };
+    await render();
+    expect(renderer!.root.findAllByProps({ "aria-label": "Your chats" })).toHaveLength(1);
     expect(JSON.stringify(renderer!.toJSON())).not.toContain("Relay of Launch crew");
   });
 
