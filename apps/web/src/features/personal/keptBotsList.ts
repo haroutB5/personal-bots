@@ -81,8 +81,6 @@ export function useKeptBotsListScroll(
     return () => scroller.removeEventListener("scroll", onScroll);
   }, [list.kept, scrollerRef]);
 
-  // After the pages' own layout effects: a page that restores its own position
-  // (the Team screen) has already moved the scroller, and is left alone.
   useLayoutEffect(() => {
     shownRef.current = list.shown;
     const scroller = scrollerRef.current;
@@ -91,7 +89,17 @@ export function useKeptBotsListScroll(
       return;
     }
     if (scroller === null) return;
-    if (list.shown) scroller.scrollTop = savedScrollTop;
-    else if (scroller.scrollTop === savedScrollTop) scroller.scrollTop = 0;
+    if (list.shown) {
+      scroller.scrollTop = savedScrollTop;
+      return;
+    }
+    // Hidden: the page on top starts at the top. In the next frame's rAF,
+    // still before it paints: touching scrollTop here forced a layout inside
+    // the opening tap (37 ms at 4x CPU). A page that restores its own position
+    // (the Team screen) has moved the scroller by then and is left alone.
+    const frame = requestAnimationFrame(() => {
+      if (scroller.scrollTop === savedScrollTop) scroller.scrollTop = 0;
+    });
+    return () => cancelAnimationFrame(frame);
   }, [list.kept, list.shown, scrollerRef]);
 }
