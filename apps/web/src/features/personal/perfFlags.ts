@@ -19,6 +19,9 @@ export type PerfOptimization =
   // asks for it, keeping its session and link-state reads off boot (1.59.4);
   // off: mounted at boot.
   | "defer-connect-wizard"
+  // Root dialogs and hosts that draw nothing at first load after the app has
+  // settled (DeferredMount, 1.59.4); off: at once.
+  | "lean-boot"
   | "snapshot-early"
   | "warm-highlighter"
   | "rum"

@@ -18,13 +18,9 @@ import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from ".
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
-import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
-import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
-import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
-import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useDefaultThemeAdoption } from "../hooks/useDefaultTheme";
 import { useEnvironmentThemeSync } from "../hooks/useEnvironmentTheme";
@@ -72,6 +68,7 @@ import {
 } from "../components/KeybindingsUpdateToast.logic";
 
 import { isPersonalPath } from "../features/personal/personalMode";
+import { DeferredMount } from "../lib/DeferredMount";
 import { perfOptimizationOn } from "../features/personal/perfFlags";
 import {
   PROVIDER_WORKSPACE_DATA_OMITTED,
@@ -85,6 +82,31 @@ import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 // Personal fork: the Bots routes never show the upstream thread sidebar, so it
 // (and the pull-request and thread code behind it) loads on demand instead of
 // on every Bots launch.
+// Dialogs that open only on a later event (a sign-in, a relay-client install,
+// an SSH prompt, the theme editor): off the boot path (1.59.4), mounted by
+// DeferredMount once the app has settled. The state that opens each one lives
+// outside the component, so a later mount misses nothing.
+const ConnectOnboardingDialog = lazy(() =>
+  import("../components/cloud/ConnectOnboardingDialog").then((module) => ({
+    default: module.ConnectOnboardingDialog,
+  })),
+);
+const RelayClientInstallDialog = lazy(() =>
+  import("../components/cloud/RelayClientInstallDialog").then((module) => ({
+    default: module.RelayClientInstallDialog,
+  })),
+);
+const SshPasswordPromptDialog = lazy(() =>
+  import("../components/desktop/SshPasswordPromptDialog").then((module) => ({
+    default: module.SshPasswordPromptDialog,
+  })),
+);
+const ThemeEditorHost = lazy(() =>
+  import("../components/settings/ThemeEditorHost").then((module) => ({
+    default: module.ThemeEditorHost,
+  })),
+);
+
 const AppSidebarLayout = lazy(() =>
   import("../components/AppSidebarLayout").then((module) => ({ default: module.AppSidebarLayout })),
 );
@@ -295,9 +317,11 @@ function RootRouteView() {
         >
           {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
           {isElectron ? <RunningThreadKeepAlive /> : null}
-          <RelayClientInstallDialog />
-          <ConnectOnboardingDialog />
-          <SshPasswordPromptDialog />
+          <DeferredMount>
+            <RelayClientInstallDialog />
+            <ConnectOnboardingDialog />
+            <SshPasswordPromptDialog />
+          </DeferredMount>
           <ConfirmDialogHost />
           {leanShell ? null : (
             // Desktop and developer-view tools, quiet in the Bots shell anyway
@@ -323,7 +347,9 @@ function RootRouteView() {
           {appShell}
           {/* Above the router: a theme draft is judged by walking the app, so the
               editor has to survive navigation away from settings. */}
-          <ThemeEditorHost />
+          <DeferredMount>
+            <ThemeEditorHost />
+          </DeferredMount>
         </FirstRunGate>
       </AnchoredToastProvider>
     </ToastProvider>
