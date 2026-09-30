@@ -114,6 +114,9 @@ const REVEAL_SETTLE_MS = 3_000;
 export function useMinuteClock(): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    // A list kept hidden under a chat (keptBotsList.ts) had no clock running:
+    // catch up as it shows again. No re-render when under a minute has passed.
+    setNow((prev) => (Date.now() - prev >= MINUTE_MS ? Date.now() : prev));
     const timer = window.setInterval(() => setNow(Date.now()), MINUTE_MS);
     return () => window.clearInterval(timer);
   }, []);

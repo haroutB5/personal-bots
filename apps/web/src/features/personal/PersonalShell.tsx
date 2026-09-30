@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX } from "react";
-import { lazy, Suspense, useRef } from "react";
+import { Activity, lazy, Suspense, useMemo, useRef } from "react";
 
 import { Outlet, useLocation, useParams } from "@tanstack/react-router";
 
@@ -16,6 +16,7 @@ import {
   useChatSidePanel,
 } from "./desktopColumns";
 import { InAppNotifications } from "./InAppNotifications";
+import { useKeptBotsList, useKeptBotsListScroll } from "./keptBotsList";
 import { installPerfRum } from "./perfRum";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
 import {
@@ -72,6 +73,13 @@ export function PersonalShell(): JSX.Element {
   // the route params, so it follows every navigation and holds no state.
   const selectedChat = useParams({ strict: false, select: sidebarSelectionKey });
   const swipeBack = useChatSwipeBack({ wide: isWide });
+  // Phone: the Bots list stays mounted under the pages opened from it
+  // (keptBotsList.ts). One element for the life of the shell, so the shell's
+  // own re-renders (every navigation) never re-render the hidden list.
+  const mainRef = useRef<HTMLElement | null>(null);
+  const keptList = useKeptBotsList(pathname, isWide);
+  useKeptBotsListScroll(mainRef, keptList);
+  const keptListElement = useMemo(() => <ChatsScreen />, []);
 
   if (!isWide) {
     return (
@@ -83,8 +91,14 @@ export function PersonalShell(): JSX.Element {
           <div className="pt-[env(safe-area-inset-top)]">
             <PersonalOfflineBanner />
           </div>
-          <main className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
-            <Outlet />
+          <main
+            ref={mainRef}
+            className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
+          >
+            {keptList.kept ? (
+              <Activity mode={keptList.shown ? "visible" : "hidden"}>{keptListElement}</Activity>
+            ) : null}
+            {keptList.shown ? null : <Outlet />}
           </main>
           {activeTab !== null ? <PersonalTabBar active={activeTab} /> : null}
           <InAppNotifications />

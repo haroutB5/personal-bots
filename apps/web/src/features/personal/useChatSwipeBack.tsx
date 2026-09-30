@@ -11,6 +11,7 @@ import {
   EdgeSwipeTracker,
   nativeSwipeForced,
 } from "./edgeSwipeBack";
+import { keptBotsListScrollTop } from "./keptBotsList";
 import { PersonalTabBar } from "./PersonalTabBar";
 import { isStandaloneDisplay } from "./serviceWorker";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
@@ -43,6 +44,15 @@ function isTextEntry(element: Element): element is HTMLElement {
     element instanceof HTMLInputElement ||
     (element instanceof HTMLElement && element.isContentEditable)
   );
+}
+
+/**
+ * The list drawn under a swiping chat sits where the kept Bots list will be
+ * when the swipe lands (keptBotsList.ts), not at the top. 0 when the list is
+ * not kept: it mounts at the top then too.
+ */
+function matchKeptListScroll(node: HTMLDivElement | null): void {
+  if (node !== null) node.scrollTop = keptBotsListScrollTop();
 }
 
 function scrollableAncestor(element: Element | null): Element | null {
@@ -251,7 +261,10 @@ export function useChatSwipeBack({ wide }: { readonly wide: boolean }): {
             transition,
           }}
         >
-          <div className="min-h-0 flex-1 overflow-hidden pt-[env(safe-area-inset-top)]">
+          <div
+            ref={behindTeam ? undefined : matchKeptListScroll}
+            className="min-h-0 flex-1 overflow-hidden pt-[env(safe-area-inset-top)]"
+          >
             {behindTeam ? (
               <Suspense fallback={null}>
                 <TeamScreen />

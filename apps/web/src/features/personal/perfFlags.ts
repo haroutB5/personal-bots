@@ -35,6 +35,11 @@ export type PerfOptimization =
   // Client tracing exports every 5 s instead of every second (1.59.5), so a
   // batch does not post during a chat opening; off: every second.
   | "trace-batch"
+  // The phone keeps the Bots list mounted (hidden, React Activity) under the
+  // pages opened from it, so a tap hides it and Back shows it at its scroll
+  // position (keptBotsList.ts, 1.60.0); off: every tap unmounts it and Back
+  // mounts it again.
+  | "keep-list"
   | "snapshot-early"
   | "warm-highlighter"
   | "rum"
