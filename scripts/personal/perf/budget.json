@@ -10,7 +10,7 @@
   "journeys": {
     "J1-warm": {
       "wall": {
-        "max": 1834,
+        "max": 1785,
         "headroom": 0.35
       },
       "longTaskMs": {
@@ -65,8 +65,8 @@
       }
     }
   },
-  "ratchetedAt": "2026-09-23T23:13:31.780Z",
-  "ratchetedFrom": "version=1.30.1\r release=ee9c19c10b1e\r",
+  "ratchetedAt": "2026-09-30",
+  "ratchetedFrom": "version=1.59.4 release=4db8bb035114 (throwaway bench, p50 x (1 + headroom), the four J1 wall/longTaskMs ceilings only)",
   "recalibratedAt": "2026-09-30",
   "recalibration": "J1-warm.wall, J1-warm.longTaskMs, J1-deep.wall and J1-deep.longTaskMs were set from 1.30.1 on 2026-09-23. Re-measured 2026-09-30 with the same bench (5 runs + warm-up, 4x CPU, 390x844, throwaway server, fake CLI), 1.30.1 itself gave 1834.5/1729 and 2655.9/2202 (repeat: 1874.2/1851, 2641.2/2196): the old ceilings (1138/960, 1478/1130) were out of date for this laptop and Chrome, not beaten by a regression (1.53.1 to 1.59.2 were flat and faster than 1.30.1). These four were raised to 1.30.1's first re-measure, once, by CTO decision; every other ceiling is unchanged. Evidence: ~/.personal-bots/qa/frontend-1593/check-v1301.log, check-v1301b.log and HANDOFF-1591.md (1.59.3/1.59.4). Budgets go down only from here."
 }
