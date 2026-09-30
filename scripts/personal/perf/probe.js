@@ -29,6 +29,17 @@
       ["splashGone", () => !document.getElementById("boot-shell")],
       // Chat screen shell (header) is up, before the thread has loaded.
       ["chatShell", () => document.querySelector('a[aria-label="Back to Bots"]')],
+      // Back from a chat: the chat header is gone and a bot row is in the page
+      // (J2-back). The kept list's rows are in the DOM all along, hidden, so this
+      // is read at rAF like chatShell: the frame after the Back tap's commit.
+      [
+        "listBack",
+        () =>
+          !document.querySelector('a[aria-label="Back to Bots"]') &&
+          document.querySelector(
+            'ul[aria-label="Your chats"] li a[href^="/bots/"], ul[aria-label="Your bots"] li a[href^="/bots/"]',
+          ),
+      ],
       // Chat usable: the transcript and a typeable composer are both there.
       [
         "chat",
@@ -100,7 +111,7 @@
   // handled (J2.chatShell read 120-200 ms or 325-385 ms at random, 2026-09-30).
   // Presence is read in rAF with querySelector only (no layout), and the mark
   // is the start of the first frame the header was in the DOM for.
-  const PRESENT_AT_RAF = new Set(["chatShell"]);
+  const PRESENT_AT_RAF = new Set(["chatShell", "listBack"]);
   const presentAt = {};
   const channel = new MessageChannel();
   let frameAt = 0;

@@ -15,6 +15,8 @@
 //   J1-cold   first ever visit to /bots (empty caches) -> chats list usable
 //   J1-warm   installed-PWA relaunch of /bots (SW + snapshot warm) -> list usable
 //   J2        tap a bot row on the list -> transcript + typeable composer
+//   J2-back   (opt-in: --journeys J1,J2,J2-back) Back from that chat -> the
+//             list is on screen again; not budgeted
 //   J1-deep   warm relaunch straight into that chat (notification tap) -> chat usable
 //
 // Every run uses a fresh, isolated browser context (no profile on disk), signed
@@ -169,6 +171,7 @@ async function collect(page, mark, t0, settleMs = 1500) {
         shiftRegionsAfter: [...new Set(shiftsAfter.map(([, , w]) => w))].slice(0, 6),
         longTaskMsAfter: longTasksAfter.reduce((s, [, d]) => s + d, 0),
         chatShell: P.marks.chatShell !== undefined ? P.marks.chatShell - t0 : null,
+        listBack: P.marks.listBack !== undefined ? P.marks.listBack - t0 : null,
       };
     },
     { mark, t0 },
@@ -260,6 +263,16 @@ async function oneRun(browser, index, off) {
       const probe = await collect(page, "chat", t0);
       out.J2 = withCdp(probe, m0, await cdpMetrics(cdp));
       out.J2.href = href;
+      if (journeys.has("J2-back")) {
+        // Back from the chat, with the Back arrow, as the owner does.
+        const back = page.locator('a[aria-label="Back to Bots"]').first();
+        await page.evaluate(() => window.__perf.reset());
+        const t3 = await page.evaluate(() => window.__perf.t0);
+        const m3 = await cdpMetrics(cdp);
+        resetWs();
+        await back.tap();
+        out["J2-back"] = withCdp(await collect(page, "listBack", t3), m3, await cdpMetrics(cdp));
+      }
       // Relaunch straight into that chat, as a notification tap does.
       out["J1-deep"] = await measureLoad(page, cdp, `${origin}${href}`, "chat");
     }
@@ -280,6 +293,7 @@ const FIELDS = [
   "splashGone",
   "liveRows",
   "chatShell",
+  "listBack",
   "commits",
   "longTasks",
   "longTaskMs",

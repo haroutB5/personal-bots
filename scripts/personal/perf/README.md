@@ -32,6 +32,12 @@ CPU throttle to stand in for an iPhone. The network is whatever the origin is:
 | `J1-warm` | installed-PWA relaunch (worker + snapshot warm) -> first chat row painted  |
 | `J2`      | tap a chat row on the list -> transcript and typeable composer painted     |
 | `J1-deep` | warm relaunch straight into that chat (a notification tap) -> chat usable  |
+| `J2-back` | Back arrow in that chat -> the list on screen again (opt-in, not gated)    |
+
+`J2-back` runs only when asked for (`--journeys J1,J2,J2-back`), so the gate's
+journeys are unchanged. Its mark (`listBack`) is the first frame at whose rAF the
+chat header is gone and a bot row is in the page, read like `chatShell` because
+the phone keeps the list mounted, hidden, under the chat (`keep-list`, 1.60.0).
 
 J3 (send, echo, first token) comes from the RUM beacons (below), and also from
 `stream.mjs --rum`. J4 (a long streamed reply with code blocks and a table) is
