@@ -68,6 +68,9 @@ export const CLIENT_DIAG_EVENTS: ReadonlySet<string> = new Set([
   // (web features/personal/staleNotifications.ts).
   "notifications-cleared",
   "notifications-clear-skipped",
+  // Every look for a tap iOS never dispatched, and what it decided
+  // (web features/personal/lostNotificationTaps.ts).
+  "lost-tap-check",
 ]);
 const VISIBILITY = new Set(["visible", "hidden", "prerender", "unknown"]);
 const TOKEN = /^[A-Za-z0-9._:-]+$/;
@@ -116,6 +119,8 @@ const CLIENT = object({
 });
 const FIELDS: Record<string, Read> = {
   sw: token(32),
+  // The worker's own revision (public/sw.js SW_REVISION); `sw` is the package version.
+  rev: token(32),
   id: nullable(token(64)),
   url: path,
   page: nullable(token(80)),
@@ -147,6 +152,15 @@ const FIELDS: Record<string, Read> = {
   // arrived in that window: shows a cleanup racing a late notification tap.
   waitedMs: count,
   afterTap: bool,
+  // lost-tap-check: the worker's list, what Notification Center still lists
+  // (null: unreadable), how many left it, how many arrived while away, the
+  // outcome and how long the app had been away.
+  outcome: token(16),
+  shown: count,
+  listed: nullable(count),
+  gone: count,
+  recent: count,
+  awayMs: count,
   clients: (value) =>
     Array.isArray(value)
       ? value

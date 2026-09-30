@@ -391,6 +391,7 @@ describe("personal service worker", () => {
         {
           event: "push-shown",
           sw: "test",
+          rev: expect.stringMatching(/^[A-Za-z0-9._:-]{1,32}$/),
           url: "/bots/bot-1/thread-1",
           broadcast: true,
           clients: [{ path: "/bots", visibility: "visible", focused: true }],

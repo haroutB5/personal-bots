@@ -165,7 +165,8 @@ export function registerPersonalServiceWorker(
     },
     report: reportTap,
     lostTap: {
-      find: () => notificationRegistration().then((registration) => findLostTap(registration)),
+      find: ({ awaySince }) =>
+        notificationRegistration().then((registration) => findLostTap(registration, { awaySince })),
       after: (callback, ms) => void window.setTimeout(callback, ms),
     },
   });
@@ -208,7 +209,10 @@ export function registerPersonalServiceWorker(
   };
 
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible") return;
+    if (document.visibilityState !== "visible") {
+      taps.away();
+      return;
+    }
     void taps.check("cache-visible");
     checkForNewWorker();
   });

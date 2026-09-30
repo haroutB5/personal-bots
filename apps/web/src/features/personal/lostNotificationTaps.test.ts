@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   LOST_TAP_GRACE_MS,
+  RECENT_TAP_WINDOW_MS,
   SHOWN_NOTIFICATIONS_MAX_AGE_MS,
-  reconcileShown,
+  decideLostTap,
   type ShownNotification,
 } from "./lostNotificationTaps";
 import { createNotificationTapController, type PendingTap } from "./notificationTap";
@@ -16,51 +17,106 @@ function shown(key: string, url: string, at = Date.now()): ShownNotification {
   return { key, url, at };
 }
 
-describe("reconcileShown", () => {
+describe("decideLostTap", () => {
   it("names the one notification that left Notification Center", () => {
     const now = Date.now();
-    const result = reconcileShown(
+    const result = decideLostTap(
       [shown("task-a", ASSISTANT_TASK, now - 60_000), shown("chat-b", CTO_CHAT, now - 30_000)],
       ["chat-b"],
       now,
+      0,
     );
-    expect(result.tapped).toEqual(shown("task-a", ASSISTANT_TASK, now - 60_000));
-    expect(result.kept).toEqual([shown("chat-b", CTO_CHAT, now - 30_000)]);
+    expect(result).toEqual(
+      expect.objectContaining({
+        reason: "one-gone",
+        tapped: shown("task-a", ASSISTANT_TASK, now - 60_000),
+      }),
+    );
   });
 
   it("guesses nothing when several left at once (Clear All)", () => {
     const now = Date.now();
-    const result = reconcileShown(
+    const result = decideLostTap(
       [shown("task-a", ASSISTANT_TASK, now), shown("chat-b", CTO_CHAT, now)],
       [],
       now,
+      0,
     );
-    expect(result.tapped).toBeNull();
-    expect(result.kept).toEqual([]);
+    expect(result).toEqual(
+      expect.objectContaining({ tapped: null, reason: "several-gone", gone: 2 }),
+    );
   });
 
-  it("guesses nothing when every notification is still there", () => {
+  it("takes the recent notification as tapped when iOS still lists it", () => {
     const now = Date.now();
-    const result = reconcileShown([shown("task-a", ASSISTANT_TASK, now)], ["task-a"], now);
-    expect(result.tapped).toBeNull();
-    expect(result.kept).toHaveLength(1);
+    const result = decideLostTap(
+      [shown("chat-a", ASSISTANT_CHAT, now - 3_000)],
+      ["chat-a"],
+      now,
+      now - 60_000,
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        reason: "recent",
+        tapped: shown("chat-a", ASSISTANT_CHAT, now - 3_000),
+      }),
+    );
+  });
+
+  it("uses the recent rule when Notification Center cannot be read", () => {
+    const now = Date.now();
+    const result = decideLostTap([shown("chat-a", ASSISTANT_CHAT, now - 3_000)], null, now, 0);
+    expect(result.reason).toBe("recent");
+  });
+
+  it("guesses nothing from a notification older than the window (opened from the icon)", () => {
+    const now = Date.now();
+    const result = decideLostTap(
+      [shown("task-a", ASSISTANT_TASK, now - RECENT_TAP_WINDOW_MS - 1)],
+      ["task-a"],
+      now,
+      0,
+    );
+    expect(result).toEqual(expect.objectContaining({ tapped: null, reason: "none-recent" }));
+  });
+
+  it("guesses nothing from a notification shown before the app went away", () => {
+    const now = Date.now();
+    const result = decideLostTap(
+      [shown("task-a", ASSISTANT_TASK, now - 20_000)],
+      ["task-a"],
+      now,
+      now - 10_000,
+    );
+    expect(result).toEqual(expect.objectContaining({ tapped: null, reason: "none-recent" }));
+  });
+
+  it("guesses nothing when recent notifications open different places", () => {
+    const now = Date.now();
+    const result = decideLostTap(
+      [shown("task-a", ASSISTANT_TASK, now - 5_000), shown("chat-b", CTO_CHAT, now - 4_000)],
+      ["task-a", "chat-b"],
+      now,
+      0,
+    );
+    expect(result).toEqual(expect.objectContaining({ tapped: null, reason: "several-recent" }));
   });
 
   it("forgets old entries without treating them as taps", () => {
     const now = Date.now();
-    const result = reconcileShown(
+    const result = decideLostTap(
       [shown("task-a", ASSISTANT_TASK, now - SHOWN_NOTIFICATIONS_MAX_AGE_MS - 1)],
       [],
       now,
+      0,
     );
-    expect(result.tapped).toBeNull();
-    expect(result.kept).toEqual([]);
+    expect(result).toEqual(expect.objectContaining({ tapped: null, reason: "none-shown" }));
   });
 
   it("ignores entries that are not safe in-app paths", () => {
     const now = Date.now();
-    const result = reconcileShown([shown("x", "https://evil.example/", now)], [], now);
-    expect(result.tapped).toBeNull();
+    const result = decideLostTap([shown("x", "https://evil.example/", now)], [], now, 0);
+    expect(result).toEqual(expect.objectContaining({ tapped: null, reason: "not-openable" }));
   });
 });
 
@@ -75,10 +131,10 @@ function resumedPage(options: { path: string; lostTap: string | null }) {
     state.path = path;
   });
   const reports: Record<string, unknown>[] = [];
-  const findLostTap = vi.fn(async () => {
+  const findLostTap = vi.fn(async (_context: { readonly awaySince: number }) => {
     const url = state.lostTap;
     state.lostTap = null;
-    return url;
+    return { url, reason: url === null ? "none-recent" : "recent", shown: 1 };
   });
   const controller = createNotificationTapController({
     navigate,
@@ -120,6 +176,13 @@ describe("a tap iOS never hands to the worker", () => {
 
     expect(app.navigate).toHaveBeenCalledExactlyOnceWith(ASSISTANT_TASK);
     expect(app.reports).toEqual([
+      expect.objectContaining({
+        event: "lost-tap-check",
+        via: "cache-visible",
+        reason: "recent",
+        outcome: "opened",
+        url: ASSISTANT_TASK,
+      }),
       expect.objectContaining({ event: "tap-received", url: ASSISTANT_TASK, via: "inferred" }),
     ]);
     app.controller.dispose();
@@ -144,6 +207,9 @@ describe("a tap iOS never hands to the worker", () => {
     expect(app.navigate).toHaveBeenCalledExactlyOnceWith(ASSISTANT_CHAT);
     // The list is still reconciled, so the tapped entry is not guessed later.
     expect(app.findLostTap).toHaveBeenCalledOnce();
+    expect(app.reports).toContainEqual(
+      expect.objectContaining({ event: "lost-tap-check", outcome: "tap-arrived" }),
+    );
     app.controller.dispose();
   });
 
@@ -152,6 +218,37 @@ describe("a tap iOS never hands to the worker", () => {
     await app.controller.check("cache-visible");
     await vi.advanceTimersByTimeAsync(LOST_TAP_GRACE_MS);
     expect(app.navigate).not.toHaveBeenCalled();
+    // Nothing found is still one line in the server log, with the reason.
+    expect(app.reports).toEqual([
+      expect.objectContaining({ event: "lost-tap-check", reason: "none-recent", outcome: "none" }),
+    ]);
+    app.controller.dispose();
+  });
+
+  it("does not pull back a user who opened another chat during the wait", async () => {
+    const app = resumedPage({ path: "/bots", lostTap: ASSISTANT_CHAT });
+    await app.controller.check("cache-visible");
+    app.state.path = CTO_CHAT;
+    await vi.advanceTimersByTimeAsync(LOST_TAP_GRACE_MS);
+    expect(app.navigate).not.toHaveBeenCalled();
+    expect(app.reports).toEqual([
+      expect.objectContaining({ event: "lost-tap-check", outcome: "user-moved" }),
+    ]);
+    app.controller.dispose();
+  });
+
+  it("tells the look when the app went away, 0 before the first time", async () => {
+    const app = resumedPage({ path: "/bots", lostTap: null });
+    await app.controller.check("cache-load");
+    await vi.advanceTimersByTimeAsync(LOST_TAP_GRACE_MS);
+    expect(app.findLostTap).toHaveBeenLastCalledWith({ awaySince: 0 });
+    app.controller.away();
+    const awayAt = Date.now();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await app.controller.check("cache-visible");
+    await vi.advanceTimersByTimeAsync(LOST_TAP_GRACE_MS);
+    expect(app.findLostTap).toHaveBeenLastCalledWith({ awaySince: awayAt });
+    expect(app.reports.at(-1)).toEqual(expect.objectContaining({ awayMs: 60_000 }));
     app.controller.dispose();
   });
 

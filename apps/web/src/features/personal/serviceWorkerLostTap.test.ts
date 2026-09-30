@@ -4,7 +4,12 @@ import * as NodeVM from "node:vm";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { findLostTap, forgetShownNotifications } from "./lostNotificationTaps";
+import {
+  findLostTap,
+  forgetShownNotifications,
+  type NotificationLister,
+  RECENT_TAP_WINDOW_MS,
+} from "./lostNotificationTaps";
 
 const source = NodeFS.readFileSync(new URL("../../../public/sw.js", import.meta.url), "utf8");
 
@@ -88,6 +93,14 @@ function phone() {
 
 const ASSISTANT_TASK = "/tasks/50cd83dc-e90e-440c-9876-a9d9a8865dd6";
 const CTO_CHAT = "/bots/969c2998/a6a6a26e";
+const ASSISTANT_CHAT = "/bots/personal-seed-assistant/0c4b1d06-0852-4d28-8904-6ca40ac017e8";
+
+async function lostUrl(
+  app: { readonly registration: NotificationLister },
+  options?: { readonly awaySince?: number },
+) {
+  return (await findLostTap(app.registration, options)).url;
+}
 
 describe("worker and page find a tap iOS dropped", () => {
   beforeEach(() => {
@@ -107,9 +120,10 @@ describe("worker and page find a tap iOS dropped", () => {
       tag: "task-50cd83dc-e90e-440c-9876-a9d9a8865dd6",
     });
     app.take(ASSISTANT_TASK); // tapped: iOS removed it and dispatched nothing
-    expect(await findLostTap(app.registration)).toBe(ASSISTANT_TASK);
-    // Once only.
-    expect(await findLostTap(app.registration)).toBeNull();
+    expect(await lostUrl(app)).toBe(ASSISTANT_TASK);
+    // Once only: the app went away again before the next return.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await lostUrl(app, { awaySince: Date.now() })).toBeNull();
   });
 
   it("does not guess a tap the worker already handled", async () => {
@@ -118,14 +132,14 @@ describe("worker and page find a tap iOS dropped", () => {
     const tapped = app.run("notificationclick", app.take(ASSISTANT_TASK));
     await vi.advanceTimersByTimeAsync(10_000); // no page answers: the worker gives up waiting
     await tapped;
-    expect(await findLostTap(app.registration)).toBeNull();
+    expect(await lostUrl(app)).toBeNull();
   });
 
   it("does not guess a notification the user swiped away", async () => {
     const app = phone();
     await app.push({ title: "Assistant finished", url: ASSISTANT_TASK, tag: "task-1" });
     await app.run("notificationclose", app.take(ASSISTANT_TASK));
-    expect(await findLostTap(app.registration)).toBeNull();
+    expect(await lostUrl(app)).toBeNull();
   });
 
   it("does not guess a notification the page closed itself", async () => {
@@ -133,7 +147,7 @@ describe("worker and page find a tap iOS dropped", () => {
     await app.push({ title: "CTO", url: CTO_CHAT });
     app.take(CTO_CHAT);
     await forgetShownNotifications(["chat-a6a6a26e"]);
-    expect(await findLostTap(app.registration)).toBeNull();
+    expect(await lostUrl(app)).toBeNull();
   });
 
   it("keeps one entry per chat when a newer notification replaces the older", async () => {
@@ -142,12 +156,57 @@ describe("worker and page find a tap iOS dropped", () => {
     await app.push({ title: "CTO again", url: CTO_CHAT });
     expect(app.center).toHaveLength(1);
     app.take(CTO_CHAT);
-    expect(await findLostTap(app.registration)).toBe(CTO_CHAT);
+    expect(await lostUrl(app)).toBe(CTO_CHAT);
   });
 
-  it("opens nothing when the app is opened from its icon", async () => {
+  // 30 Sep 21:28 and 21:33 (live 1.60.8): two Assistant replies for one chat
+  // while the app sat suspended, the second tapped at once. No click reached
+  // the worker, the app resumed on /bots, and nothing was opened: iOS still
+  // listed the tapped notification (as on 24-26 Sep, when a resume cleanup
+  // found and closed the just-tapped one, closed:1), so none was "missing".
+  it("opens the chat whose notification was tapped when iOS still lists it", async () => {
+    const app = phone();
+    await app.push({ title: "Assistant", url: ASSISTANT_CHAT });
+    await vi.advanceTimersByTimeAsync(5 * 60_000 + 22_000);
+    await app.push({ title: "Assistant", url: ASSISTANT_CHAT });
+    expect(app.center).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(3_000);
+    const look = await findLostTap(app.registration, { awaySince: Date.now() - 6 * 60_000 });
+    expect(look).toEqual(
+      expect.objectContaining({
+        url: ASSISTANT_CHAT,
+        reason: "recent",
+        shown: 1,
+        listed: 1,
+        gone: 0,
+      }),
+    );
+    // Once only, even though iOS keeps listing it.
+    expect(await lostUrl(app)).toBeNull();
+  });
+
+  it("opens the tapped chat on a cold launch too", async () => {
+    const app = phone();
+    await app.push({ title: "Assistant", url: ASSISTANT_CHAT });
+    await app.push({ title: "Assistant", url: ASSISTANT_CHAT });
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(await lostUrl(app, { awaySince: 0 })).toBe(ASSISTANT_CHAT);
+  });
+
+  it("does not guess a notification that arrived while the app was open", async () => {
+    const app = phone();
+    await app.push({ title: "Assistant", url: ASSISTANT_CHAT });
+    await vi.advanceTimersByTimeAsync(20_000);
+    const awaySince = Date.now();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await lostUrl(app, { awaySince })).toBeNull();
+  });
+
+  it("opens nothing when the app is opened from its icon well after a push", async () => {
     const app = phone();
     await app.push({ title: "Assistant finished", url: ASSISTANT_TASK, tag: "task-1" });
-    expect(await findLostTap(app.registration)).toBeNull();
+    await vi.advanceTimersByTimeAsync(RECENT_TAP_WINDOW_MS + 1_000);
+    const look = await findLostTap(app.registration);
+    expect(look).toEqual(expect.objectContaining({ url: null, reason: "none-recent", listed: 1 }));
   });
 });

@@ -9,6 +9,10 @@
  */
 
 const VERSION = new URL(self.location.href).searchParams.get("v") || "dev";
+// VERSION is the package version and has not changed across releases, so the
+// diag lines carry this too: bump it with every change to this file, so the
+// server log shows which worker the phone is running.
+const SW_REVISION = "2026-09-30-recent-tap";
 const CACHE_PREFIX = "bots-shell-";
 const CACHE_NAME = `${CACHE_PREFIX}${VERSION}`;
 const SHELL_KEY = "/__bots-shell__";
@@ -411,6 +415,7 @@ self.addEventListener("push", (event) => {
       await sendDiag({
         event: "push-shown",
         sw: VERSION,
+        rev: SW_REVISION,
         url: pathOf(new URL(url, self.location.origin).href),
         broadcast,
         clients: describeWindows(windows),
@@ -590,6 +595,7 @@ self.addEventListener("notificationclick", (event) => {
   const startDiag = sendDiag({
     event: "notificationclick-start",
     sw: VERSION,
+    rev: SW_REVISION,
     id,
     url,
     at: started,
@@ -597,7 +603,14 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(startDiag);
   event.waitUntil(
     (async () => {
-      const diag = { event: "notificationclick", sw: VERSION, id, url, cache: false };
+      const diag = {
+        event: "notificationclick",
+        sw: VERSION,
+        rev: SW_REVISION,
+        id,
+        url,
+        cache: false,
+      };
       // This tap reached the worker, so the page must not guess it later.
       const forgotten = forgetShown(event.notification);
       // Listen before anything is sent, so a fast page cannot answer too early.

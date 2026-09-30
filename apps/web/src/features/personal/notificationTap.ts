@@ -50,14 +50,21 @@ export interface NotificationTapDeps {
   /** One line per delivered tap for the server log; best-effort. */
   readonly report?: (record: Record<string, unknown>) => void;
   /**
-   * Finds a tap that reached no route: `find` returns the deep link of the
-   * one notification that left Notification Center, run `after` a grace
-   * period on each return to the app.
+   * Finds a tap that reached no route (lostNotificationTaps.ts), run `after`
+   * a grace period on each return to the app. `find` gets when the app last
+   * went to the background (0 if it has not since launch) and returns the
+   * deep link to open, or null, plus why, for the lost-tap-check line.
    */
   readonly lostTap?: {
-    readonly find: () => Promise<string | null>;
+    readonly find: (context: { readonly awaySince: number }) => Promise<LostTapLook>;
     readonly after: (callback: () => void, ms: number) => void;
   };
+}
+
+/** What a look found; any further fields (counts) go into its log line as they are. */
+export interface LostTapLook {
+  readonly url: string | null;
+  readonly reason: string;
 }
 
 /** How long the page watches for a tap after a push was shown. */
@@ -91,6 +98,8 @@ export interface NotificationTapController {
   readonly check: (via: TapRoute) => Promise<void>;
   /** Polls the saved copy while visible until `ms` from now. */
   readonly watch: (ms: number) => void;
+  /** The app went to the background: notifications after this are news to it. */
+  readonly away: () => void;
   readonly dispose: () => void;
 }
 
@@ -104,6 +113,7 @@ export function createNotificationTapController(
   // Bumped by every delivered tap, so a lost-tap look knows one arrived.
   let deliveries = 0;
   let lookingForLostTap = false;
+  let awaySince = 0;
 
   const deliver = (url: string, id: string | null, via: TapRoute): void => {
     deliveries += 1;
@@ -126,21 +136,44 @@ export function createNotificationTapController(
     });
   };
 
-  const lookForLostTap = () => {
+  const lookForLostTap = (via: TapRoute) => {
     const lostTap = deps.lostTap;
     if (lostTap === undefined || lookingForLostTap) return;
     lookingForLostTap = true;
     const before = deliveries;
+    const returnedAt = deps.now();
+    const pathAtReturn = deps.currentPath();
+    const context = { awaySince };
     lostTap.after(() => {
       void lostTap
-        .find()
-        .catch(() => null)
-        .then((url) => {
+        .find(context)
+        .catch((): LostTapLook => ({ url: null, reason: "failed" }))
+        .then((look) => {
           lookingForLostTap = false;
+          const url = look.url !== null && isNavigablePath(look.url) ? look.url : null;
+          const path = deps.currentPath();
           // A real tap landed meanwhile: it wins. The look still ran, so the
-          // list forgets the notification that tap removed.
-          if (url === null || deliveries !== before || !isNavigablePath(url)) return;
-          deliver(url, null, "inferred");
+          // list forgets the notification that tap removed. A user who has
+          // moved on since the return is not pulled back.
+          const outcome =
+            deliveries !== before
+              ? "tap-arrived"
+              : url === null
+                ? "none"
+                : path !== pathAtReturn && path !== url
+                  ? "user-moved"
+                  : "opened";
+          // Every look, so a tap that still goes nowhere shows why.
+          deps.report?.({
+            ...look,
+            event: "lost-tap-check",
+            via,
+            url: url ?? undefined,
+            outcome,
+            waitedMs: Math.max(0, deps.now() - returnedAt),
+            awayMs: awaySince === 0 ? undefined : Math.max(0, returnedAt - awaySince),
+          });
+          if (outcome === "opened") deliver(url!, null, "inferred");
         });
     }, LOST_TAP_GRACE_MS);
   };
@@ -193,11 +226,14 @@ export function createNotificationTapController(
       }
       // A return to the app or a launch, not a mere focus change.
       if (via === "cache-visible" || via === "cache-pageshow" || via === "cache-load") {
-        lookForLostTap();
+        lookForLostTap(via);
       }
       await check(via);
     },
     watch: (ms) => startWatch(ms, "manual"),
+    away: () => {
+      awaySince = deps.now();
+    },
     dispose: stop,
   };
 }

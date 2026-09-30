@@ -253,6 +253,54 @@ describe("client diagnostics route", () => {
     });
   });
 
+  it("accepts every lost-tap look with its decision, and the worker's revision", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "lost-tap-check",
+          via: "cache-visible",
+          reason: "recent",
+          outcome: "opened",
+          url: "/bots/personal-seed-assistant/0c4b1d06",
+          shown: 1,
+          listed: 1,
+          gone: 0,
+          recent: 1,
+          waitedMs: 2502,
+          awayMs: 330_000,
+          page: "index-abc.js",
+          visibility: "visible",
+          notes: "dropped",
+        }),
+      ),
+    ).toEqual({
+      event: "lost-tap-check",
+      via: "cache-visible",
+      reason: "recent",
+      outcome: "opened",
+      url: "/bots/personal-seed-assistant/0c4b1d06",
+      shown: 1,
+      listed: 1,
+      gone: 0,
+      recent: 1,
+      waitedMs: 2502,
+      awayMs: 330_000,
+      page: "index-abc.js",
+      visibility: "visible",
+    });
+    // Notification Center unreadable, nothing chosen.
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({ event: "lost-tap-check", reason: "none-shown", listed: null, shown: 0 }),
+      ),
+    ).toEqual({ event: "lost-tap-check", reason: "none-shown", listed: null, shown: 0 });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({ event: "push-shown", sw: "0.0.42", rev: "2026-09-30-recent-tap" }),
+      ),
+    ).toEqual({ event: "push-shown", sw: "0.0.42", rev: "2026-09-30-recent-tap" });
+  });
+
   it("keeps one record on one bounded line", () => {
     const line = clientDiagLine(tap(), "anonymous");
     expect(line).not.toContain(String.fromCharCode(10));
