@@ -33,6 +33,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { it as effectIt } from "@effect/vitest";
@@ -99,6 +100,8 @@ const assistantCitation = {
 
 const deriveServerPathsSync = (baseDir: string, devUrl: URL | undefined) =>
   Effect.runSync(deriveServerPaths(baseDir, devUrl).pipe(Effect.provide(NodeServices.layer)));
+
+const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
@@ -180,6 +183,17 @@ describe("ProviderCommandReactor", () => {
     readonly unreadableHistory?: boolean;
     /** Links thread-1 to a personal bot, as bot chats, tasks and routines are. */
     readonly personalBotThread?: boolean;
+    /** The linked bot's own model selection (personalBotThread). */
+    readonly botModelSelection?: ModelSelection;
+    /** Replaces sendTurn's answer for the given call (1-based). */
+    readonly sendTurnEffect?: (
+      call: number,
+    ) =>
+      | Effect.Effect<
+          { readonly threadId: ThreadId; readonly turnId: TurnId },
+          ProviderServiceError
+        >
+      | undefined;
     /** Runs the real personal memory service, so turns carry "Known facts". */
     readonly personalMemory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
@@ -274,12 +288,17 @@ describe("ProviderCommandReactor", () => {
         ),
       );
     });
-    const sendTurn = vi.fn((_: unknown) =>
-      Effect.succeed({
-        threadId: ThreadId.make("thread-1"),
-        turnId: asTurnId("turn-1"),
-      }),
-    );
+    let sendTurnCalls = 0;
+    const sendTurn = vi.fn((_: unknown) => {
+      sendTurnCalls += 1;
+      return (
+        input?.sendTurnEffect?.(sendTurnCalls) ??
+        Effect.succeed({
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+        })
+      );
+    });
     const compactThread = vi.fn((_: ThreadId) => input?.compactThreadEffect?.() ?? Effect.void);
     const interruptTurn = vi.fn((_: unknown) => input?.interruptTurnEffect?.() ?? Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
@@ -567,7 +586,10 @@ describe("ProviderCommandReactor", () => {
           yield* sql`
             INSERT INTO personal_bots (
               bot_id, name, avatar_shape, avatar_color, model_selection_json, created_at, updated_at
-            ) VALUES ('bot-1', 'Helper', 'circle', 'blue', '{}', ${now}, ${now})
+            ) VALUES (
+              'bot-1', 'Helper', 'blob', '#1A73E8',
+              ${encodeJsonString(input?.botModelSelection ?? {})}, ${now}, ${now}
+            )
           `;
           yield* sql`
             INSERT INTO personal_bot_threads (thread_id, bot_id, created_at)
@@ -4789,6 +4811,248 @@ describe("ProviderCommandReactor", () => {
       });
     }),
   );
+  describe("bot provider switch and session renewal", () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const CLAUDE: ModelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5-5",
+    };
+    const CLAUDE_SONNET: ModelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet-5-5",
+    };
+    const CODEX: ModelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-6.1-sol",
+    };
+    const image = {
+      type: "image" as const,
+      id: "switch-image",
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 5,
+    };
+    const missingConversation = () =>
+      new ProviderAdapterRequestError({
+        provider: "claudeAgent",
+        method: "turn/start",
+        detail: "No conversation found with session ID: 853cc750-05e8-4fe6-92e7-48ffd8259294",
+      });
+    type Harness = Awaited<ReturnType<typeof createHarness>>;
+    type SentTurn = {
+      readonly input?: string;
+      readonly modelSelection?: ModelSelection;
+      readonly attachments?: ReadonlyArray<{ readonly id: string; readonly type: string }>;
+      readonly turnContext?: string;
+    };
+    type StartedSession = {
+      readonly providerInstanceId?: string;
+      readonly modelSelection?: ModelSelection;
+      readonly resumeCursor?: unknown;
+      readonly freshSession?: boolean;
+    };
+    const sendMessage = (
+      harness: Harness,
+      id: string,
+      text: string,
+      options: {
+        readonly modelSelection: ModelSelection;
+        readonly attachments?: ReadonlyArray<typeof image>;
+      },
+    ) =>
+      harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-${id}`),
+          threadId,
+          message: {
+            messageId: asMessageId(id),
+            role: "user",
+            text,
+            attachments: options.attachments ?? [],
+          },
+          modelSelection: options.modelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+    const setBotModel = (harness: Harness, selection: ModelSelection) =>
+      harness.runSql(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            UPDATE personal_bots SET model_selection_json = ${encodeJsonString(selection)}
+            WHERE bot_id = 'bot-1'
+          `;
+        }),
+      );
+    const sentTurn = (harness: Harness, index: number) =>
+      harness.sendTurn.mock.calls[index]?.[0] as SentTurn | undefined;
+    const startedSession = (harness: Harness, index: number) =>
+      harness.startSession.mock.calls[index]?.[1] as StartedSession | undefined;
+    const readThread = async (harness: Harness) =>
+      (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+
+    it("a chat whose bot moved to another provider continues there, with the chat and the image", async () => {
+      const harness = await createHarness({
+        threadModelSelection: CLAUDE,
+        personalBotThread: true,
+        botModelSelection: CLAUDE,
+      });
+      await sendMessage(harness, "msg-before-switch", "Plan the trip to Lisbon.", {
+        modelSelection: CLAUDE,
+      });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+
+      // The owner moves the bot to Codex. The web client still sends the
+      // chat's old selection, as it does for a chat on another instance.
+      await setBotModel(harness, CODEX);
+      await sendMessage(harness, "msg-after-switch", "What do you think of this? For 180", {
+        modelSelection: CLAUDE,
+        attachments: [image],
+      });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+      await harness.drain();
+
+      expect(harness.stopSession).toHaveBeenCalledWith({ threadId });
+      const started = startedSession(harness, 1);
+      expect(started?.providerInstanceId).toBe("codex");
+      expect(started?.modelSelection).toEqual(CODEX);
+      expect(started?.freshSession).toBe(true);
+      expect(started?.resumeCursor).toBeUndefined();
+
+      const sent = sentTurn(harness, 1);
+      expect(sent?.modelSelection).toEqual(CODEX);
+      expect(sent?.attachments).toEqual([expect.objectContaining({ id: "switch-image" })]);
+      expect(sent?.turnContext).toContain("Earlier in this chat");
+      expect(sent?.turnContext).toContain("Owner: Plan the trip to Lisbon.");
+      expect(sent?.turnContext).not.toContain("For 180");
+
+      const thread = await readThread(harness);
+      expect(thread?.modelSelection).toEqual(CODEX);
+      expect(thread?.session?.providerInstanceId).toBe("codex");
+      expect(
+        thread?.activities.filter((activity) => activity.kind === "provider.turn.start.failed"),
+      ).toEqual([]);
+    });
+
+    it("a model change on the same provider keeps resuming the conversation", async () => {
+      const harness = await createHarness({
+        threadModelSelection: CLAUDE,
+        personalBotThread: true,
+        botModelSelection: CLAUDE,
+      });
+      await sendMessage(harness, "msg-opus", "Hello.", { modelSelection: CLAUDE });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+
+      await setBotModel(harness, CLAUDE_SONNET);
+      await sendMessage(harness, "msg-sonnet", "Still there?", { modelSelection: CLAUDE_SONNET });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+      await harness.drain();
+
+      const restarted = startedSession(harness, 1);
+      expect(restarted?.freshSession).toBeUndefined();
+      expect(restarted?.resumeCursor).toEqual({ opaque: "resume-1" });
+      expect(restarted?.modelSelection).toEqual(CLAUDE_SONNET);
+      expect(sentTurn(harness, 1)?.turnContext ?? "").not.toContain("Earlier in this chat");
+    });
+
+    it("a resume the provider has no conversation for retries once on a fresh session", async () => {
+      const harness = await createHarness({
+        threadModelSelection: CLAUDE,
+        personalBotThread: true,
+        botModelSelection: CLAUDE,
+        sendTurnEffect: (call) => (call === 2 ? Effect.fail(missingConversation()) : undefined),
+      });
+      await sendMessage(harness, "msg-first", "Remember the number 42.", {
+        modelSelection: CLAUDE,
+      });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+
+      await sendMessage(harness, "msg-image", "And this picture?", {
+        modelSelection: CLAUDE,
+        attachments: [image],
+      });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 3);
+      await harness.drain();
+
+      const fresh = harness.startSession.mock.calls
+        .map((call) => call[1] as StartedSession)
+        .filter((input) => input.freshSession === true);
+      expect(fresh).toHaveLength(1);
+      expect(fresh[0]?.resumeCursor).toBeUndefined();
+      expect(fresh[0]?.modelSelection).toEqual(CLAUDE);
+
+      const retried = sentTurn(harness, 2);
+      expect(retried?.attachments).toEqual([expect.objectContaining({ id: "switch-image" })]);
+      expect(retried?.input).toContain("And this picture?");
+      expect(retried?.turnContext).toContain("Owner: Remember the number 42.");
+
+      const thread = await readThread(harness);
+      expect(thread?.session?.status).not.toBe("error");
+      expect(
+        thread?.activities.filter((activity) => activity.kind === "provider.turn.start.failed"),
+      ).toEqual([]);
+    });
+
+    it("a renewal that fails too leaves the chat in error with the real reason", async () => {
+      const harness = await createHarness({
+        threadModelSelection: CLAUDE,
+        personalBotThread: true,
+        botModelSelection: CLAUDE,
+        sendTurnEffect: (call) => (call >= 2 ? Effect.fail(missingConversation()) : undefined),
+      });
+      await sendMessage(harness, "msg-ok", "Hi.", { modelSelection: CLAUDE });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+
+      await sendMessage(harness, "msg-lost", "Hello again.", { modelSelection: CLAUDE });
+      await waitFor(async () =>
+        ((await readThread(harness))?.activities ?? []).some(
+          (activity) => activity.kind === "provider.turn.start.failed",
+        ),
+      );
+      await harness.drain();
+
+      // One renewal only, never a loop.
+      expect(harness.sendTurn).toHaveBeenCalledTimes(3);
+      const thread = await readThread(harness);
+      expect(thread?.session?.status).toBe("error");
+      expect(thread?.session?.lastError).toContain("No conversation found");
+      expect(thread?.session?.providerRetry).toBeUndefined();
+    });
+
+    it("any other send failure is reported as it is, without a renewal", async () => {
+      const harness = await createHarness({
+        threadModelSelection: CLAUDE,
+        personalBotThread: true,
+        botModelSelection: CLAUDE,
+        sendTurnEffect: () =>
+          Effect.fail(
+            new ProviderAdapterRequestError({
+              provider: "claudeAgent",
+              method: "turn/start",
+              detail: "Claude usage limit reached.",
+            }),
+          ),
+      });
+      await sendMessage(harness, "msg-limit", "Hi.", { modelSelection: CLAUDE });
+      await waitFor(async () => (await readThread(harness))?.session?.status === "error");
+      await harness.drain();
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      expect(
+        harness.startSession.mock.calls.some(
+          (call) => (call[1] as StartedSession).freshSession === true,
+        ),
+      ).toBe(false);
+    });
+  });
+
   describe("session prewarm", () => {
     const claudeSelection: ModelSelection = {
       instanceId: ProviderInstanceId.make("claudeAgent"),

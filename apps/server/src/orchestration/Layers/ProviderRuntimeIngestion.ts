@@ -1944,7 +1944,9 @@ const make = Effect.gen(function* () {
             case "turn.started":
               return "running";
             case "session.exited":
-              return "stopped";
+              // A failed turn's process usually exits right after it: keep
+              // the error, or the chat reads "Idle" over an unanswered message.
+              return thread.session?.status === "error" ? "error" : "stopped";
             case "turn.aborted":
               return "interrupted";
             case "turn.completed":

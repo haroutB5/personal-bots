@@ -3213,6 +3213,27 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.equal(startPayload.threadId, initial.threadId);
       }
 
+      // A fresh session never resumes the persisted conversation: the
+      // provider no longer has it, or the bot moved to another provider.
+      secondClaude.startSession.mockClear();
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        yield* provider.startSession(initial.threadId, {
+          provider: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: claudeAgentInstanceId,
+          threadId: initial.threadId,
+          cwd: fixtureCwd("project-claude-start"),
+          runtimeMode: "full-access",
+          resumeCursor: initial.resumeCursor,
+          freshSession: true,
+        });
+      }).pipe(Effect.provide(secondProviderLayer));
+      const freshStartInput = secondClaude.startSession.mock.calls[0]?.[0] as
+        | { resumeCursor?: unknown; freshSession?: unknown }
+        | undefined;
+      assert.equal(freshStartInput?.resumeCursor, undefined);
+      assert.equal(freshStartInput?.freshSession, undefined);
+
       NodeFS.rmSync(tempDir, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
   );

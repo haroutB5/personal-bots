@@ -31,7 +31,8 @@ export type PersonalSessionPrewarmOutcome =
   | "debounced"
   | "not-a-bot-chat"
   | "group-member"
-  | "too-many-unused";
+  | "too-many-unused"
+  | "provider-switch";
 
 export { sendModelSelection };
 
@@ -83,6 +84,11 @@ export const makePersonalSessionPrewarmer = (options?: {
         if (Option.isNone(bot)) return "not-a-bot-chat" as const;
         const thread = yield* projection.getThreadShellById(threadId);
         if (Option.isNone(thread)) return "missing" as const;
+        // The bot moved to another provider: the chat's next send starts a
+        // fresh session there. Warming the old provider's would be wasted.
+        if (bot.value.modelSelection.instanceId !== thread.value.modelSelection.instanceId) {
+          return "provider-switch" as const;
+        }
         if ((yield* countUnused) >= maxUnused) return "too-many-unused" as const;
         const startedAt = DateTime.formatIso(yield* DateTime.now);
         const outcome = yield* reactor.prewarmSession({

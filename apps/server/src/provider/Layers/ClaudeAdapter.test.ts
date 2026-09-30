@@ -7262,6 +7262,84 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect(
+    "starts a new Claude conversation instead of resuming one that never ran a turn",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        // A prewarmed chat the owner left without sending: Claude Code never
+        // wrote a transcript, so resuming it fails with "No conversation found".
+        yield* adapter.startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: {
+            threadId: "resume-thread-1",
+            resume: "853cc750-05e8-4fe6-92e7-48ffd8259294",
+            turnCount: 0,
+            turnStartMessageIds: [],
+          },
+          runtimeMode: "full-access",
+        });
+
+        const createInput = harness.getLastCreateQueryInput();
+        assert.equal(createInput?.options.resume, undefined);
+        assert.notEqual(createInput?.options.sessionId, undefined);
+        assert.notEqual(createInput?.options.sessionId, "853cc750-05e8-4fe6-92e7-48ffd8259294");
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "fails the next turn with Claude's own line when the resumed conversation is gone",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const session = yield* adapter.startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: {
+            threadId: "resume-thread-1",
+            resume: "853cc750-05e8-4fe6-92e7-48ffd8259294",
+            turnCount: 2,
+          },
+          runtimeMode: "full-access",
+        });
+        harness.query.emit({
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          errors: ["No conversation found with session ID: 853cc750-05e8-4fe6-92e7-48ffd8259294"],
+          num_turns: 0,
+          session_id: "853cc750-05e8-4fe6-92e7-48ffd8259294",
+          uuid: "result-missing",
+        } as unknown as SDKMessage);
+        for (let index = 0; index < 50; index += 1) yield* Effect.yieldNow;
+
+        const error = yield* adapter
+          .sendTurn({
+            threadId: session.threadId,
+            input: "hello again",
+            interactionMode: "default",
+            attachments: [],
+          })
+          .pipe(Effect.flip);
+        assert.include(
+          String((error as { readonly detail?: string }).detail),
+          "No conversation found with session ID",
+        );
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("preserves durable resume ids across Claude resume hooks", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

@@ -5236,6 +5236,54 @@ describe("ProviderRuntimeIngestion", () => {
     expect(completed?.payload).toMatchObject({ title: "Watch round-3 CI and bots" });
   });
 
+  it("keeps a failed turn's error when its provider process exits afterwards", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const provider = ProviderDriverKind.make("claudeAgent");
+    const setSession = (status: "error" | "ready", at: string) =>
+      harness.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make(`cmd-session-${status}-${at}`),
+        threadId,
+        session: {
+          threadId,
+          status,
+          providerName: "claudeAgent",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: status === "error" ? "No conversation found with session ID: 853cc750" : null,
+          updatedAt: at,
+        },
+        createdAt: at,
+      });
+    const exited = (id: string, at: string) =>
+      harness.emitAndDrain([
+        {
+          type: "session.exited",
+          eventId: asEventId(id),
+          provider,
+          createdAt: at,
+          threadId,
+          payload: {},
+        },
+      ]);
+    const session = async () =>
+      (await harness.readModel()).threads.find((entry) => entry.id === threadId)?.session;
+
+    await setSession("error", "2026-01-01T00:00:01.000Z");
+    await exited("evt-exit-after-error", "2026-01-01T00:00:02.000Z");
+    expect(await session()).toMatchObject({
+      status: "error",
+      lastError: "No conversation found with session ID: 853cc750",
+    });
+
+    // A session that was fine just stops.
+    await setSession("ready", "2026-01-01T00:00:03.000Z");
+    await exited("evt-exit-after-ready", "2026-01-01T00:00:04.000Z");
+    expect((await session())?.status).toBe("stopped");
+  });
+
   it("projects structured user input request and resolution as thread activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

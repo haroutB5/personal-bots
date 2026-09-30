@@ -85,6 +85,12 @@ export const ProviderSessionStartInput = Schema.Struct({
    * (per-bot skills and commands). Absent means no per-bot extras.
    */
   personalBotId: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Set by the server to start a new provider conversation and never resume
+   * the thread's persisted one: after the bot moved to another provider, or
+   * when the provider no longer has the conversation it would resume.
+   */
+  freshSession: Schema.optional(Schema.Boolean),
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 

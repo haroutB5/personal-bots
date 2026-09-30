@@ -256,6 +256,52 @@ export function chatReplyPushPayload(input: {
 }
 
 /**
+ * How long a chat turn's failure must stand before it notifies. The server's
+ * own retry of a transient failure marks the session a moment after the
+ * failure lands; a failure it is already retrying is not news.
+ */
+export const CHAT_FAILURE_SETTLE_MS = 5_000;
+const CHAT_FAILURE_REASON_MAX = 140;
+
+/**
+ * A failure as one short line for a lock screen: the first line, no stack
+ * frames, nothing that looks like a key or token, capped.
+ */
+export function shortFailureReason(raw: string | null | undefined): string {
+  const firstLine =
+    (raw ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? "";
+  const cleaned = firstLine
+    .replace(/\s+at\s+\S*\(?file:\/\/.*$/i, "")
+    .replace(/\b(?:sk|pk|rk|ghp|gho|xox[abp])[-_][A-Za-z0-9_-]{6,}/g, "[hidden]")
+    .replace(/\bBearer\s+\S+/gi, "Bearer [hidden]")
+    .trim();
+  if (cleaned.length === 0) return "Open the chat to see what happened.";
+  return cleaned.length > CHAT_FAILURE_REASON_MAX
+    ? `${cleaned.slice(0, CHAT_FAILURE_REASON_MAX - 1)}…`
+    : cleaned;
+}
+
+/** A bot's chat turn failed and nothing is retrying it: the owner has to act. */
+export function chatFailurePushPayload(input: {
+  readonly botId: string;
+  readonly bot: PushBotIdentity;
+  readonly threadId: string;
+  readonly reason: string | null | undefined;
+}): PersonalPushPayload {
+  return {
+    title: `${input.bot.name} couldn't reply`,
+    body: shortFailureReason(input.reason),
+    url: chatPath(input.botId, input.threadId),
+    // The chat's one lock-screen slot, like its replies.
+    tag: `chat-${input.threadId}`,
+    ...avatarFields(input.bot),
+  };
+}
+
+/**
  * The round statuses that end a group's turn, and so earn its one
  * notification. "stopped" is the user's own doing, and "running" /
  * "waiting_provider" are mid-turn.
@@ -1095,6 +1141,59 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * A chat turn that failed, to start or midway, with nothing retrying it.
+   * Same holds as a reply (group members, task-driven turns); it rides the
+   * "hit a problem" preference, like a failed task.
+   */
+  const notifyChatFailure = (input: {
+    readonly threadId: ThreadId;
+    readonly failedAt: string;
+    readonly reason: string | null;
+  }) =>
+    Effect.gen(function* () {
+      const groupThreads = yield* sql<GroupThreadForMemberRow>`
+        SELECT g.thread_id AS "threadId"
+        FROM personal_group_members m
+        JOIN personal_groups g ON g.group_id = m.group_id
+        WHERE m.thread_id = ${input.threadId}
+          AND g.deleted_at IS NULL
+        LIMIT 1
+      `;
+      if (groupThreads[0] !== undefined) return;
+      const link = yield* botRepository.getThreadLink({ threadId: input.threadId });
+      if (Option.isNone(link)) return;
+      if (Option.isSome(tasks) && (yield* tasks.value.ownsThreadTurn(input.threadId))) return;
+      const preferences = yield* readPreferences;
+      if (!preferences[PREFERENCE_FOR.task_failed]) return;
+      const bot = yield* botRepository.getBotById({ botId: link.value.botId });
+      yield* deliver(
+        `chat-failed:${input.threadId}:${input.failedAt}`,
+        chatFailurePushPayload({
+          botId: link.value.botId,
+          bot: botIdentity(bot),
+          threadId: input.threadId,
+          reason: input.reason,
+        }),
+        {
+          bot,
+          viewing: {
+            threadId: input.threadId,
+            quietPath: chatPath(link.value.botId, input.threadId),
+          },
+        },
+      );
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal notifications could not queue a chat failure", {
+              threadId: input.threadId,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
+
   const notifyGroupRound: PersonalPushService["Service"]["notifyGroupRound"] = (round) =>
     Effect.gen(function* () {
       if (!GROUP_ROUND_NOTIFY_STATUSES.has(round.status)) return;
@@ -1152,15 +1251,48 @@ export const make = Effect.gen(function* () {
    * risk a notification for a turn that was never observed.
    */
   const runningThreadIds = new Set<string>();
+  /**
+   * Threads with a turn starting or running, for failures: a turn that fails
+   * to start never runs. A failure waits CHAT_FAILURE_SETTLE_MS in
+   * `pendingFailures` (keyed by thread, valued by its session's updatedAt);
+   * any later session change for the thread (a retry, a new turn) drops it.
+   */
+  const turnThreadIds = new Set<string>();
+  const pendingFailures = new Map<string, string>();
 
   const ingestDomainEvent: PersonalPushService["Service"]["ingestDomainEvent"] = (event) => {
     if (event.type !== "thread.session-set") return Effect.void;
     const { threadId, session } = event.payload;
+    pendingFailures.delete(threadId);
+    const hadTurn = turnThreadIds.delete(threadId);
+    if (session.status === "running" || session.status === "starting") {
+      turnThreadIds.add(threadId);
+    }
     if (session.status === "running") {
       runningThreadIds.add(threadId);
       return Effect.void;
     }
     const wasRunning = runningThreadIds.delete(threadId);
+    if (
+      hadTurn &&
+      session.status === "error" &&
+      session.providerRetry?.auto !== "pending" &&
+      session.providerRetry?.kind !== "rate_limited"
+    ) {
+      const key = session.updatedAt;
+      pendingFailures.set(threadId, key);
+      return Effect.sleep(CHAT_FAILURE_SETTLE_MS).pipe(
+        Effect.andThen(
+          Effect.suspend(() => {
+            if (pendingFailures.get(threadId) !== key) return Effect.void;
+            pendingFailures.delete(threadId);
+            return notifyChatFailure({ threadId, failedAt: key, reason: session.lastError });
+          }),
+        ),
+        Effect.forkDetach,
+        Effect.asVoid,
+      );
+    }
     return wasRunning && session.status === "ready"
       ? notifyChatReply({ threadId, turnEndedAt: session.updatedAt })
       : Effect.void;

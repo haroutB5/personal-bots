@@ -10,6 +10,8 @@ import {
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
+  type OrchestrationSessionProviderRetry,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -40,6 +42,9 @@ import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
 import { personalBotSystemInstructions } from "../../personal/personalBotInstructions.ts";
+import { buildChatHandoff } from "../../personal/sessionHandoff.ts";
+import { botModelSelectionForThread } from "../../personal/botModelSelection.ts";
+import { isMissingProviderConversationText } from "../../provider/missingProviderConversation.ts";
 import {
   isPersonalTaskMessageId,
   PERSONAL_THREAD_TITLE,
@@ -130,6 +135,13 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
   event.commandId !== null ? `command:${event.commandId}` : `event:${event.eventId}`;
 
 const HANDLED_TURN_START_KEY_MAX = 10_000;
+/**
+ * `providerRetry.reason` while the server replaces a provider session that no
+ * longer has the chat's conversation and sends the message again on it.
+ */
+export const SESSION_RENEWED_REASON = "session_renewed";
+/** Room left in a turn's input for attachment paths and other context. */
+const HANDOFF_INPUT_MARGIN_CHARS = 8_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
@@ -282,6 +294,63 @@ const make = Effect.gen(function* () {
       const block = context.block?.trim() ?? "";
       return block.length > 0 ? block : undefined;
     });
+  /**
+   * A bot chat whose bot now runs on another provider than the chat's session
+   * (the owner moved the bot, e.g. Claude to Codex). The chat moves with the
+   * bot: its next turn runs on the bot's current selection. A session of the
+   * other provider can never be resumed, so that turn starts a fresh one and
+   * carries the chat over; an instance of the same driver with compatible
+   * resume state keeps resuming. Undefined for other threads and when the bot
+   * is on the chat's instance (the send's own selection applies).
+   */
+  const botProviderSwitch = Effect.fnUntraced(function* (thread: OrchestrationThreadShell) {
+    const botSelection = yield* botModelSelectionForThread(personalBots, thread.id, undefined);
+    if (botSelection === undefined) return undefined;
+    const boundInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+    if (botSelection.instanceId === boundInstanceId) return undefined;
+    const wanted = yield* providerService
+      .getInstanceInfo(botSelection.instanceId)
+      .pipe(Effect.option);
+    // The bot's provider is not configured here: leave the chat where it is.
+    if (Option.isNone(wanted)) return undefined;
+    const bound = yield* providerService.getInstanceInfo(boundInstanceId).pipe(Effect.option);
+    const resumable =
+      Option.isSome(bound) &&
+      bound.value.driverKind === wanted.value.driverKind &&
+      bound.value.continuationIdentity.continuationKey ===
+        wanted.value.continuationIdentity.continuationKey;
+    return {
+      modelSelection: botSelection,
+      freshSession: !resumable,
+      fromInstanceId: boundInstanceId,
+    } as const;
+  });
+  /**
+   * The chat's earlier messages for a turn that starts a fresh session, sized
+   * to what the turn's input has room for. Never fails the turn.
+   */
+  const chatHandoffForTurn = (input: {
+    readonly threadId: ThreadId;
+    readonly messageId: MessageId | undefined;
+    readonly maxChars: number;
+  }) =>
+    resolveThreadDetail(input.threadId).pipe(
+      Effect.map((thread) =>
+        thread === undefined
+          ? undefined
+          : buildChatHandoff({
+              messages: thread.messages,
+              currentMessageId: input.messageId,
+              maxChars: input.maxChars,
+            }),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider command reactor could not carry the chat over", {
+          threadId: input.threadId,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(undefined)),
+      ),
+    );
   /**
    * Whether a thread is linked in personal_bot_threads (bot chats, and the
    * task and routine threads that run through them). Title refinement skips
@@ -492,7 +561,12 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
-    const session = thread.session;
+    const currentSession = thread.session;
+    // A session renewal that failed is over; its notice goes with it.
+    const session =
+      currentSession?.providerRetry?.reason === SESSION_RENEWED_REASON
+        ? (({ providerRetry: _renewal, ...rest }) => rest)(currentSession)
+        : currentSession;
     yield* setThreadSession({
       threadId: input.threadId,
       session: {
@@ -502,7 +576,9 @@ const make = Effect.gen(function* () {
           providerInstanceId: thread.modelSelection.instanceId,
           runtimeMode: thread.runtimeMode,
         }),
-        status: session?.status === "stopped" ? "stopped" : "error",
+        // Always an error, even when the session already stopped: a message
+        // whose turn never started must not sit under an "Idle" header.
+        status: "error",
         activeTurnId: null,
         lastError: input.detail,
         updatedAt: input.createdAt,
@@ -655,8 +731,15 @@ const make = Effect.gen(function* () {
       // First-turn prompt seed. A manual title that still equals this seed was
       // written by the client's auto-title, not a user rename.
       readonly titleSeed?: string;
+      // Start a new provider conversation: stop whatever session the thread
+      // has and never resume its persisted one (a bot that moved to another
+      // provider, or a conversation the provider no longer has).
+      readonly freshSession?: boolean;
+      // Shown on the session while it starts (a session renewal's notice).
+      readonly providerRetry?: OrchestrationSessionProviderRetry;
     },
   ) {
+    const freshSession = options?.freshSession === true;
     const thread = yield* resolveThreadShell(threadId);
     if (!thread) {
       return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
@@ -735,17 +818,22 @@ const make = Effect.gen(function* () {
         session: {
           threadId,
           status: "starting",
-          providerName: activeSession?.provider ?? preferredProvider,
-          providerInstanceId: activeSession?.providerInstanceId ?? desiredInstanceId,
+          providerName: freshSession
+            ? preferredProvider
+            : (activeSession?.provider ?? preferredProvider),
+          providerInstanceId: freshSession
+            ? desiredInstanceId
+            : (activeSession?.providerInstanceId ?? desiredInstanceId),
           runtimeMode: desiredRuntimeMode,
           activeTurnId: null,
           lastError: null,
+          ...(options?.providerRetry !== undefined ? { providerRetry: options.providerRetry } : {}),
           updatedAt: createdAt,
         },
         createdAt,
       });
     }
-    if (thread.session !== null) {
+    if (thread.session !== null && !freshSession) {
       yield* rejectStartedThreadModelChangeIfRequired({
         threadId,
         currentModelSelection:
@@ -761,6 +849,7 @@ const make = Effect.gen(function* () {
     }
     if (
       thread.session !== null &&
+      !freshSession &&
       requestedModelSelection !== undefined &&
       requestedModelSelection.instanceId !== currentInstanceId
     ) {
@@ -805,6 +894,7 @@ const make = Effect.gen(function* () {
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
+      readonly freshSession?: boolean;
     }) =>
       personalBotInstructions(threadId).pipe(
         Effect.flatMap((systemInstructions) =>
@@ -817,6 +907,7 @@ const make = Effect.gen(function* () {
               ...(sessionTitle ? { title: sessionTitle } : {}),
               modelSelection: desiredModelSelection,
               ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+              ...(input?.freshSession === true ? { freshSession: true } : {}),
               ...(systemInstructions !== undefined ? { systemInstructions } : {}),
               runtimeMode: desiredRuntimeMode,
             })
@@ -847,11 +938,39 @@ const make = Effect.gen(function* () {
             // Provider turn ids are not orchestration turn ids.
             activeTurnId: null,
             lastError: session.lastError ?? null,
+            ...(options?.providerRetry !== undefined
+              ? { providerRetry: options.providerRetry }
+              : {}),
             updatedAt: session.updatedAt,
           },
           createdAt,
         });
       });
+
+    if (freshSession) {
+      if (activeSession !== undefined) {
+        yield* providerService.stopSession({ threadId }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.interrupt
+              : Effect.logWarning("provider command reactor could not stop the replaced session", {
+                  threadId,
+                  provider: activeSession.provider,
+                  cause: Cause.pretty(cause),
+                }),
+          ),
+        );
+      }
+      yield* Effect.logInfo("provider command reactor starting a fresh provider session", {
+        threadId,
+        previousProvider: activeSession?.provider ?? thread.session?.providerName ?? null,
+        previousInstanceId: thread.session?.providerInstanceId ?? null,
+        desiredInstanceId,
+      });
+      const freshStarted = yield* startProviderSession({ freshSession: true });
+      yield* bindSessionToThread(freshStarted);
+      return freshStarted.threadId;
+    }
 
     const existingSessionThreadId =
       thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
@@ -1002,6 +1121,9 @@ const make = Effect.gen(function* () {
     readonly interactionMode?: "default" | "plan";
     readonly createdAt: string;
     readonly titleSeed?: string;
+    /** Start a fresh provider session and carry the chat over to it. */
+    readonly freshSession?: boolean;
+    readonly providerRetry?: OrchestrationSessionProviderRetry;
   }) {
     const thread = yield* resolveThreadShell(input.threadId);
     if (!thread) {
@@ -1012,6 +1134,8 @@ const make = Effect.gen(function* () {
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       ...(input.titleSeed !== undefined ? { titleSeed: input.titleSeed } : {}),
+      ...(input.freshSession === true ? { freshSession: true } : {}),
+      ...(input.providerRetry !== undefined ? { providerRetry: input.providerRetry } : {}),
       pendingTurnStart: true,
     });
     if (input.modelSelection !== undefined) {
@@ -1020,9 +1144,27 @@ const make = Effect.gen(function* () {
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
     const systemInstructions = yield* personalBotInstructions(input.threadId);
-    const turnContext = normalizedInput
+    const memoryContext = normalizedInput
       ? yield* personalMemoryForTurn(input.threadId, input.messageText, input.messageId)
       : undefined;
+    // A fresh session knows nothing of the chat: its earlier messages go in
+    // front of the memory, in whatever room the turn's input has left.
+    const handoff =
+      input.freshSession === true
+        ? yield* chatHandoffForTurn({
+            threadId: input.threadId,
+            messageId: input.messageId,
+            maxChars:
+              PROVIDER_SEND_TURN_MAX_INPUT_CHARS -
+              input.messageText.length -
+              (memoryContext?.length ?? 0) -
+              HANDOFF_INPUT_MARGIN_CHARS,
+          })
+        : undefined;
+    const turnContext =
+      handoff !== undefined && memoryContext !== undefined
+        ? `${handoff}\n\n${memoryContext}`
+        : (handoff ?? memoryContext);
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
@@ -1706,7 +1848,7 @@ const make = Effect.gen(function* () {
       turnsAfterCompaction.set(event.payload.threadId, queued);
       return;
     }
-    const sendTurnRequest = yield* buildSendTurnRequestForThread({
+    const turnInput = {
       threadId: event.payload.threadId,
       messageId: event.payload.messageId,
       messageText: projectComposerContextForProvider({
@@ -1714,9 +1856,6 @@ const make = Effect.gen(function* () {
         records: message.context?.records ?? [],
       }),
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-      ...(event.payload.modelSelection !== undefined
-        ? { modelSelection: event.payload.modelSelection }
-        : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,
       // Later turns must not reuse the current title as titleSeed. Only the
@@ -1724,6 +1863,31 @@ const make = Effect.gen(function* () {
       ...(!hasOtherUserMessages && event.payload.titleSeed !== undefined
         ? { titleSeed: event.payload.titleSeed }
         : {}),
+    };
+    const sendTurnRequest = yield* Effect.gen(function* () {
+      // A bot chat follows its bot to another provider on its next turn.
+      const providerSwitch = yield* botProviderSwitch(thread);
+      if (providerSwitch?.freshSession === true) {
+        yield* Effect.logInfo("provider command reactor moving a bot chat to its bot's provider", {
+          threadId: thread.id,
+          fromInstanceId: providerSwitch.fromInstanceId,
+          toInstanceId: providerSwitch.modelSelection.instanceId,
+          model: providerSwitch.modelSelection.model,
+        });
+        yield* orchestrationEngine.dispatch({
+          type: "thread.meta.update",
+          commandId: yield* serverCommandId("bot-provider-switch"),
+          threadId: thread.id,
+          modelSelection: providerSwitch.modelSelection,
+        });
+      }
+      const modelSelection = providerSwitch?.modelSelection ?? event.payload.modelSelection;
+      const request = yield* buildSendTurnRequestForThread({
+        ...turnInput,
+        ...(modelSelection !== undefined ? { modelSelection } : {}),
+        ...(providerSwitch?.freshSession === true ? { freshSession: true } : {}),
+      });
+      return { request, modelSelection, fresh: providerSwitch?.freshSession === true } as const;
     }).pipe(
       Effect.asSome,
       Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
@@ -1733,9 +1897,53 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const send = providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.asVoid, Effect.catchCause(recoverTurnStartFailure));
+    // The provider no longer has the conversation this session resumed (a
+    // Claude transcript that is gone, a Codex thread it cannot find). Resuming
+    // again cannot work, so start a fresh session once, carry the chat over,
+    // and send the same message, attachments included, on it.
+    const renewSessionAndSend = (cause: Cause.Cause<unknown>) =>
+      Effect.gen(function* () {
+        const current = yield* resolveThreadShell(event.payload.threadId);
+        const previousProvider =
+          current?.session?.providerName ?? thread.session?.providerName ?? "provider";
+        yield* Effect.logWarning(
+          "provider command reactor renewing a session that lost its conversation",
+          {
+            threadId: event.payload.threadId,
+            provider: previousProvider,
+            cause: Cause.pretty(cause),
+          },
+        );
+        const providerRetry: OrchestrationSessionProviderRetry = {
+          kind: "retrying",
+          attempt: 1,
+          maxAttempts: 1,
+          reason: SESSION_RENEWED_REASON,
+          provider: previousProvider,
+          observedAt: DateTime.formatIso(yield* DateTime.now),
+          auto: "pending",
+        };
+        const { modelSelection } = sendTurnRequest.value;
+        const request = yield* buildSendTurnRequestForThread({
+          ...turnInput,
+          ...(modelSelection !== undefined ? { modelSelection } : {}),
+          freshSession: true,
+          providerRetry,
+        });
+        yield* providerService.sendTurn(request);
+      });
+
+    const send = providerService.sendTurn(sendTurnRequest.value.request).pipe(
+      Effect.catchCause((cause) =>
+        !sendTurnRequest.value.fresh &&
+        !Cause.hasInterruptsOnly(cause) &&
+        isMissingProviderConversationText(Cause.pretty(cause))
+          ? renewSessionAndSend(cause)
+          : Effect.failCause(cause),
+      ),
+      Effect.asVoid,
+      Effect.catchCause(recoverTurnStartFailure),
+    );
     // The forked send settles `sent` from here on, so drop the entry the post-processing hook uses.
     if (resumed && event.commandId !== null) resumedTurnStarts.delete(event.commandId);
     yield* send.pipe(

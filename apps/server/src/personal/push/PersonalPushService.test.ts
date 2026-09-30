@@ -494,6 +494,78 @@ it.effect("a turn that only reaches ready without running is not a reply", () =>
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+const failedSession = (
+  threadId: ThreadId,
+  at: string,
+  providerRetry?: Record<string, unknown>,
+): OrchestrationEvent =>
+  ({
+    type: "thread.session-set",
+    payload: {
+      threadId,
+      session: {
+        threadId,
+        status: "error",
+        providerName: "claudeAgent",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError:
+          "No conversation found with session ID: 853cc750 (key sk-abcdefghijklmnop)\n    at file:///x.js:1:1",
+        ...(providerRetry === undefined ? {} : { providerRetry }),
+        updatedAt: at,
+      },
+    },
+  }) as unknown as OrchestrationEvent;
+
+it.effect("a chat turn that fails and stays failed notifies once, with a short reason", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+
+    // A turn that fails to start never runs: starting -> error.
+    yield* push.ingestDomainEvent(sessionSet(CHAT, "starting", "2026-09-18T09:00:00.000Z"));
+    yield* push.ingestDomainEvent(failedSession(CHAT, "2026-09-18T09:00:01.000Z"));
+    yield* push.drain;
+    // It waits to see whether the server retries it.
+    expect(yield* outbox).toEqual([]);
+    yield* TestClock.adjust(`${PersonalPushService.CHAT_FAILURE_SETTLE_MS + 10} millis`);
+    yield* push.drain;
+
+    const rows = yield* outbox;
+    expect(rows.length).toBe(1);
+    const payload = JSON.parse(rows[0]!.payload);
+    expect(payload.title).toBe("Assistant couldn't reply");
+    expect(payload.body).toBe("No conversation found with session ID: 853cc750 (key [hidden])");
+    expect(payload.url).toBe(`/bots/${BOT}/${CHAT}`);
+    expect(payload.tag).toBe(`chat-${CHAT}`);
+
+    // A failure the server goes on to retry by itself is not news.
+    yield* push.ingestDomainEvent(sessionSet(CHAT, "running", "2026-09-18T09:05:00.000Z"));
+    yield* push.ingestDomainEvent(failedSession(CHAT, "2026-09-18T09:05:01.000Z"));
+    yield* push.ingestDomainEvent(
+      failedSession(CHAT, "2026-09-18T09:05:02.000Z", {
+        kind: "retrying",
+        auto: "pending",
+        provider: "claudeAgent",
+        observedAt: "2026-09-18T09:05:02.000Z",
+      }),
+    );
+    yield* TestClock.adjust(`${PersonalPushService.CHAT_FAILURE_SETTLE_MS + 10} millis`);
+    yield* push.drain;
+    expect((yield* outbox).length).toBe(1);
+
+    // An error seen with no turn in flight (a session dying on its own) is silent.
+    yield* push.ingestDomainEvent(failedSession(CHAT, "2026-09-18T09:10:00.000Z"));
+    yield* TestClock.adjust(`${PersonalPushService.CHAT_FAILURE_SETTLE_MS + 10} millis`);
+    yield* push.drain;
+    expect((yield* outbox).length).toBe(1);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 it.effect("the chat the user is reading gets no reply notification", () => {
   const harness: Harness = { sent: [], status: 201 };
   return Effect.gen(function* () {

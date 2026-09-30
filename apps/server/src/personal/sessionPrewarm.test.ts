@@ -118,6 +118,17 @@ describe("personal session prewarm", () => {
     expect(sendModelSelection(codex, claude("sonnet"))).toEqual(claude("sonnet"));
   });
 
+  it.effect("does not warm the old provider for a chat whose bot moved to another one", () =>
+    Effect.gen(function* () {
+      const codex = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+      const { calls, run } = setup({ botModel: codex, threadModel: claude("opus") });
+
+      // The chat's next send starts a fresh session on the bot's provider.
+      expect(yield* run((prewarm) => prewarm(threadId))).toBe("provider-switch");
+      expect(calls).toEqual([]);
+    }),
+  );
+
   it.effect("asks once per chat within the debounce window", () =>
     Effect.gen(function* () {
       const { calls, run } = setup();

@@ -1534,8 +1534,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             `Provider instance '${resolvedInstanceId}' belongs to driver '${resolvedProvider}', not '${parsed.provider}'.`,
           );
         }
+        const { freshSession, resumeCursor: requestedResumeCursor, ...startFields } = parsed;
         const input = {
-          ...parsed,
+          ...startFields,
+          ...(freshSession !== true && requestedResumeCursor !== undefined
+            ? { resumeCursor: requestedResumeCursor }
+            : {}),
           threadId,
           provider: resolvedProvider,
         };
@@ -1545,7 +1549,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             `Provider instance '${resolvedInstanceId}' is disabled in T3 Code settings.`,
           );
         }
-        const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+        // A fresh session ignores the persisted conversation: it belongs to
+        // another provider, or the provider no longer has it.
+        const persistedBinding =
+          freshSession === true
+            ? undefined
+            : Option.getOrUndefined(yield* directory.getBinding(threadId));
         if (
           persistedBinding?.provider === resolvedProvider &&
           persistedBinding.providerInstanceId !== resolvedInstanceId &&

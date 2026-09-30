@@ -38,6 +38,10 @@ import {
 import { claudeApiRetryInfo, claudeRateLimitRejectionInfo } from "./claudeRetryInfo.ts";
 import { terminateDescendants } from "../processTree.ts";
 import {
+  isMissingProviderConversationText,
+  missingProviderConversationLine,
+} from "../missingProviderConversation.ts";
+import {
   ApprovalRequestId,
   classifyTaskAgentKind,
   type CanonicalItemType,
@@ -442,6 +446,13 @@ interface ClaudeSessionContext {
    * effort override inherit this. */
   currentEffort: string | undefined;
   resumeSessionId: string | undefined;
+  /**
+   * Set when Claude Code reports that the conversation this session resumed
+   * does not exist ("No conversation found with session ID"). The session can
+   * never run a turn, so sendTurn fails with that line and the caller starts
+   * a fresh session instead.
+   */
+  missingConversation?: string;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   /** Completed turn ids, reported by readThread and trimmed on rollback.
@@ -3643,6 +3654,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ? "Claude usage limit reached. Send the message again once the limit resets."
         : undefined);
     const { status, errorMessage } = resultOutcome(message, failureHint);
+    if (
+      status === "failed" &&
+      errorMessage !== undefined &&
+      isMissingProviderConversationText(errorMessage)
+    ) {
+      context.missingConversation = errorMessage;
+    }
 
     if (status === "failed") {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
@@ -4674,7 +4692,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const startedAt = yield* nowIso;
       const resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
-      const existingResumeSessionId = resumeState?.resume;
+      // A session that never ran a turn never wrote a transcript, so Claude
+      // Code cannot resume it ("No conversation found"): a prewarmed chat the
+      // owner left without sending. Only this adapter writes turnCount, so a
+      // cursor from elsewhere (an imported session) still resumes.
+      const neverRanTurn =
+        resumeState?.turnCount === 0 &&
+        resumeState.resumeSessionAt === undefined &&
+        (resumeState.turnStartMessageIds?.length ?? 0) === 0;
+      const existingResumeSessionId = neverRanTurn ? undefined : resumeState?.resume;
       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
       const sessionId = existingResumeSessionId ?? newSessionId;
 
@@ -5208,6 +5234,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(processHandle !== undefined
           ? {
               spawnClaudeCodeProcess: makeRecordingClaudeSpawner(processHandle, (detail) => {
+                const missing = missingProviderConversationLine(detail.stderrTail);
+                const exitedContext = sessions.get(threadId);
+                if (missing !== undefined && exitedContext?.process === processHandle) {
+                  exitedContext.missingConversation ??= missing;
+                }
                 runFork(
                   Effect.logWarning("claude.process.exited-abnormally", {
                     threadId,
@@ -5449,8 +5480,35 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
+  const missingConversationError = (line: string) =>
+    new ProviderAdapterRequestError({
+      provider: PROVIDER,
+      method: "turn/start",
+      detail: line,
+    });
+
+  /**
+   * A control request that fails because the CLI exited. When it exited on a
+   * missing conversation, that is the real reason: say so, so the caller can
+   * start a fresh session. The CLI's result or stderr can land just after the
+   * control request's rejection, so wait briefly for the session to settle.
+   */
+  const explainControlFailure = (context: ClaudeSessionContext, error: ProviderAdapterError) =>
+    Effect.gen(function* () {
+      for (let waited = 0; waited < 2_000; waited += 50) {
+        if (context.missingConversation !== undefined || context.stopped) break;
+        yield* Effect.sleep("50 millis");
+      }
+      return yield* context.missingConversation !== undefined
+        ? Effect.fail(missingConversationError(context.missingConversation))
+        : Effect.fail(error);
+    });
+
   const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     const context = yield* requireSession(input.threadId);
+    if (context.missingConversation !== undefined) {
+      return yield* missingConversationError(context.missingConversation);
+    }
     const modelCatalog = yield* modelCatalogEffect;
     const selectedModel =
       input.modelSelection !== undefined && input.modelSelection.instanceId === boundInstanceId
@@ -5480,7 +5538,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         yield* Effect.tryPromise({
           try: () => context.query.setModel(apiModelId),
           catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),
-        });
+        }).pipe(Effect.catch((error) => explainControlFailure(context, error)));
         context.currentApiModelId = apiModelId;
       }
       context.session = {
@@ -5505,12 +5563,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* Effect.tryPromise({
         try: () => context.query.setPermissionMode("plan"),
         catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
-      });
+      }).pipe(Effect.catch((error) => explainControlFailure(context, error)));
     } else if (input.interactionMode === "default") {
       yield* Effect.tryPromise({
         try: () => context.query.setPermissionMode(context.basePermissionMode ?? "default"),
         catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
-      });
+      }).pipe(Effect.catch((error) => explainControlFailure(context, error)));
     }
 
     const turnId = steeringTurnState?.turnId ?? TurnId.make(yield* randomUUIDv4);
