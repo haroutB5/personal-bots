@@ -117,6 +117,7 @@ import {
   personalRoutineHookRouteLayer,
 } from "./personal/routines/hookRoutes.ts";
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
+import * as PersonalMemoryTidy from "./personal/memory/PersonalMemoryTidyService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
 import { personalClientDiagRouteLayer } from "./personal/push/clientDiagRoute.ts";
 import { personalPushSentRouteLayer } from "./personal/push/sentPushesRoute.ts";
@@ -565,6 +566,7 @@ const PersonalReactorsLive = Layer.effectDiscard(
   Effect.gen(function* () {
     yield* (yield* PersonalRoutineService.PersonalRoutineService).start();
     yield* (yield* PersonalMemoryService.PersonalMemoryService).start();
+    yield* (yield* PersonalMemoryTidy.PersonalMemoryTidy).start();
     yield* (yield* PersonalPushService.PersonalPushService).start();
     yield* (yield* PersonalProviderUpdates.PersonalProviderUpdates).start();
     // Sets up the Updates bot and its nightly 04:00 update run (the routine service runs it).
@@ -609,6 +611,7 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
     ),
   ),
   Layer.provideMerge(PersonalMemoryService.layer),
+  Layer.provideMerge(PersonalMemoryTidy.layer.pipe(Layer.provide(PersonalMemoryTidy.judgeLayer))),
   Layer.provideMerge(PersonalRoutineService.layer),
   Layer.provideMerge(PersonalTasksDispatcherLive),
   Layer.provideMerge(PersonalTaskService.layerLive),

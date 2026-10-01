@@ -247,6 +247,12 @@ export const SaveMemoryInput = Schema.Struct({
       description: "shared (default): every bot sees it. bot: only you.",
     }),
   ),
+  replaces: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(10)).annotate({
+      description:
+        "memoryIds of saved entries this one replaces, because the fact or rule changed or this restates it. They are archived (kept for the user to restore) and bots stop receiving them. Take the ids from this tool's `similar` list or from search_memory.",
+    }),
+  ),
 });
 export type SaveMemoryInput = typeof SaveMemoryInput.Type;
 
@@ -254,6 +260,23 @@ export const SaveMemoryResult = Schema.Struct({
   memoryId: Schema.String,
   scope: Schema.String,
   kind: Schema.String,
+  /** The entries this save archived. */
+  replaced: Schema.Array(Schema.String),
+  /**
+   * Current entries on what reads like the same subject. If the new entry
+   * changes or restates one, call save_memory again with the same content and
+   * replaces: [its memoryId].
+   */
+  similar: Schema.Array(
+    Schema.Struct({
+      memoryId: Schema.String,
+      kind: Schema.String,
+      scope: Schema.String,
+      content: Schema.String,
+      savedOn: Schema.String,
+    }),
+  ),
+  note: Schema.optional(Schema.String),
 });
 
 const CreateRoutineTool = Tool.make("create_routine", {
@@ -341,7 +364,7 @@ const SearchMemoryTool = Tool.make("search_memory", {
 
 const SaveMemoryTool = Tool.make("save_memory", {
   description:
-    "Save a fact or preference to long-term memory when the user has explicitly asked you to remember something. Pass their words verbatim in userRequest: the server refuses the save unless those words ask for it, with a phrase such as 'remember', 'don't forget', 'keep in mind', 'save this', 'note that down' or 'for future reference'. The user can give a bot standing permission to save without being asked; your instructions say so when you have it, and only then is a save without those words accepted, except in a chat that has had a site the user marked sensitive open, where it is refused for the rest of the chat. Passwords, tokens, keys and other secrets are rejected. A shared entry is seen by every bot; use scope 'bot' for one only you should see.",
+    "Save a fact or preference to long-term memory when the user has explicitly asked you to remember something. Pass their words verbatim in userRequest: the server refuses the save unless those words ask for it, with a phrase such as 'remember', 'don't forget', 'keep in mind', 'save this', 'note that down' or 'for future reference'. The user can give a bot standing permission to save without being asked; your instructions say so when you have it, and only then is a save without those words accepted, except in a chat that has had a site the user marked sensitive open, where it is refused for the rest of the chat. Passwords, tokens, keys and other secrets are rejected. A shared entry is seen by every bot; use scope 'bot' for one only you should see. Keep memory current: when a fact or rule changed, pass the old entry's memoryId in replaces so the new one supersedes it instead of sitting beside it. The result lists similar current entries; if one says the same thing or an older version of it, call save_memory again with the same content and replaces set to that memoryId.",
   parameters: SaveMemoryInput,
   success: SaveMemoryResult,
   failure: PersonalToolFailure,

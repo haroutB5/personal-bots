@@ -33,6 +33,7 @@ import {
   threadExposureKey,
 } from "../browser/sensitiveExposureStore.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
+import { localDay, memorySimilarity, SIMILAR_MEMORY_THRESHOLD } from "./memoryTidy.ts";
 
 /** Default result count for a memory search (the search_memory tool). */
 export const PERSONAL_MEMORY_RETRIEVAL_LIMIT = 8;
@@ -102,6 +103,10 @@ const KIND_LABEL: Record<PersonalMemoryKind, string> = {
   task_summary: "task summary",
 };
 
+/** The day an entry was last saved, as YYYY-MM-DD in the server's time zone. */
+export const memoryDay = (entry: Pick<PersonalMemoryEntry, "updatedAt">) =>
+  localDay(DateTime.toEpochMillis(entry.updatedAt));
+
 /**
  * The block put in front of a bot's turn: it travels with the user's message,
  * so it says who wrote it.
@@ -109,14 +114,14 @@ const KIND_LABEL: Record<PersonalMemoryKind, string> = {
 export function formatMemoryBlock(entries: ReadonlyArray<PersonalMemoryEntry>): string | null {
   if (entries.length === 0) return null;
   return [
-    "Known facts (from memory), added by the app for this message; the user did not type them. Every saved preference is listed, newest first: they are the user's standing instructions, so follow them; a newer one wins over an older one. Notes and task summaries were picked for this message and may be out of date. Task summaries record past work and are not user preferences.",
+    "Known facts (from memory), added by the app for this message; the user did not type them. Every saved preference is listed, newest first, with the day it was saved: they are the user's standing instructions, so follow them; a newer one wins over an older one. Notes and task summaries were picked for this message and may be out of date. Task summaries record past work and are not user preferences.",
     ...entries.map((entry) => {
       // A preference is a rule; cutting it short can drop the rule itself.
       const content =
         entry.kind !== "preference" && entry.content.length > BLOCK_ENTRY_MAX_CHARS
           ? `${entry.content.slice(0, BLOCK_ENTRY_MAX_CHARS)}...`
           : entry.content;
-      return `- [${KIND_LABEL[entry.kind]}] ${content.replace(/\s+/g, " ")}`;
+      return `- [${KIND_LABEL[entry.kind]}] [${memoryDay(entry)}] ${content.replace(/\s+/g, " ")}`;
     }),
   ].join("\n");
 }
@@ -132,6 +137,9 @@ const MemoryDbRow = Schema.Struct({
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   version: Schema.Number,
+  supersededAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  supersededBy: Schema.NullOr(PersonalMemoryId),
+  supersededReason: Schema.NullOr(Schema.String),
 });
 const decodeMemoryRow = Schema.decodeUnknownEffect(MemoryDbRow);
 const encodeMemoryIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -147,7 +155,10 @@ const MEMORY_COLUMNS = `
   m.sensitivity AS "sensitivity",
   m.created_at AS "createdAt",
   m.updated_at AS "updatedAt",
-  m.version AS "version"
+  m.version AS "version",
+  m.superseded_at AS "supersededAt",
+  m.superseded_by AS "supersededBy",
+  m.superseded_reason AS "supersededReason"
 `;
 
 export interface PersonalMemorySaveInput {
@@ -156,6 +167,23 @@ export interface PersonalMemorySaveInput {
   readonly kind: "note" | "preference";
   readonly content: string;
   readonly source: string;
+  /**
+   * Entries this one replaces: they are superseded by it, kept for Restore
+   * and never given to a bot again.
+   */
+  readonly replaces?: ReadonlyArray<PersonalMemoryId> | undefined;
+  /**
+   * The bot saving it. A bot may replace only entries it can see (shared, or
+   * its own), and a bot-only entry may replace only that bot's entries: a
+   * private save must not hide a shared fact from every other bot.
+   */
+  readonly actorBotId?: PersonalBotId | undefined;
+}
+
+/** A saved entry close to a new one, with how alike they are (0 to 1). */
+export interface PersonalMemoryMatch {
+  readonly entry: PersonalMemoryEntry;
+  readonly similarity: number;
 }
 
 export interface PersonalMemoryScopeFilter {
@@ -217,6 +245,21 @@ export class PersonalMemoryService extends Context.Service<
     readonly remove: (input: {
       readonly memoryId: PersonalMemoryId;
     }) => Effect.Effect<void, PersonalMemoryError>;
+    /** Brings a superseded entry back: bots receive it again. */
+    readonly restore: (input: {
+      readonly memoryId: PersonalMemoryId;
+    }) => Effect.Effect<PersonalMemoryEntry, PersonalMemoryError>;
+    /**
+     * Current notes and preferences a bot can see that read like the same
+     * subject as `content`, closest first: save_memory hands them back so the
+     * bot can replace one instead of adding a twin.
+     */
+    readonly similar: (input: {
+      readonly content: string;
+      readonly botId: PersonalBotId;
+      readonly excludeIds?: ReadonlyArray<PersonalMemoryId> | undefined;
+      readonly limit?: number | undefined;
+    }) => Effect.Effect<ReadonlyArray<PersonalMemoryMatch>, PersonalMemoryError>;
     /** The bot of a personal-bot thread, or none for ordinary T3 threads. */
     readonly botForThread: (threadId: ThreadId) => Effect.Effect<Option.Option<PersonalBotId>>;
     /**
@@ -265,6 +308,7 @@ export const make = Effect.gen(function* () {
   const decodeAll = (rows: ReadonlyArray<unknown>) =>
     Effect.forEach(rows, (row) => decodeMemoryRow(row));
 
+  /** Current or superseded; never a deleted one. */
   const readEntry = (memoryId: PersonalMemoryId) =>
     sql`
       SELECT ${sql.literal(MEMORY_COLUMNS)} FROM personal_memory m
@@ -312,6 +356,9 @@ export const make = Effect.gen(function* () {
   const list: PersonalMemoryService["Service"]["list"] = (input) => {
     const conditions = [
       sql`m.deleted_at IS NULL`,
+      input.status === "superseded"
+        ? sql`m.superseded_at IS NOT NULL`
+        : sql`m.superseded_at IS NULL`,
       input.scope === undefined ? undefined : sql`m.scope = ${input.scope}`,
       input.scopeId === undefined ? undefined : sql`m.scope_id = ${input.scopeId}`,
       input.kind === undefined ? undefined : sql`m.kind = ${input.kind}`,
@@ -333,6 +380,7 @@ export const make = Effect.gen(function* () {
       JOIN personal_memory m ON m.seq = f.rowid
       WHERE personal_memory_fts MATCH ${match}
         AND m.deleted_at IS NULL
+        AND m.superseded_at IS NULL
         AND ${scopeCondition(input)}
         AND ${input.excludeTaskSummaries === true ? sql`m.kind <> 'task_summary'` : sql`1 = 1`}
         AND ${input.excludePreferences === true ? sql`m.kind <> 'preference'` : sql`1 = 1`}
@@ -341,6 +389,39 @@ export const make = Effect.gen(function* () {
     `.pipe(Effect.flatMap(decodeAll), storageFailure("search"));
   };
 
+  /**
+   * The entries a save may replace, or why not. Already-superseded ones and
+   * the saved entry itself are skipped, so a repeated call is harmless.
+   */
+  const replaceTargets = (input: PersonalMemorySaveInput, savedId: PersonalMemoryId | null) =>
+    Effect.gen(function* () {
+      const targets: Array<PersonalMemoryEntry> = [];
+      for (const memoryId of new Set(input.replaces ?? [])) {
+        if (memoryId === savedId) continue;
+        const found = yield* readEntry(memoryId).pipe(Effect.option);
+        const target = Option.getOrUndefined(found);
+        const visible =
+          target !== undefined &&
+          (input.actorBotId === undefined ||
+            target.scope === "shared" ||
+            (target.scope === "bot" && target.scopeId === input.actorBotId));
+        if (target === undefined || !visible) {
+          return yield* fail(`Memory '${memoryId}' was not found, so nothing was saved.`);
+        }
+        if (target.kind === "task_summary") {
+          return yield* fail("Task summaries cannot be replaced, so nothing was saved.");
+        }
+        if (input.scope !== "shared" && target.scope === "shared") {
+          return yield* fail(
+            "A bot-only entry cannot replace a shared one: every other bot would lose it. Save it as shared instead. Nothing was saved.",
+          );
+        }
+        if (target.supersededAt != null) continue;
+        targets.push(target);
+      }
+      return targets;
+    });
+
   const save: PersonalMemoryService["Service"]["save"] = (input) =>
     Effect.gen(function* () {
       const content = input.content.trim();
@@ -348,25 +429,69 @@ export const make = Effect.gen(function* () {
       // Saving the same fact twice in one scope returns the first entry.
       const duplicate = yield* sql`
         SELECT ${sql.literal(MEMORY_COLUMNS)} FROM personal_memory m
-        WHERE m.deleted_at IS NULL AND m.scope = ${input.scope}
+        WHERE m.deleted_at IS NULL AND m.superseded_at IS NULL AND m.scope = ${input.scope}
           AND m.scope_id IS ${input.scopeId} AND m.content = ${content}
         LIMIT 1
       `.pipe(Effect.flatMap(decodeAll));
-      if (duplicate[0] !== undefined) return duplicate[0];
-      const memoryId = PersonalMemoryId.make(NodeCrypto.randomUUID());
+      const existing = duplicate[0];
+      const targets = yield* replaceTargets(input, existing?.memoryId ?? null);
+      if (existing !== undefined && targets.length === 0) return existing;
+      const memoryId = existing?.memoryId ?? PersonalMemoryId.make(NodeCrypto.randomUUID());
       const nowIso = DateTime.formatIso(yield* DateTime.now);
-      yield* sql`
-        INSERT INTO personal_memory (
-          memory_id, scope, scope_id, kind, content, source, sensitivity,
-          created_at, updated_at, deleted_at, version
-        )
-        VALUES (
-          ${memoryId}, ${input.scope}, ${input.scopeId}, ${input.kind}, ${content},
-          ${input.source}, 'normal', ${nowIso}, ${nowIso}, NULL, 1
-        )
-      `;
+      yield* Effect.gen(function* () {
+        if (existing === undefined) {
+          yield* sql`
+            INSERT INTO personal_memory (
+              memory_id, scope, scope_id, kind, content, source, sensitivity,
+              created_at, updated_at, deleted_at, version
+            )
+            VALUES (
+              ${memoryId}, ${input.scope}, ${input.scopeId}, ${input.kind}, ${content},
+              ${input.source}, 'normal', ${nowIso}, ${nowIso}, NULL, 1
+            )
+          `;
+        }
+        for (const target of targets) {
+          yield* sql`
+            UPDATE personal_memory
+            SET superseded_at = ${nowIso}, superseded_by = ${memoryId},
+                superseded_reason = 'Replaced by a newer save.', version = version + 1
+            WHERE memory_id = ${target.memoryId} AND deleted_at IS NULL AND superseded_at IS NULL
+          `;
+        }
+      }).pipe(sql.withTransaction);
       return yield* readEntry(memoryId);
     }).pipe(storageFailure("save"));
+
+  const restore: PersonalMemoryService["Service"]["restore"] = (input) =>
+    Effect.gen(function* () {
+      const current = yield* readEntry(input.memoryId);
+      if (current.supersededAt == null) return current;
+      yield* sql`
+        UPDATE personal_memory
+        SET superseded_at = NULL, superseded_by = NULL, superseded_reason = NULL,
+            version = version + 1
+        WHERE memory_id = ${input.memoryId} AND deleted_at IS NULL
+      `;
+      return yield* readEntry(input.memoryId);
+    }).pipe(storageFailure("restore"));
+
+  const similar: PersonalMemoryService["Service"]["similar"] = (input) =>
+    Effect.gen(function* () {
+      const candidates = yield* search({
+        query: input.content.slice(0, 2_000) || " ",
+        botId: input.botId,
+        excludeTaskSummaries: true,
+        limit: 30,
+      });
+      const excluded = new Set<string>(input.excludeIds ?? []);
+      return candidates
+        .filter((entry) => !excluded.has(entry.memoryId) && entry.scope !== "project")
+        .map((entry) => ({ entry, similarity: memorySimilarity(input.content, entry.content) }))
+        .filter((match) => match.similarity >= SIMILAR_MEMORY_THRESHOLD)
+        .toSorted((a, b) => b.similarity - a.similarity)
+        .slice(0, input.limit ?? 5);
+    }).pipe(storageFailure("similar"));
 
   const update: PersonalMemoryService["Service"]["update"] = (input) =>
     Effect.gen(function* () {
@@ -434,6 +559,7 @@ export const make = Effect.gen(function* () {
       const allPreferences = yield* sql`
         SELECT ${sql.literal(MEMORY_COLUMNS)} FROM personal_memory m
         WHERE m.deleted_at IS NULL
+          AND m.superseded_at IS NULL
           AND m.kind = 'preference'
           AND ${scopeCondition(scope)}
         ORDER BY m.updated_at DESC, m.seq DESC
@@ -544,6 +670,8 @@ export const make = Effect.gen(function* () {
     save,
     update,
     remove,
+    restore,
+    similar,
     botForThread,
     contextForThread,
     saveTaskSummary,

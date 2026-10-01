@@ -2,6 +2,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   describePersonalRoutineTrigger,
+  PersonalMemoryId,
   PersonalRoutineId,
   type PersonalRoutine,
   type PersonalRoutineSchedule,
@@ -504,6 +505,7 @@ const make = Effect.gen(function* () {
         });
         if (refusal !== null) return yield* refuse(refusal);
         const scope = input.scope ?? "shared";
+        const replaces = (input.replaces ?? []).map((id) => PersonalMemoryId.make(id));
         const entry = yield* memory
           .save({
             scope,
@@ -511,9 +513,33 @@ const make = Effect.gen(function* () {
             kind: input.kind ?? "note",
             content: input.content,
             source: `bot:${botId}`,
+            replaces,
+            actorBotId: botId,
           })
           .pipe(Effect.mapError((error) => refuse(error.message)));
-        return { memoryId: entry.memoryId, scope: entry.scope, kind: entry.kind };
+        const replaced = replaces.filter((id) => id !== entry.memoryId);
+        // Close matches are advice: a failed lookup never fails the save.
+        const similar = yield* memory
+          .similar({ content: entry.content, botId, excludeIds: [entry.memoryId, ...replaced] })
+          .pipe(Effect.orElseSucceed(() => []));
+        return {
+          memoryId: entry.memoryId,
+          scope: entry.scope,
+          kind: entry.kind,
+          replaced,
+          similar: similar.map(({ entry: match }) => ({
+            memoryId: match.memoryId,
+            kind: match.kind,
+            scope: match.scope,
+            content: match.content,
+            savedOn: PersonalMemoryService.memoryDay(match),
+          })),
+          ...(similar.length === 0
+            ? {}
+            : {
+                note: "These saved entries read like the same subject. If the new entry changes or restates one, call save_memory again with the same content and replaces: [its memoryId]; otherwise leave them.",
+              }),
+        };
       }),
   });
 });

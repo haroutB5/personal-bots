@@ -84,6 +84,19 @@ export const personalMemoryList = createEnvironmentRpcQueryAtomFamily(connection
   staleTimeMs: 5_000,
 });
 
+/** Replaced entries (kept for Restore, never given to a bot): the Memory screen's "Replaced" list. */
+export const SUPERSEDED_MEMORY_INPUT = { status: "superseded" } as const;
+
+/** How many tidy-up runs the Memory screen's changelog shows. */
+export const TIDY_LOG_INPUT = { limit: 10 } as const;
+
+/** The nightly memory tidy-up's mode and its recent runs (the changelog). */
+export const personalMemoryTidyLog = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "personal-memory:tidy-log",
+  tag: WS_METHODS.personalMemoryTidyLog,
+  staleTimeMs: 10_000,
+});
+
 export const personalPushSettings = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "personal-push:settings",
   tag: WS_METHODS.personalPushGetSettings,
@@ -102,6 +115,33 @@ const refreshing =
 const refreshRoutines = refreshing(personalRoutinesList);
 const refreshMemory = refreshing(personalMemoryList);
 const refreshPush = refreshing(personalPushSettings);
+
+/** Restore moves an entry from the replaced list back to the current one: both lists change. */
+const refreshMemoryAndReplaced = (
+  target: { readonly environmentId: EnvironmentId },
+  registry: Registry,
+) =>
+  Effect.sync(() => {
+    registry.refresh(
+      personalMemoryList({ environmentId: target.environmentId, input: {} }) as never,
+    );
+    registry.refresh(
+      personalMemoryList({
+        environmentId: target.environmentId,
+        input: SUPERSEDED_MEMORY_INPUT,
+      }) as never,
+    );
+  });
+
+const refreshTidyLog = (target: { readonly environmentId: EnvironmentId }, registry: Registry) =>
+  Effect.sync(() =>
+    registry.refresh(
+      personalMemoryTidyLog({
+        environmentId: target.environmentId,
+        input: TIDY_LOG_INPUT,
+      }) as never,
+    ),
+  );
 
 export const personalTaskCancel = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-tasks:cancel",
@@ -177,6 +217,30 @@ export const personalMemoryDeleteMany = createEnvironmentRpcCommand(connectionAt
   label: "personal-memory:delete-many",
   tag: WS_METHODS.personalMemoryDeleteMany,
   onSuccess: refreshMemory,
+});
+
+/** Brings a replaced entry back: bots receive it again. */
+export const personalMemoryRestore = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-memory:restore",
+  tag: WS_METHODS.personalMemoryRestore,
+  onSuccess: refreshMemoryAndReplaced,
+});
+
+export const personalMemoryTidySetMode = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-memory:tidy-set-mode",
+  tag: WS_METHODS.personalMemoryTidySetMode,
+  onSuccess: refreshTidyLog,
+});
+
+/** Runs the tidy-up now (a preview when dryRun); it can take a minute. A real run changes both lists. */
+export const personalMemoryTidyRun = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-memory:tidy-run",
+  tag: WS_METHODS.personalMemoryTidyRun,
+  onSettled: (target, registry) =>
+    Effect.andThen(
+      refreshTidyLog(target, registry),
+      target.input.dryRun === false ? refreshMemoryAndReplaced(target, registry) : Effect.void,
+    ),
 });
 
 export const personalPushSubscribe = createEnvironmentRpcCommand(connectionAtomRuntime, {
@@ -317,6 +381,29 @@ export function usePersonalRoutines(environmentId: EnvironmentId | null) {
 export function usePersonalMemory(environmentId: EnvironmentId | null) {
   const atom = useMemo(
     () => (environmentId === null ? null : personalMemoryList({ environmentId, input: {} })),
+    [environmentId],
+  );
+  return useEnvironmentQuery(atom);
+}
+
+/** Entries a newer save or the tidy-up replaced, for the "Replaced" list and Restore. */
+export function usePersonalReplacedMemory(environmentId: EnvironmentId | null) {
+  const atom = useMemo(
+    () =>
+      environmentId === null
+        ? null
+        : personalMemoryList({ environmentId, input: SUPERSEDED_MEMORY_INPUT }),
+    [environmentId],
+  );
+  return useEnvironmentQuery(atom);
+}
+
+export function usePersonalMemoryTidyLog(environmentId: EnvironmentId | null) {
+  const atom = useMemo(
+    () =>
+      environmentId === null
+        ? null
+        : personalMemoryTidyLog({ environmentId, input: TIDY_LOG_INPUT }),
     [environmentId],
   );
   return useEnvironmentQuery(atom);

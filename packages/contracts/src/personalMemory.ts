@@ -32,6 +32,12 @@ export const PersonalMemoryEntry = Schema.Struct({
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   version: Schema.Number,
+  /** Set when a newer entry replaced this one: kept for Restore, never given to a bot. */
+  supersededAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  /** The entry that replaced it, when there is one. */
+  supersededBy: Schema.optional(Schema.NullOr(PersonalMemoryId)),
+  /** Why, in words: "Replaced by a newer save", or the tidy-up's reason. */
+  supersededReason: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type PersonalMemoryEntry = typeof PersonalMemoryEntry.Type;
 
@@ -39,6 +45,8 @@ export const PersonalMemoryListInput = Schema.Struct({
   scope: Schema.optional(PersonalMemoryScope),
   scopeId: Schema.optional(Schema.String),
   kind: Schema.optional(PersonalMemoryKind),
+  /** current (default): what bots receive. superseded: replaced entries, for Restore. */
+  status: Schema.optional(Schema.Literals(["current", "superseded"])),
 });
 export type PersonalMemoryListInput = typeof PersonalMemoryListInput.Type;
 
@@ -88,6 +96,73 @@ export const PersonalMemoryBatchResult = Schema.Struct({
   ),
 });
 export type PersonalMemoryBatchResult = typeof PersonalMemoryBatchResult.Type;
+
+/** Brings a superseded entry back: bots receive it again. */
+export const PersonalMemoryRestoreInput = Schema.Struct({ memoryId: PersonalMemoryId });
+export type PersonalMemoryRestoreInput = typeof PersonalMemoryRestoreInput.Type;
+
+/** merge: several entries folded into one. supersede: older entries replaced. leave: unsure, untouched. */
+export const PersonalMemoryTidyAction = Schema.Literals(["merge", "supersede", "leave"]);
+export type PersonalMemoryTidyAction = typeof PersonalMemoryTidyAction.Type;
+
+export const PersonalMemoryTidyChange = Schema.Struct({
+  action: PersonalMemoryTidyAction,
+  scope: PersonalMemoryScope,
+  scopeId: Schema.NullOr(Schema.String),
+  /** The entries merged or superseded (or, for leave, looked at). */
+  memoryIds: Schema.Array(PersonalMemoryId),
+  /** The entry that now carries the fact. */
+  resultMemoryId: Schema.NullOr(PersonalMemoryId),
+  /** A merge's combined text. */
+  content: Schema.NullOr(Schema.String),
+  reason: Schema.String,
+});
+export type PersonalMemoryTidyChange = typeof PersonalMemoryTidyChange.Type;
+
+/** One nightly (or preview) run of the memory tidy-up and what it changed: its changelog. */
+export const PersonalMemoryTidyRun = Schema.Struct({
+  runId: Schema.String,
+  startedAt: Schema.DateTimeUtcFromString,
+  finishedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  status: Schema.Literals(["running", "done", "failed"]),
+  /** A preview: the changes were listed, not made. */
+  dryRun: Schema.Boolean,
+  model: Schema.NullOr(Schema.String),
+  merged: Schema.Number,
+  superseded: Schema.Number,
+  leftAlone: Schema.Number,
+  error: Schema.NullOr(Schema.String),
+  changes: Schema.Array(PersonalMemoryTidyChange),
+});
+export type PersonalMemoryTidyRun = typeof PersonalMemoryTidyRun.Type;
+
+export const PersonalMemoryTidyLogInput = Schema.Struct({
+  limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 60 }))),
+});
+export type PersonalMemoryTidyLogInput = typeof PersonalMemoryTidyLogInput.Type;
+
+/**
+ * What the nightly tidy-up (03:30) does. preview: lists what it would change
+ * and changes nothing (the default until the owner has reviewed one). on:
+ * makes the changes. off: does not run.
+ */
+export const PersonalMemoryTidyMode = Schema.Literals(["off", "preview", "on"]);
+export type PersonalMemoryTidyMode = typeof PersonalMemoryTidyMode.Type;
+
+export const PersonalMemoryTidyLogResult = Schema.Struct({
+  mode: PersonalMemoryTidyMode,
+  runs: Schema.Array(PersonalMemoryTidyRun),
+});
+export type PersonalMemoryTidyLogResult = typeof PersonalMemoryTidyLogResult.Type;
+
+export const PersonalMemoryTidySetModeInput = Schema.Struct({ mode: PersonalMemoryTidyMode });
+export type PersonalMemoryTidySetModeInput = typeof PersonalMemoryTidySetModeInput.Type;
+
+/** Runs the tidy-up now. dryRun (the default) only lists what it would change. */
+export const PersonalMemoryTidyRunInput = Schema.Struct({
+  dryRun: Schema.optional(Schema.Boolean),
+});
+export type PersonalMemoryTidyRunInput = typeof PersonalMemoryTidyRunInput.Type;
 
 export class PersonalMemoryError extends Schema.TaggedError<PersonalMemoryError>()(
   "PersonalMemoryError",

@@ -410,7 +410,13 @@ import {
   PersonalMemoryError,
   PersonalMemoryListInput,
   PersonalMemoryListResult,
+  PersonalMemoryRestoreInput,
   PersonalMemorySearchInput,
+  PersonalMemoryTidyLogInput,
+  PersonalMemoryTidyLogResult,
+  PersonalMemoryTidyRun,
+  PersonalMemoryTidyRunInput,
+  PersonalMemoryTidySetModeInput,
   PersonalMemoryUpdateInput,
 } from "./personalMemory.ts";
 import {
@@ -698,6 +704,10 @@ export const WS_METHODS = {
   personalMemoryUpdate: "personalMemory.update",
   personalMemoryDelete: "personalMemory.delete",
   personalMemoryDeleteMany: "personalMemory.deleteMany",
+  personalMemoryRestore: "personalMemory.restore",
+  personalMemoryTidyLog: "personalMemory.tidyLog",
+  personalMemoryTidySetMode: "personalMemory.tidySetMode",
+  personalMemoryTidyRun: "personalMemory.tidyRun",
 
   // Personal Web Push methods
   personalPushPublicKey: "personalPush.publicKey",
@@ -1835,6 +1845,30 @@ const WsPersonalMemoryDeleteManyRpc = Rpc.make(WS_METHODS.personalMemoryDeleteMa
   error: PersonalMemoryRpcError,
 });
 
+const WsPersonalMemoryRestoreRpc = Rpc.make(WS_METHODS.personalMemoryRestore, {
+  payload: PersonalMemoryRestoreInput,
+  success: PersonalMemoryEntry,
+  error: PersonalMemoryRpcError,
+});
+
+const WsPersonalMemoryTidyLogRpc = Rpc.make(WS_METHODS.personalMemoryTidyLog, {
+  payload: PersonalMemoryTidyLogInput,
+  success: PersonalMemoryTidyLogResult,
+  error: PersonalMemoryRpcError,
+});
+
+const WsPersonalMemoryTidySetModeRpc = Rpc.make(WS_METHODS.personalMemoryTidySetMode, {
+  payload: PersonalMemoryTidySetModeInput,
+  success: PersonalMemoryTidyLogResult,
+  error: PersonalMemoryRpcError,
+});
+
+const WsPersonalMemoryTidyRunRpc = Rpc.make(WS_METHODS.personalMemoryTidyRun, {
+  payload: PersonalMemoryTidyRunInput,
+  success: PersonalMemoryTidyRun,
+  error: PersonalMemoryRpcError,
+});
+
 const PersonalPushRpcError = Schema.Union([PersonalPushError, EnvironmentAuthorizationError]);
 
 const WsPersonalPushPublicKeyRpc = Rpc.make(WS_METHODS.personalPushPublicKey, {
@@ -2572,6 +2606,10 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalMemoryUpdateRpc,
   WsPersonalMemoryDeleteRpc,
   WsPersonalMemoryDeleteManyRpc,
+  WsPersonalMemoryRestoreRpc,
+  WsPersonalMemoryTidyLogRpc,
+  WsPersonalMemoryTidySetModeRpc,
+  WsPersonalMemoryTidyRunRpc,
   WsPersonalPushPublicKeyRpc,
   WsPersonalPushGetSettingsRpc,
   WsPersonalPushSubscribeRpc,

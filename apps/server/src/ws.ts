@@ -218,6 +218,7 @@ import * as PersonalBrowser from "./personal/browser/PersonalBrowser.ts";
 import * as PersonalDesktop from "./personal/desktop/PersonalDesktop.ts";
 import * as PersonalRoutineService from "./personal/routines/PersonalRoutineService.ts";
 import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.ts";
+import * as PersonalMemoryTidy from "./personal/memory/PersonalMemoryTidyService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
@@ -776,6 +777,7 @@ const makeWsRpcLayer = (
       const personalDesktop = yield* PersonalDesktop.PersonalDesktop;
       const personalRoutines = yield* PersonalRoutineService.PersonalRoutineService;
       const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
+      const personalMemoryTidy = yield* PersonalMemoryTidy.PersonalMemoryTidy;
       const personalPush = yield* PersonalPushService.PersonalPushService;
       const personalProviderUpdates = yield* PersonalProviderUpdates.PersonalProviderUpdates;
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -3750,6 +3752,26 @@ const makeWsRpcLayer = (
             deletePersonalMemories(personalMemory, input.memoryIds),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.personalMemoryRestore]: (input) =>
+          observeRpcEffect(WS_METHODS.personalMemoryRestore, personalMemory.restore(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalMemoryTidyLog]: (input) =>
+          observeRpcEffect(WS_METHODS.personalMemoryTidyLog, personalMemoryTidy.log(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.personalMemoryTidySetMode]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalMemoryTidySetMode,
+            personalMemoryTidy.setMode(input.mode),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.personalMemoryTidyRun]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalMemoryTidyRun,
+            personalMemoryTidy.run({ dryRun: input.dryRun ?? true }),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalPushPublicKey]: (_input) =>
           observeRpcEffect(
             WS_METHODS.personalPushPublicKey,
@@ -4636,6 +4658,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const personalLeadBots = yield* PersonalLeadBotService.PersonalLeadBotService;
     const personalRoutines = yield* PersonalRoutineService.PersonalRoutineService;
     const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
+    const personalMemoryTidy = yield* PersonalMemoryTidy.PersonalMemoryTidy;
     const personalPush = yield* PersonalPushService.PersonalPushService;
     const sql = yield* SqlClient.SqlClient;
     // Server-lifetime too: its per-chat debounce must outlive one connection.
@@ -4721,6 +4744,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               ),
               Layer.provide(
                 Layer.succeed(PersonalMemoryService.PersonalMemoryService, personalMemory),
+              ),
+              Layer.provide(
+                Layer.succeed(PersonalMemoryTidy.PersonalMemoryTidy, personalMemoryTidy),
               ),
               Layer.provide(Layer.succeed(PersonalPushService.PersonalPushService, personalPush)),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),

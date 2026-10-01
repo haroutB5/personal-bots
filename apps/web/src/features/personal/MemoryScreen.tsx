@@ -19,11 +19,14 @@ import {
   visibleSelection,
 } from "./bulkSelection";
 import { commandFailureMessage } from "./commandFeedback";
-import { formatRelativeTime } from "./relativeTime";
+import { MemoryContent } from "./MemoryContent";
+import { memoryMetaLine, memoryTextLookup } from "./memoryPresentation";
+import { MemoryTidySection, ReplacedMemorySection } from "./MemoryTidyPanels";
 import { mergeTaskLists } from "./taskPresentation";
 import {
   personalMemoryDelete,
   usePersonalMemory,
+  usePersonalReplacedMemory,
   usePersonalTasks,
   usePersonalTasksByIds,
 } from "./usePersonalAutomation";
@@ -104,7 +107,7 @@ function MemoryEntryBody({
         <MemoryContent content={entry.content} />
       )}
       <p className="mt-1 text-[12px] text-[var(--personal-text-tertiary)]">
-        {source} · {formatRelativeTime(DateTime.toEpochMillis(entry.updatedAt), now)}
+        {memoryMetaLine(source, DateTime.toEpochMillis(entry.updatedAt), now)}
       </p>
     </div>
   );
@@ -191,6 +194,7 @@ function SelectableMemoryRow({
 export function MemoryScreen(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const memory = usePersonalMemory(environmentId);
+  const replaced = usePersonalReplacedMemory(environmentId);
   const botsQuery = usePersonalBotsList(environmentId);
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
   const deleteEntry = useAtomCommand(personalMemoryDelete);
@@ -222,6 +226,15 @@ export function MemoryScreen(): JSX.Element {
     needle.length === 0
       ? entries
       : entries.filter((entry) => entry.content.toLowerCase().includes(needle));
+  const replacedEntries = replaced.data?.entries ?? null;
+  const visibleReplaced =
+    replacedEntries === null || needle.length === 0
+      ? replacedEntries
+      : replacedEntries.filter((entry) => entry.content.toLowerCase().includes(needle));
+  const memoryTexts = useMemo(
+    () => memoryTextLookup(memory.data?.entries, replaced.data?.entries),
+    [memory.data, replaced.data],
+  );
   const now = useMinuteNow();
 
   const onDelete = async (entry: PersonalMemoryEntry) => {
@@ -332,8 +345,10 @@ export function MemoryScreen(): JSX.Element {
 
       <p className="text-[14px] leading-snug text-[var(--personal-text-secondary)]">
         Bots save something here only when you ask them to remember it, plus short summaries of
-        finished tasks. Up to 8 relevant entries are given to a bot when it starts work. Deleting an
-        entry stops bots receiving it; chat transcripts where it came up still contain the text.
+        finished tasks. Every preference goes to every bot turn; notes and task summaries are picked
+        by relevance (up to 20). When a fact changes, the newer entry replaces the older one, which
+        moves to Replaced and can be restored. Deleting an entry stops bots receiving it; chat
+        transcripts where it came up still contain the text.
       </p>
 
       <label className="mt-4 flex h-11 items-center gap-2.5 rounded-[var(--personal-radius-pill)] bg-[var(--personal-fill-muted)] px-3.5">
@@ -398,6 +413,20 @@ export function MemoryScreen(): JSX.Element {
         </ul>
       )}
 
+      {selecting ? null : (
+        <>
+          <ReplacedMemorySection
+            environmentId={environmentId}
+            entries={visibleReplaced}
+            totalCount={replacedEntries?.length ?? 0}
+            loadError={replaced.error}
+            scopeOf={(entry) => scopeLabel(entry, botById)}
+            now={now}
+          />
+          <MemoryTidySection environmentId={environmentId} texts={memoryTexts} />
+        </>
+      )}
+
       {selecting ? (
         <SelectModeActions>
           <SelectModeDeleteButton
@@ -408,39 +437,5 @@ export function MemoryScreen(): JSX.Element {
         </SelectModeActions>
       ) : null}
     </div>
-  );
-}
-
-/** Past this many characters an entry is folded to five lines. */
-const MEMORY_FOLD_CHARS = 280;
-
-/**
- * One entry's text. A wrap-up summary runs to 30 lines, and unfolded it
- * filled the phone screen on its own, so long entries open folded with a
- * "Show more" to read the rest in place.
- */
-function MemoryContent({ content }: { readonly content: string }): JSX.Element {
-  const [open, setOpen] = useState(false);
-  const long = content.length > MEMORY_FOLD_CHARS;
-  return (
-    <>
-      <p
-        className={`mt-1.5 text-[15px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text)] ${
-          long && !open ? "line-clamp-5" : ""
-        }`}
-      >
-        {content}
-      </p>
-      {long ? (
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen((value) => !value)}
-          className="-my-2 min-h-11 rounded-[var(--personal-radius-button)] text-[14px] font-medium text-[var(--personal-text)] underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
-        >
-          {open ? "Show less" : "Show more"}
-        </button>
-      ) : null}
-    </>
   );
 }
