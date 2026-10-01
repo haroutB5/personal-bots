@@ -71,6 +71,7 @@ import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalLoginRepository from "../secrets/PersonalLoginRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { AGENT_LEASE_TTL_MS, BrowserLease, PERSONAL_BROWSER_PROFILE_ID } from "./BrowserLease.ts";
+import { applyRequestedProfileReset } from "./browserProfileReset.ts";
 import { makeCredentialRedactor } from "./credentialRedactor.ts";
 import { type EgressApproval, type EgressIntent, egressNeedingApproval } from "./egressGuard.ts";
 import {
@@ -490,6 +491,17 @@ export const make = (options: PersonalBrowserOptions) =>
         redactor.redactText(error.message),
         redactor.redact(error.detail),
       );
+    // An owner-approved reset swaps in an empty profile and clears the
+    // protections of the old one. It only runs when its request file exists,
+    // and before the protections below are read.
+    yield* applyRequestedProfileReset({
+      personalDir: NodePath.join(config.baseDir, "personal"),
+      profileDir,
+      profileId: PERSONAL_BROWSER_PROFILE_ID,
+      now: yield* DateTime.now,
+      isProfileLocked: async (dir) => (await detectProfileLock(dir)).locked,
+      saveProtections: protections.save,
+    });
     // Restored while the layer is still being built, so no tool call can reach
     // the shared browser before the protections that gate its persistent,
     // still-authenticated profile are back in place.
@@ -1254,19 +1266,21 @@ export const make = (options: PersonalBrowserOptions) =>
       });
 
     /** Closes one thread's tabs on `origin`, except the one being kept. */
-    const retireTabsOnOrigin = (input: {
-      readonly threadId: ThreadId;
+    /**
+     * Closes every tab, of every thread, that can see the cookies a login on
+     * `origin` is about to create: any of them can hold a script a bot ran
+     * earlier, which would still be running when the session arrives.
+     */
+    const retireTabsInCookieScope = (input: {
       readonly origin: string;
       readonly except: TabEntry;
     }) =>
       Effect.gen(function* () {
+        const inScope = (url: string) =>
+          url !== "about:blank" && loginOriginCovering(url, [input.origin]) !== null;
         // Collected first: closing a tab reaps it out of the same map.
         const doomed = [...runtime.tabs.values()].filter(
-          (tab) =>
-            tab !== input.except &&
-            tab.threadId === input.threadId &&
-            openPage(tab.page) &&
-            originOf(tab.page.url()) === input.origin,
+          (tab) => tab !== input.except && openPage(tab.page) && inScope(tab.page.url()),
         );
         for (const tab of doomed) {
           yield* Effect.promise(() => tab.page.close().catch(() => undefined));
@@ -1901,11 +1915,18 @@ export const make = (options: PersonalBrowserOptions) =>
         // service worker, which outlives the tab, the navigation and Chrome
         // itself and can read a later fill from inside the page. Nothing here
         // can undo that, so the origin is simply never filled again.
-        if (runtime.taintedOrigins.has(input.expectedOrigin)) {
+        // The same holds anywhere that shares this login's cookies: a script on
+        // a sibling subdomain can read a domain cookie the login sets.
+        const taintedInScope = [...runtime.taintedOrigins].find(
+          (origin) => loginOriginCovering(origin, [input.expectedOrigin]) !== null,
+        );
+        if (taintedInScope !== undefined) {
           return yield* Effect.fail(
             new HostOperationError(
               "PreviewAutomationExecutionError",
-              `A page script was run on ${input.expectedOrigin} in this browser, so saved logins are no longer filled there. Page state from that script can outlive the tab.`,
+              taintedInScope === input.expectedOrigin
+                ? `A page script was run on ${input.expectedOrigin} in this browser, so saved logins are no longer filled there. Page state from that script can outlive the tab.`
+                : `A page script was run on ${taintedInScope}, which shares cookies with ${input.expectedOrigin}, so saved logins are no longer filled there. Page state from that script can outlive the tab.`,
             ),
           );
         }
@@ -1936,14 +1957,11 @@ export const make = (options: PersonalBrowserOptions) =>
               ),
           ),
         );
-        // The bot's own tabs on this origin are retired with the fill: they can
-        // hold script the bot installed, and closing them also routes its next
-        // tool call to the tab the server opened rather than the old one.
-        yield* retireTabsOnOrigin({
-          threadId: input.threadId,
-          origin: input.expectedOrigin,
-          except: tab,
-        });
+        // Every tab in this login's cookie scope is retired with the fill, the
+        // bot's own and other threads': they can hold script a bot installed,
+        // and closing the bot's own also routes its next tool call to the tab
+        // the server opened rather than the old one.
+        yield* retireTabsInCookieScope({ origin: input.expectedOrigin, except: tab });
         const fields = yield* attempt({}, () =>
           performFillLogin(
             tab.page,

@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - the profile-reset test seeds a throwaway profile folder on disk.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -336,6 +340,7 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
     ProtectionContext
   >,
   taskHarness: TaskHarness = { waits: [], resumes: [] },
+  baseDir?: string,
 ) =>
   PersonalBrowser.makeLayer({ driver, headless: true, executablePath: undefined }).pipe(
     Layer.provideMerge(BrowserLease.layer),
@@ -346,7 +351,9 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
     Layer.provideMerge(taskServiceLayer(taskHarness)),
     Layer.provideMerge(PreviewManager.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-personal-browser-" })),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), baseDir ?? { prefix: "t3-personal-browser-" }),
+    ),
     Layer.provideMerge(NodeServices.layer),
   );
 
@@ -2490,6 +2497,111 @@ describe("PersonalBrowser", () => {
       }).pipe(
         Effect.provide(
           baseLayer(fake.driver, PersonalBrowserLeaseRepository.layer, protections.layer),
+        ),
+      );
+    });
+
+    // Security review of 1.60.16: a script that ran anywhere in the login's
+    // cookie scope can still be running, or can have left a service worker,
+    // when the login's cookies arrive.
+    it.effect("refuses a fill when a script ran elsewhere in the login's cookie scope", () => {
+      const fake = makeFakeDriver();
+      scriptableBrowser(fake);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        expect(yield* evaluateOn(browser, "https://qa.example.com/")).toBe(
+          "model-script:qa.example.com",
+        );
+        yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://login.example.com/sign-in" }),
+        );
+        const refused = yield* browser
+          .fillLogin({
+            threadId,
+            label: "Fixture",
+            expectedOrigin: "https://login.example.com",
+            username: "person@example.com",
+            password: "password-value",
+          })
+          .pipe(Effect.asVoid, Effect.flip);
+        expect(refused.message).toContain("https://qa.example.com");
+        expect(refused.message).toContain("saved logins are no longer filled");
+
+        // A script on an unrelated site does not block it.
+        expect(yield* evaluateOn(browser, "https://unrelated.example/")).toBe(
+          "model-script:unrelated.example",
+        );
+        yield* signIn(browser, "https://bank.test");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("retires every thread's tabs in the login's cookie scope at the fill", () => {
+      const fake = makeFakeDriver();
+      scriptableBrowser(fake);
+      const otherThread = ThreadId.make("thread-other");
+      const otherRequest = (
+        operation: PreviewAutomationRequest["operation"],
+        input: unknown = {},
+      ) => ({ ...request(operation, input), threadId: otherThread }) as PreviewAutomationRequest;
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(
+          otherRequest("navigate", { url: "https://www.example.com/" }),
+        );
+        const sibling = fake.state.pages.find(
+          (page) => !page.closed && page.currentUrl === "https://www.example.com/",
+        );
+        yield* browser.handleAutomationRequest(
+          otherRequest("open", { url: "https://unrelated.example/", reuseExistingTab: false }),
+        );
+        const unrelated = fake.state.pages.find(
+          (page) => !page.closed && page.currentUrl === "https://unrelated.example/",
+        );
+        expect(sibling).toBeDefined();
+        expect(unrelated).toBeDefined();
+
+        yield* signIn(browser, "https://app.example.com");
+
+        expect(sibling!.closed).toBe(true);
+        expect(unrelated!.closed).toBe(false);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("starts clean after an explicitly requested profile reset", () => {
+      const protections = memoryProtectionRepository({
+        profileId: "default",
+        loginUsed: true,
+        loginOrigins: null,
+        taintedOrigins: ["https://tainted.example"],
+      });
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-browser-reset-"));
+      const profileDir = NodePath.join(baseDir, "personal", "browser-profiles", "default");
+      NodeFS.mkdirSync(profileDir, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(profileDir, "Cookies"), "old session");
+      NodeFS.writeFileSync(
+        NodePath.join(baseDir, "personal", "browser-profile-reset.request"),
+        "{}\n",
+      );
+      const fake = makeFakeDriver();
+      scriptableBrowser(fake);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        expect(yield* evaluateOn(browser, "http://localhost:3000/")).toBe("model-script:localhost");
+        expect(NodeFS.existsSync(NodePath.join(profileDir, "Cookies"))).toBe(false);
+        expect(protections.saved.at(-1)).toMatchObject({
+          loginUsed: false,
+          loginOrigins: [],
+          taintedOrigins: ["http://localhost:3000"],
+        });
+      }).pipe(
+        Effect.provide(
+          baseLayer(
+            fake.driver,
+            PersonalBrowserLeaseRepository.layer,
+            protections.layer,
+            undefined,
+            baseDir,
+          ),
         ),
       );
     });
