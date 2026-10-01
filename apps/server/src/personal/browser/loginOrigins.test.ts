@@ -1,4 +1,4 @@
-import * as NodeVm from "node:vm";
+import * as NodeVM from "node:vm";
 
 import { describe, expect, it } from "@effect/vitest";
 
@@ -12,7 +12,7 @@ import {
 
 /** Evaluates like Playwright does, in a document at `url`. */
 const runAt = (url: string, expression: string, globals: Record<string, unknown> = {}) =>
-  NodeVm.runInNewContext(expression, Object.assign(globals, { location: new URL(url) }));
+  NodeVM.runInNewContext(expression, Object.assign(globals, { location: new URL(url) }));
 
 describe("loginOrigins", () => {
   it("scopes a login to its registrable site, or its exact host when there is none", () => {
@@ -78,12 +78,12 @@ describe("loginOrigins", () => {
     });
 
     it("does not trust prototype methods the page can replace", () => {
-      const context = NodeVm.createContext({ location: new URL("https://app.example.com/") });
-      NodeVm.runInContext(
+      const context = NodeVM.createContext({ location: new URL("https://app.example.com/") });
+      NodeVM.runInContext(
         "String.prototype.endsWith = () => false; String.prototype.charCodeAt = () => 0;",
         context,
       );
-      expect(() => NodeVm.runInContext(guardedExpression("1", scopes), context)).toThrow(
+      expect(() => NodeVM.runInContext(guardedExpression("1", scopes), context)).toThrow(
         LOGIN_SCRIPT_REFUSED,
       );
     });

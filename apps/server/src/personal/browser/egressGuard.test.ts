@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  connectionEgressRefusal,
-  egressNeedingApproval,
-  type Exposure,
-} from "./egressGuard.ts";
+import { connectionEgressRefusal, egressNeedingApproval, type Exposure } from "./egressGuard.ts";
 
 const BANK = "https://bank.example";
 const MAIL = "https://mail.example";

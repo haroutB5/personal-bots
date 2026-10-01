@@ -1,4 +1,4 @@
-import * as NodeVm from "node:vm";
+import * as NodeVM from "node:vm";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -2286,10 +2286,10 @@ describe("PersonalBrowser", () => {
         before?.();
         const document: Record<string, unknown> = { location: new URL(page.currentUrl) };
         try {
-          return NodeVm.runInNewContext(expression, document);
+          return NodeVM.runInNewContext(expression, document);
         } catch (thrown) {
           // Playwright reports a thrown non-Error value inside its own Error.
-          throw new Error(`page.evaluate: ${String(thrown)}`);
+          throw new Error(`page.evaluate: ${String(thrown)}`, { cause: thrown });
         } finally {
           if (document.ranModelScript === true) record.ran = true;
         }

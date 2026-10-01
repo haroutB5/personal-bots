@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
@@ -11,6 +12,8 @@ interface Row {
   readonly taintedOrigins: string;
   readonly loginOrigins: string | null;
 }
+
+const decodeOrigins = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 const rows = (sql: SqlClient.SqlClient) =>
   sql<Row>`
@@ -49,7 +52,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
           const [used, unused] = yield* rows(sql);
           assert.strictEqual(used?.loginUsed, 1);
           assert.strictEqual(used?.taintedOrigins, '["https://tainted.example"]');
-          assert.deepEqual(JSON.parse(used?.loginOrigins ?? "null").toSorted(), [
+          assert.deepEqual(decodeOrigins(used?.loginOrigins).toSorted(), [
             "https://bank.example",
             "https://shop.example",
             "https://unsaved.example",
