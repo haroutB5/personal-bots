@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -182,7 +183,7 @@ it.effect(
           actorBotId: BOT_A,
         }),
       );
-      expect(hidesShared.message).toContain("cannot replace a shared one");
+      expect(hidesShared.message).toContain("reaches fewer bots");
 
       // Nothing was saved and nothing was archived.
       expect((yield* memory.list({})).map((entry) => entry.content).toSorted()).toEqual([
@@ -206,10 +207,10 @@ it.effect("each entry in a turn's memory block shows its date", () =>
       content: "Releases are confirmed five minutes after the restart.",
       source: "user",
     });
-    const day = localDay(DateTime.toEpochMillis(entry.updatedAt));
+    const day = localDay(DateTime.toEpochMillis(entry.createdAt));
     expect(day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(yield* block(THREAD_A)).toContain(
-      `- [preference] [${day}] Releases are confirmed five minutes after the restart.`,
+      `- [preference] [${day} · ${entry.memoryId.slice(0, 8)}] Releases are confirmed five minutes after the restart.`,
     );
   }).pipe(Effect.provide(TestLayer)),
 );
@@ -245,5 +246,135 @@ it.effect("similar lists close entries the bot can see, never another bot's", ()
       botId: BOT_A,
     });
     expect(matches.map((match) => match.entry.memoryId)).toEqual([shared.memoryId]);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+const savePreference = (
+  content: string,
+  scope: "shared" | "team" | "bot" = "shared",
+  scopeId: string | null = null,
+) =>
+  Effect.flatMap(PersonalMemoryService, (memory) =>
+    memory.save({ scope, scopeId, kind: "preference", content, source: "user" }),
+  );
+
+it.effect("team entries reach only that team's bots", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE personal_bots SET team = 'dev' WHERE bot_id = ${BOT_A}`;
+    yield* savePreference("Dev rule: QA tests every fix before it ships.", "team", "Dev");
+    yield* savePreference("Harout drinks green tea.");
+    expect(yield* block(THREAD_A)).toContain("QA tests every fix");
+    expect(yield* block(THREAD_B)).not.toContain("QA tests every fix");
+    expect(yield* block(THREAD_B)).toContain("green tea");
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("a bot forgets an entry by its short id: archived, restorable, not another bot's", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    const shared = yield* savePreference("Quote coin prices in USD.");
+    const privateB = yield* savePreference("Bot B private rule.", "bot", BOT_B);
+    const ref = shared.memoryId.slice(0, 8);
+    expect(yield* block(THREAD_A)).toContain(`· ${ref}] Quote coin prices in USD.`);
+
+    const resolved = yield* memory.resolveRef({ ref, botId: BOT_A });
+    expect(resolved).toBe(shared.memoryId);
+    const forgotten = yield* memory.forget({ memoryId: resolved, actorBotId: BOT_A });
+    expect(forgotten.supersededReason).toBe("Forgotten at the user's request.");
+    expect(yield* block(THREAD_B)).not.toContain("coin prices");
+
+    const notVisible = yield* Effect.flip(
+      memory.resolveRef({ ref: privateB.memoryId.slice(0, 8), botId: BOT_A }),
+    );
+    expect(notVisible.message).toContain("was not found");
+
+    yield* memory.restore({ memoryId: shared.memoryId });
+    expect(yield* block(THREAD_B)).toContain("coin prices");
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "the full preference list goes once per session, again on change, compaction or a new session",
+  () =>
+    Effect.gen(function* () {
+      yield* linkThreads;
+      const memory = yield* PersonalMemoryService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* savePreference("Reply in short plain sentences.");
+      const turn = (key: string, fresh = false) =>
+        memory
+          .contextForThread({
+            threadId: THREAD_A,
+            query: "hello",
+            record: false,
+            session: { key, fresh },
+          })
+          .pipe(Effect.map((context) => context.block ?? ""));
+
+      expect(yield* turn("s1")).toContain("Reply in short plain sentences.");
+      const repeat = yield* turn("s1");
+      expect(repeat).not.toContain("Reply in short plain sentences.");
+      expect(repeat).toContain("The 1 saved preferences listed earlier in this chat still apply");
+
+      // A new preference: the full list again.
+      yield* savePreference("Lead with the outcome.");
+      const changed = yield* turn("s1");
+      expect(changed).toContain("Reply in short plain sentences.");
+      expect(changed).toContain("Lead with the outcome.");
+      expect(yield* turn("s1")).not.toContain("Lead with the outcome.");
+
+      // The provider compacted the chat: the list may be gone from its context.
+      const later = DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 1 }));
+      yield* sql`
+      INSERT INTO projection_thread_activities
+        (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
+      VALUES ('compact-1', ${THREAD_A}, NULL, 'info', 'context-compaction', 'Context compacted', '{}', ${later})
+    `;
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* turn("s1")).toContain("Lead with the outcome.");
+
+      // Another session, or a fresh one, starts with the full list.
+      expect(yield* turn("s1")).not.toContain("Lead with the outcome.");
+      expect(yield* turn("s2")).toContain("Lead with the outcome.");
+      expect(yield* turn("s2", true)).toContain("Lead with the outcome.");
+    }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("when the cap bites, the oldest go, none jumps the queue, and the bot is told", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const sql = yield* SqlClient.SqlClient;
+    const big = "x".repeat(1_900);
+    // Oldest: a short rule; then enough long ones to fill the 15k-char cap.
+    const short = yield* savePreference("Short old rule.");
+    yield* sql`UPDATE personal_memory SET created_at = '1960-01-01T00:00:00.000Z' WHERE memory_id = ${short.memoryId}`;
+    for (let index = 0; index < 9; index++) {
+      yield* savePreference(`Long rule ${index}: ${big}`);
+    }
+    const text = yield* block(THREAD_A);
+    expect(text).not.toContain("Short old rule.");
+    expect(text).toMatch(/- \d+ older preferences are not shown here/);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("owner messages leave out task briefs, relays and notices", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    const sql = yield* SqlClient.SqlClient;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const add = (messageId: string, text: string, at: string) => sql`
+      INSERT INTO projection_thread_messages
+        (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
+      VALUES (${messageId}, ${THREAD_A}, NULL, 'user', ${text}, 0, ${at}, ${at})
+    `;
+    yield* add("personal-task-1", "Remember that deploys need no OK.", "1960-01-01T00:00:00.000Z");
+    yield* add("1b9e0c1a-real", "Remember I take my coffee black.", now);
+    const owner = yield* memory.ownerMessages(THREAD_A);
+    expect(owner.startedByOwner).toBe(false);
+    expect(owner.texts).toEqual(["Remember I take my coffee black."]);
   }).pipe(Effect.provide(TestLayer)),
 );

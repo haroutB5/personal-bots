@@ -11,7 +11,7 @@ import { makeSensitiveExposureStore, rootExposureKey } from "../browser/sensitiv
 import {
   buildMemoryMatchQuery,
   looksLikeSecret,
-  PERSONAL_MEMORY_CONTEXT_RELEVANT_LIMIT,
+  PERSONAL_MEMORY_CONTEXT_NOTE_LIMIT,
   PERSONAL_MEMORY_PREFERENCE_MAX_CHARS,
   PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES,
   PersonalMemoryService,
@@ -204,7 +204,7 @@ it.effect("task summaries are labelled, saved once per task and never resurrecte
       record: false,
     });
     expect(context.block).toMatch(
-      /- \[task summary\] \[\d{4}-\d{2}-\d{2}\] Task "Compare broadband deals"/,
+      /- \[task summary\] \[\d{4}-\d{2}-\d{2} · [0-9a-f-]{8}\] Task "Compare broadband deals"/,
     );
 
     yield* memory.remove({ memoryId: summaries[0]!.memoryId });
@@ -282,19 +282,19 @@ it.effect("a task turn gets no task summaries; a chat turn still does", () =>
     expect(taskTurn.memoryIds.length).toBe(2);
     expect(taskTurn.block).toContain("Known facts (from memory)");
     expect(taskTurn.block).toMatch(
-      /- \[preference\] \[\d{4}-\d{2}-\d{2}\] The user wants benchmark results/,
+      /- \[preference\] \[\d{4}-\d{2}-\d{2} · [0-9a-f-]{8}\] The user wants benchmark results/,
     );
     expect(taskTurn.block).toMatch(
-      /- \[note\] \[\d{4}-\d{2}-\d{2}\] Benchmark machines live in the lab/,
+      /- \[note\] \[\d{4}-\d{2}-\d{2} · [0-9a-f-]{8}\] Benchmark machines live in the lab/,
     );
     expect(taskTurn.block).not.toContain("[task summary]");
 
     const chatTurn = yield* memory.contextForThread({ threadId: THREAD_A, query, record: false });
-    // The preference always, then every summary and the note: 10 relevant
-    // entries fit under the relevance limit of 20.
-    expect(chatTurn.memoryIds.length).toBe(11);
+    // The preference always, the note, and task summaries up to their own
+    // quota of 6 (of the 9 that match).
+    expect(chatTurn.memoryIds.length).toBe(8);
     expect(chatTurn.block).toMatch(
-      /- \[task summary\] \[\d{4}-\d{2}-\d{2}\] Task "Benchmark batch/,
+      /- \[task summary\] \[\d{4}-\d{2}-\d{2} · [0-9a-f-]{8}\] Task "Benchmark batch/,
     );
   }).pipe(Effect.provide(TestLayer)),
 );
@@ -438,12 +438,13 @@ describe("standing preferences", () => {
             record: false,
             excludeTaskSummaries,
           });
-          expect(context.memoryIds).toEqual([own.memoryId, old.memoryId]);
+          // Oldest first by when saved: the later-saved one wins a conflict.
+          expect(context.memoryIds).toEqual([old.memoryId, own.memoryId]);
           expect(context.block).toMatch(
-            /- \[preference\] \[\d{4}-\d{2}-\d{2}\] Always deploy the latest builds/,
+            /- \[preference\] \[\d{4}-\d{2}-\d{2} · [0-9a-f-]{8}\] Always deploy the latest builds/,
           );
           expect(context.block).toMatch(
-            /- \[preference\] \[\d{4}-\d{2}-\d{2}\] Reply in short plain sentences/,
+            /- \[preference\] \[\d{4}-\d{2}-\d{2} · [0-9a-f-]{8}\] Reply in short plain sentences/,
           );
           expect(context.block).not.toContain("Bot B");
           expect(context.block).not.toContain("printer");
@@ -539,7 +540,7 @@ describe("standing preferences", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
-  it.effect("notes and task summaries stay relevance-picked, up to 20", () =>
+  it.effect("notes are relevance-picked with their own quota, weak matches dropped", () =>
     Effect.gen(function* () {
       yield* linkThread;
       const memory = yield* PersonalMemoryService;
@@ -564,8 +565,8 @@ describe("standing preferences", () => {
         query: "How is the tomato bed?",
         record: false,
       });
-      expect(PERSONAL_MEMORY_CONTEXT_RELEVANT_LIMIT).toBe(20);
-      expect(context.memoryIds.length).toBe(20);
+      expect(PERSONAL_MEMORY_CONTEXT_NOTE_LIMIT).toBe(6);
+      expect(context.memoryIds.length).toBe(PERSONAL_MEMORY_CONTEXT_NOTE_LIMIT);
       expect(context.block).not.toContain("printer");
     }).pipe(Effect.provide(TestLayer)),
   );
