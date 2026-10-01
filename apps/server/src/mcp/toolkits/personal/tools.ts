@@ -233,28 +233,49 @@ export type SearchMemoryResult = typeof SearchMemoryResult.Type;
 
 export const SaveMemoryInput = Schema.Struct({
   content: TrimmedNonEmptyString.annotate({
-    description: "The fact or preference to remember, as one short self-contained sentence.",
+    description:
+      "One fact or rule per entry, as one self-contained sentence, dated when it can change (e.g. '(2026-10-02) Backend runs Opus 5.5.'), under about 300 characters.",
   }),
   userRequest: TrimmedNonEmptyString.annotate({
     description:
-      "The user's own words, quoted verbatim: their ask to remember this (e.g. 'remember that I take my coffee black'), or, when your instructions say you have standing permission to save, the message the fact came from.",
+      "The user's own words, copied verbatim from their message in this chat: their ask to remember this (e.g. 'remember that I take my coffee black'), or, when your instructions say you have standing permission to save, the message the fact came from. The server checks these words against the user's real messages.",
   }),
-  kind: Schema.optional(
-    Schema.Literals(["note", "preference"]).annotate({ description: "Defaults to note." }),
-  ),
+  kind: Schema.Literals(["note", "preference"]).annotate({
+    description:
+      "Required. preference: a standing instruction or rule the user wants bots to follow (always / never / when X do Y, how to report, who does what). Every bot it reaches gets every preference in every turn. note: a fact about the user, their things, a decision or an event; notes are looked up when relevant.",
+  }),
   scope: Schema.optional(
-    Schema.Literals(["shared", "bot"]).annotate({
-      description: "shared (default): every bot sees it. bot: only you.",
+    Schema.Literals(["team", "shared", "bot"]).annotate({
+      description:
+        "team (default): the bots on your team. shared: every bot; use it for facts about the user themselves (their home, health, tastes) and rules they gave for all bots. bot: only you.",
     }),
   ),
   replaces: Schema.optional(
     Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(10)).annotate({
       description:
-        "memoryIds of saved entries this one replaces, because the fact or rule changed or this restates it. They are archived (kept for the user to restore) and bots stop receiving them. Take the ids from this tool's `similar` list or from search_memory.",
+        "Ids of saved entries this one replaces because the fact or rule changed (the id shown in your memory block, or from search_memory or this tool's similar list). They are archived (the user can restore them) and bots stop receiving them. Use this instead of saving an 'Update:' entry beside the old one.",
     }),
   ),
 });
 export type SaveMemoryInput = typeof SaveMemoryInput.Type;
+
+export const ForgetMemoryInput = Schema.Struct({
+  memoryId: TrimmedNonEmptyString.annotate({
+    description:
+      "The id of the entry to forget, as shown in your memory block or by search_memory.",
+  }),
+  userRequest: TrimmedNonEmptyString.annotate({
+    description:
+      "The user's own words, copied verbatim from their message in this chat, asking you to forget or drop it.",
+  }),
+});
+export type ForgetMemoryInput = typeof ForgetMemoryInput.Type;
+
+export const ForgetMemoryResult = Schema.Struct({
+  memoryId: Schema.String,
+  content: Schema.String,
+  summary: Schema.String,
+});
 
 export const SaveMemoryResult = Schema.Struct({
   memoryId: Schema.String,
@@ -362,9 +383,23 @@ const SearchMemoryTool = Tool.make("search_memory", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const ForgetMemoryTool = Tool.make("forget_memory", {
+  description:
+    "Forget a saved memory entry when the user asks you to (it is wrong, out of date, or they no longer want it kept). Pass the user's words verbatim in userRequest; they must come from the user's own message in this chat. Bots stop receiving the entry at once; it moves to Archived on the Memory screen, where the user can restore or delete it. To change an entry rather than drop it, use save_memory with replaces.",
+  parameters: ForgetMemoryInput,
+  success: ForgetMemoryResult,
+  failure: PersonalToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Forget memory")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 const SaveMemoryTool = Tool.make("save_memory", {
   description:
-    "Save a fact or preference to long-term memory when the user has explicitly asked you to remember something. Pass their words verbatim in userRequest: the server refuses the save unless those words ask for it, with a phrase such as 'remember', 'don't forget', 'keep in mind', 'save this', 'note that down' or 'for future reference'. The user can give a bot standing permission to save without being asked; your instructions say so when you have it, and only then is a save without those words accepted, except in a chat that has had a site the user marked sensitive open, where it is refused for the rest of the chat. Passwords, tokens, keys and other secrets are rejected. A shared entry is seen by every bot; use scope 'bot' for one only you should see. Keep memory current: when a fact or rule changed, pass the old entry's memoryId in replaces so the new one supersedes it instead of sitting beside it. The result lists similar current entries; if one says the same thing or an older version of it, call save_memory again with the same content and replaces set to that memoryId.",
+    "Save a fact or rule to long-term memory when the user has asked you to remember something. Pass their words verbatim in userRequest: the server checks they are in the user's own message in this chat and refuses the save unless those words ask for it, with a phrase such as 'remember', 'don't forget', 'keep in mind', 'save this', 'note that down' or 'for future reference'. The user can give a bot standing permission to save without being asked; your instructions say so when you have it, and only then is a save without those words accepted (still from the user's own words, in a chat the user started, and never in a chat that has had a site the user marked sensitive open). Choose kind carefully: rules are preferences, facts are notes. Write one fact per entry, dated, under about 300 characters. Keep memory current: when a fact or rule changed, pass the old entry's id in replaces so the new one supersedes it instead of sitting beside it; the result lists similar current entries, and if one is an older version, call save_memory again with the same content and replaces set to its id. Passwords, tokens, keys and other secrets are rejected. A shared or team preference is shown to the user as a line in this chat.",
   parameters: SaveMemoryInput,
   success: SaveMemoryResult,
   failure: PersonalToolFailure,
@@ -507,4 +542,5 @@ export const PersonalToolkit = Toolkit.make(
   DeleteRoutineTool,
   SearchMemoryTool,
   SaveMemoryTool,
+  ForgetMemoryTool,
 );

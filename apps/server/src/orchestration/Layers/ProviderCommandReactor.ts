@@ -279,18 +279,32 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     query: string,
     messageId: MessageId | undefined,
+    freshSession: boolean,
   ) =>
     Effect.gen(function* () {
       if (Option.isNone(personalMemory)) return undefined;
       const thread = yield* projectionSnapshotQuery
         .getThreadShellById(threadId)
         .pipe(Effect.orElseSucceed(() => Option.none()));
+      // The session this turn runs in: the full preference list goes to it
+      // once, then only when it changes (see contextForThread).
+      const session = yield* providerService.listSessions().pipe(
+        Effect.map((sessions) => sessions.find((candidate) => candidate.threadId === threadId)),
+        Effect.orElseSucceed(() => undefined),
+      );
       const context = yield* personalMemory.value.contextForThread({
         threadId,
         query,
         projectId: Option.isSome(thread) ? thread.value.projectId : undefined,
         record: true,
         excludeTaskSummaries: messageId !== undefined && isPersonalTaskMessageId(messageId),
+        session:
+          session === undefined
+            ? undefined
+            : {
+                key: `${session.providerInstanceId ?? session.provider}:${session.createdAt}`,
+                fresh: freshSession,
+              },
       });
       const block = context.block?.trim() ?? "";
       return block.length > 0 ? block : undefined;
@@ -1146,7 +1160,12 @@ const make = Effect.gen(function* () {
     const normalizedAttachments = input.attachments ?? [];
     const systemInstructions = yield* personalBotInstructions(input.threadId);
     const memoryContext = normalizedInput
-      ? yield* personalMemoryForTurn(input.threadId, input.messageText, input.messageId)
+      ? yield* personalMemoryForTurn(
+          input.threadId,
+          input.messageText,
+          input.messageId,
+          input.freshSession === true,
+        )
       : undefined;
     // A fresh session knows nothing of the chat: its earlier messages go in
     // front of the memory, in whatever room the turn's input has left.

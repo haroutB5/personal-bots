@@ -19,6 +19,7 @@ import {
   PersonalMemoryTidyMode,
   PersonalMemoryTidyRun,
   ProviderInstanceId,
+  type PersonalMemoryTidyChangeStatus,
   type PersonalMemoryTidyChange,
   type PersonalMemoryTidyLogResult,
 } from "@t3tools/contracts";
@@ -31,7 +32,6 @@ import {
   buildTidyPrompt,
   decisionsFromJudge,
   exactDuplicateDecisions,
-  groupByScope,
   localDay,
   localMinuteOfDay,
   TIDY_MAX_ENTRIES_PER_CALL,
@@ -61,6 +61,11 @@ export class PersonalMemoryTidy extends Context.Service<
     readonly run: (input: {
       readonly dryRun: boolean;
     }) => Effect.Effect<PersonalMemoryTidyRun, PersonalMemoryError>;
+    /** The owner's answer to a pending change: approve makes it, reject drops it. */
+    readonly decide: (input: {
+      readonly changeId: number;
+      readonly approve: boolean;
+    }) => Effect.Effect<PersonalMemoryTidyLogResult, PersonalMemoryError>;
     readonly log: (input: {
       readonly limit?: number | undefined;
     }) => Effect.Effect<PersonalMemoryTidyLogResult, PersonalMemoryError>;
@@ -140,11 +145,12 @@ export function nightlyRunDue(nowMs: number, lastNightlyStartMs: number | null):
 
 const EntryRow = Schema.Struct({
   memoryId: Schema.String,
-  scope: Schema.Literals(["shared", "bot", "project"]),
+  scope: Schema.Literals(["shared", "team", "bot", "project"]),
   scopeId: Schema.NullOr(Schema.String),
   kind: Schema.Literals(["note", "preference"]),
   content: Schema.String,
   source: Schema.String,
+  createdAt: Schema.String,
   updatedAt: Schema.String,
   version: Schema.Number,
 });
@@ -163,12 +169,15 @@ interface RunRow {
   readonly model: string | null;
   readonly merged: number;
   readonly superseded: number;
+  readonly pending: number;
   readonly leftAlone: number;
   readonly error: string | null;
 }
 
 interface ChangeRow {
+  readonly changeId: number;
   readonly runId: string;
+  readonly status: string;
   readonly action: string;
   readonly scope: string;
   readonly scopeId: string | null;
@@ -217,12 +226,14 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  // Shared entries only: team and bot entries are left to the bots that own them.
   const readEntries = sql`
     SELECT memory_id AS "memoryId", scope, scope_id AS "scopeId", kind, content, source,
-      updated_at AS "updatedAt", version
+      created_at AS "createdAt", updated_at AS "updatedAt", version
     FROM personal_memory
-    WHERE deleted_at IS NULL AND superseded_at IS NULL AND kind IN ('note', 'preference')
-    ORDER BY updated_at DESC, seq DESC
+    WHERE deleted_at IS NULL AND superseded_at IS NULL AND scope = 'shared'
+      AND kind IN ('note', 'preference')
+    ORDER BY created_at DESC, seq DESC
   `.pipe(
     Effect.flatMap(decodeEntryRows),
     Effect.map((rows) =>
@@ -233,21 +244,15 @@ export const make = Effect.gen(function* () {
         kind: row.kind,
         content: row.content,
         source: row.source,
+        createdAtMs: Date.parse(row.createdAt),
         updatedAtMs: Date.parse(row.updatedAt),
         version: row.version,
       })),
     ),
   );
 
-  const scopeLabel = (entry: TidyEntry) =>
-    entry.scope === "shared"
-      ? "shared (every bot sees them)"
-      : entry.scope === "bot"
-        ? "private to one bot"
-        : "one project's";
-
-  /** The proposed changes for one scope: exact duplicates first, then the model's. */
-  const planScope = (entries: ReadonlyArray<TidyEntry>, nowMs: number, appVersion: string | null) =>
+  /** The proposed changes: exact duplicates first, then the model's. */
+  const plan = (entries: ReadonlyArray<TidyEntry>, nowMs: number, appVersion: string | null) =>
     Effect.gen(function* () {
       const exact = exactDuplicateDecisions(entries);
       const folded = new Set(exact.flatMap((decision) => decision.memoryIds));
@@ -255,10 +260,8 @@ export const make = Effect.gen(function* () {
       let judged: ReadonlyArray<TidyDecision> = [];
       let error: string | null = null;
       if (rest.length >= 2) {
-        const shown = rest.slice(0, TIDY_MAX_ENTRIES_PER_CALL);
         const { prompt, refs } = buildTidyPrompt({
-          scopeLabel: scopeLabel(shown[0]!),
-          entries: shown,
+          entries: rest.slice(0, TIDY_MAX_ENTRIES_PER_CALL),
           todayIso: localDay(nowMs),
           appVersion,
         });
@@ -273,48 +276,71 @@ export const make = Effect.gen(function* () {
     });
 
   /**
-   * Makes one change, only if every entry is still exactly as planned: an
-   * edit, restore or delete during the run wins. False when skipped.
+   * Makes one change, only if every entry it touches is still current (and,
+   * for a run, exactly as planned): an edit, restore or delete in between
+   * wins. Null when skipped.
    */
   const applyDecision = (
     decision: TidyDecision,
-    entries: ReadonlyMap<string, TidyEntry>,
-    runId: string,
+    versions: ReadonlyMap<string, number> | null,
+    source: string,
     nowIso: string,
   ) =>
     Effect.gen(function* () {
+      if (decision.action === "leave") return null;
       const ids = decision.memoryIds;
-      const unchanged = yield* sql<{ readonly count: number }>`
-        SELECT COUNT(*) AS "count" FROM personal_memory
-        WHERE deleted_at IS NULL AND superseded_at IS NULL AND (${sql.or(
-          ids.map((id) => sql`(memory_id = ${id} AND version = ${entries.get(id)!.version})`),
-        )})
+      const touched =
+        decision.action === "supersede" && decision.by !== null ? [...ids, decision.by] : ids;
+      const current = yield* sql<{
+        readonly memoryId: string;
+        readonly version: number;
+        readonly kind: string;
+        readonly scope: string;
+        readonly scopeId: string | null;
+        readonly createdAt: string;
+      }>`
+        SELECT memory_id AS "memoryId", version, kind, scope, scope_id AS "scopeId",
+          created_at AS "createdAt"
+        FROM personal_memory
+        WHERE deleted_at IS NULL AND superseded_at IS NULL
+          AND ${sql.in("memory_id", touched)}
       `;
-      if ((unchanged[0]?.count ?? 0) !== ids.length) return null;
+      const byId = new Map(current.map((row) => [row.memoryId, row]));
+      const intact = touched.every((id) => {
+        const row = byId.get(id);
+        return (
+          row !== undefined &&
+          (versions === null || versions.get(id) === undefined || versions.get(id) === row.version)
+        );
+      });
+      if (!intact) return null;
       let resultId: string | null = decision.action === "supersede" ? decision.by : null;
       if (decision.action === "merge") {
-        const members = ids.map((id) => entries.get(id)!);
+        const members = ids.map((id) => byId.get(id)!);
         const first = members[0]!;
         resultId = NodeCrypto.randomUUID();
-        // Dated by its newest member, so it keeps its place in "newest first".
-        const newest = DateTime.makeUnsafe(Math.max(...members.map((entry) => entry.updatedAtMs)));
+        // Dated by its newest member, so it keeps its place among the others.
+        const newest = members
+          .map((row) => row.createdAt)
+          .toSorted()
+          .at(-1)!;
         yield* sql`
           INSERT INTO personal_memory (
             memory_id, scope, scope_id, kind, content, source, sensitivity,
             created_at, updated_at, deleted_at, version
           )
           VALUES (
-            ${resultId}, ${first.scope}, ${first.scopeId},
-            ${members.some((entry) => entry.kind === "preference") ? "preference" : "note"},
-            ${decision.content.trim()}, ${`tidy:${runId}`}, 'normal', ${nowIso},
-            ${DateTime.formatIso(newest)}, NULL, 1
+            ${resultId}, ${first.scope}, ${first.scopeId}, ${first.kind},
+            ${decision.content.trim()}, ${source}, 'normal', ${newest}, ${nowIso}, NULL, 1
           )
         `;
       }
       const reason =
         decision.action === "merge"
-          ? `Merged by the nightly tidy-up: ${decision.reason}`
-          : `Tidy-up: ${decision.reason}`;
+          ? `Merged by the tidy-up: ${decision.reason}`
+          : decision.by === null
+            ? `Retired by the tidy-up: ${decision.reason}`
+            : `Archived by the tidy-up for a newer entry: ${decision.reason}`;
       for (const id of ids) {
         yield* sql`
           UPDATE personal_memory
@@ -328,26 +354,38 @@ export const make = Effect.gen(function* () {
 
   const recordChange = (
     runId: string,
+    status: PersonalMemoryTidyChangeStatus,
     decision: TidyDecision,
-    entry: TidyEntry,
     resultId: string | null,
     nowIso: string,
   ) => sql`
     INSERT INTO personal_memory_tidy_changes (
-      run_id, action, scope, scope_id, memory_ids_json, result_memory_id, content, reason, created_at
+      run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id, content,
+      reason, created_at
     )
     VALUES (
-      ${runId}, ${decision.action}, ${entry.scope}, ${entry.scopeId},
+      ${runId}, ${status}, ${decision.action}, 'shared', NULL,
       ${encodeIds(decision.memoryIds)}, ${resultId},
       ${decision.action === "merge" ? decision.content.trim() : null}, ${decision.reason}, ${nowIso}
     )
   `;
 
+  /**
+   * A proposal already waiting for the owner, or one they turned down: the
+   * same change is not asked for again every night.
+   */
+  const alreadyAsked = (decision: TidyDecision) =>
+    sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS "count" FROM personal_memory_tidy_changes
+      WHERE status IN ('pending', 'rejected') AND action = ${decision.action}
+        AND memory_ids_json = ${encodeIds(decision.memoryIds)}
+    `.pipe(Effect.map((rows) => (rows[0]?.count ?? 0) > 0));
+
   const readRuns = (limit: number, runId?: string) =>
     Effect.gen(function* () {
       const runs = yield* sql<RunRow>`
         SELECT run_id AS "runId", started_at AS "startedAt", finished_at AS "finishedAt", status,
-          dry_run AS "dryRun", model, merged, superseded, left_alone AS "leftAlone", error
+          dry_run AS "dryRun", model, merged, superseded, pending, left_alone AS "leftAlone", error
         FROM personal_memory_tidy_runs
         WHERE ${runId === undefined ? sql`1 = 1` : sql`run_id = ${runId}`}
         ORDER BY started_at DESC
@@ -355,8 +393,9 @@ export const make = Effect.gen(function* () {
       `;
       if (runs.length === 0) return [];
       const changes = yield* sql<ChangeRow>`
-        SELECT run_id AS "runId", action, scope, scope_id AS "scopeId",
-          memory_ids_json AS "memoryIdsJson", result_memory_id AS "resultMemoryId", content, reason
+        SELECT change_id AS "changeId", run_id AS "runId", status, action, scope,
+          scope_id AS "scopeId", memory_ids_json AS "memoryIdsJson",
+          result_memory_id AS "resultMemoryId", content, reason
         FROM personal_memory_tidy_changes
         WHERE ${sql.in(
           "run_id",
@@ -371,6 +410,8 @@ export const make = Effect.gen(function* () {
           changes: changes
             .filter((change) => change.runId === run.runId)
             .map((change): Record<keyof PersonalMemoryTidyChange, unknown> => ({
+              changeId: change.changeId,
+              status: change.status,
               action: change.action,
               scope: change.scope,
               scopeId: change.scopeId,
@@ -396,38 +437,51 @@ export const make = Effect.gen(function* () {
       const outcome = yield* Effect.gen(function* () {
         const appVersion = yield* readAppVersion;
         const entries = yield* readEntries;
-        const byId = new Map(entries.map((entry) => [entry.memoryId, entry]));
+        const versions = new Map(entries.map((entry) => [entry.memoryId, entry.version]));
+        const proposal = yield* plan(entries, nowMs, appVersion);
         let merged = 0;
         let superseded = 0;
+        let pending = 0;
         let leftAlone = 0;
-        const errors: Array<string> = [];
-        for (const group of groupByScope(entries).values()) {
-          const plan = yield* planScope(group, nowMs, appVersion);
-          if (plan.error !== null) errors.push(plan.error);
-          for (const decision of plan.apply) {
-            const applied = dryRun
-              ? { resultId: decision.action === "supersede" ? decision.by : null }
-              : yield* applyDecision(decision, byId, runId, nowIso);
-            if (applied === null) {
-              const skipped: TidyDecision = {
+        for (const decision of proposal.auto) {
+          const applied = dryRun
+            ? { resultId: decision.action === "supersede" ? decision.by : null }
+            : yield* applyDecision(decision, versions, `tidy:${runId}`, nowIso);
+          if (applied === null) {
+            yield* recordChange(
+              runId,
+              "left",
+              {
                 action: "leave",
                 memoryIds: decision.memoryIds,
                 reason: `Changed while the tidy-up ran; left as it is (${decision.reason})`,
-              };
-              yield* recordChange(runId, skipped, group[0]!, null, nowIso);
-              leftAlone += 1;
-              continue;
-            }
-            yield* recordChange(runId, decision, group[0]!, applied.resultId, nowIso);
-            if (decision.action === "merge") merged += 1;
-            else superseded += decision.memoryIds.length;
-          }
-          for (const decision of plan.left) {
-            yield* recordChange(runId, decision, group[0]!, null, nowIso);
+              },
+              null,
+              nowIso,
+            );
             leftAlone += 1;
+            continue;
           }
+          yield* recordChange(
+            runId,
+            dryRun ? "preview" : "applied",
+            decision,
+            applied.resultId,
+            nowIso,
+          );
+          superseded += decision.memoryIds.length;
         }
-        return { merged, superseded, leftAlone, errors };
+        for (const decision of proposal.pending) {
+          if (yield* alreadyAsked(decision)) continue;
+          const resultId = decision.action === "supersede" ? decision.by : null;
+          yield* recordChange(runId, "pending", decision, resultId, nowIso);
+          pending += 1;
+        }
+        for (const decision of proposal.left) {
+          yield* recordChange(runId, "left", decision, null, nowIso);
+          leftAlone += 1;
+        }
+        return { merged, superseded, pending, leftAlone, error: proposal.error };
       }).pipe(Effect.result);
       const finishedIso = DateTime.formatIso(yield* DateTime.now);
       if (outcome._tag === "Failure") {
@@ -438,12 +492,12 @@ export const make = Effect.gen(function* () {
           WHERE run_id = ${runId}
         `;
       } else {
-        const { merged, superseded, leftAlone, errors } = outcome.success;
+        const { merged, superseded, pending, leftAlone, error } = outcome.success;
         yield* sql`
           UPDATE personal_memory_tidy_runs
-          SET status = 'done', finished_at = ${finishedIso}, merged = ${merged},
-              superseded = ${superseded}, left_alone = ${leftAlone},
-              error = ${errors.length === 0 ? null : errors.join("; ").slice(0, 1_000)}
+          SET status = ${error === null ? "done" : "failed"}, finished_at = ${finishedIso},
+              merged = ${merged}, superseded = ${superseded}, pending = ${pending},
+              left_alone = ${leftAlone}, error = ${error === null ? null : error.slice(0, 1_000)}
           WHERE run_id = ${runId}
         `;
       }
@@ -454,16 +508,59 @@ export const make = Effect.gen(function* () {
         model: judge.model,
         ...(outcome._tag === "Success"
           ? {
-              merged: outcome.success.merged,
               superseded: outcome.success.superseded,
+              pending: outcome.success.pending,
               leftAlone: outcome.success.leftAlone,
-              judgeErrors: outcome.success.errors.length,
+              judgeError: outcome.success.error !== null,
             }
           : { failed: true }),
       });
       const [run] = yield* readRuns(1, runId);
       return run!;
     }).pipe(lock.withPermits(1), storageFailure("run"));
+
+  const decide: PersonalMemoryTidy["Service"]["decide"] = (input) =>
+    Effect.gen(function* () {
+      const rows = yield* sql<ChangeRow>`
+        SELECT change_id AS "changeId", run_id AS "runId", status, action, scope,
+          scope_id AS "scopeId", memory_ids_json AS "memoryIdsJson",
+          result_memory_id AS "resultMemoryId", content, reason
+        FROM personal_memory_tidy_changes WHERE change_id = ${input.changeId}
+      `;
+      const change = rows[0];
+      if (change === undefined) return yield* fail("That tidy-up change was not found.");
+      if (change.status !== "pending") {
+        return yield* fail("That tidy-up change is not waiting for an answer.");
+      }
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      if (!input.approve) {
+        yield* sql`
+          UPDATE personal_memory_tidy_changes SET status = 'rejected', decided_at = ${nowIso}
+          WHERE change_id = ${input.changeId}
+        `;
+        return yield* log({});
+      }
+      const memoryIds = decodeIds(change.memoryIdsJson);
+      const decision: TidyDecision =
+        change.action === "merge"
+          ? { action: "merge", memoryIds, content: change.content ?? "", reason: change.reason }
+          : { action: "supersede", memoryIds, by: change.resultMemoryId, reason: change.reason };
+      if (decision.action === "merge" && looksLikeSecret(decision.content)) {
+        return yield* fail("The merged text looks like it carries a secret; not applied.");
+      }
+      const applied = yield* applyDecision(decision, null, `tidy-approved:${change.runId}`, nowIso);
+      if (applied === null) {
+        return yield* fail(
+          "One of these entries changed, was archived or was deleted since the tidy-up proposed this; nothing was changed.",
+        );
+      }
+      yield* sql`
+        UPDATE personal_memory_tidy_changes
+        SET status = 'approved', decided_at = ${nowIso}, result_memory_id = ${applied.resultId}
+        WHERE change_id = ${input.changeId}
+      `;
+      return yield* log({});
+    }).pipe(lock.withPermits(1), storageFailure("decide"));
 
   const run: PersonalMemoryTidy["Service"]["run"] = (input) => runOnce(input.dryRun, false);
 
@@ -519,7 +616,7 @@ export const make = Effect.gen(function* () {
           ),
         ).pipe(Effect.asVoid);
 
-  return { run, log, setMode, start } satisfies PersonalMemoryTidy["Service"];
+  return { run, decide, log, setMode, start } satisfies PersonalMemoryTidy["Service"];
 });
 
 export const layer = Layer.effect(PersonalMemoryTidy, make);

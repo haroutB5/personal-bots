@@ -82,6 +82,10 @@ export function chatNoticeLabel(
   const trimmed = text.trim();
   if (notice.notice === "team-bot-answer")
     return trimmed === "" ? "You answered a request" : trimmed;
+  // A lead's bot change and a saved preference: the server's line is the whole
+  // row, never usage-limit wording.
+  if (notice.notice === "team-bot-change") return trimmed === "" ? "Team change" : trimmed;
+  if (notice.notice === "memory-saved") return trimmed === "" ? "Memory saved" : trimmed;
   // The release waiter's turn: its outcome line ("Release landed: ..."),
   // under the line saying the app wrote it.
   if (notice.notice === "release-landed") {

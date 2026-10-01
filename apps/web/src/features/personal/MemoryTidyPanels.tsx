@@ -1,4 +1,4 @@
-import type { JSX, KeyboardEvent } from "react";
+import type { JSX, KeyboardEvent, ReactNode } from "react";
 import { useId, useMemo, useRef, useState } from "react";
 
 import type {
@@ -20,6 +20,8 @@ import {
   memoryDayTimeLabel,
   memoryMetaLine,
   newestTidyRunsFirst,
+  pendingTidyChanges,
+  TIDY_CHANGE_STATUS_LABEL,
   TIDY_ACTION_LABEL,
   TIDY_MODE_LABEL,
   TIDY_MODES,
@@ -32,6 +34,7 @@ import {
 } from "./memoryPresentation";
 import {
   personalMemoryRestore,
+  personalMemoryTidyDecide,
   personalMemoryTidyRun,
   personalMemoryTidySetMode,
   usePersonalMemoryTidyLog,
@@ -85,8 +88,8 @@ function Disclosure({
   );
 }
 
-/** One replaced entry: what it said, why it was replaced, and Restore. */
-function ReplacedRow({
+/** One archived entry: what it said, why it was archived, and Restore. */
+function ArchivedRow({
   entry,
   scope,
   now,
@@ -99,7 +102,7 @@ function ReplacedRow({
   busy: boolean;
   onRestore: (entry: PersonalMemoryEntry) => void;
 }): JSX.Element {
-  const replacedAt = DateTime.toEpochMillis(entry.supersededAt ?? entry.updatedAt);
+  const archivedAt = DateTime.toEpochMillis(entry.supersededAt ?? entry.updatedAt);
   return (
     <li className="flex flex-col gap-1 py-3">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -109,10 +112,10 @@ function ReplacedRow({
       </div>
       <MemoryContent content={entry.content} />
       <p className="text-[13px] leading-snug text-[var(--personal-text-secondary)]">
-        {entry.supersededReason?.trim() || "Replaced"}
+        {entry.supersededReason?.trim() || "Archived"}
       </p>
       <p className="text-[12px] text-[var(--personal-text-tertiary)]">
-        {memoryMetaLine("Replaced", replacedAt, now)}
+        {memoryMetaLine("Archived", archivedAt, now)}
       </p>
       <button
         type="button"
@@ -131,10 +134,11 @@ function ReplacedRow({
 }
 
 /**
- * Entries a newer save or the tidy-up replaced. Bots never receive them;
+ * Entries a newer save replaced, a bot was asked to forget, or the tidy-up
+ * archived. Bots never receive them;
  * Restore puts one back. Closed by default, below the current list.
  */
-export function ReplacedMemorySection({
+export function ArchivedMemorySection({
   environmentId,
   entries,
   totalCount,
@@ -169,7 +173,7 @@ export function ReplacedMemorySection({
   return (
     <section className="mt-6 border-t border-[var(--personal-border)] pt-2">
       <Disclosure
-        title={`Replaced (${entries === null ? "…" : shown.length})`}
+        title={`Archived (${entries === null ? "…" : shown.length})`}
         open={open}
         onToggle={() => setOpen((value) => !value)}
         controls={panelId}
@@ -187,13 +191,13 @@ export function ReplacedMemorySection({
         ) : shown.length === 0 ? (
           <p className="mt-2 text-[14px] text-[var(--personal-text-secondary)]">
             {totalCount === 0
-              ? "Nothing replaced. When a fact changes, the older entry moves here."
-              : "No replaced memory matches that search."}
+              ? "Nothing archived. When a fact changes, or a bot is asked to forget something, the older entry moves here."
+              : "No archived memory matches that search."}
           </p>
         ) : (
           <ul className="divide-y divide-[var(--personal-border)]">
             {shown.map((entry) => (
-              <ReplacedRow
+              <ArchivedRow
                 key={entry.memoryId}
                 entry={entry}
                 scope={scopeOf(entry)}
@@ -273,15 +277,22 @@ function TidyModeControl({
 function TidyChangeItem({
   change,
   texts,
+  children,
 }: {
   change: PersonalMemoryTidyChange;
   texts: ReadonlyMap<string, string>;
+  /** Approve / Reject, in the waiting list. */
+  children?: ReactNode;
 }): JSX.Element {
   const involved = tidyEntryTexts(change.memoryIds, texts);
   return (
     <li className="py-2.5">
-      <p className="text-[14px] font-semibold text-[var(--personal-text)]">
-        {TIDY_ACTION_LABEL[change.action]}
+      <p className="text-[14px] text-[var(--personal-text)]">
+        <span className="font-semibold">{TIDY_ACTION_LABEL[change.action]}</span>
+        <span className="text-[var(--personal-text-secondary)]">
+          {" "}
+          · {TIDY_CHANGE_STATUS_LABEL[change.status]}
+        </span>
       </p>
       {change.reason.trim().length > 0 ? (
         <p className="mt-0.5 text-[13px] leading-snug text-[var(--personal-text-secondary)]">
@@ -311,7 +322,85 @@ function TidyChangeItem({
           </p>
         </div>
       ) : null}
+      {children}
     </li>
+  );
+}
+
+/** Changes the tidy-up will not make without the owner's OK, with Approve and Reject. */
+function PendingTidyChanges({
+  environmentId,
+  changes,
+  texts,
+}: {
+  environmentId: EnvironmentId | null;
+  changes: ReadonlyArray<PersonalMemoryTidyChange>;
+  texts: ReadonlyMap<string, string>;
+}): JSX.Element {
+  const decide = useAtomCommand(personalMemoryTidyDecide);
+  const [busy, setBusy] = useState<{ changeId: number; approve: boolean } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const onDecide = async (changeId: number, approve: boolean) => {
+    if (environmentId === null || busy !== null) return;
+    setBusy({ changeId, approve });
+    setError(null);
+    const result = await decide({ environmentId, input: { changeId, approve } });
+    setBusy(null);
+    setError(
+      commandFailureMessage(
+        result,
+        approve ? "Could not approve that change." : "Could not reject that change.",
+      ),
+    );
+  };
+
+  return (
+    <div className="rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] px-3 py-2">
+      <h2 className="text-[15px] font-semibold text-[var(--personal-text)]">
+        Waiting for your OK ({changes.length})
+      </h2>
+      {error !== null ? (
+        <p role="alert" className="mt-1 text-[14px] text-[var(--personal-error)]">
+          {error}
+        </p>
+      ) : null}
+      <ul className="divide-y divide-[var(--personal-border)]">
+        {changes.map((change) => {
+          const mine = busy?.changeId === change.changeId;
+          return (
+            <TidyChangeItem key={change.changeId} change={change} texts={texts}>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  aria-busy={mine && busy?.approve === true}
+                  onClick={() => void onDecide(change.changeId, true)}
+                  className={cn(
+                    "h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-5 text-[15px] font-semibold text-[var(--personal-primary-text)] disabled:opacity-60",
+                    FOCUS_RING,
+                  )}
+                >
+                  {mine && busy?.approve === true ? "Approving…" : "Approve"}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  aria-busy={mine && busy?.approve === false}
+                  onClick={() => void onDecide(change.changeId, false)}
+                  className={cn(
+                    "h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)] px-5 text-[15px] font-semibold text-[var(--personal-text)] disabled:opacity-60",
+                    FOCUS_RING,
+                  )}
+                >
+                  {mine && busy?.approve === false ? "Rejecting…" : "Reject"}
+                </button>
+              </div>
+            </TidyChangeItem>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -352,9 +441,8 @@ function TidyRunItem({
             {open ? "Hide changes" : `Show ${tidyChangeCountLabel(run.changes.length)}`}
           </button>
           <ul id={changesId} hidden={!open} className="divide-y divide-[var(--personal-border)]">
-            {run.changes.map((change, index) => (
-              // oxlint-disable-next-line react/no-array-index-key -- changes have no id of their own
-              <TidyChangeItem key={index} change={change} texts={texts} />
+            {run.changes.map((change) => (
+              <TidyChangeItem key={change.changeId} change={change} texts={texts} />
             ))}
           </ul>
         </>
@@ -372,7 +460,7 @@ export function MemoryTidySection({
   texts,
 }: {
   environmentId: EnvironmentId | null;
-  /** memoryId to text, from the current and replaced lists. */
+  /** memoryId to text, from the current and archived lists. */
   texts: ReadonlyMap<string, string>;
 }): JSX.Element {
   const log = usePersonalMemoryTidyLog(environmentId);
@@ -385,9 +473,12 @@ export function MemoryTidySection({
   const panelId = useId();
 
   const runs = useMemo(() => newestTidyRunsFirst(log.data?.runs ?? []), [log.data]);
+  const waiting = useMemo(() => pendingTidyChanges(runs), [runs]);
   const mode = pendingMode ?? log.data?.mode ?? null;
   const summary =
-    log.data === null ? (log.error ?? "Loading…") : tidySummaryLine(log.data.mode, runs[0] ?? null);
+    log.data === null
+      ? (log.error ?? "Loading…")
+      : tidySummaryLine(log.data.mode, runs[0] ?? null, waiting.length);
 
   const onModeChange = async (next: PersonalMemoryTidyMode) => {
     if (environmentId === null || pendingMode !== null || next === log.data?.mode) return;
@@ -417,9 +508,12 @@ export function MemoryTidySection({
         controls={panelId}
       />
       <div id={panelId} hidden={!open} className="flex flex-col gap-3 pt-1">
+        {waiting.length > 0 ? (
+          <PendingTidyChanges environmentId={environmentId} changes={waiting} texts={texts} />
+        ) : null}
         <p className="text-[14px] leading-snug text-[var(--personal-text-secondary)]">
           Each night at 03:30 duplicates are merged and outdated entries are replaced. Preview only
-          lists what it would do and changes nothing.
+          lists what it would do and changes nothing. Changes that need your OK wait at the top.
         </p>
         <TidyModeControl
           mode={mode}

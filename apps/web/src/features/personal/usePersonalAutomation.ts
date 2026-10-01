@@ -243,6 +243,17 @@ export const personalMemoryTidyRun = createEnvironmentRpcCommand(connectionAtomR
     ),
 });
 
+/** The owner's answer to a pending tidy-up change; an approval changes both memory lists. */
+export const personalMemoryTidyDecide = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-memory:tidy-decide",
+  tag: WS_METHODS.personalMemoryTidyDecide,
+  onSuccess: (target, registry) =>
+    Effect.andThen(
+      refreshTidyLog(target, registry),
+      target.input.approve ? refreshMemoryAndReplaced(target, registry) : Effect.void,
+    ),
+});
+
 export const personalPushSubscribe = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-push:subscribe",
   tag: WS_METHODS.personalPushSubscribe,

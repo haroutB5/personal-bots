@@ -415,6 +415,7 @@ import {
   PersonalMemoryTidyLogInput,
   PersonalMemoryTidyLogResult,
   PersonalMemoryTidyRun,
+  PersonalMemoryTidyDecideInput,
   PersonalMemoryTidyRunInput,
   PersonalMemoryTidySetModeInput,
   PersonalMemoryUpdateInput,
@@ -708,6 +709,7 @@ export const WS_METHODS = {
   personalMemoryTidyLog: "personalMemory.tidyLog",
   personalMemoryTidySetMode: "personalMemory.tidySetMode",
   personalMemoryTidyRun: "personalMemory.tidyRun",
+  personalMemoryTidyDecide: "personalMemory.tidyDecide",
 
   // Personal Web Push methods
   personalPushPublicKey: "personalPush.publicKey",
@@ -1869,6 +1871,12 @@ const WsPersonalMemoryTidyRunRpc = Rpc.make(WS_METHODS.personalMemoryTidyRun, {
   error: PersonalMemoryRpcError,
 });
 
+const WsPersonalMemoryTidyDecideRpc = Rpc.make(WS_METHODS.personalMemoryTidyDecide, {
+  payload: PersonalMemoryTidyDecideInput,
+  success: PersonalMemoryTidyLogResult,
+  error: PersonalMemoryRpcError,
+});
+
 const PersonalPushRpcError = Schema.Union([PersonalPushError, EnvironmentAuthorizationError]);
 
 const WsPersonalPushPublicKeyRpc = Rpc.make(WS_METHODS.personalPushPublicKey, {
@@ -2610,6 +2618,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalMemoryTidyLogRpc,
   WsPersonalMemoryTidySetModeRpc,
   WsPersonalMemoryTidyRunRpc,
+  WsPersonalMemoryTidyDecideRpc,
   WsPersonalPushPublicKeyRpc,
   WsPersonalPushGetSettingsRpc,
   WsPersonalPushSubscribeRpc,

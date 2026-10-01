@@ -81,6 +81,31 @@ describe("chat notices", () => {
     expect(chatNoticeLabel(notice!, line, NOW)).toBe(line);
   });
 
+  it("shows a saved preference as its own plain line, with no usage-limit wording", () => {
+    const line = "CTO saved a preference every bot will follow: Use British spelling.";
+    const marker = { notice: "memory-saved", provider: "Memory" };
+    const notice = readChatNotice({ context: context(marker) } as never)!;
+    expect(notice).toEqual(marker);
+    expect(isServerTurnNotice(notice)).toBe(false);
+    expect(
+      chatNoticeLabel(
+        notice,
+        `  ${line}
+`,
+        NOW,
+      ),
+    ).toBe(line);
+    expect(chatNoticeLabel(notice, "   ", NOW)).toBe("Memory saved");
+
+    const items = buildConversationItems([
+      entry("owner-1", "user", "2026-09-27T19:40:00.000Z", "Always use British spelling"),
+      entry("personal-notice-m1", "assistant", "2026-09-27T19:41:00.000Z", line, marker),
+    ]);
+    const row = items.find((item) => item.id === "personal-notice-m1")!;
+    expect(row.kind).toBe("notice");
+    expect(isTurnBoundary(row)).toBe(false);
+  });
+
   it("shows a release notice as a system row labelled with its outcome", () => {
     const text = [
       "Release notice from the app's release waiter (the user did not type this).",

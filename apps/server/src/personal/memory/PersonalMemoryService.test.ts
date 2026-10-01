@@ -203,7 +203,9 @@ it.effect("task summaries are labelled, saved once per task and never resurrecte
       query: "broadband fibre deals",
       record: false,
     });
-    expect(context.block).toContain('- [task summary] Task "Compare broadband deals"');
+    expect(context.block).toMatch(
+      /- \[task summary\] \[\d{4}-\d{2}-\d{2}\] Task "Compare broadband deals"/,
+    );
 
     yield* memory.remove({ memoryId: summaries[0]!.memoryId });
     yield* memory.saveTaskSummary(task);
@@ -279,15 +281,21 @@ it.effect("a task turn gets no task summaries; a chat turn still does", () =>
     });
     expect(taskTurn.memoryIds.length).toBe(2);
     expect(taskTurn.block).toContain("Known facts (from memory)");
-    expect(taskTurn.block).toContain("- [preference] The user wants benchmark results");
-    expect(taskTurn.block).toContain("- [note] Benchmark machines live in the lab");
+    expect(taskTurn.block).toMatch(
+      /- \[preference\] \[\d{4}-\d{2}-\d{2}\] The user wants benchmark results/,
+    );
+    expect(taskTurn.block).toMatch(
+      /- \[note\] \[\d{4}-\d{2}-\d{2}\] Benchmark machines live in the lab/,
+    );
     expect(taskTurn.block).not.toContain("[task summary]");
 
     const chatTurn = yield* memory.contextForThread({ threadId: THREAD_A, query, record: false });
     // The preference always, then every summary and the note: 10 relevant
     // entries fit under the relevance limit of 20.
     expect(chatTurn.memoryIds.length).toBe(11);
-    expect(chatTurn.block).toContain('- [task summary] Task "Benchmark batch');
+    expect(chatTurn.block).toMatch(
+      /- \[task summary\] \[\d{4}-\d{2}-\d{2}\] Task "Benchmark batch/,
+    );
   }).pipe(Effect.provide(TestLayer)),
 );
 
@@ -431,8 +439,12 @@ describe("standing preferences", () => {
             excludeTaskSummaries,
           });
           expect(context.memoryIds).toEqual([own.memoryId, old.memoryId]);
-          expect(context.block).toContain("- [preference] Always deploy the latest builds");
-          expect(context.block).toContain("- [preference] Reply in short plain sentences");
+          expect(context.block).toMatch(
+            /- \[preference\] \[\d{4}-\d{2}-\d{2}\] Always deploy the latest builds/,
+          );
+          expect(context.block).toMatch(
+            /- \[preference\] \[\d{4}-\d{2}-\d{2}\] Reply in short plain sentences/,
+          );
           expect(context.block).not.toContain("Bot B");
           expect(context.block).not.toContain("printer");
         }

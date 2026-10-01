@@ -6,8 +6,12 @@ import { PersonalBotId } from "./personalBots.ts";
 export const PersonalMemoryId = TrimmedNonEmptyString.pipe(Schema.brand("PersonalMemoryId"));
 export type PersonalMemoryId = typeof PersonalMemoryId.Type;
 
-/** shared: every bot. bot: one bot (scopeId = botId). project: one project (scopeId = projectId). */
-export const PersonalMemoryScope = Schema.Literals(["shared", "bot", "project"]);
+/**
+ * shared: every bot (facts about the user themselves). team: one team's bots
+ * (scopeId = team name, e.g. "dev"). bot: one bot (scopeId = botId).
+ * project: one project (scopeId = projectId).
+ */
+export const PersonalMemoryScope = Schema.Literals(["shared", "team", "bot", "project"]);
 export type PersonalMemoryScope = typeof PersonalMemoryScope.Type;
 
 /** task_summary entries are derived from finished tasks and never treated as preferences. */
@@ -105,7 +109,24 @@ export type PersonalMemoryRestoreInput = typeof PersonalMemoryRestoreInput.Type;
 export const PersonalMemoryTidyAction = Schema.Literals(["merge", "supersede", "leave"]);
 export type PersonalMemoryTidyAction = typeof PersonalMemoryTidyAction.Type;
 
+/**
+ * applied: made by the run. preview: a preview run listed it. pending: needs
+ * the owner's OK (a merge's new wording, or retiring an entry with no newer
+ * one). approved / rejected: the owner's answer. left: unsure, untouched.
+ */
+export const PersonalMemoryTidyChangeStatus = Schema.Literals([
+  "applied",
+  "preview",
+  "pending",
+  "approved",
+  "rejected",
+  "left",
+]);
+export type PersonalMemoryTidyChangeStatus = typeof PersonalMemoryTidyChangeStatus.Type;
+
 export const PersonalMemoryTidyChange = Schema.Struct({
+  changeId: Schema.Number,
+  status: PersonalMemoryTidyChangeStatus,
   action: PersonalMemoryTidyAction,
   scope: PersonalMemoryScope,
   scopeId: Schema.NullOr(Schema.String),
@@ -130,6 +151,8 @@ export const PersonalMemoryTidyRun = Schema.Struct({
   model: Schema.NullOr(Schema.String),
   merged: Schema.Number,
   superseded: Schema.Number,
+  /** Changes this run put on the approval list. */
+  pending: Schema.optional(Schema.Number),
   leftAlone: Schema.Number,
   error: Schema.NullOr(Schema.String),
   changes: Schema.Array(PersonalMemoryTidyChange),
@@ -157,6 +180,13 @@ export type PersonalMemoryTidyLogResult = typeof PersonalMemoryTidyLogResult.Typ
 
 export const PersonalMemoryTidySetModeInput = Schema.Struct({ mode: PersonalMemoryTidyMode });
 export type PersonalMemoryTidySetModeInput = typeof PersonalMemoryTidySetModeInput.Type;
+
+/** The owner's answer to a pending tidy-up change. */
+export const PersonalMemoryTidyDecideInput = Schema.Struct({
+  changeId: Schema.Number,
+  approve: Schema.Boolean,
+});
+export type PersonalMemoryTidyDecideInput = typeof PersonalMemoryTidyDecideInput.Type;
 
 /** Runs the tidy-up now. dryRun (the default) only lists what it would change. */
 export const PersonalMemoryTidyRunInput = Schema.Struct({

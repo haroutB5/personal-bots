@@ -22,6 +22,9 @@ export const PERSONAL_CHAT_NOTICE_CONTEXT_KIND = "personal-chat-notice";
  * release-landed: the server's turn message telling the bot that asked for an
  * hbots release how it went (live, rolled back), posted from the release
  * waiter's notice (a user-role turn message, rendered as a system row).
+ * memory-saved: a bot saved (or replaced) a preference other bots will follow
+ * (an assistant-role row whose text is the whole line; `provider` carries
+ * "Memory"), so the owner sees every new standing rule as it lands.
  */
 export const PersonalChatNoticeKind = Schema.Literals([
   "usage-limit-paused",
@@ -29,6 +32,7 @@ export const PersonalChatNoticeKind = Schema.Literals([
   "team-bot-change",
   "team-bot-answer",
   "release-landed",
+  "memory-saved",
 ]);
 export type PersonalChatNoticeKind = typeof PersonalChatNoticeKind.Type;
 

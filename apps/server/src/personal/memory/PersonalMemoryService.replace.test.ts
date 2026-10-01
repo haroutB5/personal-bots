@@ -71,7 +71,7 @@ it.effect(
       // Every bot stops getting it, not only the one that replaced it.
       expect(yield* block(THREAD_B, "Dev team models Backend")).not.toContain("Sonnet 5.5 high");
       expect((yield* memory.list({})).map((entry) => entry.memoryId)).toEqual([changed.memoryId]);
-      expect(yield* memory.search({ query: "Sonnet Backend" })).toEqual([]);
+      expect(yield* memory.search({ query: "Sonnet" })).toEqual([]);
 
       // Archived, not deleted: it keeps its text and says what replaced it.
       const archived = yield* memory.list({ status: "superseded" });

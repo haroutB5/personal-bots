@@ -1,7 +1,12 @@
 import type { JSX } from "react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { type PersonalBot, type PersonalMemoryEntry, PersonalTaskId } from "@t3tools/contracts";
+import {
+  type PersonalBot,
+  type PersonalMemoryEntry,
+  PersonalTaskId,
+  personalBotTeamLabel,
+} from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import { ChevronLeft, Ellipsis, Search, Trash2 } from "lucide-react";
@@ -20,8 +25,14 @@ import {
 } from "./bulkSelection";
 import { commandFailureMessage } from "./commandFeedback";
 import { MemoryContent } from "./MemoryContent";
-import { memoryMetaLine, memoryTextLookup } from "./memoryPresentation";
-import { MemoryTidySection, ReplacedMemorySection } from "./MemoryTidyPanels";
+import {
+  isNewBotPreference,
+  memoryMetaLine,
+  memoryTextLookup,
+  readMemoryLastSeen,
+  writeMemoryLastSeen,
+} from "./memoryPresentation";
+import { MemoryTidySection, ArchivedMemorySection } from "./MemoryTidyPanels";
 import { mergeTaskLists } from "./taskPresentation";
 import {
   personalMemoryDelete,
@@ -70,6 +81,8 @@ export function memorySourceLabel(
 
 function scopeLabel(entry: PersonalMemoryEntry, botById: Map<string, PersonalBot>): string {
   if (entry.scope === "shared") return "All bots";
+  if (entry.scope === "team")
+    return entry.scopeId === null ? "One team" : personalBotTeamLabel(entry.scopeId);
   if (entry.scope === "bot") return botById.get(entry.scopeId ?? "")?.name ?? "One bot";
   return "Project";
 }
@@ -81,11 +94,14 @@ function MemoryEntryBody({
   source,
   now,
   folded,
+  isNew,
 }: {
   entry: PersonalMemoryEntry;
   scope: string;
   source: string;
   now: number;
+  /** A preference a bot saved since this screen was last opened here. */
+  isNew: boolean;
   /** Select mode: the whole row is one checkbox, so long text stays clamped with no Show more. */
   folded: boolean;
 }): JSX.Element {
@@ -98,6 +114,11 @@ function MemoryEntryBody({
         <span className="text-[12px] text-[var(--personal-text-secondary)]">
           {KIND_LABEL[entry.kind]}
         </span>
+        {isNew ? (
+          <span className="rounded-[var(--personal-radius-pill)] bg-[var(--personal-primary)] px-2 py-0.5 text-[12px] font-semibold text-[var(--personal-primary-text)]">
+            New
+          </span>
+        ) : null}
       </div>
       {folded ? (
         <p className="mt-1.5 line-clamp-5 text-[15px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text)]">
@@ -119,6 +140,7 @@ function MemoryRow({
   scope,
   source,
   now,
+  isNew,
   busy,
   onDelete,
   onLongPress,
@@ -127,6 +149,7 @@ function MemoryRow({
   scope: string;
   source: string;
   now: number;
+  isNew: boolean;
   busy: boolean;
   onDelete: (entry: PersonalMemoryEntry) => void;
   onLongPress: (memoryId: string) => void;
@@ -135,7 +158,14 @@ function MemoryRow({
   const longPress = useLongPress(useCallback(() => onLongPress(memoryId), [onLongPress, memoryId]));
   return (
     <li {...longPress} className={cn("flex items-start gap-2 py-3", NO_TOUCH_SELECT)}>
-      <MemoryEntryBody entry={entry} scope={scope} source={source} now={now} folded={false} />
+      <MemoryEntryBody
+        entry={entry}
+        scope={scope}
+        source={source}
+        now={now}
+        isNew={isNew}
+        folded={false}
+      />
       <button
         type="button"
         aria-label="Delete this memory"
@@ -155,6 +185,7 @@ function SelectableMemoryRow({
   scope,
   source,
   now,
+  isNew,
   selected,
   onToggle,
 }: {
@@ -162,6 +193,7 @@ function SelectableMemoryRow({
   scope: string;
   source: string;
   now: number;
+  isNew: boolean;
   selected: boolean;
   onToggle: (memoryId: string) => void;
 }): JSX.Element {
@@ -180,7 +212,14 @@ function SelectableMemoryRow({
         <span className="flex h-6 items-center">
           <SelectCheck checked={selected} />
         </span>
-        <MemoryEntryBody entry={entry} scope={scope} source={source} now={now} folded />
+        <MemoryEntryBody
+          entry={entry}
+          scope={scope}
+          source={source}
+          now={now}
+          isNew={isNew}
+          folded
+        />
       </button>
     </li>
   );
@@ -195,6 +234,10 @@ export function MemoryScreen(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const memory = usePersonalMemory(environmentId);
   const replaced = usePersonalReplacedMemory(environmentId);
+  // When this screen was last opened on this device: bot-saved preferences
+  // newer than that are marked New. Read once, then moved on to now.
+  const [lastSeen] = useState(readMemoryLastSeen);
+  useEffect(() => writeMemoryLastSeen(Date.now()), []);
   const botsQuery = usePersonalBotsList(environmentId);
   const { tasks: taskFeed } = usePersonalTasks(environmentId);
   const deleteEntry = useAtomCommand(personalMemoryDelete);
@@ -345,10 +388,11 @@ export function MemoryScreen(): JSX.Element {
 
       <p className="text-[14px] leading-snug text-[var(--personal-text-secondary)]">
         Bots save something here only when you ask them to remember it, plus short summaries of
-        finished tasks. Every preference goes to every bot turn; notes and task summaries are picked
-        by relevance (up to 20). When a fact changes, the newer entry replaces the older one, which
-        moves to Replaced and can be restored. Deleting an entry stops bots receiving it; chat
-        transcripts where it came up still contain the text.
+        finished tasks. Shared entries (facts about you) reach every bot, team entries reach one
+        team's bots, and bot entries reach one bot. Preferences go to every turn of the bots they
+        reach; up to 6 notes and 6 task summaries are picked by relevance. When a fact changes, the
+        newer entry replaces the older one, which moves to Archived and can be restored. Deleting an
+        entry stops bots receiving it; chat transcripts where it came up still contain the text.
       </p>
 
       <label className="mt-4 flex h-11 items-center gap-2.5 rounded-[var(--personal-radius-pill)] bg-[var(--personal-fill-muted)] px-3.5">
@@ -394,6 +438,7 @@ export function MemoryScreen(): JSX.Element {
                 scope={scopeLabel(entry, botById)}
                 source={sourceOf(entry)}
                 now={now}
+                isNew={isNewBotPreference(entry, lastSeen)}
                 selected={selection.has(entry.memoryId)}
                 onToggle={toggle}
               />
@@ -404,6 +449,7 @@ export function MemoryScreen(): JSX.Element {
                 scope={scopeLabel(entry, botById)}
                 source={sourceOf(entry)}
                 now={now}
+                isNew={isNewBotPreference(entry, lastSeen)}
                 busy={busyId === entry.memoryId}
                 onDelete={(target) => void onDelete(target)}
                 onLongPress={enterSelect}
@@ -415,7 +461,7 @@ export function MemoryScreen(): JSX.Element {
 
       {selecting ? null : (
         <>
-          <ReplacedMemorySection
+          <ArchivedMemorySection
             environmentId={environmentId}
             entries={visibleReplaced}
             totalCount={replacedEntries?.length ?? 0}

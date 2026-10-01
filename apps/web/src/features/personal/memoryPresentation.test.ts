@@ -1,12 +1,18 @@
+import type { PersonalMemoryTidyChangeStatus } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  isNewBotPreference,
+  MEMORY_LAST_SEEN_KEY,
   memoryDayLabel,
   memoryDayTimeLabel,
   memoryMetaLine,
   memoryTextLookup,
   newestTidyRunsFirst,
+  pendingTidyChanges,
+  readMemoryLastSeen,
+  TIDY_CHANGE_STATUS_LABEL,
   TIDY_ACTION_LABEL,
   TIDY_MODE_LABEL,
   tidyChangeCountLabel,
@@ -16,6 +22,7 @@ import {
   tidyStatusLabel,
   tidySummaryLine,
   UNLISTED_MEMORY_TEXT,
+  writeMemoryLastSeen,
 } from "./memoryPresentation";
 
 const now = new Date("2026-10-01T15:00:00Z"); // 16:00 BST
@@ -126,5 +133,98 @@ describe("memory text lookup", () => {
   it("falls back for ids neither list has", () => {
     expect(tidyEntryTexts(["b", "gone"], texts)).toEqual(["Replaced B", UNLISTED_MEMORY_TEXT]);
     expect(UNLISTED_MEMORY_TEXT).toBe("an entry no longer listed");
+  });
+});
+
+describe("pending tidy changes", () => {
+  it("gathers pending changes across runs once each, in order", () => {
+    const runs: ReadonlyArray<{
+      changes: ReadonlyArray<{ changeId: number; status: PersonalMemoryTidyChangeStatus }>;
+    }> = [
+      {
+        changes: [
+          { changeId: 3, status: "pending" as const },
+          { changeId: 4, status: "applied" as const },
+        ],
+      },
+      {
+        changes: [
+          { changeId: 1, status: "pending" as const },
+          { changeId: 3, status: "pending" as const },
+          { changeId: 2, status: "rejected" as const },
+        ],
+      },
+    ];
+    expect(pendingTidyChanges(runs).map((change) => change.changeId)).toEqual([3, 1]);
+    expect(pendingTidyChanges([])).toEqual([]);
+  });
+
+  it("labels change statuses and counts waiting changes in the status line", () => {
+    expect(TIDY_CHANGE_STATUS_LABEL).toEqual({
+      applied: "Done",
+      preview: "Preview",
+      pending: "Waiting for you",
+      approved: "Approved",
+      rejected: "Rejected",
+      left: "Left alone",
+    });
+    expect(tidySummaryLine("on", run("2026-10-01T02:30:00Z"), 2)).toBe(
+      "Make changes · last run 2026-10-01 03:30: 1 merged, 2 replaced · 2 waiting for your OK",
+    );
+  });
+});
+
+describe("New badge", () => {
+  const lastSeen = Date.parse("2026-10-01T10:00:00Z");
+  const entry = (
+    kind: "note" | "preference" | "task_summary",
+    source: string,
+    createdAt: string,
+  ) => ({
+    kind,
+    source,
+    createdAt: DateTime.makeUnsafe(createdAt),
+  });
+
+  it("marks bot-saved preferences newer than the last visit", () => {
+    expect(
+      isNewBotPreference(entry("preference", "bot:b1", "2026-10-01T11:00:00Z"), lastSeen),
+    ).toBe(true);
+  });
+
+  it("leaves everything else unmarked", () => {
+    expect(
+      isNewBotPreference(entry("preference", "bot:b1", "2026-10-01T09:00:00Z"), lastSeen),
+    ).toBe(false);
+    expect(isNewBotPreference(entry("preference", "user", "2026-10-01T11:00:00Z"), lastSeen)).toBe(
+      false,
+    );
+    expect(isNewBotPreference(entry("note", "bot:b1", "2026-10-01T11:00:00Z"), lastSeen)).toBe(
+      false,
+    );
+    // First visit on this device: nothing is New.
+    expect(isNewBotPreference(entry("preference", "bot:b1", "2026-10-01T11:00:00Z"), null)).toBe(
+      false,
+    );
+  });
+
+  it("reads and writes the last visit, tolerating missing or bad storage", () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => void store.set(key, value),
+      },
+    });
+    try {
+      expect(readMemoryLastSeen()).toBeNull();
+      writeMemoryLastSeen(lastSeen);
+      expect(store.get(MEMORY_LAST_SEEN_KEY)).toBe(String(lastSeen));
+      expect(readMemoryLastSeen()).toBe(lastSeen);
+      store.set(MEMORY_LAST_SEEN_KEY, "garbage");
+      expect(readMemoryLastSeen()).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

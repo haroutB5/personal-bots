@@ -1,5 +1,8 @@
 import type {
+  PersonalMemoryEntry,
   PersonalMemoryTidyAction,
+  PersonalMemoryTidyChange,
+  PersonalMemoryTidyChangeStatus,
   PersonalMemoryTidyMode,
   PersonalMemoryTidyRun,
 } from "@t3tools/contracts";
@@ -57,6 +60,15 @@ export const TIDY_ACTION_LABEL: Readonly<Record<PersonalMemoryTidyAction, string
   leave: "Left alone",
 };
 
+export const TIDY_CHANGE_STATUS_LABEL: Readonly<Record<PersonalMemoryTidyChangeStatus, string>> = {
+  applied: "Done",
+  preview: "Preview",
+  pending: "Waiting for you",
+  approved: "Approved",
+  rejected: "Rejected",
+  left: "Left alone",
+};
+
 const TIDY_STATUS_LABEL: Readonly<Record<PersonalMemoryTidyRun["status"], string>> = {
   running: "Running",
   done: "Done",
@@ -102,14 +114,69 @@ export function tidySummaryLine(
     PersonalMemoryTidyRun,
     "startedAt" | "status" | "merged" | "superseded" | "leftAlone"
   > | null,
+  pendingCount: number = 0,
   timeZone: string = PERSONAL_TIME_ZONE,
 ): string {
   const modeLabel = TIDY_MODE_LABEL[mode];
-  if (lastRun === null) return `${modeLabel} · not run yet`;
+  const waiting = pendingCount > 0 ? ` · ${pendingCount} waiting for your OK` : "";
+  if (lastRun === null) return `${modeLabel} · not run yet${waiting}`;
   const when = memoryDayTimeLabel(DateTime.toEpochMillis(lastRun.startedAt), timeZone);
   const outcome =
     lastRun.status === "done" ? tidyCountsLabel(lastRun) : tidyStatusLabel(lastRun.status);
-  return `${modeLabel} · last run ${when}: ${outcome}`;
+  return `${modeLabel} · last run ${when}: ${outcome}${waiting}`;
+}
+
+/** Every change still waiting for the owner's OK, across the runs given, in their order. */
+export function pendingTidyChanges<C extends Pick<PersonalMemoryTidyChange, "changeId" | "status">>(
+  runs: ReadonlyArray<{ readonly changes: ReadonlyArray<C> }>,
+): C[] {
+  const seen = new Set<number>();
+  const pending: C[] = [];
+  for (const run of runs) {
+    for (const change of run.changes) {
+      if (change.status !== "pending" || seen.has(change.changeId)) continue;
+      seen.add(change.changeId);
+      pending.push(change);
+    }
+  }
+  return pending;
+}
+
+/** Where the Memory screen keeps, on this device, when it was last opened. */
+export const MEMORY_LAST_SEEN_KEY = "personal-memory-last-seen";
+
+export function readMemoryLastSeen(): number | null {
+  try {
+    const raw = window.localStorage.getItem(MEMORY_LAST_SEEN_KEY);
+    const value = raw === null ? Number.NaN : Number(raw);
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeMemoryLastSeen(at: number): void {
+  try {
+    window.localStorage.setItem(MEMORY_LAST_SEEN_KEY, String(at));
+  } catch {
+    // Private mode: nothing is marked New next time.
+  }
+}
+
+/**
+ * A preference a bot saved since the screen was last opened here. Never on a
+ * first visit (no stored time), so an existing list is not all marked New.
+ */
+export function isNewBotPreference(
+  entry: Pick<PersonalMemoryEntry, "kind" | "source" | "createdAt">,
+  lastSeenMs: number | null,
+): boolean {
+  return (
+    lastSeenMs !== null &&
+    entry.kind === "preference" &&
+    entry.source.startsWith("bot:") &&
+    DateTime.toEpochMillis(entry.createdAt) > lastSeenMs
+  );
 }
 
 /** What the changelog says for an id that is in neither list any more. */

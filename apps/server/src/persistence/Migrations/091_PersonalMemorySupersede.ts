@@ -32,6 +32,7 @@ export default Effect.gen(function* () {
       model TEXT,
       merged INTEGER NOT NULL DEFAULT 0,
       superseded INTEGER NOT NULL DEFAULT 0,
+      pending INTEGER NOT NULL DEFAULT 0,
       left_alone INTEGER NOT NULL DEFAULT 0,
       error TEXT
     )
@@ -42,12 +43,15 @@ export default Effect.gen(function* () {
     ON personal_memory_tidy_runs(started_at)
   `;
 
-  // action: merge (memory_ids folded into result_memory_id), supersede
-  // (memory_ids replaced by result_memory_id) or leave (uncertain, untouched).
+  // action: merge (memory_ids folded into a new entry), supersede (memory_ids
+  // archived for result_memory_id, or retired when it is null) or leave.
+  // status: applied, preview, pending (waits for the owner), approved,
+  // rejected or left.
   yield* sql`
     CREATE TABLE IF NOT EXISTS personal_memory_tidy_changes (
       change_id INTEGER PRIMARY KEY AUTOINCREMENT,
       run_id TEXT NOT NULL,
+      status TEXT NOT NULL,
       action TEXT NOT NULL,
       scope TEXT NOT NULL,
       scope_id TEXT,
@@ -55,13 +59,21 @@ export default Effect.gen(function* () {
       result_memory_id TEXT,
       content TEXT,
       reason TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      decided_at TEXT
     )
   `;
 
   yield* sql`
     CREATE INDEX IF NOT EXISTS idx_personal_memory_tidy_changes_run
     ON personal_memory_tidy_changes(run_id)
+  `;
+
+  // How many entries hold each term: a turn's search uses a message's rarest
+  // words instead of its first sixteen.
+  yield* sql`
+    CREATE VIRTUAL TABLE IF NOT EXISTS personal_memory_fts_vocab
+    USING fts5vocab(personal_memory_fts, 'row')
   `;
 
   // One row. The nightly run starts as a preview: it changes nothing until
