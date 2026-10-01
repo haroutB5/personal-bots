@@ -2,7 +2,8 @@ import { APP_VERSION } from "~/branding";
 import { isElectron } from "~/env";
 
 import { runningClientEntry } from "./appVersion";
-import { findLostTap } from "./lostNotificationTaps";
+import { type NotificationLister } from "./lostNotificationTaps";
+import { currentPushEndpoint, makeLostTapFinder, type PushEndpointSource } from "./serverLostTap";
 import {
   createNotificationTapController,
   isNavigablePath,
@@ -172,8 +173,15 @@ export function registerPersonalServiceWorker(
       write: (at) => window.localStorage.setItem(LAST_AWAY_KEY, String(at)),
     },
     lostTap: {
-      find: ({ awaySince }) =>
-        notificationRegistration().then((registration) => findLostTap(registration, { awaySince })),
+      // The server's record first: on iOS the phone's own list does not
+      // survive a resume (serverLostTap.ts). The phone's list only when the
+      // server cannot answer for this device.
+      find: makeLostTapFinder({
+        registration: async () =>
+          (await notificationRegistration()) as (PushEndpointSource & NotificationLister) | null,
+        fetch: (input, init) => window.fetch(input, init),
+        now: () => Date.now(),
+      }),
       after: (callback, ms) => void window.setTimeout(callback, ms),
     },
   });
@@ -243,6 +251,11 @@ export function registerPersonalServiceWorker(
       });
   };
   // The entry chunk imports main lazily, so `load` has usually fired already.
+  // Keep this device's push endpoint while iOS will say it (a fresh launch),
+  // for a resume where it may not.
+  void notificationRegistration()
+    .then((registration) => currentPushEndpoint(registration as PushEndpointSource | null))
+    .catch(() => undefined);
   if (document.readyState === "complete") register();
   else window.addEventListener("load", register, { once: true });
 }

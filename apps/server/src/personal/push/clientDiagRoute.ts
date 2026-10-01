@@ -161,8 +161,12 @@ const FIELDS: Record<string, Read> = {
   gone: count,
   recent: count,
   awayMs: count,
-  // Which store answered the list: worker, cache-fallback or cache.
+  // Which store answered: server, worker, cache-fallback or cache.
   store: token(16),
+  // The server's answer: pushes it sent this device while away, or why it
+  // could not answer (no-endpoint, unknown-device, timeout, http-<status>).
+  sent: count,
+  server: token(32),
   clients: (value) =>
     Array.isArray(value)
       ? value

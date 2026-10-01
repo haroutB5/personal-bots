@@ -411,6 +411,25 @@ interface GroupForRoundRow {
   readonly hasVerdict: number;
 }
 
+export interface PersonalPushSentSince {
+  readonly known: boolean;
+  readonly pushes: ReadonlyArray<{ readonly url: string; readonly sentAt: string }>;
+}
+
+/** Most pushes one answer lists; a resume window never holds more. */
+export const SENT_SINCE_MAX = 20;
+
+/** The deep link a stored payload opens, or null if it has none. */
+function storedPayloadUrl(payloadJson: string): string | null {
+  try {
+    const payload = decodeJson(payloadJson) as { url?: unknown } | null;
+    const url = payload?.url;
+    return typeof url === "string" && url.startsWith("/") && !url.startsWith("//") ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 export class PersonalPushService extends Context.Service<
   PersonalPushService,
   {
@@ -487,6 +506,18 @@ export class PersonalPushService extends Context.Service<
       readonly version: string;
     }) => Effect.Effect<void>;
     /** Queues one pass: send due messages, expire and prune old rows. */
+    /**
+     * Pushes delivered to the push service for the device subscribed at
+     * `endpoint` since `since` (ISO), oldest first: the url each opens and when
+     * it was sent. `known` is false when no device has that endpoint. The page
+     * asks this when the app comes back without a notification tap, because
+     * on iOS neither the worker's own list nor getNotifications() survives a
+     * resume (1 Oct 07:16:59 push, 07:18:46 resume: both empty).
+     */
+    readonly sentSince: (input: {
+      readonly endpoint: string;
+      readonly since: string;
+    }) => Effect.Effect<PersonalPushSentSince, PersonalPushError>;
     readonly sweep: Effect.Effect<void>;
     /** Resolves when every queued send pass has finished. */
     readonly drain: Effect.Effect<void>;
@@ -1356,6 +1387,31 @@ export const make = Effect.gen(function* () {
       );
     });
 
+  const sentSince: PersonalPushService["Service"]["sentSince"] = (input) =>
+    Effect.gen(function* () {
+      const devices = yield* sql<{ readonly subscriptionId: string }>`
+        SELECT subscription_id AS "subscriptionId"
+        FROM personal_push_subscriptions WHERE endpoint = ${input.endpoint}
+      `;
+      const device = devices[0];
+      if (device === undefined) return { known: false, pushes: [] };
+      const rows = yield* sql<{ readonly payloadJson: string; readonly sentAt: string }>`
+        SELECT payload_json AS "payloadJson", updated_at AS "sentAt"
+        FROM personal_notification_outbox
+        WHERE subscription_id = ${device.subscriptionId} AND status = 'sent'
+          AND updated_at >= ${input.since}
+        ORDER BY updated_at ASC
+        LIMIT ${SENT_SINCE_MAX}
+      `;
+      return {
+        known: true,
+        pushes: rows.flatMap((row) => {
+          const url = storedPayloadUrl(row.payloadJson);
+          return url === null ? [] : [{ url, sentAt: row.sentAt }];
+        }),
+      };
+    }).pipe(storageFailure("history"));
+
   return {
     publicKey,
     getSettings,
@@ -1374,6 +1430,7 @@ export const make = Effect.gen(function* () {
     ackInApp,
     notifyProviderBroken,
     notifyTeamBotChange,
+    sentSince,
     sweep: kick,
     drain: worker.drain,
     start,

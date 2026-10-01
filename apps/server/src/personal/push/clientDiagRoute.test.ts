@@ -290,6 +290,22 @@ describe("client diagnostics route", () => {
       page: "index-abc.js",
       visibility: "visible",
     });
+    // The server's answer, and why it gave none when the phone's list decided.
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "lost-tap-check",
+          store: "server",
+          reason: "server-sent",
+          sent: 1,
+        }),
+      ),
+    ).toEqual({ event: "lost-tap-check", store: "server", reason: "server-sent", sent: 1 });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({ event: "lost-tap-check", store: "worker", server: "unknown-device" }),
+      ),
+    ).toEqual({ event: "lost-tap-check", store: "worker", server: "unknown-device" });
     // Notification Center unreadable, nothing chosen.
     expect(
       sanitizeClientDiag(

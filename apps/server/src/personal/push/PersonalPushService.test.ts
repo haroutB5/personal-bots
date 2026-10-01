@@ -246,6 +246,49 @@ it.effect("a completed task queues one minimal notification per device, deduped"
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+// 1 Oct: an Assistant push at 07:16:59 was tapped and the app resumed at
+// 07:18:46 with the worker's list and getNotifications() both empty. The
+// outbox still says what was sent, to which device, and when.
+it.effect("lists the pushes sent to one device since a time, and only that device's", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-10-01T06:10:00Z"));
+    yield* seedBot;
+    const push = yield* PersonalPushService.PersonalPushService;
+    const iphone = "https://web.push.apple.com/device-1";
+    const laptop = "https://fcm.googleapis.com/fcm/send/device-2";
+    yield* push.subscribe(subscription(iphone));
+    yield* push.notifyTask(yield* makeTask({ taskId: PersonalTaskId.make("old") }));
+    yield* push.drain;
+    yield* TestClock.setTime(Date.parse("2026-10-01T06:16:59Z"));
+    yield* push.subscribe(subscription(laptop));
+    yield* push.notifyTask(yield* makeTask({}));
+    yield* push.drain;
+
+    const since = "2026-10-01T06:16:49.948Z";
+    expect(yield* push.sentSince({ endpoint: iphone, since })).toEqual({
+      known: true,
+      pushes: [{ url: "/tasks/task-1", sentAt: "2026-10-01T06:16:59.000Z" }],
+    });
+    // Each device answers for itself; an unknown one says so.
+    expect((yield* push.sentSince({ endpoint: laptop, since })).pushes).toHaveLength(1);
+    expect(
+      yield* push.sentSince({ endpoint: "https://web.push.apple.com/unknown", since }),
+    ).toEqual({ known: false, pushes: [] });
+    // Nothing after the time asked for; a push still failing is not "sent".
+    expect(
+      (yield* push.sentSince({ endpoint: iphone, since: "2026-10-01T06:17:00.000Z" })).pushes,
+    ).toEqual([]);
+    harness.status = 503;
+    yield* TestClock.setTime(Date.parse("2026-10-01T06:17:30Z"));
+    yield* push.notifyTask(yield* makeTask({ status: "failed" }));
+    yield* push.drain;
+    expect(
+      (yield* push.sentSince({ endpoint: iphone, since: "2026-10-01T06:17:00.000Z" })).pushes,
+    ).toEqual([]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 it.effect("a disabled event type queues nothing", () => {
   const harness: Harness = { sent: [], status: 201 };
   return Effect.gen(function* () {
