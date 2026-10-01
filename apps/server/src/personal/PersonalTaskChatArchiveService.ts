@@ -28,9 +28,8 @@ import {
 } from "./taskChatAutoArchivePolicy.ts";
 
 /**
- * Archives a chat made for a delegated task once the task has finished and
- * the chat has sat idle and unopened for 30 minutes (Harout: bots were left
- * with 30+ chats from finished tasks).
+ * Archives finished delegated-task chats after 30 idle minutes. Routine-run
+ * chats archive after opening and 30 idle minutes, or after 24 hours unread.
  *
  * Which chats and when: `taskChatAutoArchivePolicy.ts`. The archive itself is
  * the manual one (`PersonalBotService.archiveThread`): the link row gets
@@ -186,12 +185,21 @@ export const make = Effect.gen(function* () {
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const candidates = yield* sql.unsafe<CandidateRow>(TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL);
     let archived = 0;
+    let archivedTaskChats = 0;
+    let archivedRoutineChats = 0;
     for (const candidate of candidates) {
-      if (yield* archiveOne(candidate, nowMs)) archived += 1;
+      if (yield* archiveOne(candidate, nowMs)) {
+        archived += 1;
+        if (candidate.chatKind === "routine") archivedRoutineChats += 1;
+        else archivedTaskChats += 1;
+      }
     }
     yield* Effect.logInfo("personal task chat auto-archive sweep", {
       archived,
-      finishedTaskChats: candidates.length,
+      archivedTaskChats,
+      archivedRoutineChats,
+      finishedTaskChats: candidates.filter((chat) => chat.chatKind === "delegation").length,
+      finishedRoutineChats: candidates.filter((chat) => chat.chatKind === "routine").length,
     });
     return archived;
   }).pipe(

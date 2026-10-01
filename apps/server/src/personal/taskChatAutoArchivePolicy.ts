@@ -1,5 +1,5 @@
 /**
- * Which finished delegated-task chats archive themselves, and when. Pure (no
+ * Which finished delegated-task and routine-run chats archive themselves, and when. Pure (no
  * Effect, no clock), so every rule is testable alone and the read-only dry
  * run against a copy of the live database (qa script) imports the very same
  * SQL and decision. The service (`PersonalTaskChatArchiveService`) applies it.
@@ -7,6 +7,8 @@
 
 /** A finished task chat archives once it has been idle and unopened this long. */
 export const TASK_CHAT_AUTO_ARCHIVE_IDLE_MS = 30 * 60_000;
+/** An unopened routine report stays visible for a day from chat creation. */
+export const ROUTINE_CHAT_AUTO_ARCHIVE_UNREAD_MS = 24 * 60 * 60_000;
 /** How often the sweep looks. It also runs once at startup. */
 export const TASK_CHAT_AUTO_ARCHIVE_SWEEP_MS = 5 * 60_000;
 /**
@@ -41,12 +43,14 @@ export const TASK_CHAT_OPEN_WORK_SQL = `
 `;
 
 /**
- * Candidate chats: only a chat created for a delegated task (the thread came
- * after the task), every task on it finished, none of its child tasks still
+ * Candidate chats: a chat created for a delegated task or routine run (the
+ * thread came after the task), every task on it finished, none of its child tasks still
  * open, and it is not archived (now or ever by this sweep), pinned, a
  * routine's chat, a group member's thread or a deleted bot's chat. A chat
- * holding any task that is not a delegation (Harout's own messages to a bot
- * become `user` tasks, routine runs `routine` tasks) is not a task chat.
+ * holding a user task is never eligible. Delegated-task behaviour stays the
+ * same. Relay runs always create their own chat, but record the task after
+ * posting its deterministic personal-relay message. These existing markers
+ * also identify runs of deleted one-off routines, without a migration.
  *
  * Idle and liveness are decided per row by `decideTaskChatArchive`.
  */
@@ -56,6 +60,11 @@ export const TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL = `
     bt.bot_id AS "botId",
     b.name AS "botName",
     p.title AS "title",
+    bt.created_at AS "createdAt",
+    CASE WHEN EXISTS (
+      SELECT 1 FROM personal_tasks r
+      WHERE r.thread_id = bt.thread_id AND r.source = 'routine'
+    ) THEN 'routine' ELSE 'delegation' END AS "chatKind",
     (
       SELECT max(COALESCE(o.completed_at, o.updated_at))
       FROM personal_tasks o
@@ -91,13 +100,23 @@ export const TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL = `
     AND EXISTS (
       SELECT 1 FROM personal_tasks d
       WHERE d.thread_id = bt.thread_id
-        AND d.source = 'delegation'
-        AND d.created_at <= bt.created_at
+        AND (
+          (d.source = 'delegation' AND d.created_at <= bt.created_at AND NOT EXISTS (
+            SELECT 1 FROM personal_tasks other
+            WHERE other.thread_id = bt.thread_id AND other.source <> 'delegation'
+          ))
+          OR (d.source = 'routine' AND d.created_at <= bt.created_at)
+          OR (d.source = 'routine' AND EXISTS (
+            SELECT 1 FROM projection_thread_messages relay
+            WHERE relay.thread_id = bt.thread_id
+              AND relay.role = 'assistant' AND relay.message_id LIKE 'personal-relay-%'
+          ))
+        )
     )
     AND NOT EXISTS (
       SELECT 1 FROM personal_tasks o
       WHERE o.thread_id = bt.thread_id
-        AND (o.source <> 'delegation' OR o.status NOT IN ('completed', 'failed', 'cancelled'))
+        AND (o.source NOT IN ('delegation', 'routine') OR o.status NOT IN ('completed', 'failed', 'cancelled'))
     )
     AND NOT EXISTS (
       SELECT 1 FROM personal_tasks c
@@ -137,6 +156,8 @@ export interface TaskChatArchiveCandidate {
   readonly botId: string;
   readonly botName: string;
   readonly title: string;
+  readonly createdAt: string;
+  readonly chatKind: "delegation" | "routine";
   readonly taskEndedAt: string | null;
   readonly lastMessageAt: string | null;
   readonly lastOwnerMessageAt: string | null;
@@ -203,6 +224,20 @@ export function decideTaskChatArchive(
   }
   if (live?.backgroundWork === true) return { kind: "keep", reason: "background_work" };
   if (candidate.pendingRequests > 0) return { kind: "keep", reason: "pending_request" };
+  // Owner messages are also proof the report has been read, even if the
+  // viewed heartbeat did not arrive. Opened chats keep the ordinary idle clock.
+  if (
+    candidate.chatKind === "routine" &&
+    parseMs(candidate.lastViewedAt) === null &&
+    parseMs(candidate.lastOwnerMessageAt) === null
+  ) {
+    const createdMs = parseMs(candidate.createdAt);
+    if (createdMs === null) return { kind: "keep", reason: "recent" };
+    const dueAtMs = createdMs + ROUTINE_CHAT_AUTO_ARCHIVE_UNREAD_MS;
+    return nowMs < dueAtMs
+      ? { kind: "keep", reason: "recent", dueAtMs }
+      : { kind: "archive", idleSinceMs: createdMs };
+  }
   const idleSinceMs = taskChatIdleSinceMs(candidate, live);
   // Every finished task has an updated_at, so this only guards bad data.
   if (idleSinceMs === null) return { kind: "keep", reason: "recent" };

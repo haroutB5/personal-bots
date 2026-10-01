@@ -16,6 +16,8 @@ const candidate = (over: Partial<TaskChatArchiveCandidate> = {}): TaskChatArchiv
   botId: "b1",
   botName: "Backend",
   title: "Task",
+  chatKind: "delegation",
+  createdAt: at(DONE - 10 * 60_000),
   taskEndedAt: at(DONE),
   lastMessageAt: at(DONE - 1_000),
   lastOwnerMessageAt: null,
@@ -27,6 +29,26 @@ const candidate = (over: Partial<TaskChatArchiveCandidate> = {}): TaskChatArchiv
 });
 
 describe("decideTaskChatArchive", () => {
+  it("keeps unopened routine reports until exactly 24 hours old, including long runs", () => {
+    const run = candidate({ chatKind: "routine", createdAt: at(DONE) });
+    const due = DONE + 24 * 60 * 60_000;
+    expect(decideTaskChatArchive(run, due - 1)).toMatchObject({ kind: "keep", dueAtMs: due });
+    expect(decideTaskChatArchive(run, due).kind).toBe("archive");
+    expect(decideTaskChatArchive({ ...run, taskEndedAt: at(due) }, due).kind).toBe("archive");
+    expect(decideTaskChatArchive({ ...run, sessionStatus: "running" }, due).kind).toBe("keep");
+  });
+
+  it("waits for 30 idle minutes after opening a routine report, including older reports", () => {
+    const viewed = DONE + 25 * 60 * 60_000;
+    const run = candidate({ chatKind: "routine", createdAt: at(DONE), lastViewedAt: at(viewed) });
+    expect(decideTaskChatArchive(run, viewed + TASK_CHAT_AUTO_ARCHIVE_IDLE_MS - 1).kind).toBe(
+      "keep",
+    );
+    expect(decideTaskChatArchive(run, viewed + TASK_CHAT_AUTO_ARCHIVE_IDLE_MS).kind).toBe(
+      "archive",
+    );
+  });
+
   it("archives exactly 30 minutes after the latest of task end, last message and last open", () => {
     expect(TASK_CHAT_AUTO_ARCHIVE_IDLE_MS).toBe(30 * 60_000);
     const due = DONE + TASK_CHAT_AUTO_ARCHIVE_IDLE_MS;

@@ -129,6 +129,10 @@ interface ChatSpec {
   readonly sessionStatus?: string;
   readonly pinned?: boolean;
   readonly routine?: boolean;
+  /** A completed relay run creates its task after opening its own chat. */
+  readonly relay?: boolean;
+  /** A routine posts into this already-existing chat. */
+  readonly existingChat?: boolean;
   readonly groupMember?: boolean;
   /** Messages: [id, role, atMs]. Default: the task brief and the bot's reply. */
   readonly messages?: ReadonlyArray<readonly [string, "user" | "assistant", number]>;
@@ -183,7 +187,7 @@ const seed = (harness: Harness, chats: ReadonlyArray<ChatSpec>) =>
           )
           VALUES (
             ${taskId}, ${taskId}, NULL, ${BOT}, ${chat.id}, 'Task', 'Do it', ${task.status},
-            ${task.source}, ${taskId}, 1, 3, 4, ${iso(T0 - 1_000)}, ${ended ?? iso(T0)}, ${ended}
+            ${task.source}, ${taskId}, 1, 3, 4, ${iso(chat.existingChat || chat.relay ? T0 + 1_000 : T0 - 1_000)}, ${ended ?? iso(T0)}, ${ended}
           )
         `;
         if (task.parentOf !== undefined) {
@@ -201,7 +205,11 @@ const seed = (harness: Harness, chats: ReadonlyArray<ChatSpec>) =>
         }
       }
       const messages = chat.messages ?? [
-        [`personal-task-${chat.id}-1`, "user", T0],
+        [
+          chat.relay ? `personal-relay-${chat.id}` : `personal-task-${chat.id}-1`,
+          chat.relay ? "assistant" : "user",
+          T0,
+        ],
         [`${chat.id}-reply`, "assistant", TASK_DONE_MS],
       ];
       for (const [messageId, role, atMs] of messages) {
@@ -299,6 +307,88 @@ const runTurn = (threadId: string, requestedMs: number) =>
   });
 
 describe("PersonalTaskChatArchive", () => {
+  it.effect("archives an opened routine-run chat only after 30 idle minutes", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seed(harness, [
+        { id: "run-opened", tasks: [{ source: "routine", status: "completed" }] },
+      ]);
+      const viewedAt = TASK_DONE_MS + 5 * MIN;
+      yield* (yield* PersonalBotRepository.PersonalBotRepository).recordThreadViewed({
+        threadId: ThreadId.make("run-opened"),
+        viewedAt: iso(viewedAt),
+      });
+      expect(yield* sweepAt(viewedAt + TASK_CHAT_AUTO_ARCHIVE_IDLE_MS - 1)).toBe(0);
+      expect(yield* sweepAt(viewedAt + TASK_CHAT_AUTO_ARCHIVE_IDLE_MS)).toBe(1);
+      expect(yield* archivedIds).toEqual(["run-opened"]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("keeps unread routine and relay reports for 24 hours from chat creation", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seed(harness, [
+        { id: "run-unread", tasks: [{ source: "routine", status: "completed" }] },
+        { id: "relay-unread", relay: true, tasks: [{ source: "routine", status: "completed" }] },
+      ]);
+      expect(yield* sweepAt(T0 + 24 * 60 * MIN - 1)).toBe(0);
+      expect(yield* sweepAt(T0 + 24 * 60 * MIN)).toBe(2);
+      expect(yield* archivedIds).toEqual(["relay-unread", "run-unread"]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("protects fixed, owner, group, pinned, busy and unfinished routine chats", () => {
+    const harness = makeHarness();
+    const done = [{ source: "routine" as const, status: "completed" }];
+    return Effect.gen(function* () {
+      yield* seed(harness, [
+        { id: "fixed", routine: true, tasks: done },
+        { id: "fixed-routine-deleted", existingChat: true, tasks: done },
+        { id: "routine-owner", tasks: [...done, { source: "user", status: "completed" }] },
+        { id: "routine-pinned", pinned: true, tasks: done },
+        { id: "routine-group", groupMember: true, tasks: done },
+        { id: "routine-live", sessionStatus: "running", tasks: done },
+        { id: "routine-background", tasks: done },
+        { id: "routine-unfinished", tasks: [{ source: "routine", status: "running" }] },
+        {
+          id: "routine-child",
+          tasks: [{ source: "routine", status: "completed", parentOf: "elsewhere" }],
+        },
+        { id: "delegation-then-fixed-routine", existingChat: true, tasks: done },
+      ]);
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        INSERT INTO personal_tasks (
+          task_id, root_task_id, bot_id, thread_id, title, objective, status, source,
+          idempotency_key, depth, max_depth, max_children, created_at, updated_at, completed_at
+        ) VALUES (
+          'original-delegation', 'original-delegation', ${BOT}, 'delegation-then-fixed-routine',
+          'Task', 'Go', 'completed', 'delegation', 'original-delegation', 1, 3, 4,
+          ${iso(T0 - 1_000)}, ${iso(TASK_DONE_MS)}, ${iso(TASK_DONE_MS)}
+        )
+      `;
+      harness.shells.get("routine-background")!.backgroundLiveness = { liveTaskIds: ["bg"] };
+      expect(yield* sweepAt(T0 + 48 * 60 * MIN)).toBe(0);
+      expect(yield* archivedIds).toEqual([]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("leaves a routine-run chat the owner unarchived open forever", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seed(harness, [
+        { id: "routine-restored", tasks: [{ source: "routine", status: "completed" }] },
+      ]);
+      expect(yield* sweepAt(T0 + 24 * 60 * MIN)).toBe(1);
+      yield* (yield* PersonalBotService.PersonalBotService).archiveThread({
+        threadId: ThreadId.make("routine-restored"),
+        archived: false,
+      });
+      expect(yield* sweepAt(T0 + 72 * 60 * MIN)).toBe(0);
+      expect(yield* archivedIds).toEqual([]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
   it.effect(
     "archives a finished task chat after 30 idle minutes, the way a manual archive does",
     () => {

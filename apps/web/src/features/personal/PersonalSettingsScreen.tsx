@@ -157,7 +157,7 @@ function PreferenceRow({
 }
 
 /**
- * "Auto-archive finished task chats". Unlike `PreferenceRow` this setting
+ * "Auto-archive finished task and routine chats". Unlike `PreferenceRow` this setting
  * lives on the laptop (the server runs the sweep), so it is the same on every
  * device and saves through the profile.
  */
@@ -198,11 +198,11 @@ function AutoArchiveTaskChatsRow({
       >
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="text-[15px] font-semibold text-[var(--personal-text)]">
-            Auto-archive finished task chats
+            Auto-archive finished task and routine chats
           </span>
           <span className="text-[13px] text-[var(--personal-text-secondary)]">
-            A chat a bot opened for a task archives once the task is done and the chat has gone
-            unused for 30 minutes. Nothing is deleted.
+            Finished task chats archive after 30 unused minutes. Routine-run chats archive 30
+            minutes after last use, or after 24 hours if unopened. Nothing is deleted.
           </span>
         </span>
         <span className="shrink-0 text-[13px] font-semibold text-[var(--personal-text-secondary)]">

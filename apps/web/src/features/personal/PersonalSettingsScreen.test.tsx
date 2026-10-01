@@ -278,7 +278,7 @@ describe("Settings auto-archive finished task chats", () => {
       .find((button) =>
         button
           .findAllByType("span")
-          .some((span) => span.props.children === "Auto-archive finished task chats"),
+          .some((span) => span.props.children === "Auto-archive finished task and routine chats"),
       )!;
   const stateLabel = () => findRow().findAllByType("span").at(-1)!.props.children;
 
