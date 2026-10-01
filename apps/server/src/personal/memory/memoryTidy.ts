@@ -123,6 +123,9 @@ export const MAX_CHANGED_SHARE = 0.5;
 const SECRET_SHAPED =
   /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:password|passwd|token|api[_ -]?key|secret|bearer)\b\s*(?:is|=|:)\s*\S+/i;
 
+/** A successor longer than this (and much longer than what it replaces) needs the owner's OK. */
+export const AUTO_SUCCESSOR_MAX_CHARS = 600;
+
 /**
  * The only change made without asking: older entries archived in favour of a
  * newer entry of the same kind, whose text stays exactly as it is. A merge
@@ -137,7 +140,12 @@ export function isAutoChange(
   const successor = byId.get(decision.by)!;
   return decision.memoryIds.every((id) => {
     const older = byId.get(id)!;
-    return older.kind === successor.kind && older.createdAtMs < successor.createdAtMs;
+    return (
+      older.kind === successor.kind &&
+      older.createdAtMs < successor.createdAtMs &&
+      // A short fact folded into a long wrap-up is worse memory, not tidier.
+      successor.content.length <= Math.max(AUTO_SUCCESSOR_MAX_CHARS, older.content.length * 2.5)
+    );
   });
 }
 
@@ -301,7 +309,7 @@ export function buildTidyPrompt(input: {
     "- Never put the same ref in two operations. Never invent refs.",
     "- Same subject only: entries that share words but are about different people, apps, bots or decisions stay separate.",
     "- Prefer supersede over merge whenever the newer entry already says everything that is still true.",
-    "- Chat wrap-ups and dated logs of past events are history: leave them unless two say the same thing.",
+    "- Chat wrap-ups and dated logs of past events are history: leave them unless two say the same thing. Never archive a short single fact in favour of a long wrap-up that mentions it; the short fact is the better memory.",
     "- Never change a note into a preference. Never invent facts. Never copy a password, token or key.",
     "- Every operation needs a short reason a person can check.",
   ].join("\n");

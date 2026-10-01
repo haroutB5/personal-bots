@@ -103,6 +103,22 @@ describe("validateDecisions", () => {
     expect(result.pending).toHaveLength(2);
   });
 
+  it("asks first before folding a short fact into a long wrap-up", () => {
+    const withWrapUp = [
+      ...entries,
+      entry("w", `Chat wrap-up: ${"details ".repeat(120)}home has hard floors.`, {
+        createdAtMs: NOW - DAY,
+      }),
+    ];
+    const result = validateDecisions(
+      withWrapUp,
+      [{ action: "supersede", memoryIds: ["g"], by: "w", reason: "Covered by the wrap-up." }],
+      NOW,
+    );
+    expect(result.auto).toEqual([]);
+    expect(result.pending).toHaveLength(1);
+  });
+
   it("never merges a note with a preference", () => {
     const result = validateDecisions(
       entries,

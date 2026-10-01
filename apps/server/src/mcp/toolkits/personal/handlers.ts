@@ -2,7 +2,6 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   describePersonalRoutineTrigger,
-  PersonalMemoryId,
   PersonalRoutineId,
   type PersonalRoutine,
   type PersonalRoutineSchedule,

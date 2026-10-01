@@ -159,6 +159,7 @@ const encodeIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.St
 const decodeIds = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const decodeRun = Schema.decodeUnknownEffect(PersonalMemoryTidyRun);
 const isMemoryError = Schema.is(PersonalMemoryError);
+const isTidyMode = Schema.is(PersonalMemoryTidyMode);
 
 interface RunRow {
   readonly runId: string;
@@ -220,11 +221,7 @@ export const make = Effect.gen(function* () {
 
   const readMode = sql<{ readonly mode: string }>`
     SELECT mode FROM personal_memory_tidy_settings WHERE settings_id = 1
-  `.pipe(
-    Effect.map((rows) =>
-      Schema.is(PersonalMemoryTidyMode)(rows[0]?.mode) ? rows[0]!.mode : ("preview" as const),
-    ),
-  );
+  `.pipe(Effect.map((rows) => (isTidyMode(rows[0]?.mode) ? rows[0]!.mode : ("preview" as const))));
 
   // Shared entries only: team and bot entries are left to the bots that own them.
   const readEntries = sql`

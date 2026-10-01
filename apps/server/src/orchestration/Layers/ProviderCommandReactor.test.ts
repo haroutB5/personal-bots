@@ -2983,8 +2983,12 @@ describe("ProviderCommandReactor", () => {
     it("a delegated task turn gets preferences and notes but no task summaries", async () => {
       const context = await turnContextOf(personalTaskMessageId("task-batch-2", 1));
       expect(context).toContain("Known facts (from memory)");
-      expect(context).toContain("- [preference] Benchmark results go in a table.");
-      expect(context).toContain("- [note] Benchmark machines are in the lab.");
+      expect(context).toMatch(
+        /- \[preference\] \[\d{4}-\d{2}-\d{2} · [\w-]{8}\] Benchmark results go in a table\./,
+      );
+      expect(context).toMatch(
+        /- \[note\] \[\d{4}-\d{2}-\d{2} · [\w-]{8}\] Benchmark machines are in the lab\./,
+      );
       expect(context).not.toContain("[task summary]");
       expect(context).not.toContain("batch 1 scored 42");
     });
@@ -2992,7 +2996,9 @@ describe("ProviderCommandReactor", () => {
     it("a routine run turn gets no task summaries either", async () => {
       // Routine runs start through the task service with the same message id.
       const context = await turnContextOf(personalTaskMessageId("routine-run-7", 3));
-      expect(context).toContain("- [preference] Benchmark results go in a table.");
+      expect(context).toMatch(
+        /- \[preference\] \[\d{4}-\d{2}-\d{2} · [\w-]{8}\] Benchmark results go in a table\./,
+      );
       expect(context).not.toContain("[task summary]");
     });
 
@@ -3003,15 +3009,23 @@ describe("ProviderCommandReactor", () => {
       ["group round", asMessageId("personal-group-round-1-brief-1")],
     ])("a %s turn gets every standing preference, relevant or not", async (_kind, messageId) => {
       const context = await turnContextOf(messageId);
-      expect(context).toContain("- [preference] Always reply in British English.");
+      expect(context).toMatch(
+        /- \[preference\] \[\d{4}-\d{2}-\d{2} · [\w-]{8}\] Always reply in British English\./,
+      );
     });
 
     it("a chat turn still gets task summaries", async () => {
       const context = await turnContextOf(asMessageId("user-message-benchmark"));
       expect(context).toContain("Known facts (from memory)");
-      expect(context).toContain('- [task summary] Task "Benchmark batch 1": batch 1 scored 42.');
-      expect(context).toContain("- [preference] Benchmark results go in a table.");
-      expect(context).toContain("- [note] Benchmark machines are in the lab.");
+      expect(context).toMatch(
+        /- \[task summary\] \[\d{4}-\d{2}-\d{2} · [\w-]{8}\] Task "Benchmark batch 1": batch 1 scored 42\./,
+      );
+      expect(context).toMatch(
+        /- \[preference\] \[\d{4}-\d{2}-\d{2} · [\w-]{8}\] Benchmark results go in a table\./,
+      );
+      expect(context).toMatch(
+        /- \[note\] \[\d{4}-\d{2}-\d{2} · [\w-]{8}\] Benchmark machines are in the lab\./,
+      );
     });
   });
 
