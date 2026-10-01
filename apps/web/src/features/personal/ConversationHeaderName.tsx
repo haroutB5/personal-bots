@@ -58,6 +58,9 @@ export function ConversationHeaderName({
         <span
           aria-hidden="true"
           data-chat-title=""
+          // The full text of a truncated, aria-hidden title on desktop hover. Kept native
+          // on purpose: a styled Tooltip would change the header's hover and tap behaviour.
+          // oxlint-disable-next-line t3code/no-native-title-tooltip
           title={title}
           className="min-w-10 flex-1 basis-0 truncate text-[15px] leading-6 font-medium text-[var(--personal-text-secondary)]"
         >

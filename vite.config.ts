@@ -53,6 +53,35 @@ const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
     "Pick a glyph by meaning from PullRequestGlyph in apps/web/src/components/pullRequest/pullRequestIcons.tsx so every surface draws the same pull request the same way.",
 };
 
+// personal-bots fork: the Bots app's own design vocabulary (see the lint override that uses it).
+const PERSONAL_APP_ARBITRARY_VALUES = [
+  // Its theme tokens, alone, with an opacity modifier, or inside color-mix/calc/shadow values.
+  // (A glob `*` matches one or more characters, so the bare forms are listed too.)
+  "*-[var(--personal-*)]",
+  "*-[*var(--personal-*)]",
+  "*-[*var(--personal-*)*]",
+  // iPhone safe-area padding, alone or inside max()/calc().
+  "p*-[env(safe-area-inset-*)]",
+  "p*-[*env(safe-area-inset-*)*]",
+  // The iOS type, line-height and corner scale its spec is written in.
+  ...[10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 28].map((px) => `text-[${px}px]`),
+  ...[14, 15, 18, 21, 22].map((px) => `leading-[${px}px]`),
+  ...["1.35", "1.4", "1.45", "1.5", "1.6"].map((ratio) => `leading-[${ratio}]`),
+  ...[8, 10, 12, 14, 18, 20, 22].map((px) => `rounded-[${px}px]`),
+  "rounded-t-[20px]",
+  // Hairline spacing and strokes from the same spec.
+  "gap-[3px]",
+  "gap-[18px]",
+  "px-[3px]",
+  "px-[5px]",
+  "px-[7px]",
+  "py-[11px]",
+  "border-[1.5px]",
+  "border-[3px]",
+];
+// The shared overlay primitives the Bots app skins in its own tokens.
+const PERSONAL_APP_SKINNED_PRIMITIVES = "^(Sheet|AlertDialog|Dialog|Menu)[A-Za-z]*$|^Button$";
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -349,6 +378,53 @@ export default defineConfig({
         const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
         return { files: [file], rules: { "t3code/no-manual-effect-runtime-in-tests": rule } };
       }),
+      {
+        // personal-bots fork: the Bots app has its own design system, separate from the
+        // upstream T3 theme. Its tokens are the `--personal-*` variables scoped under
+        // `.personal-app` (features/personal/personal.css), its type and corner scale is
+        // the iOS spec in px, and it skins the shared overlay primitives (sheets, alert
+        // dialogs, menus) in those tokens instead of adding upstream variants. Allow exactly
+        // that vocabulary in the Bots app's files; raw colours, unknown classes, runtime
+        // classNames and every other arbitrary value or restyle stay errors here too.
+        files: [
+          "apps/web/src/features/personal/**",
+          "apps/web/src/routes/_personal*.tsx",
+          "apps/web/src/components/ConfirmDialogHost.tsx",
+        ],
+        rules: {
+          "shadcn/no-arbitrary-values": [
+            "error",
+            { allow: ["layout", "transition", ...PERSONAL_APP_ARBITRARY_VALUES] },
+          ],
+          "shadcn/no-restyle": [
+            "error",
+            {
+              allow: ["layout"],
+              contracts: [
+                {
+                  pattern: "^CollapsibleTrigger$",
+                  allow: ["layout", "color", "typography", "spacing", "shape", "effects", "motion"],
+                },
+                {
+                  pattern: PERSONAL_APP_SKINNED_PRIMITIVES,
+                  allow: [
+                    "layout",
+                    "color",
+                    "typography",
+                    "spacing",
+                    "shape",
+                    "effects",
+                    "motion",
+                    // The `.personal-app` / `.personal-menu` scope classes that carry the tokens
+                    // into portalled popups.
+                    "personal-*",
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
     ],
     options: {
       reportUnusedDisableDirectives: "error",

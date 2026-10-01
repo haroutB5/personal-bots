@@ -236,7 +236,7 @@ export function BotAvatar({
       */}
       {halo ? <SilhouetteHalo d={silhouette.d} roundCorners={silhouette.roundCorners} /> : null}
       <SilhouetteFill d={silhouette.d} roundCorners={silhouette.roundCorners} color={color} />
-      <g className="bot-avatar-eyes">
+      <g>
         {eyes.map((eye) => (
           <rect
             key={`${eye.cx}-${eye.cy}`}
