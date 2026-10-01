@@ -123,14 +123,11 @@ export const MAX_CHANGED_SHARE = 0.5;
 const SECRET_SHAPED =
   /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:password|passwd|token|api[_ -]?key|secret|bearer)\b\s*(?:is|=|:)\s*\S+/i;
 
-/** A successor longer than this (and much longer than what it replaces) needs the owner's OK. */
-export const AUTO_SUCCESSOR_MAX_CHARS = 600;
-
 /**
- * The only change made without asking: older entries archived in favour of a
- * newer entry of the same kind, whose text stays exactly as it is. A merge
- * (new wording), retiring an entry with no successor, or anything across
- * kinds needs the owner's OK.
+ * The only change made without asking: an older entry archived in favour of
+ * a newer one that says the same thing in (nearly) the same words, same kind
+ * and scope. Every other supersede, every merge and every retirement is the
+ * model's judgement and needs the owner's OK: a model can be wrong or misled.
  */
 export function isAutoChange(
   decision: TidyDecision,
@@ -142,11 +139,27 @@ export function isAutoChange(
     const older = byId.get(id)!;
     return (
       older.kind === successor.kind &&
+      older.scope === successor.scope &&
+      older.scopeId === successor.scopeId &&
       older.createdAtMs < successor.createdAtMs &&
-      // A short fact folded into a long wrap-up is worse memory, not tidier.
-      successor.content.length <= Math.max(AUTO_SUCCESSOR_MAX_CHARS, older.content.length * 2.5)
+      nearDuplicate(older.content, successor.content)
     );
   });
+}
+
+/** Same words in the same entry, give or take punctuation and a word or two. */
+export const NEAR_DUPLICATE_SIMILARITY = 0.9;
+
+export function nearDuplicate(a: string, b: string): boolean {
+  if (normalised(a) === normalised(b)) return true;
+  const words = (text: string) =>
+    normalised(text)
+      .replace(/[^\p{L}\p{N} ]+/gu, " ")
+      .split(/\s+/);
+  const left = words(a);
+  const right = words(b);
+  if (Math.abs(left.length - right.length) > Math.max(2, left.length * 0.1)) return false;
+  return memorySimilarity(a, b) >= NEAR_DUPLICATE_SIMILARITY;
 }
 
 /**

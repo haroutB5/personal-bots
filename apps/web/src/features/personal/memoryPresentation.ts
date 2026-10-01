@@ -60,6 +60,8 @@ export const TIDY_ACTION_LABEL: Readonly<Record<PersonalMemoryTidyAction, string
   merge: "Merged",
   supersede: "Replaced",
   reclassify: "Reclassified",
+  save: "New entry",
+  forget: "Forgotten",
   leave: "Left alone",
 };
 
@@ -149,7 +151,11 @@ export function pendingTidyChanges<C extends Pick<PersonalMemoryTidyChange, "cha
 export function tidyActionLabel(
   change: Pick<PersonalMemoryTidyChange, "action" | "status">,
 ): string {
-  if (change.action === "reclassify" && change.status === "pending") return "Reclassify";
+  if (change.status === "pending") {
+    if (change.action === "reclassify") return "Reclassify";
+    if (change.action === "save") return "Save";
+    if (change.action === "forget") return "Forget";
+  }
   return TIDY_ACTION_LABEL[change.action];
 }
 
@@ -171,7 +177,54 @@ export function reclassifyDescription(
   return parts.join(" · ");
 }
 
+/** Who proposed a change, by name: the bot's, or "A bot" when it is not listed. */
+export function proposerBotName(
+  proposedBy: string | null | undefined,
+  botName: (botId: string) => string | undefined,
+): string {
+  if (proposedBy?.startsWith("bot:")) return botName(proposedBy.slice(4)) ?? "A bot";
+  return "A bot";
+}
+
+/** "From the nightly tidy-up" / "From CTO" / "From the file notes.md"; null when unknown. */
+export function tidyProvenanceLabel(
+  proposedBy: string | null | undefined,
+  botName: (botId: string) => string | undefined,
+): string | null {
+  if (proposedBy === undefined || proposedBy === null || proposedBy.trim() === "") return null;
+  if (proposedBy === "tidy-up") return "From the nightly tidy-up";
+  if (proposedBy.startsWith("bot:")) return `From ${botName(proposedBy.slice(4)) ?? "a bot"}`;
+  if (proposedBy.startsWith("file:")) return `From the file ${proposedBy.slice(5).trim()}`;
+  return `From ${proposedBy}`;
+}
+
+/**
+ * A bot's request in words: "CTO wants to save a preference for Dev team",
+ * "CTO asks to forget:". Empty for other actions.
+ */
+export function tidyRequestHeadline(
+  change: Pick<
+    PersonalMemoryTidyChange,
+    "action" | "proposedBy" | "toKind" | "toScope" | "toScopeId"
+  >,
+  botName: (botId: string) => string | undefined,
+): string {
+  const who = proposerBotName(change.proposedBy, botName);
+  if (change.action === "forget") return `${who} asks to forget:`;
+  if (change.action !== "save") return "";
+  const kind = change.toKind === "preference" ? "preference" : "note";
+  const team = change.toScopeId?.trim();
+  const reach =
+    change.toScope === "shared"
+      ? " for All bots"
+      : change.toScope === "team"
+        ? ` for ${team ? personalBotTeamLabel(team) : "one team"}`
+        : "";
+  return `${who} wants to save a ${kind}${reach}`;
+}
+
 const PROPOSALS_PREFIX = "proposals: ";
+const BOT_REQUESTS_PREFIX = "from bots, ";
 
 /** "2 Oct 03:30" on the app's local calendar. */
 function shortDayTime(then: number, timeZone: string): string {
@@ -203,6 +256,9 @@ export function tidyRunGroupLabel(
   const model = run.model ?? "";
   if (model.startsWith(PROPOSALS_PREFIX)) {
     const name = model.slice(PROPOSALS_PREFIX.length).trim();
+    if (name.startsWith(BOT_REQUESTS_PREFIX)) {
+      return `Bot requests ${name.slice(BOT_REQUESTS_PREFIX.length).trim()}`.trim();
+    }
     return name === "" ? "Proposals" : `Proposals: ${name}`;
   }
   return `Nightly tidy-up ${shortDayTime(DateTime.toEpochMillis(run.startedAt), timeZone)}`;

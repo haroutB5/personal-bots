@@ -283,6 +283,8 @@ export const SaveMemoryResult = Schema.Struct({
   kind: Schema.String,
   /** The entries this save archived. */
   replaced: Schema.Array(Schema.String),
+  /** saved: in memory now. waiting_for_approval: on the user's approval list, not saved yet. */
+  status: Schema.Literals(["saved", "waiting_for_approval"]),
   /**
    * Current entries on what reads like the same subject. If the new entry
    * changes or restates one, call save_memory again with the same content and
@@ -385,7 +387,7 @@ const SearchMemoryTool = Tool.make("search_memory", {
 
 const ForgetMemoryTool = Tool.make("forget_memory", {
   description:
-    "Forget a saved memory entry when the user asks you to (it is wrong, out of date, or they no longer want it kept). Pass the user's words verbatim in userRequest; they must come from the user's own message in this chat. Bots stop receiving the entry at once; it moves to Archived on the Memory screen, where the user can restore or delete it. To change an entry rather than drop it, use save_memory with replaces.",
+    "Forget a saved memory entry when the user asks you to (it is wrong, out of date, or they no longer want it kept). Pass the user's words verbatim in userRequest; they must come from the user's own message in this chat. Bots stop receiving the entry at once; it moves to Archived on the Memory screen, where the user can restore or delete it. An entry other bots see is forgotten at once only when the user's message in this turn asks to forget it and names it; otherwise it waits for their approval on the Memory screen. To change an entry rather than drop it, use save_memory with replaces.",
   parameters: ForgetMemoryInput,
   success: ForgetMemoryResult,
   failure: PersonalToolFailure,
@@ -399,7 +401,7 @@ const ForgetMemoryTool = Tool.make("forget_memory", {
 
 const SaveMemoryTool = Tool.make("save_memory", {
   description:
-    "Save a fact or rule to long-term memory when the user has asked you to remember something. Pass their words verbatim in userRequest: the server checks they are in the user's own message in this chat and refuses the save unless those words ask for it, with a phrase such as 'remember', 'don't forget', 'keep in mind', 'save this', 'note that down' or 'for future reference'. The user can give a bot standing permission to save without being asked; your instructions say so when you have it, and only then is a save without those words accepted (still from the user's own words, in a chat the user started, and never in a chat that has had a site the user marked sensitive open). Choose kind carefully: rules are preferences, facts are notes. Write one fact per entry, dated, under about 300 characters. Keep memory current: when a fact or rule changed, pass the old entry's id in replaces so the new one supersedes it instead of sitting beside it; the result lists similar current entries, and if one is an older version, call save_memory again with the same content and replaces set to its id. Passwords, tokens, keys and other secrets are rejected. A shared or team preference is shown to the user as a line in this chat.",
+    "Save a fact or rule to long-term memory when the user has asked you to remember something. Pass their words verbatim in userRequest: the server checks they are in the user's own message in this chat and refuses the save unless those words ask for it, with a phrase such as 'remember', 'don't forget', 'keep in mind', 'save this', 'note that down' or 'for future reference'. The user can give a bot standing permission to save without being asked; your instructions say so when you have it, and only then is a save without those words accepted (still from the user's own words, in a chat the user started, and never in a chat that has had a site the user marked sensitive open). Choose kind carefully: rules are preferences, facts are notes. Write one fact per entry, dated, under about 300 characters. Keep memory current: when a fact or rule changed, pass the old entry's id in replaces so the new one supersedes it instead of sitting beside it; the result lists similar current entries, and if one is an older version, call save_memory again with the same content and replaces set to its id. Passwords, tokens, keys and other secrets are rejected. A shared or team entry is saved at once only when the user's own message that started this turn asks for it, says what you save (save their words, not your additions), and names any entry it replaces; otherwise it goes to the user's approval list on the Memory screen (status waiting_for_approval), and you must tell them it is waiting. Either way the user sees a line in this chat.",
   parameters: SaveMemoryInput,
   success: SaveMemoryResult,
   failure: PersonalToolFailure,

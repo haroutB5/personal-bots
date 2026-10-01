@@ -12,6 +12,7 @@ import {
   newestTidyRunsFirst,
   pendingTidyChanges,
   pendingTidyGroups,
+  proposerBotName,
   reclassifyDescription,
   readMemoryLastSeen,
   TIDY_CHANGE_STATUS_LABEL,
@@ -21,6 +22,8 @@ import {
   tidyChangeCountLabel,
   tidyCountsLabel,
   tidyEntryTexts,
+  tidyProvenanceLabel,
+  tidyRequestHeadline,
   tidyRunGroupLabel,
   tidyRunKindLabel,
   tidyStatusLabel,
@@ -68,6 +71,8 @@ describe("tidy labels", () => {
       merge: "Merged",
       supersede: "Replaced",
       reclassify: "Reclassified",
+      save: "New entry",
+      forget: "Forgotten",
       leave: "Left alone",
     });
     expect(TIDY_MODE_LABEL).toEqual({ off: "Off", preview: "Preview only", on: "Make changes" });
@@ -288,5 +293,62 @@ describe("pending tidy groups", () => {
         startedAt: DateTime.makeUnsafe("2026-10-02T02:30:00Z"),
       }),
     ).toBe("Proposals");
+  });
+});
+
+describe("bot requests", () => {
+  const botName = (botId: string) => (botId === "b1" ? "CTO" : undefined);
+
+  it("labels save and forget, as requests while pending", () => {
+    expect(TIDY_ACTION_LABEL.save).toBe("New entry");
+    expect(TIDY_ACTION_LABEL.forget).toBe("Forgotten");
+    expect(tidyActionLabel({ action: "save", status: "pending" })).toBe("Save");
+    expect(tidyActionLabel({ action: "forget", status: "pending" })).toBe("Forget");
+    expect(tidyActionLabel({ action: "save", status: "approved" })).toBe("New entry");
+  });
+
+  it("says what a bot wants to save or forget", () => {
+    expect(
+      tidyRequestHeadline(
+        {
+          action: "save",
+          proposedBy: "bot:b1",
+          toKind: "preference",
+          toScope: "team",
+          toScopeId: "dev",
+        },
+        botName,
+      ),
+    ).toBe("CTO wants to save a preference for Dev team");
+    expect(
+      tidyRequestHeadline(
+        { action: "save", proposedBy: "bot:gone", toKind: "note", toScope: "shared" },
+        botName,
+      ),
+    ).toBe("A bot wants to save a note for All bots");
+    expect(tidyRequestHeadline({ action: "forget", proposedBy: "bot:b1" }, botName)).toBe(
+      "CTO asks to forget:",
+    );
+    expect(tidyRequestHeadline({ action: "merge", proposedBy: "tidy-up" }, botName)).toBe("");
+  });
+
+  it("says where a pending change came from", () => {
+    expect(tidyProvenanceLabel("tidy-up", botName)).toBe("From the nightly tidy-up");
+    expect(tidyProvenanceLabel("bot:b1", botName)).toBe("From CTO");
+    expect(tidyProvenanceLabel("bot:gone", botName)).toBe("From a bot");
+    expect(tidyProvenanceLabel("file:memory-review.md", botName)).toBe(
+      "From the file memory-review.md",
+    );
+    expect(tidyProvenanceLabel(null, botName)).toBeNull();
+    expect(proposerBotName("file:x", botName)).toBe("A bot");
+  });
+
+  it("heads a bot-request run as Bot requests", () => {
+    expect(
+      tidyRunGroupLabel({
+        model: "proposals: from bots, 2 Oct",
+        startedAt: DateTime.makeUnsafe("2026-10-02T09:00:00Z"),
+      }),
+    ).toBe("Bot requests 2 Oct");
   });
 });

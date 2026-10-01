@@ -75,18 +75,28 @@ describe("validateDecisions", () => {
     entry("g", "Rule G"),
   ];
 
-  it("archives an older entry for a newer one on its own; asks first for merges and retirements", () => {
+  it("archives on its own only a near-exact older copy; everything else waits for approval", () => {
+    const withCopies = [
+      ...entries,
+      entry("t1", "Favourite drink is green tea.", { createdAtMs: NOW - 9 * DAY }),
+      entry("t2", "Favourite drink is green tea!", { createdAtMs: NOW - 2 * DAY }),
+    ];
     const result = validateDecisions(
-      entries,
+      withCopies,
       [
+        { action: "supersede", memoryIds: ["t1"], by: "t2", reason: "Same entry." },
         { action: "supersede", memoryIds: ["a"], by: "b", reason: "B restates A." },
         { action: "merge", memoryIds: ["c", "d"], content: "Rules C and D.", reason: "Same rule." },
         { action: "supersede", memoryIds: ["f"], by: null, reason: "Says it ended." },
       ],
       NOW,
     );
-    expect(result.auto.map((decision) => decision.memoryIds)).toEqual([["a"]]);
-    expect(result.pending.map((decision) => decision.action)).toEqual(["merge", "supersede"]);
+    expect(result.auto.map((decision) => decision.memoryIds)).toEqual([["t1"]]);
+    expect(result.pending.map((decision) => decision.memoryIds)).toEqual([
+      ["a"],
+      ["c", "d"],
+      ["f"],
+    ]);
     expect(result.left).toEqual([]);
   });
 
@@ -167,10 +177,11 @@ describe("validateDecisions", () => {
       ],
       NOW,
     );
-    expect([...result.auto, ...result.pending].map((decision) => decision.memoryIds)).toEqual([
-      ["a"],
-      ["c", "f"],
-    ]);
+    expect(
+      [...result.auto, ...result.pending]
+        .map((decision) => decision.memoryIds.join(","))
+        .toSorted(),
+    ).toEqual(["a", "c,f"]);
     expect(result.left.map((decision) => decision.reason)).toEqual([
       "Overlaps an earlier change in this run (Overlaps.)",
       "Merged text looks like it carries a secret (Leaky.)",

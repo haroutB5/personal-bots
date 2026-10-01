@@ -27,6 +27,8 @@ import {
   TIDY_CHANGE_STATUS_LABEL,
   TIDY_MODE_LABEL,
   tidyActionLabel,
+  tidyProvenanceLabel,
+  tidyRequestHeadline,
   TIDY_MODES,
   tidyChangeCountLabel,
   tidyCountsLabel,
@@ -42,6 +44,8 @@ import {
   personalMemoryTidySetMode,
   usePersonalMemoryTidyLog,
 } from "./usePersonalAutomation";
+
+type BotName = (botId: string) => string | undefined;
 
 const FOCUS_RING =
   "outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-surface)]";
@@ -280,11 +284,13 @@ function TidyModeControl({
 function TidyChangeItem({
   change,
   texts,
+  botName,
   leading,
   children,
 }: {
   change: PersonalMemoryTidyChange;
   texts: ReadonlyMap<string, string>;
+  botName: BotName;
   /** A checkbox, in the waiting list. */
   leading?: ReactNode;
   /** Approve / Reject, in the waiting list. */
@@ -292,6 +298,10 @@ function TidyChangeItem({
 }): JSX.Element {
   const involved = tidyEntryTexts(change.memoryIds, texts);
   const reclassify = change.action === "reclassify" ? reclassifyDescription(change) : "";
+  const headline = tidyRequestHeadline(change, botName);
+  // Provenance only where the owner decides: the changelog's runs say where they came from.
+  const provenance =
+    change.status === "pending" ? tidyProvenanceLabel(change.proposedBy, botName) : null;
   return (
     <li className="flex items-start gap-1 py-2.5">
       {leading}
@@ -303,12 +313,28 @@ function TidyChangeItem({
             · {TIDY_CHANGE_STATUS_LABEL[change.status]}
           </span>
         </p>
+        {provenance !== null ? (
+          <p className="text-[12px] text-[var(--personal-text-tertiary)]">{provenance}</p>
+        ) : null}
+        {headline !== "" ? (
+          <p className="mt-0.5 text-[14px] font-medium text-[var(--personal-text)]">{headline}</p>
+        ) : null}
+        {change.action === "save" && change.content !== null ? (
+          <p className="mt-1 text-[14px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text)]">
+            {change.content}
+          </p>
+        ) : null}
         {reclassify !== "" ? (
           <p className="mt-0.5 text-[14px] font-medium text-[var(--personal-text)]">{reclassify}</p>
         ) : null}
         {change.reason.trim().length > 0 ? (
           <p className="mt-0.5 text-[13px] leading-snug text-[var(--personal-text-secondary)]">
             {change.reason}
+          </p>
+        ) : null}
+        {change.action === "save" && involved.length > 0 ? (
+          <p className="mt-1.5 text-[12px] font-medium text-[var(--personal-text-tertiary)]">
+            Would replace
           </p>
         ) : null}
         {involved.length > 0 ? (
@@ -363,6 +389,7 @@ function PendingTidyChanges({
   environmentId,
   groups,
   texts,
+  botName,
 }: {
   environmentId: EnvironmentId | null;
   groups: ReadonlyArray<{
@@ -371,6 +398,7 @@ function PendingTidyChanges({
     readonly changes: ReadonlyArray<PersonalMemoryTidyChange>;
   }>;
   texts: ReadonlyMap<string, string>;
+  botName: BotName;
 }): JSX.Element {
   const decide = useAtomCommand(personalMemoryTidyDecide);
   const [busy, setBusy] = useState<DecideBusy | null>(null);
@@ -473,6 +501,7 @@ function PendingTidyChanges({
                     key={change.changeId}
                     change={change}
                     texts={texts}
+                    botName={botName}
                     leading={
                       <button
                         type="button"
@@ -551,9 +580,11 @@ function PendingTidyChanges({
 function TidyRunItem({
   run,
   texts,
+  botName,
 }: {
   run: PersonalMemoryTidyRun;
   texts: ReadonlyMap<string, string>;
+  botName: BotName;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const changesId = useId();
@@ -585,7 +616,12 @@ function TidyRunItem({
           </button>
           <ul id={changesId} hidden={!open} className="divide-y divide-[var(--personal-border)]">
             {run.changes.map((change) => (
-              <TidyChangeItem key={change.changeId} change={change} texts={texts} />
+              <TidyChangeItem
+                key={change.changeId}
+                change={change}
+                texts={texts}
+                botName={botName}
+              />
             ))}
           </ul>
         </>
@@ -601,10 +637,12 @@ function TidyRunItem({
 export function MemoryTidySection({
   environmentId,
   texts,
+  botName,
 }: {
   environmentId: EnvironmentId | null;
   /** memoryId to text, from the current and archived lists. */
   texts: ReadonlyMap<string, string>;
+  botName: BotName;
 }): JSX.Element {
   const log = usePersonalMemoryTidyLog(environmentId);
   const setModeCommand = useAtomCommand(personalMemoryTidySetMode);
@@ -653,7 +691,12 @@ export function MemoryTidySection({
       />
       <div id={panelId} hidden={!open} className="flex flex-col gap-3 pt-1">
         {waiting.length > 0 ? (
-          <PendingTidyChanges environmentId={environmentId} groups={waitingGroups} texts={texts} />
+          <PendingTidyChanges
+            environmentId={environmentId}
+            groups={waitingGroups}
+            texts={texts}
+            botName={botName}
+          />
         ) : null}
         <p className="text-[14px] leading-snug text-[var(--personal-text-secondary)]">
           Each night at 03:30 duplicates are merged and outdated entries are replaced. Preview only
@@ -694,7 +737,7 @@ export function MemoryTidySection({
         ) : (
           <ul className="-mt-2 divide-y divide-[var(--personal-border)]">
             {runs.map((run) => (
-              <TidyRunItem key={run.runId} run={run} texts={texts} />
+              <TidyRunItem key={run.runId} run={run} texts={texts} botName={botName} />
             ))}
           </ul>
         )}

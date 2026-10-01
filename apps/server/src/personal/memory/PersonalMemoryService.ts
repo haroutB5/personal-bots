@@ -80,6 +80,23 @@ const SECRET_PATTERNS: ReadonlyArray<RegExp> = [
 ];
 
 /**
+ * The text with anything credential-shaped replaced by "[redacted]": for
+ * reasons, errors and file names the app stores or shows beside memory.
+ */
+export function redactSecrets(text: string): string {
+  let out = text;
+  for (const pattern of SECRET_PATTERNS) {
+    out = out.replace(
+      new RegExp(pattern.source, `${pattern.flags.replace("g", "")}g`),
+      "[redacted]",
+    );
+  }
+  return out.replace(/[A-Za-z0-9+/_=-]{40,}/g, (token) =>
+    /[A-Za-z]/.test(token) && /\d/.test(token) ? "[redacted]" : token,
+  );
+}
+
+/**
  * True when text looks like it carries a credential. Memory never stores
  * secrets: the secret store is the only place for those.
  */
@@ -220,6 +237,9 @@ const MemoryDbRow = Schema.Struct({
 });
 const decodeMemoryRow = Schema.decodeUnknownEffect(MemoryDbRow);
 const encodeMemoryIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const encodeVersions = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Number)),
+);
 const isMemoryError = Schema.is(PersonalMemoryError);
 
 const MEMORY_COLUMNS = `
@@ -268,6 +288,28 @@ const SCOPE_REACH: Record<PersonalMemoryScope, number> = {
   team: 2,
   shared: 3,
 };
+
+/** A bot's memory write waiting for the owner's tap. */
+export type PersonalMemoryProposal =
+  | {
+      readonly action: "save";
+      readonly botId: PersonalBotId;
+      readonly kind: "note" | "preference";
+      readonly scope: "shared" | "team";
+      readonly scopeId: string | null;
+      readonly content: string;
+      readonly replaces: ReadonlyArray<PersonalMemoryEntry>;
+      readonly reason: string;
+    }
+  | {
+      readonly action: "forget";
+      readonly botId: PersonalBotId;
+      readonly target: PersonalMemoryEntry;
+      readonly reason: string;
+    };
+
+/** Pending bot proposals one bot may have at a time. */
+export const PERSONAL_MEMORY_MAX_PENDING_PER_BOT = 20;
 
 /** A saved entry close to a new one, with how alike they are (0 to 1). */
 export interface PersonalMemoryMatch {
@@ -368,7 +410,18 @@ export class PersonalMemoryService extends Context.Service<
     readonly ownerMessages: (threadId: ThreadId) => Effect.Effect<{
       readonly startedByOwner: boolean;
       readonly texts: ReadonlyArray<string>;
+      /** The user-role message that started the current turn, and whether the owner wrote it. */
+      readonly current: { readonly text: string; readonly byOwner: boolean } | null;
     }>;
+    /** One entry, current or archived (not deleted). */
+    readonly get: (
+      memoryId: PersonalMemoryId,
+    ) => Effect.Effect<PersonalMemoryEntry, PersonalMemoryError>;
+    /**
+     * Puts a bot's save or forget on the owner's approval list instead of
+     * applying it. Returns the change id.
+     */
+    readonly propose: (input: PersonalMemoryProposal) => Effect.Effect<number, PersonalMemoryError>;
     /** The team a bot is on, for team-scoped saves. */
     readonly teamOfBot: (botId: PersonalBotId) => Effect.Effect<string | null>;
     /** Brings a superseded entry back: bots receive it again. */
@@ -565,11 +618,75 @@ export const make = Effect.gen(function* () {
         WHERE thread_id = ${threadId} AND role = 'user'
         ORDER BY created_at ASC LIMIT 1
       `;
+      const latest = yield* sql<{ readonly messageId: string; readonly text: string }>`
+        SELECT message_id AS "messageId", text FROM projection_thread_messages
+        WHERE thread_id = ${threadId} AND role = 'user'
+        ORDER BY created_at DESC LIMIT 1
+      `;
       return {
         startedByOwner: first[0] !== undefined && !first[0].messageId.startsWith("personal-"),
         texts: recent.map((row) => row.text),
+        current:
+          latest[0] === undefined
+            ? null
+            : { text: latest[0].text, byOwner: !latest[0].messageId.startsWith("personal-") },
       };
-    }).pipe(Effect.orElseSucceed(() => ({ startedByOwner: false, texts: [] })));
+    }).pipe(Effect.orElseSucceed(() => ({ startedByOwner: false, texts: [], current: null })));
+
+  const get: PersonalMemoryService["Service"]["get"] = (memoryId) =>
+    readEntry(memoryId).pipe(storageFailure("read"));
+
+  const propose: PersonalMemoryService["Service"]["propose"] = (input) =>
+    Effect.gen(function* () {
+      if (input.action === "save") yield* rejectUnsafe(input.content.trim());
+      const proposedBy = `bot:${input.botId}`;
+      const waiting = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS "count" FROM personal_memory_tidy_changes
+        WHERE status = 'pending' AND proposed_by = ${proposedBy}
+      `;
+      if ((waiting[0]?.count ?? 0) >= PERSONAL_MEMORY_MAX_PENDING_PER_BOT) {
+        return yield* fail(
+          "Not proposed: you already have many memory changes waiting for the user's OK. Tell the user instead.",
+        );
+      }
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      const day = localDay(DateTime.toEpochMillis(now));
+      const runId = `bot-proposals-${day}`;
+      yield* sql`
+        INSERT OR IGNORE INTO personal_memory_tidy_runs
+          (run_id, started_at, finished_at, status, dry_run, nightly, model)
+        VALUES (${runId}, ${nowIso}, ${nowIso}, 'done', 1, 0, ${`proposals: from bots, ${day}`})
+      `;
+      const targets = input.action === "save" ? input.replaces : [input.target];
+      const versions = Object.fromEntries(targets.map((entry) => [entry.memoryId, entry.version]));
+      yield* sql`
+        INSERT INTO personal_memory_tidy_changes (
+          run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id, content,
+          to_kind, to_scope, to_scope_id, versions_json, proposed_by, reason, created_at
+        )
+        VALUES (
+          ${runId}, 'pending', ${input.action},
+          ${input.action === "save" ? input.scope : input.target.scope},
+          ${input.action === "save" ? input.scopeId : input.target.scopeId},
+          ${encodeMemoryIds(targets.map((entry) => entry.memoryId))}, NULL,
+          ${input.action === "save" ? input.content.trim() : null},
+          ${input.action === "save" ? input.kind : null},
+          ${input.action === "save" ? input.scope : null},
+          ${input.action === "save" ? input.scopeId : null},
+          ${encodeVersions(versions)}, ${proposedBy}, ${redactSecrets(input.reason).slice(0, 600)},
+          ${nowIso}
+        )
+      `;
+      const id = yield* sql<{ readonly id: number }>`SELECT last_insert_rowid() AS "id"`;
+      yield* sql`
+        UPDATE personal_memory_tidy_runs
+        SET pending = (SELECT COUNT(*) FROM personal_memory_tidy_changes
+          WHERE run_id = ${runId} AND status = 'pending')
+        WHERE run_id = ${runId}
+      `;
+      return id[0]!.id;
+    }).pipe(storageFailure("propose"));
 
   const teamOfBot: PersonalMemoryService["Service"]["teamOfBot"] = (botId) =>
     sql<{ readonly team: string | null }>`
@@ -989,6 +1106,8 @@ export const make = Effect.gen(function* () {
     forget,
     resolveRef,
     ownerMessages,
+    get,
+    propose,
     teamOfBot,
     restore,
     similar,

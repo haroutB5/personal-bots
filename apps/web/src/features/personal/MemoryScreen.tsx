@@ -469,7 +469,11 @@ export function MemoryScreen(): JSX.Element {
             scopeOf={(entry) => scopeLabel(entry, botById)}
             now={now}
           />
-          <MemoryTidySection environmentId={environmentId} texts={memoryTexts} />
+          <MemoryTidySection
+            environmentId={environmentId}
+            texts={memoryTexts}
+            botName={(botId) => botById.get(botId)?.name}
+          />
         </>
       )}
 

@@ -61,6 +61,8 @@ export default Effect.gen(function* () {
       to_kind TEXT,
       to_scope TEXT,
       to_scope_id TEXT,
+      versions_json TEXT,
+      proposed_by TEXT,
       reason TEXT NOT NULL,
       created_at TEXT NOT NULL,
       decided_at TEXT

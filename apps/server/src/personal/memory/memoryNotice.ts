@@ -28,16 +28,40 @@ const context: OrchestrationMessageContext = {
   ],
 };
 
+const shownText = (content: string) => {
+  const text = content.replace(/\s+/g, " ").trim();
+  return text.length > 240 ? `${text.slice(0, 240).trimEnd()}...` : text;
+};
+
+/** The chat line for a save that waits for the owner's OK. */
+export function memoryProposedLine(input: {
+  readonly content: string;
+  readonly reach: string;
+  readonly kind: "note" | "preference";
+  readonly replaced: number;
+}): string {
+  const replaced =
+    input.replaced === 0
+      ? ""
+      : ` (replacing ${input.replaced} older ${input.replaced === 1 ? "entry" : "entries"})`;
+  return `Memory: a bot proposes a ${input.kind} for ${input.reach}${replaced}, waiting for your OK on the Memory screen: "${shownText(input.content)}"`;
+}
+
 /** The chat line for a saved preference other bots will follow. */
 export function memorySavedLine(input: {
   readonly content: string;
   readonly reach: string;
   readonly replaced: number;
   readonly forgotten?: boolean | undefined;
+  /** Not done: waiting for the owner's OK. */
+  readonly pending?: boolean | undefined;
 }): string {
-  const text = input.content.replace(/\s+/g, " ").trim();
-  const shown = text.length > 240 ? `${text.slice(0, 240).trimEnd()}...` : text;
-  if (input.forgotten === true) return `Memory: forgot a preference for ${input.reach}: "${shown}"`;
+  const shown = shownText(input.content);
+  if (input.forgotten === true) {
+    return input.pending === true
+      ? `Memory: a bot asks to forget an entry for ${input.reach}, waiting for your OK on the Memory screen: "${shown}"`
+      : `Memory: forgot a preference for ${input.reach}: "${shown}"`;
+  }
   const replaced =
     input.replaced === 0
       ? ""

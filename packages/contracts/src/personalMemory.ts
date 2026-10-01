@@ -108,12 +108,16 @@ export type PersonalMemoryRestoreInput = typeof PersonalMemoryRestoreInput.Type;
 /** merge: several entries folded into one. supersede: older entries replaced. leave: unsure, untouched. */
 /**
  * merge: several entries folded into one. supersede: older entries archived.
- * reclassify: one entry's kind or reach changes (never its text). leave: unsure, untouched.
+ * reclassify: one entry's kind or reach changes (never its text). save: a bot's new
+ * entry (content, toKind, toScope, toScopeId), replacing memoryIds if any. forget: a
+ * bot asks to archive memoryIds. leave: unsure, untouched.
  */
 export const PersonalMemoryTidyAction = Schema.Literals([
   "merge",
   "supersede",
   "reclassify",
+  "save",
+  "forget",
   "leave",
 ]);
 export type PersonalMemoryTidyAction = typeof PersonalMemoryTidyAction.Type;
@@ -149,6 +153,8 @@ export const PersonalMemoryTidyChange = Schema.Struct({
   toKind: Schema.optional(Schema.NullOr(Schema.Literals(["note", "preference"]))),
   toScope: Schema.optional(Schema.NullOr(Schema.Literals(["shared", "team"]))),
   toScopeId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Who proposed it: the tidy-up, a bot ("bot:<id>") or a local proposals file. */
+  proposedBy: Schema.optional(Schema.NullOr(Schema.String)),
   reason: Schema.String,
 });
 export type PersonalMemoryTidyChange = typeof PersonalMemoryTidyChange.Type;
