@@ -75,6 +75,25 @@ Remove-Item -Recurse "$env:USERPROFILE\.personal-bots\releases\<sha>"
 Never delete a release folder with `rm -rf` from Git Bash: it follows the
 junction and empties the checkout's `node_modules`.
 
+### Tell the requesting chat when a release lands
+
+A release waiter (backup, `restart.ps1`, `smoke.ps1`, rollback on a failed
+smoke) ends by running `notify-release.ps1` once with the chat that asked for
+the release:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\notify-release.ps1 `
+  -ThreadId <requesting chat id> -Version 1.60.18 -Release <sha12> -Outcome live `
+  -SmokeExit 0 -LogPath <waiter log>
+```
+
+`-Outcome` is `live`, `rolled_back` (with `-RollbackRelease`, `-RollbackExit`,
+`-RollbackSmokeExit`), `rollback_failed` or `failed` (stopped before the
+restart). It writes one notice into `<baseDir>\personal\release-notices\`;
+the server (1.60.18+) posts it within about 5 seconds as one turn in that bot
+chat, then moves it to `posted\` (or `rejected\`, with a log line, for a
+missing or non-bot thread). No `-ThreadId`: nothing is posted, exit 0.
+
 Agents and people working in this repo: run `git pull --ff-only` before new
 work. The weekly upstream sync pushes merges to `personal-bots/main`.
 

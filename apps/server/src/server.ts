@@ -126,6 +126,7 @@ import * as PersonalTaskTitleBackfill from "./personal/taskTitleBackfill.ts";
 import * as PersonalTurnRetry from "./personal/PersonalTurnRetryService.ts";
 import * as PersonalChatResume from "./personal/PersonalChatResumeService.ts";
 import * as PersonalTaskChatArchive from "./personal/PersonalTaskChatArchiveService.ts";
+import * as PersonalReleaseNotices from "./personal/releaseNotices/PersonalReleaseNoticeService.ts";
 import * as PersonalLeadBots from "./personal/leadBots/PersonalLeadBotService.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
@@ -577,6 +578,9 @@ const PersonalReactorsLive = Layer.effectDiscard(
     yield* (yield* PersonalLeadBots.PersonalLeadBotService).start();
     // Archives finished delegated-task chats after 30 idle minutes (startup + every 5 min).
     yield* (yield* PersonalTaskChatArchive.PersonalTaskChatArchive).start();
+    // Posts the release waiter's "landed / rolled back" notice into the chat
+    // that asked for the release (startup + every 5s; notify-release.ps1).
+    yield* (yield* PersonalReleaseNotices.PersonalReleaseNotices).start();
     // One-off: names old task/routine chats still on "New chat" after their
     // task, once the server is up. Marker in personal_meta; never blocks start.
     yield* forkParked(PersonalTaskTitleBackfill.runTaskTitleBackfillSafely);
@@ -594,6 +598,7 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   Layer.provideMerge(PersonalTurnRetry.layer),
   Layer.provideMerge(PersonalChatResume.layer),
   Layer.provideMerge(PersonalTaskChatArchive.layer),
+  Layer.provideMerge(PersonalReleaseNotices.layer),
   // Team leads create, edit and remove bots on their own team; consumes the
   // bot, task and routine services below and the push service just below.
   Layer.provideMerge(PersonalLeadBots.layer),

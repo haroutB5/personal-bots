@@ -81,6 +81,22 @@ describe("chat notices", () => {
     expect(chatNoticeLabel(notice!, line, NOW)).toBe(line);
   });
 
+  it("shows a release notice as a system row labelled with its outcome", () => {
+    const text = [
+      "Release notice from the app's release waiter (the user did not type this).",
+      "Release landed: hbots 1.60.18 (release abc123def456) is live. Smoke exit 0. No rollback.",
+      "Log: C:\\logs\\restart-1.60.18.log",
+      "Confirm the live release and start QA now.",
+    ].join("\n");
+    const marker = { notice: "release-landed", provider: "Release" };
+    const notice = readChatNotice({ context: context(marker) } as never)!;
+    expect(notice).toEqual(marker);
+    expect(isServerTurnNotice(notice)).toBe(true);
+    expect(chatNoticeLabel(notice, text, NOW)).toBe(
+      "Release landed: hbots 1.60.18 (release abc123def456) is live. Smoke exit 0. No rollback.",
+    );
+  });
+
   it("shows the server's answer to a lead as a system row in the owner's place, as written", () => {
     const text = "Harout approved your request to remove Tax.";
     const answer = { notice: "team-bot-answer", provider: "Team" };

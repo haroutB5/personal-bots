@@ -19,12 +19,16 @@ export const PERSONAL_CHAT_NOTICE_CONTEXT_KIND = "personal-chat-notice";
  * team-bot-answer: the server's turn message telling a lead how the owner
  * answered its change request (a user-role turn message, since the provider
  * needs a prompt; never the owner's words; rendered as a system row).
+ * release-landed: the server's turn message telling the bot that asked for an
+ * hbots release how it went (live, rolled back), posted from the release
+ * waiter's notice (a user-role turn message, rendered as a system row).
  */
 export const PersonalChatNoticeKind = Schema.Literals([
   "usage-limit-paused",
   "usage-limit-resumed",
   "team-bot-change",
   "team-bot-answer",
+  "release-landed",
 ]);
 export type PersonalChatNoticeKind = typeof PersonalChatNoticeKind.Type;
 
