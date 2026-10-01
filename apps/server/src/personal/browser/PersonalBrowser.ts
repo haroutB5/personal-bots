@@ -74,6 +74,12 @@ import { AGENT_LEASE_TTL_MS, BrowserLease, PERSONAL_BROWSER_PROFILE_ID } from ".
 import { makeCredentialRedactor } from "./credentialRedactor.ts";
 import { type EgressApproval, type EgressIntent, egressNeedingApproval } from "./egressGuard.ts";
 import {
+  LOGIN_SCRIPT_REFUSED,
+  guardedExpression,
+  loginCookieScopes,
+  loginOriginCovering,
+} from "./loginOrigins.ts";
+import {
   makeSensitiveExposureStore,
   rootExposureKey,
   type SensitiveExposureKind,
@@ -462,6 +468,12 @@ export const make = (options: PersonalBrowserOptions) =>
       tabs: new Map<string, TabEntry>(),
       activeTabId: null as string | null,
       loginUsed: false,
+      // Origins a saved login was filled on. The profile keeps that session,
+      // so page scripts stay disabled wherever its cookies can be read (see
+      // loginOrigins.ts). `loginOriginsUnknown` is a profile that used a login
+      // before the origins were recorded: page scripts stay disabled everywhere.
+      loginOrigins: new Set<string>(),
+      loginOriginsUnknown: false,
       // Origins where a model-provided script was allowed to run. A script can
       // register a service worker, which survives the tab, the navigation and
       // the Chrome process, so no saved login is ever filled on such an origin
@@ -494,6 +506,7 @@ export const make = (options: PersonalBrowserOptions) =>
             Option.some<BrowserProtectionState>({
               profileId: PERSONAL_BROWSER_PROFILE_ID,
               loginUsed: true,
+              loginOrigins: null,
               taintedOrigins: [],
             }),
           ),
@@ -502,6 +515,9 @@ export const make = (options: PersonalBrowserOptions) =>
     );
     if (Option.isSome(restored)) {
       runtime.loginUsed = restored.value.loginUsed;
+      runtime.loginOriginsUnknown =
+        restored.value.loginUsed && restored.value.loginOrigins === null;
+      for (const origin of restored.value.loginOrigins ?? []) runtime.loginOrigins.add(origin);
       for (const origin of restored.value.taintedOrigins) runtime.taintedOrigins.add(origin);
     }
 
@@ -514,6 +530,7 @@ export const make = (options: PersonalBrowserOptions) =>
       protections.save({
         profileId: PERSONAL_BROWSER_PROFILE_ID,
         loginUsed: runtime.loginUsed,
+        loginOrigins: runtime.loginOriginsUnknown ? null : [...runtime.loginOrigins],
         taintedOrigins: [...runtime.taintedOrigins],
       }),
     );
@@ -1375,6 +1392,23 @@ export const make = (options: PersonalBrowserOptions) =>
     const rejectUrl = (reason: string) =>
       Effect.fail(new HostOperationError("PreviewAutomationExecutionError", reason));
 
+    const LOGIN_SCRIPTS_DISABLED_EVERYWHERE =
+      "Page scripts are disabled after a saved login is used, so browser or page state cannot reveal it.";
+
+    /** Why a model-provided script may not run on `url`, or null when it may. */
+    const loginScriptRefusal = (url: string): string | null => {
+      if (runtime.loginOriginsUnknown) return LOGIN_SCRIPTS_DISABLED_EVERYWHERE;
+      const covering = loginOriginCovering(url, runtime.loginOrigins);
+      if (covering === null) return null;
+      if (covering === "unknown") {
+        return "Page scripts are disabled on this page because a saved login was used in this browser and the page's site cannot be checked. Open an http(s) page first.";
+      }
+      const pageOrigin = originOf(url) ?? "this page";
+      return pageOrigin === covering.origin
+        ? `Page scripts are disabled on ${pageOrigin} because a saved login was used there.`
+        : `Page scripts are disabled on ${pageOrigin} because a saved login was used on ${covering.origin}, which shares its cookies.`;
+    };
+
     /**
      * A tab with a native dialog open cannot be read or driven: every page
      * call waits on the dialog. Enter and Escape answer it, typing fills a
@@ -1485,10 +1519,9 @@ export const make = (options: PersonalBrowserOptions) =>
         if (pendingDialog !== null) return yield* operateOnDialog(request, tab, pendingDialog);
         refreshCredentialProtection(tab);
         yield* setActive(tab);
-        if (runtime.loginUsed && request.operation === "evaluate") {
-          return yield* rejectUrl(
-            "Page scripts are disabled after a saved login is used, so browser or page state cannot reveal it.",
-          );
+        if (request.operation === "evaluate") {
+          const refusal = loginScriptRefusal(openPage(tab.page) ? tab.page.url() : "");
+          if (refusal !== null) return yield* rejectUrl(refusal);
         }
         if (
           tab.loginProtected &&
@@ -1576,10 +1609,28 @@ export const make = (options: PersonalBrowserOptions) =>
           }
           case "evaluate": {
             const input = request.input as PreviewAutomationEvaluateInput;
+            // The tab's URL was checked above, but the page can navigate to a
+            // signed-in site before the script reaches it, so the page checks
+            // again in the same turn that runs the script.
+            const scopes = loginCookieScopes(runtime.loginOrigins);
+            if (scopes === null) return yield* rejectUrl(LOGIN_SCRIPTS_DISABLED_EVERYWHERE);
+            const guarded =
+              scopes.length === 0
+                ? input
+                : { ...input, expression: guardedExpression(input.expression, scopes) };
             yield* taintForScript(tab);
             return {
               tab,
-              result: yield* attempt({}, () => performEvaluate(tab.page, input, timeoutMs)),
+              result: yield* attempt({}, () => performEvaluate(tab.page, guarded, timeoutMs)).pipe(
+                Effect.mapError((error) =>
+                  error.message.includes(LOGIN_SCRIPT_REFUSED)
+                    ? new HostOperationError(
+                        "PreviewAutomationExecutionError",
+                        "Page scripts are disabled on this page because it moved to a site where a saved login was used. Nothing was run.",
+                      )
+                    : error,
+                ),
+              ),
             };
           }
           case "waitFor": {
@@ -1873,6 +1924,7 @@ export const make = (options: PersonalBrowserOptions) =>
         tab.loginProtected = true;
         tab.credentialFormUrl = openPage(tab.page) ? tab.page.url() : target;
         runtime.loginUsed = true;
+        runtime.loginOrigins.add(input.expectedOrigin);
         // A protection that is only in memory would be gone after a restart
         // while the profile stayed signed in, so the fill waits for the write.
         yield* persistProtections.pipe(
@@ -2126,9 +2178,9 @@ export const make = (options: PersonalBrowserOptions) =>
           runtime.detail = null;
           runtime.lockedByPid = null;
           yield* abandonHelp(HELP_ENDED_BY_CLOSE);
-          // Keep loginUsed: the persistent profile retains authenticated
-          // cookies across a Chrome close, so re-enabling page scripts here
-          // would bypass the protection on the next launch.
+          // Keep the login origins: the persistent profile retains
+          // authenticated cookies across a Chrome close, so re-enabling page
+          // scripts there would bypass the protection on the next launch.
           runtime.closing = false;
           yield* lease.releaseAll;
           if (closedSomething) {

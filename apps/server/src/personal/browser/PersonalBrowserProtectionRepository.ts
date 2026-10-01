@@ -24,8 +24,14 @@ import { PersistenceDecodeError, PersistenceSqlError } from "../../persistence/E
 
 export const BrowserProtectionState = Schema.Struct({
   profileId: Schema.String,
-  /** A saved login has been used in this profile, so page scripts stay disabled. */
+  /** A saved login has been used in this profile. Kept for rollbacks, which read only this. */
   loginUsed: Schema.Boolean,
+  /**
+   * Origins a saved login was filled on; page scripts stay disabled on their
+   * sites. Null while a login was used but where is unknown, which disables
+   * page scripts everywhere.
+   */
+  loginOrigins: Schema.NullOr(Schema.Array(Schema.String)),
   /** Origins where a model-provided script was allowed to run. */
   taintedOrigins: Schema.Array(Schema.String),
 });
@@ -36,9 +42,10 @@ const ProtectionRow = Schema.Struct({
   profileId: Schema.String,
   loginUsed: Schema.Int,
   taintedOrigins: Schema.fromJsonString(Schema.Array(Schema.String)),
+  loginOrigins: Schema.NullOr(Schema.fromJsonString(Schema.Array(Schema.String))),
 });
 
-const encodeTaintedOrigins = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const encodeOrigins = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 export type BrowserProtectionRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 
@@ -73,7 +80,8 @@ export const make = Effect.gen(function* () {
         SELECT
           profile_id AS "profileId",
           login_used AS "loginUsed",
-          tainted_origins AS "taintedOrigins"
+          tainted_origins AS "taintedOrigins",
+          login_origins AS "loginOrigins"
         FROM personal_browser_protection
         WHERE profile_id = ${profileId}
       `,
@@ -82,15 +90,17 @@ export const make = Effect.gen(function* () {
   const saveRow = (state: BrowserProtectionState) =>
     sql`
       INSERT INTO personal_browser_protection (
-        profile_id, login_used, tainted_origins
+        profile_id, login_used, tainted_origins, login_origins
       )
       VALUES (
         ${state.profileId}, ${state.loginUsed ? 1 : 0},
-        ${encodeTaintedOrigins(state.taintedOrigins)}
+        ${encodeOrigins(state.taintedOrigins)},
+        ${state.loginOrigins === null ? null : encodeOrigins(state.loginOrigins)}
       )
       ON CONFLICT(profile_id) DO UPDATE SET
         login_used = excluded.login_used,
-        tainted_origins = excluded.tainted_origins
+        tainted_origins = excluded.tainted_origins,
+        login_origins = excluded.login_origins
     `;
 
   return PersonalBrowserProtectionRepository.of({
@@ -101,6 +111,7 @@ export const make = Effect.gen(function* () {
             profileId: row.profileId,
             loginUsed: row.loginUsed !== 0,
             taintedOrigins: row.taintedOrigins,
+            loginOrigins: row.loginOrigins,
           })),
         ),
         Effect.mapError(toRepositoryError("PersonalBrowserProtectionRepository.load")),

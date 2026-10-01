@@ -1,3 +1,5 @@
+import * as NodeVm from "node:vm";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -272,8 +274,11 @@ const asLoginBrowser = (fake: ReturnType<typeof makeFakeDriver>) => {
  * Building the layer twice over one of these is a server restart against the
  * same still-authenticated browser profile.
  */
-const memoryProtectionRepository = () => {
-  const saved: PersonalBrowserProtectionRepository.BrowserProtectionState[] = [];
+const memoryProtectionRepository = (
+  initial?: PersonalBrowserProtectionRepository.BrowserProtectionState,
+) => {
+  const saved: PersonalBrowserProtectionRepository.BrowserProtectionState[] =
+    initial === undefined ? [] : [initial];
   const layer = Layer.succeed(
     PersonalBrowserProtectionRepository.PersonalBrowserProtectionRepository,
     PersonalBrowserProtectionRepository.PersonalBrowserProtectionRepository.of({
@@ -743,7 +748,7 @@ describe("PersonalBrowser", () => {
       );
       yield* browser.handleAutomationRequest(otherRequest("snapshot"));
 
-      // Page scripts stay disabled for everyone while the profile holds the
+      // Page scripts stay disabled on this site for everyone while the profile holds the
       // session the credential created.
       const scripted = yield* browser
         .handleAutomationRequest(otherRequest("evaluate", { expression: "document.cookie" }))
@@ -1664,7 +1669,7 @@ describe("PersonalBrowser", () => {
       yield* browser.handleAutomationRequest(request("snapshot"));
       yield* browser.handleAutomationRequest(request("type", { locator: "input", text: "hello" }));
 
-      // Page scripts stay off on that profile all the same.
+      // Page scripts stay off on the signed-in site all the same.
       const scripted = yield* browser
         .handleAutomationRequest(request("evaluate", { expression: "document.cookie" }))
         .pipe(Effect.asVoid, Effect.flip);
@@ -2256,6 +2261,237 @@ describe("PersonalBrowser", () => {
           }),
         );
       }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+  });
+
+  // Page scripts used to stay disabled on every site once any saved login was
+  // used, which stopped bots testing local servers. They stay disabled only
+  // where the login's cookies can be read: its host on any port and scheme,
+  // and the rest of its registrable site.
+  describe("page scripts after a saved login", () => {
+    const MODEL_SCRIPT = "globalThis.ranModelScript = true; 'model-script:' + location.hostname";
+    const scriptHooks = new Map<FakePage, () => void>();
+
+    /**
+     * Runs a model-provided script as a real script in a document at the
+     * page's URL, so the in-page guard is exercised for real. A hook moves the
+     * page between the server's check and the script, like a redirect landing.
+     */
+    const asScriptablePage = (page: FakePage, record: { ran: boolean }) => {
+      const probe = page.evaluateImpl;
+      page.evaluateImpl = async (expression) => {
+        if (!expression.includes("model-script")) return probe?.(expression) ?? null;
+        const before = scriptHooks.get(page);
+        scriptHooks.delete(page);
+        before?.();
+        const document: Record<string, unknown> = { location: new URL(page.currentUrl) };
+        try {
+          return NodeVm.runInNewContext(expression, document);
+        } catch (thrown) {
+          // Playwright reports a thrown non-Error value inside its own Error.
+          throw new Error(`page.evaluate: ${String(thrown)}`);
+        } finally {
+          if (document.ranModelScript === true) record.ran = true;
+        }
+      };
+    };
+
+    const scriptableBrowser = (fake: ReturnType<typeof makeFakeDriver>) => {
+      const record = { ran: false };
+      configureLoginPage(fake.state.page);
+      asScriptablePage(fake.state.page, record);
+      fake.state.onNewPage = (page) => {
+        configureLoginPage(page);
+        asScriptablePage(page, record);
+      };
+      return record;
+    };
+
+    type Browser = PersonalBrowser.PersonalBrowser["Service"];
+
+    const signIn = (browser: Browser, origin: string) =>
+      Effect.gen(function* () {
+        yield* browser.handleAutomationRequest(request("navigate", { url: `${origin}/sign-in` }));
+        yield* browser.fillLogin({
+          threadId,
+          label: "Fixture",
+          expectedOrigin: origin,
+          username: "person@example.com",
+          password: "password-value",
+        });
+      });
+
+    const evaluateOn = (browser: Browser, url: string) =>
+      Effect.gen(function* () {
+        yield* browser.handleAutomationRequest(request("navigate", { url }));
+        return yield* browser.handleAutomationRequest(
+          request("evaluate", { expression: MODEL_SCRIPT }),
+        );
+      });
+
+    const refusalOn = (browser: Browser, url: string) =>
+      evaluateOn(browser, url).pipe(Effect.asVoid, Effect.flip);
+
+    it.effect("refuses only on the signed-in site, on any port or subdomain", () => {
+      const fake = makeFakeDriver();
+      scriptableBrowser(fake);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* signIn(browser, "https://app.example.com");
+
+        const same = yield* refusalOn(browser, "https://app.example.com/account");
+        expect(same.message).toBe(
+          "Page scripts are disabled on https://app.example.com because a saved login was used there.",
+        );
+        for (const sameSite of [
+          "https://www.example.com/",
+          "https://example.com/",
+          "http://app.example.com:8080/",
+          "https://deep.app.example.com/",
+        ]) {
+          const refused = yield* refusalOn(browser, sameSite);
+          expect(refused.message).toContain("Page scripts are disabled on");
+          expect(refused.message).toContain("https://app.example.com");
+        }
+
+        expect(yield* evaluateOn(browser, "https://other.example/")).toBe(
+          "model-script:other.example",
+        );
+        expect(yield* evaluateOn(browser, "http://localhost:3000/")).toBe("model-script:localhost");
+        expect(yield* evaluateOn(browser, "https://example.org/")).toBe("model-script:example.org");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("treats shared hosting suffixes as separate sites", () => {
+      const fake = makeFakeDriver();
+      scriptableBrowser(fake);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* signIn(browser, "https://alpha.vercel.app");
+        expect(yield* evaluateOn(browser, "https://beta.vercel.app/")).toBe(
+          "model-script:beta.vercel.app",
+        );
+        const refused = yield* refusalOn(browser, "https://alpha.vercel.app/");
+        expect(refused.message).toContain("https://alpha.vercel.app");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    // Cookies ignore the port, so another port on the same loopback host still
+    // sees the session; a different loopback host does not.
+    it.effect("blocks the signed-in loopback host on every port, not other hosts", () => {
+      const fake = makeFakeDriver();
+      scriptableBrowser(fake);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* signIn(browser, "http://127.0.0.1:4000");
+        const otherPort = yield* refusalOn(browser, "http://127.0.0.1:5000/");
+        expect(otherPort.message).toContain("http://127.0.0.1:4000");
+        expect(yield* evaluateOn(browser, "http://localhost:5000/")).toBe("model-script:localhost");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("refuses inside the page when it reached the signed-in site after the check", () => {
+      const fake = makeFakeDriver();
+      const record = scriptableBrowser(fake);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* signIn(browser, "https://app.example.com");
+        yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://other.example/" }),
+        );
+        const page = fake.state.pages.find(
+          (candidate) => !candidate.closed && candidate.currentUrl === "https://other.example/",
+        );
+        expect(page).toBeDefined();
+        // The server sees other.example; the document the script lands in is
+        // the signed-in site.
+        scriptHooks.set(page!, () => {
+          page!.currentUrl = "https://app.example.com/account";
+        });
+        const refused = yield* browser
+          .handleAutomationRequest(request("evaluate", { expression: MODEL_SCRIPT }))
+          .pipe(Effect.asVoid, Effect.flip);
+        expect(refused.message).toContain("Page scripts are disabled");
+        expect(refused.message).not.toContain("__hbots");
+        expect(record.ran).toBe(false);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("keeps the signed-in origins across a restart", () => {
+      const protections = memoryProtectionRepository();
+      const first = makeFakeDriver();
+      scriptableBrowser(first);
+      const second = makeFakeDriver();
+      scriptableBrowser(second);
+      const layerFor = (fake: ReturnType<typeof makeFakeDriver>) =>
+        baseLayer(fake.driver, PersonalBrowserLeaseRepository.layer, protections.layer);
+      return Effect.gen(function* () {
+        yield* Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* signIn(browser, "https://app.example.com");
+        }).pipe(Effect.provide(layerFor(first)));
+
+        expect(protections.saved.at(-1)).toMatchObject({
+          loginUsed: true,
+          loginOrigins: ["https://app.example.com"],
+        });
+
+        yield* Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          const refused = yield* refusalOn(browser, "https://app.example.com/account");
+          expect(refused.message).toContain("https://app.example.com");
+          expect(yield* evaluateOn(browser, "http://localhost:3000/")).toBe(
+            "model-script:localhost",
+          );
+        }).pipe(Effect.provide(layerFor(second)));
+      });
+    });
+
+    it.effect("keeps page scripts disabled everywhere when the login origins are unknown", () => {
+      const protections = memoryProtectionRepository({
+        profileId: "default",
+        loginUsed: true,
+        loginOrigins: null,
+        taintedOrigins: [],
+      });
+      const fake = makeFakeDriver();
+      scriptableBrowser(fake);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const refused = yield* refusalOn(browser, "http://localhost:3000/");
+        expect(refused.message).toContain("Page scripts are disabled after a saved login is used");
+      }).pipe(
+        Effect.provide(
+          baseLayer(fake.driver, PersonalBrowserLeaseRepository.layer, protections.layer),
+        ),
+      );
+    });
+
+    it.effect("scopes a migrated profile to the origins it was given", () => {
+      const protections = memoryProtectionRepository({
+        profileId: "default",
+        loginUsed: true,
+        loginOrigins: ["https://bank.example"],
+        taintedOrigins: ["https://tainted.example"],
+      });
+      const fake = makeFakeDriver();
+      scriptableBrowser(fake);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const refused = yield* refusalOn(browser, "https://bank.example/");
+        expect(refused.message).toContain("https://bank.example");
+        expect(yield* evaluateOn(browser, "http://localhost:3000/")).toBe("model-script:localhost");
+        // The taint written for localhost keeps both lists.
+        expect(protections.saved.at(-1)).toMatchObject({
+          loginUsed: true,
+          loginOrigins: ["https://bank.example"],
+          taintedOrigins: ["https://tainted.example", "http://localhost:3000"],
+        });
+      }).pipe(
+        Effect.provide(
+          baseLayer(fake.driver, PersonalBrowserLeaseRepository.layer, protections.layer),
+        ),
+      );
     });
   });
 });
