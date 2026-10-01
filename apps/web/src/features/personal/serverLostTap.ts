@@ -120,7 +120,25 @@ export type ServerLostTapOutcome =
   | { readonly answered: false; readonly reason: string };
 
 /** Asks the server what it sent this device while the app was away. */
-export async function askServerForLostTap(input: {
+/**
+ * A request that failed outright (no HTTP answer) is sent once more after
+ * this: it now goes out the instant iOS wakes the app, when the network may
+ * not be back yet.
+ */
+export const SERVER_LOST_TAP_RETRY_MS = 250;
+
+/** Asks the server, retrying once a request that got no HTTP answer at all. */
+export async function askServerForLostTap(
+  input: Parameters<typeof askServerOnce>[0],
+): Promise<ServerLostTapOutcome> {
+  const first = await askServerOnce(input);
+  if (first.answered || first.reason !== "failed") return first;
+  await new Promise((resolve) => setTimeout(resolve, SERVER_LOST_TAP_RETRY_MS));
+  const second = await askServerOnce(input);
+  return second.answered ? second : { answered: false, reason: `${second.reason}-retried` };
+}
+
+async function askServerOnce(input: {
   readonly endpoint: string | null;
   /** How long the app was away; null when not known (a launch with no record). */
   readonly awayMs: number | null;
@@ -150,39 +168,26 @@ export async function askServerForLostTap(input: {
 }
 
 /**
- * The look the page logs and acts on: the server's, whenever it answers for
- * this device, else the phone's own list, noting why the server did not.
+ * The page's lost-tap lookups (notificationTap.ts lostTap): `ask` puts the
+ * question to the server the moment the app comes back; `find` reads the
+ * phone's own list, used only when the server cannot answer.
  */
-export async function findLostTapServerFirst(input: {
-  readonly server: () => Promise<ServerLostTapOutcome>;
-  readonly phone: () => Promise<LostTapLook>;
-}): Promise<LostTapLook & { readonly server?: string }> {
-  const server = await input
-    .server()
-    .catch((): ServerLostTapOutcome => ({ answered: false, reason: "failed" }));
-  if (server.answered) return server.look;
-  const phone = await input.phone();
-  return { ...phone, server: server.reason };
-}
-
-/**
- * The page's lost-tap look (notificationTap.ts lostTap.find): the server's
- * record of what it sent this device first, the phone's own list second.
- */
-export function makeLostTapFinder(deps: {
+export function makeLostTapLookups(deps: {
   readonly registration: () => Promise<(PushEndpointSource & NotificationLister) | null>;
   readonly fetch: typeof fetch;
   readonly now: () => number;
   readonly memory?: EndpointMemory;
-}): (context: { readonly awaySince: number }) => Promise<LostTapLook> {
-  return ({ awaySince }) =>
-    findLostTapServerFirst({
-      server: async () =>
-        askServerForLostTap({
-          endpoint: await currentPushEndpoint(await deps.registration(), deps.memory),
-          awayMs: awaySince === 0 ? null : Math.max(0, deps.now() - awaySince),
-          fetch: deps.fetch,
-        }),
-      phone: async () => findLostTap(await deps.registration(), { awaySince }),
-    });
+}): {
+  readonly ask: (context: { readonly awaySince: number }) => Promise<ServerLostTapOutcome>;
+  readonly find: (context: { readonly awaySince: number }) => Promise<LostTapLook>;
+} {
+  return {
+    ask: async ({ awaySince }) =>
+      askServerForLostTap({
+        endpoint: await currentPushEndpoint(await deps.registration(), deps.memory),
+        awayMs: awaySince === 0 ? null : Math.max(0, deps.now() - awaySince),
+        fetch: deps.fetch,
+      }),
+    find: async ({ awaySince }) => findLostTap(await deps.registration(), { awaySince }),
+  };
 }

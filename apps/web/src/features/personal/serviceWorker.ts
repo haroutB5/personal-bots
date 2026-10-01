@@ -3,7 +3,8 @@ import { isElectron } from "~/env";
 
 import { runningClientEntry } from "./appVersion";
 import { type NotificationLister } from "./lostNotificationTaps";
-import { currentPushEndpoint, makeLostTapFinder, type PushEndpointSource } from "./serverLostTap";
+import { noteInferredTap } from "./perfRum";
+import { currentPushEndpoint, makeLostTapLookups, type PushEndpointSource } from "./serverLostTap";
 import {
   createNotificationTapController,
   isNavigablePath,
@@ -176,12 +177,13 @@ export function registerPersonalServiceWorker(
       // The server's record first: on iOS the phone's own list does not
       // survive a resume (serverLostTap.ts). The phone's list only when the
       // server cannot answer for this device.
-      find: makeLostTapFinder({
+      ...makeLostTapLookups({
         registration: async () =>
           (await notificationRegistration()) as (PushEndpointSource & NotificationLister) | null,
         fetch: (input, init) => window.fetch(input, init),
         now: () => Date.now(),
       }),
+      onInferred: (url, sinceReturnMs) => noteInferredTap(url, sinceReturnMs),
       after: (callback, ms) => void window.setTimeout(callback, ms),
     },
   });

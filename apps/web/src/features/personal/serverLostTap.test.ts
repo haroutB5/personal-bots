@@ -7,7 +7,7 @@ import {
   currentPushEndpoint,
   decideServerLostTap,
   type EndpointMemory,
-  makeLostTapFinder,
+  makeLostTapLookups,
   PUSH_SENT_URL,
 } from "./serverLostTap";
 
@@ -86,7 +86,19 @@ function iphone(options: { subscribed: boolean }) {
   };
 }
 
-function page(find: (context: { readonly awaySince: number }) => Promise<unknown>) {
+type Lookups = {
+  readonly ask?: (context: { readonly awaySince: number }) => Promise<unknown>;
+  readonly find: (context: { readonly awaySince: number }) => Promise<unknown>;
+};
+
+/** What the controller does with the two lookups, for the fallback cases. */
+async function lookup(lookups: ReturnType<typeof makeLostTapLookups>, awaySince: number) {
+  const answer = await lookups.ask({ awaySince });
+  if (answer.answered) return answer.look;
+  return { ...(await lookups.find({ awaySince })), server: answer.reason };
+}
+
+function page(lookups: Lookups) {
   const state = { path: "/bots" };
   const navigate = vi.fn((path: string) => {
     state.path = path;
@@ -104,11 +116,15 @@ function page(find: (context: { readonly awaySince: number }) => Promise<unknown
     ack: () => undefined,
     report: (record) => reports.push(record),
     lostTap: {
-      find: find as never,
+      ...(lookups.ask === undefined ? {} : { ask: lookups.ask as never }),
+      find: lookups.find as never,
       after: (callback, ms) => void setTimeout(callback, ms),
     },
   });
-  return { state, navigate, reports, controller };
+  /** A real notificationclick reaching the page by message. */
+  const click = (url: string) =>
+    controller.onMessage({ type: "bots:navigate", url, id: `tap-${url}` }, "message");
+  return { state, navigate, reports, controller, click };
 }
 
 describe("the 1 Oct 07:16:59 tap, found through the server", () => {
@@ -127,8 +143,8 @@ describe("the 1 Oct 07:16:59 tap, found through the server", () => {
    * to the laptop), back at 07:18:44.021, looked 2.5 s later at 07:18:46.521.
    * On the resume the worker's list and getNotifications() are empty.
    */
-  async function replay(find: (context: { readonly awaySince: number }) => Promise<unknown>) {
-    const app = page(find);
+  async function replay(lookups: Lookups) {
+    const app = page(lookups);
     await vi.advanceTimersByTimeAsync(Date.parse("2026-10-01T06:16:49.948Z") - Date.now());
     app.controller.away();
     await vi.advanceTimersByTimeAsync(Date.parse("2026-10-01T06:16:59.100Z") - Date.now());
@@ -138,7 +154,7 @@ describe("the 1 Oct 07:16:59 tap, found through the server", () => {
   it("1.60.11 looked only at the phone's own list and opened nothing", async () => {
     phoneCaches();
     const device = iphone({ subscribed: false });
-    const app = await replay(({ awaySince }) => findLostTap(device, { awaySince }));
+    const app = await replay({ find: ({ awaySince }) => findLostTap(device, { awaySince }) });
     await vi.advanceTimersByTimeAsync(Date.parse("2026-10-01T06:18:44.021Z") - Date.now());
     await app.controller.check("cache-visible");
     await vi.advanceTimersByTimeAsync(LOST_TAP_GRACE_MS);
@@ -155,21 +171,22 @@ describe("the 1 Oct 07:16:59 tap, found through the server", () => {
     const kept = memory();
     // The fresh launch keeps the endpoint while iOS names it.
     expect(await currentPushEndpoint(iphone({ subscribed: true }), kept)).toBe(IPHONE);
-    const find = makeLostTapFinder({
+    const lookups = makeLostTapLookups({
       registration: async () => iphone({ subscribed: false }),
       fetch: server.fetch,
       now: () => Date.now(),
       memory: kept,
     });
-    const app = await replay(find);
+    const app = await replay(lookups);
     server.send(IPHONE, ASSISTANT_CHAT);
     server.send(LAPTOP, CTO_CHAT);
     await vi.advanceTimersByTimeAsync(Date.parse("2026-10-01T06:18:44.021Z") - Date.now());
     await app.controller.check("cache-visible");
-    await vi.advanceTimersByTimeAsync(LOST_TAP_GRACE_MS);
+    // Asked at once, not after the grace period: open as soon as it answers.
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(app.navigate).toHaveBeenCalledExactlyOnceWith(ASSISTANT_CHAT);
-    expect(server.requests).toEqual([{ endpoint: IPHONE, awayMs: 116_573 }]);
+    expect(server.requests).toEqual([{ endpoint: IPHONE, awayMs: 114_073 }]);
     expect(app.reports).toEqual([
       expect.objectContaining({
         event: "lost-tap-check",
@@ -179,6 +196,8 @@ describe("the 1 Oct 07:16:59 tap, found through the server", () => {
         outcome: "opened",
         url: ASSISTANT_CHAT,
         awayMs: 114_073,
+        waitedMs: 0,
+        requestMs: 0,
       }),
       expect.objectContaining({ event: "tap-received", url: ASSISTANT_CHAT, via: "inferred" }),
     ]);
@@ -192,6 +211,121 @@ describe("the 1 Oct 07:16:59 tap, found through the server", () => {
     expect(app.navigate).toHaveBeenCalledOnce();
     expect(app.reports.at(-1)).toEqual(
       expect.objectContaining({ store: "server", reason: "none-sent", outcome: "none" }),
+    );
+    app.controller.dispose();
+  });
+});
+
+describe("asking at once, racing a real notificationclick", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  /** A server that answers `ms` after it is asked. */
+  function slowServer(ms: number, url: string | null) {
+    return vi.fn(
+      () =>
+        new Promise<{ answered: true; look: { url: string | null; reason: string } }>(
+          (resolve) =>
+            void setTimeout(
+              () =>
+                resolve({
+                  answered: true,
+                  look: { url, reason: url ? "server-sent" : "none-sent" },
+                }),
+              ms,
+            ),
+        ),
+    );
+  }
+
+  it("opens on the server's answer, long before the old 2.5 s grace", async () => {
+    const find = vi.fn(async () => ({ url: null, reason: "none-shown" }));
+    const app = page({ ask: slowServer(150, ASSISTANT_CHAT), find });
+    app.controller.away();
+    await app.controller.check("cache-visible");
+    await vi.advanceTimersByTimeAsync(149);
+    expect(app.navigate).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(app.navigate).toHaveBeenCalledExactlyOnceWith(ASSISTANT_CHAT);
+    expect(app.reports[0]).toEqual(
+      expect.objectContaining({ outcome: "opened", waitedMs: 150, requestMs: 150 }),
+    );
+    // The phone's list is not read when the server answered.
+    await vi.advanceTimersByTimeAsync(LOST_TAP_GRACE_MS);
+    expect(find).not.toHaveBeenCalled();
+    app.controller.dispose();
+  });
+
+  it("a real click during the request wins: one navigation only", async () => {
+    const app = page({
+      ask: slowServer(300, ASSISTANT_CHAT),
+      find: async () => ({ url: null, reason: "x" }),
+    });
+    app.controller.away();
+    await app.controller.check("cache-visible");
+    await vi.advanceTimersByTimeAsync(100);
+    app.click(ASSISTANT_CHAT);
+    await vi.advanceTimersByTimeAsync(LOST_TAP_GRACE_MS);
+    expect(app.navigate).toHaveBeenCalledExactlyOnceWith(ASSISTANT_CHAT);
+    expect(app.reports).toContainEqual(
+      expect.objectContaining({ event: "lost-tap-check", outcome: "tap-arrived" }),
+    );
+    app.controller.dispose();
+  });
+
+  it("a real click for the same chat after the server opened it changes nothing", async () => {
+    const app = page({
+      ask: slowServer(100, ASSISTANT_CHAT),
+      find: async () => ({ url: null, reason: "x" }),
+    });
+    app.controller.away();
+    await app.controller.check("cache-visible");
+    await vi.advanceTimersByTimeAsync(100);
+    expect(app.navigate).toHaveBeenCalledOnce();
+    app.click(ASSISTANT_CHAT);
+    await vi.advanceTimersByTimeAsync(LOST_TAP_GRACE_MS);
+    expect(app.navigate).toHaveBeenCalledOnce();
+    expect(app.reports.at(-1)).toEqual(
+      expect.objectContaining({ event: "tap-received", via: "message", navigated: false }),
+    );
+    app.controller.dispose();
+  });
+
+  it("a real click for another chat after the server answered still goes where tapped", async () => {
+    const app = page({
+      ask: slowServer(100, ASSISTANT_CHAT),
+      find: async () => ({ url: null, reason: "x" }),
+    });
+    app.controller.away();
+    await app.controller.check("cache-visible");
+    await vi.advanceTimersByTimeAsync(100);
+    app.click(CTO_CHAT);
+    expect(app.navigate.mock.calls.map(([path]) => path)).toEqual([ASSISTANT_CHAT, CTO_CHAT]);
+    expect(app.state.path).toBe(CTO_CHAT);
+    app.controller.dispose();
+  });
+
+  it("without a server answer the phone's list still waits out the grace", async () => {
+    const find = vi.fn(async () => ({ url: ASSISTANT_CHAT, reason: "one-gone" }));
+    const ask = vi.fn(async () => ({ answered: false as const, reason: "no-endpoint" }));
+    const app = page({ ask, find });
+    app.controller.away();
+    await app.controller.check("cache-visible");
+    await vi.advanceTimersByTimeAsync(LOST_TAP_GRACE_MS - 1);
+    expect(find).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(app.navigate).toHaveBeenCalledExactlyOnceWith(ASSISTANT_CHAT);
+    expect(app.reports[0]).toEqual(
+      expect.objectContaining({
+        server: "no-endpoint",
+        outcome: "opened",
+        waitedMs: LOST_TAP_GRACE_MS,
+      }),
     );
     app.controller.dispose();
   });
@@ -257,13 +391,13 @@ describe("when the server cannot answer, the phone's own list decides", () => {
     phoneCaches(entry());
     const server = fakeServer();
     server.fail(500);
-    const find = makeLostTapFinder({
+    const lookups = makeLostTapLookups({
       registration: async () => iphone({ subscribed: true }),
       fetch: server.fetch,
       now: () => Date.now(),
       memory: memory(),
     });
-    expect(await find({ awaySince: Date.now() - 60_000 })).toEqual(
+    expect(await lookup(lookups, Date.now() - 60_000)).toEqual(
       expect.objectContaining({ url: ASSISTANT_CHAT, store: "cache", server: "http-500" }),
     );
   });
@@ -271,13 +405,13 @@ describe("when the server cannot answer, the phone's own list decides", () => {
   it("falls back when no endpoint is known, without asking the server", async () => {
     phoneCaches(entry());
     const server = fakeServer();
-    const find = makeLostTapFinder({
+    const lookups = makeLostTapLookups({
       registration: async () => iphone({ subscribed: false }),
       fetch: server.fetch,
       now: () => Date.now(),
       memory: memory(),
     });
-    expect(await find({ awaySince: 0 })).toEqual(
+    expect(await lookup(lookups, 0)).toEqual(
       expect.objectContaining({ url: ASSISTANT_CHAT, server: "no-endpoint" }),
     );
     expect(server.requests).toHaveLength(0);
@@ -286,13 +420,13 @@ describe("when the server cannot answer, the phone's own list decides", () => {
   it("falls back when the server does not know this device", async () => {
     phoneCaches(entry());
     const server = fakeServer();
-    const find = makeLostTapFinder({
+    const lookups = makeLostTapLookups({
       registration: async () => null,
       fetch: server.fetch,
       now: () => Date.now(),
       memory: memory("https://web.push.apple.com/someone-else"),
     });
-    expect(await find({ awaySince: 0 })).toEqual(
+    expect(await lookup(lookups, 0)).toEqual(
       expect.objectContaining({ url: ASSISTANT_CHAT, server: "unknown-device" }),
     );
   });
@@ -314,17 +448,52 @@ describe("when the server cannot answer, the phone's own list decides", () => {
     expect(await pending).toEqual({ answered: false, reason: "timeout" });
   });
 
+  it("tries once more when the network was not up yet on the wake", async () => {
+    let calls = 0;
+    const flaky = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new TypeError("Load failed");
+      return Response.json({ known: true, pushes: [{ url: ASSISTANT_CHAT, sentAt: "a" }] });
+    });
+    const pending = askServerForLostTap({
+      endpoint: IPHONE,
+      awayMs: 1_000,
+      fetch: flaky as unknown as typeof fetch,
+    });
+    await vi.advanceTimersByTimeAsync(250);
+    expect(await pending).toEqual({
+      answered: true,
+      look: expect.objectContaining({ url: ASSISTANT_CHAT }),
+    });
+    expect(flaky).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry an HTTP answer, and says when a retry also failed", async () => {
+    const refused = vi.fn(async () => new Response("", { status: 403 }));
+    expect(
+      await askServerForLostTap({ endpoint: IPHONE, awayMs: 0, fetch: refused as never }),
+    ).toEqual({ answered: false, reason: "http-403" });
+    expect(refused).toHaveBeenCalledOnce();
+    const down = vi.fn(async () => {
+      throw new TypeError("Load failed");
+    });
+    const pending = askServerForLostTap({ endpoint: IPHONE, awayMs: 0, fetch: down as never });
+    await vi.advanceTimersByTimeAsync(250);
+    expect(await pending).toEqual({ answered: false, reason: "failed-retried" });
+    expect(down).toHaveBeenCalledTimes(2);
+  });
+
   it("asks for the full lookback when the away time is unknown (a launch)", async () => {
     phoneCaches();
     const server = fakeServer();
     server.send(IPHONE, ASSISTANT_CHAT);
-    const find = makeLostTapFinder({
+    const lookups = makeLostTapLookups({
       registration: async () => iphone({ subscribed: true }),
       fetch: server.fetch,
       now: () => Date.now(),
       memory: memory(),
     });
-    expect(await find({ awaySince: 0 })).toEqual(
+    expect(await lookup(lookups, 0)).toEqual(
       expect.objectContaining({ url: ASSISTANT_CHAT, store: "server" }),
     );
     expect(server.requests).toEqual([{ endpoint: IPHONE, awayMs: null }]);

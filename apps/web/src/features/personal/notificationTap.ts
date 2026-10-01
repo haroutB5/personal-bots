@@ -64,15 +64,30 @@ export interface NotificationTapDeps {
     readonly write: (at: number) => void;
   };
   readonly lostTap?: {
+    /**
+     * Asks the server, at once on each return, what it sent this device
+     * while the app was away (serverLostTap.ts). An answer decides; no answer
+     * falls back to `find` after the grace period.
+     */
+    readonly ask?: (context: { readonly awaySince: number }) => Promise<LostTapAnswer>;
     readonly find: (context: { readonly awaySince: number }) => Promise<LostTapLook>;
     readonly after: (callback: () => void, ms: number) => void;
+    /** A tap inferred and about to open `url`, `sinceReturnMs` after the return (timings). */
+    readonly onInferred?: (url: string, sinceReturnMs: number) => void;
   };
 }
+
+/** The server's answer, or why there is none (the phone's list decides then). */
+export type LostTapAnswer =
+  | { readonly answered: true; readonly look: LostTapLook }
+  | { readonly answered: false; readonly reason: string };
 
 /** What a look found; any further fields (counts) go into its log line as they are. */
 export interface LostTapLook {
   readonly url: string | null;
   readonly reason: string;
+  /** Why the server did not answer, when the phone's own list decided. */
+  readonly server?: string;
 }
 
 /** How long the page watches for a tap after a push was shown. */
@@ -159,38 +174,72 @@ export function createNotificationTapController(
     const returnedAt = deps.now();
     const pathAtReturn = deps.currentPath();
     const context = { awaySince };
-    lostTap.after(() => {
-      void lostTap
-        .find(context)
-        .catch((): LostTapLook => ({ url: null, reason: "failed" }))
-        .then((look) => {
-          lookingForLostTap = false;
-          const url = look.url !== null && isNavigablePath(look.url) ? look.url : null;
-          const path = deps.currentPath();
-          // A real tap landed meanwhile: it wins. The look still ran, so the
-          // list forgets the notification that tap removed. A user who has
-          // moved on since the return is not pulled back.
-          const outcome =
-            deliveries !== before
-              ? "tap-arrived"
-              : url === null
-                ? "none"
-                : path !== pathAtReturn && path !== url
-                  ? "user-moved"
-                  : "opened";
-          // Every look, so a tap that still goes nowhere shows why.
-          deps.report?.({
-            ...look,
-            event: "lost-tap-check",
-            via,
-            url: url ?? undefined,
-            outcome,
-            waitedMs: Math.max(0, deps.now() - returnedAt),
-            awayMs: awaySince === 0 ? undefined : Math.max(0, returnedAt - awaySince),
-          });
-          if (outcome === "opened") deliver(url!, null, "inferred");
-        });
-    }, LOST_TAP_GRACE_MS);
+
+    const settle = (look: LostTapLook, timings: Record<string, number | undefined>) => {
+      lookingForLostTap = false;
+      const url = look.url !== null && isNavigablePath(look.url) ? look.url : null;
+      const path = deps.currentPath();
+      // A real tap landed meanwhile: it wins. The look still ran, so the
+      // list forgets the notification that tap removed. A user who has
+      // moved on since the return is not pulled back.
+      const outcome =
+        deliveries !== before
+          ? "tap-arrived"
+          : url === null
+            ? "none"
+            : path !== pathAtReturn && path !== url
+              ? "user-moved"
+              : "opened";
+      const waitedMs = Math.max(0, deps.now() - returnedAt);
+      // Every look, so a tap that still goes nowhere shows why.
+      deps.report?.({
+        ...look,
+        ...timings,
+        event: "lost-tap-check",
+        via,
+        url: url ?? undefined,
+        outcome,
+        waitedMs,
+        awayMs: awaySince === 0 ? undefined : Math.max(0, returnedAt - awaySince),
+      });
+      if (outcome === "opened") {
+        lostTap.onInferred?.(url!, waitedMs);
+        deliver(url!, null, "inferred");
+      }
+    };
+
+    // The phone's own list, after the grace period: a tap the worker did see
+    // must have taken its notification off the list first.
+    const phone = (server: string | undefined, timings: Record<string, number | undefined>) => {
+      lostTap.after(
+        () => {
+          void lostTap
+            .find(context)
+            .catch((): LostTapLook => ({ url: null, reason: "failed" }))
+            .then((look) => settle(server === undefined ? look : { ...look, server }, timings));
+        },
+        Math.max(0, LOST_TAP_GRACE_MS - (deps.now() - returnedAt)),
+      );
+    };
+
+    const ask = lostTap.ask;
+    if (ask === undefined) {
+      phone(undefined, {});
+      return;
+    }
+    // The server is asked at once, alongside any real tap still on its way:
+    // its answer opens the chat as soon as it arrives (1.60.12 waited the
+    // whole grace period first: 2.5 s of the 2.6 s on the phone). A real tap
+    // that lands first wins; one that lands after for the same chat changes
+    // nothing, since the page is already there.
+    const asked = deps.now();
+    void ask(context)
+      .catch((): LostTapAnswer => ({ answered: false, reason: "failed" }))
+      .then((answer) => {
+        const timings = { requestMs: Math.max(0, deps.now() - asked) };
+        if (answer.answered) settle(answer.look, timings);
+        else phone(answer.reason, timings);
+      });
   };
 
   const check = async (via: TapRoute): Promise<void> => {

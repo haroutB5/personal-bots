@@ -94,6 +94,18 @@ describe("real-user timings", () => {
     });
   });
 
+  it("times the return after an inferred notification tap until the chat is usable", () => {
+    vi.stubGlobal("document", { visibilityState: "visible", addEventListener: () => undefined });
+    resetPerfRumForTest(() => now);
+    return import("./perfRum").then(({ noteInferredTap }) => {
+      // The page decided 120 ms after coming back; the chat is usable 200 ms later.
+      noteInferredTap("/bots/b1/t1", 120);
+      now = 1_200;
+      reportChatUsable("/bots/b1/t1");
+      expect(beacons.map((b) => [b.journey, b.ms])).toEqual([["j4-tap", 336]]);
+    });
+  });
+
   it("knows a load on the chats list from a load on anything else", () => {
     expect(isChatsListLoad("/bots")).toBe(true);
     expect(isChatsListLoad("/bots/")).toBe(true);

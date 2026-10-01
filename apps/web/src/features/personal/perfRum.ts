@@ -10,6 +10,7 @@
  *   j2       tap on a chat row               -> transcript + composer painted
  *   j3-echo  message sent                    -> the server's copy is in the chat
  *   j3-first message sent                    -> the reply's first text is painted
+ *   j4-tap   app back after a notification tap the page inferred -> that chat usable
  *
  * Timings are skipped when the page was hidden at any point during the
  * journey (background time is not app time). Kill switch: "rum".
@@ -22,7 +23,7 @@ const TAP_WINDOW_MS = 15_000;
 /** A reply slower than this is the model thinking, not the app. */
 const SEND_WINDOW_MS = 120_000;
 
-export type PerfJourney = "j1" | "j1-chat" | "j2" | "j3-echo" | "j3-first";
+export type PerfJourney = "j1" | "j1-chat" | "j2" | "j3-echo" | "j3-first" | "j4-tap";
 
 interface Clock {
   readonly now: () => number;
@@ -30,7 +31,11 @@ interface Clock {
 
 let hiddenAt: number | null = null;
 const reportedLoads = new Set<PerfJourney>();
-let tap: { readonly path: string; readonly at: number } | null = null;
+let tap: {
+  readonly path: string;
+  readonly at: number;
+  readonly journey?: PerfJourney;
+} | null = null;
 let send: {
   readonly threadId: string;
   readonly at: number;
@@ -106,6 +111,14 @@ export function installPerfRum(): void {
   );
 }
 
+/**
+ * A notification tap the page inferred (notificationTap.ts): times the return
+ * to the app -> that chat usable, as j4-tap.
+ */
+export function noteInferredTap(path: string, sinceReturnMs: number): void {
+  tap = { path, at: clock.now() - sinceReturnMs, journey: "j4-tap" };
+}
+
 /** The chats list painted its first rows (from the snapshot or live). */
 export function reportChatsListPainted(fromSnapshot: boolean): void {
   if (reportedLoads.has("j1") || !isChatsListLoad(loadPath())) return;
@@ -121,10 +134,11 @@ export function reportChatUsable(path: string): void {
   const startedByTap = tap !== null && tap.path === path && clock.now() - tap.at < TAP_WINDOW_MS;
   if (startedByTap) {
     const started = tap!.at;
+    const journey = tap!.journey;
     tap = null;
     atPaint((at) => {
       if (hiddenSince(started)) return;
-      beacon({ journey: "j2", ms: Math.round(at - started) });
+      beacon({ journey: journey ?? "j2", ms: Math.round(at - started) });
     });
     return;
   }

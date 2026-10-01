@@ -298,9 +298,16 @@ describe("client diagnostics route", () => {
           store: "server",
           reason: "server-sent",
           sent: 1,
+          requestMs: 118,
         }),
       ),
-    ).toEqual({ event: "lost-tap-check", store: "server", reason: "server-sent", sent: 1 });
+    ).toEqual({
+      event: "lost-tap-check",
+      store: "server",
+      reason: "server-sent",
+      sent: 1,
+      requestMs: 118,
+    });
     expect(
       sanitizeClientDiag(
         JSON.stringify({ event: "lost-tap-check", store: "worker", server: "unknown-device" }),

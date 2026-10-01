@@ -167,6 +167,8 @@ const FIELDS: Record<string, Read> = {
   // could not answer (no-endpoint, unknown-device, timeout, http-<status>).
   sent: count,
   server: token(32),
+  // How long the server took to answer the page's lost-tap question.
+  requestMs: count,
   clients: (value) =>
     Array.isArray(value)
       ? value
