@@ -377,7 +377,7 @@ it.effect("a task tree that saw a sensitive site leaves no summary in bot memory
 const ageEntry = (memoryId: string, daysAgo: number) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const at = new Date(Date.now() - daysAgo * 86_400_000).toISOString();
+    const at = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { days: daysAgo }));
     yield* sql`
       UPDATE personal_memory SET created_at = ${at}, updated_at = ${at}
       WHERE memory_id = ${memoryId}
