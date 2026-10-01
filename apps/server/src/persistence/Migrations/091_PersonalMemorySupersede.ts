@@ -58,6 +58,9 @@ export default Effect.gen(function* () {
       memory_ids_json TEXT NOT NULL,
       result_memory_id TEXT,
       content TEXT,
+      to_kind TEXT,
+      to_scope TEXT,
+      to_scope_id TEXT,
       reason TEXT NOT NULL,
       created_at TEXT NOT NULL,
       decided_at TEXT

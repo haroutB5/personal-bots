@@ -11,13 +11,17 @@ import {
   memoryTextLookup,
   newestTidyRunsFirst,
   pendingTidyChanges,
+  pendingTidyGroups,
+  reclassifyDescription,
   readMemoryLastSeen,
   TIDY_CHANGE_STATUS_LABEL,
   TIDY_ACTION_LABEL,
   TIDY_MODE_LABEL,
+  tidyActionLabel,
   tidyChangeCountLabel,
   tidyCountsLabel,
   tidyEntryTexts,
+  tidyRunGroupLabel,
   tidyRunKindLabel,
   tidyStatusLabel,
   tidySummaryLine,
@@ -63,6 +67,7 @@ describe("tidy labels", () => {
     expect(TIDY_ACTION_LABEL).toEqual({
       merge: "Merged",
       supersede: "Replaced",
+      reclassify: "Reclassified",
       leave: "Left alone",
     });
     expect(TIDY_MODE_LABEL).toEqual({ off: "Off", preview: "Preview only", on: "Make changes" });
@@ -226,5 +231,62 @@ describe("New badge", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("reclassify changes", () => {
+  it("describes the new kind and reach in words", () => {
+    expect(reclassifyDescription({ toKind: "preference" })).toBe("Make it a preference");
+    expect(reclassifyDescription({ toScope: "team", toScopeId: "dev" })).toBe("Reach: Dev team");
+    expect(reclassifyDescription({ toKind: "note", toScope: "shared", toScopeId: null })).toBe(
+      "Make it a note · Reach: All bots",
+    );
+    expect(reclassifyDescription({ toScope: "team", toScopeId: "finance" })).toBe("Reach: finance");
+    expect(reclassifyDescription({ toKind: null, toScope: null })).toBe("");
+  });
+
+  it("labels a reclassify as a request while pending", () => {
+    expect(tidyActionLabel({ action: "reclassify", status: "pending" })).toBe("Reclassify");
+    expect(tidyActionLabel({ action: "reclassify", status: "approved" })).toBe("Reclassified");
+    expect(tidyActionLabel({ action: "merge", status: "pending" })).toBe("Merged");
+  });
+});
+
+describe("pending tidy groups", () => {
+  const groupRun = (
+    runId: string,
+    model: string | null,
+    startedAt: string,
+    changes: ReadonlyArray<{ changeId: number; status: PersonalMemoryTidyChangeStatus }>,
+  ) => ({ runId, model, startedAt: DateTime.makeUnsafe(startedAt), changes });
+
+  it("groups pending changes by run with a header each, dropping empty runs", () => {
+    const groups = pendingTidyGroups([
+      groupRun("r2", "claude-sonnet", "2026-10-02T02:30:00Z", [
+        { changeId: 5, status: "pending" },
+        { changeId: 6, status: "applied" },
+      ]),
+      groupRun("r1", "proposals: Memory review", "2026-10-01T18:00:00Z", [
+        { changeId: 1, status: "pending" },
+        { changeId: 2, status: "pending" },
+        { changeId: 5, status: "pending" },
+      ]),
+      groupRun("r0", null, "2026-09-30T02:30:00Z", [{ changeId: 9, status: "rejected" }]),
+    ]);
+    expect(
+      groups.map((group) => [group.runId, group.label, group.changes.map((c) => c.changeId)]),
+    ).toEqual([
+      ["r2", "Nightly tidy-up 2 Oct 03:30", [5]],
+      ["r1", "Proposals: Memory review", [1, 2]],
+    ]);
+  });
+
+  it("names a proposals run with no name plainly", () => {
+    expect(
+      tidyRunGroupLabel({
+        model: "proposals: ",
+        startedAt: DateTime.makeUnsafe("2026-10-02T02:30:00Z"),
+      }),
+    ).toBe("Proposals");
   });
 });

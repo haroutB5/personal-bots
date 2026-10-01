@@ -72,6 +72,11 @@ export class PersonalMemoryTidy extends Context.Service<
     readonly setMode: (
       mode: PersonalMemoryTidyMode,
     ) => Effect.Effect<PersonalMemoryTidyLogResult, PersonalMemoryError>;
+    /** Puts one-off proposals on the approval list (see {@link ProposalFile}). */
+    readonly importProposals: (input: {
+      readonly source: string;
+      readonly items: ReadonlyArray<ProposalItem>;
+    }) => Effect.Effect<PersonalMemoryTidyRun, PersonalMemoryError>;
     /** Checks every 10 minutes whether tonight's run is due. Park-aware. */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
@@ -132,6 +137,53 @@ export const judgeLayer = Layer.effect(
   }),
 );
 
+/** The inbox for one-off proposal files, under `<baseDir>/personal/`. */
+export const MEMORY_PROPOSALS_DIR = "memory-proposals";
+
+const ProposalItemSchema = Schema.Struct({
+  action: Schema.Literals(["reclassify", "supersede"]),
+  memoryIds: Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+  by: Schema.optional(Schema.NullOr(Schema.String)),
+  toKind: Schema.optional(Schema.NullOr(Schema.Literals(["note", "preference"]))),
+  toScope: Schema.optional(Schema.NullOr(Schema.Literals(["shared", "team"]))),
+  toScopeId: Schema.optional(Schema.NullOr(Schema.String)),
+  reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(600)),
+});
+export type ProposalItem = typeof ProposalItemSchema.Type;
+
+/** A proposals file: `{ "items": [...] }`, at most 200 items. */
+export const ProposalFile = Schema.Struct({
+  items: Schema.Array(ProposalItemSchema).check(Schema.isMaxLength(200)),
+});
+const decodeProposalFile = Schema.decodeUnknownEffect(Schema.fromJsonString(ProposalFile));
+
+/** Why a proposal cannot go on the approval list, or null when it can. */
+export function proposalProblem(
+  item: ProposalItem,
+  current: ReadonlyMap<string, Pick<TidyEntry, "kind" | "scope">>,
+): string | null {
+  if (item.memoryIds.some((id) => !current.has(id))) {
+    return "Names an entry that is not a current shared entry";
+  }
+  if (item.action === "reclassify") {
+    if (item.memoryIds.length !== 1) return "A reclassify names exactly one entry";
+    const entry = current.get(item.memoryIds[0]!)!;
+    const toScope = item.toScope ?? "shared";
+    if (toScope === "team" && (item.toScopeId ?? "").trim().length === 0) {
+      return "A team reach needs the team's name";
+    }
+    if ((item.toKind ?? entry.kind) === entry.kind && toScope === "shared") {
+      return "Changes nothing";
+    }
+    return null;
+  }
+  if (item.by === undefined || item.by === null || !current.has(item.by)) {
+    return "Names a newer entry that is not a current shared entry";
+  }
+  if (item.memoryIds.includes(item.by)) return "An entry cannot replace itself";
+  return null;
+}
+
 /** Local time of the nightly run. */
 export const TIDY_HOUR = 3;
 export const TIDY_MINUTE = 30;
@@ -176,6 +228,9 @@ interface RunRow {
 }
 
 interface ChangeRow {
+  readonly toKind?: string | null;
+  readonly toScope?: string | null;
+  readonly toScopeId?: string | null;
   readonly changeId: number;
   readonly runId: string;
   readonly status: string;
@@ -194,6 +249,7 @@ export const make = Effect.gen(function* () {
   const judge = yield* PersonalMemoryTidyJudge;
   const config = yield* Effect.serviceOption(ServerConfig);
   const staticDir = config._tag === "Some" ? config.value.staticDir : undefined;
+  const baseDir = config._tag === "Some" ? config.value.baseDir : undefined;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -299,7 +355,7 @@ export const make = Effect.gen(function* () {
         SELECT memory_id AS "memoryId", version, kind, scope, scope_id AS "scopeId",
           created_at AS "createdAt"
         FROM personal_memory
-        WHERE deleted_at IS NULL AND superseded_at IS NULL
+        WHERE deleted_at IS NULL AND superseded_at IS NULL AND scope = 'shared'
           AND ${sql.in("memory_id", touched)}
       `;
       const byId = new Map(current.map((row) => [row.memoryId, row]));
@@ -392,7 +448,8 @@ export const make = Effect.gen(function* () {
       const changes = yield* sql<ChangeRow>`
         SELECT change_id AS "changeId", run_id AS "runId", status, action, scope,
           scope_id AS "scopeId", memory_ids_json AS "memoryIdsJson",
-          result_memory_id AS "resultMemoryId", content, reason
+          result_memory_id AS "resultMemoryId", content, reason,
+          to_kind AS "toKind", to_scope AS "toScope", to_scope_id AS "toScopeId"
         FROM personal_memory_tidy_changes
         WHERE ${sql.in(
           "run_id",
@@ -414,6 +471,9 @@ export const make = Effect.gen(function* () {
               scopeId: change.scopeId,
               memoryIds: decodeIds(change.memoryIdsJson).map((id) => PersonalMemoryId.make(id)),
               resultMemoryId: change.resultMemoryId,
+              toKind: change.toKind ?? null,
+              toScope: change.toScope ?? null,
+              toScopeId: change.toScopeId ?? null,
               content: change.content,
               reason: change.reason,
             })),
@@ -516,12 +576,146 @@ export const make = Effect.gen(function* () {
       return run!;
     }).pipe(lock.withPermits(1), storageFailure("run"));
 
+  /**
+   * Changes one current shared entry's kind and reach, never its text. False
+   * when it is no longer current, or no longer shared.
+   */
+  const applyReclassify = (
+    memoryId: string,
+    change: Pick<ChangeRow, "toKind" | "toScope" | "toScopeId">,
+    nowIso: string,
+  ) =>
+    Effect.gen(function* () {
+      const rows = yield* sql<{ readonly kind: string; readonly scope: string }>`
+        SELECT kind, scope FROM personal_memory
+        WHERE memory_id = ${memoryId} AND deleted_at IS NULL AND superseded_at IS NULL
+      `;
+      const entry = rows[0];
+      if (entry === undefined || entry.scope !== "shared" || entry.kind === "task_summary") {
+        return false;
+      }
+      const kind = change.toKind ?? entry.kind;
+      const scope = change.toScope ?? "shared";
+      const scopeId = scope === "team" ? (change.toScopeId ?? null) : null;
+      if (scope === "team" && (scopeId === null || scopeId.trim().length === 0)) return false;
+      yield* sql`
+        UPDATE personal_memory
+        SET kind = ${kind}, scope = ${scope}, scope_id = ${scopeId},
+            updated_at = ${nowIso}, version = version + 1
+        WHERE memory_id = ${memoryId} AND deleted_at IS NULL AND superseded_at IS NULL
+      `;
+      return true;
+    }).pipe(sql.withTransaction);
+
+  /**
+   * A one-off list of proposals (reclassify an entry, archive older entries
+   * for a newer one) put on the owner's approval list: nothing is changed
+   * until they approve each item. Items naming an entry that is not a current
+   * shared one, or already asked, are recorded as left with the reason.
+   */
+  const importProposals: PersonalMemoryTidy["Service"]["importProposals"] = (input) =>
+    Effect.gen(function* () {
+      const runId = `proposals-${NodeCrypto.randomUUID()}`;
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      yield* sql`
+        INSERT INTO personal_memory_tidy_runs (run_id, started_at, status, dry_run, nightly, model)
+        VALUES (${runId}, ${nowIso}, 'running', 1, 0, ${`proposals: ${input.source}`.slice(0, 200)})
+      `;
+      const current = new Map(
+        (yield* readEntries).map((entry) => [entry.memoryId, entry] as const),
+      );
+      let pending = 0;
+      let leftAlone = 0;
+      const insert = (
+        status: PersonalMemoryTidyChangeStatus,
+        item: ProposalItem,
+        reason: string,
+      ) => sql`
+        INSERT INTO personal_memory_tidy_changes (
+          run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id, content,
+          to_kind, to_scope, to_scope_id, reason, created_at
+        )
+        VALUES (
+          ${runId}, ${status}, ${status === "left" ? "leave" : item.action}, 'shared', NULL,
+          ${encodeIds(item.memoryIds)}, ${item.action === "supersede" ? (item.by ?? null) : null},
+          NULL, ${item.toKind ?? null}, ${item.toScope ?? null},
+          ${item.toScope === "team" ? (item.toScopeId ?? null) : null}, ${reason}, ${nowIso}
+        )
+      `;
+      for (const item of input.items) {
+        const problem = proposalProblem(item, current);
+        if (problem !== null) {
+          yield* insert("left", item, `${problem} (${item.reason})`);
+          leftAlone += 1;
+          continue;
+        }
+        const asked = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS "count" FROM personal_memory_tidy_changes
+          WHERE status IN ('pending', 'rejected') AND action = ${item.action}
+            AND memory_ids_json = ${encodeIds(item.memoryIds)}
+        `;
+        if ((asked[0]?.count ?? 0) > 0) continue;
+        yield* insert("pending", item, item.reason);
+        pending += 1;
+      }
+      yield* sql`
+        UPDATE personal_memory_tidy_runs
+        SET status = 'done', finished_at = ${nowIso}, pending = ${pending}, left_alone = ${leftAlone}
+        WHERE run_id = ${runId}
+      `;
+      yield* Effect.logInfo("personal memory proposals imported", {
+        source: input.source,
+        pending,
+        leftAlone,
+      });
+      const [run] = yield* readRuns(1, runId);
+      return run!;
+    }).pipe(lock.withPermits(1), storageFailure("import"));
+
+  /** `<baseDir>/personal/memory-proposals/*.json`, each imported once, then moved aside. */
+  const importInbox =
+    baseDir === undefined
+      ? Effect.void
+      : Effect.gen(function* () {
+          const inbox = path.join(baseDir, "personal", MEMORY_PROPOSALS_DIR);
+          if (!(yield* fileSystem.exists(inbox))) return;
+          const names = (yield* fileSystem.readDirectory(inbox)).filter((name) =>
+            name.endsWith(".json"),
+          );
+          for (const name of names.toSorted()) {
+            const file = path.join(inbox, name);
+            const parsed = yield* fileSystem
+              .readFileString(file)
+              .pipe(Effect.flatMap(decodeProposalFile), Effect.result);
+            const target = parsed._tag === "Success" ? "imported" : "rejected";
+            if (parsed._tag === "Success") {
+              yield* importProposals({ source: name, items: parsed.success.items });
+            } else {
+              yield* Effect.logWarning("personal memory proposals file rejected", {
+                file: name,
+                cause: String(parsed.failure).slice(0, 500),
+              });
+            }
+            yield* fileSystem.makeDirectory(path.join(inbox, target), { recursive: true });
+            yield* fileSystem.rename(file, path.join(inbox, target, name));
+          }
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.interrupt
+              : Effect.logWarning("personal memory proposals import failed", {
+                  cause: Cause.pretty(cause),
+                }),
+          ),
+        );
+
   const decide: PersonalMemoryTidy["Service"]["decide"] = (input) =>
     Effect.gen(function* () {
       const rows = yield* sql<ChangeRow>`
         SELECT change_id AS "changeId", run_id AS "runId", status, action, scope,
           scope_id AS "scopeId", memory_ids_json AS "memoryIdsJson",
-          result_memory_id AS "resultMemoryId", content, reason
+          result_memory_id AS "resultMemoryId", content, reason,
+          to_kind AS "toKind", to_scope AS "toScope", to_scope_id AS "toScopeId"
         FROM personal_memory_tidy_changes WHERE change_id = ${input.changeId}
       `;
       const change = rows[0];
@@ -538,6 +732,20 @@ export const make = Effect.gen(function* () {
         return yield* log({});
       }
       const memoryIds = decodeIds(change.memoryIdsJson);
+      if (change.action === "reclassify") {
+        const done = yield* applyReclassify(memoryIds[0] ?? "", change, nowIso);
+        if (!done) {
+          return yield* fail(
+            "That entry changed, was archived or was deleted since this was proposed; nothing was changed.",
+          );
+        }
+        yield* sql`
+          UPDATE personal_memory_tidy_changes
+          SET status = 'approved', decided_at = ${nowIso}
+          WHERE change_id = ${input.changeId}
+        `;
+        return yield* log({});
+      }
       const decision: TidyDecision =
         change.action === "merge"
           ? { action: "merge", memoryIds, content: change.content ?? "", reason: change.reason }
@@ -609,11 +817,19 @@ export const make = Effect.gen(function* () {
       ? Effect.void
       : forkParked(
           closeInterrupted.pipe(
+            Effect.andThen(importInbox),
             Effect.andThen(nightly.pipe(Effect.repeat(Schedule.spaced(TIDY_CHECK_MS)))),
           ),
         ).pipe(Effect.asVoid);
 
-  return { run, decide, log, setMode, start } satisfies PersonalMemoryTidy["Service"];
+  return {
+    run,
+    decide,
+    importProposals,
+    log,
+    setMode,
+    start,
+  } satisfies PersonalMemoryTidy["Service"];
 });
 
 export const layer = Layer.effect(PersonalMemoryTidy, make);

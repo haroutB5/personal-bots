@@ -14,4 +14,4 @@ Built on 1.60.18 (feat/team-rules-release-wake). Branch feat/memory-replace-tidy
 ## Not done / limits
 
 - Group chats: user messages there reach member bots as `personal-group-*` relays, so a bot in a group cannot save memory from a group message (it must be asked in its own chat).
-- The existing 81 shared entries are untouched; reclassification and team scoping of old notes are a proposal only (qa/backend-memtidy16019).
+- The existing shared entries are untouched until Harout approves. One-off proposals go through the same approval list: drop a `{ "items": [...] }` file (actions `reclassify` with toKind/toScope/toScopeId, or `supersede` with by) into `<baseDir>/personal/memory-proposals/`; at startup the server puts each valid item on "Waiting for your OK" (invalid or no-longer-current ones are listed as left) and moves the file to `imported/` (or `rejected/` if it does not parse). Approving a reclassify changes kind/reach only, never text; any approval is refused if the entries are no longer current shared entries. The 2 Oct file (`memory-proposals-2026-10-02.json`, 52 items: 50 reclassify, 2 archive) is in the dev root inbox.

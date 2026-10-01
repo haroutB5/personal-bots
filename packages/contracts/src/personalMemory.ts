@@ -106,7 +106,16 @@ export const PersonalMemoryRestoreInput = Schema.Struct({ memoryId: PersonalMemo
 export type PersonalMemoryRestoreInput = typeof PersonalMemoryRestoreInput.Type;
 
 /** merge: several entries folded into one. supersede: older entries replaced. leave: unsure, untouched. */
-export const PersonalMemoryTidyAction = Schema.Literals(["merge", "supersede", "leave"]);
+/**
+ * merge: several entries folded into one. supersede: older entries archived.
+ * reclassify: one entry's kind or reach changes (never its text). leave: unsure, untouched.
+ */
+export const PersonalMemoryTidyAction = Schema.Literals([
+  "merge",
+  "supersede",
+  "reclassify",
+  "leave",
+]);
 export type PersonalMemoryTidyAction = typeof PersonalMemoryTidyAction.Type;
 
 /**
@@ -136,6 +145,10 @@ export const PersonalMemoryTidyChange = Schema.Struct({
   resultMemoryId: Schema.NullOr(PersonalMemoryId),
   /** A merge's combined text. */
   content: Schema.NullOr(Schema.String),
+  /** A reclassify's new kind, scope and scope id (team name), where they change. */
+  toKind: Schema.optional(Schema.NullOr(Schema.Literals(["note", "preference"]))),
+  toScope: Schema.optional(Schema.NullOr(Schema.Literals(["shared", "team"]))),
+  toScopeId: Schema.optional(Schema.NullOr(Schema.String)),
   reason: Schema.String,
 });
 export type PersonalMemoryTidyChange = typeof PersonalMemoryTidyChange.Type;

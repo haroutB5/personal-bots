@@ -16,14 +16,17 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
 import { MemoryContent } from "./MemoryContent";
+import { SelectCheck } from "./SelectMode";
 import {
   memoryDayTimeLabel,
   memoryMetaLine,
   newestTidyRunsFirst,
   pendingTidyChanges,
+  pendingTidyGroups,
+  reclassifyDescription,
   TIDY_CHANGE_STATUS_LABEL,
-  TIDY_ACTION_LABEL,
   TIDY_MODE_LABEL,
+  tidyActionLabel,
   TIDY_MODES,
   tidyChangeCountLabel,
   tidyCountsLabel,
@@ -277,129 +280,269 @@ function TidyModeControl({
 function TidyChangeItem({
   change,
   texts,
+  leading,
   children,
 }: {
   change: PersonalMemoryTidyChange;
   texts: ReadonlyMap<string, string>;
+  /** A checkbox, in the waiting list. */
+  leading?: ReactNode;
   /** Approve / Reject, in the waiting list. */
   children?: ReactNode;
 }): JSX.Element {
   const involved = tidyEntryTexts(change.memoryIds, texts);
+  const reclassify = change.action === "reclassify" ? reclassifyDescription(change) : "";
   return (
-    <li className="py-2.5">
-      <p className="text-[14px] text-[var(--personal-text)]">
-        <span className="font-semibold">{TIDY_ACTION_LABEL[change.action]}</span>
-        <span className="text-[var(--personal-text-secondary)]">
-          {" "}
-          · {TIDY_CHANGE_STATUS_LABEL[change.status]}
-        </span>
-      </p>
-      {change.reason.trim().length > 0 ? (
-        <p className="mt-0.5 text-[13px] leading-snug text-[var(--personal-text-secondary)]">
-          {change.reason}
+    <li className="flex items-start gap-1 py-2.5">
+      {leading}
+      <div className="min-w-0 flex-1">
+        <p className="text-[14px] text-[var(--personal-text)]">
+          <span className="font-semibold">{tidyActionLabel(change)}</span>
+          <span className="text-[var(--personal-text-secondary)]">
+            {" "}
+            · {TIDY_CHANGE_STATUS_LABEL[change.status]}
+          </span>
         </p>
-      ) : null}
-      {involved.length > 0 ? (
-        <ul className="mt-1.5 flex flex-col gap-1">
-          {involved.map((text, index) => (
-            <li
-              // oxlint-disable-next-line react/no-array-index-key -- ids can repeat; order is the data
-              key={index}
-              className="line-clamp-3 border-l-2 border-[var(--personal-border)] pl-2 text-[13px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text-secondary)]"
-            >
-              {text}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {change.action === "merge" && change.content !== null ? (
-        <div className="mt-1.5">
-          <p className="text-[12px] font-medium text-[var(--personal-text-tertiary)]">
-            Merged text
+        {reclassify !== "" ? (
+          <p className="mt-0.5 text-[14px] font-medium text-[var(--personal-text)]">{reclassify}</p>
+        ) : null}
+        {change.reason.trim().length > 0 ? (
+          <p className="mt-0.5 text-[13px] leading-snug text-[var(--personal-text-secondary)]">
+            {change.reason}
           </p>
-          <p className="mt-0.5 text-[14px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text)]">
-            {change.content}
-          </p>
-        </div>
-      ) : null}
-      {children}
+        ) : null}
+        {involved.length > 0 ? (
+          <ul className="mt-1.5 flex flex-col gap-1">
+            {involved.map((text, index) => (
+              <li
+                // oxlint-disable-next-line react/no-array-index-key -- ids can repeat; order is the data
+                key={index}
+                className="line-clamp-3 border-l-2 border-[var(--personal-border)] pl-2 text-[13px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text-secondary)]"
+              >
+                {text}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {change.action === "merge" && change.content !== null ? (
+          <div className="mt-1.5">
+            <p className="text-[12px] font-medium text-[var(--personal-text-tertiary)]">
+              Merged text
+            </p>
+            <p className="mt-0.5 text-[14px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text)]">
+              {change.content}
+            </p>
+          </div>
+        ) : null}
+        {children}
+      </div>
     </li>
   );
 }
 
-/** Changes the tidy-up will not make without the owner's OK, with Approve and Reject. */
+type DecideBusy =
+  | { readonly kind: "one"; readonly changeId: number; readonly approve: boolean }
+  | { readonly kind: "group"; readonly runId: string; readonly approve: boolean };
+
+const DECIDE_BUTTON =
+  "h-11 rounded-[var(--personal-radius-button)] px-4 text-[15px] font-semibold disabled:opacity-60";
+const APPROVE_LOOK = "bg-[var(--personal-primary)] text-[var(--personal-primary-text)]";
+const REJECT_LOOK = "bg-[var(--personal-fill-muted)] text-[var(--personal-text)]";
+
+const withoutId = (current: ReadonlySet<number>, changeId: number): ReadonlySet<number> => {
+  const next = new Set(current);
+  next.delete(changeId);
+  return next;
+};
+
+/**
+ * Changes the tidy-up will not make without the owner's OK, grouped by run.
+ * Each has Approve and Reject; ticked ones can be decided together per group.
+ */
 function PendingTidyChanges({
   environmentId,
-  changes,
+  groups,
   texts,
 }: {
   environmentId: EnvironmentId | null;
-  changes: ReadonlyArray<PersonalMemoryTidyChange>;
+  groups: ReadonlyArray<{
+    readonly runId: string;
+    readonly label: string;
+    readonly changes: ReadonlyArray<PersonalMemoryTidyChange>;
+  }>;
   texts: ReadonlyMap<string, string>;
 }): JSX.Element {
   const decide = useAtomCommand(personalMemoryTidyDecide);
-  const [busy, setBusy] = useState<{ changeId: number; approve: boolean } | null>(null);
+  const [busy, setBusy] = useState<DecideBusy | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<ReadonlySet<number>>(() => new Set());
+  const total = groups.reduce((sum, group) => sum + group.changes.length, 0);
+
+  const decideOne = async (changeId: number, approve: boolean) => {
+    if (environmentId === null) return "No connection.";
+    const result = await decide({ environmentId, input: { changeId, approve } });
+    const message = commandFailureMessage(
+      result,
+      approve ? "Could not approve that change." : "Could not reject that change.",
+    );
+    if (message === null) setSelected((current) => withoutId(current, changeId));
+    return message;
+  };
 
   const onDecide = async (changeId: number, approve: boolean) => {
     if (environmentId === null || busy !== null) return;
-    setBusy({ changeId, approve });
+    setBusy({ kind: "one", changeId, approve });
     setError(null);
-    const result = await decide({ environmentId, input: { changeId, approve } });
+    const message = await decideOne(changeId, approve);
     setBusy(null);
-    setError(
-      commandFailureMessage(
-        result,
-        approve ? "Could not approve that change." : "Could not reject that change.",
-      ),
-    );
+    setError(message);
+  };
+
+  // One decide per ticked change, in order; the first failure stops the rest.
+  const onDecideGroup = async (
+    runId: string,
+    changeIds: ReadonlyArray<number>,
+    approve: boolean,
+  ) => {
+    if (environmentId === null || busy !== null || changeIds.length === 0) return;
+    setBusy({ kind: "group", runId, approve });
+    setError(null);
+    for (const changeId of changeIds) {
+      const message = await decideOne(changeId, approve);
+      if (message !== null) {
+        setError(message);
+        break;
+      }
+    }
+    setBusy(null);
   };
 
   return (
     <div className="rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] px-3 py-2">
       <h2 className="text-[15px] font-semibold text-[var(--personal-text)]">
-        Waiting for your OK ({changes.length})
+        Waiting for your OK ({total})
       </h2>
       {error !== null ? (
         <p role="alert" className="mt-1 text-[14px] text-[var(--personal-error)]">
           {error}
         </p>
       ) : null}
-      <ul className="divide-y divide-[var(--personal-border)]">
-        {changes.map((change) => {
-          const mine = busy?.changeId === change.changeId;
-          return (
-            <TidyChangeItem key={change.changeId} change={change} texts={texts}>
-              <div className="mt-2 flex gap-2">
-                <button
-                  type="button"
-                  disabled={busy !== null}
-                  aria-busy={mine && busy?.approve === true}
-                  onClick={() => void onDecide(change.changeId, true)}
-                  className={cn(
-                    "h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-5 text-[15px] font-semibold text-[var(--personal-primary-text)] disabled:opacity-60",
-                    FOCUS_RING,
-                  )}
-                >
-                  {mine && busy?.approve === true ? "Approving…" : "Approve"}
-                </button>
-                <button
-                  type="button"
-                  disabled={busy !== null}
-                  aria-busy={mine && busy?.approve === false}
-                  onClick={() => void onDecide(change.changeId, false)}
-                  className={cn(
-                    "h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)] px-5 text-[15px] font-semibold text-[var(--personal-text)] disabled:opacity-60",
-                    FOCUS_RING,
-                  )}
-                >
-                  {mine && busy?.approve === false ? "Rejecting…" : "Reject"}
-                </button>
-              </div>
-            </TidyChangeItem>
-          );
-        })}
-      </ul>
+      {groups.map((group) => {
+        const ids = group.changes.map((change) => change.changeId);
+        const chosen = ids.filter((changeId) => selected.has(changeId));
+        const all = chosen.length === ids.length;
+        const groupBusy = busy?.kind === "group" && busy.runId === group.runId;
+        return (
+          <section
+            key={group.runId}
+            aria-label={group.label}
+            className="mt-2 border-t border-[var(--personal-border)] pt-2"
+          >
+            <h3 className="text-[14px] font-semibold text-[var(--personal-text)]">
+              {group.label} ({ids.length})
+            </h3>
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={all ? true : chosen.length > 0 ? "mixed" : false}
+              disabled={busy !== null}
+              onClick={() =>
+                setSelected((current) => {
+                  const next = new Set(current);
+                  for (const changeId of ids) {
+                    if (all) next.delete(changeId);
+                    else next.add(changeId);
+                  }
+                  return next;
+                })
+              }
+              className={cn(
+                "flex min-h-11 items-center gap-2.5 rounded-[var(--personal-radius-button)] text-[14px] font-medium text-[var(--personal-text)] disabled:opacity-60",
+                FOCUS_RING,
+              )}
+            >
+              <SelectCheck checked={all} />
+              Select all in this group
+            </button>
+            <ul className="divide-y divide-[var(--personal-border)]">
+              {group.changes.map((change) => {
+                const mine = busy?.kind === "one" && busy.changeId === change.changeId;
+                const ticked = selected.has(change.changeId);
+                return (
+                  <TidyChangeItem
+                    key={change.changeId}
+                    change={change}
+                    texts={texts}
+                    leading={
+                      <button
+                        type="button"
+                        role="checkbox"
+                        aria-checked={ticked}
+                        aria-label="Select this change"
+                        disabled={busy !== null}
+                        onClick={() =>
+                          setSelected((current) =>
+                            current.has(change.changeId)
+                              ? withoutId(current, change.changeId)
+                              : new Set([...current, change.changeId]),
+                          )
+                        }
+                        className={cn(
+                          "-my-2.5 -ml-2.5 flex size-11 shrink-0 items-center justify-center rounded-full disabled:opacity-60",
+                          FOCUS_RING,
+                        )}
+                      >
+                        <SelectCheck checked={ticked} />
+                      </button>
+                    }
+                  >
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        type="button"
+                        disabled={busy !== null}
+                        aria-busy={mine && busy.approve}
+                        onClick={() => void onDecide(change.changeId, true)}
+                        className={cn(DECIDE_BUTTON, APPROVE_LOOK, FOCUS_RING)}
+                      >
+                        {mine && busy.approve ? "Approving…" : "Approve"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy !== null}
+                        aria-busy={mine && !busy.approve}
+                        onClick={() => void onDecide(change.changeId, false)}
+                        className={cn(DECIDE_BUTTON, REJECT_LOOK, FOCUS_RING)}
+                      >
+                        {mine && !busy.approve ? "Rejecting…" : "Reject"}
+                      </button>
+                    </div>
+                  </TidyChangeItem>
+                );
+              })}
+            </ul>
+            <div className="flex flex-wrap gap-2 py-2">
+              <button
+                type="button"
+                disabled={busy !== null || chosen.length === 0}
+                aria-busy={groupBusy && busy.approve}
+                onClick={() => void onDecideGroup(group.runId, chosen, true)}
+                className={cn(DECIDE_BUTTON, APPROVE_LOOK, FOCUS_RING)}
+              >
+                {groupBusy && busy.approve ? "Approving…" : `Approve selected (${chosen.length})`}
+              </button>
+              <button
+                type="button"
+                disabled={busy !== null || chosen.length === 0}
+                aria-busy={groupBusy && !busy.approve}
+                onClick={() => void onDecideGroup(group.runId, chosen, false)}
+                className={cn(DECIDE_BUTTON, REJECT_LOOK, FOCUS_RING)}
+              >
+                {groupBusy && !busy.approve ? "Rejecting…" : `Reject selected (${chosen.length})`}
+              </button>
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -474,6 +617,7 @@ export function MemoryTidySection({
 
   const runs = useMemo(() => newestTidyRunsFirst(log.data?.runs ?? []), [log.data]);
   const waiting = useMemo(() => pendingTidyChanges(runs), [runs]);
+  const waitingGroups = useMemo(() => pendingTidyGroups(runs), [runs]);
   const mode = pendingMode ?? log.data?.mode ?? null;
   const summary =
     log.data === null
@@ -509,7 +653,7 @@ export function MemoryTidySection({
       />
       <div id={panelId} hidden={!open} className="flex flex-col gap-3 pt-1">
         {waiting.length > 0 ? (
-          <PendingTidyChanges environmentId={environmentId} changes={waiting} texts={texts} />
+          <PendingTidyChanges environmentId={environmentId} groups={waitingGroups} texts={texts} />
         ) : null}
         <p className="text-[14px] leading-snug text-[var(--personal-text-secondary)]">
           Each night at 03:30 duplicates are merged and outdated entries are replaced. Preview only

@@ -8,6 +8,8 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { personalBotTeamLabel } from "@t3tools/contracts";
+
 import { PERSONAL_TIME_ZONE } from "./greeting";
 import { formatRelativeTime } from "./relativeTime";
 
@@ -57,6 +59,7 @@ export const TIDY_MODE_LABEL: Readonly<Record<PersonalMemoryTidyMode, string>> =
 export const TIDY_ACTION_LABEL: Readonly<Record<PersonalMemoryTidyAction, string>> = {
   merge: "Merged",
   supersede: "Replaced",
+  reclassify: "Reclassified",
   leave: "Left alone",
 };
 
@@ -140,6 +143,93 @@ export function pendingTidyChanges<C extends Pick<PersonalMemoryTidyChange, "cha
     }
   }
   return pending;
+}
+
+/** A change's action in words; a reclassify still waiting reads as a request. */
+export function tidyActionLabel(
+  change: Pick<PersonalMemoryTidyChange, "action" | "status">,
+): string {
+  if (change.action === "reclassify" && change.status === "pending") return "Reclassify";
+  return TIDY_ACTION_LABEL[change.action];
+}
+
+/**
+ * What a reclassify does, in words: "Make it a preference · Reach: Dev team".
+ * Empty when it names no new kind or reach.
+ */
+export function reclassifyDescription(
+  change: Pick<PersonalMemoryTidyChange, "toKind" | "toScope" | "toScopeId">,
+): string {
+  const parts: string[] = [];
+  if (change.toKind === "preference") parts.push("Make it a preference");
+  if (change.toKind === "note") parts.push("Make it a note");
+  if (change.toScope === "shared") parts.push("Reach: All bots");
+  if (change.toScope === "team") {
+    const team = change.toScopeId?.trim();
+    parts.push(`Reach: ${team ? personalBotTeamLabel(team) : "one team"}`);
+  }
+  return parts.join(" · ");
+}
+
+const PROPOSALS_PREFIX = "proposals: ";
+
+/** "2 Oct 03:30" on the app's local calendar. */
+function shortDayTime(then: number, timeZone: string): string {
+  const [, month, day] = memoryDayLabel(then, timeZone).split("-").map(Number);
+  const time = memoryDayTimeLabel(then, timeZone).slice(11);
+  return `${day} ${SHORT_MONTHS[month! - 1]} ${time}`;
+}
+
+const SHORT_MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+/** A run's group header: "Proposals: <name>" for a one-off list, else "Nightly tidy-up 2 Oct 03:30". */
+export function tidyRunGroupLabel(
+  run: Pick<PersonalMemoryTidyRun, "model" | "startedAt">,
+  timeZone: string = PERSONAL_TIME_ZONE,
+): string {
+  const model = run.model ?? "";
+  if (model.startsWith(PROPOSALS_PREFIX)) {
+    const name = model.slice(PROPOSALS_PREFIX.length).trim();
+    return name === "" ? "Proposals" : `Proposals: ${name}`;
+  }
+  return `Nightly tidy-up ${shortDayTime(DateTime.toEpochMillis(run.startedAt), timeZone)}`;
+}
+
+/** Pending changes grouped by their run (runs in the order given, empty groups dropped). */
+export function pendingTidyGroups<C extends Pick<PersonalMemoryTidyChange, "changeId" | "status">>(
+  runs: ReadonlyArray<
+    Pick<PersonalMemoryTidyRun, "runId" | "model" | "startedAt"> & {
+      readonly changes: ReadonlyArray<C>;
+    }
+  >,
+  timeZone: string = PERSONAL_TIME_ZONE,
+): Array<{ runId: string; label: string; changes: C[] }> {
+  const seen = new Set<number>();
+  const groups: Array<{ runId: string; label: string; changes: C[] }> = [];
+  for (const run of runs) {
+    const changes = run.changes.filter((change) => {
+      if (change.status !== "pending" || seen.has(change.changeId)) return false;
+      seen.add(change.changeId);
+      return true;
+    });
+    if (changes.length > 0) {
+      groups.push({ runId: run.runId, label: tidyRunGroupLabel(run, timeZone), changes });
+    }
+  }
+  return groups;
 }
 
 /** Where the Memory screen keeps, on this device, when it was last opened. */

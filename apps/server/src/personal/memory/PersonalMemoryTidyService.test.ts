@@ -1,4 +1,4 @@
-import { PersonalBotId } from "@t3tools/contracts";
+import { PersonalBotId, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -230,4 +230,116 @@ it.effect("a model error fails the run and changes nothing", () =>
       ),
     ),
   ),
+);
+
+it.effect(
+  "imported proposals wait for approval; approving reclassifies one entry, text unchanged",
+  () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO personal_bots (
+        bot_id, name, description, instructions, avatar_shape, avatar_color,
+        model_selection_json, enabled, sort_order, created_at, updated_at, team
+      ) VALUES ('bot-dev', 'Dev', '', '', 'blob', '#1A73E8', '{}', 1, 0, '2026-10-01', '2026-10-01', 'dev'),
+        ('bot-asst', 'Asst', '', '', 'blob', '#1A73E8', '{}', 1, 0, '2026-10-01', '2026-10-01', 'assistant')`;
+      const before = yield* memory.list({});
+
+      const run = yield* tidy.importProposals({
+        source: "reclass.json",
+        items: [
+          {
+            action: "reclassify",
+            memoryIds: [ids.newModels],
+            toScope: "team",
+            toScopeId: "dev",
+            reason: "Only the dev team needs it.",
+          },
+          {
+            action: "reclassify",
+            memoryIds: [ids.building],
+            toKind: "preference",
+            toScope: "team",
+            toScopeId: "dev",
+            reason: "A standing rule.",
+          },
+          {
+            action: "supersede",
+            memoryIds: [ids.oldModels],
+            by: ids.newModels,
+            reason: "Newer list.",
+          },
+          {
+            action: "reclassify",
+            memoryIds: [ids.privateNote],
+            toScope: "team",
+            toScopeId: "dev",
+            reason: "Not shared.",
+          },
+          {
+            action: "reclassify",
+            memoryIds: ["no-such-id"],
+            toKind: "preference",
+            reason: "Gone.",
+          },
+          { action: "reclassify", memoryIds: [ids.tea], reason: "No change." },
+        ],
+      });
+      expect(run.changes.map((change) => change.status)).toEqual([
+        "pending",
+        "pending",
+        "pending",
+        "left",
+        "left",
+        "left",
+      ]);
+      // Nothing applied without a tap.
+      expect(yield* memory.list({})).toEqual(before);
+      const contextOf = (botId: string) =>
+        memory.contextForThread({
+          threadId: ThreadId.make(`t-${botId}`),
+          query: "Dev team models",
+          record: false,
+        });
+      yield* sql`INSERT INTO personal_bot_threads (thread_id, bot_id, created_at)
+      VALUES ('t-bot-dev', 'bot-dev', '2026-10-01'), ('t-bot-asst', 'bot-asst', '2026-10-01')`;
+      expect((yield* contextOf("bot-asst")).block).toContain("Backend Opus 5.5");
+
+      yield* tidy.decide({ changeId: run.changes[0]!.changeId, approve: true });
+      yield* tidy.decide({ changeId: run.changes[1]!.changeId, approve: true });
+      const after = yield* memory.list({});
+      const moved = after.find((entry) => entry.memoryId === ids.newModels)!;
+      expect([moved.scope, moved.scopeId, moved.kind]).toEqual(["team", "dev", "note"]);
+      expect(moved.content).toBe("Dev team models (1 Oct): Backend Opus 5.5, QA on GPT-6.1 Sol.");
+      const promoted = after.find((entry) => entry.memoryId === ids.building)!;
+      expect([promoted.kind, promoted.scope]).toEqual(["preference", "team"]);
+      // Reach: the dev bot still gets it, the assistant's bot no longer does.
+      expect((yield* contextOf("bot-dev")).block).toContain("Backend Opus 5.5");
+      expect((yield* contextOf("bot-asst")).block ?? "").not.toContain("Backend Opus 5.5");
+
+      // The supersede now names an entry that left the shared list: refused, nothing changed.
+      const stale = yield* Effect.flip(
+        tidy.decide({ changeId: run.changes[2]!.changeId, approve: true }),
+      );
+      expect(stale.message).toContain("nothing was changed");
+      expect((yield* memory.list({})).map((entry) => entry.memoryId)).toContain(ids.oldModels);
+
+      // Importing the same file again asks nothing twice (still waiting, or approved).
+      const again = yield* tidy.importProposals({
+        source: "reclass.json",
+        items: [
+          { action: "supersede", memoryIds: [ids.oldModels], by: ids.tea, reason: "x" },
+          {
+            action: "reclassify",
+            memoryIds: [ids.tea],
+            toScope: "team",
+            toScopeId: "assistant",
+            reason: "y",
+          },
+        ],
+      });
+      expect(again.changes.map((change) => change.status)).toEqual(["pending"]);
+    }).pipe(Effect.provide(testLayer(fakeJudge(answers)))),
 );
