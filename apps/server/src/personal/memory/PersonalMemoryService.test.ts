@@ -11,6 +11,9 @@ import { makeSensitiveExposureStore, rootExposureKey } from "../browser/sensitiv
 import {
   buildMemoryMatchQuery,
   looksLikeSecret,
+  PERSONAL_MEMORY_CONTEXT_RELEVANT_LIMIT,
+  PERSONAL_MEMORY_PREFERENCE_MAX_CHARS,
+  PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES,
   PersonalMemoryService,
   layer as memoryLayer,
 } from "./PersonalMemoryService.ts";
@@ -93,7 +96,7 @@ it.effect("retrieval is scoped to shared + the thread's bot, ranked by relevance
     yield* linkThread;
     const memory = yield* PersonalMemoryService;
     const save = (scope: "shared" | "bot", scopeId: string | null, content: string) =>
-      memory.save({ scope, scopeId, kind: "preference", content, source: "user" });
+      memory.save({ scope, scopeId, kind: "note", content, source: "user" });
     yield* save("shared", null, "The user grows tomatoes in the back garden.");
     yield* save("bot", BOT_A, "Bot A should water the tomatoes every morning.");
     yield* save("bot", BOT_B, "Bot B tracks tomatoes prices at the market.");
@@ -281,7 +284,9 @@ it.effect("a task turn gets no task summaries; a chat turn still does", () =>
     expect(taskTurn.block).not.toContain("[task summary]");
 
     const chatTurn = yield* memory.contextForThread({ threadId: THREAD_A, query, record: false });
-    expect(chatTurn.memoryIds.length).toBe(8);
+    // The preference always, then every summary and the note: 10 relevant
+    // entries fit under the relevance limit of 20.
+    expect(chatTurn.memoryIds.length).toBe(11);
     expect(chatTurn.block).toContain('- [task summary] Task "Benchmark batch');
   }).pipe(Effect.provide(TestLayer)),
 );
@@ -367,3 +372,189 @@ it.effect("a task tree that saw a sensitive site leaves no summary in bot memory
     expect(yield* memory.list({ kind: "task_summary" })).toEqual([]);
   }).pipe(Effect.provide(TestLayer)),
 );
+
+/** Back-dates an entry so "newest first" and "weeks ago" are real in the test. */
+const ageEntry = (memoryId: string, daysAgo: number) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const at = new Date(Date.now() - daysAgo * 86_400_000).toISOString();
+    yield* sql`
+      UPDATE personal_memory SET created_at = ${at}, updated_at = ${at}
+      WHERE memory_id = ${memoryId}
+    `;
+  });
+
+describe("standing preferences", () => {
+  it.effect(
+    "every preference the bot can see is in every turn, relevant or not, newest first",
+    () =>
+      Effect.gen(function* () {
+        yield* linkThread;
+        const memory = yield* PersonalMemoryService;
+        const old = yield* memory.save({
+          scope: "shared",
+          scopeId: null,
+          kind: "preference",
+          content: "Always deploy the latest builds without asking first.",
+          source: "user",
+        });
+        yield* ageEntry(old.memoryId, 30);
+        const own = yield* memory.save({
+          scope: "bot",
+          scopeId: BOT_A,
+          kind: "preference",
+          content: "Reply in short plain sentences, outcome first.",
+          source: "user",
+        });
+        yield* ageEntry(own.memoryId, 2);
+        yield* memory.save({
+          scope: "bot",
+          scopeId: BOT_B,
+          kind: "preference",
+          content: "Bot B keeps its own standing rule about invoices.",
+          source: "user",
+        });
+        yield* memory.save({
+          scope: "shared",
+          scopeId: null,
+          kind: "note",
+          content: "The office printer is on the second floor.",
+          source: "user",
+        });
+
+        // No word in common with any entry.
+        for (const excludeTaskSummaries of [false, true]) {
+          const context = yield* memory.contextForThread({
+            threadId: THREAD_A,
+            query: "What is the weather in Lisbon?",
+            record: false,
+            excludeTaskSummaries,
+          });
+          expect(context.memoryIds).toEqual([own.memoryId, old.memoryId]);
+          expect(context.block).toContain("- [preference] Always deploy the latest builds");
+          expect(context.block).toContain("- [preference] Reply in short plain sentences");
+          expect(context.block).not.toContain("Bot B");
+          expect(context.block).not.toContain("printer");
+        }
+      }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("a preference saved in two scopes appears once, and is never cut to 500 chars", () =>
+    Effect.gen(function* () {
+      yield* linkThread;
+      const memory = yield* PersonalMemoryService;
+      const long = `Release rule: ${"check the live version and the logs, ".repeat(30)}end.`;
+      expect(long.length).toBeGreaterThan(600);
+      yield* memory.save({
+        scope: "shared",
+        scopeId: null,
+        kind: "preference",
+        content: long,
+        source: "user",
+      });
+      yield* memory.save({
+        scope: "bot",
+        scopeId: BOT_A,
+        kind: "preference",
+        content: `  ${long.toUpperCase()}  `,
+        source: "user",
+      });
+      const context = yield* memory.contextForThread({
+        threadId: THREAD_A,
+        query: "release rule",
+        record: false,
+      });
+      expect(context.memoryIds.length).toBe(1);
+      expect(context.block?.toLowerCase()).toContain("the logs, end.");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("preferences are capped by count, oldest dropped first", () =>
+    Effect.gen(function* () {
+      yield* linkThread;
+      const memory = yield* PersonalMemoryService;
+      for (let index = 0; index < PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES + 5; index++) {
+        const entry = yield* memory.save({
+          scope: "shared",
+          scopeId: null,
+          kind: "preference",
+          content: `Standing rule number ${index}.`,
+          source: "user",
+        });
+        // Rule 0 is the oldest.
+        yield* ageEntry(entry.memoryId, 100 - index);
+      }
+      const context = yield* memory.contextForThread({
+        threadId: THREAD_A,
+        query: "anything",
+        record: false,
+      });
+      expect(context.memoryIds.length).toBe(PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES);
+      expect(context.block).toContain(
+        `Standing rule number ${PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES + 4}.`,
+      );
+      expect(context.block).not.toContain("Standing rule number 4.");
+      expect(context.block).toContain("Standing rule number 5.");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("preferences are capped by characters, oldest dropped first", () =>
+    Effect.gen(function* () {
+      yield* linkThread;
+      const memory = yield* PersonalMemoryService;
+      const count = Math.ceil(PERSONAL_MEMORY_PREFERENCE_MAX_CHARS / 1_900) + 3;
+      for (let index = 0; index < count; index++) {
+        const entry = yield* memory.save({
+          scope: "shared",
+          scopeId: null,
+          kind: "preference",
+          content: `Rule ${String(index).padStart(2, "0")}: ${"keep going ".repeat(170)}`,
+          source: "user",
+        });
+        yield* ageEntry(entry.memoryId, 100 - index);
+      }
+      const context = yield* memory.contextForThread({
+        threadId: THREAD_A,
+        query: "anything",
+        record: false,
+      });
+      const block = context.block ?? "";
+      const included = context.memoryIds.length;
+      expect(included).toBeLessThan(count);
+      expect(included * 1_880).toBeLessThanOrEqual(PERSONAL_MEMORY_PREFERENCE_MAX_CHARS);
+      expect(block).toContain(`Rule ${String(count - 1).padStart(2, "0")}:`);
+      expect(block).not.toContain("Rule 00:");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("notes and task summaries stay relevance-picked, up to 20", () =>
+    Effect.gen(function* () {
+      yield* linkThread;
+      const memory = yield* PersonalMemoryService;
+      for (let index = 0; index < 25; index++) {
+        yield* memory.save({
+          scope: "shared",
+          scopeId: null,
+          kind: "note",
+          content: `Tomato bed ${index} was planted in spring.`,
+          source: "user",
+        });
+      }
+      yield* memory.save({
+        scope: "shared",
+        scopeId: null,
+        kind: "note",
+        content: "The office printer is on the second floor.",
+        source: "user",
+      });
+      const context = yield* memory.contextForThread({
+        threadId: THREAD_A,
+        query: "How is the tomato bed?",
+        record: false,
+      });
+      expect(PERSONAL_MEMORY_CONTEXT_RELEVANT_LIMIT).toBe(20);
+      expect(context.memoryIds.length).toBe(20);
+      expect(context.block).not.toContain("printer");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+});

@@ -266,7 +266,8 @@ const make = Effect.gen(function* () {
       ),
     );
   /**
-   * Up to 8 memory entries relevant to a turn's text ("Known facts (from
+   * Every preference the bot can see (capped, newest first) plus up to 20
+   * notes and task summaries relevant to a turn's text ("Known facts (from
    * memory)"), sent as that turn's context rather than in the bot's system
    * instructions: those must read the same on every session start of a
    * conversation, and a Claude session reads them only when it starts. Memory

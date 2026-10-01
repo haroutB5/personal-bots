@@ -2939,6 +2939,8 @@ describe("ProviderCommandReactor", () => {
             ],
             ["memory-preference", "preference", "Benchmark results go in a table.", "user"],
             ["memory-note", "note", "Benchmark machines are in the lab.", "user"],
+            // Shares no word with the turn's text: only "always included" finds it.
+            ["memory-standing", "preference", "Always reply in British English.", "user"],
           ] as const;
           for (const [memoryId, kind, content, source] of rows) {
             yield* sql`
@@ -2992,6 +2994,16 @@ describe("ProviderCommandReactor", () => {
       const context = await turnContextOf(personalTaskMessageId("routine-run-7", 3));
       expect(context).toContain("- [preference] Benchmark results go in a table.");
       expect(context).not.toContain("[task summary]");
+    });
+
+    it.each([
+      ["chat", asMessageId("user-message-benchmark")],
+      ["delegated task", personalTaskMessageId("task-batch-2", 1)],
+      ["routine run", personalTaskMessageId("routine-run-7", 3)],
+      ["group round", asMessageId("personal-group-round-1-brief-1")],
+    ])("a %s turn gets every standing preference, relevant or not", async (_kind, messageId) => {
+      const context = await turnContextOf(messageId);
+      expect(context).toContain("- [preference] Always reply in British English.");
     });
 
     it("a chat turn still gets task summaries", async () => {

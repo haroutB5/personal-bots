@@ -34,8 +34,21 @@ import {
 } from "../browser/sensitiveExposureStore.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 
-/** Entries handed to one turn at most. */
+/** Default result count for a memory search (the search_memory tool). */
 export const PERSONAL_MEMORY_RETRIEVAL_LIMIT = 8;
+/**
+ * Notes and task summaries picked by relevance for one turn. Preferences are
+ * not counted here: every one the bot can see is always included.
+ */
+export const PERSONAL_MEMORY_CONTEXT_RELEVANT_LIMIT = 20;
+/**
+ * Standing preferences in one turn at most, newest first. Harout's rules live
+ * as preferences, and a rule only picked when its words matched the message
+ * was missed (a 25 Sep release-check rule did not surface on 1 Oct), so they
+ * are all included up to these caps, oldest dropped first and logged.
+ */
+export const PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES = 60;
+export const PERSONAL_MEMORY_PREFERENCE_MAX_CHARS = 15_000;
 const BLOCK_ENTRY_MAX_CHARS = 500;
 const SUMMARY_MAX_CHARS = 600;
 
@@ -96,10 +109,11 @@ const KIND_LABEL: Record<PersonalMemoryKind, string> = {
 export function formatMemoryBlock(entries: ReadonlyArray<PersonalMemoryEntry>): string | null {
   if (entries.length === 0) return null;
   return [
-    "Known facts (from memory), added by the app for this message; the user did not type them. Use them when relevant; they may be out of date. Task summaries record past work and are not user preferences.",
+    "Known facts (from memory), added by the app for this message; the user did not type them. Every saved preference is listed, newest first: they are the user's standing instructions, so follow them; a newer one wins over an older one. Notes and task summaries were picked for this message and may be out of date. Task summaries record past work and are not user preferences.",
     ...entries.map((entry) => {
+      // A preference is a rule; cutting it short can drop the rule itself.
       const content =
-        entry.content.length > BLOCK_ENTRY_MAX_CHARS
+        entry.kind !== "preference" && entry.content.length > BLOCK_ENTRY_MAX_CHARS
           ? `${entry.content.slice(0, BLOCK_ENTRY_MAX_CHARS)}...`
           : entry.content;
       return `- [${KIND_LABEL[entry.kind]}] ${content.replace(/\s+/g, " ")}`;
@@ -149,6 +163,40 @@ export interface PersonalMemoryScopeFilter {
   readonly projectId?: string | undefined;
   /** Leaves task summaries out before ranking, so the limit fills with other kinds. */
   readonly excludeTaskSummaries?: boolean | undefined;
+  /** Leaves preferences out: a turn's context lists them all separately. */
+  readonly excludePreferences?: boolean | undefined;
+}
+
+/** Same text, ignoring case and spacing: one rule saved in two scopes is listed once. */
+const dedupeKey = (content: string) => content.trim().replace(/\s+/g, " ").toLowerCase();
+
+/**
+ * The newest preferences that fit the caps. Entries are newest first, so the
+ * ones dropped are the oldest.
+ */
+export function capPreferences(entries: ReadonlyArray<PersonalMemoryEntry>): {
+  readonly kept: ReadonlyArray<PersonalMemoryEntry>;
+  readonly dropped: number;
+} {
+  const kept: Array<PersonalMemoryEntry> = [];
+  const seen = new Set<string>();
+  let chars = 0;
+  let dropped = 0;
+  for (const entry of entries) {
+    const key = dedupeKey(entry.content);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (
+      kept.length >= PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES ||
+      chars + entry.content.length > PERSONAL_MEMORY_PREFERENCE_MAX_CHARS
+    ) {
+      dropped += 1;
+      continue;
+    }
+    kept.push(entry);
+    chars += entry.content.length;
+  }
+  return { kept, dropped };
 }
 
 export class PersonalMemoryService extends Context.Service<
@@ -172,8 +220,9 @@ export class PersonalMemoryService extends Context.Service<
     /** The bot of a personal-bot thread, or none for ordinary T3 threads. */
     readonly botForThread: (threadId: ThreadId) => Effect.Effect<Option.Option<PersonalBotId>>;
     /**
-     * Relevant entries for a turn on a personal-bot thread (shared + that
-     * bot, + the project when given), formatted as context for that turn.
+     * Memory for a turn on a personal-bot thread (shared + that bot, + the
+     * project when given), formatted as context for that turn: every
+     * preference (capped), then the notes and task summaries relevant to it.
      * `record` logs the ids against the thread's active task attempt.
      * `excludeTaskSummaries` is set for task and routine turns: a task's
      * objective must not carry the bot's summaries of unrelated past tasks.
@@ -286,6 +335,7 @@ export const make = Effect.gen(function* () {
         AND m.deleted_at IS NULL
         AND ${scopeCondition(input)}
         AND ${input.excludeTaskSummaries === true ? sql`m.kind <> 'task_summary'` : sql`1 = 1`}
+        AND ${input.excludePreferences === true ? sql`m.kind <> 'preference'` : sql`1 = 1`}
       ORDER BY bm25(personal_memory_fts) ASC, m.updated_at DESC
       LIMIT ${input.limit ?? PERSONAL_MEMORY_RETRIEVAL_LIMIT}
     `.pipe(Effect.flatMap(decodeAll), storageFailure("search"));
@@ -379,13 +429,41 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const botId = yield* botForThread(input.threadId);
       if (Option.isNone(botId)) return { block: null, memoryIds: [] };
-      const entries = yield* search({
+      const scope = { botId: botId.value, projectId: input.projectId };
+      // Every preference the bot can see, whatever the message says.
+      const allPreferences = yield* sql`
+        SELECT ${sql.literal(MEMORY_COLUMNS)} FROM personal_memory m
+        WHERE m.deleted_at IS NULL
+          AND m.kind = 'preference'
+          AND ${scopeCondition(scope)}
+        ORDER BY m.updated_at DESC, m.seq DESC
+        LIMIT 500
+      `.pipe(Effect.flatMap(decodeAll), storageFailure("preferences"));
+      const preferences = capPreferences(allPreferences);
+      if (preferences.dropped > 0) {
+        yield* Effect.logWarning("personal memory preferences capped for a turn", {
+          threadId: input.threadId,
+          included: preferences.kept.length,
+          dropped: preferences.dropped,
+          maxEntries: PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES,
+          maxChars: PERSONAL_MEMORY_PREFERENCE_MAX_CHARS,
+        });
+      }
+      const relevant = yield* search({
         query: input.query.slice(0, 2_000) || " ",
-        botId: botId.value,
-        projectId: input.projectId,
+        ...scope,
         excludeTaskSummaries: input.excludeTaskSummaries,
-        limit: PERSONAL_MEMORY_RETRIEVAL_LIMIT,
+        excludePreferences: true,
+        limit: PERSONAL_MEMORY_CONTEXT_RELEVANT_LIMIT,
       });
+      const seen = new Set(preferences.kept.map((entry) => dedupeKey(entry.content)));
+      const entries = [...preferences.kept];
+      for (const entry of relevant) {
+        const key = dedupeKey(entry.content);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        entries.push(entry);
+      }
       const memoryIds = entries.map((entry) => entry.memoryId);
       if (input.record && memoryIds.length > 0) {
         yield* recordUsage(input.threadId, memoryIds);
