@@ -945,6 +945,57 @@ describe("Fable follow-ups (1.60.21)", () => {
     }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
   );
 
+  it.effect(
+    "a split approved after its entry moved team still applies; after an edit it is refused",
+    () =>
+      Effect.gen(function* () {
+        const ids = yield* seed;
+        const memory = yield* PersonalMemoryService;
+        const tidy = yield* PersonalMemoryTidy;
+        const parts = [
+          { content: "Owns a Garmin watch.", kind: "note", scope: "shared", scopeId: null },
+          { content: "The watch is a Venu 3.", kind: "note", scope: "shared", scopeId: null },
+        ] as const;
+        const run = yield* tidy.importProposals({
+          source: "memory-proposals-split.json",
+          items: [
+            {
+              action: "reclassify",
+              memoryIds: [ids.watch],
+              toScope: "team",
+              toScopeId: "assistant",
+              reason: "Assistant only.",
+            },
+            { action: "split", memoryIds: [ids.watch], parts, reason: "One fact each." },
+            {
+              action: "split",
+              memoryIds: [ids.flooring],
+              parts: [
+                { content: "Mostly hard floors.", kind: "note", scope: "shared", scopeId: null },
+              ],
+              reason: "Shorter.",
+            },
+          ],
+        });
+        const [reclassify, splitWatch, splitFloor] = run.changes;
+        yield* decideWithHash(reclassify!.changeId, true);
+        yield* decideWithHash(splitWatch!.changeId, true);
+        const current = yield* memory.list({});
+        expect(current.map((e) => e.memoryId)).not.toContain(ids.watch);
+        expect(current.some((e) => e.content === "The watch is a Venu 3.")).toBe(true);
+
+        yield* memory.update({
+          memoryId: PersonalMemoryId.make(ids.flooring),
+          content: "Home is all hard flooring now.",
+        });
+        const error = yield* Effect.flip(decideWithHash(splitFloor!.changeId, true));
+        expect(error.message).toContain("nothing was changed");
+        expect((yield* memory.list({})).some((e) => e.content === "Mostly hard floors.")).toBe(
+          false,
+        );
+      }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
   it.effect("a split with a secret-shaped or empty part is left, not asked", () =>
     Effect.gen(function* () {
       const ids = yield* seed;

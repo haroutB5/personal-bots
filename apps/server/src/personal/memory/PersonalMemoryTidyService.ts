@@ -219,12 +219,17 @@ const ProposalItemSchema = Schema.Struct({
 });
 export type ProposalItem = typeof ProposalItemSchema.Type;
 
-const encodeSplitParts = Schema.encodeSync(
-  Schema.fromJsonString(Schema.Array(PersonalMemorySplitPart)),
-);
-const decodeSplitParts = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Array(PersonalMemorySplitPart)),
-);
+/**
+ * A split as stored: the long entry's text as the owner was shown it (its
+ * approval holds the entry to that text, so a reach change in between does
+ * not make it stale) and the parts.
+ */
+const StoredSplit = Schema.Struct({
+  from: Schema.String,
+  parts: Schema.Array(PersonalMemorySplitPart),
+});
+const encodeSplit = Schema.encodeSync(Schema.fromJsonString(StoredSplit));
+const decodeSplit = Schema.decodeUnknownOption(Schema.fromJsonString(StoredSplit));
 
 /** A proposals file: `{ "items": [...] }`, at most 200 items. */
 export const ProposalFile = Schema.Struct({
@@ -623,7 +628,10 @@ export const make = Effect.gen(function* () {
               resultMemoryId: change.resultMemoryId,
               parts:
                 change.action === "split"
-                  ? Option.getOrElse(decodeSplitParts(change.content ?? ""), () => [])
+                  ? Option.match(decodeSplit(change.content ?? ""), {
+                      onNone: () => [],
+                      onSome: (split) => split.parts,
+                    })
                   : undefined,
               toKind: change.toKind ?? null,
               toScope: change.toScope ?? null,
@@ -837,14 +845,15 @@ export const make = Effect.gen(function* () {
         item.action === "supersede"
           ? (current.get(item.by ?? "")?.content ?? null)
           : item.action === "split"
-            ? encodeSplitParts(
-                (item.parts ?? []).map((part) => ({
+            ? encodeSplit({
+                from: current.get(item.memoryIds[0] ?? "")?.content ?? "",
+                parts: (item.parts ?? []).map((part) => ({
                   content: part.content.trim(),
                   kind: part.kind,
                   scope: part.scope,
                   scopeId: part.scope === "team" ? (part.scopeId?.trim() ?? null) : null,
                 })),
-              )
+              })
             : null;
       const insert = (
         status: PersonalMemoryTidyChangeStatus,
@@ -1059,7 +1068,7 @@ export const make = Effect.gen(function* () {
             break;
           }
           case "split": {
-            const first = yield* applySplit(change, memoryIds, versions, nowIso);
+            const first = yield* applySplit(change, memoryIds, nowIso);
             if (first === null) return yield* stale;
             resultId = first;
             break;
@@ -1191,26 +1200,26 @@ export const make = Effect.gen(function* () {
    * place among newer rules), and the long entry is archived. A part whose
    * exact text is already current in its reach is not added twice.
    */
-  const applySplit = (
-    change: ChangeRow,
-    ids: ReadonlyArray<string>,
-    versions: ReadonlyMap<string, number>,
-    nowIso: string,
-  ) =>
+  const applySplit = (change: ChangeRow, ids: ReadonlyArray<string>, nowIso: string) =>
     Effect.gen(function* () {
-      const parts = Option.getOrUndefined(decodeSplitParts(change.content ?? ""));
-      if (parts === undefined || parts.length === 0 || ids.length !== 1) return null;
+      const split = Option.getOrUndefined(decodeSplit(change.content ?? ""));
+      const parts = split?.parts ?? [];
+      if (split === undefined || parts.length === 0 || ids.length !== 1) return null;
       const invalid = parts.some(
         (part) =>
           part.content.trim().length === 0 ||
           looksLikeSecret(part.content) ||
           (part.scope === "team" && (part.scopeId ?? "").trim().length === 0),
       );
-      if (invalid || !(yield* unchanged(ids, versions))) return null;
-      const original = yield* sql<{ readonly createdAt: string }>`
-        SELECT created_at AS "createdAt" FROM personal_memory WHERE memory_id = ${ids[0]!}
+      if (invalid) return null;
+      // Still current and reading exactly as shown; a reach or kind change
+      // in between (e.g. an approved reclassify) is fine.
+      const original = yield* sql<{ readonly createdAt: string; readonly content: string }>`
+        SELECT created_at AS "createdAt", content FROM personal_memory
+        WHERE memory_id = ${ids[0]!} AND deleted_at IS NULL AND superseded_at IS NULL
       `;
-      const createdAt = original[0]?.createdAt ?? nowIso;
+      if (original[0] === undefined || original[0].content !== split.from) return null;
+      const createdAt = original[0].createdAt;
       const made: Array<string> = [];
       for (const part of parts) {
         const content = part.content.trim();
