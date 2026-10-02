@@ -17,11 +17,13 @@ Built on 1.60.20 (main 42f2452a0d). Branch feat/memory-followups. No migration.
 
 In `scripts/personal/memory-proposals/`, one group each on Waiting for your OK. They are imported only at server start, from `<baseDir>/personal/memory-proposals/`, so **DevOps copies them into `C:\Users\Ht\.personal-bots\dev\personal\memory-proposals\` before the 1.60.21 restart** (a pre-1.60.21 server would reject the split file). Every id was resolved against a read-only snapshot of the live DB on 2 Oct 03:2x.
 
-- `...02b-duplicate-rules.json` (5 items, 4 new): bd548c26 -> 687a3056 (5 bots in total; 924b2db2 stays), 266ca4a8 -> 4ce9becc (crypto currencies), d91998e1 -> 9240047d (Frontend model), 6e950227 -> 953fac88 (release checks), d35bb1bc -> c185a9d3 (already pending as change 52, not added twice).
-- `...02c-dev-team-rules.json` (17 reclassify to team dev): a8101b42, bcf0825d, 924b2db2, 9240047d, b6ffbeef, 6bb47e61, e5495568, d4c96687, 65ad6a44, 6586991b, 4166e697, 4e792bd8, ef555b92, 953fac88, 2bb09749, 5201715a, 22e7cedb. Left shared: personal facts, the crypto rules, the "5 bots in total" rule, computer use (d935331f), token-efficiency note (e3bc5111).
-- `...02d-split-wrap-ups.json` (15 split items, 149 parts): the 15 long wrap-up notes. Parts that restate a standing rule already saved on its own were left out.
+- `proposals-2oct-b-duplicates.json` (5 items, 4 new): bd548c26 -> 687a3056 (5 bots in total; 924b2db2 stays), 266ca4a8 -> 4ce9becc (crypto currencies), d91998e1 -> 9240047d (Frontend model), 6e950227 -> 953fac88 (release checks), d35bb1bc -> c185a9d3 (already pending as change 52, not added twice).
+- `proposals-2oct-c-dev-team.json` (17 reclassify to team dev): a8101b42, bcf0825d, 924b2db2, 9240047d, b6ffbeef, 6bb47e61, e5495568, d4c96687, 65ad6a44, 6586991b, 4166e697, 4e792bd8, ef555b92, 953fac88, 2bb09749, 5201715a, 22e7cedb. Left shared: personal facts, the crypto rules, the "5 bots in total" rule, computer use (d935331f), token-efficiency note (e3bc5111).
+- `proposals-2oct-d-splits.json` (15 split items, 149 parts): the 15 long wrap-up notes. Parts that restate a standing rule already saved on its own were left out.
 
 ## Caveats
+
+- Keep proposal file names under 40 letters/digits/dashes: the importer redacts longer token-like strings, so a long name shows as "[redacted].json" in the group label.
 
 - A split, like a supersede, stores the text it was proposed against: approving a 1.60.19 reclassify of the same note first does not make it stale; an edit to the note does.
 - CFO is on team **Finance**, not "assistant": the 9 assistant-reach crypto items in the 1.60.19 file (memory-proposals-2026-10-02.json) would hide those notes from CFO. The split file uses Finance for crypto parts.
