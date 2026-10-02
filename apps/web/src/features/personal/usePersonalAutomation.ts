@@ -238,6 +238,13 @@ export const personalMemoryRestore = createEnvironmentRpcCommand(connectionAtomR
   onSuccess: refreshMemoryAndReplaced,
 });
 
+/** Undo on a "Saved a note" chat line: archives the note, bringing back what it replaced. */
+export const personalMemoryUndoNote = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-memory:undo-note",
+  tag: WS_METHODS.personalMemoryUndoNote,
+  onSuccess: refreshMemoryAndReplaced,
+});
+
 export const personalMemoryTidySetMode = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-memory:tidy-set-mode",
   tag: WS_METHODS.personalMemoryTidySetMode,

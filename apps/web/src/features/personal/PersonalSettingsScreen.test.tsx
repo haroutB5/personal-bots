@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   },
   reload: vi.fn(),
   removedCount: 0,
+  memoryWaiting: 0,
   versionInfo: { label: "v1.9.4", updateAvailable: false } as {
     label: string | null;
     updateAvailable: boolean;
@@ -45,6 +46,23 @@ vi.mock("./useRemovedBots", () => ({
   }),
 }));
 vi.mock("./appVersion", () => ({ useAppVersion: () => state.versionInfo }));
+vi.mock("./usePersonalAutomation", () => ({
+  usePersonalMemoryTidyLog: () => ({
+    data: {
+      mode: "preview",
+      runs: [
+        {
+          runId: "r1",
+          changes: Array.from({ length: state.memoryWaiting + 2 }, (_, index) => ({
+            changeId: index,
+            status: index < state.memoryWaiting ? "pending" : "applied",
+          })),
+        },
+      ],
+    },
+    error: null,
+  }),
+}));
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -54,6 +72,7 @@ afterEach(async () => {
   state.result = { _tag: "Success", value: { displayName: "Harout" } };
   state.reload.mockClear();
   state.removedCount = 0;
+  state.memoryWaiting = 0;
   state.versionInfo = { label: "v1.9.4", updateAvailable: false };
   vi.unstubAllGlobals();
 });
@@ -327,5 +346,32 @@ describe("Settings removed bots", () => {
     const badge = renderer!.root.findByProps({ "aria-label": "3 removed" });
     expect(badge.props.children).toBe(3);
     expect(JSON.stringify(renderer!.toJSON())).toContain("Removed bots");
+  });
+});
+
+describe("1.60.22: the Memory row shows how many changes wait for an OK", () => {
+  const badges = () =>
+    renderer!.root.findAll(
+      (node) =>
+        typeof node.props["aria-label"] === "string" &&
+        node.props["aria-label"].endsWith("waiting for your OK"),
+    );
+
+  it("shows the count when something waits", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    state.memoryWaiting = 82;
+    await act(async () => {
+      renderer = create(<PersonalSettingsScreen />);
+    });
+    expect(badges().map((node) => node.props.children)).toEqual([82]);
+    expect(badges()[0]!.props["aria-label"]).toBe("82 waiting for your OK");
+  });
+
+  it("shows no badge when nothing waits", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    await act(async () => {
+      renderer = create(<PersonalSettingsScreen />);
+    });
+    expect(badges()).toEqual([]);
   });
 });

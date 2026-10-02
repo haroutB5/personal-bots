@@ -44,6 +44,8 @@ import {
 } from "./personalTheme";
 import { useAppVersion } from "./appVersion";
 import { useRemovedBots } from "./useRemovedBots";
+import { pendingTidyChanges } from "./memoryPresentation";
+import { usePersonalMemoryTidyLog } from "./usePersonalAutomation";
 import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { PersonalProviderRows } from "./PersonalProviderRows";
 import { buildProviderUpdateRows } from "./providerUpdateRows";
@@ -282,6 +284,11 @@ export function PersonalSettingsScreen(): JSX.Element {
   const profile = usePersonalProfile(environmentId);
   const list = usePersonalBotsList(environmentId);
   const removedCount = useRemovedBots(environmentId).data?.bots.length ?? 0;
+  const tidyLog = usePersonalMemoryTidyLog(environmentId);
+  const memoryWaiting = useMemo(
+    () => pendingTidyChanges(tidyLog.data?.runs ?? []).length,
+    [tidyLog.data],
+  );
   const providers = useAtomValue(primaryServerProvidersAtom);
   const { label: versionLabel, updateAvailable } = useAppVersion();
   const versionNumber = versionLabel?.replace(/^v/, "") ?? null;
@@ -545,6 +552,7 @@ export function PersonalSettingsScreen(): JSX.Element {
                 icon: CalendarClock,
                 label: "Routines",
                 hint: "Scheduled work for your bots",
+                waiting: 0,
                 link: <Link to="/tasks" search={{ view: "scheduled" }} className={SETTINGS_ROW} />,
               },
               {
@@ -552,6 +560,7 @@ export function PersonalSettingsScreen(): JSX.Element {
                 icon: Brain,
                 label: "Memory",
                 hint: "What bots remember, and deleting it",
+                waiting: memoryWaiting,
                 link: <Link to="/bots/settings/memory" className={SETTINGS_ROW} />,
               },
               {
@@ -559,6 +568,7 @@ export function PersonalSettingsScreen(): JSX.Element {
                 icon: Bell,
                 label: "Notifications",
                 hint: "Alerts on this phone when bots finish or need you",
+                waiting: 0,
                 link: <Link to="/bots/settings/notifications" className={SETTINGS_ROW} />,
               },
             ] as const
@@ -581,6 +591,14 @@ export function PersonalSettingsScreen(): JSX.Element {
                       {entry.hint}
                     </span>
                   </span>
+                  {entry.waiting > 0 ? (
+                    <span
+                      aria-label={`${entry.waiting} waiting for your OK`}
+                      className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-[var(--personal-primary)] px-[7px] text-[12px] leading-none font-semibold text-[var(--personal-primary-text)]"
+                    >
+                      {entry.waiting}
+                    </span>
+                  ) : null}
                   <ChevronRight
                     aria-hidden="true"
                     className="size-5 shrink-0 text-[var(--personal-text-secondary)]"

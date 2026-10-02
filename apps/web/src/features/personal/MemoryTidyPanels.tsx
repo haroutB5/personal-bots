@@ -461,7 +461,6 @@ function PendingTidyChanges({
   const [busy, setBusy] = useState<DecideBusy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<number>>(() => new Set());
-  const total = groups.reduce((sum, group) => sum + group.changes.length, 0);
   const hashById = useMemo(() => {
     const hashes = new Map<number, string>();
     for (const group of groups) {
@@ -515,10 +514,7 @@ function PendingTidyChanges({
   };
 
   return (
-    <div className="rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] px-3 py-2">
-      <h2 className="text-[15px] font-semibold text-[var(--personal-text)]">
-        Waiting for your OK ({total})
-      </h2>
+    <div>
       {error !== null ? (
         <p role="alert" className="mt-1 text-[14px] text-[var(--personal-error)]">
           {error}
@@ -645,6 +641,62 @@ function PendingTidyChanges({
   );
 }
 
+/**
+ * "Waiting for your OK (N)": every change a bot or the tidy-up asked for, the
+ * first section under the Memory screen's intro, open whenever something is
+ * waiting (the owner can still fold it).
+ */
+export function MemoryWaitingSection({
+  environmentId,
+  texts,
+  botName,
+}: {
+  environmentId: EnvironmentId | null;
+  /** memoryId to text, from the current and archived lists. */
+  texts: ReadonlyMap<string, string>;
+  botName: BotName;
+}): JSX.Element | null {
+  const log = usePersonalMemoryTidyLog(environmentId);
+  const groups = useMemo(
+    () => pendingTidyGroups(newestTidyRunsFirst(log.data?.runs ?? [])),
+    [log.data],
+  );
+  const total = groups.reduce((sum, group) => sum + group.changes.length, 0);
+  // null: follow the count (open when something waits) until the owner taps.
+  const [openChoice, setOpenChoice] = useState<boolean | null>(null);
+  const open = openChoice ?? total > 0;
+  const panelId = useId();
+  if (log.data === null) return null;
+  return (
+    <section
+      aria-label="Waiting for your OK"
+      className="mt-4 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] px-3"
+    >
+      <Disclosure
+        title={`Waiting for your OK (${total})`}
+        detail={
+          total === 0
+            ? "Nothing is waiting."
+            : "Rules and changes bots asked for. Nothing changes until you approve it."
+        }
+        open={open}
+        onToggle={() => setOpenChoice(!open)}
+        controls={panelId}
+      />
+      <div id={panelId} hidden={!open} className="pb-1">
+        {total > 0 ? (
+          <PendingTidyChanges
+            environmentId={environmentId}
+            groups={groups}
+            texts={texts}
+            botName={botName}
+          />
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 /** One run in the changelog, with its changes folded behind a button. */
 function TidyRunItem({
   run,
@@ -724,7 +776,6 @@ export function MemoryTidySection({
 
   const runs = useMemo(() => newestTidyRunsFirst(log.data?.runs ?? []), [log.data]);
   const waiting = useMemo(() => pendingTidyChanges(runs), [runs]);
-  const waitingGroups = useMemo(() => pendingTidyGroups(runs), [runs]);
   const mode = pendingMode ?? log.data?.mode ?? null;
   const summary =
     log.data === null
@@ -759,17 +810,10 @@ export function MemoryTidySection({
         controls={panelId}
       />
       <div id={panelId} hidden={!open} className="flex flex-col gap-3 pt-1">
-        {waiting.length > 0 ? (
-          <PendingTidyChanges
-            environmentId={environmentId}
-            groups={waitingGroups}
-            texts={texts}
-            botName={botName}
-          />
-        ) : null}
         <p className="text-[14px] leading-snug text-[var(--personal-text-secondary)]">
           Each night at 03:30 duplicates are merged and outdated entries are replaced. Preview only
-          lists what it would do and changes nothing. Changes that need your OK wait at the top.
+          lists what it would do and changes nothing. Changes that need your OK wait under Waiting
+          for your OK at the top of this screen.
         </p>
         <TidyModeControl
           mode={mode}

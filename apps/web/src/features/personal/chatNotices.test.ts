@@ -7,6 +7,7 @@ import { previewOf } from "./BotRow";
 import type { BotSummary } from "./botSummaries";
 import {
   chatNoticeLabel,
+  chatNoticeUndo,
   isServerTurnNotice,
   readChatNotice,
   RESUMED_NOTICE_LABEL,
@@ -197,5 +198,33 @@ describe("chat notices", () => {
     expect(previewOf(summary(PROMPT, RESUMED, "personal-resume-r1"), () => "")).toBe(
       RESUMED_NOTICE_LABEL,
     );
+  });
+});
+
+describe("1.60.22: a note line carries its Undo", () => {
+  it("reads the note id and what Undo does from the marker", () => {
+    const marker = { notice: "memory-saved", provider: "Memory", memoryId: "m-1", undo: "archive" };
+    const notice = readChatNotice({ context: context(marker) } as never)!;
+    expect(chatNoticeUndo(notice)).toEqual({ memoryId: "m-1", undo: "archive" });
+    expect(chatNoticeLabel(notice, "Saved a note: Likes tea.", 0)).toBe("Saved a note: Likes tea.");
+  });
+
+  it("an older memory line without an id has no Undo", () => {
+    const notice = readChatNotice({
+      context: context({ notice: "memory-saved", provider: "Memory" }),
+    } as never)!;
+    expect(chatNoticeUndo(notice)).toBeNull();
+  });
+
+  it("other notices never offer Undo", () => {
+    const notice = readChatNotice({
+      context: context({
+        notice: "team-bot-change",
+        provider: "Team",
+        memoryId: "m-1",
+        undo: "archive",
+      }),
+    } as never)!;
+    expect(chatNoticeUndo(notice)).toBeNull();
   });
 });

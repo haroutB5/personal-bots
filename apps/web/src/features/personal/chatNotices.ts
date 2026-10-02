@@ -28,6 +28,15 @@ export function readChatNotice(message: {
   return null;
 }
 
+/** What a note line's Undo does, or null for a line without one. */
+export function chatNoticeUndo(
+  notice: PersonalChatNoticeMarker,
+): { readonly memoryId: string; readonly undo: "archive" | "restore" } | null {
+  if (notice.notice !== "memory-saved") return null;
+  if (notice.memoryId === undefined || notice.undo === undefined) return null;
+  return { memoryId: notice.memoryId, undo: notice.undo };
+}
+
 export function isChatNoticeMessageId(messageId: string): boolean {
   return NOTICE_MESSAGE_ID.test(messageId);
 }

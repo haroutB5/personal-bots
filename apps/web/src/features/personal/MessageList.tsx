@@ -24,7 +24,8 @@ import { AttachmentPreview, type AttachmentPreviewData } from "./AttachmentPrevi
 import { BotAvatar, type BotAvatarShape } from "./BotAvatar";
 import { type ConversationItem, formatDayDivider } from "./conversationModel";
 import type { ServerTurn } from "./delegationModel";
-import { chatNoticeLabel, isServerTurnNotice } from "./chatNotices";
+import { chatNoticeLabel, chatNoticeUndo, isServerTurnNotice } from "./chatNotices";
+import { NoteNoticeRow } from "./NoteNoticeRow";
 import { groupSystemLabel, readGroupMarker } from "./groupModel";
 import { QuestionCard } from "./QuestionCard";
 import type { UserInputAnswers } from "./questionCards";
@@ -829,9 +830,22 @@ export function MessageList({
                     </div>
                   );
                 }
-              case "notice":
+              case "notice": {
                 // The continue shows the prompt the bot got when tapped, like
-                // any server-written turn; the pause is a plain line.
+                // any server-written turn; the pause is a plain line; a note a
+                // bot saved or forgot on its own offers Undo.
+                const noteUndo = chatNoticeUndo(item.notice);
+                if (noteUndo !== null) {
+                  return (
+                    <NoteNoticeRow
+                      key={item.id}
+                      environmentId={environmentId}
+                      label={chatNoticeLabel(item.notice, item.message.text, now.getTime())}
+                      memoryId={noteUndo.memoryId}
+                      undo={noteUndo.undo}
+                    />
+                  );
+                }
                 return isServerTurnNotice(item.notice) ? (
                   <SystemTurnRow
                     key={item.id}
@@ -847,6 +861,7 @@ export function MessageList({
                     {chatNoticeLabel(item.notice, item.message.text, now.getTime())}
                   </p>
                 );
+              }
               case "group-system":
                 return (
                   <p

@@ -2,8 +2,10 @@ import type { PersonalMemoryTidyChange } from "@t3tools/contracts";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { TidyChangeItem } from "./MemoryTidyPanels";
+import { MemoryTidySection, MemoryWaitingSection, TidyChangeItem } from "./MemoryTidyPanels";
 import { UNLISTED_MEMORY_TEXT } from "./memoryPresentation";
+
+const tidyLog = vi.hoisted(() => ({ data: null as unknown, error: null as string | null }));
 
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => undefined }));
 vi.mock("./usePersonalAutomation", () => ({
@@ -11,7 +13,7 @@ vi.mock("./usePersonalAutomation", () => ({
   personalMemoryTidyDecide: {},
   personalMemoryTidyRun: {},
   personalMemoryTidySetMode: {},
-  usePersonalMemoryTidyLog: () => ({ data: null, error: null }),
+  usePersonalMemoryTidyLog: () => tidyLog,
 }));
 
 const change = (overrides: Partial<Record<string, unknown>>): PersonalMemoryTidyChange =>
@@ -39,6 +41,7 @@ let renderer: ReactTestRenderer | null = null;
 afterEach(() => {
   act(() => renderer?.unmount());
   renderer = null;
+  tidyLog.data = null;
 });
 
 const textOf = (item: PersonalMemoryTidyChange): string => {
@@ -155,5 +158,134 @@ describe("TidyChangeItem: the binding label is never clipped", () => {
       (node) => node.type === "p" && textIn(node) === "Bound to: Note · All bots",
     );
     expect(label).toHaveLength(1);
+  });
+});
+
+/** A live-like Waiting list: 82 bot and proposal-file changes in two groups. */
+const liveLikeLog = (pending: number) => ({
+  mode: "preview",
+  runs: [
+    {
+      runId: "bot-proposals-2026-10-02",
+      startedAt: "2026-10-02T08:00:00.000Z",
+      finishedAt: "2026-10-02T08:00:00.000Z",
+      status: "done",
+      dryRun: true,
+      model: "proposals: from bots, 2026-10-02",
+      merged: 0,
+      superseded: 0,
+      leftAlone: 0,
+      error: null,
+      changes: Array.from({ length: Math.min(pending, 30) }, (_, index) =>
+        change({
+          changeId: index + 1,
+          status: "pending",
+          action: "save",
+          memoryIds: [],
+          resultMemoryId: null,
+          content: "Rule " + String(index + 1),
+          toKind: "preference",
+          toScope: "team",
+          toScopeId: "dev",
+          proposedBy: "bot:cto",
+        }),
+      ),
+    },
+    {
+      runId: "file-proposals-2oct-c-dev-team",
+      startedAt: "2026-10-02T03:00:00.000Z",
+      finishedAt: "2026-10-02T03:00:00.000Z",
+      status: "done",
+      dryRun: true,
+      model: "proposals: proposals-2oct-c-dev-team.json",
+      merged: 0,
+      superseded: 0,
+      leftAlone: 0,
+      error: null,
+      changes: Array.from({ length: Math.max(pending - 30, 0) }, (_, index) =>
+        change({
+          changeId: 100 + index,
+          status: "pending",
+          action: "reclassify",
+          memoryIds: ["m-old"],
+          resultMemoryId: null,
+          toScope: "team",
+          toScopeId: "dev",
+        }),
+      ),
+    },
+  ],
+});
+
+const renderWaiting = () => {
+  act(() => {
+    renderer = create(
+      <MemoryWaitingSection environmentId={null} texts={texts} botName={() => undefined} />,
+    );
+  });
+  return renderer!;
+};
+
+/** Every string rendered inside a node. */
+const textIn = (node: ReactTestRenderer["root"]): string =>
+  node.children.map((child) => (typeof child === "string" ? child : textIn(child))).join("");
+
+const toggleOf = (root: ReactTestRenderer["root"]) =>
+  root.find((node) => node.type === "button" && node.props["aria-expanded"] !== undefined);
+
+describe("1.60.22: Waiting for your OK is its own section, open when something waits", () => {
+  it("shows the count, open, with Select all per group, when 82 changes wait", () => {
+    tidyLog.data = liveLikeLog(82);
+    const root = renderWaiting().root;
+    const toggle = toggleOf(root);
+    expect(textIn(toggle)).toContain("Waiting for your OK (82)");
+    expect(toggle.props["aria-expanded"]).toBe(true);
+    const panel = root.find(
+      (node) => node.type === "div" && node.props.id === toggle.props["aria-controls"],
+    );
+    expect(panel.props.hidden).toBe(false);
+    const selectAll = root.findAll(
+      (node) =>
+        node.type === "button" &&
+        node.props.role === "checkbox" &&
+        textIn(node).includes("Select all in this group"),
+    );
+    expect(selectAll).toHaveLength(2);
+    expect(
+      root.findAll(
+        (node) => node.type === "button" && node.props["aria-label"] === "Select this change",
+      ),
+    ).toHaveLength(82);
+  });
+
+  it("folds on a tap and stays folded", () => {
+    tidyLog.data = liveLikeLog(3);
+    const root = renderWaiting().root;
+    act(() => toggleOf(root).props.onClick());
+    expect(toggleOf(root).props["aria-expanded"]).toBe(false);
+  });
+
+  it("is a closed one-line section when nothing waits", () => {
+    tidyLog.data = liveLikeLog(0);
+    const toggle = toggleOf(renderWaiting().root);
+    expect(textIn(toggle)).toContain("Waiting for your OK (0)");
+    expect(textIn(toggle)).toContain("Nothing is waiting.");
+    expect(toggle.props["aria-expanded"]).toBe(false);
+  });
+
+  it("renders nothing while the log loads", () => {
+    expect(renderWaiting().toJSON()).toBeNull();
+  });
+
+  it("the Nightly tidy-up section no longer holds the Waiting list", () => {
+    tidyLog.data = liveLikeLog(82);
+    act(() => {
+      renderer = create(
+        <MemoryTidySection environmentId={null} texts={texts} botName={() => undefined} />,
+      );
+    });
+    const json = JSON.stringify(renderer!.toJSON());
+    expect(json).not.toContain("Waiting for your OK (");
+    expect(json).not.toContain("Select all in this group");
   });
 });
