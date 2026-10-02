@@ -24,6 +24,7 @@ import {
   pendingTidyChanges,
   pendingTidyGroups,
   reclassifyDescription,
+  memoryReachTag,
   splitPartTag,
   supersedeKeptText,
   TIDY_CHANGE_STATUS_LABEL,
@@ -310,6 +311,9 @@ export function TidyChangeItem({
   const kept = change.action === "supersede" ? supersedeKeptText(change, texts) : null;
   const parts = change.action === "split" ? (change.parts ?? []) : [];
   const archives = change.action === "supersede" || change.action === "split";
+  // What the owner's answer is bound to, per entry (none on older changes).
+  const boundTo = (memoryId: string) => change.bound?.find((entry) => entry.memoryId === memoryId);
+  const keptBound = change.resultMemoryId === null ? undefined : boundTo(change.resultMemoryId);
   return (
     <li className="flex items-start gap-1 py-2.5">
       {leading}
@@ -353,6 +357,14 @@ export function TidyChangeItem({
                 className="line-clamp-3 border-l-2 border-[var(--personal-border)] pl-2 text-[13px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text-secondary)]"
               >
                 {text}
+                {(() => {
+                  const bound = boundTo(change.memoryIds[index] ?? "");
+                  return bound === undefined || bound.textOnly ? null : (
+                    <span className="mt-0.5 block text-[12px] text-[var(--personal-text-tertiary)]">
+                      {`Bound to: ${memoryReachTag(bound)}`}
+                    </span>
+                  );
+                })()}
               </li>
             ))}
           </ul>
@@ -365,6 +377,11 @@ export function TidyChangeItem({
             <p className="mt-0.5 text-[14px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text)]">
               {kept}
             </p>
+            {keptBound?.textOnly === true ? (
+              <p className="text-[12px] text-[var(--personal-text-tertiary)]">
+                Bound to its text; its reach may change before you answer.
+              </p>
+            ) : null}
           </div>
         ) : null}
         {parts.length > 0 ? (

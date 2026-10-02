@@ -12,6 +12,7 @@ import {
   memoryCardSettledLine,
   type MemoryCardItem,
 } from "./memoryCards";
+import { memoryReachTag } from "./memoryPresentation";
 
 const CARD_CLASS =
   "rounded-[var(--personal-radius-card)] border border-[var(--personal-review-border)] bg-[var(--personal-review-bg)] p-3.5";
@@ -44,7 +45,13 @@ function TargetBlocks({
   return (
     <div className="flex min-w-0 flex-col gap-2">
       {targets.map((target) => (
-        <MemoryTextBlock key={target.memoryId} label={label} text={target.content} />
+        <div key={target.memoryId} className="min-w-0">
+          <MemoryTextBlock label={label} text={target.content} />
+          {/* The kind and reach the answer is bound to, as the bot proposed. */}
+          <p className="mt-0.5 text-[12px] text-[var(--personal-text-tertiary)]">
+            {memoryReachTag(target)}
+          </p>
+        </div>
       ))}
     </div>
   );

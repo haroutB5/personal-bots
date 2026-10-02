@@ -15,6 +15,7 @@ import {
   proposerBotName,
   reclassifyDescription,
   readMemoryLastSeen,
+  memoryReachTag,
   splitPartTag,
   supersedeKeptText,
   TIDY_CHANGE_STATUS_LABEL,
@@ -401,5 +402,17 @@ describe("splits and bot-only saves", () => {
     );
     // No newer entry: a retirement, nothing kept.
     expect(supersedeKeptText({ resultMemoryId: null, content: null }, texts)).toBeNull();
+  });
+});
+
+describe("memoryReachTag", () => {
+  it("names an entry's kind and reach, bot-only included", () => {
+    expect(memoryReachTag({ kind: "preference", scope: "team", scopeId: "Finance" })).toBe(
+      "Preference · Finance",
+    );
+    expect(memoryReachTag({ kind: "note", scope: "shared", scopeId: null })).toBe(
+      "Note · All bots",
+    );
+    expect(memoryReachTag({ kind: "note", scope: "bot", scopeId: "cfo" })).toBe("Note · One bot");
   });
 });

@@ -367,21 +367,65 @@ export function decisionsFromJudge(
 export const memoryTextHash = (content: string) =>
   NodeCrypto.createHash("sha256").update(content, "utf8").digest("hex").slice(0, 32);
 
-const TextHashes = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
-const encodeTextHashMap = Schema.encodeSync(TextHashes);
-const decodeTextHashMap = Schema.decodeUnknownOption(TextHashes);
+/** One entry a pending change is bound to, as it was proposed. */
+const EntrySnapshot = Schema.Struct({
+  text: Schema.String,
+  kind: Schema.String,
+  scope: Schema.String,
+  scopeId: Schema.NullOr(Schema.String),
+  /** Bound by text only: the newer entry a supersede keeps. */
+  textOnly: Schema.Boolean,
+});
+export type EntrySnapshot = typeof EntrySnapshot.Type;
+const EntrySnapshots = Schema.fromJsonString(Schema.Record(Schema.String, EntrySnapshot));
+const encodeEntrySnapshots = Schema.encodeSync(EntrySnapshots);
+const decodeEntrySnapshots = Schema.decodeUnknownOption(EntrySnapshots);
 
-/** The text hash of every named entry whose text is known, as stored with a change. */
-export const textHashesJson = (
-  ids: ReadonlyArray<string>,
-  texts: ReadonlyMap<string, string>,
+/** What a snapshot is taken of. */
+export interface SnapshotSource {
+  readonly memoryId: string;
+  readonly content: string;
+  readonly kind: string;
+  readonly scope: string;
+  readonly scopeId: string | null;
+}
+
+/** The snapshot of every named entry, in order, as stored with a change. */
+export const entrySnapshotsJson = (
+  entries: ReadonlyArray<SnapshotSource>,
+  textOnly: ReadonlySet<string> = new Set(),
 ): string =>
-  encodeTextHashMap(
+  encodeEntrySnapshots(
     Object.fromEntries(
-      ids.flatMap((id) => (texts.has(id) ? [[id, memoryTextHash(texts.get(id)!)] as const] : [])),
+      entries.map((entry) => [
+        entry.memoryId,
+        {
+          text: memoryTextHash(entry.content),
+          kind: entry.kind,
+          scope: entry.scope,
+          scopeId: entry.scopeId ?? null,
+          textOnly: textOnly.has(entry.memoryId),
+        },
+      ]),
     ),
   );
 
-/** The stored text hashes of a change; empty for rows from before 1.60.21. */
-export const readTextHashes = (json: string | null | undefined): ReadonlyMap<string, string> =>
-  new Map(Object.entries(Option.getOrElse(decodeTextHashMap(json ?? ""), () => ({}))));
+/** A change's stored snapshots; empty for rows from before 1.60.21. */
+export const readEntrySnapshots = (
+  json: string | null | undefined,
+): ReadonlyMap<string, EntrySnapshot> =>
+  new Map(Object.entries(Option.getOrElse(decodeEntrySnapshots(json ?? ""), () => ({}))));
+
+/**
+ * Whether an entry still reads as it was shown: its text, and unless the
+ * snapshot is text-only, its kind and reach.
+ */
+export const matchesSnapshot = (
+  entry: Omit<SnapshotSource, "memoryId">,
+  snapshot: EntrySnapshot,
+): boolean =>
+  memoryTextHash(entry.content) === snapshot.text &&
+  (snapshot.textOnly ||
+    (entry.kind === snapshot.kind &&
+      entry.scope === snapshot.scope &&
+      (entry.scopeId ?? null) === snapshot.scopeId));

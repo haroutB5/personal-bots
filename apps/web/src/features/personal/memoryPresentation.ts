@@ -183,10 +183,25 @@ export function reclassifyDescription(
 
 /** A split part's short tag: "Preference · Dev team", "Note · All bots". */
 export function splitPartTag(part: PersonalMemorySplitPart): string {
-  const kind = part.kind === "preference" ? "Preference" : "Note";
-  const team = part.scopeId?.trim();
+  return memoryReachTag(part);
+}
+
+/** "Preference · Dev team" / "Note · All bots" / "Note · One bot": an entry's kind and reach. */
+export function memoryReachTag(entry: {
+  readonly kind: string;
+  readonly scope: string;
+  readonly scopeId: string | null;
+}): string {
+  const kind = entry.kind === "preference" ? "Preference" : "Note";
+  const team = entry.scopeId?.trim();
   const reach =
-    part.scope === "shared" ? "All bots" : team ? personalBotTeamLabel(team) : "One team";
+    entry.scope === "shared"
+      ? "All bots"
+      : entry.scope === "bot"
+        ? "One bot"
+        : team
+          ? personalBotTeamLabel(team)
+          : "One team";
   return `${kind} · ${reach}`;
 }
 

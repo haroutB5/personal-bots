@@ -99,3 +99,23 @@ describe("TidyChangeItem", () => {
     expect(shown).toContain("Works on the dev team.|Note · Dev team");
   });
 });
+
+describe("TidyChangeItem: what an approval is bound to", () => {
+  it("tags each archived entry with the kind and reach it is bound to, and the kept one as text only", () => {
+    const text = textOf(
+      change({
+        status: "pending",
+        bound: [
+          { memoryId: "m-old", kind: "preference", scope: "team", scopeId: "dev", textOnly: false },
+          { memoryId: "m-new", kind: "preference", scope: "shared", scopeId: null, textOnly: true },
+        ],
+      }),
+    );
+    expect(text).toContain("Bound to: Preference · Dev team");
+    expect(text).toContain("Bound to its text");
+  });
+
+  it("shows no bound tags for an older change without snapshots", () => {
+    expect(textOf(change({ status: "pending" }))).not.toContain("Bound to");
+  });
+});

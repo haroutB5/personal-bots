@@ -955,7 +955,7 @@ describe("Fable follow-ups (1.60.21)", () => {
   );
 
   it.effect(
-    "a split approved after its entry moved team still applies; after an edit it is refused",
+    "a split is refused once its entry moved team (bound to kind and reach) or was edited",
     () =>
       Effect.gen(function* () {
         const ids = yield* seed;
@@ -988,10 +988,13 @@ describe("Fable follow-ups (1.60.21)", () => {
         });
         const [reclassify, splitWatch, splitFloor] = run.changes;
         yield* decideWithHash(reclassify!.changeId, true);
-        yield* decideWithHash(splitWatch!.changeId, true);
+        // Security (2a52e8c67866): the entry it archives now reaches another
+        // team than the owner was shown, so the split is out of date.
+        const moved = yield* Effect.flip(decideWithHash(splitWatch!.changeId, true));
+        expect(moved.message).toContain("nothing was changed");
         const current = yield* memory.list({});
-        expect(current.map((e) => e.memoryId)).not.toContain(ids.watch);
-        expect(current.some((e) => e.content === "The watch is a Venu 3.")).toBe(true);
+        expect(current.map((e) => e.memoryId)).toContain(ids.watch);
+        expect(current.some((e) => e.content === "The watch is a Venu 3.")).toBe(false);
 
         yield* memory.update({
           memoryId: PersonalMemoryId.make(ids.flooring),
@@ -1384,7 +1387,7 @@ describe("QA (e833b7035aa4): pending supersedes from before 1.60.21", () => {
     }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
   );
 
-  it.effect("new proposals hold to text: a bot's forget after a reach change still applies", () =>
+  it.effect("Security (2a52e8c67866): a bot's forget after its entry moved team is refused", () =>
     Effect.gen(function* () {
       const ids = yield* seed;
       const memory = yield* PersonalMemoryService;
@@ -1409,8 +1412,168 @@ describe("QA (e833b7035aa4): pending supersedes from before 1.60.21", () => {
         ],
       });
       yield* decideWithHash(reach.changes[0]!.changeId, true);
-      yield* decideWithHash(forget, true);
-      expect((yield* memory.list({})).map((e) => e.memoryId)).not.toContain(ids.watch);
+      const error = yield* Effect.flip(decideWithHash(forget, true));
+      expect(error.message).toContain("nothing was changed");
+      expect((yield* memory.list({})).map((e) => e.memoryId)).toContain(ids.watch);
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+});
+
+describe("Security (2a52e8c67866): approvals bound to kind and reach, not only text", () => {
+  const reclassifyAndApprove = (memoryId: string, change: Record<string, unknown>) =>
+    Effect.gen(function* () {
+      const tidy = yield* PersonalMemoryTidy;
+      const run = yield* tidy.importProposals({
+        source: "proposals-move.json",
+        items: [
+          { action: "reclassify", memoryIds: [memoryId], reason: "Move.", ...change } as never,
+        ],
+      });
+      yield* decideWithHash(run.changes[0]!.changeId, true);
+    });
+
+  it.effect("a pending merge is refused once a member moved team or became a preference", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const sql = yield* SqlClient.SqlClient;
+      const old = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { days: 4 }));
+      yield* sql`UPDATE personal_memory SET updated_at = ${old}`;
+      const run = yield* tidy.run({ dryRun: false });
+      const merge = run.changes.find((c) => c.action === "merge" && c.status === "pending")!;
+      expect(merge).toBeDefined();
+      // The card shows (and is bound to) each member's kind and reach.
+      expect(merge.bound?.map((b) => [b.kind, b.scope, b.textOnly])).toEqual([
+        ["preference", "shared", false],
+        ["preference", "shared", false],
+      ]);
+      yield* reclassifyAndApprove(ids.capA, { toScope: "team", toScopeId: "assistant" });
+      const error = yield* Effect.flip(decideWithHash(merge.changeId, true));
+      expect(error.message).toContain("nothing was changed");
+      expect((yield* memory.list({})).some((e) => e.content.includes("across all bots"))).toBe(
+        false,
+      );
+    }).pipe(Effect.provide(testLayer(fakeJudge(answers)))),
+  );
+
+  it.effect("an approved merge takes the kind and reach the card showed", () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const sql = yield* SqlClient.SqlClient;
+      const old = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { days: 4 }));
+      yield* sql`UPDATE personal_memory SET updated_at = ${old}`;
+      const run = yield* tidy.run({ dryRun: false });
+      const merge = run.changes.find((c) => c.action === "merge" && c.status === "pending")!;
+      yield* decideWithHash(merge.changeId, true);
+      const made = (yield* memory.list({})).find((e) => e.content.includes("across all bots"))!;
+      expect([made.kind, made.scope, made.scopeId]).toEqual(["preference", "shared", null]);
+    }).pipe(Effect.provide(testLayer(fakeJudge(answers)))),
+  );
+
+  it.effect("a supersede is refused once the entry it archives moved team", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const run = yield* tidy.importProposals({
+        source: "proposals-dupes.json",
+        items: [{ action: "supersede", memoryIds: [ids.capA], by: ids.capB, reason: "Dupe." }],
+      });
+      expect(run.changes[0]!.bound?.map((b) => [b.memoryId, b.textOnly])).toEqual([
+        [ids.capA, false],
+        [ids.capB, true],
+      ]);
+      yield* reclassifyAndApprove(ids.capA, { toScope: "team", toScopeId: "dev" });
+      const error = yield* Effect.flip(decideWithHash(run.changes[0]!.changeId, true));
+      expect(error.message).toContain("nothing was changed");
+      expect((yield* memory.list({})).map((e) => e.memoryId)).toContain(ids.capA);
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it.effect("a bot's save is refused once the entry it replaces became a note", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const save = yield* memory.propose({
+        action: "save",
+        botId: BOT_A,
+        threadId: null,
+        kind: "preference",
+        scope: "shared",
+        scopeId: null,
+        content: "Crypto prices in GBP.",
+        replaces: [yield* memory.get(PersonalMemoryId.make(ids.unsure))],
+        reason: "Asked in chat",
+      });
+      yield* reclassifyAndApprove(ids.unsure, { toKind: "note" });
+      const error = yield* Effect.flip(decideWithHash(save, true));
+      expect(error.message).toContain("nothing was changed");
+      expect((yield* memory.list({})).some((e) => e.content === "Crypto prices in GBP.")).toBe(
+        false,
+      );
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it.effect(
+    "the change hash covers the bound snapshots: an answer with the pre-backfill hash is refused",
+    () =>
+      Effect.gen(function* () {
+        const ids = yield* seed;
+        const tidy = yield* PersonalMemoryTidy;
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+        INSERT INTO personal_memory_tidy_runs (run_id, started_at, finished_at, status, dry_run, nightly, model, pending)
+        VALUES ('nightly-old', '2026-10-02T02:30:00.000Z', '2026-10-02T02:31:00.000Z', 'done', 1, 1, 'm', 1)
+      `;
+        yield* sql`
+        INSERT INTO personal_memory_tidy_changes (
+          run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id, content,
+          versions_json, proposed_by, reason, created_at
+        )
+        VALUES ('nightly-old', 'pending', 'supersede', 'shared', NULL, ${`["${ids.capA}"]`},
+          ${ids.capB}, NULL, ${`{"${ids.capA}":1,"${ids.capB}":1}`}, 'tidy-up', 'Newer.',
+          '2026-10-02T02:31:00.000Z')
+      `;
+        const before = (yield* tidy.log({ limit: 5 })).runs.flatMap((r) => r.changes)[0]!;
+        expect(before.bound ?? []).toEqual([]);
+        yield* tidy.snapshotPendingTexts;
+        const after = (yield* tidy.log({ limit: 5 })).runs.flatMap((r) => r.changes)[0]!;
+        expect(after.changeHash).not.toBe(before.changeHash);
+        expect(after.bound?.map((b) => [b.memoryId, b.kind, b.scope, b.textOnly])).toEqual([
+          [ids.capA, "preference", "shared", false],
+          [ids.capB, "preference", "shared", true],
+        ]);
+        const stale = yield* Effect.flip(
+          tidy.decide({ changeId: before.changeId, approve: true, changeHash: before.changeHash }),
+        );
+        expect(stale.message).toContain("out of date");
+      }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it.effect("a chat card shows the replaced entry's kind and reach as proposed", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      yield* memory.propose({
+        action: "save",
+        botId: BOT_A,
+        threadId: ThreadId.make("chat-9"),
+        kind: "preference",
+        scope: "shared",
+        scopeId: null,
+        content: "Crypto prices in GBP.",
+        replaces: [yield* memory.get(PersonalMemoryId.make(ids.unsure))],
+        reason: "Asked in chat",
+      });
+      yield* reclassifyAndApprove(ids.unsure, { toScope: "team", toScopeId: "Finance" });
+      const card = (yield* tidy.cardsForThread("chat-9")).cards[0]!;
+      expect(card.targets.map((t) => [t.kind, t.scope, t.scopeId])).toEqual([
+        ["preference", "shared", null],
+      ]);
     }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
   );
 });

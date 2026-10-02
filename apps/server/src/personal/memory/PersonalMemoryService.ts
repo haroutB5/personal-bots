@@ -37,7 +37,7 @@ import {
   localDay,
   memorySimilarity,
   SIMILAR_MEMORY_THRESHOLD,
-  textHashesJson,
+  entrySnapshotsJson,
 } from "./memoryTidy.ts";
 
 /** Default result count for a memory search (the search_memory tool). */
@@ -682,7 +682,7 @@ export const make = Effect.gen(function* () {
         INSERT INTO personal_memory_tidy_changes (
           run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id, content,
           to_kind, to_scope, to_scope_id, versions_json, proposed_by, thread_id, reason, created_at,
-          text_hashes_json
+          entry_snapshots_json
         )
         SELECT
           ${runId}, 'pending', ${input.action},
@@ -696,10 +696,7 @@ export const make = Effect.gen(function* () {
           ${encodeVersions(versions)}, ${proposedBy}, ${input.threadId},
           ${redactSecrets(input.reason).slice(0, 600)},
           ${nowIso},
-          ${textHashesJson(
-            targets.map((entry) => entry.memoryId),
-            new Map(targets.map((entry) => [entry.memoryId, entry.content])),
-          )}
+          ${entrySnapshotsJson(targets)}
         WHERE (
           SELECT COUNT(*) FROM personal_memory_tidy_changes
           WHERE status = 'pending' AND proposed_by = ${proposedBy}

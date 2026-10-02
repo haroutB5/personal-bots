@@ -141,6 +141,17 @@ export const PersonalMemoryTidyChangeStatus = Schema.Literals([
 ]);
 export type PersonalMemoryTidyChangeStatus = typeof PersonalMemoryTidyChangeStatus.Type;
 
+/** An entry a pending change is bound to, as it was when proposed. */
+export const PersonalMemoryBoundEntry = Schema.Struct({
+  memoryId: PersonalMemoryId,
+  kind: Schema.String,
+  scope: Schema.String,
+  scopeId: Schema.NullOr(Schema.String),
+  /** Held to its text only: the newer entry a supersede keeps. */
+  textOnly: Schema.Boolean,
+});
+export type PersonalMemoryBoundEntry = typeof PersonalMemoryBoundEntry.Type;
+
 /** One single fact a long entry is split into, with the kind and reach it gets. */
 export const PersonalMemorySplitPart = Schema.Struct({
   content: Schema.String,
@@ -166,6 +177,13 @@ export const PersonalMemoryTidyChange = Schema.Struct({
    * it read when proposed (null for older changes).
    */
   content: Schema.NullOr(Schema.String),
+  /**
+   * What an approval is bound to, per entry, as proposed: the entries it
+   * archives, merges, forgets or reclassifies by text, kind and reach; the
+   * entry a supersede keeps by text only (textOnly). Empty on older changes,
+   * which are bound to exact entry versions instead.
+   */
+  bound: Schema.optional(Schema.Array(PersonalMemoryBoundEntry)),
   /** A split's single facts, in order, each with its own kind and reach. */
   parts: Schema.optional(Schema.Array(PersonalMemorySplitPart)),
   /**

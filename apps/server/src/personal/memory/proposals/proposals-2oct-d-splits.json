@@ -1,5 +1,63 @@
 {
   "minVersion": "1.60.21",
+  "withdraw": [
+    {
+      "changeId": 3,
+      "memoryIds": ["e700f051-aa92-4737-8146-00dce4b27937"]
+    },
+    {
+      "changeId": 5,
+      "memoryIds": ["d1e5c437-fefa-41e9-90e9-e69f66e25550"]
+    },
+    {
+      "changeId": 6,
+      "memoryIds": ["a33cddbf-c8b6-4394-889a-cff2074a9b48"]
+    },
+    {
+      "changeId": 7,
+      "memoryIds": ["a7044895-7782-48b8-b5f8-d6a953809229"]
+    },
+    {
+      "changeId": 8,
+      "memoryIds": ["4c30899a-26d5-4b98-ba39-2176b7330b48"]
+    },
+    {
+      "changeId": 9,
+      "memoryIds": ["7f7c2927-72ff-45bb-8278-0819aec372e2"]
+    },
+    {
+      "changeId": 11,
+      "memoryIds": ["1131140b-2eaf-4e7b-9001-ff98493ce651"]
+    },
+    {
+      "changeId": 14,
+      "memoryIds": ["4269acb5-15d9-4a2a-89eb-d75803042bbc"]
+    },
+    {
+      "changeId": 20,
+      "memoryIds": ["437e0a1b-e9e0-4759-b26f-f46a21bcb5fd"]
+    },
+    {
+      "changeId": 24,
+      "memoryIds": ["b6c1b6dc-dbce-47d8-b8ce-f86a2cbe86c5"]
+    },
+    {
+      "changeId": 28,
+      "memoryIds": ["272cf61b-1cff-44c1-b198-b1db172ef36b"]
+    },
+    {
+      "changeId": 31,
+      "memoryIds": ["04ba39a5-6311-4d87-872f-000c1891cfcb"]
+    },
+    {
+      "changeId": 44,
+      "memoryIds": ["c37a2efe-35b4-4b7a-b8cb-795edc5a28a6"]
+    },
+    {
+      "changeId": 46,
+      "memoryIds": ["43f3974e-1b2d-402b-97d5-80ffc7b50e1a"]
+    }
+  ],
   "items": [
     {
       "action": "split",
