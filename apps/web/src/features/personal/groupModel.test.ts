@@ -245,6 +245,21 @@ describe("group activity and rounds", () => {
     // A finished round is not a status worth showing: the group is simply ready.
     expect(groupStatusLine(round({ status: "completed" }), nameOf).label).toBe("Ready");
   });
+
+  it("shows an archived group as archived, never as one to tap and continue", () => {
+    // QA 1.60.20: an archived group paused on its budget still said "tap to
+    // continue", but an archived chat is read-only and has no Continue.
+    for (const status of ["paused_budget", "paused_vote", "running", "waiting_provider"] as const) {
+      expect(groupStatusLine(round({ status }), nameOf, { archived: true })).toEqual({
+        label: "Archived",
+        tone: "normal",
+      });
+    }
+    expect(groupStatusLine(null, nameOf, { archived: true }).label).toBe("Archived");
+    expect(groupStatusLine(round({ status: "paused_budget" }), nameOf).label).toBe(
+      "Paused · tap to continue",
+    );
+  });
 });
 
 describe("groupRoundCard", () => {

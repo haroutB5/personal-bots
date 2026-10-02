@@ -46,7 +46,7 @@ export const GroupRow = memo(function GroupRow({
   const members = activeGroupMembers(group);
   const nameOf = (botId: string) =>
     bots.find((candidate) => candidate.botId === botId)?.name ?? null;
-  const status = groupStatusLine(round, nameOf);
+  const status = groupStatusLine(round, nameOf, { archived });
   const live = isGroupRoundLive(round);
   const lastActivityMs = groupLastActivityMs(group);
 
@@ -93,7 +93,8 @@ export const GroupRow = memo(function GroupRow({
           )}
         >
           {groupSubtitle(group, nameOf)}
-          {status.label === "Ready" ? "" : ` · ${status.label}`}
+          {/* An archived row already carries the "Archived" tag. */}
+          {status.label === "Ready" || archived ? "" : ` · ${status.label}`}
         </span>
         <span className="truncate text-sm leading-5 text-[var(--personal-text-preview)]">
           {groupPreviewLine(group)}

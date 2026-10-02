@@ -167,12 +167,16 @@ export function isGroupRoundLive(round: PersonalGroupRound | null): boolean {
 
 /**
  * One line for a group row's status, in the vocabulary the bot rows already
- * use. Nothing is invented: a group with no live round is "Ready".
+ * use. Nothing is invented: a group with no live round is "Ready". An archived
+ * group is read-only, so it says "Archived" whatever its last round was: it
+ * offers no Continue and no vote.
  */
 export function groupStatusLine(
   round: PersonalGroupRound | null,
   nameOf: (botId: string) => string | null,
+  options?: { readonly archived?: boolean | undefined },
 ): { readonly label: string; readonly tone: "review" | "normal" } {
+  if (options?.archived === true) return { label: "Archived", tone: "normal" };
   if (round === null) return { label: "Ready", tone: "normal" };
   switch (round.status) {
     case "running": {

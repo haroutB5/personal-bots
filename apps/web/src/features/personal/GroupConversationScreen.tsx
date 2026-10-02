@@ -275,7 +275,7 @@ export function GroupConversationScreen({
   /* oxlint-enable react/refs */
 
   const live = isGroupRoundLive(round);
-  const stateLabel = groupStatusLine(round, nameOf);
+  const stateLabel = groupStatusLine(round, nameOf, { archived });
   const card = groupRoundCard(round, nameOf);
   // `groupRoundCard` returns null for `paused_vote` and this returns null for
   // everything else, so exactly one card can ever be in the slot below.
