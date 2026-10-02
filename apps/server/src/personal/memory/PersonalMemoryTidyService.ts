@@ -19,6 +19,7 @@ import {
   PersonalMemoryId,
   PersonalMemoryTidyMode,
   PersonalMemoryTidyRun,
+  PersonalMemoryCardsResult,
   ProviderInstanceId,
   type PersonalMemoryTidyChangeStatus,
   type PersonalMemoryTidyChange,
@@ -66,7 +67,13 @@ export class PersonalMemoryTidy extends Context.Service<
     readonly decide: (input: {
       readonly changeId: number;
       readonly approve: boolean;
+      /** The hash the owner's card or list showed; refused when it is not this change's. */
+      readonly changeHash?: string | undefined;
     }) => Effect.Effect<PersonalMemoryTidyLogResult, PersonalMemoryError>;
+    /** Bots' save/forget cards shown in one chat: pending, and decided in the last 7 days. */
+    readonly cardsForThread: (
+      threadId: string,
+    ) => Effect.Effect<PersonalMemoryCardsResult, PersonalMemoryError>;
     readonly log: (input: {
       readonly limit?: number | undefined;
     }) => Effect.Effect<PersonalMemoryTidyLogResult, PersonalMemoryError>;
@@ -137,6 +144,40 @@ export const judgeLayer = Layer.effect(
     });
   }),
 );
+
+const decodeCards = Schema.decodeUnknownEffect(PersonalMemoryCardsResult);
+
+/**
+ * What an approval is bound to: the change and the version of every entry it
+ * names, as the owner was shown them.
+ */
+export const changeHashOf = (change: {
+  readonly changeId: number;
+  readonly action: string;
+  readonly memoryIdsJson: string;
+  readonly resultMemoryId: string | null;
+  readonly content: string | null;
+  readonly toKind?: string | null;
+  readonly toScope?: string | null;
+  readonly toScopeId?: string | null;
+  readonly versionsJson?: string | null;
+}) =>
+  NodeCrypto.createHash("sha256")
+    .update(
+      [
+        change.changeId,
+        change.action,
+        change.memoryIdsJson,
+        change.resultMemoryId ?? "",
+        change.content ?? "",
+        change.toKind ?? "",
+        change.toScope ?? "",
+        change.toScopeId ?? "",
+        change.versionsJson ?? "",
+      ].join("\u0000"),
+    )
+    .digest("hex")
+    .slice(0, 32);
 
 /** Reasons, errors and names stored or shown beside memory never carry a secret. */
 const safeText = (text: string) => redactSecrets(text);
@@ -251,6 +292,9 @@ interface RunRow {
 }
 
 interface ChangeRow {
+  readonly threadId?: string | null;
+  readonly createdAt?: string;
+  readonly decidedAt?: string | null;
   readonly versionsJson?: string | null;
   readonly proposedBy?: string | null;
   readonly toKind?: string | null;
@@ -510,7 +554,7 @@ export const make = Effect.gen(function* () {
           scope_id AS "scopeId", memory_ids_json AS "memoryIdsJson",
           result_memory_id AS "resultMemoryId", content, reason,
           to_kind AS "toKind", to_scope AS "toScope", to_scope_id AS "toScopeId",
-          proposed_by AS "proposedBy"
+          proposed_by AS "proposedBy", versions_json AS "versionsJson"
         FROM personal_memory_tidy_changes
         WHERE ${sql.in(
           "run_id",
@@ -536,6 +580,7 @@ export const make = Effect.gen(function* () {
               toScope: change.toScope ?? null,
               toScopeId: change.toScopeId ?? null,
               proposedBy: change.proposedBy ?? null,
+              changeHash: changeHashOf(change),
               content: change.content,
               reason: change.reason,
             })),
@@ -796,10 +841,63 @@ export const make = Effect.gen(function* () {
             Cause.hasInterruptsOnly(cause)
               ? Effect.interrupt
               : Effect.logWarning("personal memory proposals import failed", {
-                  cause: Cause.pretty(cause),
+                  cause: safeText(Cause.pretty(cause)).slice(0, 2_000),
                 }),
           ),
         );
+
+  const cardsForThread: PersonalMemoryTidy["Service"]["cardsForThread"] = (threadId) =>
+    Effect.gen(function* () {
+      const since = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { days: 7 }));
+      const rows = yield* sql<ChangeRow>`
+        SELECT change_id AS "changeId", run_id AS "runId", status, action, scope,
+          scope_id AS "scopeId", memory_ids_json AS "memoryIdsJson",
+          result_memory_id AS "resultMemoryId", content, reason,
+          to_kind AS "toKind", to_scope AS "toScope", to_scope_id AS "toScopeId",
+          versions_json AS "versionsJson", proposed_by AS "proposedBy",
+          thread_id AS "threadId", created_at AS "createdAt", decided_at AS "decidedAt"
+        FROM personal_memory_tidy_changes
+        WHERE thread_id = ${threadId} AND action IN ('save', 'forget')
+          AND (status = 'pending' OR created_at >= ${since})
+        ORDER BY created_at, change_id
+        LIMIT 100
+      `;
+      const ids = [...new Set(rows.flatMap((row) => decodeIds(row.memoryIdsJson)))];
+      const targets =
+        ids.length === 0
+          ? []
+          : yield* sql<{
+              readonly memoryId: string;
+              readonly kind: string;
+              readonly scope: string;
+              readonly scopeId: string | null;
+              readonly content: string;
+            }>`
+              SELECT memory_id AS "memoryId", kind, scope, scope_id AS "scopeId", content
+              FROM personal_memory WHERE ${sql.in("memory_id", ids)}
+            `;
+      const byId = new Map(targets.map((row) => [row.memoryId, row]));
+      return yield* decodeCards({
+        cards: rows.map((row) => ({
+          changeId: row.changeId,
+          changeHash: changeHashOf(row),
+          threadId,
+          action: row.action,
+          proposedBy: row.proposedBy ?? null,
+          content: row.content,
+          kind: row.toKind ?? null,
+          scope: row.toScope ?? null,
+          scopeId: row.toScopeId ?? null,
+          targets: decodeIds(row.memoryIdsJson).flatMap((id) => {
+            const target = byId.get(id);
+            return target === undefined ? [] : [target];
+          }),
+          status: row.status,
+          createdAt: row.createdAt,
+          decidedAt: row.decidedAt ?? null,
+        })),
+      });
+    }).pipe(storageFailure("cards"));
 
   const decide: PersonalMemoryTidy["Service"]["decide"] = (input) =>
     Effect.gen(function* () {
@@ -813,6 +911,11 @@ export const make = Effect.gen(function* () {
       `;
       const change = rows[0];
       if (change === undefined) return yield* fail("That tidy-up change was not found.");
+      if (input.changeHash !== undefined && input.changeHash !== changeHashOf(change)) {
+        return yield* fail(
+          "That card is out of date; reload it before answering. Nothing was changed.",
+        );
+      }
       if (change.status !== "pending") {
         return yield* fail("That tidy-up change is not waiting for an answer.");
       }
@@ -998,7 +1101,9 @@ export const make = Effect.gen(function* () {
     Effect.catchCause((cause) =>
       Cause.hasInterruptsOnly(cause)
         ? Effect.interrupt
-        : Effect.logWarning("personal memory tidy-up check failed", { cause: Cause.pretty(cause) }),
+        : Effect.logWarning("personal memory tidy-up check failed", {
+            cause: safeText(Cause.pretty(cause)).slice(0, 2_000),
+          }),
     ),
   );
 
@@ -1022,6 +1127,7 @@ export const make = Effect.gen(function* () {
   return {
     run,
     decide,
+    cardsForThread,
     importProposals,
     log,
     setMode,

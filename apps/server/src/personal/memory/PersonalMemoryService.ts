@@ -294,6 +294,8 @@ export type PersonalMemoryProposal =
   | {
       readonly action: "save";
       readonly botId: PersonalBotId;
+      /** The chat the card is shown in; null puts it on the approval list only. */
+      readonly threadId: ThreadId | null;
       readonly kind: "note" | "preference";
       readonly scope: "shared" | "team";
       readonly scopeId: string | null;
@@ -304,6 +306,7 @@ export type PersonalMemoryProposal =
   | {
       readonly action: "forget";
       readonly botId: PersonalBotId;
+      readonly threadId: ThreadId | null;
       readonly target: PersonalMemoryEntry;
       readonly reason: string;
     };
@@ -618,10 +621,15 @@ export const make = Effect.gen(function* () {
         WHERE thread_id = ${threadId} AND role = 'user'
         ORDER BY created_at ASC LIMIT 1
       `;
+      // The message that started the turn running now, not just the newest
+      // one: a message queued during a task turn has not started anything.
       const latest = yield* sql<{ readonly messageId: string; readonly text: string }>`
-        SELECT message_id AS "messageId", text FROM projection_thread_messages
-        WHERE thread_id = ${threadId} AND role = 'user'
-        ORDER BY created_at DESC LIMIT 1
+        SELECT m.message_id AS "messageId", m.text AS "text"
+        FROM projection_thread_sessions s
+        JOIN projection_turns t ON t.thread_id = s.thread_id AND t.turn_id = s.active_turn_id
+        JOIN projection_thread_messages m ON m.message_id = t.pending_message_id
+        WHERE s.thread_id = ${threadId} AND m.role = 'user'
+        LIMIT 1
       `;
       return {
         startedByOwner: first[0] !== undefined && !first[0].messageId.startsWith("personal-"),
@@ -663,7 +671,7 @@ export const make = Effect.gen(function* () {
       yield* sql`
         INSERT INTO personal_memory_tidy_changes (
           run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id, content,
-          to_kind, to_scope, to_scope_id, versions_json, proposed_by, reason, created_at
+          to_kind, to_scope, to_scope_id, versions_json, proposed_by, thread_id, reason, created_at
         )
         VALUES (
           ${runId}, 'pending', ${input.action},
@@ -674,7 +682,8 @@ export const make = Effect.gen(function* () {
           ${input.action === "save" ? input.kind : null},
           ${input.action === "save" ? input.scope : null},
           ${input.action === "save" ? input.scopeId : null},
-          ${encodeVersions(versions)}, ${proposedBy}, ${redactSecrets(input.reason).slice(0, 600)},
+          ${encodeVersions(versions)}, ${proposedBy}, ${input.threadId},
+          ${redactSecrets(input.reason).slice(0, 600)},
           ${nowIso}
         )
       `;
@@ -1034,7 +1043,7 @@ export const make = Effect.gen(function* () {
           ? Effect.interrupt
           : Effect.logWarning("personal memory retrieval failed; continuing without memory", {
               threadId: input.threadId,
-              cause: Cause.pretty(cause),
+              cause: redactSecrets(Cause.pretty(cause)).slice(0, 2_000),
             }).pipe(Effect.as({ block: null, memoryIds: [] })),
       ),
     );
@@ -1085,7 +1094,7 @@ export const make = Effect.gen(function* () {
           ? Effect.interrupt
           : Effect.logWarning("personal memory could not save a task summary", {
               taskId: task.taskId,
-              cause: Cause.pretty(cause),
+              cause: redactSecrets(Cause.pretty(cause)).slice(0, 2_000),
             }),
       ),
     );

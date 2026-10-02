@@ -84,6 +84,7 @@ import {
   placeLoginRequestCards,
   placeConnectionApprovalCards,
   placeLeadBotChangeCards,
+  placeMemoryCards,
   resolveConversationHeaderName,
   turnErrorNotice,
 } from "./conversationModel";
@@ -106,6 +107,7 @@ import {
 import { deriveSecretRequestCards, type SecretRequestOutcome } from "./secretRequestCards";
 import { useConnectionApprovalCards } from "./useConnectionApprovalCards";
 import { useLeadBotChangeCards } from "./useLeadBotChangeCards";
+import { useMemoryCards } from "./useMemoryCards";
 import { useLoginRequestCards } from "./useLoginRequests";
 import {
   personalSecretCancel,
@@ -427,29 +429,36 @@ export function ConversationScreen({
   // A team lead asking to remove or rewrite a bot it did not create.
   const leadBotChanges = useLeadBotChangeCards(environmentId, threadId);
   const leadBotChangeCards = leadBotChanges.cards;
+  // A bot's save or forget of memory other bots see, waiting for the owner.
+  const memoryChanges = useMemoryCards(environmentId, threadId);
+  const memoryChangeCards = memoryChanges.cards;
   const loginRequests = useLoginRequestCards(environmentId, threadId);
   // The cards the bot put in the conversation belong in it: an answered
   // question keeps the spot where it was asked, so the bot's next reply reads
   // below it instead of above a card stuck at the bottom of the chat.
   const items = useMemo(
     () =>
-      placeLoginRequestCards(
-        placeLeadBotChangeCards(
-          placeConnectionApprovalCards(
-            placeSecretRequestCards(
-              placeQuestionCards(delegationItems, questionCards),
-              secretRequestCards,
+      placeMemoryCards(
+        placeLoginRequestCards(
+          placeLeadBotChangeCards(
+            placeConnectionApprovalCards(
+              placeSecretRequestCards(
+                placeQuestionCards(delegationItems, questionCards),
+                secretRequestCards,
+              ),
+              connectionApprovalCards,
             ),
-            connectionApprovalCards,
+            leadBotChangeCards,
           ),
-          leadBotChangeCards,
+          loginRequests.cards,
         ),
-        loginRequests.cards,
+        memoryChangeCards,
       ),
     [
       connectionApprovalCards,
       delegationItems,
       leadBotChangeCards,
+      memoryChangeCards,
       questionCards,
       secretRequestCards,
       loginRequests.cards,
@@ -932,6 +941,9 @@ export function ConversationScreen({
             approvalRespondingIds={connectionApprovals.respondingIds}
             onDecideLeadBotChange={leadBotChanges.decide}
             leadBotChangeRespondingIds={leadBotChanges.respondingIds}
+            onDecideMemoryChange={memoryChanges.decide}
+            memoryChangeRespondingIds={memoryChanges.respondingIds}
+            memoryBotName={memoryChanges.botName}
             onRespondToApproval={(requestId, decision) =>
               void onRespondToApproval(requestId, decision)
             }

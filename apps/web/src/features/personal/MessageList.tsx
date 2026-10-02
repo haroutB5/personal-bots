@@ -33,6 +33,7 @@ import { LoginRequestCard, type ProvideLogin } from "./LoginRequestCard";
 import { ConnectionApprovalCard } from "./ConnectionApprovalCard";
 import { approvalHasExpired } from "./connectionApprovalCards";
 import { LeadBotChangeCard } from "./LeadBotChangeCard";
+import { MemoryChangeCard } from "./MemoryChangeCard";
 import { ToolDetails } from "./ToolDetails";
 import type { LatestMessageReadStatus, MessageReadStatus } from "./messageReadStatus";
 
@@ -418,6 +419,9 @@ export function MessageList({
   approvalRespondingIds,
   onDecideLeadBotChange,
   leadBotChangeRespondingIds,
+  onDecideMemoryChange,
+  memoryChangeRespondingIds,
+  memoryBotName,
   approvalsNowMs,
   errorText,
   errorDetail = null,
@@ -472,6 +476,15 @@ export function MessageList({
     decision: "approved" | "declined",
   ) => Promise<string | null>;
   leadBotChangeRespondingIds?: ReadonlySet<string>;
+  /** One-to-one chat only: a bot's memory save or forget. Resolves to an error message, or null. */
+  onDecideMemoryChange?: (
+    changeId: number,
+    changeHash: string,
+    approve: boolean,
+  ) => Promise<string | null>;
+  memoryChangeRespondingIds?: ReadonlySet<number>;
+  /** Bot names for the memory cards' headers. */
+  memoryBotName?: (botId: string) => string | undefined;
   /** Passed in rather than read here so a card cannot re-render itself live past its expiry. */
   approvalsNowMs: number;
   errorText: string | null;
@@ -883,6 +896,18 @@ export function MessageList({
                     responding={leadBotChangeRespondingIds?.has(item.card.changeId) ?? false}
                     onDecide={(changeId, changeHash, decision) =>
                       onDecideLeadBotChange?.(changeId, changeHash, decision)
+                    }
+                  />
+                );
+              case "memory-change":
+                return (
+                  <MemoryChangeCard
+                    key={item.id}
+                    item={item.card}
+                    botName={memoryBotName ?? (() => undefined)}
+                    responding={memoryChangeRespondingIds?.has(item.card.changeId) ?? false}
+                    onDecide={(changeId, changeHash, approve) =>
+                      onDecideMemoryChange?.(changeId, changeHash, approve)
                     }
                   />
                 );

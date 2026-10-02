@@ -75,11 +75,11 @@ describe("validateDecisions", () => {
     entry("g", "Rule G"),
   ];
 
-  it("archives on its own only a near-exact older copy; everything else waits for approval", () => {
+  it("archives on its own only an exact older copy (case and spacing aside); everything else waits for approval", () => {
     const withCopies = [
       ...entries,
       entry("t1", "Favourite drink is green tea.", { createdAtMs: NOW - 9 * DAY }),
-      entry("t2", "Favourite drink is green tea!", { createdAtMs: NOW - 2 * DAY }),
+      entry("t2", "favourite  drink is GREEN tea.", { createdAtMs: NOW - 2 * DAY }),
     ];
     const result = validateDecisions(
       withCopies,
@@ -151,7 +151,7 @@ describe("validateDecisions", () => {
 
   it("leaves an entry the user edited in the last day: their edit wins", () => {
     const edited = [
-      entry("u", "User's rule", {
+      entry("u", "Rule E", {
         createdAtMs: NOW - 9 * DAY,
         updatedAtMs: NOW - DAY / 2,
         version: 2,
@@ -191,7 +191,7 @@ describe("validateDecisions", () => {
 
   it("caps what it archives on its own in one night", () => {
     const many = Array.from({ length: 40 }, (_, index) =>
-      entry(`n${index}`, `Note ${index}`, { createdAtMs: NOW - (50 - index) * DAY }),
+      entry(`n${index}`, `Note ${index % 20}`, { createdAtMs: NOW - (50 - index) * DAY }),
     );
     const proposals = Array.from({ length: 20 }, (_, index) => ({
       action: "supersede" as const,

@@ -5,7 +5,6 @@ import {
   PersonalRoutineId,
   type PersonalRoutine,
   type PersonalRoutineSchedule,
-  personalBotTeamLabel,
   savesMemoryWithoutAsking,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -14,19 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as OrchestrationEngine from "../../../orchestration/Services/OrchestrationEngine.ts";
-import {
-  contentSupported,
-  FORGET_INTENT,
-  quoteInMessage,
-  SAVE_INTENT,
-  targetNamed,
-} from "../../../personal/memory/memoryAuth.ts";
-import {
-  memoryProposedLine,
-  memorySavedLine,
-  writeMemoryNotice,
-} from "../../../personal/memory/memoryNotice.ts";
+import { quoteInMessage } from "../../../personal/memory/memoryQuote.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import { PersonalBrowser } from "../../../personal/browser/PersonalBrowser.ts";
 import { PersonalSessionAccess } from "../../../personal/secrets/PersonalSessionAccess.ts";
@@ -80,16 +67,6 @@ export function saveMemoryRefusal(input: {
   }
   return null;
 }
-
-/** Who a scope reaches, in the owner's words. */
-const reachLabel = (scope: "shared" | "team" | "bot", team: string | null) =>
-  scope === "shared"
-    ? "all bots"
-    : scope === "team"
-      ? team === null
-        ? "this team"
-        : personalBotTeamLabel(team)
-      : "this bot only";
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -184,8 +161,6 @@ const make = Effect.gen(function* () {
   const sessions = yield* PersonalSessionAccess;
   const browser = yield* PersonalBrowser;
   const research = createResearchClient();
-  // Present in the server; absent in narrow tests, where no chat line is written.
-  const engine = yield* Effect.serviceOption(OrchestrationEngine.OrchestrationEngineService);
 
   const refuse = (reason: string) => new PersonalToolError({ reason });
 
@@ -519,15 +494,17 @@ const make = Effect.gen(function* () {
               Effect.map((bot) => Option.isSome(bot) && savesMemoryWithoutAsking(bot.value)),
               Effect.mapError(() => refuse("Could not read the bot.")),
             );
-        const sensitiveOrigins = yield* browser.sensitiveExposure(invocation.threadId);
+        const sensitiveOrigins =
+          explicit || !autoSave ? [] : yield* browser.sensitiveExposure(invocation.threadId);
         const refusal = saveMemoryRefusal({
           userRequest: input.userRequest,
           autoSave,
-          sensitiveOrigins: explicit ? [] : sensitiveOrigins,
+          sensitiveOrigins,
         });
         if (refusal !== null) return yield* refuse(refusal);
-        // The quoted words must be the owner's own, word for word, in this
-        // chat: a brief from another bot or a page the bot read cannot make it save.
+        // The quoted words must be the owner's own, word for word, in this chat.
+        // This only decides whether the bot may ask at all: memory other bots
+        // see changes only when the owner taps Save on the card.
         const owner = yield* memory.ownerMessages(invocation.threadId);
         const source = owner.texts.find((text) => quoteInMessage(input.userRequest, text));
         if (source === undefined) {
@@ -550,65 +527,52 @@ const make = Effect.gen(function* () {
         const replaceIds = yield* Effect.forEach(input.replaces ?? [], (ref) =>
           memory.resolveRef({ ref, botId }).pipe(Effect.mapError((error) => refuse(error.message))),
         );
-        // A shared or team entry reaches other bots: it applies now only when
-        // the owner's message that started this turn asks for exactly this.
         if (scope !== "bot") {
+          // Text from a sensitive site must not reach memory other bots see,
+          // not even as a card: the owner asks again in a clean chat.
+          const exposed =
+            sensitiveOrigins.length > 0
+              ? sensitiveOrigins
+              : yield* browser.sensitiveExposure(invocation.threadId);
+          if (exposed.length > 0) {
+            return yield* refuse(
+              `Not saved: this chat has had ${exposed.join(", ")} open, a site the user marked sensitive, so memory other bots see cannot be changed from it. Save it for yourself (scope bot) or ask the user to repeat it in a new chat.`,
+            );
+          }
+          // Memory other bots follow changes only on the owner's tap.
           const targets = yield* Effect.forEach(replaceIds, (id) =>
             memory.get(id).pipe(Effect.mapError((error) => refuse(error.message))),
           );
-          const current = owner.current;
-          const direct =
-            current !== null &&
-            current.byOwner &&
-            SAVE_INTENT.test(current.text) &&
-            quoteInMessage(input.userRequest, current.text) &&
-            contentSupported(input.content, current.text) &&
-            targets.every((target) => targetNamed(target, current.text));
-          if (!direct) {
-            if (sensitiveOrigins.length > 0) {
-              return yield* refuse(
-                `Not saved: this chat has had ${sensitiveOrigins.join(", ")} open, a site the user marked sensitive. Ask the user to say exactly what to remember in their next message.`,
-              );
-            }
-            const changeId = yield* memory
-              .propose({
-                action: "save",
-                botId,
-                kind: input.kind,
-                scope,
-                scopeId: scope === "team" ? team : null,
-                content: input.content,
-                replaces: targets,
-                reason: `Asked in chat: "${source.replace(/\s+/g, " ").slice(0, 300)}"`,
-              })
-              .pipe(Effect.mapError((error) => refuse(error.message)));
-            if (engine._tag === "Some") {
-              yield* writeMemoryNotice(
-                engine.value,
-                invocation.threadId,
-                memoryProposedLine({
-                  content: input.content,
-                  reach: reachLabel(scope, team),
-                  kind: input.kind,
-                  replaced: targets.length,
-                }),
-              );
-            }
-            return {
-              memoryId: `pending-${changeId}`,
-              scope,
+          const inChat = owner.current !== null && owner.current.byOwner;
+          const changeId = yield* memory
+            .propose({
+              action: "save",
+              botId,
+              threadId: inChat ? invocation.threadId : null,
               kind: input.kind,
-              replaced: [],
-              similar: [],
-              status: "waiting_for_approval" as const,
-              note: "Not saved yet: it is waiting for the user's OK on the Memory screen (Nightly tidy-up > Waiting for your OK). Tell the user so. It applies directly only when the user's own message in this turn asks for exactly this, and names any entry it replaces.",
-            };
-          }
+              scope,
+              scopeId: scope === "team" ? team : null,
+              content: input.content,
+              replaces: targets,
+              reason: `Asked in chat: "${source.replace(/\s+/g, " ").slice(0, 300)}"`,
+            })
+            .pipe(Effect.mapError((error) => refuse(error.message)));
+          return {
+            memoryId: `pending-${changeId}`,
+            scope,
+            kind: input.kind,
+            replaced: [],
+            similar: [],
+            status: "waiting_for_approval" as const,
+            note: inChat
+              ? "Not saved yet: a card with the exact text is in this chat. It is saved only when the user taps Save there. Tell them briefly; do not save it again."
+              : "Not saved yet: it is waiting for the user's OK on the Memory screen (Waiting for your OK). Mention it in your result.",
+          };
         }
         const entry = yield* memory
           .save({
             scope,
-            scopeId: scope === "bot" ? botId : scope === "team" ? team : null,
+            scopeId: botId,
             kind: input.kind,
             content: input.content,
             source: `bot:${botId}`,
@@ -618,17 +582,6 @@ const make = Effect.gen(function* () {
           })
           .pipe(Effect.mapError((error) => refuse(error.message)));
         const replaced = replaceIds.filter((id) => id !== entry.memoryId);
-        if (entry.kind === "preference" && scope !== "bot" && engine._tag === "Some") {
-          yield* writeMemoryNotice(
-            engine.value,
-            invocation.threadId,
-            memorySavedLine({
-              content: entry.content,
-              reach: reachLabel(scope, team),
-              replaced: replaced.length,
-            }),
-          );
-        }
         // Close matches are advice: a failed lookup never fails the save.
         const similar = yield* memory
           .similar({ content: entry.content, botId, excludeIds: [entry.memoryId, ...replaced] })
@@ -658,7 +611,7 @@ const make = Effect.gen(function* () {
         const { scope: invocation, botId } = yield* requireBotThread;
         const owner = yield* memory.ownerMessages(invocation.threadId);
         const source = owner.texts.find((text) => quoteInMessage(input.userRequest, text));
-        if (source === undefined || !FORGET_INTENT.test(source)) {
+        if (source === undefined) {
           return yield* refuse(
             "Not forgotten: only forget an entry when the user asks in this chat, and quote their words exactly in userRequest.",
           );
@@ -669,65 +622,36 @@ const make = Effect.gen(function* () {
         const target = yield* memory
           .get(memoryId)
           .pipe(Effect.mapError((error) => refuse(error.message)));
-        const current = owner.current;
-        const direct =
-          target.scope === "bot" ||
-          (current !== null &&
-            current.byOwner &&
-            FORGET_INTENT.test(current.text) &&
-            quoteInMessage(input.userRequest, current.text) &&
-            targetNamed(target, current.text));
-        const team = yield* memory.teamOfBot(botId);
-        const reach = reachLabel(target.scope === "team" ? "team" : "shared", team);
-        if (!direct) {
-          if (target.kind === "task_summary") {
-            return yield* refuse(
-              "Task summaries are removed from the Memory screen, not by a bot.",
-            );
-          }
+        if (target.kind === "task_summary") {
+          return yield* refuse("Task summaries are removed from the Memory screen, not by a bot.");
+        }
+        if (target.scope !== "bot") {
+          const inChat = owner.current !== null && owner.current.byOwner;
           yield* memory
             .propose({
               action: "forget",
               botId,
+              threadId: inChat ? invocation.threadId : null,
               target,
               reason: `Asked in chat: "${source.replace(/\s+/g, " ").slice(0, 300)}"`,
             })
             .pipe(Effect.mapError((error) => refuse(error.message)));
-          if (engine._tag === "Some") {
-            yield* writeMemoryNotice(
-              engine.value,
-              invocation.threadId,
-              memorySavedLine({
-                content: target.content,
-                reach,
-                replaced: 0,
-                forgotten: true,
-                pending: true,
-              }),
-            );
-          }
           return {
             memoryId: PersonalMemoryService.memoryRef(target),
             content: target.content,
-            summary:
-              "Not forgotten yet: it is waiting for the user's OK on the Memory screen. Tell the user so. It applies directly only when the user's own message in this turn asks to forget this entry by naming it.",
+            summary: inChat
+              ? "Not forgotten yet: a card is in this chat. It is forgotten only when the user taps Forget there. Tell them briefly."
+              : "Not forgotten yet: it is waiting for the user's OK on the Memory screen. Mention it in your result.",
           };
         }
         const entry = yield* memory
           .forget({ memoryId, actorBotId: botId })
           .pipe(Effect.mapError((error) => refuse(error.message)));
-        if (entry.kind === "preference" && entry.scope !== "bot" && engine._tag === "Some") {
-          yield* writeMemoryNotice(
-            engine.value,
-            invocation.threadId,
-            memorySavedLine({ content: entry.content, reach, replaced: 0, forgotten: true }),
-          );
-        }
         return {
           memoryId: PersonalMemoryService.memoryRef(entry),
           content: entry.content,
           summary:
-            "Forgotten: bots no longer receive it. It is in Archived on the Memory screen, where the user can restore or delete it.",
+            "Forgotten: you no longer receive it. It is in Archived on the Memory screen, where the user can restore or delete it.",
         };
       }),
   });

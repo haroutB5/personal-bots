@@ -205,6 +205,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalMemoryTidySetMode]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalMemoryTidyRun]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalMemoryTidyDecide]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalMemoryCards]: AuthOrchestrationReadScope,
   [WS_METHODS.personalPushPublicKey]: AuthOrchestrationReadScope,
   [WS_METHODS.personalPushGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.personalPushSubscribe]: AuthOrchestrationOperateScope,

@@ -155,6 +155,8 @@ export const PersonalMemoryTidyChange = Schema.Struct({
   toScopeId: Schema.optional(Schema.NullOr(Schema.String)),
   /** Who proposed it: the tidy-up, a bot ("bot:<id>") or a local proposals file. */
   proposedBy: Schema.optional(Schema.NullOr(Schema.String)),
+  /** What an approval is bound to: the change and every entry version it saw. */
+  changeHash: Schema.optional(Schema.String),
   reason: Schema.String,
 });
 export type PersonalMemoryTidyChange = typeof PersonalMemoryTidyChange.Type;
@@ -204,7 +206,51 @@ export type PersonalMemoryTidySetModeInput = typeof PersonalMemoryTidySetModeInp
 export const PersonalMemoryTidyDecideInput = Schema.Struct({
   changeId: Schema.Number,
   approve: Schema.Boolean,
+  /** The hash the card or list was showing; the tap is refused if the change is not that one. */
+  changeHash: Schema.optional(Schema.String),
 });
+
+/** An entry a bot's change would replace or forget, shown whole on the card. */
+export const PersonalMemoryCardTarget = Schema.Struct({
+  memoryId: PersonalMemoryId,
+  kind: PersonalMemoryKind,
+  scope: PersonalMemoryScope,
+  scopeId: Schema.NullOr(Schema.String),
+  content: Schema.String,
+});
+export type PersonalMemoryCardTarget = typeof PersonalMemoryCardTarget.Type;
+
+/**
+ * A bot's change to memory other bots see, as a Save / Don't save card in the
+ * chat it happened in. Nothing applies until the owner taps Save.
+ */
+export const PersonalMemoryCard = Schema.Struct({
+  changeId: Schema.Number,
+  changeHash: Schema.String,
+  threadId: Schema.String,
+  action: Schema.Literals(["save", "forget"]),
+  /** "bot:<id>". */
+  proposedBy: Schema.NullOr(Schema.String),
+  /** A save's new entry: its exact text, kind and reach. */
+  content: Schema.NullOr(Schema.String),
+  kind: Schema.NullOr(Schema.Literals(["note", "preference"])),
+  scope: Schema.NullOr(Schema.Literals(["shared", "team"])),
+  scopeId: Schema.NullOr(Schema.String),
+  /** The entries it replaces (save) or forgets (forget), whole, as they were proposed. */
+  targets: Schema.Array(PersonalMemoryCardTarget),
+  status: PersonalMemoryTidyChangeStatus,
+  createdAt: Schema.DateTimeUtcFromString,
+  decidedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+});
+export type PersonalMemoryCard = typeof PersonalMemoryCard.Type;
+
+export const PersonalMemoryCardsInput = Schema.Struct({ threadId: TrimmedNonEmptyString });
+export type PersonalMemoryCardsInput = typeof PersonalMemoryCardsInput.Type;
+
+export const PersonalMemoryCardsResult = Schema.Struct({
+  cards: Schema.Array(PersonalMemoryCard),
+});
+export type PersonalMemoryCardsResult = typeof PersonalMemoryCardsResult.Type;
 export type PersonalMemoryTidyDecideInput = typeof PersonalMemoryTidyDecideInput.Type;
 
 /** Runs the tidy-up now. dryRun (the default) only lists what it would change. */

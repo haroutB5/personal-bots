@@ -63,6 +63,8 @@ export default Effect.gen(function* () {
       to_scope_id TEXT,
       versions_json TEXT,
       proposed_by TEXT,
+      -- The chat a bot's save/forget card is shown in (null: approval list only).
+      thread_id TEXT,
       reason TEXT NOT NULL,
       created_at TEXT NOT NULL,
       decided_at TEXT
@@ -72,6 +74,10 @@ export default Effect.gen(function* () {
   yield* sql`
     CREATE INDEX IF NOT EXISTS idx_personal_memory_tidy_changes_run
     ON personal_memory_tidy_changes(run_id)
+  `;
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS idx_personal_memory_tidy_changes_thread
+    ON personal_memory_tidy_changes(thread_id, created_at)
   `;
 
   // How many entries hold each term: a turn's search uses a message's rarest

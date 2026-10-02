@@ -97,6 +97,18 @@ export const personalMemoryTidyLog = createEnvironmentRpcQueryAtomFamily(connect
   staleTimeMs: 10_000,
 });
 
+/**
+ * A chat's memory cards: a bot's save or forget that waits for the owner.
+ * Polled like the lead-bot change cards, since no subscription exists and a
+ * card asked mid-conversation has to surface without reopening the chat.
+ */
+export const personalMemoryCards = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "personal-memory:cards",
+  tag: WS_METHODS.personalMemoryCards,
+  staleTimeMs: 3_000,
+  refreshIntervalMs: 6_000,
+});
+
 export const personalPushSettings = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "personal-push:settings",
   tag: WS_METHODS.personalPushGetSettings,

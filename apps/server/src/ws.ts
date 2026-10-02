@@ -3766,6 +3766,12 @@ const makeWsRpcLayer = (
             personalMemoryTidy.setMode(input.mode),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.personalMemoryCards]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalMemoryCards,
+            personalMemoryTidy.cardsForThread(input.threadId),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalMemoryTidyDecide]: (input) =>
           observeRpcEffect(WS_METHODS.personalMemoryTidyDecide, personalMemoryTidy.decide(input), {
             "rpc.aggregate": "server",

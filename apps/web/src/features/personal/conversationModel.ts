@@ -26,6 +26,7 @@ import type { QuestionCardItem } from "./questionCards";
 import type { SecretRequestCardItem } from "./secretRequestCards";
 import type { ConnectionApprovalCardItem } from "./connectionApprovalCards";
 import type { LeadBotChangeCardItem } from "./leadBotChangeCards";
+import type { MemoryCardItem } from "./memoryCards";
 
 /**
  * Header state for a bot conversation, derived only from session/turn/request
@@ -606,7 +607,9 @@ export type ConversationItem =
       readonly card: ConnectionApprovalCardItem;
     }
   /** A team lead asking to remove or rewrite a bot, in the lead's chat. */
-  | { readonly kind: "lead-bot-change"; readonly id: string; readonly card: LeadBotChangeCardItem };
+  | { readonly kind: "lead-bot-change"; readonly id: string; readonly card: LeadBotChangeCardItem }
+  /** A bot's save or forget of memory other bots see, waiting for the owner's OK. */
+  | { readonly kind: "memory-change"; readonly id: string; readonly card: MemoryCardItem };
 
 /**
  * Flattens the upstream timeline into chat rows: consecutive work entries
@@ -799,6 +802,7 @@ function itemTimeMs(item: ConversationItem): number {
     case "secret":
     case "connection-approval":
     case "lead-bot-change":
+    case "memory-change":
       return item.card.createdAtMs;
   }
 }
@@ -964,6 +968,21 @@ export function placeLeadBotChangeCards(
       item: { kind: "lead-bot-change", id: `lead-bot-change:${card.changeId}`, card } as const,
       atMs: card.createdAtMs,
       pending: card.kind === "pending",
+    })),
+  );
+}
+
+/** Memory cards, placed like the lead-bot change cards: at the moment the bot asked. */
+export function placeMemoryCards(
+  items: ReadonlyArray<ConversationItem>,
+  cards: ReadonlyArray<MemoryCardItem>,
+): ConversationItem[] {
+  return placeTimedCards(
+    items,
+    cards.map((card) => ({
+      item: { kind: "memory-change", id: `memory-change:${card.changeId}`, card } as const,
+      atMs: card.createdAtMs,
+      pending: card.pending,
     })),
   );
 }

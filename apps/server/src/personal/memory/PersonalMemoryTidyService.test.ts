@@ -476,6 +476,7 @@ it.effect("a bot's save and forget proposals apply only on approval, version-che
     const saveId = yield* memory.propose({
       action: "save",
       botId: PersonalBotId.make("bot-a"),
+      threadId: null,
       kind: "preference",
       scope: "shared",
       scopeId: null,
@@ -486,6 +487,7 @@ it.effect("a bot's save and forget proposals apply only on approval, version-che
     const forgetId = yield* memory.propose({
       action: "forget",
       botId: PersonalBotId.make("bot-a"),
+      threadId: null,
       target: yield* memory.get(PersonalMemoryId.make(ids.tea)),
       reason: "Asked in chat",
     });
@@ -537,3 +539,152 @@ it.effect("QA repro (1.60.19): an imported reclassify approved after an edit is 
     expect([after.kind, after.scope, after.version]).toEqual(["note", "shared", 2]);
   }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
 );
+
+it.effect("Security recheck: a rule and its negation are never archived without a tap", () =>
+  Effect.gen(function* () {
+    const ids = yield* seed;
+    const memory = yield* PersonalMemoryService;
+    const tidy = yield* PersonalMemoryTidy;
+    const sql = yield* SqlClient.SqlClient;
+    yield* memory.update({
+      memoryId: PersonalMemoryId.make(ids.capA),
+      content: "Do not deploy the app without owner approval.",
+    });
+    yield* memory.update({
+      memoryId: PersonalMemoryId.make(ids.capB),
+      content: "Deploy the app without owner approval.",
+    });
+    const old = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { days: 4 }));
+    yield* sql`UPDATE personal_memory SET updated_at = ${old} WHERE memory_id IN (${ids.capA}, ${ids.capB})`;
+    const run = yield* tidy.run({ dryRun: false });
+    expect(run.superseded).toBe(0);
+    expect((yield* memory.list({})).map((e) => e.memoryId)).toContain(ids.capA);
+  }).pipe(
+    Effect.provide(
+      testLayer(
+        fakeJudge((ref) => [
+          {
+            action: "supersede",
+            memoryIds: [ref("Do not deploy")],
+            by: ref("Deploy the app"),
+            reason: "Near-duplicate.",
+          },
+        ]),
+      ),
+    ),
+  ),
+);
+
+it.effect("only an exact copy (case and spacing aside) is archived without a tap", () =>
+  Effect.gen(function* () {
+    const ids = yield* seed;
+    const memory = yield* PersonalMemoryService;
+    const tidy = yield* PersonalMemoryTidy;
+    const sql = yield* SqlClient.SqlClient;
+    yield* memory.update({
+      memoryId: PersonalMemoryId.make(ids.pasta),
+      content: "Favourite  drink is GREEN tea.",
+    });
+    const old = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { days: 3 }));
+    yield* sql`UPDATE personal_memory SET updated_at = ${old}, created_at = ${old} WHERE memory_id = ${ids.pasta}`;
+    const run = yield* tidy.run({ dryRun: false });
+    // tea (20 days old) is an exact copy of the newer one: archived on its own.
+    expect(run.superseded).toBe(1);
+    expect((yield* memory.list({ status: "superseded" })).map((e) => e.memoryId)).toEqual([
+      ids.tea,
+    ]);
+  }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+);
+
+describe("memory cards in a chat", () => {
+  const propose = (
+    threadId: string | null,
+    content: string,
+    replaces: ReadonlyArray<string> = [],
+  ) =>
+    Effect.gen(function* () {
+      const memory = yield* PersonalMemoryService;
+      const targets = yield* Effect.forEach(replaces, (id) =>
+        memory.get(PersonalMemoryId.make(id)),
+      );
+      return yield* memory.propose({
+        action: "save",
+        botId: PersonalBotId.make("bot-a"),
+        threadId: threadId === null ? null : ThreadId.make(threadId),
+        kind: "preference",
+        scope: "shared",
+        scopeId: null,
+        content,
+        replaces: targets,
+        reason: "Asked in chat",
+      });
+    });
+
+  it.effect("tapping Save applies the exact text and archives the replaced entry", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      yield* propose("chat-1", "Crypto prices in GBP.", [ids.unsure]);
+      yield* propose(null, "Not in this chat.");
+      const { cards } = yield* tidy.cardsForThread("chat-1");
+      expect(cards).toHaveLength(1);
+      const card = cards[0]!;
+      expect(card).toMatchObject({
+        action: "save",
+        content: "Crypto prices in GBP.",
+        status: "pending",
+      });
+      expect(card.targets.map((target) => target.content)).toEqual(["Crypto prices in USD."]);
+      // Nothing applied before the tap.
+      expect((yield* memory.list({})).some((e) => e.content === "Crypto prices in GBP.")).toBe(
+        false,
+      );
+
+      yield* tidy.decide({ changeId: card.changeId, approve: true, changeHash: card.changeHash });
+      const current = yield* memory.list({});
+      expect(current.some((e) => e.content === "Crypto prices in GBP.")).toBe(true);
+      expect(current.map((e) => e.memoryId)).not.toContain(ids.unsure);
+      expect((yield* tidy.cardsForThread("chat-1")).cards[0]!.status).toBe("approved");
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it.effect("tapping Don't save leaves nothing", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const before = yield* memory.list({});
+      yield* propose("chat-1", "Crypto prices in GBP.", [ids.unsure]);
+      const card = (yield* tidy.cardsForThread("chat-1")).cards[0]!;
+      yield* tidy.decide({ changeId: card.changeId, approve: false, changeHash: card.changeHash });
+      expect(yield* memory.list({})).toEqual(before);
+      expect((yield* tidy.cardsForThread("chat-1")).cards[0]!.status).toBe("rejected");
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it.effect("a stale card after an edit, or a wrong hash, is refused and changes nothing", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      yield* propose("chat-1", "Crypto prices in GBP.", [ids.unsure]);
+      const card = (yield* tidy.cardsForThread("chat-1")).cards[0]!;
+      const wrongHash = yield* Effect.flip(
+        tidy.decide({ changeId: card.changeId, approve: true, changeHash: "0".repeat(32) }),
+      );
+      expect(wrongHash.message).toContain("out of date");
+      yield* memory.update({
+        memoryId: PersonalMemoryId.make(ids.unsure),
+        content: "Crypto prices in EUR.",
+      });
+      const stale = yield* Effect.flip(
+        tidy.decide({ changeId: card.changeId, approve: true, changeHash: card.changeHash }),
+      );
+      expect(stale.message).toContain("nothing was changed");
+      const current = yield* memory.list({});
+      expect(current.find((e) => e.memoryId === ids.unsure)?.content).toBe("Crypto prices in EUR.");
+      expect(current.some((e) => e.content === "Crypto prices in GBP.")).toBe(false);
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+});

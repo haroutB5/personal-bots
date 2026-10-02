@@ -416,6 +416,8 @@ import {
   PersonalMemoryTidyLogResult,
   PersonalMemoryTidyRun,
   PersonalMemoryTidyDecideInput,
+  PersonalMemoryCardsInput,
+  PersonalMemoryCardsResult,
   PersonalMemoryTidyRunInput,
   PersonalMemoryTidySetModeInput,
   PersonalMemoryUpdateInput,
@@ -710,6 +712,7 @@ export const WS_METHODS = {
   personalMemoryTidySetMode: "personalMemory.tidySetMode",
   personalMemoryTidyRun: "personalMemory.tidyRun",
   personalMemoryTidyDecide: "personalMemory.tidyDecide",
+  personalMemoryCards: "personalMemory.cards",
 
   // Personal Web Push methods
   personalPushPublicKey: "personalPush.publicKey",
@@ -1871,6 +1874,12 @@ const WsPersonalMemoryTidyRunRpc = Rpc.make(WS_METHODS.personalMemoryTidyRun, {
   error: PersonalMemoryRpcError,
 });
 
+const WsPersonalMemoryCardsRpc = Rpc.make(WS_METHODS.personalMemoryCards, {
+  payload: PersonalMemoryCardsInput,
+  success: PersonalMemoryCardsResult,
+  error: PersonalMemoryRpcError,
+});
+
 const WsPersonalMemoryTidyDecideRpc = Rpc.make(WS_METHODS.personalMemoryTidyDecide, {
   payload: PersonalMemoryTidyDecideInput,
   success: PersonalMemoryTidyLogResult,
@@ -2619,6 +2628,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalMemoryTidySetModeRpc,
   WsPersonalMemoryTidyRunRpc,
   WsPersonalMemoryTidyDecideRpc,
+  WsPersonalMemoryCardsRpc,
   WsPersonalPushPublicKeyRpc,
   WsPersonalPushGetSettingsRpc,
   WsPersonalPushSubscribeRpc,

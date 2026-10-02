@@ -125,8 +125,8 @@ const SECRET_SHAPED =
 
 /**
  * The only change made without asking: an older entry archived in favour of
- * a newer one that says the same thing in (nearly) the same words, same kind
- * and scope. Every other supersede, every merge and every retirement is the
+ * a newer one with exactly the same text (case and spacing aside), same kind
+ * and scope. Words like "not" and every number count. Every other supersede, every merge and every retirement is the
  * model's judgement and needs the owner's OK: a model can be wrong or misled.
  */
 export function isAutoChange(
@@ -142,24 +142,9 @@ export function isAutoChange(
       older.scope === successor.scope &&
       older.scopeId === successor.scopeId &&
       older.createdAtMs < successor.createdAtMs &&
-      nearDuplicate(older.content, successor.content)
+      normalised(older.content) === normalised(successor.content)
     );
   });
-}
-
-/** Same words in the same entry, give or take punctuation and a word or two. */
-export const NEAR_DUPLICATE_SIMILARITY = 0.9;
-
-export function nearDuplicate(a: string, b: string): boolean {
-  if (normalised(a) === normalised(b)) return true;
-  const words = (text: string) =>
-    normalised(text)
-      .replace(/[^\p{L}\p{N} ]+/gu, " ")
-      .split(/\s+/);
-  const left = words(a);
-  const right = words(b);
-  if (Math.abs(left.length - right.length) > Math.max(2, left.length * 0.1)) return false;
-  return memorySimilarity(a, b) >= NEAR_DUPLICATE_SIMILARITY;
 }
 
 /**

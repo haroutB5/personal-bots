@@ -405,10 +405,24 @@ function PendingTidyChanges({
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<number>>(() => new Set());
   const total = groups.reduce((sum, group) => sum + group.changes.length, 0);
+  const hashById = useMemo(() => {
+    const hashes = new Map<number, string>();
+    for (const group of groups) {
+      for (const change of group.changes) {
+        if (change.changeHash !== undefined) hashes.set(change.changeId, change.changeHash);
+      }
+    }
+    return hashes;
+  }, [groups]);
 
   const decideOne = async (changeId: number, approve: boolean) => {
     if (environmentId === null) return "No connection.";
-    const result = await decide({ environmentId, input: { changeId, approve } });
+    // The hash binds the tap to the change on screen; the server refuses a stale one.
+    const changeHash = hashById.get(changeId);
+    const result = await decide({
+      environmentId,
+      input: { changeId, approve, ...(changeHash === undefined ? {} : { changeHash }) },
+    });
     const message = commandFailureMessage(
       result,
       approve ? "Could not approve that change." : "Could not reject that change.",
