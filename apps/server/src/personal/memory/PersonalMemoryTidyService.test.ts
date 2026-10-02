@@ -505,3 +505,35 @@ it.effect("a bot's save and forget proposals apply only on approval, version-che
     expect((yield* memory.list({})).map((e) => e.memoryId)).toContain(ids.tea);
   }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
 );
+
+it.effect("QA repro (1.60.19): an imported reclassify approved after an edit is refused", () =>
+  Effect.gen(function* () {
+    const ids = yield* seed;
+    const memory = yield* PersonalMemoryService;
+    const tidy = yield* PersonalMemoryTidy;
+    const run = yield* tidy.importProposals({
+      source: "memory-proposals-2026-10-02.json",
+      items: [
+        {
+          action: "reclassify",
+          memoryIds: [ids.newModels],
+          toKind: "preference",
+          toScope: "team",
+          toScopeId: "dev",
+          reason: "Dev only.",
+        },
+      ],
+    });
+    const before = (yield* memory.list({})).find((e) => e.memoryId === ids.newModels)!;
+    yield* memory.update({
+      memoryId: PersonalMemoryId.make(ids.newModels),
+      content: `${before.content} [QA edited after proposal]`,
+    });
+    const error = yield* Effect.flip(
+      tidy.decide({ changeId: run.changes[0]!.changeId, approve: true }),
+    );
+    expect(error.message).toContain("nothing was changed");
+    const after = (yield* memory.list({})).find((e) => e.memoryId === ids.newModels)!;
+    expect([after.kind, after.scope, after.version]).toEqual(["note", "shared", 2]);
+  }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+);

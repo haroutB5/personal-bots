@@ -36,7 +36,13 @@ const FILLER = new Set(
   ),
 );
 
-const stem = (word: string) => (word.length > 4 ? word.replace(/(ies|es|s|ing|ed)$/, "") : word);
+/** A rough stem, the same for every form: takes/take/taking, notes/noted/note. */
+const stem = (word: string) => {
+  if (word.length <= 3) return word;
+  const bare = word.replace(/ies$/, "y").replace(/(ing|ed|es|s)$/, "");
+  const short = bare.length >= 3 ? bare : word;
+  return short.length > 3 ? short.replace(/e$/, "") : short;
+};
 
 const meaningful = (text: string) =>
   new Set([...subjectWords(text)].filter((word) => !FILLER.has(word)).map(stem));
