@@ -493,7 +493,7 @@ const runningTurn = (
         INSERT INTO projection_thread_activities
           (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at, sequence)
         VALUES (${`act-${messageId}-${n}`}, ${THREAD_A}, 'turn-1', 'tool', 'tool.completed',
-          ${tool.summary}, ${JSON.stringify({ itemType: tool.type, title: tool.summary })},
+          ${tool.summary}, ${`{"itemType":"${tool.type}","title":"${tool.summary}"}`},
           '2026-10-02T08:00:05.000Z', ${n})
       `;
     }
