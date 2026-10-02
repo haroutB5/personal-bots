@@ -1005,6 +1005,90 @@ describe("Fable follow-ups (1.60.21)", () => {
       }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
   );
 
+  it.effect(
+    "Security (f9096b8cda54): a Note part never reuses a Preference with the same text",
+    () =>
+      Effect.gen(function* () {
+        const ids = yield* seed;
+        const memory = yield* PersonalMemoryService;
+        const tidy = yield* PersonalMemoryTidy;
+        // A current shared preference with exactly the part's text.
+        const rule = yield* memory.save({
+          scope: "shared",
+          scopeId: null,
+          kind: "preference",
+          content: "Always offer tea first.",
+          source: "user",
+        });
+        const run = yield* tidy.importProposals({
+          source: "proposals-kind.json",
+          items: [
+            {
+              action: "split",
+              memoryIds: [ids.tea],
+              parts: [
+                {
+                  content: "Always offer tea first.",
+                  kind: "note",
+                  scope: "shared",
+                  scopeId: null,
+                },
+              ],
+              reason: "As a note.",
+            },
+          ],
+        });
+        yield* decideWithHash(run.changes[0]!.changeId, true);
+        const current = (yield* memory.list({})).filter(
+          (e) => e.content === "Always offer tea first.",
+        );
+        // The approved Note exists as a note; the Preference was not taken for it.
+        expect(current.map((e) => e.kind).toSorted()).toEqual(["note", "preference"]);
+        const archived = (yield* memory.list({ status: "superseded" })).find(
+          (e) => e.memoryId === ids.tea,
+        );
+        expect(archived?.supersededBy).not.toBe(rule.memoryId);
+      }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it.effect(
+    "Security (f9096b8cda54): a Preference part never reuses a Note with the same text",
+    () =>
+      Effect.gen(function* () {
+        const ids = yield* seed;
+        const memory = yield* PersonalMemoryService;
+        const tidy = yield* PersonalMemoryTidy;
+        // seed's "Owns a Garmin Venu 3 watch." is a current shared note.
+        const run = yield* tidy.importProposals({
+          source: "proposals-kind.json",
+          items: [
+            {
+              action: "split",
+              memoryIds: [ids.pasta],
+              parts: [
+                {
+                  content: "Owns a Garmin Venu 3 watch.",
+                  kind: "preference",
+                  scope: "shared",
+                  scopeId: null,
+                },
+              ],
+              reason: "As a rule.",
+            },
+          ],
+        });
+        yield* decideWithHash(run.changes[0]!.changeId, true);
+        const current = (yield* memory.list({})).filter(
+          (e) => e.content === "Owns a Garmin Venu 3 watch.",
+        );
+        expect(current.map((e) => e.kind).toSorted()).toEqual(["note", "preference"]);
+        const archived = (yield* memory.list({ status: "superseded" })).find(
+          (e) => e.memoryId === ids.pasta,
+        );
+        expect(archived?.supersededBy).not.toBe(ids.watch);
+      }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
   it.effect("a split with a secret-shaped or empty part is left, not asked", () =>
     Effect.gen(function* () {
       const ids = yield* seed;

@@ -1317,7 +1317,8 @@ export const make = Effect.gen(function* () {
    * A split the owner approved: each part becomes its own entry with its own
    * kind and reach, dated like the long entry it came from (so it keeps its
    * place among newer rules), and the long entry is archived. A part whose
-   * exact text is already current in its reach is not added twice.
+   * exact text is already current in its reach, as the same kind, is not
+   * added twice; a note never stands in for a rule, or a rule for a note.
    */
   const applySplit = (change: ChangeRow, ids: ReadonlyArray<string>, nowIso: string) =>
     Effect.gen(function* () {
@@ -1346,7 +1347,8 @@ export const make = Effect.gen(function* () {
         const existing = yield* sql<{ readonly memoryId: string }>`
           SELECT memory_id AS "memoryId" FROM personal_memory
           WHERE deleted_at IS NULL AND superseded_at IS NULL AND scope = ${part.scope}
-            AND scope_id IS ${scopeId} AND content = ${content} AND memory_id <> ${ids[0]!}
+            AND scope_id IS ${scopeId} AND kind = ${part.kind} AND content = ${content}
+            AND memory_id <> ${ids[0]!}
           LIMIT 1
         `;
         if (existing[0] !== undefined) {
