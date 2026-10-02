@@ -389,6 +389,18 @@ function ApprovalCard({
   );
 }
 
+const NO_PINNED_APPROVALS: ReadonlyArray<PendingApproval> = [];
+
+/** Read-only cards keep their text for reading and VoiceOver; a disabled fieldset turns every control off. */
+function lockCard(key: string, readOnly: boolean, card: ReactNode): ReactNode {
+  if (!readOnly) return card;
+  return (
+    <fieldset key={key} disabled className="contents" data-read-only-card="">
+      {card}
+    </fieldset>
+  );
+}
+
 /**
  * Chat rows (ui-spec Screen 2): dividers, right-aligned user bubbles, plain
  * markdown assistant text, collapsed tool activity, and the cards the bot put
@@ -432,6 +444,7 @@ export function MessageList({
   describeTurn,
   renderDelegation,
   groupSpeaker,
+  readOnly = false,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
@@ -499,6 +512,11 @@ export function MessageList({
   errorRetry?: { readonly onRetry: () => void; readonly busy: boolean } | null;
   loadEarlier: { readonly loading: boolean; readonly onLoad: () => void } | null;
   now: Date;
+  /**
+   * An archived chat: every card still reads as it did, but none can be
+   * answered (a reply would start a turn), and pinned approvals are hidden.
+   */
+  readOnly?: boolean;
 }): JSX.Element {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -737,7 +755,7 @@ export function MessageList({
 
           {empty ? (
             <p className="my-auto text-center text-[15px] text-[var(--personal-text-secondary)]">
-              Send {botName} a message to get started.
+              {readOnly ? "No messages in this chat." : `Send ${botName} a message to get started.`}
             </p>
           ) : null}
 
@@ -841,7 +859,9 @@ export function MessageList({
               case "delegation":
                 return <div key={item.id}>{renderDelegation(item.task)}</div>;
               case "question":
-                return (
+                return lockCard(
+                  item.id,
+                  readOnly,
                   <QuestionCard
                     key={item.id}
                     card={item.card}
@@ -849,10 +869,12 @@ export function MessageList({
                     responding={respondingIds.has(item.card.requestId)}
                     onAnswer={onAnswerQuestion}
                     onDismiss={onDismissQuestion}
-                  />
+                  />,
                 );
               case "secret":
-                return (
+                return lockCard(
+                  item.id,
+                  readOnly,
                   <SecretRequestCard
                     key={item.id}
                     card={item.card}
@@ -860,20 +882,24 @@ export function MessageList({
                     responding={respondingIds.has(item.card.requestId)}
                     onProvide={onProvideSecret}
                     onDecline={onDeclineSecret}
-                  />
+                  />,
                 );
               case "login":
-                return (
+                return lockCard(
+                  item.id,
+                  readOnly,
                   <LoginRequestCard
                     key={item.id}
                     request={item.request}
                     botName={botName}
                     onProvide={(...args) => onProvideLogin?.(...args)}
                     onCancel={(requestId) => onCancelLogin?.(requestId)}
-                  />
+                  />,
                 );
               case "connection-approval":
-                return (
+                return lockCard(
+                  item.id,
+                  readOnly,
                   <ConnectionApprovalCard
                     key={item.id}
                     card={item.card}
@@ -885,10 +911,12 @@ export function MessageList({
                     responding={approvalRespondingIds.has(item.card.approvalId)}
                     onApprove={(approvalId) => onDecideConnectionApproval(approvalId, "approved")}
                     onDeny={(approvalId) => onDecideConnectionApproval(approvalId, "denied")}
-                  />
+                  />,
                 );
               case "lead-bot-change":
-                return (
+                return lockCard(
+                  item.id,
+                  readOnly,
                   <LeadBotChangeCard
                     key={item.id}
                     card={item.card}
@@ -897,10 +925,12 @@ export function MessageList({
                     onDecide={(changeId, changeHash, decision) =>
                       onDecideLeadBotChange?.(changeId, changeHash, decision)
                     }
-                  />
+                  />,
                 );
               case "memory-change":
-                return (
+                return lockCard(
+                  item.id,
+                  readOnly,
                   <MemoryChangeCard
                     key={item.id}
                     item={item.card}
@@ -909,7 +939,7 @@ export function MessageList({
                     onDecide={(changeId, changeHash, approve) =>
                       onDecideMemoryChange?.(changeId, changeHash, approve)
                     }
-                  />
+                  />,
                 );
               case "message":
                 return item.message.role === "user" ? (
@@ -980,7 +1010,7 @@ export function MessageList({
             </div>
           ))}
 
-          {approvals.map((approval) => (
+          {(readOnly ? NO_PINNED_APPROVALS : approvals).map((approval) => (
             <ApprovalCard
               key={approval.requestId}
               approval={approval}

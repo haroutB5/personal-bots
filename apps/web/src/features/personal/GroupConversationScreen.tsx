@@ -15,7 +15,7 @@ import {
   type PersonalBotId,
 } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Archive, ChevronLeft, Ellipsis } from "lucide-react";
+import { ChevronLeft, Ellipsis } from "lucide-react";
 
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { cn, randomUUID } from "~/lib/utils";
@@ -25,6 +25,7 @@ import { useEnvironmentThread, useRetryEnvironmentThread } from "~/state/threads
 import type { ChatMessage } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { ArchivedChatBar } from "./ArchivedChatBar";
 import { buildConversationItems } from "./conversationModel";
 import { commandFailureMessage } from "./commandFeedback";
 import { GroupAvatarCluster } from "./GroupAvatarCluster";
@@ -596,8 +597,9 @@ export function GroupConversationScreen({
             describeTurn={() => ""}
             renderDelegation={() => null}
             groupSpeaker={groupSpeaker}
+            readOnly={archived}
           />
-          {vote !== null ? (
+          {vote !== null && !archived ? (
             /* The same slot as the round card, and never at the same time as
                one: a parked round is either waiting on a budget or waiting on
                this decision. */
@@ -605,7 +607,7 @@ export function GroupConversationScreen({
               <GroupVoteCard card={vote} speakerOf={groupSpeaker} onDecide={onDecide} />
             </div>
           ) : null}
-          {card !== null ? (
+          {card !== null && !archived ? (
             /* Directly under the transcript and above the composer: the round
                ended at the end of the conversation, so that is where its card
                belongs, and it stays on screen without a scroll. Continue and
@@ -617,32 +619,17 @@ export function GroupConversationScreen({
           ) : null}
           {archived ? (
             /* Read-only: the history stays, the composer waits for Unarchive. */
-            <div className="personal-column shrink-0 px-4 pb-2">
-              <div
-                role="status"
-                className="flex min-h-14 items-center gap-3 rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] py-2 pr-2 pl-4"
-              >
-                <Archive
-                  aria-hidden="true"
-                  className="size-5 shrink-0 text-[var(--personal-text-secondary)]"
-                  strokeWidth={1.75}
-                />
-                <p className="min-w-0 flex-1 text-[15px] leading-5 text-[var(--personal-text)]">
-                  <span className="font-semibold">Archived.</span>{" "}
-                  <span className="text-[var(--personal-text-secondary)]">
-                    Unarchive to send messages again.
-                  </span>
-                </p>
-                <button
-                  type="button"
-                  disabled={unarchiving || laptopOffline}
-                  onClick={() => void onUnarchive()}
-                  className="flex h-11 shrink-0 items-center rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] px-4 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-50"
-                >
-                  {unarchiving ? "Unarchiving…" : "Unarchive"}
-                </button>
-              </div>
-            </div>
+            <ArchivedChatBar
+              hint="Unarchive to send messages again."
+              unarchiving={unarchiving}
+              deleting={deleting}
+              disabled={laptopOffline}
+              onUnarchive={() => void onUnarchive()}
+              onDelete={() => {
+                setDeleteError(null);
+                setDeleteOpen(true);
+              }}
+            />
           ) : (
             <PersonalComposer
               key={group.threadId}

@@ -126,9 +126,10 @@ function ThreadRowContent({ row, now }: { row: BotThreadRow; now: number }) {
 
 /**
  * One chat in the bot's list. Swipe left for Archive (Unarchive once
- * archived) and Delete; a tap opens the chat, or closes the row while it is
- * swiped open. Archived rows keep their buttons for mouse, keyboard and
- * VoiceOver; open chats have the same actions in the chat's own "..." menu.
+ * archived) and Delete; a tap opens the chat (an archived one read-only), or
+ * closes the row while it is swiped open. Archived rows keep their buttons for
+ * mouse, keyboard and VoiceOver; open chats have the same actions in the
+ * chat's own "..." menu.
  * Press and hold enters select mode (also in the list's "..." menu).
  */
 function ThreadRow({
@@ -191,11 +192,17 @@ function ThreadRow({
         ]}
       >
         {archived ? (
-          <div
-            {...longPress}
-            className={cn("flex min-h-12 items-center gap-3 py-1", NO_TOUCH_SELECT)}
-          >
-            <ThreadRowContent row={row} now={now} />
+          <div {...longPress} className={cn("flex items-center gap-3", NO_TOUCH_SELECT)}>
+            {/* Opens read-only: the history and an "Archived" bar, no composer. */}
+            <Link
+              to="/bots/$botId/$threadId"
+              params={{ botId, threadId: row.link.threadId }}
+              draggable={false}
+              aria-label={`${title}, archived`}
+              className="flex min-h-14 min-w-0 flex-1 items-center gap-3 py-2 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
+            >
+              <ThreadRowContent row={row} now={now} />
+            </Link>
             {/* Out of sight on touch screens, where the swipe carries them. */}
             <button
               type="button"

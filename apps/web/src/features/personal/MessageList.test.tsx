@@ -14,6 +14,7 @@ import { act, create, type ReactTestRenderer, type ReactTestInstance } from "rea
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 import type { ConversationItem } from "./conversationModel";
+import type { PendingApproval } from "@t3tools/client-runtime/pending-requests";
 import { MessageList } from "./MessageList";
 import type { QuestionCardItem, UserInputAnswers } from "./questionCards";
 import type { SecretRequestCardItem } from "./secretRequestCards";
@@ -637,4 +638,47 @@ it("keeps the transcript's hidden speaker labels inside the scroller", async () 
     }
     expect(inside).toBe(true);
   }
+});
+
+it("shows an archived chat's cards for reading but lets none of them be answered", async () => {
+  stubEnvironment();
+  const answered: Array<string> = [];
+  await act(async () => {
+    renderer = create(
+      <MessageList
+        {...BASE_PROPS}
+        readOnly
+        items={[questionItem(pendingCard())]}
+        onAnswerQuestion={(requestId) => answered.push(requestId)}
+      />,
+    );
+  });
+
+  // Still readable: the question and its options are on screen.
+  expect(
+    renderer!.root.findAll((node) => node.children.includes("What should I do first?")).length,
+  ).toBeGreaterThan(0);
+  // A disabled fieldset turns off every control inside the card.
+  const lock = renderer!.root.find((node) => node.type === "fieldset");
+  expect(lock.props.disabled).toBe(true);
+  expect(lock.findAll((node) => node.type === "button").length).toBeGreaterThan(0);
+  expect(answered).toEqual([]);
+});
+
+it("hides pinned approvals in an archived chat", async () => {
+  stubEnvironment();
+  const approval = {
+    requestId: "approval-1" as ApprovalRequestId,
+    requestKind: "command",
+    createdAt: "2026-09-14T10:00:00.000Z",
+    detail: "rm build",
+  } as unknown as PendingApproval;
+  await act(async () => {
+    renderer = create(<MessageList {...BASE_PROPS} approvals={[approval]} readOnly />);
+  });
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain("rm build");
+  await act(async () => {
+    renderer!.update(<MessageList {...BASE_PROPS} approvals={[approval]} />);
+  });
+  expect(JSON.stringify(renderer!.toJSON())).toContain("rm build");
 });

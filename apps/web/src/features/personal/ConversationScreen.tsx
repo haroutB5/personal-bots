@@ -53,6 +53,7 @@ import { perfOptimizationOn } from "./perfFlags";
 import { motionForConversationState } from "./avatarMotion";
 import { BotAvatar } from "./BotAvatar";
 import { AllChatsCount } from "./AllChatsCount";
+import { ArchivedChatBar } from "./ArchivedChatBar";
 import { CHAT_PROBLEM_BUTTON, ChatLoadProblem } from "./ChatLoadProblem";
 import { threadLoadProblem } from "./threadLoadProblem";
 import { BotMuteMenuItems, useSetBotMute } from "./BotMute";
@@ -192,12 +193,15 @@ export function ConversationScreen({
   const threadShell = useThreadShell(threadRef);
   const status = useThreadStatus(threadRef);
   useCloseChatNotifications(botId, threadIdParam);
+  // An archived chat opens read-only: the history, an "Archived" bar with
+  // Unarchive and Delete in the composer's place, and nothing that starts a
+  // turn or a provider session.
+  const link = list.data?.threads.find((candidate) => candidate.threadId === threadIdParam) ?? null;
+  const archived =
+    (threadShell?.archivedAt ?? null) !== null || (link?.archivedAt ?? null) !== null;
   // Reopened by a relaunch but deleted or archived since (deleting a bot
   // deletes its chats): back to Bots without a word.
-  useLeaveResumedChatIfGone(
-    `/bots/${botId}/${threadIdParam}`,
-    status === "deleted" || (threadShell?.archivedAt ?? null) !== null,
-  );
+  useLeaveResumedChatIfGone(`/bots/${botId}/${threadIdParam}`, status === "deleted" || archived);
 
   // A cold deep link (notification tap, PWA relaunch) makes this the first
   // screen: nothing else has loaded the bots list, and a query that failed
@@ -254,7 +258,12 @@ export function ConversationScreen({
   // Reading this chat right now means its own notifications stay off the
   // phone; every other chat still notifies.
   useReportViewingThread(environmentId, threadId, connectionPhase === "connected");
-  usePrewarmChatSession(environmentId, threadId, connectionPhase === "connected");
+  // Only once the shell says the chat is open: an archived one never warms a session.
+  usePrewarmChatSession(
+    environmentId,
+    threadId,
+    connectionPhase === "connected" && threadShell !== null && !archived,
+  );
   const { feed: computerFeed } = useComputerFeed(environmentId);
   const desktopStatus = useDesktopStatus(environmentId);
 
@@ -691,6 +700,17 @@ export function ConversationScreen({
     await navigate({ to: "/bots/$botId", params: { botId }, replace: true });
   };
 
+  const [unarchiving, setUnarchiving] = useState(false);
+  /** Stays on the chat: the shell clears its archivedAt and the composer comes back. */
+  const onUnarchive = async () => {
+    if (environmentId === null) return;
+    setUnarchiving(true);
+    setActionError(null);
+    const result = await archiveThread({ environmentId, input: { threadId, archived: false } });
+    setUnarchiving(false);
+    setActionError(commandFailureMessage(result, "Couldn't unarchive this chat. Try again."));
+  };
+
   const { send: sendWrapup, sending: wrapupSending } = useWrapupChat(
     environmentId,
     thread,
@@ -890,7 +910,9 @@ export function ConversationScreen({
               ) : null}
             </MenuItem>
             <MenuItem
-              disabled={disabledReason !== null || turnBusy || wrapupSending || thread === null}
+              disabled={
+                archived || disabledReason !== null || turnBusy || wrapupSending || thread === null
+              }
               onClick={() => void onWrapup()}
             >
               Wrapup chat
@@ -909,7 +931,13 @@ export function ConversationScreen({
             <MenuItem disabled={thread === null} onClick={() => setRenameOpen(true)}>
               Rename chat
             </MenuItem>
-            <MenuItem onClick={() => void onArchive()}>Archive chat</MenuItem>
+            {archived ? (
+              <MenuItem disabled={unarchiving} onClick={() => void onUnarchive()}>
+                Unarchive chat
+              </MenuItem>
+            ) : (
+              <MenuItem onClick={() => void onArchive()}>Archive chat</MenuItem>
+            )}
             <MenuItem variant="destructive" onClick={() => void onDeleteChat()}>
               Delete chat
             </MenuItem>
@@ -963,7 +991,7 @@ export function ConversationScreen({
             errorDetail={actionError === null ? (turnNotice?.detail ?? null) : null}
             errorTone={actionError === null ? (turnNotice?.tone ?? "danger") : "danger"}
             errorRetry={
-              turnNotice?.canRetry === true && !turnBusy
+              turnNotice?.canRetry === true && !turnBusy && !archived
                 ? {
                     onRetry: () => {
                       void failedTurnRetry.retry().then((ok) => {
@@ -978,6 +1006,7 @@ export function ConversationScreen({
             now={now}
             describeTurn={describeTurn}
             renderDelegation={renderDelegation}
+            readOnly={archived}
           />
           <ConversationDesktopLine
             environmentId={environmentId}
@@ -992,29 +1021,42 @@ export function ConversationScreen({
               agentTurnRunning={conversationState === "working"}
             />
           )}
-          {showRoutinesStrip && conversationState !== "needs_help" && !sidePanelOpen ? (
+          {showRoutinesStrip &&
+          conversationState !== "needs_help" &&
+          !sidePanelOpen &&
+          !archived ? (
             <ConversationRoutinesPanel
               environmentId={environmentId}
               botId={botId}
               onHide={() => setPersonalPreference("showRoutinesStrip", false)}
             />
           ) : null}
-          <PersonalComposer
-            // One composer per chat: its in-flight send, error and queued
-            // state belong to the chat it was sent from.
-            key={threadId}
-            environmentId={environmentId}
-            threadId={threadId}
-            thread={thread}
-            botName={botName}
-            botModelSelection={bot?.modelSelection ?? null}
-            disabledReason={disabledReason}
-            working={turnBusy}
-            queuedNotice={false}
-            canInterrupt={interruptInput !== null}
-            onInterrupt={onInterrupt}
-            onPendingChange={(update) => setPending((current) => update(current))}
-          />
+          {archived ? (
+            <ArchivedChatBar
+              hint="Unarchive to send messages again."
+              unarchiving={unarchiving}
+              disabled={laptopOffline}
+              onUnarchive={() => void onUnarchive()}
+              onDelete={() => void onDeleteChat()}
+            />
+          ) : (
+            <PersonalComposer
+              // One composer per chat: its in-flight send, error and queued
+              // state belong to the chat it was sent from.
+              key={threadId}
+              environmentId={environmentId}
+              threadId={threadId}
+              thread={thread}
+              botName={botName}
+              botModelSelection={bot?.modelSelection ?? null}
+              disabledReason={disabledReason}
+              working={turnBusy}
+              queuedNotice={false}
+              canInterrupt={interruptInput !== null}
+              onInterrupt={onInterrupt}
+              onPendingChange={(update) => setPending((current) => update(current))}
+            />
+          )}
         </>
       ) : (
         <div className="flex flex-1 items-center justify-center px-8 text-center text-[15px] text-[var(--personal-text-secondary)]">
