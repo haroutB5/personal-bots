@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   otherCommand: (() => {}) as (...args: unknown[]) => unknown,
   deleteChat: (() => {}) as (...args: unknown[]) => unknown,
   prewarm: [] as boolean[],
+  viewing: [] as boolean[],
   messageListProps: [] as Array<Record<string, unknown>>,
   composerRenders: 0,
   retry: (() => {}) as (...args: unknown[]) => unknown,
@@ -211,7 +212,11 @@ vi.mock("./DiagnosticsOverlay", () => ({
   DiagnosticsOverlay: () => null,
 }));
 vi.mock("./useKeyboardInset", () => ({ useKeyboardInset: () => 0 }));
-vi.mock("./useReportViewingThread", () => ({ useReportViewingThread: () => {} }));
+vi.mock("./useReportViewingThread", () => ({
+  useReportViewingThread: (_environmentId: unknown, _threadId: unknown, connected: boolean) => {
+    state.viewing.push(connected);
+  },
+}));
 vi.mock("./perfRum", () => ({
   markMessageSent: () => {},
   observeChatMessages: () => {},
@@ -315,6 +320,7 @@ beforeEach(() => {
   state.sendWrapup = vi.fn(async () => true);
   state.startNewChat = vi.fn(async () => undefined);
   state.prewarm = [];
+  state.viewing = [];
   state.messageListProps = [];
   state.composerRenders = 0;
 });
@@ -377,6 +383,9 @@ it("opens an archived chat read-only: the Archived bar, no composer, no session,
   // Never asked to warm a provider session.
   expect(state.prewarm.length).toBeGreaterThan(0);
   expect(state.prewarm.every((connected) => connected === false)).toBe(true);
+  // Not reported as viewed either: that writes the chat's last-viewed time.
+  expect(state.viewing.length).toBeGreaterThan(0);
+  expect(state.viewing.every((connected) => connected === false)).toBe(true);
 
   const props = lastMessageListProps();
   expect(props.readOnly).toBe(true);
@@ -418,11 +427,13 @@ it("Unarchive archives=false in place, and the composer and session come back", 
   state.shell = { title: "Plans", archivedAt: null };
   state.linkArchivedAt = null;
   state.prewarm = [];
+  state.viewing = [];
   await rerender();
 
   expect(hasComposer()).toBe(true);
   expect(hasArchivedBar()).toBe(false);
   expect(state.prewarm.at(-1)).toBe(true);
+  expect(state.viewing.at(-1)).toBe(true);
   expect(lastMessageListProps().readOnly).toBe(false);
   expect(buttonsLabelled("Archive chat")).toHaveLength(1);
   expect(buttonsLabelled("Unarchive chat")).toHaveLength(0);
@@ -473,6 +484,9 @@ it("a chat archived only on the bots-list link is read-only too", async () => {
   expect(hasComposer()).toBe(false);
   expect(hasArchivedBar()).toBe(true);
   expect(state.prewarm.every((connected) => connected === false)).toBe(true);
+  // Not reported as viewed either: that writes the chat's last-viewed time.
+  expect(state.viewing.length).toBeGreaterThan(0);
+  expect(state.viewing.every((connected) => connected === false)).toBe(true);
   expect(lastMessageListProps().readOnly).toBe(true);
   expect(lastMessageListProps().errorRetry).toBeNull();
   expect(buttonsLabelled("Unarchive chat")).toHaveLength(1);
@@ -486,6 +500,7 @@ it("an open chat keeps its composer, Retry and session prewarm", async () => {
   expect(hasComposer()).toBe(true);
   expect(hasArchivedBar()).toBe(false);
   expect(state.prewarm.at(-1)).toBe(true);
+  expect(state.viewing.at(-1)).toBe(true);
   const props = lastMessageListProps();
   expect(props.readOnly).toBe(false);
   expect(props.errorRetry).not.toBeNull();

@@ -257,13 +257,13 @@ export function ConversationScreen({
   const connectionPhase = usePersonalConnectionPhase();
   // Reading this chat right now means its own notifications stay off the
   // phone; every other chat still notifies.
-  useReportViewingThread(environmentId, threadId, connectionPhase === "connected");
-  // Only once the shell says the chat is open: an archived one never warms a session.
-  usePrewarmChatSession(
-    environmentId,
-    threadId,
-    connectionPhase === "connected" && threadShell !== null && !archived,
-  );
+  // Both wait until the shell and the bots list say whether the chat is
+  // archived. An archived chat is only read: no session is warmed, and it is
+  // not reported as viewed (that writes its last-viewed time on the server).
+  const openForWork =
+    threadShell !== null && (list.data !== null || list.error !== null) && !archived;
+  useReportViewingThread(environmentId, threadId, connectionPhase === "connected" && openForWork);
+  usePrewarmChatSession(environmentId, threadId, connectionPhase === "connected" && openForWork);
   const { feed: computerFeed } = useComputerFeed(environmentId);
   const desktopStatus = useDesktopStatus(environmentId);
 
