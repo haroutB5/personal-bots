@@ -843,6 +843,7 @@ export function MessageList({
                       label={chatNoticeLabel(item.notice, item.message.text, now.getTime())}
                       memoryId={noteUndo.memoryId}
                       undo={noteUndo.undo}
+                      readOnly={readOnly}
                     />
                   );
                 }

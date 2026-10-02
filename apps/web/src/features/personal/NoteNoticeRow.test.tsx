@@ -32,7 +32,7 @@ afterEach(() => {
   calls.entry = null;
 });
 
-const render = (undo: "archive" | "restore") => {
+const render = (undo: "archive" | "restore", readOnly = false) => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   act(() => {
     renderer = create(
@@ -41,6 +41,7 @@ const render = (undo: "archive" | "restore") => {
         label="Saved a note: Likes tea."
         memoryId="m-1"
         undo={undo}
+        readOnly={readOnly}
       />,
     );
   });
@@ -103,5 +104,14 @@ describe("Security (1.60.22): a used Undo stays done after a reload", () => {
         supersededReason: "Forgotten by a bot.",
       }),
     ).toBeNull();
+  });
+});
+
+describe("QA (1.60.22): archived chats", () => {
+  it("a read-only note line has no Undo and changes nothing", () => {
+    const root = render("archive", true);
+    expect(undoButton(root)).toBeUndefined();
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Saved a note: Likes tea.");
+    expect(calls.undoNote).toEqual([]);
   });
 });

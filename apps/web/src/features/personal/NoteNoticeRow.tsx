@@ -44,11 +44,14 @@ export function NoteNoticeRow({
   label,
   memoryId,
   undo,
+  readOnly = false,
 }: {
   environmentId: EnvironmentId;
   label: string;
   memoryId: string;
   undo: "archive" | "restore";
+  /** An archived chat: the line reads as it did, with no Undo (like its cards). */
+  readOnly?: boolean;
 }): JSX.Element {
   const undoNote = useAtomCommand(personalMemoryUndoNote);
   const restore = useAtomCommand(personalMemoryRestore);
@@ -58,7 +61,7 @@ export function NoteNoticeRow({
   const settled = noteUndoSettled(undo, current.data ?? null);
 
   const onUndo = async () => {
-    if (state !== "idle") return;
+    if (state !== "idle" || readOnly) return;
     setState("busy");
     setError(null);
     const input = { memoryId: PersonalMemoryId.make(memoryId) };
@@ -77,7 +80,7 @@ export function NoteNoticeRow({
       className="mx-auto max-w-[90%] text-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
     >
       <span className="break-words">{label}</span>{" "}
-      {state === "done" || settled !== null ? (
+      {readOnly ? null : state === "done" || settled !== null ? (
         <span className="font-medium">
           · {state === "done" ? (undo === "archive" ? "Undone" : "Restored") : settled}
         </span>

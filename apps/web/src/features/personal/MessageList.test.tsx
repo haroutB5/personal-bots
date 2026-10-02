@@ -47,6 +47,10 @@ vi.mock("~/session-logic", () => ({
   ],
 }));
 vi.mock("./ToolDetails", () => ({ ToolDetails: () => null }));
+vi.mock("./NoteNoticeRow", () => ({
+  NoteNoticeRow: (props: { label: string; readOnly?: boolean }) =>
+    `note-row:${props.label}:${props.readOnly === true ? "read-only" : "live"}`,
+}));
 vi.mock("./AttachmentPreview", () => ({
   AttachmentPreview: ({
     attachment,
@@ -681,4 +685,28 @@ it("hides pinned approvals in an archived chat", async () => {
     renderer!.update(<MessageList {...BASE_PROPS} approvals={[approval]} />);
   });
   expect(JSON.stringify(renderer!.toJSON())).toContain("rm build");
+});
+
+it("QA (1.60.22): a note line in an archived chat is read-only, with no Undo", async () => {
+  stubEnvironment();
+  const noteItem = {
+    kind: "notice",
+    id: "personal-notice-memory-1",
+    message: {
+      id: "personal-notice-memory-1",
+      role: "assistant",
+      text: "Saved a note: Likes tea.",
+    },
+    notice: { notice: "memory-saved", provider: "Memory", memoryId: "m-1", undo: "archive" },
+  } as unknown as ConversationItem;
+  await act(async () => {
+    renderer = create(<MessageList {...BASE_PROPS} readOnly items={[noteItem]} />);
+  });
+  expect(JSON.stringify(renderer!.toJSON())).toContain(
+    "note-row:Saved a note: Likes tea.:read-only",
+  );
+  await act(async () => {
+    renderer!.update(<MessageList {...BASE_PROPS} items={[noteItem]} />);
+  });
+  expect(JSON.stringify(renderer!.toJSON())).toContain("note-row:Saved a note: Likes tea.:live");
 });
