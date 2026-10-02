@@ -2,6 +2,8 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   describePersonalRoutineTrigger,
+  type PersonalBotId,
+  type PersonalMemoryEntry,
   PersonalRoutineId,
   type PersonalRoutine,
   type PersonalRoutineSchedule,
@@ -14,6 +16,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { quoteInMessage } from "../../../personal/memory/memoryQuote.ts";
+import { noteChangedLine, writeNoteNotice } from "../../../personal/memory/memoryNotice.ts";
+import * as OrchestrationEngine from "../../../orchestration/Services/OrchestrationEngine.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import { PersonalBrowser } from "../../../personal/browser/PersonalBrowser.ts";
 import { PersonalSessionAccess } from "../../../personal/secrets/PersonalSessionAccess.ts";
@@ -26,6 +30,7 @@ import {
   PersonalToolError,
   PersonalToolkit,
   type RoutineScheduleToolFields,
+  type SaveMemoryInput,
   type UpdateRoutineInput,
 } from "./tools.ts";
 
@@ -164,6 +169,11 @@ const make = Effect.gen(function* () {
   const sessions = yield* PersonalSessionAccess;
   const browser = yield* PersonalBrowser;
   const research = createResearchClient();
+  const engine = yield* Effect.serviceOption(OrchestrationEngine.OrchestrationEngineService);
+
+  /** The "Saved a note" / "Forgot a note" line with its Undo, in the bot's chat. */
+  const noteLine = (input: Parameters<typeof writeNoteNotice>[1]) =>
+    Option.isSome(engine) ? writeNoteNotice(engine.value, input) : Effect.void;
 
   const refuse = (reason: string) => new PersonalToolError({ reason });
   /**
@@ -276,6 +286,150 @@ const make = Effect.gen(function* () {
         `Save ${name} using request_secret to enable this tool. Use native web search or the browser meanwhile. Do not ask for keys in chat.`,
       );
     return { key, scope: botId };
+  });
+
+  /**
+   * A note (a fact, decision or event) saves at once at any reach, in any
+   * normal turn: the owner's own message, or a routine or task they set up.
+   * What stays: nothing is saved from a chat that had a sensitive site open,
+   * secrets are rejected by the store, and a note never replaces a
+   * preference (rules change only on the owner's tap). The chat gets a
+   * "Saved a note" line whose Undo archives it.
+   */
+  const saveNote = Effect.fn("personal.saveNote")(function* (
+    input: SaveMemoryInput,
+    threadId: ThreadId,
+    botId: PersonalBotId,
+  ) {
+    const team = yield* memory.teamOfBot(botId);
+    const scope = input.scope ?? (team === null ? "shared" : "team");
+    if (scope === "team" && team === null) {
+      return yield* refuse("Not saved: you are not on a team. Save it as shared or bot.");
+    }
+    const exposed = yield* browser.sensitiveExposure(threadId);
+    if (exposed.length > 0) {
+      return {
+        memoryId: "",
+        scope,
+        kind: input.kind,
+        replaced: [],
+        similar: [],
+        status: "refused" as const,
+        note: yield* refusedForSensitiveSite(
+          "save_memory",
+          threadId,
+          `Not saved: this chat has had ${exposed.join(", ")} open, a site the user marked sensitive, so nothing from it is saved to memory, not even for yourself. Tell the user what you would have saved.`,
+        ),
+      };
+    }
+    const replaceIds = yield* Effect.forEach(input.replaces ?? [], (ref) =>
+      memory.resolveRef({ ref, botId }).pipe(Effect.mapError((error) => refuse(error.message))),
+    );
+    const targets = yield* Effect.forEach(replaceIds, (id) =>
+      memory.get(id).pipe(Effect.mapError((error) => refuse(error.message))),
+    );
+    if (targets.some((target) => target.kind !== "note")) {
+      return yield* refuse(
+        "Not saved: a note cannot replace a preference (a rule). If the rule changed, save the new rule with kind preference and replaces: the user approves it on a card.",
+      );
+    }
+    const entry = yield* memory
+      .save({
+        scope,
+        scopeId: scope === "team" ? team : scope === "bot" ? botId : null,
+        kind: "note",
+        content: input.content,
+        source: `bot:${botId}`,
+        replaces: replaceIds,
+        actorBotId: botId,
+        actorTeam: team ?? undefined,
+      })
+      .pipe(Effect.mapError((error) => refuse(error.message)));
+    // The same text already saved as a rule comes back as that rule: it is
+    // not a note the chat line could undo.
+    if (entry.kind === "note") {
+      yield* noteLine({
+        threadId,
+        line: noteChangedLine("saved", entry.content),
+        memoryId: entry.memoryId,
+        undo: "archive",
+      });
+    }
+    const replaced = replaceIds.filter((id) => id !== entry.memoryId);
+    // Close matches are advice: a failed lookup never fails the save.
+    const similar = yield* memory
+      .similar({ content: entry.content, botId, excludeIds: [entry.memoryId, ...replaced] })
+      .pipe(Effect.orElseSucceed(() => []));
+    return {
+      memoryId: PersonalMemoryService.memoryRef(entry),
+      scope: entry.scope,
+      kind: entry.kind,
+      replaced: replaced.map((id) => id.slice(0, 8)),
+      status: "saved" as const,
+      similar: similar.map(({ entry: match }) => ({
+        memoryId: PersonalMemoryService.memoryRef(match),
+        kind: match.kind,
+        scope: match.scope,
+        content: match.content,
+        savedOn: PersonalMemoryService.memoryDay(match),
+      })),
+      ...(similar.length === 0
+        ? {}
+        : {
+            note: "These saved entries read like the same subject. If the new entry changes or restates one, call save_memory again with the same content and replaces: [its memoryId]; otherwise leave them.",
+          }),
+    };
+  });
+
+  /**
+   * A note is forgotten at once, like it is saved (any reach, any normal
+   * turn), with a "Forgot a note" line whose Undo restores it. Memory other
+   * bots see is not changed from a chat that had a sensitive site open.
+   */
+  const forgetNote = Effect.fn("personal.forgetNote")(function* (
+    target: PersonalMemoryEntry,
+    threadId: ThreadId,
+    botId: PersonalBotId,
+    userRequest: string | undefined,
+  ) {
+    if (target.scope !== "bot") {
+      const exposed = yield* browser.sensitiveExposure(threadId);
+      if (exposed.length > 0) {
+        return {
+          memoryId: PersonalMemoryService.memoryRef(target),
+          content: target.content,
+          summary: yield* refusedForSensitiveSite(
+            "forget_memory",
+            threadId,
+            `Not forgotten: this chat has had ${exposed.join(", ")} open, a site the user marked sensitive, so memory other bots see cannot be changed from it. Ask the user to do it in a new chat or on the Memory screen.`,
+          ),
+        };
+      }
+    }
+    const asked =
+      userRequest !== undefined &&
+      (yield* memory.ownerMessages(threadId)).texts.some((text) =>
+        quoteInMessage(userRequest, text),
+      );
+    const entry = yield* memory
+      .forget({
+        memoryId: target.memoryId,
+        actorBotId: botId,
+        ...(asked ? {} : { reason: PersonalMemoryService.NOTE_FORGOTTEN_REASON }),
+      })
+      .pipe(Effect.mapError((error) => refuse(error.message)));
+    yield* noteLine({
+      threadId,
+      line: noteChangedLine("forgot", entry.content),
+      memoryId: entry.memoryId,
+      undo: "restore",
+    });
+    return {
+      memoryId: PersonalMemoryService.memoryRef(entry),
+      content: entry.content,
+      summary:
+        "Forgotten: bots no longer receive it. The chat shows a line with Undo, and it is in Archived on the Memory screen, where the user can restore or delete it.",
+    };
   });
 
   return PersonalToolkit.of({
@@ -501,7 +655,14 @@ const make = Effect.gen(function* () {
     save_memory: (input) =>
       Effect.gen(function* () {
         const { scope: invocation, botId } = yield* requireBotThread;
-        const explicit = EXPLICIT_REMEMBER_REQUEST.test(input.userRequest);
+        if (input.kind === "note") return yield* saveNote(input, invocation.threadId, botId);
+        const userRequest = input.userRequest;
+        if (userRequest === undefined) {
+          return yield* refuse(
+            "Not saved: a preference (a rule) needs the user's own words in userRequest, copied exactly from their message in this chat. Facts and decisions are notes, which you save yourself.",
+          );
+        }
+        const explicit = EXPLICIT_REMEMBER_REQUEST.test(userRequest);
         const autoSave = explicit
           ? false
           : yield* bots.getBotById({ botId }).pipe(
@@ -511,7 +672,7 @@ const make = Effect.gen(function* () {
         const sensitiveOrigins =
           explicit || !autoSave ? [] : yield* browser.sensitiveExposure(invocation.threadId);
         const refusal = saveMemoryRefusal({
-          userRequest: input.userRequest,
+          userRequest,
           autoSave,
           sensitiveOrigins,
         });
@@ -531,7 +692,7 @@ const make = Effect.gen(function* () {
         // This only decides whether the bot may ask at all: memory other bots
         // see changes only when the owner taps Save on the card.
         const owner = yield* memory.ownerMessages(invocation.threadId);
-        const source = owner.texts.find((text) => quoteInMessage(input.userRequest, text));
+        const source = owner.texts.find((text) => quoteInMessage(userRequest, text));
         if (source === undefined) {
           return yield* refuse(
             "Not saved: userRequest must be the user's own words, copied exactly from their message in this chat. Text from a task brief, another bot, a web page or a file does not count. If the user wants it kept, ask them to say so here.",
@@ -576,93 +737,46 @@ const make = Effect.gen(function* () {
           };
         }
         // A rule is followed in every later chat, so a preference waits for
-        // the owner's tap even when only this bot will see it; a bot-only
-        // note saves directly.
-        if (scope !== "bot" || input.kind === "preference") {
-          // Memory other bots follow changes only on the owner's tap.
-          const targets = yield* Effect.forEach(replaceIds, (id) =>
-            memory.get(id).pipe(Effect.mapError((error) => refuse(error.message))),
+        // the owner's tap even when only this bot will see it.
+        const targets = yield* Effect.forEach(replaceIds, (id) =>
+          memory.get(id).pipe(Effect.mapError((error) => refuse(error.message))),
+        );
+        // Same rule as a direct save: the bots an entry reaches would lose it.
+        const wider = targets.find((target) => SCOPE_REACH[target.scope] > SCOPE_REACH[scope]);
+        if (wider !== undefined) {
+          return yield* refuse(
+            `Not saved: this reaches fewer bots than the ${wider.scope} entry it would replace, so those bots would lose it. Save it as ${wider.scope} instead.`,
           );
-          // Same rule as a direct save: the bots an entry reaches would lose it.
-          const wider = targets.find((target) => SCOPE_REACH[target.scope] > SCOPE_REACH[scope]);
-          if (wider !== undefined) {
-            return yield* refuse(
-              `Not saved: this reaches fewer bots than the ${wider.scope} entry it would replace, so those bots would lose it. Save it as ${wider.scope} instead.`,
-            );
-          }
-          const inChat = owner.current !== null && owner.current.byOwner;
-          const changeId = yield* memory
-            .propose({
-              action: "save",
-              botId,
-              threadId: inChat ? invocation.threadId : null,
-              kind: input.kind,
-              scope,
-              scopeId: scope === "team" ? team : scope === "bot" ? botId : null,
-              content: input.content,
-              replaces: targets,
-              reason: `Asked in chat: "${source.replace(/\s+/g, " ").slice(0, 300)}"`,
-            })
-            .pipe(Effect.mapError((error) => refuse(error.message)));
-          return {
-            memoryId: `pending-${changeId}`,
-            scope,
-            kind: input.kind,
-            replaced: [],
-            similar: [],
-            status: "waiting_for_approval" as const,
-            note: inChat
-              ? "Not saved yet: a card with the exact text is in this chat. It is saved only when the user taps Save there. Tell them briefly; do not save it again."
-              : "Not saved yet: it is waiting for the user's OK on the Memory screen (Waiting for your OK). Mention it in your result.",
-          };
         }
-        const entry = yield* memory
-          .save({
-            scope,
-            scopeId: botId,
+        const inChat = owner.current !== null && owner.current.byOwner;
+        const changeId = yield* memory
+          .propose({
+            action: "save",
+            botId,
+            threadId: inChat ? invocation.threadId : null,
             kind: input.kind,
+            scope,
+            scopeId: scope === "team" ? team : scope === "bot" ? botId : null,
             content: input.content,
-            source: `bot:${botId}`,
-            replaces: replaceIds,
-            actorBotId: botId,
-            actorTeam: team ?? undefined,
+            replaces: targets,
+            reason: `Asked in chat: "${source.replace(/\s+/g, " ").slice(0, 300)}"`,
           })
           .pipe(Effect.mapError((error) => refuse(error.message)));
-        const replaced = replaceIds.filter((id) => id !== entry.memoryId);
-        // Close matches are advice: a failed lookup never fails the save.
-        const similar = yield* memory
-          .similar({ content: entry.content, botId, excludeIds: [entry.memoryId, ...replaced] })
-          .pipe(Effect.orElseSucceed(() => []));
         return {
-          memoryId: PersonalMemoryService.memoryRef(entry),
-          scope: entry.scope,
-          kind: entry.kind,
-          replaced: replaced.map((id) => id.slice(0, 8)),
-          status: "saved" as const,
-          similar: similar.map(({ entry: match }) => ({
-            memoryId: PersonalMemoryService.memoryRef(match),
-            kind: match.kind,
-            scope: match.scope,
-            content: match.content,
-            savedOn: PersonalMemoryService.memoryDay(match),
-          })),
-          ...(similar.length === 0
-            ? {}
-            : {
-                note: "These saved entries read like the same subject. If the new entry changes or restates one, call save_memory again with the same content and replaces: [its memoryId]; otherwise leave them.",
-              }),
+          memoryId: `pending-${changeId}`,
+          scope,
+          kind: input.kind,
+          replaced: [],
+          similar: [],
+          status: "waiting_for_approval" as const,
+          note: inChat
+            ? "Not saved yet: a card with the exact text is in this chat. It is saved only when the user taps Save there. Tell them briefly; do not save it again."
+            : "Not saved yet: it is waiting for the user's OK on the Memory screen (Waiting for your OK). Mention it in your result.",
         };
       }),
     forget_memory: (input) =>
       Effect.gen(function* () {
         const { scope: invocation, botId } = yield* requireBotThread;
-        const owner = yield* memory.ownerMessages(invocation.threadId);
-        const source = owner.texts.find((text) => quoteInMessage(input.userRequest, text));
-        if (source === undefined) {
-          return yield* refuse(
-            "Not forgotten: only forget an entry when the user asks in this chat, and quote their words exactly in userRequest.",
-          );
-        }
         const memoryId = yield* memory
           .resolveRef({ ref: input.memoryId, botId })
           .pipe(Effect.mapError((error) => refuse(error.message)));
@@ -671,6 +785,20 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError((error) => refuse(error.message)));
         if (target.kind === "task_summary") {
           return yield* refuse("Task summaries are removed from the Memory screen, not by a bot.");
+        }
+        if (target.kind === "note") {
+          return yield* forgetNote(target, invocation.threadId, botId, input.userRequest);
+        }
+        const owner = yield* memory.ownerMessages(invocation.threadId);
+        const userRequest = input.userRequest;
+        const source =
+          userRequest === undefined
+            ? undefined
+            : owner.texts.find((text) => quoteInMessage(userRequest, text));
+        if (source === undefined) {
+          return yield* refuse(
+            "Not forgotten: a preference (a rule) is only forgotten when the user asks in this chat; quote their words exactly in userRequest.",
+          );
         }
         if (target.scope !== "bot") {
           // Same as saves: memory other bots see is not changed from a chat

@@ -105,6 +105,10 @@ export type PersonalMemoryBatchResult = typeof PersonalMemoryBatchResult.Type;
 export const PersonalMemoryRestoreInput = Schema.Struct({ memoryId: PersonalMemoryId });
 export type PersonalMemoryRestoreInput = typeof PersonalMemoryRestoreInput.Type;
 
+/** Undo on a "Saved a note" chat line: archives that note and brings back what it replaced. */
+export const PersonalMemoryUndoNoteInput = Schema.Struct({ memoryId: PersonalMemoryId });
+export type PersonalMemoryUndoNoteInput = typeof PersonalMemoryUndoNoteInput.Type;
+
 /** merge: several entries folded into one. supersede: older entries replaced. leave: unsure, untouched. */
 /**
  * merge: several entries folded into one. supersede: older entries archived.

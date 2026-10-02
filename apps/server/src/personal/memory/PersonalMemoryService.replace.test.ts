@@ -413,3 +413,50 @@ it.effect("owner messages leave out task briefs, relays and notices", () =>
     expect(owner.texts).toEqual(["Remember I take my coffee black."]);
   }).pipe(Effect.provide(TestLayer)),
 );
+
+it.effect("1.60.22: Undo of a saved note archives it and brings back the notes it replaced", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    const old = yield* memory.save({
+      scope: "shared",
+      scopeId: null,
+      kind: "note",
+      content: "Backend runs Sonnet 5.5 high.",
+      source: `bot:${BOT_A}`,
+    });
+    const changed = yield* memory.save({
+      scope: "shared",
+      scopeId: null,
+      kind: "note",
+      content: "Backend runs Opus 5.5 medium.",
+      source: `bot:${BOT_A}`,
+      replaces: [old.memoryId],
+      actorBotId: BOT_A,
+    });
+    const undone = yield* memory.undoNote({ memoryId: changed.memoryId });
+    expect(undone.supersededAt).not.toBeNull();
+    expect(undone.supersededReason).toBe("Undone from the chat.");
+    expect((yield* memory.list({})).map((entry) => entry.memoryId)).toEqual([old.memoryId]);
+    // A second tap changes nothing.
+    const again = yield* memory.undoNote({ memoryId: changed.memoryId });
+    expect(again.version).toBe(undone.version);
+    expect((yield* memory.list({})).map((entry) => entry.memoryId)).toEqual([old.memoryId]);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("1.60.22: Undo never archives a preference", () =>
+  Effect.gen(function* () {
+    const memory = yield* PersonalMemoryService;
+    const rule = yield* memory.save({
+      scope: "shared",
+      scopeId: null,
+      kind: "preference",
+      content: "Quote coin prices in USD.",
+      source: `bot:${BOT_A}`,
+    });
+    const error = yield* memory.undoNote({ memoryId: rule.memoryId }).pipe(Effect.flip);
+    expect(error.message).toContain("Only a note");
+    expect((yield* memory.list({})).map((entry) => entry.memoryId)).toEqual([rule.memoryId]);
+  }).pipe(Effect.provide(TestLayer)),
+);

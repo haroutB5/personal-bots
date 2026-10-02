@@ -236,10 +236,12 @@ export const SaveMemoryInput = Schema.Struct({
     description:
       "One fact or rule per entry, as one self-contained sentence, dated when it can change (e.g. '(2026-10-02) Backend runs Opus 5.5.'), under about 300 characters.",
   }),
-  userRequest: TrimmedNonEmptyString.annotate({
-    description:
-      "The user's own words, copied verbatim from their message in this chat: their ask to remember this (e.g. 'remember that I take my coffee black'), or, when your instructions say you have standing permission to save, the message the fact came from. The server checks these words against the user's real messages.",
-  }),
+  userRequest: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description:
+        "Required for a preference, not needed for a note. The user's own words, copied verbatim from their message in this chat: their ask to remember this rule (e.g. 'remember to quote prices in USD'), or, when your instructions say you have standing permission to save, the message the rule came from. The server checks these words against the user's real messages.",
+    }),
+  ),
   kind: Schema.Literals(["note", "preference"]).annotate({
     description:
       "Required. preference: a standing instruction or rule the user wants bots to follow (always / never / when X do Y, how to report, who does what). Every bot it reaches gets every preference in every turn. note: a fact about the user, their things, a decision or an event; notes are looked up when relevant.",
@@ -264,10 +266,12 @@ export const ForgetMemoryInput = Schema.Struct({
     description:
       "The id of the entry to forget, as shown in your memory block or by search_memory.",
   }),
-  userRequest: TrimmedNonEmptyString.annotate({
-    description:
-      "The user's own words, copied verbatim from their message in this chat, asking you to forget or drop it.",
-  }),
+  userRequest: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description:
+        "Required to forget a preference, not needed for a note. The user's own words, copied verbatim from their message in this chat, asking you to forget or drop it.",
+    }),
+  ),
 });
 export type ForgetMemoryInput = typeof ForgetMemoryInput.Type;
 
@@ -390,7 +394,7 @@ const SearchMemoryTool = Tool.make("search_memory", {
 
 const ForgetMemoryTool = Tool.make("forget_memory", {
   description:
-    "Forget a saved memory entry when the user asks you to (it is wrong, out of date, or they no longer want it kept). Pass the user's words verbatim in userRequest; they must come from the user's own message in this chat. Bots stop receiving the entry at once; it moves to Archived on the Memory screen, where the user can restore or delete it. An entry other bots see is never forgotten by you: the user gets a Forget / Keep it card. To change an entry rather than drop it, use save_memory with replaces.",
+    "Forget a saved memory entry that is wrong, out of date, or the user no longer wants kept. A note is forgotten at once, without asking (not from a chat that has had a site the user marked sensitive open, unless it is your own bot-only note); the chat shows a line with Undo. A preference (a rule) is forgotten only when the user asks in this chat: pass their words verbatim in userRequest; your own bot-only preference is forgotten at once, and one other bots see becomes a Forget / Keep it card for the user. Forgotten entries move to Archived on the Memory screen, where the user can restore or delete them. To change an entry rather than drop it, use save_memory with replaces.",
   parameters: ForgetMemoryInput,
   success: ForgetMemoryResult,
   failure: PersonalToolFailure,
@@ -404,7 +408,7 @@ const ForgetMemoryTool = Tool.make("forget_memory", {
 
 const SaveMemoryTool = Tool.make("save_memory", {
   description:
-    "Save a fact or rule to long-term memory when the user has asked you to remember something. Pass their words verbatim in userRequest: the server checks they are in the user's own message in this chat and refuses the save unless those words ask for it, with a phrase such as 'remember', 'don't forget', 'keep in mind', 'save this', 'note that down' or 'for future reference'. The user can give a bot standing permission to save without being asked; your instructions say so when you have it, and only then is a save without those words accepted (still from the user's own words, in a chat the user started, and never in a chat that has had a site the user marked sensitive open). Nothing is saved from a chat that has had a site the user marked sensitive open, not even for yourself. Choose kind carefully: rules are preferences, facts are notes. Write one fact per entry, dated, under about 300 characters. Keep memory current: when a fact or rule changed, pass the old entry's id in replaces so the new one supersedes it instead of sitting beside it; the result lists similar current entries, and if one is an older version, call save_memory again with the same content and replaces set to its id. Passwords, tokens, keys and other secrets are rejected. Only a note for yourself (scope bot) is saved at once. A preference (even one for yourself only), a shared or team entry, or replacing one, is never saved by you: the user gets a card in this chat with the exact text (and any entry it replaces) and it is saved only if they tap Save; outside a chat with the user it waits on the Memory screen. The result says waiting_for_approval; tell the user briefly and do not save it again.",
+    "Save a fact or rule to long-term memory. Choose kind carefully: rules are preferences, facts are notes. A note is saved at once, at any reach (for you, your team or every bot), without asking the user first, in any chat, task or routine: save facts, decisions and events worth keeping whenever you learn them, no userRequest needed. The chat shows a 'Saved a note' line with Undo, so the user can take it back. A note can replace older notes, never a preference. A preference (even one for yourself only) is never saved by you: pass the user's words verbatim in userRequest (the server checks they are in the user's own message in this chat and ask for it, with a phrase such as 'remember', 'don't forget', 'keep in mind', 'save this', 'note that down' or 'for future reference', unless your instructions say you have standing permission to save, and then only in a chat the user started); the user gets a card in this chat with the exact text (and any entry it replaces) and it is saved only if they tap Save; outside a chat with the user it waits on the Memory screen. The result says waiting_for_approval; tell the user briefly and do not save it again. Nothing is saved from a chat that has had a site the user marked sensitive open, not even for yourself. Write one fact per entry, dated, under about 300 characters. Keep memory current: when a fact or rule changed, pass the old entry's id in replaces so the new one supersedes it instead of sitting beside it; the result lists similar current entries, and if one is an older version, call save_memory again with the same content and replaces set to its id. Passwords, tokens, keys and other secrets are rejected.",
   parameters: SaveMemoryInput,
   success: SaveMemoryResult,
   failure: PersonalToolFailure,

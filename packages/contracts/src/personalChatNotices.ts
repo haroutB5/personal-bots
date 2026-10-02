@@ -22,9 +22,9 @@ export const PERSONAL_CHAT_NOTICE_CONTEXT_KIND = "personal-chat-notice";
  * release-landed: the server's turn message telling the bot that asked for an
  * hbots release how it went (live, rolled back), posted from the release
  * waiter's notice (a user-role turn message, rendered as a system row).
- * memory-saved: a bot saved (or replaced) a preference other bots will follow
- * (an assistant-role row whose text is the whole line; `provider` carries
- * "Memory"), so the owner sees every new standing rule as it lands.
+ * memory-saved: a bot saved or forgot a note on its own (an assistant-role
+ * row whose text is the whole line; `provider` carries "Memory"), so the
+ * owner sees it land and can take it back with the row's Undo.
  */
 export const PersonalChatNoticeKind = Schema.Literals([
   "usage-limit-paused",
@@ -42,5 +42,9 @@ export const PersonalChatNoticeMarker = Schema.Struct({
   provider: Schema.String,
   /** When the chat continues on its own (ISO). Absent: no reset was reported, so it will not. */
   resumeAt: Schema.optional(Schema.String),
+  /** memory-saved: the note the line is about. */
+  memoryId: Schema.optional(Schema.String),
+  /** memory-saved: what Undo does: archive a saved note, or restore a forgotten one. */
+  undo: Schema.optional(Schema.Literals(["archive", "restore"])),
 });
 export type PersonalChatNoticeMarker = typeof PersonalChatNoticeMarker.Type;

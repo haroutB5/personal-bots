@@ -3756,6 +3756,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.personalMemoryRestore, personalMemory.restore(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.personalMemoryUndoNote]: (input) =>
+          observeRpcEffect(WS_METHODS.personalMemoryUndoNote, personalMemory.undoNote(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.personalMemoryTidyLog]: (input) =>
           observeRpcEffect(WS_METHODS.personalMemoryTidyLog, personalMemoryTidy.log(input), {
             "rpc.aggregate": "server",

@@ -16,7 +16,8 @@ describe("personalBotSystemInstructions", () => {
         `You are Nova (Coach), one of the user's personal bots. ${precedence}\n\nKeep answers short.\n\n<app_rules>`,
       ),
     );
-    assert.include(text, "call the save_memory tool");
+    assert.include(text, "as notes with the save_memory tool yourself, without asking");
+    assert.include(text, "rules wait for the user's tap on a card");
     assert.include(text, "call search_memory");
     assert.include(text, "Never write memory to files");
     assert.include(text, "ask for them with request_secret");

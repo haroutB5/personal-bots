@@ -287,6 +287,10 @@ export interface PersonalMemorySaveInput {
 }
 
 const FORGOTTEN_REASON = "Forgotten at the user's request.";
+/** Why a note a bot forgot on its own was archived. */
+export const NOTE_FORGOTTEN_REASON = "Forgotten by a bot (a note it found out of date).";
+/** Why a note was archived from its chat line's Undo. */
+const UNDONE_REASON = "Undone from the chat.";
 
 /** How widely a scope reaches; a save may not replace a wider entry than itself. */
 const SCOPE_REACH: Record<PersonalMemoryScope, number> = {
@@ -402,6 +406,8 @@ export class PersonalMemoryService extends Context.Service<
     readonly forget: (input: {
       readonly memoryId: PersonalMemoryId;
       readonly actorBotId: PersonalBotId;
+      /** Shown on the archived entry; default: at the user's request. */
+      readonly reason?: string | undefined;
     }) => Effect.Effect<PersonalMemoryEntry, PersonalMemoryError>;
     /**
      * The full id for one a bot quoted: a full id, or the short id from its
@@ -437,6 +443,14 @@ export class PersonalMemoryService extends Context.Service<
     readonly teamOfBot: (botId: PersonalBotId) => Effect.Effect<string | null>;
     /** Brings a superseded entry back: bots receive it again. */
     readonly restore: (input: {
+      readonly memoryId: PersonalMemoryId;
+    }) => Effect.Effect<PersonalMemoryEntry, PersonalMemoryError>;
+    /**
+     * Undo on a "Saved a note" chat line: archives the note and brings back
+     * the entries it replaced (when nothing else has replaced them since).
+     * Only ever a note; a second tap changes nothing.
+     */
+    readonly undoNote: (input: {
       readonly memoryId: PersonalMemoryId;
     }) => Effect.Effect<PersonalMemoryEntry, PersonalMemoryError>;
     /**
@@ -849,7 +863,7 @@ export const make = Effect.gen(function* () {
       yield* sql`
         UPDATE personal_memory
         SET superseded_at = ${nowIso}, superseded_by = NULL,
-            superseded_reason = ${FORGOTTEN_REASON}, version = version + 1
+            superseded_reason = ${input.reason ?? FORGOTTEN_REASON}, version = version + 1
         WHERE memory_id = ${input.memoryId} AND deleted_at IS NULL AND superseded_at IS NULL
       `;
       return yield* readEntry(input.memoryId);
@@ -867,6 +881,31 @@ export const make = Effect.gen(function* () {
       `;
       return yield* readEntry(input.memoryId);
     }).pipe(storageFailure("restore"));
+
+  const undoNote: PersonalMemoryService["Service"]["undoNote"] = (input) =>
+    Effect.gen(function* () {
+      const current = yield* readEntry(input.memoryId);
+      if (current.kind !== "note") {
+        return yield* fail("Only a note a bot saved can be undone from the chat.");
+      }
+      if (current.supersededAt != null) return current;
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      yield* Effect.gen(function* () {
+        yield* sql`
+          UPDATE personal_memory
+          SET superseded_at = ${nowIso}, superseded_by = NULL,
+              superseded_reason = ${UNDONE_REASON}, version = version + 1
+          WHERE memory_id = ${input.memoryId} AND deleted_at IS NULL AND superseded_at IS NULL
+        `;
+        yield* sql`
+          UPDATE personal_memory
+          SET superseded_at = NULL, superseded_by = NULL, superseded_reason = NULL,
+              version = version + 1
+          WHERE superseded_by = ${input.memoryId} AND deleted_at IS NULL
+        `;
+      }).pipe(sql.withTransaction);
+      return yield* readEntry(input.memoryId);
+    }).pipe(storageFailure("undo"));
 
   const similar: PersonalMemoryService["Service"]["similar"] = (input) =>
     Effect.gen(function* () {
@@ -1151,6 +1190,7 @@ export const make = Effect.gen(function* () {
     forget,
     resolveRef,
     ownerMessages,
+    undoNote,
     get,
     propose,
     teamOfBot,

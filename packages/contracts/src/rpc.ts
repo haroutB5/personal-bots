@@ -411,6 +411,7 @@ import {
   PersonalMemoryListInput,
   PersonalMemoryListResult,
   PersonalMemoryRestoreInput,
+  PersonalMemoryUndoNoteInput,
   PersonalMemorySearchInput,
   PersonalMemoryTidyLogInput,
   PersonalMemoryTidyLogResult,
@@ -708,6 +709,7 @@ export const WS_METHODS = {
   personalMemoryDelete: "personalMemory.delete",
   personalMemoryDeleteMany: "personalMemory.deleteMany",
   personalMemoryRestore: "personalMemory.restore",
+  personalMemoryUndoNote: "personalMemory.undoNote",
   personalMemoryTidyLog: "personalMemory.tidyLog",
   personalMemoryTidySetMode: "personalMemory.tidySetMode",
   personalMemoryTidyRun: "personalMemory.tidyRun",
@@ -1856,6 +1858,12 @@ const WsPersonalMemoryRestoreRpc = Rpc.make(WS_METHODS.personalMemoryRestore, {
   error: PersonalMemoryRpcError,
 });
 
+const WsPersonalMemoryUndoNoteRpc = Rpc.make(WS_METHODS.personalMemoryUndoNote, {
+  payload: PersonalMemoryUndoNoteInput,
+  success: PersonalMemoryEntry,
+  error: PersonalMemoryRpcError,
+});
+
 const WsPersonalMemoryTidyLogRpc = Rpc.make(WS_METHODS.personalMemoryTidyLog, {
   payload: PersonalMemoryTidyLogInput,
   success: PersonalMemoryTidyLogResult,
@@ -2624,6 +2632,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalMemoryDeleteRpc,
   WsPersonalMemoryDeleteManyRpc,
   WsPersonalMemoryRestoreRpc,
+  WsPersonalMemoryUndoNoteRpc,
   WsPersonalMemoryTidyLogRpc,
   WsPersonalMemoryTidySetModeRpc,
   WsPersonalMemoryTidyRunRpc,
