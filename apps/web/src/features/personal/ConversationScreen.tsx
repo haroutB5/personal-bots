@@ -119,6 +119,7 @@ import { setPersonalPreference, usePersonalPreference } from "./personalPreferen
 import { diagnosticsEnabled, DiagnosticsOverlay } from "./DiagnosticsOverlay";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { useReportViewingThread } from "./useReportViewingThread";
+import { useMarkChatSeen } from "./unreadChats";
 import { markMessageSent, observeChatMessages, reportChatUsable } from "./perfRum";
 import { warmHighlighterWhenIdle } from "./highlighterWarmup";
 import { PersonalComposer } from "./PersonalComposer";
@@ -263,6 +264,8 @@ export function ConversationScreen({
   const openForWork =
     threadShell !== null && (list.data !== null || list.error !== null) && !archived;
   useReportViewingThread(environmentId, threadId, connectionPhase === "connected" && openForWork);
+  // Open and visible here: not unread on the Bots list, read up to when it closes.
+  useMarkChatSeen(threadId, openForWork);
   usePrewarmChatSession(environmentId, threadId, connectionPhase === "connected" && openForWork);
   const { feed: computerFeed } = useComputerFeed(environmentId);
   const desktopStatus = useDesktopStatus(environmentId);

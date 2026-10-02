@@ -15,6 +15,7 @@ import { chatNoticeLabel, readChatNotice } from "./chatNotices";
 import { readServerTurn, type ServerTurn } from "./delegationModel";
 import { formatRelativeTime } from "./relativeTime";
 import { useStartBotChat } from "./startBotChat";
+import { UnreadChatsBadge } from "./UnreadChatsBadge";
 
 /**
  * md+ (the desktop bot list) pads the row by 12px, and the list pulls itself
@@ -128,8 +129,8 @@ export function snapshotPreviewLabel(
 /**
  * Chats list row (ui-spec Screen 1): 56px avatar, name + live dot,
  * relative timestamp, provider label and a one-line preview. Every value is
- * derived from real bot/thread state; there is no unread badge because T3
- * has no unread concept to back it.
+ * derived from real bot/thread state. Bots that show unread chats (team
+ * leads, `showsUnreadChats`) carry a count badge on the status line.
  *
  * Tapping opens the bot's newest chat in the personal conversation view, or
  * starts its first one. A bot whose provider cannot run and has no chat yet
@@ -156,6 +157,7 @@ export const BotRow = memo(function BotRow({
   selected?: boolean | undefined;
 }): JSX.Element {
   const preview = previewOf(summary, describeTurn);
+  const unreadChats = summary.unreadChats ?? 0;
   const { bot, newestThread, provider, live, lastActivityMs } = summary;
   const status = botStatus(summary, now);
   const { start, starting } = useStartBotChat(environmentId, bot.botId);
@@ -222,6 +224,7 @@ export const BotRow = memo(function BotRow({
             />
           ) : null}
           <span className="truncate">{status.label}</span>
+          {unreadChats > 0 ? <UnreadChatsBadge count={unreadChats} className="ml-auto" /> : null}
         </span>
         <span className="truncate text-sm leading-5 text-[var(--personal-text-preview)]">
           {preview}

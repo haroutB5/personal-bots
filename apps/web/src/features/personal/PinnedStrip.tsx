@@ -27,6 +27,8 @@ import { GroupAvatarCluster } from "./GroupAvatarCluster";
 import { activeGroupMembers, groupStatusLine, isGroupRoundLive, groupSubtitle } from "./groupModel";
 import { useStartBotChat } from "./startBotChat";
 import { usePressOpenedMenuGuard } from "./pressOpenedMenuGuard";
+import { unreadChatsLabel } from "./unreadChats";
+import { UnreadDot } from "./UnreadChatsBadge";
 
 /**
  * Favourites strip: the pinned chats as one horizontal row of faces above the
@@ -239,6 +241,7 @@ export function PinnedTile({
   menuExtra = null,
   modelLabel = null,
   modelShortLabel = null,
+  unreadChats = 0,
 }: {
   readonly name: string;
   readonly avatar: ReactNode;
@@ -258,6 +261,8 @@ export function PinnedTile({
   readonly modelLabel?: string | null | undefined;
   /** The short form of `modelLabel` drawn on the tile; `modelLabel` still names it to assistive tech. */
   readonly modelShortLabel?: string | null | undefined;
+  /** Unread chats (`BotSummary.unreadChats`): a dot on the face's top right, the count spoken. */
+  readonly unreadChats?: number | undefined;
 }): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const anchor = useRef<HTMLLIElement | null>(null);
@@ -336,6 +341,11 @@ export function PinnedTile({
             )}
           />
         ) : null}
+        {unreadChats > 0 ? (
+          // Top right, clear of the status badge (bottom right): a separate
+          // signal, so the two never sit on top of each other.
+          <UnreadDot className="absolute top-0.5 right-0 size-3 ring-2 ring-[var(--personal-bg)]" />
+        ) : null}
       </span>
       {muted ? (
         <span className="flex w-full min-w-0 items-center justify-center gap-0.5">
@@ -363,6 +373,7 @@ export function PinnedTile({
     ...(modelLabel !== null ? [modelLabel] : []),
     ...(muted ? ["notifications muted"] : []),
     statusLabel,
+    unreadChats > 0 ? unreadChatsLabel(unreadChats) : null,
   ]
     .filter((part) => part !== null)
     .join(", ");
@@ -528,6 +539,7 @@ export function PinnedBotTile({
       }
       modelLabel={summary.modelLabel}
       modelShortLabel={summary.modelShortLabel}
+      unreadChats={summary.unreadChats}
     />
   );
 }

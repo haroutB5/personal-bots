@@ -858,11 +858,35 @@ export const make = Effect.gen(function* () {
   // Last "opened" write per chat, so the 10 s heartbeat writes once a minute.
   const viewedWrittenAtMs = new Map<string, number>();
 
+  // Presence holds the ids reportViewing was given, so a stored one is a ThreadId.
+  const recordViewed = (threadId: ThreadId | string, now: DateTime.Utc) =>
+    Effect.sync(() => viewedWrittenAtMs.set(threadId, DateTime.toEpochMillis(now))).pipe(
+      Effect.andThen(
+        botRepository.recordThreadViewed({
+          threadId: threadId as ThreadId,
+          viewedAt: DateTime.formatIso(now),
+        }),
+      ),
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal chat viewed time not recorded", {
+              threadId,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
+
   const reportViewing: PersonalPushService["Service"]["reportViewing"] = (input) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const nowMs = DateTime.toEpochMillis(now);
+      const previous = presence.current(input.connectionId, nowMs);
       presence.report(input.connectionId, input.threadId, nowMs);
+      // Leaving a chat (closed, another chat, page hidden) stamps it viewed
+      // now, unthrottled: a reply that landed while it was open must not read
+      // as unread on the Bots list (personalBots.list `unread`).
+      if (previous !== null && previous !== input.threadId) yield* recordViewed(previous, now);
       if (input.threadId === null) return;
       // A finished task chat's auto-archive clock restarts while it is open
       // (PersonalTaskChatArchiveService reads last_viewed_at).
@@ -870,25 +894,18 @@ export const make = Effect.gen(function* () {
       if (writtenAtMs !== undefined && nowMs - writtenAtMs < TASK_CHAT_VIEWED_WRITE_INTERVAL_MS) {
         return;
       }
-      viewedWrittenAtMs.set(input.threadId, nowMs);
-      yield* botRepository
-        .recordThreadViewed({ threadId: input.threadId, viewedAt: DateTime.formatIso(now) })
-        .pipe(
-          Effect.catchCause((cause) =>
-            Cause.hasInterruptsOnly(cause)
-              ? Effect.interrupt
-              : Effect.logWarning("personal chat viewed time not recorded", {
-                  threadId: input.threadId,
-                  cause: Cause.pretty(cause),
-                }),
-          ),
-        );
+      yield* recordViewed(input.threadId, now);
     });
 
   const dropConnection: PersonalPushService["Service"]["dropConnection"] = (connectionId) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const previous = presence.current(connectionId, DateTime.toEpochMillis(now));
       presence.drop(connectionId);
       foreground.drop(connectionId);
+      // A socket that closed with a chat open (reload, app switched away
+      // without a last report) counts as leaving it.
+      if (previous !== null) yield* recordViewed(previous, now);
     });
 
   // In-app delivery (see PersonalPushService.inApp). One hub for every

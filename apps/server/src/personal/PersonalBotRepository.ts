@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -267,6 +268,8 @@ const PersonalBotThreadListDbRow = Schema.Struct({
   newestText: Schema.NullOr(Schema.String),
   newestContext: Schema.NullOr(Schema.fromJsonString(OrchestrationMessageContext)),
   groupRelay: Schema.Number,
+  lastReplyAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  lastViewedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 });
 
 const PersonalBotThreadListRawDbRow = Schema.Struct({
@@ -277,6 +280,8 @@ const PersonalBotThreadListRawDbRow = Schema.Struct({
   newestText: Schema.Unknown,
   newestContext: Schema.Unknown,
   groupRelay: Schema.Unknown,
+  lastReplyAt: Schema.Unknown,
+  lastViewedAt: Schema.Unknown,
 });
 
 const PersonalMetaDbRow = Schema.Struct({
@@ -393,8 +398,30 @@ function toPersonalBotThreadWithPreview(
     newestMessage,
     // Only when true, so the list stays the same size for every other chat.
     ...(row.groupRelay === 1 ? { groupRelay: true } : {}),
+    ...(isThreadRowUnread(row) && row.lastReplyAt !== null
+      ? { unread: true, lastReplyAt: row.lastReplyAt }
+      : {}),
   };
 }
+
+/**
+ * The bot replied after the owner last had the chat open. The query only
+ * returns `lastReplyAt` for chats a list shows (not archived, not deleted, not
+ * a group relay), and `lastViewedAt` falls back to when this feature first
+ * ran (`PERSONAL_CHAT_UNREAD_SINCE_META_KEY`), so chats nobody opened before
+ * then do not all light up at once.
+ */
+export function isThreadRowUnread(row: {
+  readonly groupRelay: number;
+  readonly lastReplyAt: DateTime.Utc | null;
+  readonly lastViewedAt: DateTime.Utc | null;
+}): boolean {
+  if (row.groupRelay === 1 || row.lastReplyAt === null || row.lastViewedAt === null) return false;
+  return DateTime.toEpochMillis(row.lastReplyAt) > DateTime.toEpochMillis(row.lastViewedAt);
+}
+
+/** personal_meta key: when unread chats started counting (ISO), written once. */
+export const PERSONAL_CHAT_UNREAD_SINCE_META_KEY = "chat_unread_since";
 
 function toPersistenceSqlOrDecodeError(
   sqlOperation: string,
@@ -674,6 +701,7 @@ export const make = Effect.gen(function* () {
             t.thread_id,
             t.created_at,
             t.archived_at,
+            t.last_viewed_at,
             CASE
               WHEN t.archived_at IS NULL
                 AND p.archived_at IS NULL
@@ -724,7 +752,21 @@ export const make = Effect.gen(function* () {
           -- relays the same way): no bot chat list shows one.
           EXISTS (
             SELECT 1 FROM personal_group_members relay WHERE relay.thread_id = r.thread_id
-          ) AS "groupRelay"
+          ) AS "groupRelay",
+          -- Unread (isThreadRowUnread): the newest reply of a chat a list
+          -- shows, against when the owner last had it open. Assistant rows
+          -- only: the owner's own message or a system row never counts.
+          CASE
+            WHEN r.eligible = 1 THEN (
+              SELECT max(a.created_at)
+              FROM projection_thread_messages a
+              WHERE a.thread_id = r.thread_id AND a.role = 'assistant'
+            )
+          END AS "lastReplyAt",
+          COALESCE(
+            r.last_viewed_at,
+            (SELECT value FROM personal_meta WHERE key = ${PERSONAL_CHAT_UNREAD_SINCE_META_KEY})
+          ) AS "lastViewedAt"
         FROM ranked r
         LEFT JOIN projection_thread_messages m
           ON r.eligible = 1
@@ -1009,7 +1051,23 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const listThreadLinks: PersonalBotRepository["Service"]["listThreadLinks"] = () =>
+  // The unread baseline is written once, the first time a list runs on a
+  // database without one; after that the flag skips the write.
+  let unreadSinceWritten = false;
+  const ensureUnreadSince = Effect.suspend(() => {
+    if (unreadSinceWritten) return Effect.void;
+    return Effect.gen(function* () {
+      const now = DateTime.formatIso(yield* DateTime.now);
+      yield* sql`
+        INSERT INTO personal_meta (key, value)
+        VALUES (${PERSONAL_CHAT_UNREAD_SINCE_META_KEY}, ${now})
+        ON CONFLICT(key) DO NOTHING
+      `;
+      unreadSinceWritten = true;
+    });
+  });
+
+  const listThreadLinkPreviews = () =>
     listThreadLinkRows().pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
@@ -1030,6 +1088,12 @@ export const make = Effect.gen(function* () {
           ),
         ),
       ),
+    );
+
+  const listThreadLinks: PersonalBotRepository["Service"]["listThreadLinks"] = () =>
+    ensureUnreadSince.pipe(
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listThreadLinks:unreadSince")),
+      Effect.andThen(listThreadLinkPreviews),
     );
 
   const listGroupPresence: PersonalBotRepository["Service"]["listGroupPresence"] = () =>

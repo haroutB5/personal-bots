@@ -253,6 +253,14 @@ export const PersonalBotThread = Schema.Struct({
    * from the first paint, without waiting for the groups.
    */
   groupRelay: Schema.optional(Schema.Boolean),
+  /**
+   * Only on `personalBots.list`, and only when true: the bot replied after
+   * the owner last had the chat open (`last_viewed_at`). Never on an archived
+   * chat or a group relay. `lastReplyAt` (that reply's time) rides with it so
+   * a client that has since opened the chat can clear it before a refetch.
+   */
+  unread: Schema.optional(Schema.Boolean),
+  lastReplyAt: Schema.optional(Schema.DateTimeUtcFromString),
 });
 export type PersonalBotThread = typeof PersonalBotThread.Type;
 

@@ -43,6 +43,13 @@ import {
 } from "./chatSelection";
 import { useBulkChatActions } from "./useBulkChatActions";
 import { useLongPress } from "./useLongPress";
+import {
+  isChatUnread,
+  showsUnreadChats,
+  useChatSeenState,
+  useRefetchOnTurnsSettled,
+} from "./unreadChats";
+import { UnreadDot } from "./UnreadChatsBadge";
 import { usePersonalBackTarget } from "./usePersonalBackTarget";
 import {
   BulkNoticeLine,
@@ -65,11 +72,13 @@ function SelectableThreadRow({
   now,
   selected,
   onToggle,
+  unread = false,
 }: {
   row: BotThreadRow;
   now: number;
   selected: boolean;
   onToggle: (threadId: string) => void;
+  unread?: boolean;
 }) {
   return (
     <li>
@@ -84,19 +93,35 @@ function SelectableThreadRow({
         )}
       >
         <SelectCheck checked={selected} />
-        <ThreadRowContent row={row} now={now} />
+        <ThreadRowContent row={row} now={now} unread={unread} />
       </button>
     </li>
   );
 }
 
-function ThreadRowContent({ row, now }: { row: BotThreadRow; now: number }) {
+function ThreadRowContent({
+  row,
+  now,
+  unread = false,
+}: {
+  row: BotThreadRow;
+  now: number;
+  /** The bot replied since the owner last opened it (`isChatUnread`). */
+  unread?: boolean;
+}) {
   const live = isThreadLive(row.shell);
   const needsYou = threadNeedsAttention(row.shell);
   return (
     <>
-      <span className="min-w-0 flex-1 truncate text-[15px] text-[var(--personal-text)]">
+      {unread ? <UnreadDot /> : null}
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate text-[15px] text-[var(--personal-text)]",
+          unread && "font-semibold",
+        )}
+      >
         {row.shell.title}
+        {unread ? <span className="sr-only">, unread</span> : null}
       </span>
       {needsYou ? (
         <span className="flex shrink-0 items-center gap-1.5 text-[13px] text-[var(--personal-text-secondary)]">
@@ -140,12 +165,14 @@ function ThreadRow({
   archived,
   onError,
   onLongPress,
+  unread = false,
 }: {
   environmentId: EnvironmentId;
   botId: string;
   row: BotThreadRow;
   now: number;
   archived: boolean;
+  unread?: boolean;
   onError: (message: string | null) => void;
   /** Press and hold: select mode, starting with this chat. */
   onLongPress: (threadId: string) => void;
@@ -229,7 +256,7 @@ function ThreadRow({
               draggable={false}
               className="flex min-h-14 items-center gap-3 py-2 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
             >
-              <ThreadRowContent row={row} now={now} />
+              <ThreadRowContent row={row} now={now} unread={unread} />
             </Link>
           </div>
         )}
@@ -276,6 +303,30 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
           ),
     [bot, environmentId, list.data, relayThreadIds, shells],
   );
+  // Unread dots for a bot that shows them (team leads), from the same list.
+  // Archived rows never get one.
+  const chatSeen = useChatSeenState();
+  const showsUnread = bot !== null && showsUnreadChats(bot);
+  const unreadThreadIds = useMemo(
+    () =>
+      new Set(
+        showsUnread
+          ? rows.active
+              .filter((row) => isChatUnread(row.link, chatSeen, row.shell))
+              .map((row) => row.link.threadId as string)
+          : [],
+      ),
+    [chatSeen, rows.active, showsUnread],
+  );
+  // The list refetches when one of these chats finishes a turn, so a reply
+  // that lands while this screen is open lights its dot (the Bots list does
+  // the same through its preview key). Trailing, like the Bots list.
+  const turnsKey = showsUnread
+    ? rows.active
+        .map((row) => `${row.link.threadId}:${row.shell.latestTurn?.completedAt ?? ""}`)
+        .join("|")
+    : "";
+  useRefetchOnTurnsSettled(turnsKey, list.refresh);
 
   // Wrapup acts on the most recent non-archived chat (rows.active is newest
   // first): the same chat "New chat" would supersede.
@@ -381,6 +432,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
       now={now}
       selected={selection?.ids.has(row.link.threadId) ?? false}
       onToggle={toggle}
+      unread={unreadThreadIds.has(row.link.threadId)}
     />
   );
 
@@ -563,6 +615,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
                   archived={false}
                   onError={setActionError}
                   onLongPress={selectFromActive}
+                  unread={unreadThreadIds.has(row.link.threadId)}
                 />
               ))}
             </ul>

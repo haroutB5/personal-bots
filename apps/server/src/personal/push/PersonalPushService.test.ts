@@ -1302,10 +1302,60 @@ it.effect("an open chat records when it was last viewed, once a minute", () => {
     yield* TestClock.setTime(start + 60_000);
     yield* push.reportViewing({ connectionId: "phone", threadId: chat });
     expect(yield* viewedAt).toBe("2026-09-28T20:01:00.000Z");
-    // Leaving the chat writes nothing.
+    // A report that went stale (no heartbeat for 5 min) is no longer open:
+    // leaving it then writes nothing.
     yield* TestClock.setTime(start + 5 * 60_000);
     yield* push.reportViewing({ connectionId: "phone", threadId: null });
     expect(yield* viewedAt).toBe("2026-09-28T20:01:00.000Z");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+// Unread chats (personalBots.list `unread`) compare the newest reply with
+// last_viewed_at: a reply that lands while the chat is open must be covered
+// by the moment the owner leaves, not by a heartbeat up to a minute old.
+it.effect("leaving an open chat stamps it viewed at once", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    const start = Date.parse("2026-10-02T10:00:00Z");
+    yield* TestClock.setTime(start);
+    yield* seedBot;
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const first = ThreadId.make("thread-first");
+    const second = ThreadId.make("thread-second");
+    for (const threadId of [first, second]) {
+      yield* bots.insertThreadLink({ botId: BOT, threadId, createdAt: yield* DateTime.now });
+    }
+    const push = yield* PersonalPushService.PersonalPushService;
+    const sql = yield* SqlClient.SqlClient;
+    const viewedAt = (threadId: ThreadId) =>
+      Effect.map(
+        sql<{ readonly v: string | null }>`
+          SELECT last_viewed_at AS v FROM personal_bot_threads WHERE thread_id = ${threadId}
+        `,
+        (rows) => rows[0]?.v ?? null,
+      );
+
+    yield* push.reportViewing({ connectionId: "phone", threadId: first });
+    // Closed 15 s later, inside the minute the heartbeat would skip.
+    yield* TestClock.setTime(start + 15_000);
+    yield* push.reportViewing({ connectionId: "phone", threadId: null });
+    expect(yield* viewedAt(first)).toBe("2026-10-02T10:00:15.000Z");
+
+    // Straight from one chat to another: the first is stamped as it is left.
+    yield* push.reportViewing({ connectionId: "phone", threadId: first });
+    yield* TestClock.setTime(start + 30_000);
+    yield* push.reportViewing({ connectionId: "phone", threadId: second });
+    expect(yield* viewedAt(first)).toBe("2026-10-02T10:00:30.000Z");
+    expect(yield* viewedAt(second)).toBe("2026-10-02T10:00:30.000Z");
+
+    // The socket closes with the chat open (reload, app killed).
+    yield* TestClock.setTime(start + 40_000);
+    yield* push.dropConnection("phone");
+    expect(yield* viewedAt(second)).toBe("2026-10-02T10:00:40.000Z");
+    // Another connection's chat is not touched by this one leaving.
+    yield* TestClock.setTime(start + 50_000);
+    yield* push.dropConnection("laptop");
+    expect(yield* viewedAt(second)).toBe("2026-10-02T10:00:40.000Z");
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 

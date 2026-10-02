@@ -237,6 +237,40 @@ describe("PinnedStrip", () => {
     expect(renderer!.root.findByProps({ "aria-label": "CTO, Working" })).toBeDefined();
   });
 
+  it("dots a face with unread chats and speaks the count, beside the status badge", async () => {
+    stubWindow();
+    await act(async () => {
+      renderer = create(
+        <PinnedStrip>
+          <PinnedTile
+            name="CTO"
+            avatar={<BotAvatar shape="pill" color="#E8711A" size={56} label="CTO" />}
+            badge="working"
+            statusLabel="Working"
+            target={{ kind: "none" }}
+            onUnpin={() => undefined}
+            unreadChats={2}
+          />
+          <PinnedTile
+            name="CFO"
+            avatar={<BotAvatar shape="pill" color="#E8711A" size={56} label="CFO" />}
+            badge={null}
+            statusLabel={null}
+            target={{ kind: "none" }}
+            onUnpin={() => undefined}
+          />
+        </PinnedStrip>,
+      );
+    });
+
+    expect(renderer!.root.findAllByProps({ "data-testid": "unread-dot" })).toHaveLength(1);
+    expect(renderer!.root.findAllByProps({ "data-pinned-badge": "working" })).toHaveLength(1);
+    expect(
+      renderer!.root.findByProps({ "aria-label": "CTO, Working, 2 unread chats" }),
+    ).toBeDefined();
+    expect(renderer!.root.findByProps({ "aria-label": "CFO" })).toBeDefined();
+  });
+
   it("puts the bot's model under its name, and keeps the line blank without one", async () => {
     stubWindow();
     await act(async () => {

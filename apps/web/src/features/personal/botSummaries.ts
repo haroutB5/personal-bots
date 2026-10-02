@@ -68,6 +68,12 @@ export interface BotSummary {
    * (`isThreadErrored`). Optional: the cold-start snapshot predates it.
    */
   readonly erroredThread?: EnvironmentThreadShell | null;
+  /**
+   * How many of its chats the bot replied in since the owner last opened them
+   * (`unreadChatsByBot`), set by the list for bots that show it (team leads).
+   * Absent means none; never written to the cold-start snapshot.
+   */
+  readonly unreadChats?: number;
   /** Linked threads waiting on the user (approval or requested input). */
   readonly attentionThreads: ReadonlyArray<EnvironmentThreadShell>;
   readonly hasPendingApprovals: boolean;

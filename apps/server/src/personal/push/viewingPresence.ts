@@ -30,6 +30,16 @@ export class ViewingPresence {
     this.#entries.set(connectionId, { threadId, lastSeenMs: nowMs });
   }
 
+  /**
+   * The chat this connection last said it had open and visible, while that
+   * report is still fresh; null otherwise.
+   */
+  current(connectionId: string, nowMs: number): string | null {
+    const entry = this.#entries.get(connectionId);
+    if (entry === undefined || nowMs - entry.lastSeenMs >= PERSONAL_VIEWING_TTL_MS) return null;
+    return entry.threadId;
+  }
+
   /** The connection closed. */
   drop(connectionId: string): void {
     this.#entries.delete(connectionId);

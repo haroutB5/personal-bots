@@ -71,6 +71,7 @@ import {
 } from "./groupModel";
 import { GroupRow } from "./GroupRow";
 import { PinnedBotTile, PinnedSnapshotTile, PinnedStrip } from "./PinnedStrip";
+import { unreadChatsByBot, useChatSeenState } from "./unreadChats";
 import {
   mergePersonalGroups,
   usePersonalGroupsFeed,
@@ -526,7 +527,36 @@ export function ChatsScreen({
       }),
     [progressNotes, summaries],
   );
-  const visible = useMemo(() => filterBotSummaries(listed, query), [query, listed]);
+  // Unread chats of the bots that show them (team leads), off the same list:
+  // no request per row. The chat open on this device never counts.
+  const chatSeen = useChatSeenState();
+  const unreadByBot = useMemo(
+    () =>
+      list.data === null
+        ? new Map<string, ReadonlySet<string>>()
+        : unreadChatsByBot({
+            bots: list.data.bots,
+            links: list.data.threads,
+            shells,
+            relayThreadIds: memberThreadIds,
+            seen: chatSeen,
+          }),
+    [chatSeen, list.data, memberThreadIds, shells],
+  );
+  const listedWithUnread = useMemo(
+    () =>
+      unreadByBot.size === 0
+        ? listed
+        : listed.map((summary) => {
+            const count = unreadByBot.get(summary.bot.botId)?.size ?? 0;
+            return count === 0 ? summary : { ...summary, unreadChats: count };
+          }),
+    [listed, unreadByBot],
+  );
+  const visible = useMemo(
+    () => filterBotSummaries(listedWithUnread, query),
+    [query, listedWithUnread],
+  );
   const visibleGroups = useMemo(() => filterGroups(groups, query, nameOf), [groups, nameOf, query]);
   // Archived groups stay out of the list, but a search reaches them (tagged
   // "Archived"), as does the collapsed section at the bottom.
