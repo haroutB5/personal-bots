@@ -130,7 +130,16 @@ export function messageNamesBot(
     });
 }
 
+/**
+ * Set only while a running task's turn has ended with background work left:
+ * its result is then the replies so far, not the final result.
+ */
+function waitingSince(task: PersonalTask): string | undefined {
+  return task.status === "running" ? task.result?.waitingOnBackgroundSince : undefined;
+}
+
 function summarize(task: PersonalTask, names: ReadonlyMap<string, string>): TaskSummary {
+  const since = waitingSince(task);
   return {
     taskId: task.taskId,
     rootTaskId: task.rootTaskId,
@@ -140,7 +149,13 @@ function summarize(task: PersonalTask, names: ReadonlyMap<string, string>): Task
     title: task.title,
     objective: task.objective,
     status: task.status,
-    resultSummary: task.result?.summary ?? null,
+    resultSummary:
+      task.result === null
+        ? null
+        : since === undefined
+          ? task.result.summary
+          : `[Still running, not final: the bot has replied and is waiting on background work since ${since}. Its reply so far:]\n\n${task.result.summary}`,
+    ...(since === undefined ? {} : { waitingOnBackgroundSince: since }),
     errorMessage: task.errorMessage,
     createdAt: DateTime.formatIso(task.createdAt),
     completedAt: task.completedAt === null ? null : DateTime.formatIso(task.completedAt),

@@ -39,8 +39,18 @@ export const PersonalTaskSource = Schema.Literals(["user", "delegation", "routin
 export type PersonalTaskSource = typeof PersonalTaskSource.Type;
 
 export const PersonalTaskResult = Schema.Struct({
-  /** The last assistant message of the attempt that completed the task. */
+  /**
+   * The attempt's final assistant reply. When background work let the attempt
+   * run more than one turn, the earlier turns' replies come first and each
+   * follow-up reply is appended after a marker line.
+   */
   summary: Schema.String,
+  /**
+   * Set only while the task is still `running` and its latest turn has ended
+   * with background work left: the reply so far is a preview, not the result.
+   * ISO time the wait began.
+   */
+  waitingOnBackgroundSince: Schema.optional(Schema.String),
 });
 export type PersonalTaskResult = typeof PersonalTaskResult.Type;
 

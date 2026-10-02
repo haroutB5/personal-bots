@@ -89,7 +89,10 @@ export const TaskSummary = Schema.Struct({
   title: Schema.String,
   objective: Schema.String,
   status: PersonalTaskStatus,
+  /** While `waitingOnBackgroundSince` is set this is the bot's reply so far, not the final result. */
   resultSummary: Schema.NullOr(Schema.String),
+  /** Only on a running task whose bot has replied and is waiting on background work: since when. */
+  waitingOnBackgroundSince: Schema.optional(Schema.String),
   errorMessage: Schema.NullOr(Schema.String),
   createdAt: Schema.String,
   completedAt: Schema.NullOr(Schema.String),
@@ -424,7 +427,7 @@ const DelegateTaskTool = Tool.make("delegate_task", {
 
 const GetTaskTool = Tool.make("get_task", {
   description:
-    "Read one task in your current request's task tree (the request you are working on and everything delegated from it): its status, result summary or error, its direct children and the updates sent to it with steer_task. A team lead can also read any unfinished task of a bot on its own team, whoever started it (another chat, a routine). Any other id reads as not found. You do not need this to collect results: a delegated task's result arrives on its own as a follow-up message.",
+    "Read one task in your current request's task tree (the request you are working on and everything delegated from it): its status, result summary or error, its direct children and the updates sent to it with steer_task. A task that is still running but whose bot has already replied (it is only waiting on background work it started) shows that reply in resultSummary with waitingOnBackgroundSince set; it is not the final result. A team lead can also read any unfinished task of a bot on its own team, whoever started it (another chat, a routine). Any other id reads as not found. You do not need this to collect results: a delegated task's result arrives on its own as a follow-up message.",
   parameters: GetTaskInput,
   success: GetTaskResult,
   failure: BotsToolFailure,

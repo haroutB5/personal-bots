@@ -132,6 +132,32 @@ describe("TaskDetailScreen", () => {
     expect(markdown()).toEqual(["fresh preview…"]);
   });
 
+  it("labels a running task's reply as not final while it waits on background work", async () => {
+    const waiting = task({
+      status: "running",
+      completedAt: null,
+      result: { summary: "the report", waitingOnBackgroundSince: "2026-09-20T01:00:00.000Z" },
+    });
+    state.feed = new Map([[waiting.taskId, waiting]]);
+    state.detail = { task: waiting, attempts: [], children: [], handoff: null };
+
+    await act(async () => {
+      renderer = create(<TaskDetailScreen taskId={PersonalTaskId.make("task-1")} />);
+    });
+
+    const screen = JSON.stringify(renderer!.toJSON());
+    expect(screen).toContain("Reply so far (still finishing background work)");
+    expect(markdown()).toEqual(["the report"]);
+
+    const done = task({ result: { summary: "the report" } });
+    state.feed = new Map([[done.taskId, done]]);
+    state.detail = { task: done, attempts: [], children: [], handoff: null };
+    await act(async () => {
+      renderer!.update(<TaskDetailScreen taskId={PersonalTaskId.make("task-1")} />);
+    });
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("still finishing background work");
+  });
+
   it("finds an old task's parent and children outside the feed", async () => {
     const child = task({ parentTaskId: "task-0", rootTaskId: "task-0" });
     state.feed = new Map();

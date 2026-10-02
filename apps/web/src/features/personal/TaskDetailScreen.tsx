@@ -230,7 +230,11 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
 
       {result !== null && result.summary.trim().length > 0 ? (
         <section className={DETAIL_CARD}>
-          <h3 className="text-[14px] font-semibold text-[var(--personal-text)]">Result</h3>
+          <h3 className="text-[14px] font-semibold text-[var(--personal-text)]">
+            {task.status === "running" && result.waitingOnBackgroundSince !== undefined
+              ? "Reply so far (still finishing background work)"
+              : "Result"}
+          </h3>
           {/* A bot writes its result in markdown, the same as a reply: shown
               as plain text it read "**Cause**" and `code` with the marks in. */}
           <div className="personal-markdown mt-1 text-[15px] leading-[1.5] break-words text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]">

@@ -87,9 +87,12 @@ const SWEEP_INTERVAL = "30 seconds";
  * How long a Claude task stays running after its latest turn ends while
  * background work that turn left (a Bash run with run_in_background, a
  * background subagent, a Monitor) is still live. Claude Code starts a new
- * turn in the same session when that work finishes, and that turn's reply is
- * the task's result. Work that never ends (a dev server) closes the task
- * with its latest reply and a note once no turn has run for this long.
+ * turn in the same session when that work finishes. The result keeps the
+ * earlier turns' replies and appends each follow-up reply after a marker, so
+ * a short "nothing pending" follow-up never replaces the real report; while
+ * the task waits, the replies so far show on the task as a preview marked
+ * `waitingOnBackgroundSince`. Work that never ends (a dev server) closes the
+ * task with those replies and a note once no turn has run for this long.
  */
 export const PERSONAL_TASK_BACKGROUND_WAIT_MS = 20 * 60_000;
 /**
@@ -358,6 +361,10 @@ interface BackgroundWait {
   idleSinceMs: number;
   /** When the work was first seen ended with no newer turn after it, epoch ms. */
   clearedAtMs: number | null;
+  /** ISO time the first turn that left work running ended; null = never. */
+  waitingSince: string | null;
+  /** Replies of the turns that ended with work left, oldest first. */
+  readonly replies: Array<{ readonly messageId: string; readonly text: string }>;
 }
 
 const backgroundAttemptKey = (attempt: PersonalTaskAttempt) =>
@@ -372,6 +379,52 @@ const BACKGROUND_SESSION_ENDED_NOTE =
 
 const withNote = (summary: string, note: string) =>
   note.length === 0 ? summary : summary.length === 0 ? note : `${summary}\n\n${note}`;
+
+/** Put before each reply after the first one in a result. */
+export const BACKGROUND_FOLLOW_UP_MARKER = "(Follow-up after background work finished:)";
+
+/** A composed result longer than this loses its oldest follow-ups, never the first reply. */
+export const PERSONAL_TASK_RESULT_MAX_CHARS = 100_000;
+/** What a single follow-up keeps once it is all that is left to trim. */
+const FOLLOW_UP_MIN_KEPT_CHARS = 1_000;
+
+/**
+ * One result from the replies of an attempt's turns, earliest first. The
+ * first reply stays whole; every later one follows a marker. Past
+ * {@link PERSONAL_TASK_RESULT_MAX_CHARS} the oldest follow-ups go first and
+ * a line says how many; the newest follow-up is cut last.
+ */
+export const composeTaskReplies = (replies: ReadonlyArray<string>): string => {
+  const [first, ...rest] = replies.filter((reply) => reply.trim().length > 0);
+  if (first === undefined) return "";
+  const kept = rest.map((reply) => `${BACKGROUND_FOLLOW_UP_MARKER}\n\n${reply}`);
+  let dropped = 0;
+  const compose = () =>
+    [
+      first,
+      ...(dropped === 0
+        ? []
+        : [
+            `(${dropped} earlier follow-up ${dropped === 1 ? "reply" : "replies"} left out to keep this result short.)`,
+          ]),
+      ...kept,
+    ].join("\n\n");
+  while (kept.length > 1 && compose().length > PERSONAL_TASK_RESULT_MAX_CHARS) {
+    kept.shift();
+    dropped += 1;
+  }
+  if (kept.length === 1 && compose().length > PERSONAL_TASK_RESULT_MAX_CHARS) {
+    const budget = PERSONAL_TASK_RESULT_MAX_CHARS - (compose().length - kept[0]!.length);
+    kept[0] = `${kept[0]!.slice(0, Math.max(budget, FOLLOW_UP_MIN_KEPT_CHARS)).trimEnd()}…`;
+  }
+  return compose();
+};
+
+/** Drops the "still waiting" mark from a result once the wait is over. */
+const withoutWaitingMarker = (result: PersonalTask["result"]): PersonalTask["result"] =>
+  result === null || result.waitingOnBackgroundSince === undefined
+    ? result
+    : { summary: result.summary };
 
 /** A session in the middle of a turn: a queued task for its thread waits. */
 const sessionIsBusy = (session: OrchestrationSession | null | undefined) =>
@@ -425,7 +478,8 @@ export const toTaskSummary = (task: PersonalTask): PersonalTask => {
     objective: "",
     acceptanceCriteria: "",
     expectedOutput: "",
-    result: preview === undefined ? null : { summary: preview },
+    result:
+      task.result === null || preview === undefined ? null : { ...task.result, summary: preview },
     detailOmitted: true,
   };
 };
@@ -735,6 +789,7 @@ export const make = Effect.gen(function* () {
           ) {
             yield* writeTask(changed, task.value, {
               status: "rate_limited",
+              result: withoutWaitingMarker(task.value.result),
               availableAt: outcome.availableAt,
               errorCategory: "rate_limited",
               errorMessage: outcome.message,
@@ -751,6 +806,7 @@ export const make = Effect.gen(function* () {
           if (backoff !== undefined) {
             yield* writeTask(changed, task.value, {
               status: "rate_limited",
+              result: withoutWaitingMarker(task.value.result),
               availableAt: minutesFrom(now, backoff),
               errorCategory: "rate_limited",
               errorMessage: outcome.message,
@@ -760,6 +816,7 @@ export const make = Effect.gen(function* () {
         }
         const ended = yield* writeTask(changed, task.value, {
           status: outcome.kind === "interrupted" ? "interrupted" : "failed",
+          result: withoutWaitingMarker(task.value.result),
           errorCategory: category,
           errorMessage: outcome.message,
           completedAt: now,
@@ -939,6 +996,7 @@ export const make = Effect.gen(function* () {
         const running = yield* writeTask(changed, task, {
           status: "running",
           threadId,
+          result: withoutWaitingMarker(task.result),
           startedAt: task.startedAt ?? now,
           availableAt: null,
           completedAt: null,
@@ -995,6 +1053,8 @@ export const make = Effect.gen(function* () {
         pendingReadyAt: null,
         idleSinceMs: 0,
         clearedAtMs: null,
+        waitingSince: null,
+        replies: [],
       });
     }
     yield* publish(changed);
@@ -1142,6 +1202,8 @@ export const make = Effect.gen(function* () {
       pendingReadyAt: null,
       idleSinceMs: 0,
       clearedAtMs: null,
+      waitingSince: null,
+      replies: [],
     };
     backgroundByThread.set(attempt.providerThreadId, created);
     return created;
@@ -1154,16 +1216,58 @@ export const make = Effect.gen(function* () {
   };
 
   /**
+   * The attempt's result text: the replies of the turns that ended with
+   * background work left, then `last` (the newest reply) unless it is one of
+   * them. With no such turns this is just `last`'s text, as it always was.
+   */
+  const composeAttemptReplies = (
+    attempt: PersonalTaskAttempt,
+    last: ProjectionThreadMessage | undefined,
+  ) => {
+    const state = backgroundByThread.get(attempt.providerThreadId);
+    const held = state?.attemptKey === backgroundAttemptKey(attempt) ? state.replies : [];
+    const texts = held.map((reply) => reply.text);
+    if (last !== undefined && !held.some((reply) => reply.messageId === last.messageId)) {
+      texts.push(last.text);
+    }
+    return composeTaskReplies(texts);
+  };
+
+  /**
+   * While the task waits on background work, its replies so far go on the task
+   * itself (still `running`, result marked with the time the wait began), so
+   * get_task, list_tasks and the task screen show them straight away instead
+   * of nothing until the work ends. Best effort: a failed write is logged.
+   */
+  const publishWaitingPreview = Effect.fn("PersonalTaskService.publishWaitingPreview")(function* (
+    attempt: PersonalTaskAttempt,
+    state: BackgroundWait,
+  ) {
+    const task = yield* repository.getTask(attempt.taskId);
+    if (Option.isNone(task) || task.value.status !== "running") return;
+    const changed: Changed = [];
+    yield* writeTask(changed, task.value, {
+      result: {
+        summary: composeTaskReplies(state.replies.map((reply) => reply.text)),
+        ...(state.waitingSince === null ? {} : { waitingOnBackgroundSince: state.waitingSince }),
+      },
+    });
+    yield* publish(changed);
+  });
+
+  /**
    * Whether a Claude turn that just ended cleanly is the task's last. Claude
    * Code lets a turn end while commands it started in the background run on,
    * then runs a new turn by itself when they finish; the bot's report is in
-   * that turn. So the attempt stays active while such work is live and takes
-   * the reply of the turn that ends after it. Returns "wait", or the note to
-   * add to the result (empty when there is nothing to say).
+   * that turn. So the attempt stays active while such work is live, remembers
+   * the reply of every turn that ended with work left (`last` is the turn that
+   * just ended), and finishes on the turn that ends after it. Returns "wait",
+   * or the note to add to the result (empty when there is nothing to say).
    */
   const backgroundOutcome = Effect.fn("PersonalTaskService.backgroundOutcome")(function* (
     attempt: PersonalTaskAttempt,
     session: OrchestrationSession,
+    last: ProjectionThreadMessage | undefined,
   ) {
     const state = backgroundFor(attempt);
     const pending =
@@ -1181,13 +1285,35 @@ export const make = Effect.gen(function* () {
             threadId: attempt.providerThreadId,
             backgroundTasks: pending,
           });
+          state.waitingSince = session.updatedAt;
         }
         state.pendingReadyAt = session.updatedAt;
         const endedMs = Date.parse(session.updatedAt);
         state.idleSinceMs = Number.isFinite(endedMs) ? Math.min(endedMs, nowMs) : nowMs;
       }
       state.clearedAtMs = null;
+      // This turn's reply is held before anything else, so no later turn, cap
+      // or session end can replace it.
+      const reply =
+        last !== undefined &&
+        last.text.trim().length > 0 &&
+        !state.replies.some((held) => held.messageId === last.messageId)
+          ? last
+          : undefined;
+      if (reply !== undefined) {
+        state.replies.push({ messageId: reply.messageId, text: reply.text });
+      }
       if (nowMs - state.idleSinceMs < PERSONAL_TASK_BACKGROUND_WAIT_MS) {
+        if (reply !== undefined) {
+          yield* publishWaitingPreview(attempt, state).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("personal task could not publish its waiting preview", {
+                taskId: attempt.taskId,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
+        }
         return "wait" as const;
       }
       yield* Effect.logWarning("personal task closed with background work still running", {
@@ -1270,13 +1396,13 @@ export const make = Effect.gen(function* () {
         if ((!observed && last === undefined) || last?.isStreaming === true) {
           return;
         }
-        const note = yield* backgroundOutcome(attempt, session);
+        const note = yield* backgroundOutcome(attempt, session, last);
         if (note === "wait") {
           return;
         }
         yield* finishAttempt(attempt, {
           kind: "completed",
-          summary: withNote(last?.text ?? "", note),
+          summary: withNote(composeAttemptReplies(attempt, last), note),
         });
         return;
       }
@@ -1286,12 +1412,12 @@ export const make = Effect.gen(function* () {
           return;
         }
         // The session closed while the task only waited on background work:
-        // the bot had already replied, so that reply is the result.
+        // the bot had already replied, so its replies are the result.
         if (session.status === "stopped" && waitingOnBackground(attempt)) {
           const last = yield* latestReply();
           yield* finishAttempt(attempt, {
             kind: "completed",
-            summary: withNote(last?.text ?? "", BACKGROUND_SESSION_ENDED_NOTE),
+            summary: withNote(composeAttemptReplies(attempt, last), BACKGROUND_SESSION_ENDED_NOTE),
           });
           return;
         }

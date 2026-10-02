@@ -2067,8 +2067,15 @@ it.effect(
 
       expect((yield* reload(root.taskId)).status).toBe("running");
       yield* sweepNow;
-      // Still unfinished, which is what the idle check before a restart reads.
-      expect(yield* reload(root.taskId)).toMatchObject({ status: "running", result: null });
+      // Still unfinished, which is what the idle check before a restart reads;
+      // the reply so far shows as a preview marked with when the wait began.
+      expect(yield* reload(root.taskId)).toMatchObject({
+        status: "running",
+        result: {
+          summary: "Waiting on the server gate notification.",
+          waitingOnBackgroundSince: expect.any(String),
+        },
+      });
 
       // Claude Code's own turn: progress, the gates still running.
       yield* TestClock.adjust("1 minute");
@@ -2089,7 +2096,21 @@ it.effect(
 
       const done = yield* reload(root.taskId);
       expect(done.status).toBe("completed");
-      expect(done.result).toEqual({ summary: "## Branch ready: all gates green." });
+      // Every turn's reply is kept, earliest first; the wait mark is gone.
+      expect(done.result).toEqual({
+        summary: PersonalTaskService.composeTaskReplies([
+          "Waiting on the server gate notification.",
+          "`src/personal` passed. Still waiting on tsc.",
+          "## Branch ready: all gates green.",
+        ]),
+      });
+      expect(done.result?.summary).toBe(
+        [
+          "Waiting on the server gate notification.",
+          `${PersonalTaskService.BACKGROUND_FOLLOW_UP_MARKER}\n\n\`src/personal\` passed. Still waiting on tsc.`,
+          `${PersonalTaskService.BACKGROUND_FOLLOW_UP_MARKER}\n\n## Branch ready: all gates green.`,
+        ].join("\n\n"),
+      );
       const detail = yield* service.get({ taskId: root.taskId });
       expect(detail.attempts).toHaveLength(1);
       expect(detail.attempts[0]!.turnId).toBe(report);
@@ -2207,7 +2228,12 @@ it.effect("a steer reaches a task that is waiting on background work, and its tu
 
     const done = yield* reload(root.taskId);
     expect(done.status).toBe("completed");
-    expect(done.result).toEqual({ summary: "Server gates green; web gates skipped." });
+    expect(done.result).toEqual({
+      summary: PersonalTaskService.composeTaskReplies([
+        "Waiting on the gates.",
+        "Server gates green; web gates skipped.",
+      ]),
+    });
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
@@ -2308,6 +2334,208 @@ it.effect(
     }).pipe(Effect.provide(makeLayer(harness)));
   },
 );
+
+// Backend task 84a37cf7, 2 Oct (rainhb 0.13.1): the bot ended a turn with its
+// full report and two questions while a Monitor ran; when the Monitor expired,
+// Claude Code's follow-up turn said "nothing pending" and that two-line reply
+// became the result. The report must stay, and show while the task waits.
+
+const FULL_REPORT =
+  "## rainhb 0.13.1 ready\n\nAll gates green.\n\nQuestions for CTO:\n1. Ship Tuesday?\n2. Keep the old route?";
+const MONITOR_NOTE =
+  "That notice is only the compute-measurement monitor expiring. Nothing is pending on my side.";
+
+it.effect(
+  "a short follow-up after the Monitor expires does not replace the full report; the report shows while the task waits",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const root = yield* createRoot("bg-incident");
+      const thread = threadOf(root);
+
+      const first = yield* beginClaudeTurn(harness, thread);
+      yield* backgroundStarted(thread, "monitor-compute");
+      yield* endClaudeTurn(harness, thread, first, FULL_REPORT);
+
+      // While it waits: still running, the report is the preview, marked.
+      yield* sweepNow;
+      const waiting = yield* reload(root.taskId);
+      expect(waiting.status).toBe("running");
+      expect(waiting.result?.summary).toBe(FULL_REPORT);
+      const since = waiting.result?.waitingOnBackgroundSince;
+      expect(since).toBeDefined();
+      expect(Number.isFinite(Date.parse(since!))).toBe(true);
+      // The feed and list summaries keep the mark with the preview.
+      expect(PersonalTaskService.toTaskSummary(waiting).result).toEqual({
+        summary: FULL_REPORT,
+        waitingOnBackgroundSince: since,
+      });
+
+      // 16 minutes on, the Monitor expires and Claude Code replies.
+      yield* TestClock.adjust("16 minutes");
+      yield* backgroundFinished(thread, "monitor-compute");
+      const followUp = yield* beginClaudeTurn(harness, thread);
+      yield* endClaudeTurn(harness, thread, followUp, MONITOR_NOTE);
+
+      const done = yield* reload(root.taskId);
+      expect(done.status).toBe("completed");
+      expect(done.result).toEqual({
+        summary: `${FULL_REPORT}\n\n${PersonalTaskService.BACKGROUND_FOLLOW_UP_MARKER}\n\n${MONITOR_NOTE}`,
+      });
+      expect(done.result?.waitingOnBackgroundSince).toBeUndefined();
+      expect(turnStarts(harness)).toHaveLength(1);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("a follow-up that is still waiting adds to the preview without losing the report", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const root = yield* createRoot("bg-preview-grows");
+    const thread = threadOf(root);
+    const first = yield* beginClaudeTurn(harness, thread);
+    yield* backgroundStarted(thread, "b-slow");
+    yield* endClaudeTurn(harness, thread, first, FULL_REPORT);
+    const firstSince = (yield* reload(root.taskId)).result?.waitingOnBackgroundSince;
+
+    yield* TestClock.adjust("2 minutes");
+    const second = yield* beginClaudeTurn(harness, thread);
+    yield* endClaudeTurn(harness, thread, second, "Still running.");
+    const waiting = yield* reload(root.taskId);
+    expect(waiting.status).toBe("running");
+    expect(waiting.result?.summary).toBe(
+      `${FULL_REPORT}\n\n${PersonalTaskService.BACKGROUND_FOLLOW_UP_MARKER}\n\nStill running.`,
+    );
+    // The wait began with the first turn, not the latest one.
+    expect(waiting.result?.waitingOnBackgroundSince).toBe(firstSince);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a task closed by the background cap keeps the report and its follow-ups", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const root = yield* createRoot("bg-cap-follow-up");
+    const thread = threadOf(root);
+    const first = yield* beginClaudeTurn(harness, thread);
+    yield* backgroundStarted(thread, "dev-server");
+    yield* endClaudeTurn(harness, thread, first, FULL_REPORT);
+
+    yield* TestClock.adjust("5 minutes");
+    const second = yield* beginClaudeTurn(harness, thread);
+    yield* endClaudeTurn(harness, thread, second, "Server still up.");
+
+    yield* TestClock.adjust(
+      `${PersonalTaskService.PERSONAL_TASK_BACKGROUND_WAIT_MS - 60_000} millis`,
+    );
+    yield* sweepNow;
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    yield* TestClock.adjust("1 minute");
+    yield* sweepNow;
+
+    const done = yield* reload(root.taskId);
+    expect(done.status).toBe("completed");
+    expect(done.result).toEqual({
+      summary: `${FULL_REPORT}\n\n${PersonalTaskService.BACKGROUND_FOLLOW_UP_MARKER}\n\nServer still up.\n\n${PersonalTaskService.backgroundCapNote(1)}`,
+    });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a session that stops while waiting keeps the report and the follow-ups", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const root = yield* createRoot("bg-stopped-follow-up");
+    const thread = threadOf(root);
+    const first = yield* beginClaudeTurn(harness, thread);
+    yield* backgroundStarted(thread, "b-long");
+    yield* endClaudeTurn(harness, thread, first, FULL_REPORT);
+
+    yield* TestClock.adjust("1 minute");
+    const second = yield* beginClaudeTurn(harness, thread);
+    yield* endClaudeTurn(harness, thread, second, "Progress: half done.");
+
+    yield* TestClock.adjust("1 minute");
+    yield* setSession(
+      harness,
+      claudeSession({
+        threadId: thread,
+        status: "stopped",
+        activeTurnId: null,
+        updatedAt: DateTime.formatIso(yield* DateTime.now),
+      }),
+    );
+    const done = yield* reload(root.taskId);
+    expect(done.status).toBe("completed");
+    expect(done.result?.summary).toBe(
+      `${FULL_REPORT}\n\n${PersonalTaskService.BACKGROUND_FOLLOW_UP_MARKER}\n\nProgress: half done.\n\n(Closed by the task runner: the bot's session ended while background work it started was still running.)`,
+    );
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("an interrupted task keeps the reply but not the waiting mark", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const root = yield* createRoot("bg-interrupted");
+    const thread = threadOf(root);
+    const first = yield* beginClaudeTurn(harness, thread);
+    yield* backgroundStarted(thread, "b-int");
+    yield* endClaudeTurn(harness, thread, first, FULL_REPORT);
+    expect((yield* reload(root.taskId)).result?.waitingOnBackgroundSince).toBeDefined();
+
+    yield* TestClock.adjust("1 minute");
+    yield* setSession(
+      harness,
+      claudeSession({
+        threadId: thread,
+        status: "interrupted",
+        activeTurnId: null,
+        updatedAt: DateTime.formatIso(yield* DateTime.now),
+      }),
+    );
+    const ended = yield* reload(root.taskId);
+    expect(ended.status).toBe("interrupted");
+    expect(ended.result).toEqual({ summary: FULL_REPORT });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it("composeTaskReplies: is the reply itself when there is one, and empty when there is none", () => {
+  expect(PersonalTaskService.composeTaskReplies(["Done."])).toBe("Done.");
+  expect(PersonalTaskService.composeTaskReplies([])).toBe("");
+  expect(PersonalTaskService.composeTaskReplies(["", "  "])).toBe("");
+});
+
+it("composeTaskReplies: skips blank replies and keeps the order", () => {
+  expect(PersonalTaskService.composeTaskReplies(["A", "", "B", "C"])).toBe(
+    `A\n\n${PersonalTaskService.BACKGROUND_FOLLOW_UP_MARKER}\n\nB\n\n${PersonalTaskService.BACKGROUND_FOLLOW_UP_MARKER}\n\nC`,
+  );
+});
+
+it("composeTaskReplies: trims the oldest follow-ups first and never the first report", () => {
+  const max = PersonalTaskService.PERSONAL_TASK_RESULT_MAX_CHARS;
+  const first = `FIRST ${"a".repeat(max / 2)}`;
+  const old = `OLD ${"b".repeat(max / 3)}`;
+  const middle = `MIDDLE ${"c".repeat(max / 3)}`;
+  const newest = "NEWEST short reply";
+  const composed = PersonalTaskService.composeTaskReplies([first, old, middle, newest]);
+  expect(composed.length).toBeLessThanOrEqual(max);
+  expect(composed.startsWith(first)).toBe(true);
+  expect(composed.endsWith(newest)).toBe(true);
+  expect(composed).not.toContain("OLD ");
+  expect(composed).toContain("earlier follow-up");
+});
+
+it("composeTaskReplies: cuts the newest follow-up last when it alone is too long, leaving the first report whole", () => {
+  const max = PersonalTaskService.PERSONAL_TASK_RESULT_MAX_CHARS;
+  const first = `FIRST ${"a".repeat(max - 10_000)}`;
+  const composed = PersonalTaskService.composeTaskReplies([first, "z".repeat(max)]);
+  expect(composed.startsWith(first)).toBe(true);
+  expect(composed.length).toBeLessThanOrEqual(max + 1);
+  expect(composed.endsWith("…")).toBe(true);
+});
 
 it.effect("a chat resuming after a usage limit takes a slot from the same cap as tasks", () => {
   const harness = makeHarness();

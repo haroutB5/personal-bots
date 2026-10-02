@@ -398,6 +398,54 @@ describe("bots toolkit handlers", () => {
     ),
   );
 
+  it.effect("get_task and list_tasks show a waiting task's reply so far, marked as not final", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const tasks = yield* PersonalTaskService.PersonalTaskService;
+        const repository = yield* PersonalTaskRepository.PersonalTaskRepository;
+        const child = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Fix the build.",
+        });
+        yield* tasks.drain;
+        const detail = yield* tasks.get({ taskId: child.childTaskId as never });
+        expect(detail.task.status).toBe("running");
+        const since = "2026-10-02T15:56:52.000Z";
+        yield* repository.writeTask(
+          {
+            ...detail.task,
+            result: {
+              summary: "Full report. Question for CTO: ship?",
+              waitingOnBackgroundSince: since,
+            },
+          },
+          "running",
+        );
+
+        const read = yield* call("get_task", { taskId: child.childTaskId as never });
+        expect(read.task.waitingOnBackgroundSince).toBe(since);
+        expect(read.task.resultSummary).toContain("Still running, not final");
+        expect(read.task.resultSummary).toContain(since);
+        expect(read.task.resultSummary).toContain("Full report. Question for CTO: ship?");
+
+        const listed = yield* call("list_tasks", {});
+        const row = listed.tasks.find((task) => task.taskId === child.childTaskId);
+        expect(row?.waitingOnBackgroundSince).toBe(since);
+        expect(row?.resultSummary).toContain("Question for CTO: ship?");
+
+        // A finished task has no mark and its result is as written.
+        yield* repository.writeTask(
+          { ...detail.task, status: "completed", result: { summary: "Final." } },
+          "running",
+        );
+        const done = yield* call("get_task", { taskId: child.childTaskId as never });
+        expect(done.task.resultSummary).toBe("Final.");
+        expect(done.task.waitingOnBackgroundSince).toBeUndefined();
+      }),
+    ),
+  );
+
   it.effect("stop_task cancels a delegated task the caller owns", () =>
     withHarness((harness) =>
       Effect.gen(function* () {
