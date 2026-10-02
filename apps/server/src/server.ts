@@ -578,7 +578,7 @@ const PersonalReactorsLive = Layer.effectDiscard(
     yield* (yield* PersonalChatResume.PersonalChatResume).start();
     // Cancels lead-bot confirm cards nobody answered in 15 minutes and tells their lead.
     yield* (yield* PersonalLeadBots.PersonalLeadBotService).start();
-    // Archives finished delegated-task chats after 30 idle minutes (startup + every 5 min).
+    // Archives finished delegated-task chats after 48 idle hours (startup + every 5 min).
     yield* (yield* PersonalTaskChatArchive.PersonalTaskChatArchive).start();
     // Posts the release waiter's "landed / rolled back" notice into the chat
     // that asked for the release (startup + every 5s; notify-release.ps1).

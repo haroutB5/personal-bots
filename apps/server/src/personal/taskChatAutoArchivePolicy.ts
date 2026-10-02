@@ -5,10 +5,16 @@
  * SQL and decision. The service (`PersonalTaskChatArchiveService`) applies it.
  */
 
-/** A finished task chat archives once it has been idle and unopened this long. */
-export const TASK_CHAT_AUTO_ARCHIVE_IDLE_MS = 30 * 60_000;
-/** An unopened routine report stays visible for a day from chat creation. */
-export const ROUTINE_CHAT_AUTO_ARCHIVE_UNREAD_MS = 24 * 60 * 60_000;
+/**
+ * A finished task chat archives once it has been idle and unopened this long:
+ * 48 hours (Harout, 2 Oct; it was 30 minutes).
+ */
+export const TASK_CHAT_AUTO_ARCHIVE_IDLE_MS = 48 * 60 * 60_000;
+/**
+ * An unopened routine report stays visible this long from chat creation. Same
+ * 48 hours, so an unread report never goes sooner than a read one.
+ */
+export const ROUTINE_CHAT_AUTO_ARCHIVE_UNREAD_MS = 48 * 60 * 60_000;
 /** How often the sweep looks. It also runs once at startup. */
 export const TASK_CHAT_AUTO_ARCHIVE_SWEEP_MS = 5 * 60_000;
 /**

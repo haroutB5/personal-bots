@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 
 import {
   decideTaskChatArchive,
+  ROUTINE_CHAT_AUTO_ARCHIVE_UNREAD_MS,
   TASK_CHAT_AUTO_ARCHIVE_IDLE_MS,
   taskChatAutoArchiveEnabled,
   type TaskChatArchiveCandidate,
@@ -29,17 +30,18 @@ const candidate = (over: Partial<TaskChatArchiveCandidate> = {}): TaskChatArchiv
 });
 
 describe("decideTaskChatArchive", () => {
-  it("keeps unopened routine reports until exactly 24 hours old, including long runs", () => {
+  it("keeps unopened routine reports until exactly 48 hours old, including long runs", () => {
+    expect(ROUTINE_CHAT_AUTO_ARCHIVE_UNREAD_MS).toBe(48 * 60 * 60_000);
     const run = candidate({ chatKind: "routine", createdAt: at(DONE) });
-    const due = DONE + 24 * 60 * 60_000;
+    const due = DONE + ROUTINE_CHAT_AUTO_ARCHIVE_UNREAD_MS;
     expect(decideTaskChatArchive(run, due - 1)).toMatchObject({ kind: "keep", dueAtMs: due });
     expect(decideTaskChatArchive(run, due).kind).toBe("archive");
     expect(decideTaskChatArchive({ ...run, taskEndedAt: at(due) }, due).kind).toBe("archive");
     expect(decideTaskChatArchive({ ...run, sessionStatus: "running" }, due).kind).toBe("keep");
   });
 
-  it("waits for 30 idle minutes after opening a routine report, including older reports", () => {
-    const viewed = DONE + 25 * 60 * 60_000;
+  it("waits for 48 idle hours after opening a routine report, including older reports", () => {
+    const viewed = DONE + 49 * 60 * 60_000;
     const run = candidate({ chatKind: "routine", createdAt: at(DONE), lastViewedAt: at(viewed) });
     expect(decideTaskChatArchive(run, viewed + TASK_CHAT_AUTO_ARCHIVE_IDLE_MS - 1).kind).toBe(
       "keep",
@@ -49,8 +51,8 @@ describe("decideTaskChatArchive", () => {
     );
   });
 
-  it("archives exactly 30 minutes after the latest of task end, last message and last open", () => {
-    expect(TASK_CHAT_AUTO_ARCHIVE_IDLE_MS).toBe(30 * 60_000);
+  it("archives exactly 48 hours after the latest of task end, last message and last open", () => {
+    expect(TASK_CHAT_AUTO_ARCHIVE_IDLE_MS).toBe(48 * 60 * 60_000);
     const due = DONE + TASK_CHAT_AUTO_ARCHIVE_IDLE_MS;
     expect(decideTaskChatArchive(candidate(), due - 1)).toEqual({
       kind: "keep",

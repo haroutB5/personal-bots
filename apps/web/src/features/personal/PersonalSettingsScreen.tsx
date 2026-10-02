@@ -203,8 +203,7 @@ function AutoArchiveTaskChatsRow({
             Auto-archive finished task and routine chats
           </span>
           <span className="text-[13px] text-[var(--personal-text-secondary)]">
-            Finished task chats archive after 30 unused minutes. Routine-run chats archive 30
-            minutes after last use, or after 24 hours if unopened. Nothing is deleted.
+            Finished task and routine-run chats archive after 48 hours unused. Nothing is deleted.
           </span>
         </span>
         <span className="shrink-0 text-[13px] font-semibold text-[var(--personal-text-secondary)]">

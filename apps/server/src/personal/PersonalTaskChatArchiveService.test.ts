@@ -307,7 +307,7 @@ const runTurn = (threadId: string, requestedMs: number) =>
   });
 
 describe("PersonalTaskChatArchive", () => {
-  it.effect("archives an opened routine-run chat only after 30 idle minutes", () => {
+  it.effect("archives an opened routine-run chat only after 48 idle hours", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       yield* seed(harness, [
@@ -324,15 +324,15 @@ describe("PersonalTaskChatArchive", () => {
     }).pipe(Effect.provide(makeLayer(harness)));
   });
 
-  it.effect("keeps unread routine and relay reports for 24 hours from chat creation", () => {
+  it.effect("keeps unread routine and relay reports for 48 hours from chat creation", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       yield* seed(harness, [
         { id: "run-unread", tasks: [{ source: "routine", status: "completed" }] },
         { id: "relay-unread", relay: true, tasks: [{ source: "routine", status: "completed" }] },
       ]);
-      expect(yield* sweepAt(T0 + 24 * 60 * MIN - 1)).toBe(0);
-      expect(yield* sweepAt(T0 + 24 * 60 * MIN)).toBe(2);
+      expect(yield* sweepAt(T0 + 48 * 60 * MIN - 1)).toBe(0);
+      expect(yield* sweepAt(T0 + 48 * 60 * MIN)).toBe(2);
       expect(yield* archivedIds).toEqual(["relay-unread", "run-unread"]);
     }).pipe(Effect.provide(makeLayer(harness)));
   });
@@ -368,7 +368,7 @@ describe("PersonalTaskChatArchive", () => {
         )
       `;
       harness.shells.get("routine-background")!.backgroundLiveness = { liveTaskIds: ["bg"] };
-      expect(yield* sweepAt(T0 + 48 * 60 * MIN)).toBe(0);
+      expect(yield* sweepAt(T0 + 96 * 60 * MIN)).toBe(0);
       expect(yield* archivedIds).toEqual([]);
     }).pipe(Effect.provide(makeLayer(harness)));
   });
@@ -379,18 +379,18 @@ describe("PersonalTaskChatArchive", () => {
       yield* seed(harness, [
         { id: "routine-restored", tasks: [{ source: "routine", status: "completed" }] },
       ]);
-      expect(yield* sweepAt(T0 + 24 * 60 * MIN)).toBe(1);
+      expect(yield* sweepAt(T0 + 48 * 60 * MIN)).toBe(1);
       yield* (yield* PersonalBotService.PersonalBotService).archiveThread({
         threadId: ThreadId.make("routine-restored"),
         archived: false,
       });
-      expect(yield* sweepAt(T0 + 72 * 60 * MIN)).toBe(0);
+      expect(yield* sweepAt(T0 + 144 * 60 * MIN)).toBe(0);
       expect(yield* archivedIds).toEqual([]);
     }).pipe(Effect.provide(makeLayer(harness)));
   });
 
   it.effect(
-    "archives a finished task chat after 30 idle minutes, the way a manual archive does",
+    "archives a finished task chat after 48 idle hours, the way a manual archive does",
     () => {
       const harness = makeHarness();
       return Effect.gen(function* () {
@@ -413,7 +413,8 @@ describe("PersonalTaskChatArchive", () => {
     },
   );
 
-  it.effect("waits 30 minutes from Harout's last message or open, not from the task's end", () => {
+  it.effect("waits 48 hours from Harout's last message or open, not from the task's end", () => {
+    const IDLE = TASK_CHAT_AUTO_ARCHIVE_IDLE_MS;
     const harness = makeHarness();
     return Effect.gen(function* () {
       yield* seed(harness, [
@@ -433,13 +434,13 @@ describe("PersonalTaskChatArchive", () => {
         viewedAt: iso(TASK_DONE_MS + 50 * MIN),
       });
 
-      // 41 min after the task ended: both still used recently.
-      expect(yield* sweepAt(TASK_DONE_MS + 41 * MIN)).toBe(0);
-      // 30 min after Harout wrote: that one goes, the opened one waits.
-      expect(yield* sweepAt(TASK_DONE_MS + 65 * MIN)).toBe(1);
+      // The idle time after the task ended, plus 11 min: both still used recently.
+      expect(yield* sweepAt(TASK_DONE_MS + IDLE + 11 * MIN)).toBe(0);
+      // The idle time after Harout wrote: that one goes, the opened one waits.
+      expect(yield* sweepAt(TASK_DONE_MS + 35 * MIN + IDLE)).toBe(1);
       expect(yield* archivedIds).toEqual(["chat-written"]);
-      expect(yield* sweepAt(TASK_DONE_MS + 79 * MIN)).toBe(0);
-      expect(yield* sweepAt(TASK_DONE_MS + 80 * MIN)).toBe(1);
+      expect(yield* sweepAt(TASK_DONE_MS + 50 * MIN + IDLE - MIN)).toBe(0);
+      expect(yield* sweepAt(TASK_DONE_MS + 50 * MIN + IDLE)).toBe(1);
       expect(yield* archivedIds).toEqual(["chat-opened", "chat-written"]);
     }).pipe(Effect.provide(makeLayer(harness)));
   });
@@ -476,8 +477,10 @@ describe("PersonalTaskChatArchive", () => {
         ]);
         harness.shells.get("chat-background")!.backgroundLiveness = { liveTaskIds: ["bg-1"] };
 
-        expect(yield* sweepAt(TASK_DONE_MS + 2 * TASK_CHAT_AUTO_ARCHIVE_IDLE_MS)).toBe(2);
-        expect(yield* archivedIds).toEqual(["chat-cancelled", "chat-failed"]);
+        // A finished routine-run chat is past its unread window by now, so it
+        // goes too (since 1.60.15); the routine's own chat stays.
+        expect(yield* sweepAt(TASK_DONE_MS + 2 * TASK_CHAT_AUTO_ARCHIVE_IDLE_MS)).toBe(3);
+        expect(yield* archivedIds).toEqual(["chat-cancelled", "chat-failed", "chat-routine-task"]);
       }).pipe(Effect.provide(makeLayer(harness)));
     },
   );
@@ -513,7 +516,7 @@ describe("PersonalTaskChatArchive", () => {
       // Harout unarchives it: it stays open however long it sits.
       const bots = yield* PersonalBotService.PersonalBotService;
       yield* bots.archiveThread({ threadId: ThreadId.make("chat-done"), archived: false });
-      yield* TestClock.setTime(due + 24 * 60 * MIN);
+      yield* TestClock.setTime(due + 2 * TASK_CHAT_AUTO_ARCHIVE_IDLE_MS);
       expect(yield* restarted.sweep).toBe(0);
       expect(yield* archivedIds).toEqual([]);
     }).pipe(Effect.provide(makeLayer(harness)));

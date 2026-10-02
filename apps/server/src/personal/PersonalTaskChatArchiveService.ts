@@ -28,8 +28,8 @@ import {
 } from "./taskChatAutoArchivePolicy.ts";
 
 /**
- * Archives finished delegated-task chats after 30 idle minutes. Routine-run
- * chats archive after opening and 30 idle minutes, or after 24 hours unread.
+ * Archives finished delegated-task chats after 48 idle hours. Routine-run
+ * chats archive after opening and 48 idle hours, or after 48 hours unread.
  *
  * Which chats and when: `taskChatAutoArchivePolicy.ts`. The archive itself is
  * the manual one (`PersonalBotService.archiveThread`): the link row gets
