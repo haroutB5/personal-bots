@@ -173,7 +173,11 @@ export const PersonalMemoryRestoreInput = Schema.Struct({ memoryId: PersonalMemo
 export type PersonalMemoryRestoreInput = typeof PersonalMemoryRestoreInput.Type;
 
 /** Undo on a "Saved a note" chat line: archives that note and brings back what it replaced. */
-export const PersonalMemoryUndoNoteInput = Schema.Struct({ memoryId: PersonalMemoryId });
+export const PersonalMemoryUndoNoteInput = Schema.Struct({
+  memoryId: PersonalMemoryId,
+  /** archive (default): a "Saved a note" line. restore: a "Forgot a note" line, note-only. */
+  undo: Schema.optional(Schema.Literals(["archive", "restore"])),
+});
 export type PersonalMemoryUndoNoteInput = typeof PersonalMemoryUndoNoteInput.Type;
 
 /** One entry, current or archived: a note line reads it to show whether its Undo was used. */

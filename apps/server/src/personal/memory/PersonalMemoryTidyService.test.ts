@@ -16,6 +16,7 @@ import { SHIPPED_MEMORY_PROPOSALS } from "./shippedProposals.ts";
 import type { TidyJudgeOutput } from "./memoryTidy.ts";
 import {
   PERSONAL_MEMORY_MAX_PENDING_PER_BOT,
+  NOTE_FORGOTTEN_REASON,
   PersonalMemoryService,
   layer as memoryLayer,
 } from "./PersonalMemoryService.ts";
@@ -1649,4 +1650,55 @@ it.effect(
       // And the handler is told it was not a new note, so it posts no Undo line.
       expect(again.created).toBe(false);
     }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+);
+
+it.effect("1.60.22 Security: a Forgot-a-note Undo never brings back what became a preference", () =>
+  Effect.gen(function* () {
+    const ids = yield* seed;
+    const memory = yield* PersonalMemoryService;
+    const tidy = yield* PersonalMemoryTidy;
+    const note = PersonalMemoryId.make(ids.watch);
+    // 1. A bot forgets the note (the chat line offers Undo: restore).
+    yield* memory.forget({ memoryId: note, actorBotId: BOT_A, reason: NOTE_FORGOTTEN_REASON });
+    // 2. The owner restores it on the Memory screen.
+    yield* memory.restore({ memoryId: note });
+    // 3. The owner approves making it a preference.
+    const run = yield* tidy.importProposals({
+      source: "reclass.json",
+      items: [
+        { action: "reclassify", memoryIds: [ids.watch], toKind: "preference", reason: "A rule." },
+      ],
+    });
+    yield* decideWithHash(run.changes[0]!.changeId, true);
+    expect((yield* memory.get(note)).kind).toBe("preference");
+    // 4. That preference is archived.
+    yield* memory.forget({ memoryId: note, actorBotId: BOT_A });
+    // 5. Undo on the old "Forgot a note" line: refused, the preference stays archived.
+    const error = yield* memory.undoNote({ memoryId: note, undo: "restore" }).pipe(Effect.flip);
+    expect(error.message).toContain("Only a note");
+    expect((yield* memory.get(note)).supersededAt).not.toBeNull();
+  }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+);
+
+it.effect("1.60.22 Security: a Forgot-a-note Undo restores only a note a forget archived", () =>
+  Effect.gen(function* () {
+    const ids = yield* seed;
+    const memory = yield* PersonalMemoryService;
+    const note = PersonalMemoryId.make(ids.pasta);
+    yield* memory.forget({ memoryId: note, actorBotId: BOT_A, reason: NOTE_FORGOTTEN_REASON });
+    const restored = yield* memory.undoNote({ memoryId: note, undo: "restore" });
+    expect(restored.supersededAt).toBeNull();
+    // Archived another way since (here: replaced by a newer save): Undo changes nothing.
+    yield* memory.save({
+      scope: "shared",
+      scopeId: null,
+      kind: "note",
+      content: "Cooks 100 g of dry pasta per portion.",
+      source: "bot:bot-a",
+      replaces: [note],
+      actorBotId: BOT_A,
+    });
+    const after = yield* memory.undoNote({ memoryId: note, undo: "restore" });
+    expect(after.supersededReason).toBe("Replaced by a newer save.");
+  }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
 );

@@ -8,7 +8,7 @@ const calls = vi.hoisted(() => ({
   undoNote: [] as unknown[],
   restore: [] as unknown[],
   result: { _tag: "Success", value: {} } as { readonly _tag: string; readonly cause?: unknown },
-  entry: null as null | { supersededAt: unknown; supersededReason: string | null },
+  entry: null as null | { kind?: string; supersededAt: unknown; supersededReason: string | null },
 }));
 
 vi.mock("./usePersonalAutomation", () => ({
@@ -56,17 +56,21 @@ describe("NoteNoticeRow", () => {
     const root = render("archive");
     expect(JSON.stringify(renderer!.toJSON())).toContain("Saved a note: Likes tea.");
     await act(async () => undoButton(root)!.props.onClick());
-    expect(calls.undoNote).toEqual([{ environmentId: "env-1", input: { memoryId: "m-1" } }]);
+    expect(calls.undoNote).toEqual([
+      { environmentId: "env-1", input: { memoryId: "m-1", undo: "archive" } },
+    ]);
     expect(calls.restore).toEqual([]);
     expect(undoButton(root)).toBeUndefined();
     expect(JSON.stringify(renderer!.toJSON())).toContain("Undone");
   });
 
-  it("Undo on a forgotten note restores it", async () => {
+  it("Security (1.60.22): Undo on a forgotten note uses the note-only Undo, never the generic restore", async () => {
     const root = render("restore");
     await act(async () => undoButton(root)!.props.onClick());
-    expect(calls.restore).toEqual([{ environmentId: "env-1", input: { memoryId: "m-1" } }]);
-    expect(calls.undoNote).toEqual([]);
+    expect(calls.undoNote).toEqual([
+      { environmentId: "env-1", input: { memoryId: "m-1", undo: "restore" } },
+    ]);
+    expect(calls.restore).toEqual([]);
     expect(JSON.stringify(renderer!.toJSON())).toContain("Restored");
   });
 });
@@ -74,6 +78,7 @@ describe("NoteNoticeRow", () => {
 describe("Security (1.60.22): a used Undo stays done after a reload", () => {
   it("a note already undone shows Undone, with no button", () => {
     calls.entry = {
+      kind: "note",
       supersededAt: "2026-10-02T08:00:00.000Z",
       supersededReason: "Undone from the chat.",
     };
@@ -83,7 +88,7 @@ describe("Security (1.60.22): a used Undo stays done after a reload", () => {
   });
 
   it("a forgotten note already restored shows Restored", () => {
-    calls.entry = { supersededAt: null, supersededReason: null };
+    calls.entry = { kind: "note", supersededAt: null, supersededReason: null };
     const root = render("restore");
     expect(undoButton(root)).toBeUndefined();
     expect(JSON.stringify(renderer!.toJSON())).toContain("Restored");
@@ -91,17 +96,21 @@ describe("Security (1.60.22): a used Undo stays done after a reload", () => {
 
   it("settled wording from the entry as it is now", () => {
     expect(noteUndoSettled("archive", null)).toBeNull();
-    expect(noteUndoSettled("archive", { supersededAt: null, supersededReason: null })).toBeNull();
+    expect(
+      noteUndoSettled("archive", { kind: "note", supersededAt: null, supersededReason: null }),
+    ).toBeNull();
     expect(
       noteUndoSettled("archive", {
+        kind: "note",
         supersededAt: "x" as never,
         supersededReason: "Replaced by a newer save.",
       }),
     ).toBe("Archived");
     expect(
       noteUndoSettled("restore", {
+        kind: "note",
         supersededAt: "x" as never,
-        supersededReason: "Forgotten by a bot.",
+        supersededReason: "Forgotten by a bot (a note it found out of date).",
       }),
     ).toBeNull();
   });
@@ -113,5 +122,28 @@ describe("QA (1.60.22): archived chats", () => {
     expect(undoButton(root)).toBeUndefined();
     expect(JSON.stringify(renderer!.toJSON())).toContain("Saved a note: Likes tea.");
     expect(calls.undoNote).toEqual([]);
+  });
+});
+
+describe("Security (1.60.22): Undo only while the entry is still a note", () => {
+  it("an entry made a preference since shows no Undo", () => {
+    calls.entry = {
+      kind: "preference",
+      supersededAt: "2026-10-02T08:00:00.000Z",
+      supersededReason: "Forgotten at the user's request.",
+    };
+    const root = render("restore");
+    expect(undoButton(root)).toBeUndefined();
+    expect(JSON.stringify(renderer!.toJSON())).toContain("No longer a note");
+  });
+
+  it("a forgotten note archived another way since shows Archived, no Undo", () => {
+    expect(
+      noteUndoSettled("restore", {
+        kind: "note",
+        supersededAt: "x" as never,
+        supersededReason: "Replaced by a newer save.",
+      }),
+    ).toBe("Archived");
   });
 });

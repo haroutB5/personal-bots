@@ -7,16 +7,17 @@ import { cn } from "~/lib/utils";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
-import {
-  personalMemoryRestore,
-  personalMemoryUndoNote,
-  usePersonalMemoryEntry,
-} from "./usePersonalAutomation";
+import { personalMemoryUndoNote, usePersonalMemoryEntry } from "./usePersonalAutomation";
 
 type UndoState = "idle" | "busy" | "done";
 
 /** The server's archive reason for a note taken back from its chat line. */
 const UNDONE_REASON = "Undone from the chat.";
+/** The server's archive reasons for a forgotten entry: only these can a "Forgot a note" Undo bring back. */
+const FORGOTTEN_REASONS: ReadonlySet<string> = new Set([
+  "Forgotten at the user's request.",
+  "Forgotten by a bot (a note it found out of date).",
+]);
 
 /**
  * What the line says instead of Undo once there is nothing to undo, from the
@@ -25,11 +26,16 @@ const UNDONE_REASON = "Undone from the chat.";
  */
 export function noteUndoSettled(
   undo: "archive" | "restore",
-  entry: Pick<PersonalMemoryEntry, "supersededAt" | "supersededReason"> | null,
+  entry: Pick<PersonalMemoryEntry, "kind" | "supersededAt" | "supersededReason"> | null,
 ): string | null {
   if (entry === null) return null;
+  // Made a rule since: a note's Undo never touches it.
+  if (entry.kind !== "note") return "No longer a note";
   const archived = entry.supersededAt != null;
-  if (undo === "restore") return archived ? null : "Restored";
+  if (undo === "restore") {
+    if (!archived) return "Restored";
+    return FORGOTTEN_REASONS.has(entry.supersededReason ?? "") ? null : "Archived";
+  }
   if (!archived) return null;
   return entry.supersededReason === UNDONE_REASON ? "Undone" : "Archived";
 }
@@ -54,7 +60,6 @@ export function NoteNoticeRow({
   readOnly?: boolean;
 }): JSX.Element {
   const undoNote = useAtomCommand(personalMemoryUndoNote);
-  const restore = useAtomCommand(personalMemoryRestore);
   const [state, setState] = useState<UndoState>("idle");
   const [error, setError] = useState<string | null>(null);
   const current = usePersonalMemoryEntry(environmentId, memoryId);
@@ -64,11 +69,11 @@ export function NoteNoticeRow({
     if (state !== "idle" || readOnly) return;
     setState("busy");
     setError(null);
-    const input = { memoryId: PersonalMemoryId.make(memoryId) };
-    const result =
-      undo === "archive"
-        ? await undoNote({ environmentId, input })
-        : await restore({ environmentId, input });
+    // Both directions go through the note-only Undo, never the generic restore.
+    const result = await undoNote({
+      environmentId,
+      input: { memoryId: PersonalMemoryId.make(memoryId), undo },
+    });
     const message = commandFailureMessage(result, "Could not undo that.");
     setState(message === null ? "done" : "idle");
     setError(message);

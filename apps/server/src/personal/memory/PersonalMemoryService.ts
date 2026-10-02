@@ -468,12 +468,15 @@ export class PersonalMemoryService extends Context.Service<
       readonly memoryId: PersonalMemoryId;
     }) => Effect.Effect<PersonalMemoryEntry, PersonalMemoryError>;
     /**
-     * Undo on a "Saved a note" chat line: archives the note and brings back
-     * the entries it replaced (when nothing else has replaced them since).
-     * Only ever a note; a second tap changes nothing.
+     * Undo on a note's chat line. archive ("Saved a note", the default):
+     * archives the note and brings back the notes its save replaced.
+     * restore ("Forgot a note"): brings the note back, only if it is still a
+     * note archived by a forget. Only ever a note, checked in the same
+     * transaction as the change; a second tap changes nothing.
      */
     readonly undoNote: (input: {
       readonly memoryId: PersonalMemoryId;
+      readonly undo?: "archive" | "restore" | undefined;
     }) => Effect.Effect<PersonalMemoryEntry, PersonalMemoryError>;
     /**
      * Current notes and preferences a bot can see that read like the same
@@ -956,8 +959,29 @@ export const make = Effect.gen(function* () {
       if (current.kind !== "note") {
         return yield* fail("Only a note a bot saved can be undone from the chat.");
       }
-      if (current.supersededAt != null) return current;
       const nowIso = DateTime.formatIso(yield* DateTime.now);
+      if (input.undo === "restore") {
+        // Kind and reason are part of the update itself: an entry that became
+        // a preference, or was archived some other way, is never brought back.
+        const restored = yield* sql<{ readonly id: string }>`
+          UPDATE personal_memory
+          SET superseded_at = NULL, superseded_by = NULL, superseded_reason = NULL,
+              version = version + 1
+          WHERE memory_id = ${input.memoryId} AND kind = 'note' AND deleted_at IS NULL
+            AND superseded_at IS NOT NULL
+            AND superseded_reason IN (${FORGOTTEN_REASON}, ${NOTE_FORGOTTEN_REASON})
+          RETURNING memory_id AS "id"
+        `;
+        if (restored.length === 0) {
+          const now = yield* readEntry(input.memoryId);
+          if (now.kind !== "note") {
+            return yield* fail("Only a note a bot saved can be undone from the chat.");
+          }
+          return now;
+        }
+        return yield* readEntry(input.memoryId);
+      }
+      if (current.supersededAt != null) return current;
       yield* Effect.gen(function* () {
         // The kind is checked again here, in the same transaction as the archive.
         const archived = yield* sql<{ readonly id: string }>`

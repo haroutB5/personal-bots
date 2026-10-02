@@ -22,6 +22,8 @@ Built on 1.60.21 (main 081f690930). Branch feat/notes-direct-waiting-top. No mig
 
 - **Archived chats (QA).** In a read-only archived chat the note line shows without Undo, like the cards there (QA found the button live and able to change memory).
 
+- **Forgot-a-note Undo is note-only (Security, d12c27af247d review).** The line used the generic personalMemory.restore, so forget, restore, convert to a preference, archive, then Undo brought back the preference. Both Undo directions now go through personalMemory.undoNote (`undo: archive|restore`); restore is one UPDATE that requires kind = 'note' and a forget's archive reason, so it never brings back a preference or an entry archived another way. The line hides Undo ("No longer a note" / "Archived") when personalMemory.get shows the entry is no longer a note or was archived another way.
+
 ## Tests
 
 Failing-first: memoryHandlers.test.ts ("1.60.22" blocks: 16 failed on 081f690930), PersonalMemoryService.replace.test.ts (undoNote), PersonalMemoryTidyService.test.ts ("past the run limit"), web MemoryTidyPanels/PersonalSettingsScreen/chatNotices/NoteNoticeRow tests (9 failed + NoteNoticeRow file on base). Security re-stage, failing first on 29ea56bbad: PersonalMemoryTidyService.test.ts "Security: Undo on a split's note part" (the split preference came back), memoryHandlers.test.ts "Security (1.60.22)" (bot-only preference forget applied directly; an existing note got an Undo line), PersonalMemoryService.replace.test.ts origin/tag tests, NoteNoticeRow "stays done after a reload", memoryPresentation "says where it came from". E2E: `C:\Users\Ht\.personal-bots\qa\backend-notes16022\e2e.mjs <release>`.
