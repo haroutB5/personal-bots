@@ -345,9 +345,9 @@ const make = Effect.gen(function* () {
         actorTeam: team ?? undefined,
       })
       .pipe(Effect.mapError((error) => refuse(error.message)));
-    // The same text already saved as a rule comes back as that rule: it is
-    // not a note the chat line could undo.
-    if (entry.kind === "note") {
+    // Only a note this call made gets the line: the same text already saved
+    // (a rule, or a note another save or a split made) is not this bot's to undo.
+    if (entry.kind === "note" && entry.created === true) {
       yield* noteLine({
         threadId,
         line: noteChangedLine("saved", entry.content),
@@ -800,47 +800,37 @@ const make = Effect.gen(function* () {
             "Not forgotten: a preference (a rule) is only forgotten when the user asks in this chat; quote their words exactly in userRequest.",
           );
         }
-        if (target.scope !== "bot") {
-          // Same as saves: memory other bots see is not changed from a chat
-          // that had a sensitive site open, not even as a card.
-          const exposed = yield* browser.sensitiveExposure(invocation.threadId);
-          if (exposed.length > 0) {
-            return {
-              memoryId: PersonalMemoryService.memoryRef(target),
-              content: target.content,
-              summary: yield* refusedForSensitiveSite(
-                "forget_memory",
-                invocation.threadId,
-                `Not forgotten: this chat has had ${exposed.join(", ")} open, a site the user marked sensitive, so memory other bots see cannot be changed from it. Ask the user to do it in a new chat or on the Memory screen.`,
-              ),
-            };
-          }
-          const inChat = owner.current !== null && owner.current.byOwner;
-          yield* memory
-            .propose({
-              action: "forget",
-              botId,
-              threadId: inChat ? invocation.threadId : null,
-              target,
-              reason: `Asked in chat: "${source.replace(/\s+/g, " ").slice(0, 300)}"`,
-            })
-            .pipe(Effect.mapError((error) => refuse(error.message)));
+        // A rule changes only on the owner's tap, even the bot's own: the
+        // forget is a card. Nothing changes from a chat that had a sensitive
+        // site open, not even as a card.
+        const exposed = yield* browser.sensitiveExposure(invocation.threadId);
+        if (exposed.length > 0) {
           return {
             memoryId: PersonalMemoryService.memoryRef(target),
             content: target.content,
-            summary: inChat
-              ? "Not forgotten yet: a card is in this chat. It is forgotten only when the user taps Forget there. Tell them briefly."
-              : "Not forgotten yet: it is waiting for the user's OK on the Memory screen. Mention it in your result.",
+            summary: yield* refusedForSensitiveSite(
+              "forget_memory",
+              invocation.threadId,
+              `Not forgotten: this chat has had ${exposed.join(", ")} open, a site the user marked sensitive, so memory cannot be changed from it. Ask the user to do it in a new chat or on the Memory screen.`,
+            ),
           };
         }
-        const entry = yield* memory
-          .forget({ memoryId, actorBotId: botId })
+        const inChat = owner.current !== null && owner.current.byOwner;
+        yield* memory
+          .propose({
+            action: "forget",
+            botId,
+            threadId: inChat ? invocation.threadId : null,
+            target,
+            reason: `Asked in chat: "${source.replace(/\s+/g, " ").slice(0, 300)}"`,
+          })
           .pipe(Effect.mapError((error) => refuse(error.message)));
         return {
-          memoryId: PersonalMemoryService.memoryRef(entry),
-          content: entry.content,
-          summary:
-            "Forgotten: you no longer receive it. It is in Archived on the Memory screen, where the user can restore or delete it.",
+          memoryId: PersonalMemoryService.memoryRef(target),
+          content: target.content,
+          summary: inChat
+            ? "Not forgotten yet: a card is in this chat. It is forgotten only when the user taps Forget there. Tell them briefly."
+            : "Not forgotten yet: it is waiting for the user's OK on the Memory screen. Mention it in your result.",
         };
       }),
   });

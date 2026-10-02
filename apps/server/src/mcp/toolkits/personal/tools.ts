@@ -394,7 +394,7 @@ const SearchMemoryTool = Tool.make("search_memory", {
 
 const ForgetMemoryTool = Tool.make("forget_memory", {
   description:
-    "Forget a saved memory entry that is wrong, out of date, or the user no longer wants kept. A note is forgotten at once, without asking (not from a chat that has had a site the user marked sensitive open, unless it is your own bot-only note); the chat shows a line with Undo. A preference (a rule) is forgotten only when the user asks in this chat: pass their words verbatim in userRequest; your own bot-only preference is forgotten at once, and one other bots see becomes a Forget / Keep it card for the user. Forgotten entries move to Archived on the Memory screen, where the user can restore or delete them. To change an entry rather than drop it, use save_memory with replaces.",
+    "Forget a saved memory entry that is wrong, out of date, or the user no longer wants kept. A note is forgotten at once, without asking (not from a chat that has had a site the user marked sensitive open, unless it is your own bot-only note); the chat shows a line with Undo. A preference (a rule) is forgotten only when the user asks in this chat: pass their words verbatim in userRequest; it becomes a Forget / Keep it card for the user, even your own bot-only preference. Forgotten entries move to Archived on the Memory screen, where the user can restore or delete them. To change an entry rather than drop it, use save_memory with replaces.",
   parameters: ForgetMemoryInput,
   success: ForgetMemoryResult,
   failure: PersonalToolFailure,

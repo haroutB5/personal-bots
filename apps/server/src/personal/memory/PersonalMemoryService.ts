@@ -289,6 +289,8 @@ export interface PersonalMemorySaveInput {
 const FORGOTTEN_REASON = "Forgotten at the user's request.";
 /** Why a note a bot forgot on its own was archived. */
 export const NOTE_FORGOTTEN_REASON = "Forgotten by a bot (a note it found out of date).";
+/** Why a save's replace archived an entry; only these does a note's Undo bring back. */
+const REPLACED_REASON = "Replaced by a newer save.";
 /** Why a note was archived from its chat line's Undo. */
 const UNDONE_REASON = "Undone from the chat.";
 
@@ -327,6 +329,9 @@ export type PersonalMemoryProposal =
 export const PERSONAL_MEMORY_MAX_PENDING_PER_BOT = 20;
 
 /** A saved entry close to a new one, with how alike they are (0 to 1). */
+/** What a save hands back: the entry, and whether this call made it. */
+export type PersonalMemorySaved = PersonalMemoryEntry & { readonly created?: boolean };
+
 export interface PersonalMemoryMatch {
   readonly entry: PersonalMemoryEntry;
   readonly similarity: number;
@@ -390,9 +395,10 @@ export class PersonalMemoryService extends Context.Service<
     readonly search: (
       input: PersonalMemorySearchInput & PersonalMemoryScopeFilter,
     ) => Effect.Effect<ReadonlyArray<PersonalMemoryEntry>, PersonalMemoryError>;
+    /** `created`: false when the same text was already saved and that entry came back. */
     readonly save: (
       input: PersonalMemorySaveInput,
-    ) => Effect.Effect<PersonalMemoryEntry, PersonalMemoryError>;
+    ) => Effect.Effect<PersonalMemorySaved, PersonalMemoryError>;
     readonly update: (
       input: PersonalMemoryUpdateInput,
     ) => Effect.Effect<PersonalMemoryEntry, PersonalMemoryError>;
@@ -820,7 +826,7 @@ export const make = Effect.gen(function* () {
       `.pipe(Effect.flatMap(decodeAll));
       const existing = duplicate[0];
       const targets = yield* replaceTargets(input, existing?.memoryId ?? null);
-      if (existing !== undefined && targets.length === 0) return existing;
+      if (existing !== undefined && targets.length === 0) return { ...existing, created: false };
       const memoryId = existing?.memoryId ?? PersonalMemoryId.make(NodeCrypto.randomUUID());
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       yield* Effect.gen(function* () {
@@ -840,12 +846,12 @@ export const make = Effect.gen(function* () {
           yield* sql`
             UPDATE personal_memory
             SET superseded_at = ${nowIso}, superseded_by = ${memoryId},
-                superseded_reason = 'Replaced by a newer save.', version = version + 1
+                superseded_reason = ${REPLACED_REASON}, version = version + 1
             WHERE memory_id = ${target.memoryId} AND deleted_at IS NULL AND superseded_at IS NULL
           `;
         }
       }).pipe(sql.withTransaction);
-      return yield* readEntry(memoryId);
+      return { ...(yield* readEntry(memoryId)), created: existing === undefined };
     }).pipe(storageFailure("save"));
 
   const forget: PersonalMemoryService["Service"]["forget"] = (input) =>
@@ -891,17 +897,24 @@ export const make = Effect.gen(function* () {
       if (current.supersededAt != null) return current;
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       yield* Effect.gen(function* () {
-        yield* sql`
+        // The kind is checked again here, in the same transaction as the archive.
+        const archived = yield* sql<{ readonly id: string }>`
           UPDATE personal_memory
           SET superseded_at = ${nowIso}, superseded_by = NULL,
               superseded_reason = ${UNDONE_REASON}, version = version + 1
-          WHERE memory_id = ${input.memoryId} AND deleted_at IS NULL AND superseded_at IS NULL
+          WHERE memory_id = ${input.memoryId} AND kind = 'note'
+            AND deleted_at IS NULL AND superseded_at IS NULL
+          RETURNING memory_id AS "id"
         `;
+        if (archived.length === 0) return;
+        // Only notes this note's own save replaced: never a preference, and
+        // never an entry a split or an approval linked to it.
         yield* sql`
           UPDATE personal_memory
           SET superseded_at = NULL, superseded_by = NULL, superseded_reason = NULL,
               version = version + 1
-          WHERE superseded_by = ${input.memoryId} AND deleted_at IS NULL
+          WHERE superseded_by = ${input.memoryId} AND kind = 'note'
+            AND superseded_reason = ${REPLACED_REASON} AND deleted_at IS NULL
         `;
       }).pipe(sql.withTransaction);
       return yield* readEntry(input.memoryId);

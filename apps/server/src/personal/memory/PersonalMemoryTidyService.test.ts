@@ -1607,3 +1607,46 @@ it.effect("1.60.22: the log keeps every run that still waits for an OK, past the
     expect(waiting.map((change) => change.changeId)).toEqual([changeId]);
   }).pipe(Effect.provide(testLayer(fakeJudge(answers)))),
 );
+
+it.effect(
+  "1.60.22 Security: Undo on a split's note part never brings back the split preference",
+  () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const parts = [
+        { content: "At most 5 bots run at once.", kind: "note", scope: "shared", scopeId: null },
+        { content: "Counted per bot.", kind: "note", scope: "shared", scopeId: null },
+      ] as const;
+      const run = yield* tidy.importProposals({
+        source: "memory-proposals-split.json",
+        items: [{ action: "split", memoryIds: [ids.capA], parts, reason: "One fact each." }],
+      });
+      yield* decideWithHash(run.changes[0]!.changeId, true);
+      const part = (yield* memory.list({})).find((e) => e.content === parts[0].content)!;
+      const rule = (yield* memory.list({ status: "superseded" })).find(
+        (e) => e.memoryId === ids.capA,
+      )!;
+      expect([rule.kind, rule.supersededBy]).toEqual(["preference", part.memoryId]);
+
+      // A bot saves the same text as a note: the store hands back the part.
+      const again = yield* memory.save({
+        scope: "shared",
+        scopeId: null,
+        kind: "note",
+        content: parts[0].content,
+        source: "bot:bot-a",
+        actorBotId: BOT_A,
+      });
+      expect(again.memoryId).toBe(part.memoryId);
+
+      // Even an Undo of that part leaves the split preference archived.
+      yield* memory.undoNote({ memoryId: part.memoryId });
+      const current = (yield* memory.list({})).map((e) => e.memoryId);
+      expect(current).not.toContain(ids.capA);
+      expect(current).not.toContain(part.memoryId);
+      // And the handler is told it was not a new note, so it posts no Undo line.
+      expect(again.created).toBe(false);
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+);

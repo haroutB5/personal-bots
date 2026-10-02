@@ -87,7 +87,7 @@ function saveMemory(input: {
     readonly kind?: "note" | "preference";
   };
   /** What the store hands back for the save (e.g. an identical preference already saved). */
-  readonly savedAs?: { readonly kind: "note" | "preference" };
+  readonly savedAs?: { readonly kind?: "note" | "preference"; readonly created?: boolean };
   /** The store refuses the save with this message. */
   readonly saveFails?: string;
 }) {
@@ -116,7 +116,10 @@ function saveMemory(input: {
             ? Effect.fail(new PersonalMemoryError({ message: input.saveFails }))
             : Effect.sync(() => {
                 saved(entry);
-                return entryFor({ ...entry, kind: input.savedAs?.kind ?? entry.kind });
+                return {
+                  ...entryFor({ ...entry, kind: input.savedAs?.kind ?? entry.kind }),
+                  created: input.savedAs?.created ?? true,
+                };
               }),
         ownerMessages: () =>
           Effect.succeed({
@@ -582,17 +585,35 @@ describe("QA repro (1.60.19): an earlier genuine 'remember' is not reusable", ()
 });
 
 describe("forget_memory", () => {
-  it.effect("a bot forgets its own bot-only entry directly", () =>
+  it.effect(
+    "Security (1.60.22): even a bot's own bot-only preference is forgotten only on a card",
+    () =>
+      Effect.gen(function* () {
+        const { forgotten, proposed, encoded } = yield* saveMemory({
+          memoryAutoSave: false,
+          exposure: [],
+          userRequest: "forget the USD coin prices rule, it's wrong",
+          tool: "forget_memory",
+          target: { scope: "bot", content: "Quote coin prices in USD." },
+        });
+        expect(forgotten).not.toHaveBeenCalled();
+        expect(proposed.mock.calls[0]?.[0]).toMatchObject({ action: "forget", threadId: "thread" });
+        expect(encoded).toContain("a card is in this chat");
+      }),
+  );
+
+  it.effect("a bot-only preference forget in a sensitive chat makes no card", () =>
     Effect.gen(function* () {
-      const { forgotten, proposed } = yield* saveMemory({
+      const { forgotten, proposed, encoded } = yield* saveMemory({
         memoryAutoSave: false,
-        exposure: [],
+        exposure: ["https://bank.test"],
         userRequest: "forget the USD coin prices rule, it's wrong",
         tool: "forget_memory",
         target: { scope: "bot", content: "Quote coin prices in USD." },
       });
+      expect(forgotten).not.toHaveBeenCalled();
       expect(proposed).not.toHaveBeenCalled();
-      expect(forgotten).toHaveBeenCalledWith("0123abcd-full");
+      expect(encoded).toContain("Not forgotten");
     }),
   );
 
@@ -826,6 +847,22 @@ describe("1.60.22: notes save directly at every reach, with a chat line and Undo
       expect(notices).not.toHaveBeenCalled();
       expect(encoded).toContain("cannot replace a preference");
     }),
+  );
+
+  it.effect(
+    "Security (1.60.22): a note that was already saved (e.g. a split part) gets no Undo line",
+    () =>
+      Effect.gen(function* () {
+        const { notices, encoded } = yield* saveMemory({
+          memoryAutoSave: false,
+          exposure: [],
+          scope: "shared",
+          content: "At most 5 bots run at once.",
+          savedAs: { created: false },
+        });
+        expect(notices).not.toHaveBeenCalled();
+        expect(encoded).toContain('"status":"saved"');
+      }),
   );
 
   it.effect("a note whose text is already a saved preference is not made undoable", () =>
