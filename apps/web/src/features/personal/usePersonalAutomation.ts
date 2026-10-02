@@ -5,7 +5,7 @@ import type {
   PersonalTaskId,
   ThreadId,
 } from "@t3tools/contracts";
-import { WS_METHODS } from "@t3tools/contracts";
+import { PersonalMemoryId, WS_METHODS } from "@t3tools/contracts";
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
@@ -237,6 +237,27 @@ export const personalMemoryRestore = createEnvironmentRpcCommand(connectionAtomR
   tag: WS_METHODS.personalMemoryRestore,
   onSuccess: refreshMemoryAndReplaced,
 });
+
+/** One memory entry, current or archived: whether a note line's Undo was already used. */
+export const personalMemoryEntry = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "personal-memory:get",
+  tag: WS_METHODS.personalMemoryGet,
+  staleTimeMs: 30_000,
+});
+
+export function usePersonalMemoryEntry(environmentId: EnvironmentId | null, memoryId: string) {
+  const atom = useMemo(
+    () =>
+      environmentId === null
+        ? null
+        : personalMemoryEntry({
+            environmentId,
+            input: { memoryId: PersonalMemoryId.make(memoryId) },
+          }),
+    [environmentId, memoryId],
+  );
+  return useEnvironmentQuery(atom);
+}
 
 /** Undo on a "Saved a note" chat line: archives the note, bringing back what it replaced. */
 export const personalMemoryUndoNote = createEnvironmentRpcCommand(connectionAtomRuntime, {

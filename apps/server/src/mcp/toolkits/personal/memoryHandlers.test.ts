@@ -88,6 +88,11 @@ function saveMemory(input: {
   };
   /** What the store hands back for the save (e.g. an identical preference already saved). */
   readonly savedAs?: { readonly kind?: "note" | "preference"; readonly created?: boolean };
+  /** Where the turn came from, as the store reports it. */
+  readonly origin?: {
+    readonly origin: "chat" | "task" | "routine" | "bot" | "app";
+    readonly readWeb: boolean;
+  };
   /** The store refuses the save with this message. */
   readonly saveFails?: string;
 }) {
@@ -111,6 +116,7 @@ function saveMemory(input: {
     Layer.provide(
       Layer.mock(PersonalMemoryService)({
         botForThread: () => Effect.succeed(Option.some(botId)),
+        noteOrigin: () => Effect.succeed(input.origin ?? { origin: "chat", readWeb: false }),
         save: (entry) =>
           input.saveFails !== undefined
             ? Effect.fail(new PersonalMemoryError({ message: input.saveFails }))
@@ -779,6 +785,7 @@ describe("1.60.22: notes save directly at every reach, with a chat line and Undo
           ownerTexts: [],
           current: { text: "Delegated task from CTO", byOwner: false },
           startedByOwner: false,
+          origin: { origin: "task", readWeb: false },
           scope,
           content: longNote,
         });
@@ -788,7 +795,7 @@ describe("1.60.22: notes save directly at every reach, with a chat line and Undo
           scopeId,
           kind: "note",
           content: longNote,
-          source: "bot:cfo",
+          source: "bot:cfo;from=task",
         });
         expect(encoded).toContain('"status":"saved"');
         const notice = noticeOf(notices);
@@ -1020,4 +1027,19 @@ describe("1.60.22: tool texts say notes save directly and rules need a tap", () 
     const description = PersonalToolkit.tools.forget_memory.description ?? "";
     expect(description).toContain("A note is forgotten at once");
   });
+});
+
+describe("Security (1.60.22): a note records where it came from", () => {
+  it.effect("a note saved after web reading in a routine says so in its source", () =>
+    Effect.gen(function* () {
+      const { saved } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: [],
+        origin: { origin: "routine", readWeb: true },
+        scope: "shared",
+        content: "Vendor X raised prices in October.",
+      });
+      expect(saved.mock.calls[0]?.[0]).toMatchObject({ source: "bot:cfo;from=routine+web" });
+    }),
+  );
 });

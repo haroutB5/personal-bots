@@ -45,6 +45,73 @@ export const PersonalMemoryEntry = Schema.Struct({
 });
 export type PersonalMemoryEntry = typeof PersonalMemoryEntry.Type;
 
+/**
+ * Where a note a bot saved on its own came from, as far as the turn knew:
+ * chat (the owner's own message), task, routine, bot (another bot's or a
+ * group's message), app (a server notice or continue).
+ */
+export type PersonalMemoryNoteOrigin = "chat" | "task" | "routine" | "bot" | "app";
+
+const NOTE_ORIGINS: ReadonlyArray<PersonalMemoryNoteOrigin> = [
+  "chat",
+  "task",
+  "routine",
+  "bot",
+  "app",
+];
+
+/** A note's `source`: `bot:<botId>;from=<origin>`, plus `+web` when the turn read a web page first. */
+export function botNoteSource(
+  botId: string,
+  origin: PersonalMemoryNoteOrigin,
+  readWeb: boolean,
+): string {
+  return `bot:${botId};from=${origin}${readWeb ? "+web" : ""}`;
+}
+
+export type PersonalMemorySource =
+  | { readonly kind: "user" }
+  | {
+      readonly kind: "bot";
+      readonly botId: string;
+      /** Absent on entries saved before 1.60.22. */
+      readonly origin: PersonalMemoryNoteOrigin | null;
+      readonly readWeb: boolean;
+    }
+  | { readonly kind: "task"; readonly taskId: string }
+  | { readonly kind: "other"; readonly source: string };
+
+export function parseMemorySource(source: string): PersonalMemorySource {
+  if (source === "user") return { kind: "user" };
+  if (source.startsWith("task:")) return { kind: "task", taskId: source.slice(5) };
+  if (!source.startsWith("bot:")) return { kind: "other", source };
+  const [botId = "", detail = ""] = source.slice(4).split(";from=");
+  const [origin = "", web] = detail.split("+");
+  return {
+    kind: "bot",
+    botId,
+    origin: NOTE_ORIGINS.includes(origin as PersonalMemoryNoteOrigin)
+      ? (origin as PersonalMemoryNoteOrigin)
+      : null,
+    readWeb: web === "web",
+  };
+}
+
+const ORIGIN_TAG: Record<PersonalMemoryNoteOrigin, string> = {
+  chat: "from the user's message",
+  task: "from a task",
+  routine: "from a routine",
+  bot: "from another bot",
+  app: "from an app notice",
+};
+
+/** The short tag a bot-saved note carries ("from a task, after web reading"), or null. */
+export function noteSourceTag(source: string): string | null {
+  const parsed = parseMemorySource(source);
+  if (parsed.kind !== "bot" || parsed.origin === null) return null;
+  return `${ORIGIN_TAG[parsed.origin]}${parsed.readWeb ? ", after web reading" : ""}`;
+}
+
 export const PersonalMemoryListInput = Schema.Struct({
   scope: Schema.optional(PersonalMemoryScope),
   scopeId: Schema.optional(Schema.String),
@@ -108,6 +175,10 @@ export type PersonalMemoryRestoreInput = typeof PersonalMemoryRestoreInput.Type;
 /** Undo on a "Saved a note" chat line: archives that note and brings back what it replaced. */
 export const PersonalMemoryUndoNoteInput = Schema.Struct({ memoryId: PersonalMemoryId });
 export type PersonalMemoryUndoNoteInput = typeof PersonalMemoryUndoNoteInput.Type;
+
+/** One entry, current or archived: a note line reads it to show whether its Undo was used. */
+export const PersonalMemoryGetInput = Schema.Struct({ memoryId: PersonalMemoryId });
+export type PersonalMemoryGetInput = typeof PersonalMemoryGetInput.Type;
 
 /** merge: several entries folded into one. supersede: older entries replaced. leave: unsure, untouched. */
 /**

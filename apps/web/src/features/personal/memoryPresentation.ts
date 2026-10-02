@@ -1,5 +1,6 @@
 import type {
   PersonalMemoryEntry,
+  PersonalMemoryNoteOrigin,
   PersonalMemorySplitPart,
   PersonalMemoryTidyAction,
   PersonalMemoryTidyChange,
@@ -9,7 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { personalBotTeamLabel } from "@t3tools/contracts";
+import { parseMemorySource, personalBotTeamLabel } from "@t3tools/contracts";
 
 import { PERSONAL_TIME_ZONE } from "./greeting";
 import { formatRelativeTime } from "./relativeTime";
@@ -398,3 +399,36 @@ export function tidyEntryTexts(
 export function tidyChangeCountLabel(count: number): string {
   return count === 1 ? "1 change" : `${count} changes`;
 }
+
+/** Where an entry came from, in words. */
+export function memorySourceLabel(
+  entry: Pick<PersonalMemoryEntry, "source">,
+  botName: (botId: string) => string | undefined,
+  taskTitle: (taskId: string) => string | undefined,
+): string {
+  const source = parseMemorySource(entry.source);
+  switch (source.kind) {
+    case "user":
+      return "Saved by you";
+    case "bot": {
+      const who = botName(source.botId) ?? "a bot";
+      if (source.origin === null) return `Saved by ${who} when you asked`;
+      return `Saved by ${who} ${NOTE_ORIGIN_WORDS[source.origin]}${source.readWeb ? ", after reading the web" : ""}`;
+    }
+    case "task": {
+      const title = taskTitle(source.taskId);
+      return title === undefined ? "From a finished task" : `From the task "${title}"`;
+    }
+    case "other":
+      return source.source;
+  }
+}
+
+/** Where a note a bot saved on its own came from, as the Memory screen says it. */
+const NOTE_ORIGIN_WORDS: Record<PersonalMemoryNoteOrigin, string> = {
+  chat: "from your message",
+  task: "during a task",
+  routine: "during a routine",
+  bot: "from another bot's message",
+  app: "from an app notice",
+};

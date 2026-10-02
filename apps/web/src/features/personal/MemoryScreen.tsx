@@ -28,6 +28,7 @@ import { MemoryContent } from "./MemoryContent";
 import {
   isNewBotPreference,
   memoryMetaLine,
+  memorySourceLabel,
   memoryTextLookup,
   readMemoryLastSeen,
   writeMemoryLastSeen,
@@ -61,23 +62,6 @@ const KIND_LABEL = {
   preference: "Preference",
   task_summary: "Task summary",
 } as const;
-
-/** Where an entry came from, in words. */
-export function memorySourceLabel(
-  entry: Pick<PersonalMemoryEntry, "source">,
-  botName: (botId: string) => string | undefined,
-  taskTitle: (taskId: string) => string | undefined,
-): string {
-  if (entry.source === "user") return "Saved by you";
-  if (entry.source.startsWith("bot:")) {
-    return `Saved by ${botName(entry.source.slice(4)) ?? "a bot"} when you asked`;
-  }
-  if (entry.source.startsWith("task:")) {
-    const title = taskTitle(entry.source.slice(5));
-    return title === undefined ? "From a finished task" : `From the task "${title}"`;
-  }
-  return entry.source;
-}
 
 function scopeLabel(entry: PersonalMemoryEntry, botById: Map<string, PersonalBot>): string {
   if (entry.scope === "shared") return "All bots";

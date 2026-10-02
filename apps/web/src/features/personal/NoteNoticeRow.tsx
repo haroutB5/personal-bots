@@ -1,15 +1,38 @@
 import type { JSX } from "react";
 import { useState } from "react";
 
-import { type EnvironmentId, PersonalMemoryId } from "@t3tools/contracts";
+import { type EnvironmentId, type PersonalMemoryEntry, PersonalMemoryId } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
-import { personalMemoryRestore, personalMemoryUndoNote } from "./usePersonalAutomation";
+import {
+  personalMemoryRestore,
+  personalMemoryUndoNote,
+  usePersonalMemoryEntry,
+} from "./usePersonalAutomation";
 
 type UndoState = "idle" | "busy" | "done";
+
+/** The server's archive reason for a note taken back from its chat line. */
+const UNDONE_REASON = "Undone from the chat.";
+
+/**
+ * What the line says instead of Undo once there is nothing to undo, from the
+ * entry as it is now (so a reload still shows a used Undo as done), or null
+ * while Undo still applies or the entry is not loaded.
+ */
+export function noteUndoSettled(
+  undo: "archive" | "restore",
+  entry: Pick<PersonalMemoryEntry, "supersededAt" | "supersededReason"> | null,
+): string | null {
+  if (entry === null) return null;
+  const archived = entry.supersededAt != null;
+  if (undo === "restore") return archived ? null : "Restored";
+  if (!archived) return null;
+  return entry.supersededReason === UNDONE_REASON ? "Undone" : "Archived";
+}
 
 /**
  * "Saved a note: ..." / "Forgot a note: ..." in a bot chat, with Undo: a
@@ -31,6 +54,8 @@ export function NoteNoticeRow({
   const restore = useAtomCommand(personalMemoryRestore);
   const [state, setState] = useState<UndoState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const current = usePersonalMemoryEntry(environmentId, memoryId);
+  const settled = noteUndoSettled(undo, current.data ?? null);
 
   const onUndo = async () => {
     if (state !== "idle") return;
@@ -52,8 +77,10 @@ export function NoteNoticeRow({
       className="mx-auto max-w-[90%] text-center text-[13px] leading-[18px] text-[var(--personal-text-secondary)]"
     >
       <span className="break-words">{label}</span>{" "}
-      {state === "done" ? (
-        <span className="font-medium">{undo === "archive" ? "· Undone" : "· Restored"}</span>
+      {state === "done" || settled !== null ? (
+        <span className="font-medium">
+          · {state === "done" ? (undo === "archive" ? "Undone" : "Restored") : settled}
+        </span>
       ) : (
         <button
           type="button"

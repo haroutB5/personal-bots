@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  memorySourceLabel,
   isNewBotPreference,
   MEMORY_LAST_SEEN_KEY,
   memoryDayLabel,
@@ -414,5 +415,27 @@ describe("memoryReachTag", () => {
       "Note · All bots",
     );
     expect(memoryReachTag({ kind: "note", scope: "bot", scopeId: "cfo" })).toBe("Note · One bot");
+  });
+});
+
+describe("1.60.22: a note says where it came from", () => {
+  const name = (botId: string) => (botId === "cto" ? "CTO" : undefined);
+  const task = () => undefined;
+  it("names the bot and the turn it was saved in", () => {
+    expect(memorySourceLabel({ source: "bot:cto;from=task" }, name, task)).toBe(
+      "Saved by CTO during a task",
+    );
+    expect(memorySourceLabel({ source: "bot:cto;from=routine+web" }, name, task)).toBe(
+      "Saved by CTO during a routine, after reading the web",
+    );
+    expect(memorySourceLabel({ source: "bot:cto;from=chat" }, name, task)).toBe(
+      "Saved by CTO from your message",
+    );
+  });
+  it("keeps the old wording for entries saved before provenance", () => {
+    expect(memorySourceLabel({ source: "bot:cto" }, name, task)).toBe(
+      "Saved by CTO when you asked",
+    );
+    expect(memorySourceLabel({ source: "user" }, name, task)).toBe("Saved by you");
   });
 });

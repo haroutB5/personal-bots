@@ -1,6 +1,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  botNoteSource,
   describePersonalRoutineTrigger,
   type PersonalBotId,
   type PersonalMemoryEntry,
@@ -333,13 +334,14 @@ const make = Effect.gen(function* () {
         "Not saved: a note cannot replace a preference (a rule). If the rule changed, save the new rule with kind preference and replaces: the user approves it on a card.",
       );
     }
+    const from = yield* memory.noteOrigin(threadId);
     const entry = yield* memory
       .save({
         scope,
         scopeId: scope === "team" ? team : scope === "bot" ? botId : null,
         kind: "note",
         content: input.content,
-        source: `bot:${botId}`,
+        source: botNoteSource(botId, from.origin, from.readWeb),
         replaces: replaceIds,
         actorBotId: botId,
         actorTeam: team ?? undefined,
