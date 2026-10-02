@@ -169,6 +169,56 @@ export function isThreadRateLimited(shell: EnvironmentThreadShell): boolean {
   return providerWaitState(shell.session) === "rate_limited";
 }
 
+/** The names a chat's session goes by for its provider (instance id, driver, the retry's own). */
+function sessionProviderNames(shell: EnvironmentThreadShell): ReadonlySet<string> {
+  const session = shell.session;
+  const names = [
+    session?.providerInstanceId,
+    session?.providerName,
+    session?.providerRetry?.provider,
+  ].filter((name): name is string => typeof name === "string" && name.length > 0);
+  return new Set(names);
+}
+
+function sameProvider(left: EnvironmentThreadShell, right: EnvironmentThreadShell): boolean {
+  const leftNames = sessionProviderNames(left);
+  const rightNames = sessionProviderNames(right);
+  // A chat that never named its provider says nothing against it.
+  if (leftNames.size === 0 || rightNames.size === 0) return true;
+  return [...leftNames].some((name) => rightNames.has(name));
+}
+
+/**
+ * A rate limit that has clearly passed, so the chat that recorded it must not
+ * speak for the bot. The server keeps a failed chat's session in `error` with
+ * its limit until that chat gets another turn, which a chat of an ended task
+ * never does, and the bot has often replied since in other chats.
+ *
+ * Only a chat whose turn already failed (`error`) can be stale: one still
+ * running is waiting on the provider's clock and keeps its limit. Stale when
+ *  - the chat's task has ended (`endedTaskThreadIds`, every task of the chat
+ *    failed, was cancelled or interrupted, or completed), or
+ *  - a chat of the same bot on the same provider completed a turn after the
+ *    limit was seen (`observedAt`, else the session's `updatedAt`).
+ * `botShells` is every linked chat, archived ones too: a 48-hour auto-archive
+ * must not bring the old limit back.
+ */
+export function isRateLimitStale(
+  shell: EnvironmentThreadShell,
+  botShells: ReadonlyArray<EnvironmentThreadShell>,
+  endedTaskThreadIds?: ReadonlySet<string>,
+): boolean {
+  if (shell.session?.status !== "error") return false;
+  if (endedTaskThreadIds?.has(shell.id) === true) return true;
+  const limitAt = Date.parse(shell.session.providerRetry?.observedAt ?? shell.session.updatedAt);
+  if (!Number.isFinite(limitAt)) return false;
+  return botShells.some((other) => {
+    const turn = other.latestTurn;
+    if (turn?.state !== "completed" || turn.completedAt === null) return false;
+    return Date.parse(turn.completedAt) > limitAt && sameProvider(shell, other);
+  });
+}
+
 /**
  * The chat's last turn failed and nothing is retrying it: the header's
  * "Error". The server keeps the session in `error` until the next good turn.
@@ -272,6 +322,8 @@ export function buildBotSummaries(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   /** From `waitingLabelsByThread`: thread id to "Waiting on Developer". */
   readonly waitingByThread?: ReadonlyMap<string, string>;
+  /** From `threadIdsWithEndedTasks`: chats whose every task is over (see `isRateLimitStale`). */
+  readonly endedTaskThreadIds?: ReadonlySet<string>;
   readonly browserHelpThreadId?: string | null;
   /** From `threadIdsAwaitingSecret`: chats with a pending secret request. */
   readonly secretRequestThreadIds?: ReadonlySet<string>;
@@ -322,7 +374,14 @@ export function buildBotSummaries(input: {
       (left, right) => activityMs(right) - activityMs(left),
     );
     const newestThread = shells[0] ?? null;
-    const rateLimitedThread = shells.find(isThreadRateLimited) ?? null;
+    // A limit that has passed (a later reply, or a task that ended on it) must
+    // not pin the row: the chat itself keeps saying what happened to it.
+    const rateLimitedThread =
+      shells.find(
+        (shell) =>
+          isThreadRateLimited(shell) &&
+          !isRateLimitStale(shell, busyShells, input.endedTaskThreadIds),
+      ) ?? null;
     // Only the newest chat: an old chat whose last reply failed must not pin
     // the bot at "Couldn't reply" after the owner moved on.
     const erroredThread =

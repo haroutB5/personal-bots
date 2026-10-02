@@ -13,6 +13,7 @@ import {
   readServerTurn,
   resolveTurnChildren,
   serverTurnLabel,
+  threadIdsWithEndedTasks,
   waitingLabelsByThread,
 } from "./delegationModel";
 
@@ -382,6 +383,24 @@ describe("delegatedChildren and waiting labels", () => {
       ),
     ];
     expect(waitingLabelsByThread(three, nameOf).get("thread-3")).toBe("Waiting on 3 bots");
+  });
+});
+
+describe("threadIdsWithEndedTasks", () => {
+  it("lists a chat only when every task of it is over", () => {
+    const ended = threadIdsWithEndedTasks([
+      task({ taskId: "failed", threadId: "t-failed", status: "failed" }),
+      task({ taskId: "cancelled", threadId: "t-cancelled", status: "cancelled" }),
+      task({ taskId: "interrupted", threadId: "t-interrupted", status: "interrupted" }),
+      task({ taskId: "done", threadId: "t-done", status: "completed" }),
+      // An open task keeps its chat out, even beside a failed one (a retry).
+      task({ taskId: "old", threadId: "t-retry", status: "failed" }),
+      task({ taskId: "new", threadId: "t-retry", status: "running" }),
+      // Parked on a rate limit is still open: the task will run again.
+      task({ taskId: "limited", threadId: "t-limited", status: "rate_limited" }),
+      task({ taskId: "nothread", threadId: null, status: "failed" }),
+    ]);
+    expect([...ended].toSorted()).toEqual(["t-cancelled", "t-done", "t-failed", "t-interrupted"]);
   });
 });
 

@@ -59,6 +59,7 @@ import {
   resolveTurnChildren,
   type ServerTurn,
   serverTurnLabel,
+  threadIdsWithEndedTasks,
   waitingLabelsByThread,
 } from "./delegationModel";
 import {
@@ -416,6 +417,7 @@ export function ChatsScreen({
   );
   const nameOf = useCallback((botId: string) => namesById.get(botId) ?? null, [namesById]);
   const waitingByThread = useMemo(() => waitingLabelsByThread(tasks, nameOf), [tasks, nameOf]);
+  const endedTaskThreadIds = useMemo(() => threadIdsWithEndedTasks(tasks), [tasks]);
   const describeTurn = useCallback(
     (turn: ServerTurn) => serverTurnLabel(turn, resolveTurnChildren(turn, tasks), nameOf),
     [tasks, nameOf],
@@ -437,6 +439,7 @@ export function ChatsScreen({
             shells,
             providers,
             waitingByThread,
+            endedTaskThreadIds,
             browserHelpThreadId: computerFeed.status?.helpRequest?.threadId ?? null,
             secretRequestThreadIds,
             routines: routinesQuery.data?.routines ?? [],
@@ -449,6 +452,7 @@ export function ChatsScreen({
       memberThreadIds,
       providers,
       routinesQuery.data,
+      endedTaskThreadIds,
       secretRequestThreadIds,
       shells,
       waitingByThread,

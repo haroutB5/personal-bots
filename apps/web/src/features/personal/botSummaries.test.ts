@@ -9,6 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import { motionForSummary } from "./avatarMotion";
 import {
   buildBotSummaries,
   botStatus,
@@ -18,6 +19,7 @@ import {
   filterBotSummaries,
   isBotThinking,
   isThreadLive,
+  isRateLimitStale,
   isThreadRateLimited,
   previewKeyAdvanced,
   previewRefreshKey,
@@ -236,6 +238,151 @@ describe("buildBotSummaries", () => {
     });
     expect([isThreadLive(failed), isThreadRateLimited(failed)]).toEqual([false, true]);
     expect([isThreadLive(retrying), isThreadRateLimited(retrying)]).toEqual([true, false]);
+  });
+
+  describe("a rate limit that has passed", () => {
+    const usageLimit = {
+      kind: "rate_limited",
+      provider: "codex",
+      observedAt: "2026-10-02T17:21:00.000Z",
+    };
+    // QA's chat 0b372305: its task failed on a Codex usage limit, no reset time.
+    const limitedChat = (overrides: Partial<Record<string, unknown>> = {}) =>
+      shell("t-limited", "2026-10-02T17:21:00.000Z", {
+        latestTurn: { state: "error", completedAt: "2026-10-02T17:21:00.000Z" },
+        session: {
+          status: "error",
+          providerName: "codex",
+          providerRetry: usageLimit,
+          updatedAt: "2026-10-02T17:21:05.000Z",
+        },
+        ...overrides,
+      });
+    const repliedChat = (id: string, completedAt: string, providerName = "codex") =>
+      shell(id, completedAt, {
+        latestTurn: { state: "completed", completedAt },
+        session: { status: "ready", providerName, updatedAt: completedAt },
+      });
+    const summarise = (
+      shells: EnvironmentThreadShell[],
+      endedTaskThreadIds?: ReadonlySet<string>,
+      archived: string[] = [],
+    ) =>
+      buildBotSummaries({
+        bots: [bots[1]!],
+        links: shells.map((entry) =>
+          link(
+            "developer",
+            entry.id,
+            archived.includes(entry.id) ? "2026-10-02T19:00:00.000Z" : null,
+          ),
+        ),
+        shells,
+        providers: [provider("codex")],
+        ...(endedTaskThreadIds === undefined ? {} : { endedTaskThreadIds }),
+      })[0]!;
+    const at = Date.parse("2026-10-02T19:49:00.000Z");
+
+    it("shows the normal state once the bot has replied since, on the same provider", () => {
+      const row = summarise([
+        limitedChat(),
+        repliedChat("t-ready", "2026-10-02T18:09:00.000Z"),
+        repliedChat("t-ready-2", "2026-10-02T17:51:00.000Z"),
+      ]);
+      expect([row.rateLimited, row.rateLimitedThread]).toEqual([false, null]);
+      expect(botStatusLine(row, at)).toBe("Ready");
+      expect(motionForSummary(row)).toBe("idle");
+      // An auto-archived reply still counts.
+      const archived = summarise(
+        [limitedChat(), repliedChat("t-ready", "2026-10-02T18:09:00.000Z")],
+        undefined,
+        ["t-ready"],
+      );
+      expect(archived.rateLimited).toBe(false);
+    });
+
+    it("still says rate limited when nothing has replied since the limit", () => {
+      // A reply from before the limit proves nothing.
+      const before = summarise([
+        limitedChat(),
+        repliedChat("t-before", "2026-10-02T17:00:00.000Z"),
+      ]);
+      expect(before.rateLimited).toBe(true);
+      expect(botStatusLine(before, at)).toBe("Rate limited · reset not reported");
+      expect(motionForSummary(before)).toBe("blocked");
+      // Nor does a reply on another provider.
+      const other = summarise([
+        limitedChat(),
+        repliedChat("t-claude", "2026-10-02T18:09:00.000Z", "claudeAgent"),
+      ]);
+      expect(other.rateLimited).toBe(true);
+      // With a reset time the row says when.
+      const timed = summarise([
+        limitedChat({
+          session: {
+            status: "error",
+            providerName: "codex",
+            providerRetry: { ...usageLimit, retryAt: "2026-10-02T20:47:16.087Z" },
+            updatedAt: "2026-10-02T17:21:05.000Z",
+          },
+        }),
+      ]);
+      expect(botStatusLine(timed, at)).toBe("Rate limited · retry ~21:47");
+    });
+
+    it("ignores the limit of a chat whose task ended, but not one still running", () => {
+      const ended = new Set(["t-limited"]);
+      const row = summarise([limitedChat()], ended);
+      expect(row.rateLimited).toBe(false);
+      expect(botStatusLine(row, at)).toBe("Ready");
+      // A task that is still open keeps the row limited.
+      expect(summarise([limitedChat()], new Set()).rateLimited).toBe(true);
+      // A turn still waiting on the provider's clock is not stale, task or not.
+      const running = limitedChat({
+        latestTurn: { state: "running" },
+        session: { status: "running", providerName: "codex", providerRetry: usageLimit },
+      });
+      expect(summarise([running], ended).rateLimited).toBe(true);
+      expect(
+        summarise([running, repliedChat("t-ready", "2026-10-02T18:09:00.000Z")], ended).rateLimited,
+      ).toBe(true);
+    });
+
+    it("keeps another chat's live limit when only an old one is stale", () => {
+      const fresh = shell("t-fresh", "2026-10-02T19:30:00.000Z", {
+        latestTurn: { state: "error", completedAt: "2026-10-02T19:30:00.000Z" },
+        session: {
+          status: "error",
+          providerName: "codex",
+          providerRetry: { ...usageLimit, observedAt: "2026-10-02T19:30:00.000Z" },
+          updatedAt: "2026-10-02T19:30:00.000Z",
+        },
+      });
+      const row = summarise([
+        limitedChat(),
+        fresh,
+        repliedChat("t-ready", "2026-10-02T18:09:00.000Z"),
+      ]);
+      expect(row.rateLimitedThread?.id).toBe("t-fresh");
+    });
+
+    it("falls back to the session time and tolerates missing fields", () => {
+      const noObserved = limitedChat({
+        session: {
+          status: "error",
+          providerName: "codex",
+          providerRetry: { kind: "rate_limited", provider: "codex" },
+          updatedAt: "2026-10-02T17:21:05.000Z",
+        },
+      });
+      const replied = repliedChat("t-ready", "2026-10-02T18:09:00.000Z");
+      expect(isRateLimitStale(noObserved, [noObserved, replied])).toBe(true);
+      // No time to compare against: the limit stands.
+      const noTimes = limitedChat({
+        session: { status: "error", providerRetry: { kind: "rate_limited", provider: "codex" } },
+      });
+      expect(isRateLimitStale(noTimes, [noTimes, replied])).toBe(false);
+    });
   });
 
   it("links browser help and the next enabled scheduled routine to their bot", () => {

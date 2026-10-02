@@ -317,6 +317,23 @@ function waitingText(names: ReadonlyArray<string>): string {
   return `Waiting on ${names.length} bots`;
 }
 
+/**
+ * Chats whose every task is over (completed, failed, interrupted or
+ * cancelled): nothing will send them another turn. A chat with any open task,
+ * or none at all, is not listed. Lets the Bots list tell a rate limit a chat
+ * died on from one it is still waiting out (`isRateLimitStale`).
+ */
+export function threadIdsWithEndedTasks(tasks: ReadonlyArray<PersonalTask>): ReadonlySet<string> {
+  const open = new Set<string>();
+  const ended = new Set<string>();
+  for (const task of tasks) {
+    if (task.threadId === null) continue;
+    (isTerminal(task) ? ended : open).add(task.threadId);
+  }
+  for (const threadId of open) ended.delete(threadId);
+  return ended;
+}
+
 /** Task statuses that keep a bot busy while its own turn is not running. */
 const WAITING_TASK_STATUSES: ReadonlyArray<PersonalTask["status"]> = [
   "waiting_for_agent",
