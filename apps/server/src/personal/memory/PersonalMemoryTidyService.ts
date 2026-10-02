@@ -676,15 +676,32 @@ export const make = Effect.gen(function* () {
         AND to_scope_id IS ${change.toScopeId}
     `.pipe(Effect.map((rows) => (rows[0]?.count ?? 0) > 0));
 
+  /**
+   * The newest runs, plus every older one that still has a change waiting
+   * for the owner's OK: the Waiting list must never lose a group because
+   * nightly previews pushed it past the limit.
+   */
   const readRuns = (limit: number, runId?: string) =>
     Effect.gen(function* () {
       const runs = yield* sql<RunRow>`
         SELECT run_id AS "runId", started_at AS "startedAt", finished_at AS "finishedAt", status,
           dry_run AS "dryRun", model, merged, superseded, pending, left_alone AS "leftAlone", error
-        FROM personal_memory_tidy_runs
-        WHERE ${runId === undefined ? sql`1 = 1` : sql`run_id = ${runId}`}
+        FROM personal_memory_tidy_runs r
+        WHERE ${
+          runId !== undefined
+            ? sql`r.run_id = ${runId}`
+            : sql`(
+                r.run_id IN (
+                  SELECT run_id FROM personal_memory_tidy_runs ORDER BY started_at DESC LIMIT ${limit}
+                )
+                OR EXISTS (
+                  SELECT 1 FROM personal_memory_tidy_changes c
+                  WHERE c.run_id = r.run_id AND c.status = 'pending'
+                )
+              )`
+        }
         ORDER BY started_at DESC
-        LIMIT ${limit}
+        LIMIT ${runId === undefined ? -1 : limit}
       `;
       if (runs.length === 0) return [];
       const changes = yield* sql<ChangeRow>`

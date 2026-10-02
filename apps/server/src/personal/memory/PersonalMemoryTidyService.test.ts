@@ -1577,3 +1577,33 @@ describe("Security (2a52e8c67866): approvals bound to kind and reach, not only t
     }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
   );
 });
+
+it.effect("1.60.22: the log keeps every run that still waits for an OK, past the run limit", () =>
+  Effect.gen(function* () {
+    const ids = yield* seed;
+    const memory = yield* PersonalMemoryService;
+    const tidy = yield* PersonalMemoryTidy;
+    const sql = yield* SqlClient.SqlClient;
+    const changeId = yield* memory.propose({
+      action: "forget",
+      botId: BOT_A,
+      threadId: null,
+      target: yield* memory.get(PersonalMemoryId.make(ids.tea)),
+      reason: "Asked in chat.",
+    });
+    // Twelve newer runs (nightly previews) with nothing waiting.
+    for (let night = 1; night <= 12; night += 1) {
+      const at = `2099-01-${String(night).padStart(2, "0")}T03:30:00.000Z`;
+      yield* sql`
+        INSERT INTO personal_memory_tidy_runs (run_id, started_at, finished_at, status, dry_run, nightly, model)
+        VALUES (${`nightly-${night}`}, ${at}, ${at}, 'done', 1, 1, 'test')
+      `;
+    }
+    const log = yield* tidy.log({ limit: 10 });
+    expect(log.runs.slice(0, 10).map((run) => run.runId)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `nightly-${12 - index}`),
+    );
+    const waiting = log.runs.flatMap((run) => run.changes).filter((c) => c.status === "pending");
+    expect(waiting.map((change) => change.changeId)).toEqual([changeId]);
+  }).pipe(Effect.provide(testLayer(fakeJudge(answers)))),
+);
