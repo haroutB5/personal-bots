@@ -354,15 +354,18 @@ export function TidyChangeItem({
               <li
                 // oxlint-disable-next-line react/no-array-index-key -- ids can repeat; order is the data
                 key={index}
-                className="line-clamp-3 border-l-2 border-[var(--personal-border)] pl-2 text-[13px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text-secondary)]"
+                className="border-l-2 border-[var(--personal-border)] pl-2"
               >
-                {text}
+                <p className="line-clamp-3 text-[13px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text-secondary)]">
+                  {text}
+                </p>
+                {/* Its own line, outside the clamp: a long entry never hides it. */}
                 {(() => {
                   const bound = boundTo(change.memoryIds[index] ?? "");
                   return bound === undefined || bound.textOnly ? null : (
-                    <span className="mt-0.5 block text-[12px] text-[var(--personal-text-tertiary)]">
+                    <p className="mt-0.5 text-[12px] leading-snug text-[var(--personal-text-tertiary)]">
                       {`Bound to: ${memoryReachTag(bound)}`}
-                    </span>
+                    </p>
                   );
                 })()}
               </li>

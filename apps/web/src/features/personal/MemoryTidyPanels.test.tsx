@@ -119,3 +119,41 @@ describe("TidyChangeItem: what an approval is bound to", () => {
     expect(textOf(change({ status: "pending" }))).not.toContain("Bound to");
   });
 });
+
+describe("TidyChangeItem: the binding label is never clipped", () => {
+  it("renders Bound to outside the three-line clamped entry text", () => {
+    act(() => {
+      renderer = create(
+        <TidyChangeItem
+          change={change({
+            status: "pending",
+            bound: [
+              { memoryId: "m-old", kind: "note", scope: "shared", scopeId: null, textOnly: false },
+              { memoryId: "m-new", kind: "note", scope: "shared", scopeId: null, textOnly: true },
+            ],
+          })}
+          texts={texts}
+          botName={() => undefined}
+        />,
+      );
+    });
+    const textIn = (node: { children: ReadonlyArray<unknown> }): string =>
+      node.children
+        .map((child) =>
+          typeof child === "string" ? child : textIn(child as { children: ReadonlyArray<unknown> }),
+        )
+        .join("");
+    const clamped = renderer!.root.findAll(
+      (node) =>
+        typeof node.props.className === "string" && node.props.className.includes("line-clamp"),
+    );
+    expect(clamped.length).toBeGreaterThan(0);
+    // The entry text stays clamped; the label is not inside any clamped element.
+    expect(clamped.some((node) => textIn(node).includes("Lives in Leeds"))).toBe(true);
+    expect(clamped.some((node) => textIn(node).includes("Bound to"))).toBe(false);
+    const label = renderer!.root.findAll(
+      (node) => node.type === "p" && textIn(node) === "Bound to: Note · All bots",
+    );
+    expect(label).toHaveLength(1);
+  });
+});
