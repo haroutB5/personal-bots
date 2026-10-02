@@ -322,6 +322,94 @@ describe("save_memory: bot-only entries save directly; others wait for the owner
   );
 });
 
+describe("Fable follow-up (1.60.21): bot-only preferences wait for a tap too", () => {
+  it.effect("a bot-only preference is a card in this chat, not a direct save", () =>
+    Effect.gen(function* () {
+      const { saved, proposed, encoded } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: [],
+        userRequest: "remember: always quote coin prices in USD",
+        scope: "bot",
+        kind: "preference",
+        content: "Quote coin prices in USD.",
+      });
+      expect(saved).not.toHaveBeenCalled();
+      expect(proposed.mock.calls[0]?.[0]).toMatchObject({
+        action: "save",
+        threadId: "thread",
+        scope: "bot",
+        scopeId: "cfo",
+        kind: "preference",
+        content: "Quote coin prices in USD.",
+      });
+      expect(encoded).toContain("waiting_for_approval");
+    }),
+  );
+
+  it.effect("a standing-permission bot-only preference is a card too", () =>
+    Effect.gen(function* () {
+      const { saved, proposed } = yield* saveMemory({
+        memoryAutoSave: true,
+        exposure: [],
+        userRequest: unasked,
+        scope: "bot",
+        kind: "preference",
+      });
+      expect(saved).not.toHaveBeenCalled();
+      expect(proposed.mock.calls[0]?.[0]).toMatchObject({ scope: "bot", scopeId: "cfo" });
+    }),
+  );
+
+  it.effect("a bot-only preference may not replace a rule other bots follow", () =>
+    Effect.gen(function* () {
+      const { saved, proposed, encoded } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: [],
+        userRequest: "remember: always quote coin prices in GBP",
+        scope: "bot",
+        kind: "preference",
+        content: "Quote coin prices in GBP.",
+        replaces: ["0123abcd"],
+        target: { scope: "shared", content: "Quote coin prices in USD." },
+      });
+      expect(saved).not.toHaveBeenCalled();
+      expect(proposed).not.toHaveBeenCalled();
+      expect(encoded).toContain("reaches fewer bots");
+    }),
+  );
+
+  it.effect("an explicit bot-only note is refused in a chat that had a sensitive site open", () =>
+    Effect.gen(function* () {
+      const { saved, proposed, encoded } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: ["https://www.kraken.com"],
+        userRequest: "remember this: I hold 2 ETH",
+        scope: "bot",
+        content: "I hold 2 ETH.",
+      });
+      expect(saved).not.toHaveBeenCalled();
+      expect(proposed).not.toHaveBeenCalled();
+      expect(encoded).toContain("https://www.kraken.com");
+    }),
+  );
+
+  it.effect("a bot-only preference is refused in a sensitive chat: no card, no save", () =>
+    Effect.gen(function* () {
+      const { saved, proposed, encoded } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: ["https://www.kraken.com"],
+        userRequest: "remember: always quote coin prices in USD",
+        scope: "bot",
+        kind: "preference",
+        content: "Quote coin prices in USD.",
+      });
+      expect(saved).not.toHaveBeenCalled();
+      expect(proposed).not.toHaveBeenCalled();
+      expect(encoded).toContain("https://www.kraken.com");
+    }),
+  );
+});
+
 describe("Security recheck probes (62fdfd9382): text never authorizes a shared write", () => {
   it.effect("the opposite rule replacing the original waits for a tap, showing both", () =>
     Effect.gen(function* () {
@@ -553,4 +641,17 @@ describe("Security recheck c849ca6007: forget in a sensitive chat", () => {
       expect(encoded).toContain("sensitive");
     }),
   );
+});
+
+describe("Fable follow-up (1.60.21): tool texts match how memory reaches bots", () => {
+  it("search_memory says it covers the team's entries, not only shared and own", () => {
+    const description = PersonalToolkit.tools.search_memory.description ?? "";
+    expect(description).toContain("your team");
+  });
+
+  it("save_memory says a preference for yourself waits for a tap and sensitive chats save nothing", () => {
+    const description = PersonalToolkit.tools.save_memory.description ?? "";
+    expect(description).toContain("Only a note for yourself (scope bot) is saved at once");
+    expect(description).toContain("not even for yourself");
+  });
 });

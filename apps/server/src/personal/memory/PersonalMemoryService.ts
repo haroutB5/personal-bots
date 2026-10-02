@@ -51,6 +51,8 @@ export const PERSONAL_MEMORY_CONTEXT_RELEVANT_LIMIT =
  * score: one shared common word is not relevance.
  */
 export const PERSONAL_MEMORY_SCORE_FLOOR = 0.2;
+/** How much of a turn's text picks its notes and task summaries. */
+export const PERSONAL_MEMORY_QUERY_MAX_CHARS = 8_000;
 /**
  * The full preference list goes to a session once, then again only when the
  * set changed, after the provider compacted the chat, or every this many turns.
@@ -297,7 +299,8 @@ export type PersonalMemoryProposal =
       /** The chat the card is shown in; null puts it on the approval list only. */
       readonly threadId: ThreadId | null;
       readonly kind: "note" | "preference";
-      readonly scope: "shared" | "team";
+      /** "bot": a preference only the proposing bot will follow (scopeId is that bot). */
+      readonly scope: "shared" | "team" | "bot";
       readonly scopeId: string | null;
       readonly content: string;
       readonly replaces: ReadonlyArray<PersonalMemoryEntry>;
@@ -468,6 +471,12 @@ export class PersonalMemoryService extends Context.Service<
       readonly block: string | null;
       readonly memoryIds: ReadonlyArray<PersonalMemoryId>;
     }>;
+    /**
+     * The provider accepted the turn contextForThread last built for this
+     * thread: only now does that session count as having the preference list
+     * (or one more reminder turn). A send that failed leaves the full list due.
+     */
+    readonly confirmPreferencesSent: (threadId: ThreadId) => Effect.Effect<void>;
     /** Stores a labelled summary of a completed task (idempotent per task). */
     readonly saveTaskSummary: (task: PersonalTask) => Effect.Effect<void>;
     /** Saves task summaries as tasks complete. */
@@ -647,6 +656,9 @@ export const make = Effect.gen(function* () {
   const propose: PersonalMemoryService["Service"]["propose"] = (input) =>
     Effect.gen(function* () {
       if (input.action === "save") yield* rejectUnsafe(input.content.trim());
+      if (input.action === "save" && input.scope === "bot" && input.scopeId !== input.botId) {
+        return yield* fail("A bot-only entry can only be proposed for the bot itself.");
+      }
       const proposedBy = `bot:${input.botId}`;
       const now = yield* DateTime.now;
       const nowIso = DateTime.formatIso(now);
@@ -928,10 +940,25 @@ export const make = Effect.gen(function* () {
    * (ids and versions), when, and how many turns since. In memory only: after
    * a server restart the next turn simply sends the full list again.
    */
-  const sentPreferences = new Map<
-    string,
-    { readonly sessionKey: string; readonly setKey: string; readonly sentAt: string; turns: number }
-  >();
+  type SentPreferences = {
+    readonly sessionKey: string;
+    readonly setKey: string;
+    readonly sentAt: string;
+    readonly turns: number;
+  };
+  const sentPreferences = new Map<string, SentPreferences>();
+  /** What the last built turn would record, kept until its send succeeds. */
+  const pendingSent = new Map<string, SentPreferences>();
+
+  const confirmPreferencesSent: PersonalMemoryService["Service"]["confirmPreferencesSent"] = (
+    threadId,
+  ) =>
+    Effect.sync(() => {
+      const pending = pendingSent.get(threadId);
+      if (pending === undefined) return;
+      pendingSent.delete(threadId);
+      sentPreferences.set(threadId, pending);
+    });
 
   /** Whether the provider compacted this chat since `sinceIso` (its context may have lost the list). */
   const compactedSince = (threadId: ThreadId, sinceIso: string) =>
@@ -970,7 +997,8 @@ export const make = Effect.gen(function* () {
           maxChars: PERSONAL_MEMORY_PREFERENCE_MAX_CHARS,
         });
       }
-      const query = input.query.slice(0, 2_000) || " ";
+      // Long briefs keep their tail: the rarest terms often sit near the end.
+      const query = input.query.slice(0, PERSONAL_MEMORY_QUERY_MAX_CHARS) || " ";
       const notes = yield* search({
         query,
         ...scope,
@@ -1013,17 +1041,16 @@ export const make = Effect.gen(function* () {
         previous.setKey === setKey &&
         previous.turns + 1 < PERSONAL_MEMORY_RESEND_EVERY_TURNS &&
         !(yield* compactedSince(input.threadId, previous.sentAt));
+      // Recorded only once the send succeeds (confirmPreferencesSent): a turn
+      // that never reached the provider must not mark the list as given.
       if (input.session !== undefined) {
-        if (repeat) previous.turns += 1;
-        else {
-          sentPreferences.set(input.threadId, {
-            sessionKey: input.session.key,
-            setKey,
-            sentAt: nowIso,
-            turns: 0,
-          });
-        }
-      }
+        pendingSent.set(
+          input.threadId,
+          repeat && previous !== undefined
+            ? { ...previous, turns: previous.turns + 1 }
+            : { sessionKey: input.session.key, setKey, sentAt: nowIso, turns: 0 },
+        );
+      } else pendingSent.delete(input.threadId);
 
       const sentPreferenceEntries = repeat ? [] : preferences.kept;
       const memoryIds = [...sentPreferenceEntries, ...relevant].map((entry) => entry.memoryId);
@@ -1124,6 +1151,7 @@ export const make = Effect.gen(function* () {
     similar,
     botForThread,
     contextForThread,
+    confirmPreferencesSent,
     saveTaskSummary,
     start,
   } satisfies PersonalMemoryService["Service"];

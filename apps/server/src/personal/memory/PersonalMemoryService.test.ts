@@ -130,6 +130,29 @@ it.effect("retrieval is scoped to shared + the thread's bot, ranked by relevance
   }).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("Fable follow-up (1.60.21): a long brief's later words still pick notes", () =>
+  Effect.gen(function* () {
+    yield* linkThread;
+    const memory = yield* PersonalMemoryService;
+    yield* memory.save({
+      scope: "shared",
+      scopeId: null,
+      kind: "note",
+      content: "The Kraken account holds the HBAR position.",
+      source: "user",
+    });
+    // The only matching word sits past the old 2,000-character cut.
+    const brief = `${"Please read the release notes carefully. ".repeat(80)}Then check Kraken.`;
+    expect(brief.indexOf("Kraken")).toBeGreaterThan(2_000);
+    const context = yield* memory.contextForThread({
+      threadId: THREAD_A,
+      query: brief,
+      record: false,
+    });
+    expect(context.block).toContain("HBAR position");
+  }).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("a deleted entry is excluded from retrieval, search and list", () =>
   Effect.gen(function* () {
     yield* linkThread;

@@ -41,6 +41,9 @@ const WEEKDAY_NUMBER = {
   sunday: 7,
 } as const;
 
+/** How widely a memory scope reaches; a change may not hide an entry from bots it reached. */
+const SCOPE_REACH = { bot: 1, project: 1, team: 2, shared: 3 } as const;
+
 /** save_memory runs on an explicit ask from the user, or with the bot's standing permission. */
 export const EXPLICIT_REMEMBER_REQUEST =
   /\b(remember|memori[sz]e|don'?t forget|do not forget|keep in mind|save (this|that|it)|note (this|that|it) down|for future reference)\b/i;
@@ -527,22 +530,34 @@ const make = Effect.gen(function* () {
         const replaceIds = yield* Effect.forEach(input.replaces ?? [], (ref) =>
           memory.resolveRef({ ref, botId }).pipe(Effect.mapError((error) => refuse(error.message))),
         );
-        if (scope !== "bot") {
-          // Text from a sensitive site must not reach memory other bots see,
-          // not even as a card: the owner asks again in a clean chat.
-          const exposed =
-            sensitiveOrigins.length > 0
-              ? sensitiveOrigins
-              : yield* browser.sensitiveExposure(invocation.threadId);
-          if (exposed.length > 0) {
-            return yield* refuse(
-              `Not saved: this chat has had ${exposed.join(", ")} open, a site the user marked sensitive, so memory other bots see cannot be changed from it. Save it for yourself (scope bot) or ask the user to repeat it in a new chat.`,
-            );
-          }
+        // Text from a sensitive site must not reach memory at all, not even
+        // the bot's own (it rides into every later chat of the bot, where the
+        // egress guard sees a clean thread) and not as a card: the owner asks
+        // again in a clean chat.
+        const exposed =
+          sensitiveOrigins.length > 0
+            ? sensitiveOrigins
+            : yield* browser.sensitiveExposure(invocation.threadId);
+        if (exposed.length > 0) {
+          return yield* refuse(
+            `Not saved: this chat has had ${exposed.join(", ")} open, a site the user marked sensitive, so nothing from it is saved to memory, not even for yourself. Ask the user to repeat it in a new chat.`,
+          );
+        }
+        // A rule is followed in every later chat, so a preference waits for
+        // the owner's tap even when only this bot will see it; a bot-only
+        // note saves directly.
+        if (scope !== "bot" || input.kind === "preference") {
           // Memory other bots follow changes only on the owner's tap.
           const targets = yield* Effect.forEach(replaceIds, (id) =>
             memory.get(id).pipe(Effect.mapError((error) => refuse(error.message))),
           );
+          // Same rule as a direct save: the bots an entry reaches would lose it.
+          const wider = targets.find((target) => SCOPE_REACH[target.scope] > SCOPE_REACH[scope]);
+          if (wider !== undefined) {
+            return yield* refuse(
+              `Not saved: this reaches fewer bots than the ${wider.scope} entry it would replace, so those bots would lose it. Save it as ${wider.scope} instead.`,
+            );
+          }
           const inChat = owner.current !== null && owner.current.byOwner;
           const changeId = yield* memory
             .propose({
@@ -551,7 +566,7 @@ const make = Effect.gen(function* () {
               threadId: inChat ? invocation.threadId : null,
               kind: input.kind,
               scope,
-              scopeId: scope === "team" ? team : null,
+              scopeId: scope === "team" ? team : scope === "bot" ? botId : null,
               content: input.content,
               replaces: targets,
               reason: `Asked in chat: "${source.replace(/\s+/g, " ").slice(0, 300)}"`,

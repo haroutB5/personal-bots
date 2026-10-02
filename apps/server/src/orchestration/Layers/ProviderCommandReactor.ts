@@ -1961,6 +1961,13 @@ const make = Effect.gen(function* () {
           ? renewSessionAndSend(cause)
           : Effect.failCause(cause),
       ),
+      // The bot has its memory's preference list only once the send went
+      // through; a failed send leaves the full list due on the next try.
+      Effect.tap(() =>
+        Option.isSome(personalMemory)
+          ? personalMemory.value.confirmPreferencesSent(event.payload.threadId)
+          : Effect.void,
+      ),
       Effect.asVoid,
       Effect.catchCause(recoverTurnStartFailure),
     );

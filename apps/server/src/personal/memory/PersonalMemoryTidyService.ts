@@ -15,8 +15,10 @@ import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
+  PERSONAL_MEMORY_MAX_LENGTH,
   PersonalMemoryError,
   PersonalMemoryId,
+  PersonalMemorySplitPart,
   PersonalMemoryTidyMode,
   PersonalMemoryTidyRun,
   PersonalMemoryCardsResult,
@@ -205,15 +207,24 @@ export const MEMORY_PROPOSALS_MAX_BYTES = 256 * 1024;
 export const MEMORY_PROPOSALS_DIR = "memory-proposals";
 
 const ProposalItemSchema = Schema.Struct({
-  action: Schema.Literals(["reclassify", "supersede"]),
+  action: Schema.Literals(["reclassify", "supersede", "split"]),
   memoryIds: Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
   by: Schema.optional(Schema.NullOr(Schema.String)),
+  /** A split's single facts, each with its own kind and reach. */
+  parts: Schema.optional(Schema.Array(PersonalMemorySplitPart).check(Schema.isMaxLength(20))),
   toKind: Schema.optional(Schema.NullOr(Schema.Literals(["note", "preference"]))),
   toScope: Schema.optional(Schema.NullOr(Schema.Literals(["shared", "team"]))),
   toScopeId: Schema.optional(Schema.NullOr(Schema.String)),
   reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(600)),
 });
 export type ProposalItem = typeof ProposalItemSchema.Type;
+
+const encodeSplitParts = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Array(PersonalMemorySplitPart)),
+);
+const decodeSplitParts = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Array(PersonalMemorySplitPart)),
+);
 
 /** A proposals file: `{ "items": [...] }`, at most 200 items. */
 export const ProposalFile = Schema.Struct({
@@ -227,11 +238,12 @@ export function proposalProblem(
   current: ReadonlyMap<string, Pick<TidyEntry, "kind" | "scope">>,
 ): string | null {
   if (item.memoryIds.some((id) => !current.has(id))) {
-    return "Names an entry that is not a current shared entry";
+    return "Names an entry that is not a current shared or team entry";
   }
   if (item.action === "reclassify") {
     if (item.memoryIds.length !== 1) return "A reclassify names exactly one entry";
     const entry = current.get(item.memoryIds[0]!)!;
+    if (entry.scope !== "shared") return "Only a shared entry is reclassified";
     const toScope = item.toScope ?? "shared";
     if (toScope === "team" && (item.toScopeId ?? "").trim().length === 0) {
       return "A team reach needs the team's name";
@@ -241,8 +253,24 @@ export function proposalProblem(
     }
     return null;
   }
+  if (item.action === "split") {
+    if (item.memoryIds.length !== 1) return "A split names exactly one entry";
+    const parts = item.parts ?? [];
+    if (parts.length === 0) return "A split needs its parts";
+    for (const part of parts) {
+      const content = part.content.trim();
+      if (content.length === 0 || content.length > PERSONAL_MEMORY_MAX_LENGTH) {
+        return "A part is empty or too long";
+      }
+      if (looksLikeSecret(content)) return "A part looks like it carries a secret";
+      if (part.scope === "team" && (part.scopeId ?? "").trim().length === 0) {
+        return "A team reach needs the team's name";
+      }
+    }
+    return null;
+  }
   if (item.by === undefined || item.by === null || !current.has(item.by)) {
-    return "Names a newer entry that is not a current shared entry";
+    return "Names a newer entry that is not a current shared or team entry";
   }
   if (item.memoryIds.includes(item.by)) return "An entry cannot replace itself";
   return null;
@@ -348,12 +376,12 @@ export const make = Effect.gen(function* () {
     SELECT mode FROM personal_memory_tidy_settings WHERE settings_id = 1
   `.pipe(Effect.map((rows) => (isTidyMode(rows[0]?.mode) ? rows[0]!.mode : ("preview" as const))));
 
-  // Shared entries only: team and bot entries are left to the bots that own them.
+  // Shared and team entries; bot-only entries are left to the bot that owns them.
   const readEntries = sql`
     SELECT memory_id AS "memoryId", scope, scope_id AS "scopeId", kind, content, source,
       created_at AS "createdAt", updated_at AS "updatedAt", version
     FROM personal_memory
-    WHERE deleted_at IS NULL AND superseded_at IS NULL AND scope = 'shared'
+    WHERE deleted_at IS NULL AND superseded_at IS NULL AND scope IN ('shared', 'team')
       AND kind IN ('note', 'preference')
     ORDER BY created_at DESC, seq DESC
   `.pipe(
@@ -411,10 +439,17 @@ export const make = Effect.gen(function* () {
     versions: ReadonlyMap<string, number>,
     source: string,
     nowIso: string,
+    /**
+     * A supersede's newer entry as the owner was shown it. Given, that entry
+     * only has to still read exactly so (a reach or kind change in between is
+     * fine); otherwise it is held to its recorded version like the rest.
+     */
+    byText?: string | null,
   ) =>
     Effect.gen(function* () {
       if (decision.action === "leave") return null;
       const ids = decision.memoryIds;
+      const by = decision.action === "supersede" ? decision.by : null;
       const touched =
         decision.action === "supersede" && decision.by !== null ? [...ids, decision.by] : ids;
       const current = yield* sql<{
@@ -424,23 +459,29 @@ export const make = Effect.gen(function* () {
         readonly scope: string;
         readonly scopeId: string | null;
         readonly createdAt: string;
+        readonly content: string;
       }>`
         SELECT memory_id AS "memoryId", version, kind, scope, scope_id AS "scopeId",
-          created_at AS "createdAt"
+          created_at AS "createdAt", content
         FROM personal_memory
-        WHERE deleted_at IS NULL AND superseded_at IS NULL AND scope = 'shared'
+        WHERE deleted_at IS NULL AND superseded_at IS NULL AND scope IN ('shared', 'team')
           AND ${sql.in("memory_id", touched)}
       `;
       const byId = new Map(current.map((row) => [row.memoryId, row]));
       const intact = touched.every((id) => {
         const row = byId.get(id);
-        return (
-          row !== undefined &&
-          // Every entry must be exactly as it was when the change was planned.
-          versions.get(id) === row.version
-        );
+        if (row === undefined) return false;
+        if (id === by && byText != null) return row.content === byText;
+        // Every entry must be exactly as it was when the change was planned.
+        return versions.get(id) === row.version;
       });
       if (!intact) return null;
+      // The entries archived or merged share one reach: a merge never moves a
+      // fact to bots that did not have it.
+      const reaches = new Set(
+        ids.map((id) => `${byId.get(id)!.scope}:${byId.get(id)!.scopeId ?? ""}`),
+      );
+      if (reaches.size > 1) return null;
       let resultId: string | null = decision.action === "supersede" ? decision.by : null;
       if (decision.action === "merge") {
         const members = ids.map((id) => byId.get(id)!);
@@ -486,6 +527,9 @@ export const make = Effect.gen(function* () {
     resultId: string | null,
     nowIso: string,
     versions: ReadonlyMap<string, number>,
+    reach: { readonly scope: string; readonly scopeId: string | null },
+    /** A supersede's newer entry text, as listed for the owner. */
+    byText: string | null = null,
   ) => {
     const named = resultId === null ? decision.memoryIds : [...decision.memoryIds, resultId];
     return sql`
@@ -494,9 +538,9 @@ export const make = Effect.gen(function* () {
         versions_json, proposed_by, reason, created_at
       )
       VALUES (
-        ${runId}, ${status}, ${decision.action}, 'shared', NULL,
+        ${runId}, ${status}, ${decision.action}, ${reach.scope}, ${reach.scopeId},
         ${encodeIds(decision.memoryIds)}, ${resultId},
-        ${decision.action === "merge" ? decision.content.trim() : null},
+        ${decision.action === "merge" ? decision.content.trim() : byText},
         ${versionsJson(named, versions)}, 'tidy-up', ${safeText(decision.reason)}, ${nowIso}
       )
     `;
@@ -511,7 +555,7 @@ export const make = Effect.gen(function* () {
       action: decision.action,
       memoryIds: decision.memoryIds,
       resultId: decision.action === "supersede" ? decision.by : null,
-      content: decision.action === "merge" ? decision.content.trim() : null,
+      content: decision.action === "merge" ? decision.content.trim() : undefined,
       toKind: null,
       toScope: null,
       toScopeId: null,
@@ -522,7 +566,8 @@ export const make = Effect.gen(function* () {
     readonly action: string;
     readonly memoryIds: ReadonlyArray<string>;
     readonly resultId: string | null;
-    readonly content: string | null;
+    /** Undefined: not compared (a supersede's copy of the newer text). */
+    readonly content: string | null | undefined;
     readonly toKind: string | null;
     readonly toScope: string | null;
     readonly toScopeId: string | null;
@@ -532,7 +577,7 @@ export const make = Effect.gen(function* () {
       WHERE status IN ('pending', 'rejected') AND action = ${change.action}
         AND memory_ids_json = ${encodeIds(change.memoryIds)}
         AND result_memory_id IS ${change.resultId}
-        AND content IS ${change.content}
+        AND ${change.content === undefined ? sql`1 = 1` : sql`content IS ${change.content}`}
         AND to_kind IS ${change.toKind}
         AND to_scope IS ${change.toScope}
         AND to_scope_id IS ${change.toScopeId}
@@ -576,12 +621,16 @@ export const make = Effect.gen(function* () {
               scopeId: change.scopeId,
               memoryIds: decodeIds(change.memoryIdsJson).map((id) => PersonalMemoryId.make(id)),
               resultMemoryId: change.resultMemoryId,
+              parts:
+                change.action === "split"
+                  ? Option.getOrElse(decodeSplitParts(change.content ?? ""), () => [])
+                  : undefined,
               toKind: change.toKind ?? null,
               toScope: change.toScope ?? null,
               toScopeId: change.toScopeId ?? null,
               proposedBy: change.proposedBy ?? null,
               changeHash: changeHashOf(change),
-              content: change.content,
+              content: change.action === "split" ? null : change.content,
               reason: change.reason,
             })),
         }),
@@ -602,7 +651,31 @@ export const make = Effect.gen(function* () {
         const appVersion = yield* readAppVersion;
         const entries = yield* readEntries;
         const versions = new Map(entries.map((entry) => [entry.memoryId, entry.version]));
-        const proposal = yield* plan(entries, nowMs, appVersion);
+        const byMemoryId = new Map(entries.map((entry) => [entry.memoryId, entry]));
+        // Each reach on its own: shared entries, then each team's. A rule is
+        // never merged into, or archived for, an entry other bots see.
+        const reaches = new Map<string, Array<TidyEntry>>();
+        for (const entry of entries) {
+          const key = `${entry.scope}:${entry.scopeId ?? ""}`;
+          reaches.set(key, [...(reaches.get(key) ?? []), entry]);
+        }
+        const plans = yield* Effect.forEach([...reaches.values()], (group) =>
+          plan(group, nowMs, appVersion),
+        );
+        const proposal = {
+          auto: plans.flatMap((planned) => planned.auto),
+          pending: plans.flatMap((planned) => planned.pending),
+          left: plans.flatMap((planned) => planned.left),
+          error: plans.find((planned) => planned.error !== null)?.error ?? null,
+        };
+        const reachOf = (decision: TidyDecision) => {
+          const entry = byMemoryId.get(decision.memoryIds[0] ?? "");
+          return { scope: entry?.scope ?? "shared", scopeId: entry?.scopeId ?? null };
+        };
+        const byTextOf = (decision: TidyDecision) =>
+          decision.action === "supersede" && decision.by !== null
+            ? (byMemoryId.get(decision.by)?.content ?? null)
+            : null;
         let merged = 0;
         let superseded = 0;
         let pending = 0;
@@ -623,6 +696,7 @@ export const make = Effect.gen(function* () {
               null,
               nowIso,
               versions,
+              reachOf(decision),
             );
             leftAlone += 1;
             continue;
@@ -634,17 +708,28 @@ export const make = Effect.gen(function* () {
             applied.resultId,
             nowIso,
             versions,
+            reachOf(decision),
+            byTextOf(decision),
           );
           superseded += decision.memoryIds.length;
         }
         for (const decision of proposal.pending) {
           if (yield* alreadyAsked(decision)) continue;
           const resultId = decision.action === "supersede" ? decision.by : null;
-          yield* recordChange(runId, "pending", decision, resultId, nowIso, versions);
+          yield* recordChange(
+            runId,
+            "pending",
+            decision,
+            resultId,
+            nowIso,
+            versions,
+            reachOf(decision),
+            byTextOf(decision),
+          );
           pending += 1;
         }
         for (const decision of proposal.left) {
-          yield* recordChange(runId, "left", decision, null, nowIso, versions);
+          yield* recordChange(runId, "left", decision, null, nowIso, versions, reachOf(decision));
           leftAlone += 1;
         }
         return { merged, superseded, pending, leftAlone, error: proposal.error };
@@ -746,6 +831,21 @@ export const make = Effect.gen(function* () {
       const versions = new Map(entries.map((entry) => [entry.memoryId, entry.version]));
       let pending = 0;
       let leftAlone = 0;
+      // What the owner is shown beside the entries: a supersede's newer
+      // text (its approval holds that entry to it), a split's parts.
+      const contentOf = (item: ProposalItem) =>
+        item.action === "supersede"
+          ? (current.get(item.by ?? "")?.content ?? null)
+          : item.action === "split"
+            ? encodeSplitParts(
+                (item.parts ?? []).map((part) => ({
+                  content: part.content.trim(),
+                  kind: part.kind,
+                  scope: part.scope,
+                  scopeId: part.scope === "team" ? (part.scopeId?.trim() ?? null) : null,
+                })),
+              )
+            : null;
       const insert = (
         status: PersonalMemoryTidyChangeStatus,
         item: ProposalItem,
@@ -756,9 +856,11 @@ export const make = Effect.gen(function* () {
           to_kind, to_scope, to_scope_id, versions_json, proposed_by, reason, created_at
         )
         VALUES (
-          ${runId}, ${status}, ${status === "left" ? "leave" : item.action}, 'shared', NULL,
+          ${runId}, ${status}, ${status === "left" ? "leave" : item.action},
+          ${current.get(item.memoryIds[0] ?? "")?.scope ?? "shared"},
+          ${current.get(item.memoryIds[0] ?? "")?.scopeId ?? null},
           ${encodeIds(item.memoryIds)}, ${item.action === "supersede" ? (item.by ?? null) : null},
-          NULL, ${item.toKind ?? null}, ${item.toScope ?? null},
+          ${status === "left" ? null : contentOf(item)}, ${item.toKind ?? null}, ${item.toScope ?? null},
           ${item.toScope === "team" ? (item.toScopeId ?? null) : null},
           ${versionsJson(
             item.action === "supersede" && item.by != null
@@ -780,7 +882,7 @@ export const make = Effect.gen(function* () {
           action: item.action,
           memoryIds: item.memoryIds,
           resultId: item.action === "supersede" ? (item.by ?? null) : null,
-          content: null,
+          content: item.action === "supersede" ? undefined : contentOf(item),
           toKind: item.toKind ?? null,
           toScope: item.toScope ?? null,
           toScopeId: item.toScope === "team" ? (item.toScopeId ?? null) : null,
@@ -956,6 +1058,12 @@ export const make = Effect.gen(function* () {
             if (!(yield* applyBotForget(memoryIds, versions, nowIso))) return yield* stale;
             break;
           }
+          case "split": {
+            const first = yield* applySplit(change, memoryIds, versions, nowIso);
+            if (first === null) return yield* stale;
+            resultId = first;
+            break;
+          }
           case "merge":
           case "supersede": {
             const decision: TidyDecision =
@@ -980,6 +1088,7 @@ export const make = Effect.gen(function* () {
               versions,
               `tidy-approved:${change.runId}`,
               nowIso,
+              change.action === "supersede" ? change.content : null,
             );
             if (applied === null) return yield* stale;
             resultId = applied.resultId;
@@ -1023,9 +1132,17 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const content = (change.content ?? "").trim();
       const kind = change.toKind === "preference" ? "preference" : "note";
-      const scope = change.toScope === "team" ? "team" : "shared";
+      const scope =
+        change.toScope === "team" ? "team" : change.toScope === "bot" ? "bot" : "shared";
       if (content.length === 0 || looksLikeSecret(content)) return null;
       if (scope === "team" && (change.toScopeId ?? "").trim().length === 0) return null;
+      // A bot-only entry is only ever the proposing bot's own.
+      if (
+        scope === "bot" &&
+        (change.toScopeId == null || change.proposedBy !== `bot:${change.toScopeId}`)
+      ) {
+        return null;
+      }
       if (!(yield* unchanged(replaces, versions))) return null;
       const memoryId = NodeCrypto.randomUUID();
       yield* sql`
@@ -1034,7 +1151,7 @@ export const make = Effect.gen(function* () {
           created_at, updated_at, deleted_at, version
         )
         VALUES (
-          ${memoryId}, ${scope}, ${scope === "team" ? change.toScopeId : null}, ${kind},
+          ${memoryId}, ${scope}, ${scope === "shared" ? null : change.toScopeId}, ${kind},
           ${content}, ${change.proposedBy ?? "approved"}, 'normal', ${nowIso}, ${nowIso}, NULL, 1
         )
       `;
@@ -1066,6 +1183,69 @@ export const make = Effect.gen(function* () {
         `;
       }
       return true;
+    });
+
+  /**
+   * A split the owner approved: each part becomes its own entry with its own
+   * kind and reach, dated like the long entry it came from (so it keeps its
+   * place among newer rules), and the long entry is archived. A part whose
+   * exact text is already current in its reach is not added twice.
+   */
+  const applySplit = (
+    change: ChangeRow,
+    ids: ReadonlyArray<string>,
+    versions: ReadonlyMap<string, number>,
+    nowIso: string,
+  ) =>
+    Effect.gen(function* () {
+      const parts = Option.getOrUndefined(decodeSplitParts(change.content ?? ""));
+      if (parts === undefined || parts.length === 0 || ids.length !== 1) return null;
+      const invalid = parts.some(
+        (part) =>
+          part.content.trim().length === 0 ||
+          looksLikeSecret(part.content) ||
+          (part.scope === "team" && (part.scopeId ?? "").trim().length === 0),
+      );
+      if (invalid || !(yield* unchanged(ids, versions))) return null;
+      const original = yield* sql<{ readonly createdAt: string }>`
+        SELECT created_at AS "createdAt" FROM personal_memory WHERE memory_id = ${ids[0]!}
+      `;
+      const createdAt = original[0]?.createdAt ?? nowIso;
+      const made: Array<string> = [];
+      for (const part of parts) {
+        const content = part.content.trim();
+        const scopeId = part.scope === "team" ? part.scopeId!.trim() : null;
+        const existing = yield* sql<{ readonly memoryId: string }>`
+          SELECT memory_id AS "memoryId" FROM personal_memory
+          WHERE deleted_at IS NULL AND superseded_at IS NULL AND scope = ${part.scope}
+            AND scope_id IS ${scopeId} AND content = ${content} AND memory_id <> ${ids[0]!}
+          LIMIT 1
+        `;
+        if (existing[0] !== undefined) {
+          made.push(existing[0].memoryId);
+          continue;
+        }
+        const memoryId = NodeCrypto.randomUUID();
+        yield* sql`
+          INSERT INTO personal_memory (
+            memory_id, scope, scope_id, kind, content, source, sensitivity,
+            created_at, updated_at, deleted_at, version
+          )
+          VALUES (
+            ${memoryId}, ${part.scope}, ${scopeId}, ${part.kind}, ${content},
+            ${`tidy-approved:${change.runId}`}, 'normal', ${createdAt}, ${nowIso}, NULL, 1
+          )
+        `;
+        made.push(memoryId);
+      }
+      yield* sql`
+        UPDATE personal_memory
+        SET superseded_at = ${nowIso}, superseded_by = ${made[0]!},
+            superseded_reason = ${`Split into ${parts.length} single facts you approved.`},
+            version = version + 1
+        WHERE memory_id = ${ids[0]!} AND deleted_at IS NULL AND superseded_at IS NULL
+      `;
+      return made[0]!;
     });
 
   const run: PersonalMemoryTidy["Service"]["run"] = (input) => runOnce(input.dryRun, false);

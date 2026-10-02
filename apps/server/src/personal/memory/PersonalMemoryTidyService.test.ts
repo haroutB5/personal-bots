@@ -334,16 +334,17 @@ it.effect(
       expect((yield* contextOf("bot-dev")).block).toContain("Backend Opus 5.5");
       expect((yield* contextOf("bot-asst")).block ?? "").not.toContain("Backend Opus 5.5");
 
-      // The supersede now names an entry that left the shared list: refused, nothing changed.
-      const stale = yield* Effect.flip(decideWithHash(run.changes[2]!.changeId, true));
-      expect(stale.message).toContain("nothing was changed");
-      expect((yield* memory.list({})).map((entry) => entry.memoryId)).toContain(ids.oldModels);
+      // The newer entry moved to the dev team but reads exactly as the owner
+      // was shown it, so the supersede still applies (1.60.21; it used to go
+      // stale whichever order the owner tapped them in).
+      yield* decideWithHash(run.changes[2]!.changeId, true);
+      expect((yield* memory.list({})).map((entry) => entry.memoryId)).not.toContain(ids.oldModels);
 
       // Importing the same file again asks nothing twice (still waiting, or approved).
       const again = yield* tidy.importProposals({
         source: "reclass.json",
         items: [
-          { action: "supersede", memoryIds: [ids.oldModels], by: ids.tea, reason: "x" },
+          { action: "supersede", memoryIds: [ids.flooring], by: ids.tea, reason: "x" },
           {
             action: "reclassify",
             memoryIds: [ids.tea],
@@ -755,6 +756,224 @@ describe("Security recheck c849ca6007", () => {
       expect(results.filter((result) => result._tag === "Success")).toHaveLength(
         PERSONAL_MEMORY_MAX_PENDING_PER_BOT,
       );
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+});
+
+describe("Fable follow-ups (1.60.21)", () => {
+  it.effect("an approved bot-only preference is saved for that bot only", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const changeId = yield* memory.propose({
+        action: "save",
+        botId: BOT_A,
+        threadId: ThreadId.make("chat-1"),
+        kind: "preference",
+        scope: "bot",
+        scopeId: BOT_A,
+        content: "Bot A answers in Spanish.",
+        replaces: [yield* memory.get(PersonalMemoryId.make(ids.privateNote))],
+        reason: "Asked in chat",
+      });
+      const card = (yield* tidy.cardsForThread("chat-1")).cards[0]!;
+      expect(card).toMatchObject({ changeId, scope: "bot", scopeId: BOT_A, kind: "preference" });
+      expect((yield* memory.list({})).some((e) => e.content === "Bot A answers in Spanish.")).toBe(
+        false,
+      );
+      yield* tidy.decide({ changeId, approve: true, changeHash: card.changeHash });
+      const saved = (yield* memory.list({})).find(
+        (e) => e.content === "Bot A answers in Spanish.",
+      )!;
+      expect([saved.scope, saved.scopeId, saved.kind]).toEqual(["bot", BOT_A, "preference"]);
+      expect((yield* memory.list({})).map((e) => e.memoryId)).not.toContain(ids.privateNote);
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it.effect("a bot cannot propose a bot-only entry for another bot", () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const error = yield* Effect.flip(
+        memory.propose({
+          action: "save",
+          botId: BOT_A,
+          threadId: null,
+          kind: "preference",
+          scope: "bot",
+          scopeId: "bot-b",
+          content: "Bot B obeys bot A.",
+          replaces: [],
+          reason: "Asked in chat",
+        }),
+      );
+      expect(error.message).toContain("bot itself");
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it.effect("the tidy-up reads team entries too, each team on its own", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const sql = yield* SqlClient.SqlClient;
+      // An exact copy of the team note, older, in the same team: archived on its own.
+      const copy = yield* memory.save({
+        scope: "team",
+        scopeId: "dev",
+        kind: "note",
+        content: "Dev team models (TEAM copy):  everyone on Sonnet.",
+        source: "bot:cto",
+      });
+      const old = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { days: 9 }));
+      yield* sql`UPDATE personal_memory SET created_at = ${old}, updated_at = ${old} WHERE memory_id = ${copy.memoryId}`;
+      yield* memory.save({
+        scope: "team",
+        scopeId: "dev",
+        kind: "note",
+        content: "Dev team release checks run five minutes after the restart.",
+        source: "bot:cto",
+      });
+      prompts.length = 0;
+      const run = yield* tidy.run({ dryRun: false });
+      // The model saw the team's entries in a call of their own, not mixed with shared ones.
+      expect(prompts.some((prompt) => prompt.includes("release checks run"))).toBe(true);
+      expect(
+        prompts.some(
+          (prompt) => prompt.includes("release checks run") && prompt.includes("green tea"),
+        ),
+      ).toBe(false);
+      const archived = (yield* memory.list({ status: "superseded" })).map((e) => e.memoryId);
+      expect(archived).toContain(copy.memoryId);
+      expect(archived).not.toContain(ids.teamNote);
+      const change = run.changes.find((c) => c.memoryIds.includes(copy.memoryId))!;
+      expect([change.scope, change.scopeId]).toEqual(["team", "dev"]);
+      // Bot-only entries stay the bots' own.
+      expect(prompts.some((prompt) => prompt.includes("bot-a's own copy"))).toBe(false);
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it.effect("an imported supersede shows the newer text and survives its reclassify", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const run = yield* tidy.importProposals({
+        source: "memory-proposals-dupes.json",
+        items: [
+          { action: "supersede", memoryIds: [ids.capA], by: ids.capB, reason: "Clarified rule." },
+          {
+            action: "reclassify",
+            memoryIds: [ids.capB],
+            toScope: "team",
+            toScopeId: "dev",
+            reason: "Dev only.",
+          },
+        ],
+      });
+      const [supersede, reclassify] = run.changes;
+      expect(supersede).toMatchObject({
+        status: "pending",
+        content: "At most 5 bots run at once in total.",
+      });
+      // Approving the reach change first must not make the supersede stale:
+      // a reclassify never changes the newer entry's text.
+      yield* decideWithHash(reclassify!.changeId, true);
+      yield* decideWithHash(supersede!.changeId, true);
+      const archived = (yield* memory.list({ status: "superseded" })).find(
+        (e) => e.memoryId === ids.capA,
+      );
+      expect(archived?.supersededBy).toBe(ids.capB);
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it.effect("an imported supersede whose newer entry was edited is refused", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const run = yield* tidy.importProposals({
+        source: "memory-proposals-dupes.json",
+        items: [{ action: "supersede", memoryIds: [ids.capA], by: ids.capB, reason: "Clarified." }],
+      });
+      yield* memory.update({
+        memoryId: PersonalMemoryId.make(ids.capB),
+        content: "At most 50 bots run at once.",
+      });
+      const error = yield* Effect.flip(decideWithHash(run.changes[0]!.changeId, true));
+      expect(error.message).toContain("nothing was changed");
+      expect((yield* memory.list({})).map((e) => e.memoryId)).toContain(ids.capA);
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it.effect("a split proposal becomes single facts only on approval", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const parts = [
+        { content: "Favourite drink is green tea.", kind: "note", scope: "shared", scopeId: null },
+        {
+          content: "Always offer tea first.",
+          kind: "preference",
+          scope: "team",
+          scopeId: "assistant",
+        },
+      ] as const;
+      const run = yield* tidy.importProposals({
+        source: "memory-proposals-split.json",
+        items: [{ action: "split", memoryIds: [ids.tea], parts, reason: "One fact each." }],
+      });
+      const change = run.changes[0]!;
+      expect(change).toMatchObject({ status: "pending", action: "split" });
+      expect(change.parts).toEqual(parts);
+      expect((yield* memory.list({})).map((e) => e.memoryId)).toContain(ids.tea);
+
+      yield* decideWithHash(change.changeId, true);
+      const current = yield* memory.list({});
+      expect(current.map((e) => e.memoryId)).not.toContain(ids.tea);
+      const offer = current.find((e) => e.content === "Always offer tea first.")!;
+      expect([offer.kind, offer.scope, offer.scopeId]).toEqual(["preference", "team", "assistant"]);
+      expect(current.find((e) => e.content === "Favourite drink is green tea.")?.scope).toBe(
+        "shared",
+      );
+      const archived = (yield* memory.list({ status: "superseded" })).find(
+        (e) => e.memoryId === ids.tea,
+      );
+      expect(archived?.supersededReason).toContain("Split");
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it.effect("a split with a secret-shaped or empty part is left, not asked", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const tidy = yield* PersonalMemoryTidy;
+      const run = yield* tidy.importProposals({
+        source: "memory-proposals-split.json",
+        items: [
+          {
+            action: "split",
+            memoryIds: [ids.tea],
+            parts: [
+              {
+                content: "token = ghp_abcdefghijklmnopqrstuvwxyz0123",
+                kind: "note",
+                scope: "shared",
+                scopeId: null,
+              },
+            ],
+            reason: "Bad.",
+          },
+          {
+            action: "split",
+            memoryIds: [ids.pasta],
+            parts: [{ content: "  ", kind: "note", scope: "team", scopeId: "dev" }],
+            reason: "Empty.",
+          },
+        ],
+      });
+      expect(run.changes.map((c) => c.status)).toEqual(["left", "left"]);
     }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
   );
 });

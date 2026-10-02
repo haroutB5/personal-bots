@@ -304,6 +304,7 @@ it.effect(
       const memory = yield* PersonalMemoryService;
       const sql = yield* SqlClient.SqlClient;
       yield* savePreference("Reply in short plain sentences.");
+      // Each turn's send succeeds: the provider accepted it.
       const turn = (key: string, fresh = false) =>
         memory
           .contextForThread({
@@ -312,7 +313,10 @@ it.effect(
             record: false,
             session: { key, fresh },
           })
-          .pipe(Effect.map((context) => context.block ?? ""));
+          .pipe(
+            Effect.tap(() => memory.confirmPreferencesSent(THREAD_A)),
+            Effect.map((context) => context.block ?? ""),
+          );
 
       expect(yield* turn("s1")).toContain("Reply in short plain sentences.");
       const repeat = yield* turn("s1");
@@ -341,6 +345,37 @@ it.effect(
       expect(yield* turn("s2")).toContain("Lead with the outcome.");
       expect(yield* turn("s2", true)).toContain("Lead with the outcome.");
     }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("Fable follow-up (1.60.21): a failed send leaves the full list due on the retry", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    yield* savePreference("Reply in short plain sentences.");
+    const build = memory
+      .contextForThread({
+        threadId: THREAD_A,
+        query: "hello",
+        record: false,
+        session: { key: "s1", fresh: false },
+      })
+      .pipe(Effect.map((context) => context.block ?? ""));
+
+    // The first send failed (nothing confirmed): the bot never saw the list,
+    // so the retry carries it in full, not the one-line reminder.
+    expect(yield* build).toContain("Reply in short plain sentences.");
+    expect(yield* build).toContain("Reply in short plain sentences.");
+    // This one went through: only now does the next turn get the reminder.
+    yield* memory.confirmPreferencesSent(THREAD_A);
+    const next = yield* build;
+    expect(next).not.toContain("Reply in short plain sentences.");
+    expect(next).toContain("still apply");
+
+    // A changed list whose send failed is sent in full again too.
+    yield* savePreference("Lead with the outcome.");
+    expect(yield* build).toContain("Lead with the outcome.");
+    expect(yield* build).toContain("Lead with the outcome.");
+  }).pipe(Effect.provide(TestLayer)),
 );
 
 it.effect("when the cap bites, the oldest go, none jumps the queue, and the bot is told", () =>

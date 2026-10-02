@@ -110,7 +110,8 @@ export type PersonalMemoryRestoreInput = typeof PersonalMemoryRestoreInput.Type;
  * merge: several entries folded into one. supersede: older entries archived.
  * reclassify: one entry's kind or reach changes (never its text). save: a bot's new
  * entry (content, toKind, toScope, toScopeId), replacing memoryIds if any. forget: a
- * bot asks to archive memoryIds. leave: unsure, untouched.
+ * bot asks to archive memoryIds. split: one long entry becomes several single
+ * facts (parts), and the long one is archived. leave: unsure, untouched.
  */
 export const PersonalMemoryTidyAction = Schema.Literals([
   "merge",
@@ -118,6 +119,7 @@ export const PersonalMemoryTidyAction = Schema.Literals([
   "reclassify",
   "save",
   "forget",
+  "split",
   "leave",
 ]);
 export type PersonalMemoryTidyAction = typeof PersonalMemoryTidyAction.Type;
@@ -137,6 +139,16 @@ export const PersonalMemoryTidyChangeStatus = Schema.Literals([
 ]);
 export type PersonalMemoryTidyChangeStatus = typeof PersonalMemoryTidyChangeStatus.Type;
 
+/** One single fact a long entry is split into, with the kind and reach it gets. */
+export const PersonalMemorySplitPart = Schema.Struct({
+  content: Schema.String,
+  kind: Schema.Literals(["note", "preference"]),
+  scope: Schema.Literals(["shared", "team"]),
+  /** The team's name for a team reach, else null. */
+  scopeId: Schema.NullOr(Schema.String),
+});
+export type PersonalMemorySplitPart = typeof PersonalMemorySplitPart.Type;
+
 export const PersonalMemoryTidyChange = Schema.Struct({
   changeId: Schema.Number,
   status: PersonalMemoryTidyChangeStatus,
@@ -147,11 +159,19 @@ export const PersonalMemoryTidyChange = Schema.Struct({
   memoryIds: Schema.Array(PersonalMemoryId),
   /** The entry that now carries the fact. */
   resultMemoryId: Schema.NullOr(PersonalMemoryId),
-  /** A merge's combined text. */
+  /**
+   * A merge's combined text; a save's new text; a supersede's newer entry as
+   * it read when proposed (null for older changes).
+   */
   content: Schema.NullOr(Schema.String),
-  /** A reclassify's new kind, scope and scope id (team name), where they change. */
+  /** A split's single facts, in order, each with its own kind and reach. */
+  parts: Schema.optional(Schema.Array(PersonalMemorySplitPart)),
+  /**
+   * A reclassify's new kind, scope and scope id (team name), where they
+   * change; a save's or split's kind and reach ("bot": only the proposing bot).
+   */
   toKind: Schema.optional(Schema.NullOr(Schema.Literals(["note", "preference"]))),
-  toScope: Schema.optional(Schema.NullOr(Schema.Literals(["shared", "team"]))),
+  toScope: Schema.optional(Schema.NullOr(Schema.Literals(["shared", "team", "bot"]))),
   toScopeId: Schema.optional(Schema.NullOr(Schema.String)),
   /** Who proposed it: the tidy-up, a bot ("bot:<id>") or a local proposals file. */
   proposedBy: Schema.optional(Schema.NullOr(Schema.String)),
@@ -234,7 +254,8 @@ export const PersonalMemoryCard = Schema.Struct({
   /** A save's new entry: its exact text, kind and reach. */
   content: Schema.NullOr(Schema.String),
   kind: Schema.NullOr(Schema.Literals(["note", "preference"])),
-  scope: Schema.NullOr(Schema.Literals(["shared", "team"])),
+  /** "bot": only the proposing bot will see it. */
+  scope: Schema.NullOr(Schema.Literals(["shared", "team", "bot"])),
   scopeId: Schema.NullOr(Schema.String),
   /** The entries it replaces (save) or forgets (forget), whole, as they were proposed. */
   targets: Schema.Array(PersonalMemoryCardTarget),
