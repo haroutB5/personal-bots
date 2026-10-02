@@ -32,6 +32,7 @@ import { ServerConfig } from "../../config.ts";
 import * as ProviderInstanceRegistry from "../../provider/Services/ProviderInstanceRegistry.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { isExpensiveSeedModel } from "../seedModel.ts";
+import { SHIPPED_MEMORY_PROPOSALS } from "./shippedProposals.ts";
 import {
   buildTidyPrompt,
   decisionsFromJudge,
@@ -86,7 +87,18 @@ export class PersonalMemoryTidy extends Context.Service<
     readonly importProposals: (input: {
       readonly source: string;
       readonly items: ReadonlyArray<ProposalItem>;
+      readonly withdraw?: ReadonlyArray<ProposalWithdraw> | undefined;
     }) => Effect.Effect<PersonalMemoryTidyRun, PersonalMemoryError>;
+    /**
+     * Writes the proposals files shipped in this release into the inbox (once:
+     * not when already there, imported or rejected), then imports every inbox
+     * file this version is ready for; a file whose minVersion is newer waits.
+     * Runs at startup; never fails.
+     */
+    readonly importInbox: (input: {
+      readonly appVersion: string | null;
+      readonly shipped?: ReadonlyArray<ShippedProposalFile> | undefined;
+    }) => Effect.Effect<void>;
     /** Checks every 10 minutes whether tonight's run is due. Park-aware. */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
@@ -231,10 +243,55 @@ const StoredSplit = Schema.Struct({
 const encodeSplit = Schema.encodeSync(Schema.fromJsonString(StoredSplit));
 const decodeSplit = Schema.decodeUnknownOption(Schema.fromJsonString(StoredSplit));
 
-/** A proposals file: `{ "items": [...] }`, at most 200 items. */
+/**
+ * A pending item an earlier proposals file put on the list, taken back. The
+ * entries it names must match, so an id from another data root cannot take
+ * back an unrelated item.
+ */
+const ProposalWithdrawSchema = Schema.Struct({
+  changeId: Schema.Number,
+  memoryIds: Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+});
+export type ProposalWithdraw = typeof ProposalWithdrawSchema.Type;
+
+/**
+ * A proposals file: `{ "minVersion"?, "withdraw"?: [...], "items": [...] }`,
+ * at most 200 items. A file waits in the inbox until the running app version
+ * reaches minVersion.
+ */
 export const ProposalFile = Schema.Struct({
+  minVersion: Schema.optional(Schema.String),
+  withdraw: Schema.optional(Schema.Array(ProposalWithdrawSchema).check(Schema.isMaxLength(200))),
   items: Schema.Array(ProposalItemSchema).check(Schema.isMaxLength(200)),
 });
+
+/** A proposals file that ships inside the release (see shippedProposals.ts). */
+export interface ShippedProposalFile {
+  readonly name: string;
+  readonly file: unknown;
+}
+
+const versionParts = (version: string) =>
+  version
+    .trim()
+    .split(".")
+    .map((part) => Number.parseInt(part, 10) || 0);
+
+/** Whether this app version may import a file asking for `minVersion`. */
+export function proposalFileReady(
+  file: { readonly minVersion?: string | undefined },
+  appVersion: string | null,
+): boolean {
+  if (file.minVersion === undefined) return true;
+  if (appVersion === null) return false;
+  const want = versionParts(file.minVersion);
+  const have = versionParts(appVersion);
+  for (let index = 0; index < Math.max(want.length, have.length); index++) {
+    const difference = (have[index] ?? 0) - (want[index] ?? 0);
+    if (difference !== 0) return difference > 0;
+  }
+  return true;
+}
 const decodeProposalFile = Schema.decodeUnknownEffect(Schema.fromJsonString(ProposalFile));
 
 /** Why a proposal cannot go on the approval list, or null when it can. */
@@ -834,6 +891,36 @@ export const make = Effect.gen(function* () {
         VALUES (${runId}, ${nowIso}, 'running', 1, 0,
           ${`proposals: ${safeText(input.source)}`.slice(0, 200)})
       `;
+      // Taken back first: only items still waiting that a proposals file
+      // made, naming the same entries. Memory itself is never touched.
+      const withdrawn: Array<number> = [];
+      const notWithdrawn: Array<number> = [];
+      for (const take of input.withdraw ?? []) {
+        const rows = yield* sql<{ readonly id: number }>`
+          UPDATE personal_memory_tidy_changes
+          SET status = 'withdrawn', decided_at = ${nowIso}
+          WHERE change_id = ${take.changeId} AND status = 'pending'
+            AND proposed_by LIKE 'file:%' AND memory_ids_json = ${encodeIds(take.memoryIds)}
+          RETURNING change_id AS "id"
+        `;
+        (rows.length > 0 ? withdrawn : notWithdrawn).push(take.changeId);
+      }
+      if (withdrawn.length + notWithdrawn.length > 0) {
+        yield* sql`
+          UPDATE personal_memory_tidy_runs SET pending = (
+            SELECT COUNT(*) FROM personal_memory_tidy_changes c
+            WHERE c.run_id = personal_memory_tidy_runs.run_id AND c.status = 'pending'
+          )
+          WHERE run_id IN (
+            SELECT run_id FROM personal_memory_tidy_changes WHERE status = 'withdrawn'
+          )
+        `;
+        yield* Effect.logInfo("personal memory proposals withdrawn", {
+          source: safeText(input.source),
+          withdrawn,
+          notWithdrawn,
+        });
+      }
       const entries = yield* readEntries;
       const current = new Map(entries.map((entry) => [entry.memoryId, entry] as const));
       const versions = new Map(entries.map((entry) => [entry.memoryId, entry.version]));
@@ -915,11 +1002,28 @@ export const make = Effect.gen(function* () {
     }).pipe(lock.withPermits(1), storageFailure("import"));
 
   /** `<baseDir>/personal/memory-proposals/*.json`, each imported once, then moved aside. */
-  const importInbox =
+  const importInbox: PersonalMemoryTidy["Service"]["importInbox"] = (input) =>
     baseDir === undefined
       ? Effect.void
       : Effect.gen(function* () {
           const inbox = path.join(baseDir, "personal", MEMORY_PROPOSALS_DIR);
+          // The release's own files go in once; a file already handled stays handled.
+          for (const shipped of input.shipped ?? []) {
+            const seen = yield* Effect.forEach(
+              [
+                path.join(inbox, shipped.name),
+                path.join(inbox, "imported", shipped.name),
+                path.join(inbox, "rejected", shipped.name),
+              ],
+              (file) => fileSystem.exists(file),
+            );
+            if (seen.some(Boolean)) continue;
+            yield* fileSystem.makeDirectory(inbox, { recursive: true });
+            yield* fileSystem.writeFileString(
+              path.join(inbox, shipped.name),
+              `${JSON.stringify(shipped.file, null, 1)}\n`,
+            );
+          }
           if (!(yield* fileSystem.exists(inbox))) return;
           const names = (yield* fileSystem.readDirectory(inbox)).filter((name) =>
             name.endsWith(".json"),
@@ -934,9 +1038,22 @@ export const make = Effect.gen(function* () {
                   .readFileString(file)
                   .pipe(Effect.flatMap(decodeProposalFile), Effect.result);
             const ok = parsed !== undefined && parsed._tag === "Success";
+            if (ok && !proposalFileReady(parsed.success, input.appVersion)) {
+              // Made for a newer app: it waits here, untouched, for that version.
+              yield* Effect.logInfo("personal memory proposals file waits for a newer version", {
+                file: safeText(name),
+                minVersion: parsed.success.minVersion,
+                appVersion: input.appVersion,
+              });
+              continue;
+            }
             const target = ok ? "imported" : "rejected";
             if (ok) {
-              yield* importProposals({ source: name, items: parsed.success.items });
+              yield* importProposals({
+                source: name,
+                items: parsed.success.items,
+                withdraw: parsed.success.withdraw,
+              });
             } else {
               // The reason only: a parse error can quote the file's text.
               yield* Effect.logWarning("personal memory proposals file rejected", {
@@ -1309,7 +1426,13 @@ export const make = Effect.gen(function* () {
       ? Effect.void
       : forkParked(
           closeInterrupted.pipe(
-            Effect.andThen(importInbox),
+            Effect.andThen(
+              readAppVersion.pipe(
+                Effect.flatMap((appVersion) =>
+                  importInbox({ appVersion, shipped: SHIPPED_MEMORY_PROPOSALS }),
+                ),
+              ),
+            ),
             Effect.andThen(nightly.pipe(Effect.repeat(Schedule.spaced(TIDY_CHECK_MS)))),
           ),
         ).pipe(Effect.asVoid);
@@ -1319,6 +1442,7 @@ export const make = Effect.gen(function* () {
     decide,
     cardsForThread,
     importProposals,
+    importInbox,
     log,
     setMode,
     start,

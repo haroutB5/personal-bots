@@ -166,6 +166,17 @@ const make = Effect.gen(function* () {
   const research = createResearchClient();
 
   const refuse = (reason: string) => new PersonalToolError({ reason });
+  /**
+   * A save or forget closed because the chat had a sensitive site open. It is
+   * the guard working, not a fault: the bot gets it as an answer and the log
+   * says WARN, so release error scans stay meaningful (a failed tool call is
+   * always logged as an ERROR).
+   */
+  const refusedForSensitiveSite = (tool: string, threadId: string, note: string) =>
+    Effect.logWarning("personal memory change refused: the chat had a sensitive site open", {
+      tool,
+      threadId,
+    }).pipe(Effect.as(note));
 
   // Capability first (granted only to personal-bot threads), then the bot
   // that owns this thread.
@@ -504,7 +515,18 @@ const make = Effect.gen(function* () {
           autoSave,
           sensitiveOrigins,
         });
-        if (refusal !== null) return yield* refuse(refusal);
+        if (refusal !== null) {
+          if (sensitiveOrigins.length === 0) return yield* refuse(refusal);
+          return {
+            memoryId: "",
+            scope: input.scope ?? "",
+            kind: input.kind,
+            replaced: [],
+            similar: [],
+            status: "refused" as const,
+            note: yield* refusedForSensitiveSite("save_memory", invocation.threadId, refusal),
+          };
+        }
         // The quoted words must be the owner's own, word for word, in this chat.
         // This only decides whether the bot may ask at all: memory other bots
         // see changes only when the owner taps Save on the card.
@@ -539,9 +561,19 @@ const make = Effect.gen(function* () {
             ? sensitiveOrigins
             : yield* browser.sensitiveExposure(invocation.threadId);
         if (exposed.length > 0) {
-          return yield* refuse(
-            `Not saved: this chat has had ${exposed.join(", ")} open, a site the user marked sensitive, so nothing from it is saved to memory, not even for yourself. Ask the user to repeat it in a new chat.`,
-          );
+          return {
+            memoryId: "",
+            scope,
+            kind: input.kind,
+            replaced: [],
+            similar: [],
+            status: "refused" as const,
+            note: yield* refusedForSensitiveSite(
+              "save_memory",
+              invocation.threadId,
+              `Not saved: this chat has had ${exposed.join(", ")} open, a site the user marked sensitive, so nothing from it is saved to memory, not even for yourself. Ask the user to repeat it in a new chat.`,
+            ),
+          };
         }
         // A rule is followed in every later chat, so a preference waits for
         // the owner's tap even when only this bot will see it; a bot-only
@@ -645,9 +677,15 @@ const make = Effect.gen(function* () {
           // that had a sensitive site open, not even as a card.
           const exposed = yield* browser.sensitiveExposure(invocation.threadId);
           if (exposed.length > 0) {
-            return yield* refuse(
-              `Not forgotten: this chat has had ${exposed.join(", ")} open, a site the user marked sensitive, so memory other bots see cannot be changed from it. Ask the user to do it in a new chat or on the Memory screen.`,
-            );
+            return {
+              memoryId: PersonalMemoryService.memoryRef(target),
+              content: target.content,
+              summary: yield* refusedForSensitiveSite(
+                "forget_memory",
+                invocation.threadId,
+                `Not forgotten: this chat has had ${exposed.join(", ")} open, a site the user marked sensitive, so memory other bots see cannot be changed from it. Ask the user to do it in a new chat or on the Memory screen.`,
+              ),
+            };
           }
           const inChat = owner.current !== null && owner.current.byOwner;
           yield* memory

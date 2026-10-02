@@ -643,6 +643,53 @@ describe("Security recheck c849ca6007: forget in a sensitive chat", () => {
   );
 });
 
+describe("1.60.21: a sensitive-chat refusal is an answer, not a tool error", () => {
+  it.effect("save_memory answers refused (logged as a warning), saving nothing", () =>
+    Effect.gen(function* () {
+      const { saved, proposed, encoded } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: ["https://bank.test"],
+        userRequest: "remember this: I hold 2 ETH",
+        scope: "bot",
+        content: "I hold 2 ETH.",
+      });
+      expect(saved).not.toHaveBeenCalled();
+      expect(proposed).not.toHaveBeenCalled();
+      expect(encoded).toContain('"status":"refused"');
+      expect(encoded).not.toContain("PersonalToolError");
+    }),
+  );
+
+  it.effect(
+    "an unasked save with standing permission in a sensitive chat is refused the same way",
+    () =>
+      Effect.gen(function* () {
+        const { encoded } = yield* saveMemory({
+          memoryAutoSave: true,
+          exposure: ["https://bank.test"],
+          userRequest: unasked,
+        });
+        expect(encoded).toContain('"status":"refused"');
+      }),
+  );
+
+  it.effect("forget_memory in a sensitive chat answers not forgotten, without a tool error", () =>
+    Effect.gen(function* () {
+      const { forgotten, proposed, encoded } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: ["https://bank.test"],
+        tool: "forget_memory",
+        userRequest: "forget the USD coin prices rule",
+        target: { scope: "shared", content: "Quote coin prices in USD." },
+      });
+      expect(forgotten).not.toHaveBeenCalled();
+      expect(proposed).not.toHaveBeenCalled();
+      expect(encoded).toContain("Not forgotten");
+      expect(encoded).not.toContain("PersonalToolError");
+    }),
+  );
+});
+
 describe("Fable follow-up (1.60.21): tool texts match how memory reaches bots", () => {
   it("search_memory says it covers the team's entries, not only shared and own", () => {
     const description = PersonalToolkit.tools.search_memory.description ?? "";

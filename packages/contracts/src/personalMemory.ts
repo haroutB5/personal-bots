@@ -136,6 +136,8 @@ export const PersonalMemoryTidyChangeStatus = Schema.Literals([
   "approved",
   "rejected",
   "left",
+  /** Taken back by a later proposals file before the owner answered. */
+  "withdrawn",
 ]);
 export type PersonalMemoryTidyChangeStatus = typeof PersonalMemoryTidyChangeStatus.Type;
 

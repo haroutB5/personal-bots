@@ -283,8 +283,11 @@ export const SaveMemoryResult = Schema.Struct({
   kind: Schema.String,
   /** The entries this save archived. */
   replaced: Schema.Array(Schema.String),
-  /** saved: in memory now. waiting_for_approval: on the user's approval list, not saved yet. */
-  status: Schema.Literals(["saved", "waiting_for_approval"]),
+  /**
+   * saved: in memory now. waiting_for_approval: on the user's approval list,
+   * not saved yet. refused: not saved and not asked (note says why).
+   */
+  status: Schema.Literals(["saved", "waiting_for_approval", "refused"]),
   /**
    * Current entries on what reads like the same subject. If the new entry
    * changes or restates one, call save_memory again with the same content and

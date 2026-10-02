@@ -15,19 +15,26 @@ Built on 1.60.20 (main 42f2452a0d). Branch feat/memory-followups. No migration.
 
 ## Proposals files (nothing applied without Harout's tap)
 
-In `scripts/personal/memory-proposals/`, one group each on Waiting for your OK. They are imported only at server start, from `<baseDir>/personal/memory-proposals/`, so **DevOps copies them into `C:\Users\Ht\.personal-bots\dev\personal\memory-proposals\` before the 1.60.21 restart** (a pre-1.60.21 server would reject the split file). Every id was resolved against a read-only snapshot of the live DB on 2 Oct 03:2x.
+They ship inside the release (`apps/server/src/personal/memory/proposals/`, listed in `shippedProposals.ts`); nobody copies anything. At startup the server writes each into `<baseDir>/personal/memory-proposals/` unless it is already there, in `imported/` or in `rejected/`, then imports every inbox file whose `minVersion` (1.60.21 on all four) is at or below the running version; a newer file waits in the inbox untouched. Each file is its own group on Waiting for your OK. Every id was resolved against a read-only snapshot of the live DB on 2 Oct 03:2x; an entry changed since then is listed as left, not applied.
 
 - `proposals-2oct-b-duplicates.json` (5 items, 4 new): bd548c26 -> 687a3056 (5 bots in total; 924b2db2 stays), 266ca4a8 -> 4ce9becc (crypto currencies), d91998e1 -> 9240047d (Frontend model), 6e950227 -> 953fac88 (release checks), d35bb1bc -> c185a9d3 (already pending as change 52, not added twice).
 - `proposals-2oct-c-dev-team.json` (17 reclassify to team dev): a8101b42, bcf0825d, 924b2db2, 9240047d, b6ffbeef, 6bb47e61, e5495568, d4c96687, 65ad6a44, 6586991b, 4166e697, 4e792bd8, ef555b92, 953fac88, 2bb09749, 5201715a, 22e7cedb. Left shared: personal facts, the crypto rules, the "5 bots in total" rule, computer use (d935331f), token-efficiency note (e3bc5111).
 - `proposals-2oct-d-splits.json` (15 split items, 149 parts): the 15 long wrap-up notes. Parts that restate a standing rule already saved on its own were left out.
+- `proposals-2oct-e-finance.json` (9 reclassify to team Finance, CFO's team): a7b603a8 (as a preference), 25f4b60f, 857eafa7, 68afb011, 9fcb1776, b187f100, a01ee507, 68ed699c, 4ce9becc. Its `withdraw` takes back the 8 pending 1.60.19 items that sent crypto entries to the assistant team (changes 2, 29, 30, 36, 37, 38, 41, 45), so Harout never sees both; 51e206c1 (change 38) is covered by its Finance split; change 46 (43f3974e, vacuum research) really is Assistant work and stays.
+
+## Withdraw
+
+A proposals file may carry `"withdraw": [{ "changeId": n, "memoryIds": [...] }]`. Processed before its items: an item is set to the new status `withdrawn` only if it is still pending, was made by a proposals file (`proposed_by` file:...) and names exactly those entries (so an id from another data root cannot take back an unrelated item). Logged ("personal memory proposals withdrawn", with withdrawn / notWithdrawn ids); memory itself is never touched. A withdrawn item can no longer be approved.
+
+## Sensitive-chat refusal at WARN
+
+The Effect MCP server logs every failed tool call at ERROR. A save_memory or forget_memory refused because the chat had a sensitive site open is now an answer (save_memory `status: "refused"` with the reason in `note`; forget_memory's `summary` says "Not forgotten: ..."), logged as WARN "personal memory change refused: the chat had a sensitive site open". Other refusals are unchanged.
 
 ## Caveats
 
 - Keep proposal file names under 40 letters/digits/dashes: the importer redacts longer token-like strings, so a long name shows as "[redacted].json" in the group label.
-
 - A split, like a supersede, stores the text it was proposed against: approving a 1.60.19 reclassify of the same note first does not make it stale; an edit to the note does.
-- CFO is on team **Finance**, not "assistant": the 9 assistant-reach crypto items in the 1.60.19 file (memory-proposals-2026-10-02.json) would hide those notes from CFO. The split file uses Finance for crypto parts.
 
 ## Tests
 
-Failing-first: memoryHandlers.test.ts ("Fable follow-up (1.60.21)" blocks), PersonalMemoryService.replace.test.ts (failed send), PersonalMemoryService.test.ts (long brief), PersonalMemoryTidyService.test.ts ("Fable follow-ups (1.60.21)"), groupModel.test.ts (archived), web memoryPresentation/memoryCards/MemoryTidyPanels tests. E2E: `C:\Users\Ht\.personal-bots\qa\backend-memfollow16021\e2e.mjs <release>`.
+Failing-first: memoryHandlers.test.ts ("Fable follow-up (1.60.21)" blocks), PersonalMemoryService.replace.test.ts (failed send), PersonalMemoryService.test.ts (long brief), PersonalMemoryTidyService.test.ts ("Fable follow-ups (1.60.21)", "1.60.21: withdrawing proposals, versioned and shipped proposal files"), memoryHandlers.test.ts ("a sensitive-chat refusal is an answer"), groupModel.test.ts (archived), web memoryPresentation/memoryCards/MemoryTidyPanels tests. E2E: `C:\Users\Ht\.personal-bots\qa\backend-memfollow16021\e2e.mjs <release>`.

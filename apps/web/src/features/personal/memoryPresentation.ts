@@ -74,6 +74,7 @@ export const TIDY_CHANGE_STATUS_LABEL: Readonly<Record<PersonalMemoryTidyChangeS
   approved: "Approved",
   rejected: "Rejected",
   left: "Left alone",
+  withdrawn: "Withdrawn",
 };
 
 const TIDY_STATUS_LABEL: Readonly<Record<PersonalMemoryTidyRun["status"], string>> = {

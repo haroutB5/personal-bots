@@ -1,4 +1,5 @@
 {
+  "minVersion": "1.60.21",
   "items": [
     {
       "action": "split",

@@ -2,12 +2,17 @@ import { PersonalBotId, PersonalMemoryId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
+import { ServerConfig } from "../../config.ts";
+import * as ServerConfigModule from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as Schema from "effect/Schema";
+import { SHIPPED_MEMORY_PROPOSALS } from "./shippedProposals.ts";
 import type { TidyJudgeOutput } from "./memoryTidy.ts";
 import {
   PERSONAL_MEMORY_MAX_PENDING_PER_BOT,
@@ -17,6 +22,8 @@ import {
 import {
   PersonalMemoryTidy,
   PersonalMemoryTidyJudge,
+  proposalFileReady,
+  ProposalFile,
   layer as tidyLayer,
 } from "./PersonalMemoryTidyService.ts";
 
@@ -1026,5 +1033,175 @@ describe("Fable follow-ups (1.60.21)", () => {
       });
       expect(run.changes.map((c) => c.status)).toEqual(["left", "left"]);
     }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+});
+
+describe("1.60.21: withdrawing proposals, versioned and shipped proposal files", () => {
+  it.effect("a withdraw drops only still-pending, file-made items naming the same entries", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const first = yield* tidy.importProposals({
+        source: "proposals-a.json",
+        items: [
+          {
+            action: "reclassify",
+            memoryIds: [ids.tea],
+            toScope: "team",
+            toScopeId: "assistant",
+            reason: "A.",
+          },
+          {
+            action: "reclassify",
+            memoryIds: [ids.pasta],
+            toScope: "team",
+            toScopeId: "assistant",
+            reason: "B.",
+          },
+        ],
+      });
+      const botChange = yield* memory.propose({
+        action: "forget",
+        botId: BOT_A,
+        threadId: null,
+        target: yield* memory.get(PersonalMemoryId.make(ids.watch)),
+        reason: "Asked in chat",
+      });
+      const before = yield* memory.list({});
+      const [tea, pasta] = first.changes;
+      const second = yield* tidy.importProposals({
+        source: "proposals-b.json",
+        items: [
+          {
+            action: "reclassify",
+            memoryIds: [ids.tea],
+            toScope: "team",
+            toScopeId: "Finance",
+            reason: "Finance.",
+          },
+        ],
+        withdraw: [
+          { changeId: tea!.changeId, memoryIds: [ids.tea] },
+          // Wrong entries named: left alone.
+          { changeId: pasta!.changeId, memoryIds: [ids.tea] },
+          // A bot's request is not the file's to withdraw.
+          { changeId: botChange, memoryIds: [ids.watch] },
+        ],
+      });
+      const statusOf = (changeId: number) =>
+        Effect.map(
+          tidy.log({ limit: 20 }),
+          (log) =>
+            log.runs.flatMap((run) => run.changes).find((c) => c.changeId === changeId)?.status,
+        );
+      expect(yield* statusOf(tea!.changeId)).toBe("withdrawn");
+      expect(yield* statusOf(pasta!.changeId)).toBe("pending");
+      expect(yield* statusOf(botChange)).toBe("pending");
+      expect(second.changes.map((c) => c.status)).toEqual(["pending"]);
+      // Memory itself is never touched by a withdraw.
+      expect(yield* memory.list({})).toEqual(before);
+      // A withdrawn item cannot be approved any more.
+      const error = yield* Effect.flip(decideWithHash(tea!.changeId, true));
+      expect(error.message).toContain("not waiting");
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it("every file shipped in the release is a valid proposals file for 1.60.21", () => {
+    expect(SHIPPED_MEMORY_PROPOSALS.length).toBe(4);
+    for (const shipped of SHIPPED_MEMORY_PROPOSALS) {
+      const file = Schema.decodeUnknownSync(ProposalFile)(shipped.file);
+      expect(file.minVersion).toBe("1.60.21");
+      expect(file.items.length).toBeGreaterThan(0);
+      // Short names: longer token-like names are redacted in the group label.
+      expect(shipped.name.replace(/\.json$/, "").length).toBeLessThan(40);
+    }
+  });
+
+  it("a proposals file waits until the running version reaches its minVersion", () => {
+    expect(proposalFileReady({ minVersion: "1.60.21" }, "1.60.21")).toBe(true);
+    expect(proposalFileReady({ minVersion: "1.60.21" }, "1.60.22")).toBe(true);
+    expect(proposalFileReady({ minVersion: "1.60.21" }, "1.61.0")).toBe(true);
+    expect(proposalFileReady({ minVersion: "1.60.21" }, "1.60.20")).toBe(false);
+    expect(proposalFileReady({ minVersion: "1.60.21" }, "1.60.3")).toBe(false);
+    // Unknown running version: only files that ask for none.
+    expect(proposalFileReady({ minVersion: "1.60.21" }, null)).toBe(false);
+    expect(proposalFileReady({}, null)).toBe(true);
+  });
+
+  it.effect("files shipped in the release reach the inbox once and import as pending", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const fs = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig;
+      const inbox = `${config.baseDir}/personal/memory-proposals`;
+      const shipped = [
+        {
+          name: "proposals-ship-a.json",
+          file: {
+            minVersion: "1.60.21",
+            items: [
+              {
+                action: "reclassify",
+                memoryIds: [ids.tea],
+                toScope: "team",
+                toScopeId: "assistant",
+                reason: "Shipped.",
+              },
+            ],
+          },
+        },
+        {
+          name: "proposals-ship-b.json",
+          file: {
+            minVersion: "9.0.0",
+            items: [
+              {
+                action: "reclassify",
+                memoryIds: [ids.pasta],
+                toKind: "preference",
+                reason: "Later.",
+              },
+            ],
+          },
+        },
+      ] as const;
+      const before = yield* memory.list({});
+      yield* tidy.importInbox({ appVersion: "1.60.21", shipped });
+      expect((yield* fs.readDirectory(`${inbox}/imported`)).toSorted()).toEqual([
+        "proposals-ship-a.json",
+      ]);
+      // Too new for this version: written, but waits in the inbox.
+      expect(yield* fs.exists(`${inbox}/proposals-ship-b.json`)).toBe(true);
+      const log = yield* tidy.log({ limit: 5 });
+      const run = log.runs.find((r) => r.model === "proposals: proposals-ship-a.json")!;
+      expect(run.changes.map((c) => c.status)).toEqual(["pending"]);
+      expect(yield* memory.list({})).toEqual(before);
+      // The next start does not copy or import it again.
+      yield* tidy.importInbox({ appVersion: "1.60.21", shipped });
+      const again = (yield* tidy.log({ limit: 10 })).runs.filter(
+        (r) => r.model === "proposals: proposals-ship-a.json",
+      );
+      expect(again).toHaveLength(1);
+      expect(yield* fs.exists(`${inbox}/proposals-ship-a.json`)).toBe(false);
+      // Once the version is reached, the waiting file imports.
+      yield* tidy.importInbox({ appVersion: "9.0.0", shipped });
+      expect((yield* fs.readDirectory(`${inbox}/imported`)).toSorted()).toEqual([
+        "proposals-ship-a.json",
+        "proposals-ship-b.json",
+      ]);
+    }).pipe(
+      Effect.provide(
+        testLayer(fakeJudge(() => [])).pipe(
+          Layer.provideMerge(
+            ServerConfigModule.layerTest(process.cwd(), { prefix: "t3-memory-inbox-" }).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
+        ),
+      ),
+    ),
   );
 });
