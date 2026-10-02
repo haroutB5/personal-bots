@@ -156,7 +156,7 @@ export const PersonalMemoryTidyChange = Schema.Struct({
   /** Who proposed it: the tidy-up, a bot ("bot:<id>") or a local proposals file. */
   proposedBy: Schema.optional(Schema.NullOr(Schema.String)),
   /** What an approval is bound to: the change and every entry version it saw. */
-  changeHash: Schema.optional(Schema.String),
+  changeHash: Schema.String,
   reason: Schema.String,
 });
 export type PersonalMemoryTidyChange = typeof PersonalMemoryTidyChange.Type;
@@ -206,8 +206,8 @@ export type PersonalMemoryTidySetModeInput = typeof PersonalMemoryTidySetModeInp
 export const PersonalMemoryTidyDecideInput = Schema.Struct({
   changeId: Schema.Number,
   approve: Schema.Boolean,
-  /** The hash the card or list was showing; the tap is refused if the change is not that one. */
-  changeHash: Schema.optional(Schema.String),
+  /** The hash the card or list was showing; the tap is refused unless it is this change's. */
+  changeHash: Schema.String,
 });
 
 /** An entry a bot's change would replace or forget, shown whole on the card. */

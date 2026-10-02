@@ -409,7 +409,7 @@ function PendingTidyChanges({
     const hashes = new Map<number, string>();
     for (const group of groups) {
       for (const change of group.changes) {
-        if (change.changeHash !== undefined) hashes.set(change.changeId, change.changeHash);
+        hashes.set(change.changeId, change.changeHash);
       }
     }
     return hashes;
@@ -419,10 +419,8 @@ function PendingTidyChanges({
     if (environmentId === null) return "No connection.";
     // The hash binds the tap to the change on screen; the server refuses a stale one.
     const changeHash = hashById.get(changeId);
-    const result = await decide({
-      environmentId,
-      input: { changeId, approve, ...(changeHash === undefined ? {} : { changeHash }) },
-    });
+    if (changeHash === undefined) return "That change is no longer listed; reload and try again.";
+    const result = await decide({ environmentId, input: { changeId, approve, changeHash } });
     const message = commandFailureMessage(
       result,
       approve ? "Could not approve that change." : "Could not reject that change.",

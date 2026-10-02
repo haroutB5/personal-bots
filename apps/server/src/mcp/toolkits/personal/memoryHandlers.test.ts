@@ -537,3 +537,20 @@ describe("sensitive chats", () => {
     }),
   );
 });
+
+describe("Security recheck c849ca6007: forget in a sensitive chat", () => {
+  it.effect("a shared forget from a chat that had a sensitive site open makes no card", () =>
+    Effect.gen(function* () {
+      const { forgotten, proposed, encoded } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: ["https://bank.test"],
+        tool: "forget_memory",
+        userRequest: "forget the USD coin prices rule",
+        target: { scope: "shared", content: "Quote coin prices in USD." },
+      });
+      expect(forgotten).not.toHaveBeenCalled();
+      expect(proposed).not.toHaveBeenCalled();
+      expect(encoded).toContain("sensitive");
+    }),
+  );
+});

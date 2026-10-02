@@ -68,7 +68,7 @@ export class PersonalMemoryTidy extends Context.Service<
       readonly changeId: number;
       readonly approve: boolean;
       /** The hash the owner's card or list showed; refused when it is not this change's. */
-      readonly changeHash?: string | undefined;
+      readonly changeHash: string;
     }) => Effect.Effect<PersonalMemoryTidyLogResult, PersonalMemoryError>;
     /** Bots' save/forget cards shown in one chat: pending, and decided in the last 7 days. */
     readonly cardsForThread: (
@@ -911,7 +911,8 @@ export const make = Effect.gen(function* () {
       `;
       const change = rows[0];
       if (change === undefined) return yield* fail("That tidy-up change was not found.");
-      if (input.changeHash !== undefined && input.changeHash !== changeHashOf(change)) {
+      // Every answer, Save or Don't save, is bound to the change the owner was shown.
+      if (input.changeHash !== changeHashOf(change)) {
         return yield* fail(
           "That card is out of date; reload it before answering. Nothing was changed.",
         );

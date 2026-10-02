@@ -626,6 +626,14 @@ const make = Effect.gen(function* () {
           return yield* refuse("Task summaries are removed from the Memory screen, not by a bot.");
         }
         if (target.scope !== "bot") {
+          // Same as saves: memory other bots see is not changed from a chat
+          // that had a sensitive site open, not even as a card.
+          const exposed = yield* browser.sensitiveExposure(invocation.threadId);
+          if (exposed.length > 0) {
+            return yield* refuse(
+              `Not forgotten: this chat has had ${exposed.join(", ")} open, a site the user marked sensitive, so memory other bots see cannot be changed from it. Ask the user to do it in a new chat or on the Memory screen.`,
+            );
+          }
           const inChat = owner.current !== null && owner.current.byOwner;
           yield* memory
             .propose({

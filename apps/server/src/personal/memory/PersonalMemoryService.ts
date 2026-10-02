@@ -648,15 +648,6 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       if (input.action === "save") yield* rejectUnsafe(input.content.trim());
       const proposedBy = `bot:${input.botId}`;
-      const waiting = yield* sql<{ readonly count: number }>`
-        SELECT COUNT(*) AS "count" FROM personal_memory_tidy_changes
-        WHERE status = 'pending' AND proposed_by = ${proposedBy}
-      `;
-      if ((waiting[0]?.count ?? 0) >= PERSONAL_MEMORY_MAX_PENDING_PER_BOT) {
-        return yield* fail(
-          "Not proposed: you already have many memory changes waiting for the user's OK. Tell the user instead.",
-        );
-      }
       const now = yield* DateTime.now;
       const nowIso = DateTime.formatIso(now);
       const day = localDay(DateTime.toEpochMillis(now));
@@ -668,12 +659,14 @@ export const make = Effect.gen(function* () {
       `;
       const targets = input.action === "save" ? input.replaces : [input.target];
       const versions = Object.fromEntries(targets.map((entry) => [entry.memoryId, entry.version]));
-      yield* sql`
+      // One statement checks the cap and inserts, so concurrent calls cannot
+      // both see room for one more.
+      const inserted = yield* sql<{ readonly id: number }>`
         INSERT INTO personal_memory_tidy_changes (
           run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id, content,
           to_kind, to_scope, to_scope_id, versions_json, proposed_by, thread_id, reason, created_at
         )
-        VALUES (
+        SELECT
           ${runId}, 'pending', ${input.action},
           ${input.action === "save" ? input.scope : input.target.scope},
           ${input.action === "save" ? input.scopeId : input.target.scopeId},
@@ -685,9 +678,18 @@ export const make = Effect.gen(function* () {
           ${encodeVersions(versions)}, ${proposedBy}, ${input.threadId},
           ${redactSecrets(input.reason).slice(0, 600)},
           ${nowIso}
-        )
+        WHERE (
+          SELECT COUNT(*) FROM personal_memory_tidy_changes
+          WHERE status = 'pending' AND proposed_by = ${proposedBy}
+        ) < ${PERSONAL_MEMORY_MAX_PENDING_PER_BOT}
+        RETURNING change_id AS "id"
       `;
-      const id = yield* sql<{ readonly id: number }>`SELECT last_insert_rowid() AS "id"`;
+      const id = inserted;
+      if (id[0] === undefined) {
+        return yield* fail(
+          "Not proposed: you already have many memory changes waiting for the user's OK. Tell the user instead.",
+        );
+      }
       yield* sql`
         UPDATE personal_memory_tidy_runs
         SET pending = (SELECT COUNT(*) FROM personal_memory_tidy_changes
