@@ -40,8 +40,13 @@ export function memoryCardBotName(
   return "A bot";
 }
 
-/** "All bots" / "Dev team" for a card's reach. */
-export function memoryCardReach(scope: string | null, scopeId: string | null): string {
+/** "All bots" / "Dev team" / "Only CTO" (a save just for the bot that asked) for a card's reach. */
+export function memoryCardReach(
+  scope: string | null,
+  scopeId: string | null,
+  who: string = "this bot",
+): string {
+  if (scope === "bot") return `Only ${who}`;
   if (scope === "team") {
     const team = scopeId?.trim();
     return team ? personalBotTeamLabel(team) : "one team";
@@ -49,7 +54,10 @@ export function memoryCardReach(scope: string | null, scopeId: string | null): s
   return "All bots";
 }
 
-/** "CTO wants to save a preference for Dev team" / "CTO asks to forget". */
+/**
+ * "CTO wants to save a preference for Dev team" / "CTO wants to save a note
+ * for itself" (only CTO will see it) / "CTO asks to forget".
+ */
 export function memoryCardHeadline(
   card: Pick<PersonalMemoryCard, "action" | "proposedBy" | "kind" | "scope" | "scopeId">,
   botName: (botId: string) => string | undefined,
@@ -57,7 +65,20 @@ export function memoryCardHeadline(
   const who = memoryCardBotName(card.proposedBy, botName);
   if (card.action === "forget") return `${who} asks to forget`;
   const kind = card.kind === "preference" ? "preference" : "note";
-  return `${who} wants to save a ${kind} for ${memoryCardReach(card.scope, card.scopeId)}`;
+  const reach = card.scope === "bot" ? "itself" : memoryCardReach(card.scope, card.scopeId, who);
+  return `${who} wants to save a ${kind} for ${reach}`;
+}
+
+/** Who will see it, under the card: a save just for its bot says so. */
+export function memoryCardAudienceNote(
+  card: Pick<PersonalMemoryCard, "action" | "proposedBy" | "scope">,
+  botName: (botId: string) => string | undefined,
+): string {
+  if (card.action === "save" && card.scope === "bot") {
+    const who = memoryCardBotName(card.proposedBy, botName);
+    return `${memoryCardReach("bot", null, who)} will see this memory, and only you can approve it.`;
+  }
+  return "Other bots see this memory, so only you can approve it.";
 }
 
 /** The two buttons: approve first, then the refusal. */

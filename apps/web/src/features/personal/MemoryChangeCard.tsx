@@ -6,6 +6,7 @@ import { Check, Brain, X } from "lucide-react";
 import { cn } from "~/lib/utils";
 
 import {
+  memoryCardAudienceNote,
   memoryCardButtons,
   memoryCardHeadline,
   memoryCardSettledLine,
@@ -144,7 +145,7 @@ export function MemoryChangeCard({
         </p>
       ) : null}
       <p className="mt-1.5 text-[13px] leading-[1.4] text-[var(--personal-text-secondary)]">
-        Other bots see this memory, so only you can approve it.
+        {memoryCardAudienceNote(card, botName)}
       </p>
       {error !== null ? (
         <p

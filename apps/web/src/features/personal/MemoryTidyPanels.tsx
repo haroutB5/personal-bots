@@ -24,6 +24,8 @@ import {
   pendingTidyChanges,
   pendingTidyGroups,
   reclassifyDescription,
+  splitPartTag,
+  supersedeKeptText,
   TIDY_CHANGE_STATUS_LABEL,
   TIDY_MODE_LABEL,
   tidyActionLabel,
@@ -280,8 +282,10 @@ function TidyModeControl({
   );
 }
 
+const SUBHEAD = "mt-1.5 text-[12px] font-medium text-[var(--personal-text-tertiary)]";
+
 /** One change in a run: what it did, why, and the entries involved. */
-function TidyChangeItem({
+export function TidyChangeItem({
   change,
   texts,
   botName,
@@ -302,6 +306,10 @@ function TidyChangeItem({
   // Provenance only where the owner decides: the changelog's runs say where they came from.
   const provenance =
     change.status === "pending" ? tidyProvenanceLabel(change.proposedBy, botName) : null;
+  // A supersede or split archives memoryIds; a supersede with no result is a retirement.
+  const kept = change.action === "supersede" ? supersedeKeptText(change, texts) : null;
+  const parts = change.action === "split" ? (change.parts ?? []) : [];
+  const archives = change.action === "supersede" || change.action === "split";
   return (
     <li className="flex items-start gap-1 py-2.5">
       {leading}
@@ -333,10 +341,9 @@ function TidyChangeItem({
           </p>
         ) : null}
         {change.action === "save" && involved.length > 0 ? (
-          <p className="mt-1.5 text-[12px] font-medium text-[var(--personal-text-tertiary)]">
-            Would replace
-          </p>
+          <p className={SUBHEAD}>Would replace</p>
         ) : null}
+        {archives && involved.length > 0 ? <p className={SUBHEAD}>Archives</p> : null}
         {involved.length > 0 ? (
           <ul className="mt-1.5 flex flex-col gap-1">
             {involved.map((text, index) => (
@@ -349,6 +356,36 @@ function TidyChangeItem({
               </li>
             ))}
           </ul>
+        ) : null}
+        {kept !== null ? (
+          <div className="mt-1.5">
+            <p className="text-[12px] font-medium text-[var(--personal-text-tertiary)]">
+              Keeps (newer)
+            </p>
+            <p className="mt-0.5 text-[14px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text)]">
+              {kept}
+            </p>
+          </div>
+        ) : null}
+        {parts.length > 0 ? (
+          <div className="mt-1.5">
+            <p className="text-[12px] font-medium text-[var(--personal-text-tertiary)]">
+              {`Split into (${parts.length})`}
+            </p>
+            <ul className="mt-0.5 flex flex-col gap-1.5">
+              {parts.map((part, index) => (
+                // oxlint-disable-next-line react/no-array-index-key -- parts have no id; order is the data
+                <li key={index} className="min-w-0">
+                  <p className="text-[14px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text)]">
+                    {part.content}
+                  </p>
+                  <p className="text-[12px] text-[var(--personal-text-secondary)]">
+                    {splitPartTag(part)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : null}
         {change.action === "merge" && change.content !== null ? (
           <div className="mt-1.5">

@@ -1,5 +1,6 @@
 import type {
   PersonalMemoryEntry,
+  PersonalMemorySplitPart,
   PersonalMemoryTidyAction,
   PersonalMemoryTidyChange,
   PersonalMemoryTidyChangeStatus,
@@ -62,6 +63,7 @@ export const TIDY_ACTION_LABEL: Readonly<Record<PersonalMemoryTidyAction, string
   reclassify: "Reclassified",
   save: "New entry",
   forget: "Forgotten",
+  split: "Split",
   leave: "Left alone",
 };
 
@@ -174,7 +176,29 @@ export function reclassifyDescription(
     const team = change.toScopeId?.trim();
     parts.push(`Reach: ${team ? personalBotTeamLabel(team) : "one team"}`);
   }
+  if (change.toScope === "bot") parts.push("Reach: One bot");
   return parts.join(" · ");
+}
+
+/** A split part's short tag: "Preference · Dev team", "Note · All bots". */
+export function splitPartTag(part: PersonalMemorySplitPart): string {
+  const kind = part.kind === "preference" ? "Preference" : "Note";
+  const team = part.scopeId?.trim();
+  const reach =
+    part.scope === "shared" ? "All bots" : team ? personalBotTeamLabel(team) : "One team";
+  return `${kind} · ${reach}`;
+}
+
+/**
+ * The newer entry a supersede keeps: its text as proposed, else as listed now.
+ * Null when there is no newer entry (a retirement).
+ */
+export function supersedeKeptText(
+  change: { readonly resultMemoryId: string | null; readonly content: string | null },
+  texts: ReadonlyMap<string, string>,
+): string | null {
+  if (change.resultMemoryId === null) return null;
+  return change.content ?? texts.get(change.resultMemoryId) ?? UNLISTED_MEMORY_TEXT;
 }
 
 /** Who proposed a change, by name: the bot's, or "A bot" when it is not listed. */
@@ -200,6 +224,7 @@ export function tidyProvenanceLabel(
 
 /**
  * A bot's request in words: "CTO wants to save a preference for Dev team",
+ * "CFO wants to save a note for itself" (only that bot sees it),
  * "CTO asks to forget:". Empty for other actions.
  */
 export function tidyRequestHeadline(
@@ -219,7 +244,9 @@ export function tidyRequestHeadline(
       ? " for All bots"
       : change.toScope === "team"
         ? ` for ${team ? personalBotTeamLabel(team) : "one team"}`
-        : "";
+        : change.toScope === "bot"
+          ? " for itself"
+          : "";
   return `${who} wants to save a ${kind}${reach}`;
 }
 

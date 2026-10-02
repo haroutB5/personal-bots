@@ -15,6 +15,8 @@ import {
   proposerBotName,
   reclassifyDescription,
   readMemoryLastSeen,
+  splitPartTag,
+  supersedeKeptText,
   TIDY_CHANGE_STATUS_LABEL,
   TIDY_ACTION_LABEL,
   TIDY_MODE_LABEL,
@@ -73,6 +75,7 @@ describe("tidy labels", () => {
       reclassify: "Reclassified",
       save: "New entry",
       forget: "Forgotten",
+      split: "Split",
       leave: "Left alone",
     });
     expect(TIDY_MODE_LABEL).toEqual({ off: "Off", preview: "Preview only", on: "Make changes" });
@@ -350,5 +353,52 @@ describe("bot requests", () => {
         startedAt: DateTime.makeUnsafe("2026-10-02T09:00:00Z"),
       }),
     ).toBe("Bot requests 2 Oct");
+  });
+});
+
+describe("splits and bot-only saves", () => {
+  const botName = (botId: string) => (botId === "b2" ? "CFO" : undefined);
+
+  it("labels a split, as a request while pending", () => {
+    expect(TIDY_ACTION_LABEL.split).toBe("Split");
+    expect(tidyActionLabel({ action: "split", status: "pending" })).toBe("Split");
+    expect(tidyActionLabel({ action: "split", status: "applied" })).toBe("Split");
+  });
+
+  it("says a bot-only save is for the bot itself", () => {
+    expect(
+      tidyRequestHeadline(
+        { action: "save", proposedBy: "bot:b2", toKind: "preference", toScope: "bot" },
+        botName,
+      ),
+    ).toBe("CFO wants to save a preference for itself");
+    expect(reclassifyDescription({ toScope: "bot", toScopeId: "b2" })).toBe("Reach: One bot");
+  });
+
+  it("tags each split part with its kind and reach", () => {
+    expect(splitPartTag({ content: "x", kind: "preference", scope: "team", scopeId: "dev" })).toBe(
+      "Preference · Dev team",
+    );
+    expect(splitPartTag({ content: "x", kind: "note", scope: "shared", scopeId: null })).toBe(
+      "Note · All bots",
+    );
+    expect(splitPartTag({ content: "x", kind: "note", scope: "team", scopeId: null })).toBe(
+      "Note · One team",
+    );
+  });
+
+  it("finds the newer entry a supersede keeps", () => {
+    const texts = new Map([["m-new", "Lives in Leeds"]]);
+    expect(supersedeKeptText({ resultMemoryId: "m-new", content: "Lives in York" }, texts)).toBe(
+      "Lives in York",
+    );
+    expect(supersedeKeptText({ resultMemoryId: "m-new", content: null }, texts)).toBe(
+      "Lives in Leeds",
+    );
+    expect(supersedeKeptText({ resultMemoryId: "m-gone", content: null }, texts)).toBe(
+      UNLISTED_MEMORY_TEXT,
+    );
+    // No newer entry: a retirement, nothing kept.
+    expect(supersedeKeptText({ resultMemoryId: null, content: null }, texts)).toBeNull();
   });
 });

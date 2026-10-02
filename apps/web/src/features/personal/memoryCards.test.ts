@@ -6,7 +6,9 @@ import { buildConversationItems, placeMemoryCards } from "./conversationModel";
 import {
   deriveMemoryCards,
   memoryCardButtons,
+  memoryCardAudienceNote,
   memoryCardHeadline,
+  memoryCardReach,
   memoryCardSettledLine,
 } from "./memoryCards";
 
@@ -40,6 +42,19 @@ describe("memory card wording", () => {
       "A bot wants to save a preference for Dev team",
     );
     expect(memoryCardHeadline(card({ action: "forget" }), botName)).toBe("CTO asks to forget");
+  });
+
+  it("says a bot-only save is just for that bot", () => {
+    const own = card({ scope: "bot", scopeId: "b1" });
+    expect(memoryCardHeadline(own, botName)).toBe("CTO wants to save a preference for itself");
+    expect(memoryCardReach("bot", "b1", "CTO")).toBe("Only CTO");
+    expect(memoryCardReach("shared", null, "CTO")).toBe("All bots");
+    expect(memoryCardAudienceNote(own, botName)).toBe(
+      "Only CTO will see this memory, and only you can approve it.",
+    );
+    expect(memoryCardAudienceNote(card(), botName)).toBe(
+      "Other bots see this memory, so only you can approve it.",
+    );
   });
 
   it("names the buttons for each action", () => {
