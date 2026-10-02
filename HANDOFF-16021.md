@@ -1,6 +1,6 @@
 # 1.60.21: memory follow-ups from Fable's 1.60.19 review, archived group label
 
-Built on 1.60.20 (main 42f2452a0d). Branch feat/memory-followups. No migration.
+Built on 1.60.20 (main 42f2452a0d). Branch feat/memory-followups. **Migration 092 (additive: personal_memory_tidy_changes.text_hashes_json), so DevOps backs up first.**
 
 ## What changed
 
@@ -21,6 +21,10 @@ They ship inside the release (`apps/server/src/personal/memory/proposals/`, list
 - `proposals-2oct-c-dev-team.json` (17 reclassify to team dev): a8101b42, bcf0825d, 924b2db2, 9240047d, b6ffbeef, 6bb47e61, e5495568, d4c96687, 65ad6a44, 6586991b, 4166e697, 4e792bd8, ef555b92, 953fac88, 2bb09749, 5201715a, 22e7cedb. Left shared: personal facts, the crypto rules, the "5 bots in total" rule, computer use (d935331f), token-efficiency note (e3bc5111).
 - `proposals-2oct-d-splits.json` (15 split items, 149 parts): the 15 long wrap-up notes. Parts that restate a standing rule already saved on its own were left out.
 - `proposals-2oct-e-finance.json` (9 reclassify to team Finance, CFO's team): a7b603a8 (as a preference), 25f4b60f, 857eafa7, 68afb011, 9fcb1776, b187f100, a01ee507, 68ed699c, 4ce9becc. Its `withdraw` takes back the 8 pending 1.60.19 items that sent crypto entries to the assistant team (changes 2, 29, 30, 36, 37, 38, 41, 45), so Harout never sees both; 51e206c1 (change 38) is covered by its Finance split; change 46 (43f3974e, vacuum research) really is Assistant work and stays.
+
+## Approvals hold to the text shown (migration 092)
+
+Every new pending change (nightly, proposals file, bot card) stores a hash of each named entry's text. At startup, older pending changes (e.g. the 1.60.20 nightly's changes 53 to 62, stored with no text and strict versions) get their hashes recorded if every entry they name is still at the version it was proposed against; others keep the strict check. Approving a supersede, merge, bot save or forget then checks text: a reach or kind change approved in between no longer makes it stale (QA blocker: change 57 after the 953fac88 reach change), a text edit still refuses. Reclassify stays version-strict. Log line: "personal memory pending changes now checked by text" (upgraded / keptStrict).
 
 ## Withdraw
 
