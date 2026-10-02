@@ -1,6 +1,6 @@
 # 1.60.21: memory follow-ups from Fable's 1.60.19 review, archived group label
 
-Built on 1.60.20 (main 42f2452a0d). Branch feat/memory-followups. **Migration 092 (additive: personal_memory_tidy_changes.text_hashes_json), so DevOps backs up first.**
+Built on 1.60.20 (main 42f2452a0d). Branch feat/memory-followups. **Migration 092 (additive: personal_memory_tidy_changes.entry_snapshots_json), so DevOps backs up first.**
 
 ## What changed
 
@@ -22,9 +22,17 @@ They ship inside the release (`apps/server/src/personal/memory/proposals/`, list
 - `proposals-2oct-d-splits.json` (15 split items, 149 parts): the 15 long wrap-up notes. Parts that restate a standing rule already saved on its own were left out.
 - `proposals-2oct-e-finance.json` (9 reclassify to team Finance, CFO's team): a7b603a8 (as a preference), 25f4b60f, 857eafa7, 68afb011, 9fcb1776, b187f100, a01ee507, 68ed699c, 4ce9becc. Its `withdraw` takes back the 8 pending 1.60.19 items that sent crypto entries to the assistant team (changes 2, 29, 30, 36, 37, 38, 41, 45), so Harout never sees both; 51e206c1 (change 38) is covered by its Finance split; change 46 (43f3974e, vacuum research) really is Assistant work and stays.
 
-## Approvals hold to the text shown (migration 092)
+## Approvals bound to what was shown (migration 092)
 
-Every new pending change (nightly, proposals file, bot card) stores a hash of each named entry's text. At startup, older pending changes (e.g. the 1.60.20 nightly's changes 53 to 62, stored with no text and strict versions) get their hashes recorded if every entry they name is still at the version it was proposed against; others keep the strict check. Approving a supersede, merge, bot save or forget then checks text: a reach or kind change approved in between no longer makes it stale (QA blocker: change 57 after the 953fac88 reach change), a text edit still refuses. Reclassify stays version-strict. Log line: "personal memory pending changes now checked by text" (upgraded / keptStrict).
+Every new pending change (nightly, proposals file, bot card) stores a snapshot of each entry it names: a hash of its text, its kind, its scope and team. When the owner answers:
+
+- entries the change archives, merges, forgets, splits or replaces must match all of it (text, kind, reach); any difference refuses as out of date;
+- the newer entry a supersede keeps is bound to its text only, so approving its reach change first does not block the supersede (QA's change 57: 6e950227 -> 953fac88);
+- a merge creates its result with the kind and reach the card showed, never the current values;
+- reclassify stays version-strict.
+  The change hash covers the snapshots. Cards show each target's kind and reach as proposed; the Waiting list tags each archived entry "Bound to: <kind · reach>" and the kept one "Bound to its text". At startup, older pending changes (the 1.60.20 nightly's 53 to 62) get full snapshots only if every entry is still at its proposed version; the rest keep the strict version check. Log: "personal memory pending changes now bound to what was shown" (upgraded / keptStrict).
+
+The splits file also withdraws the 2 Oct reclassify items of the notes it splits (changes 3, 5, 6, 7, 8, 9, 11, 14, 20, 24, 28, 31, 44, 46; 38 is in the Finance file): approving one of those first would otherwise make that split stale, and each split's parts carry their own reach.
 
 ## Withdraw
 
