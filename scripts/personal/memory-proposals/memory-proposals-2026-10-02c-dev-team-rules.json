@@ -1,0 +1,123 @@
+{
+  "items": [
+    {
+      "action": "reclassify",
+      "memoryIds": ["a8101b42-43d2-4c1f-8bb8-540747cd43fb"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: hbots release rule. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["bcf0825d-043a-4cbe-b276-83a5a1491ba8"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: dev team test-data rule. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["924b2db2-7f50-4825-97e9-f0e07959cfd5"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: hbots task concurrency (keep at 5). Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["9240047d-c801-4b7f-a762-4ff52909d257"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: Frontend/Backend model choice. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["b6ffbeef-af65-4b74-854f-965f5457722f"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: same task, same chat. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["6bb47e61-dfda-4618-8440-d299f0aeb37e"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: QA throwaway test teams. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["e5495568-9837-403b-a4b7-486c5076a94a"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: check the whole app for a feature. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["d4c96687-9e87-440e-8f59-7cad799c5f6c"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: DevOps runs every release. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["65ad6a44-4551-4109-977e-743027b920c6"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: no second Frontend; split web work. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["6586991b-6753-43cc-acf7-04ff09b9ee1b"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: hbots in-chat login card spec. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["4166e697-b8f5-442a-a9d7-4d9b83f51623"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: always deploy hbots builds. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["4e792bd8-bf79-47a5-9676-791e5b9e4ca4"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: QA test browser profiles. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["ef555b92-5998-44ba-b006-6f9f23f328d8"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: Codex usage rules. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["953fac88-2a05-4c5f-9b3d-5af885ada46b"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: release confirmation timing. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["2bb09749-8de9-4024-b81b-ecb6b4aa2df4"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: QA tests every fix; bot questions go to CTO. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["5201715a-edf7-477e-a06c-1df52659f8a3"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: Fable review request for 1.60.19. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    },
+    {
+      "action": "reclassify",
+      "memoryIds": ["22e7cedb-6698-4267-bc9a-e28764e590f9"],
+      "toScope": "team",
+      "toScopeId": "dev",
+      "reason": "Dev team only: 1.60.20 archived chats request. Only the dev team's bots follow it; Finance and Assistant bots stop receiving it. The text does not change."
+    }
+  ]
+}

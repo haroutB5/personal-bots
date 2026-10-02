@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "action": "supersede",
+      "memoryIds": ["bd548c26-c149-488b-bce7-b1d54f00de9b"],
+      "by": "687a3056-922c-4362-976b-9c910ea9e6a5",
+      "reason": "Duplicate rule: the 26 Sep \"at most 5 bots\" rule (per bot) was clarified the same day to 5 IN TOTAL across all bots; keep the clarified one. The separate hbots task-concurrency rule (924b2db2) stays."
+    },
+    {
+      "action": "supersede",
+      "memoryIds": ["266ca4a8-512f-44a7-ad32-892deaf38aec"],
+      "by": "4ce9becc-36a8-4e38-9e65-db6540bed0e8",
+      "reason": "Duplicate rule: the 28 Sep all-USD crypto reporting rule was cancelled the same day; keep the confirmed one (coin prices in USD, your positions and totals in GBP)."
+    },
+    {
+      "action": "supersede",
+      "memoryIds": ["d91998e1-c86f-4b7d-9610-d37ec4905095"],
+      "by": "9240047d-c801-4b7f-a762-4ff52909d257",
+      "reason": "Duplicate rule: the 29 Sep \"keep Frontend and Backend on Sonnet 5.5\" decision was replaced that evening (Frontend moved to Opus 5.5 medium); keep the newer one."
+    },
+    {
+      "action": "supersede",
+      "memoryIds": ["6e950227-0675-4210-9fc6-2a16fdc69455"],
+      "by": "953fac88-2a05-4c5f-9b3d-5af885ada46b",
+      "reason": "Duplicate rule: the 25 Sep release follow-up rule (check within 3 minutes) was restated on 1 Oct as checks about 5 minutes after the waiter is armed, recheck every 5; keep the newer one."
+    },
+    {
+      "action": "supersede",
+      "memoryIds": ["d35bb1bc-1a2e-4701-a13a-6f967e230b4c"],
+      "by": "c185a9d3-2c08-4297-8776-73a45ffed08b",
+      "reason": "Out of date: the 27 Sep Back rule still says \"being built in hbots 1.47.3\"; the 29 Sep update keeps \"all other entry points go back to /bots\" and adds the Team screen exception. (Approve together with making that update a dev-team preference.)"
+    }
+  ]
+}

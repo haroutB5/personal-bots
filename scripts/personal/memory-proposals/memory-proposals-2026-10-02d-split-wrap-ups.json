@@ -1,0 +1,1003 @@
+{
+  "items": [
+    {
+      "action": "split",
+      "memoryIds": ["d1e5c437-fefa-41e9-90e9-e69f66e25550"],
+      "parts": [
+        {
+          "content": "Matchday v0.174.0 (2026-09-20/21): football LINEUPS tab now shows players' average positions (FotMob heatmap touches averaged; keyless).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday average positions rule (Harout, 2026-09-20/21): show ONLY at half-time (labelled FIRST HALF, kept unchanged all second half) and full time (FULL MATCH), never during open play.",
+          "kind": "preference",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday average positions rule (Harout, 2026-09-20/21): tapping a dot shows the name only (NOT the FC 26 card). \"Show substitutions\" swaps the starting XI for the closing XI, 11 either way.",
+          "kind": "preference",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday average positions rule (Harout, 2026-09-20/21): the dot EDGE ring marks movement (green = came on, in the closing XI; red = went off, in the starting XI), not a mark inside the dot.",
+          "kind": "preference",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday lineups (2026-09-20/21): a short closing XI gets a caption only when a player who finished couldn't be placed; red-card sides stay silent.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday fixes in v0.174.0 (2026-09-20/21): FotMob fixture-join fix (had silently dropped managers/injuries/maps on ~26% of fixtures), goal-minute clipping fixed (spine GOAL word replaced by a football glyph), STATS percentages derived from counts, Bo5 label fix, esports theme leak (hydration race) fixed, unknown competition shows \"not found\".",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday (2026-09-20/21): UEFA Nations League added (uefa.nations, starts 24 Sep 2026; kept off paid APIs; CONCACAF mix-up guarded by tests).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout's working preferences for Matchday (2026-09-20/21): verify on his real iPhone; he tests by eye and reports with screenshots; wants UI clear and visible; gave CTO latitude to decide and implement (\"you think what's best\").",
+          "kind": "preference",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday open items (2026-09-20/21): FIRST HALF chip not yet seen on a real half-time in production; no physical iPhone Safari testing yet; known flaky Vitest timing tests under load.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        }
+      ],
+      "reason": "Split the 20/21 Sep Matchday wrap-up into 9 single facts so each surfaces on its own."
+    },
+    {
+      "action": "split",
+      "memoryIds": ["a33cddbf-c8b6-4394-889a-cff2074a9b48"],
+      "parts": [
+        {
+          "content": "Matchday 0.175.0 perf pass, client (2026-09-22, live at v0.176.3): history.replaceState for board/competition URL writes, match tabs kept mounted in React Activity, progressive Fixtures mount, CSS :active presses, idle nav prefetch.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday 0.175.0 perf pass, server (2026-09-22): memFirst on FotMob payload/search/standings, fcStats cold-start import removed, scores range cache tier fixed; ~180 useless tests and dead code removed, incident/spend tests kept.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday 0.175.1 (2026-09-22) fixed failed-tab retry under Activity. 0.176.0: Favorites scroll-up lag root cause was content-visibility placeholders above Today (not Next.js); days above opening day now render eagerly.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday decision (2026-09-22): Harout APPROVED turning off Next.js viewport prefetch on list rows. Rows now prefetch on press (pointerdown) plus one idle warm per route kind.",
+          "kind": "preference",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday 0.176.1-0.176.2 (2026-09-22): every LoL bracket card opens (lolesports: prefix, kickoff from getCompletedEvents/getSchedule, cache esports-standings:v4); Back keeps the chosen Grand Slam draw.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday 0.176.3 (2026-09-22): all 4 Slam draws link 254/254 matches; Slam chip stays highlighted on Fixtures.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday (2026-09-22): Harout confirmed on iPhone that the Favorites lag is gone. Leftover perf worktrees and _wt/probe were deleted with his OK.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday open items (2026-09-22): finished-Slam Fixtures shows misleading \"may not be published yet\"; more openable WTA Slam matches may draw on SofaSport quota after it resets 2026-09-30; Worlds bracket shows 2025 until picker switches to 2026 on 2026-09-29 (fine).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout switched the CTO bot to Claude Opus 5.5 during the 2026-09-22 chat.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        }
+      ],
+      "reason": "Split the 22 Sep Matchday perf wrap-up into 9 single facts so each surfaces on its own."
+    },
+    {
+      "action": "split",
+      "memoryIds": ["a7044895-7782-48b8-b5f8-d6a953809229"],
+      "parts": [
+        {
+          "content": "CalTrack v0.25.2 (2026-09-23) is live at caltrack-xi.vercel.app.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CalTrack Garmin sync (2026-09-23): Garmin Connect -> Apple Health -> Health Auto Export (HAE, paid $24.99 lifetime / $5.99 yr, Harout has NOT bought it) -> /api/health/ingest, which now auto-detects HAE JSON v2 (same URL + x-health-secret header). Free iPhone Shortcut path kept and made tolerant (strings with units).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CalTrack (2026-09-23): direct Garmin API rejected (business-only; garth deprecated Mar 2026).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CalTrack Settings (2026-09-23) has a Connect Garmin guide with copy buttons, Save secret button, Last received status, Sync now. Health writes are a field-level merge per (day, source), versioned pull/ack.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CalTrack fix (2026-09-23): Safari bricking on fresh install (Dexie uniqueKeys nextunique cursor throws on EMPTY index in Safari 26.5; QA was right, CTO probe had seeded data).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CalTrack fixes (2026-09-23): backups unrestorable (externalFoodCache keyed on `key`, now excluded); restore duplicating 52 quick foods (merge by name); update toast dead (no skipWaiting on install, checks reg.waiting on mount); silent food save failure (form noValidate, zod only gate).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CalTrack fixes (2026-09-23): failed sync showing \"synced just now\", onboarding scroll, see-through header, Recharts warning, back-fill date label; water reminders now DST-safe via tz_name column.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout's CalTrack decisions (2026-09-23): the 2,500 kcal per-serving cap and weight form keeping its value after save are FINE as is.",
+          "kind": "preference",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout (2026-09-23) does not use CalTrack water reminders and has no cron-job.org account, so an external hourly scheduler is not needed.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CalTrack (2026-09-23): all CalTrack worktrees deleted with Harout's OK; only the main checkout remains.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        }
+      ],
+      "reason": "Split the 23 Sep CalTrack wrap-up into 10 single facts so each surfaces on its own."
+    },
+    {
+      "action": "split",
+      "memoryIds": ["4c30899a-26d5-4b98-ba39-2176b7330b48"],
+      "parts": [
+        {
+          "content": "CalTrack Health Sync shortcut (2026-09-25): CTO built it with a generator (C:\\VMs\\cto\\shortcut\\build-shortcut.mjs), signed in the macOS Monterey VirtualBox VM \"macOS-Shortcuts\", and shared it as an iCloud share link (Harout approved share links; latest link is in the 25 Sep chat).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CalTrack Health Sync shortcut (2026-09-25) sends today's active and resting energy plus last night's sleep to CalTrack's health ingest endpoint; Harout pastes his sync key on import (never embedded).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "iOS 26 Shortcuts formats learned for CalTrack (2026-09-25): Health types are stored as \"Active Calories\", \"Resting Calories\" (unconfirmed guess) and \"Sleep\"; Health date filters compare whole days, so sleep is filtered per sample in a loop (starts after yesterday 18:00).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CalTrack Shortcut (2026-09-25): Mac to iPhone Shortcuts sync does not work, so delivery is via share link.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CalTrack Shortcut status (2026-09-25): sending path and sleep confirmed working; active and resting energy still to confirm with real data. Harout deleted his old HealthMetricsCalTrack shortcut.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "macOS-Shortcuts VM settings (2026-09-25): never sleeps, no lock after sleep; automatic login not enabled, so after a restart Harout types the Mac login himself.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout wants the macOS-Shortcuts VM shown in scaled mode (full size) (2026-09-25).",
+          "kind": "preference",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Reminder set for 25 Sep 2026 21:00 for Harout to run the CalTrack shortcut and compare with the Health app.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CalTrack next steps (2026-09-25): daily 21:30 automation, then an \"Add the Shortcut\" link in CalTrack Health sync settings (normal release).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        }
+      ],
+      "reason": "Split the 25 Sep CalTrack iPhone Shortcut wrap-up into 9 single facts so each surfaces on its own."
+    },
+    {
+      "action": "split",
+      "memoryIds": ["7f7c2927-72ff-45bb-8278-0819aec372e2"],
+      "parts": [
+        {
+          "content": "Matchday 0.177.0 (2026-09-25, live at v0.177.1, matchday-swart.vercel.app) redesigned the match-page hero card (ScoreHeader): football shows each side's scorers under its crest with minute + assist, (pen)/(OG) tags and red cards, in match order.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday ScoreHeader scorer rules (2026-09-25): own goals under the benefiting side, shootout kicks excluded, lineup surname else full name.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday 0.177.0 (2026-09-25): cleaner sizing; long team names wrap to 2 lines; venue centred with the city on its own line.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday 0.177.1 (2026-09-25): events carry addedTime so stoppage reads 90+2' in header and events list (ESPN \"90'+2'\" parsed; FotMob overloadTime no longer summed into the minute); basketball 3-digit scores shrink so they no longer overlap the logos.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday 0.177.x checked on production (2026-09-25) in both themes: football, LoL, Lebanese basketball; tennis uses its own header, unchanged.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday probes (2026-09-25): scripts/score-header-shot.mjs (venue centring, clipped names, score-to-logo gap) and scripts/events-overlap-probe.mjs (now includes NED-GER and AUT-ISR).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout approved the Matchday 0.177.x hero card result (\"Looks good\") (2026-09-25).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday open items (2026-09-25): Harout's call whether to group repeat scorers onto one line (loses per-goal assists); not yet checked: NBA (off-season), a live match, physical iPhone.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        }
+      ],
+      "reason": "Split the 25 Sep Matchday hero-card wrap-up into 8 single facts so each surfaces on its own."
+    },
+    {
+      "action": "split",
+      "memoryIds": ["1131140b-2eaf-4e7b-9001-ff98493ce651"],
+      "parts": [
+        {
+          "content": "hbots speedoptimiser findings (2026-09-25): first open after a release took 10-22 s (stale SW shell + server returned HTML 200 for old /assets); idle chats (>30 min) waited 2.6 s p50 for Claude session restart.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots speedoptimiser findings (2026-09-25): ~1.1 MB JSON per app open (all tasks 641 KB, OpenCode models 295 KB, bot list x4); 190 JS files/3.5 MB before list paint.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.38.0 (2026-09-25, a5acedc266c5, branch fix/inline-cards): retained-release asset fallback + 404, SW guard, stale-reload (kill switch bots:perf-off stale-reload); -46 startup requests; bot list once.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.38.0 (2026-09-25): session prewarm on chat open (PB_PERF_OFF=session-prewarm, max 3 idle prewarmed, ~240 MB each); task feed summaries 651->27.5 KB (PB_PERF_OFF=task-summaries, \"Show older tasks\"). OpenCode model list left as is (8 KB compressed).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots lab bench (2026-09-25) is noisy on the CTO laptop (macOS VM); trust RUM + deterministic counters.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout (2026-09-25): CTO may shut down the macOS VM via computer use (acpi ignored; savestate fallback).",
+          "kind": "preference",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "tennis-poll WhatsApp issue (2026-09-25): Ammar (Android) saw \"Waiting for this message\": his phone needed a resend and the poll job disconnected after 2 s.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "tennis-poll fixes (2026-09-25): runs stay online 150 s after last send, intro saved with poll for resends, data/runtime/wa.log (4b61dfb); Baileys rc14 dropped polltype meta on resent polls, patched via scripts/patch-baileys.mjs postinstall (e228ca2).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "tennis-poll (2026-09-25, 7eec6b1): chat suggestions now accept written dates and \"Court N\", booking tries the named court first.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "tennis-poll rules (2026-09-25): quorum 3 = early close, not a minimum; suggested slots are not sunset-checked (Harout fine with Sat 16-19).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "tennis-poll (2026-09-25): poll re-sent twice at Harout's request; booking running, 2/3 participants at 12:37.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        }
+      ],
+      "reason": "Split the 25 Sep CTO speed-pass and tennis-poll wrap-up into 11 single facts so each surfaces on its own. Rules already saved on their own are left out."
+    },
+    {
+      "action": "split",
+      "memoryIds": ["4269acb5-15d9-4a2a-89eb-d75803042bbc"],
+      "parts": [
+        {
+          "content": "hbots 1.42.0 (2026-09-25, beecf308eb36, live 16:57): routines created from a chat post each run into that chat (migration 081 thread_id/new_chat_each_run; older routines keep new chat per run). Verified live with a \"Same-chat check\" routine.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Routines deleted at Harout's request (2026-09-25): \"Confirm hbots 1.41.1 release (recheck)\", \"Remind Harout: test CalTrack Health Sync shortcut\" (21:00), \"Build tennis-poll retry fix after Friday's run\" (disabled; tennis-poll commit 4b61dfb still unbuilt). 8 routines remain.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots (2026-09-25): personal-bots/main fast-forwarded to the release (fix/inline-cards was 283 commits ahead, which had blocked the weekly upstream sync since 21 Sep).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots (2026-09-25): Harout approved a hand merge of upstream T3 Code d06f0ff10 (316 commits, 24 conflicts, over the sync's 15 limit). Backend did it on merge/upstream-20260925, upstream migrations renumbered to 82-83.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.43.0 (2026-09-25): Codex bot persona now sent as labelled parts under Codex's per-entry cap (newer Codex models were ignoring personas before).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.43.0 (460fb4e7010c, = personal-bots/main) live 18:22 on 2026-09-25, smoke passed, QA passed 10/10 local + relay (Luna1 answered as itself). Rollback target 1.42.0 = beecf308eb36.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Known upstream T3 Code nits, not fixed (2026-09-25): message-text search and Undo exist only in Developer view; Undo label says \"Ctrl+Z\" on phone; long-press in Developer view opens thread instead of menu.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout declined (for now) adding message-text search to the hbots Bots screen (2026-09-25).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        }
+      ],
+      "reason": "Split the 25 Sep CTO hbots 1.42.0/1.43.0 wrap-up into 8 single facts so each surfaces on its own. Rules already saved on their own are left out."
+    },
+    {
+      "action": "split",
+      "memoryIds": ["437e0a1b-e9e0-4759-b26f-f46a21bcb5fd"],
+      "parts": [
+        {
+          "content": "Model bench (2026-09-25/26): lives at C:/Claude/AI/model-bench, runs in model-bench-runs r1-r3, hidden graders; Harout said keep it.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Model bench round 2 (2026-09-25/26): Opus 5.5 medium and GPT-6 Luna max both 81/81; Sol high 80 (fastest, found an extra bug), Luna high 79, Luna xhigh 79. API cost: Opus $4.14, Luna max $0.10, Sol high $0.78.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Dev team models (2026-09-26): Harout briefly moved Backend/DevOps/Security to Sol high, then back to Opus 5.5 medium when Codex had an OpenAI-side 401 outage (~23:48 25 Sep to ~01:00 26 Sep). Whole dev team now Opus 5.5 (CTO high, rest medium).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Bots (2026-09-25): Luna1-5 were deleted 25 Sep 22:38 (looked deliberate); Astra remains on Codex.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.43.1-1.43.2 (2026-09-26): delegated/group turns carry the bot's model+effort; group delete removes member chats, Sending bubble stays in its chat.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.44.0/1.44.1 (2026-09-26): jump-to-latest arrow (+stop on touch, open at latest), Redeem banked resets in Bots usage sheet.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.45.0 (2026-09-26): steer_task (leads update a running task, reach any open team task) + reset row layout, Cancel as primary in redeem confirm, real redeem errors. 1.45.1: usage re-reads after a redeem and refresh bypasses cache.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots live 1.45.1 (0bd5d409d829) on 2026-09-26, rollback 1.45.0 (c3b5f8c41a11); all releases smoke/QA verified live.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots open nits (2026-09-26): usage sheet first paints a stale cached snapshot until refresh; a steer landing as a turn ends misses the task result; live mid-turn steer on Codex untested.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CTO machine (2026-09-26): Python 3.14 put on user PATH (python/python3/pip work). Old hbots worktrees removed; notes saved in personal-bots-notes/handoffs-from-worktrees.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout redeemed his Claude reset on 26 Sep 2026; Codex has 1 banked.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout's QA rules (2026-09-26): when he has confirmed a feature on his phone, QA only the new parts plus a quick regression; never press Redeem in tests.",
+          "kind": "preference",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout's bot-default rule (2026-09-26): ultrathink/ultracode should not be bot defaults (ultracode burns quota).",
+          "kind": "preference",
+          "scope": "team",
+          "scopeId": "dev"
+        }
+      ],
+      "reason": "Split the 25/26 Sep CTO model-bench and hbots 1.43.1-1.45.1 wrap-up into 13 single facts so each surfaces on its own. Rules already saved on their own are left out."
+    },
+    {
+      "action": "split",
+      "memoryIds": ["b6c1b6dc-dbce-47d8-b8ce-f86a2cbe86c5"],
+      "parts": [
+        {
+          "content": "hbots 1.48.4 (2026-09-27, live 14:36): task cap 5; tasks wait for background work; old task chats renamed; delegated tasks get no task_summary memory.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.48.4 (2026-09-27) navigation: Back from any bot chat goes to /bots; reopens last chat after iOS kills the app (12 h); in-app edge swipe back, no flash (confirmed on iPhone; kill switch bots:native-swipe=1); chat can't scroll past bottom; Queued/Read under latest message.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday 0.179.1 (2026-09-27): shootout = W/L (Harout's call), \"(pens X-Y)\" on team rows, readable dark FC ink, FC 27 ratings from EA's site, Juan Jesus/Kouassi card fixes. Open: stray \"26\" badge on \"No card available\".",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CalTrack 0.32.2 (2026-09-27): sleep score in all stats; past-day view/edit/delete.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CalTrack 0.32.2 (2026-09-27): automatic Garmin-style sleep score (duration, graded stages, awake, sleep HR; no HRV, Garmin doesn't write it) that self-calibrates after 5 typed Garmin scores. On 27 Sep: estimate 80 vs Garmin 82.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "CalTrack Shortcut is v3.1 (2026-09-27), link in Settings > Health sync; Harout enabled Allow Sharing Large Amounts of Data.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout (2026-09-27) types Garmin's sleep score into CalTrack daily for about a week, and opens Garmin Connect manually before shortcut runs.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Model bench r4 (2026-09-27): Opus 5.5 medium 81/81 best; Sonnet 5 high 80, medium 70, not cheaper.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Dev team models (2026-09-27): CTO, Frontend, Backend, DevOps, QA now Opus 5.5 medium, Security high; \"all bots\" meant dev team only. Maxi bots removed.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "tennis-poll (2026-09-27): the 25 Sep \"payment timed out\" was a fixed detection bug.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Handbook rule (2026-09-27): kill only captured PIDs.",
+          "kind": "preference",
+          "scope": "team",
+          "scopeId": "dev"
+        }
+      ],
+      "reason": "Split the 27 Sep CTO wrap-up into 11 single facts so each surfaces on its own."
+    },
+    {
+      "action": "split",
+      "memoryIds": ["272cf61b-1cff-44c1-b198-b1db172ef36b"],
+      "parts": [
+        {
+          "content": "Matchday 0.185.2 (2026-09-28/29): Direction A redesign on all sports; esports keeps the purple theme. Top bar A with text sport tabs and a week ribbon.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday 0.185.2 (2026-09-28/29): tappable green row bell mutes a single game; lineup push opens ?tab=lineups.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday (2026-09-28/29): esports logos proxied via /api/team-logo, because Leaguepedia needs a Referer header.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday repo (2026-09-28/29): old worktrees and branches deleted with Harout's OK; only _wt/matchday-01852-deploy is kept.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.53.1 (2026-09-28/29): bulk select; every busy bot animates, but only one comet; \"Waiting on <bot>\" status; progress line under Working; usage bars fill after a restart.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.53.1 (2026-09-28/29): model label on rows; pinned tiles show short labels like \"Opus 5.5 · M\".",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.53.1 (2026-09-28/29): auto-continue after a usage limit, now in group chats too.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.53.1 (2026-09-28/29): deleting or archiving a chat kills its commands; finished task chats auto-archive after 30 idle minutes (141 archived at the start); lists sort by real activity.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots (2026-09-28/29): seed bots never default to Fable (PERSONAL_SEED_MODEL).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Designer bot added (2026-09-28/29), Opus 5.5 high.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Dev team models (2026-09-28/29): Frontend, Backend and DevOps moved to Sonnet 5.5 high after bench r6.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Routine (2026-09-28/29): SofaSport quota check booked for Wed 30 Sep 12:30.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        }
+      ],
+      "reason": "Split the 28/29 Sep CTO wrap-up into 12 single facts so each surfaces on its own."
+    },
+    {
+      "action": "split",
+      "memoryIds": ["04ba39a5-6311-4d87-872f-000c1891cfcb"],
+      "parts": [
+        {
+          "content": "hbots live 1.56.1 (2026-09-29, release dd3e98877796, 17:48 BST); rollback 1.56.0 = 1cb9e55fde42.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.53.2 (2026-09-29): short model labels (e.g. \"Opus 5.5 · H\") in list rows, chat headers and task cards.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.54 (2026-09-29): New team form with leader and members, in the + menu and on the diagram.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.55/1.55.1 (2026-09-29): team leads (CTO, CFO) have create_bot/update_bot/remove_bot on their own team. System bots are protected. Changes to Harout-made bots need his latest message to name the bot. Audit rows keep before/after (migration 087). Security said SHIP.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.56 (2026-09-29): Team screen redesign B (Constellation) with lead confirm, Undo and Working now. 1.56.1: smooth drag; Back from anything opened on the Team screen returns to /bots/team.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots security follow-ups, not built (2026-09-29): require a recent naming message or a confirm card before a lead removes or rewrites a bot; raw-name rename check; an ownership model for lead-created bots.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots security follow-ups, not built (2026-09-29): task insert re-check of deleted_at; no restore button for removed bots.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots security follow-up, not built (2026-09-29): MCP token on the claude.exe command line (test ${VAR} in --mcp-config).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Bot instructions (2026-09-29): reviewed and updated on 14 bots; the old text is in ~/.personal-bots/qa/cto/instr-plan.json.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Routine (2026-09-29): SofaSport check on 30 Sep 12:30 still booked.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        }
+      ],
+      "reason": "Split the 29 Sep CTO wrap-up into 10 single facts so each surfaces on its own."
+    },
+    {
+      "action": "split",
+      "memoryIds": ["51e206c1-29b1-4acd-8492-7daded22c62d"],
+      "parts": [
+        {
+          "content": "Crypto research (CFO, 2026-09-29): 12 of the top 100 had no 50% run in 2026; none a catch-up buy. Pass on VET and XMR. AI exposure already about 35% (NEAR/WLD/ICP): add TAO from WLD trims. Privacy: ZEC only, lottery-sized.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "Finance"
+        },
+        {
+          "content": "Crypto buy watchlist (CFO, 2026-09-29, Kraken USD): BTC <= $80k, <= $76k, >= $97k (about £900 each, USDC from trims first). Alt buys pause at BTC <= $75,289.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "Finance"
+        },
+        {
+          "content": "Crypto buy watchlist (CFO, 2026-09-29, Kraken USD): TAO <= $285 and <= $250 (£500 each from WLD trims). ZEC <= $1,150 and PUMP <= $0.00460 (£250 each; £500 lottery bucket). NIGHT reviewed from 5 Dec.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "Finance"
+        },
+        {
+          "content": "CFO alerts (2026-09-29): logic in cfo\\alert-check.ps1. cfo\\alert-config.json (holdings, levels, buys, unlock \"events\") is the only file to edit when holdings or levels change. cfo\\briefing-data.ps1 is read-only.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "Finance"
+        },
+        {
+          "content": "Finance team (2026-09-29): CFO lead on Opus 5.5 xhigh; CFO scheduler (Sonnet 5.5 medium) runs the 4-hourly alerts (routine-2059397a20d13755dcdacc6d) and a daily 08:03 morning briefing (routine-8b9ab3a26c8b1ebc5a75ceb8); Analyst (Sonnet 5.5 high) does research.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "Finance"
+        },
+        {
+          "content": "Finance team (2026-09-29): add a Tax bot when exit selling starts or before 5 Apr.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "Finance"
+        },
+        {
+          "content": "Harout chose the daily morning briefing over CFO reviewing each alert (2026-09-29).",
+          "kind": "preference",
+          "scope": "team",
+          "scopeId": "Finance"
+        },
+        {
+          "content": "CFO reports (2026-09-29) are in CFO scheduler's chats. Push was fixed to ToolSearch \"select:PushNotification\", with \"PUSH NOT SENT\" on failure; phone delivery not yet confirmed.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "Finance"
+        },
+        {
+          "content": "Crypto token unlocks (CFO, 2026-09-29): ONDO about 17% on 18 Jan 2027 (biggest risk); PUMP about 2.3% on the 12th monthly; ARB mid/late Oct; PENGU 17 Oct.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "Finance"
+        },
+        {
+          "content": "Crypto open items (CFO, 2026-09-29): CFO suggested ONDO -35% action -> \"review only\" until after 18 Jan (no answer yet). ICP +20% fired 21:06 (plan: trim a third).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "Finance"
+        },
+        {
+          "content": "Harout (2026-09-29) is holding for now, no fired trims done, so cfo alert-config holdings are current.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "Finance"
+        }
+      ],
+      "reason": "Split the 29 Sep CFO crypto wrap-up into 11 single facts; routed to Finance team per the crypto/CFO rule rather than the assistant team."
+    },
+    {
+      "action": "split",
+      "memoryIds": ["c37a2efe-35b4-4b7a-b8cb-795edc5a28a6"],
+      "parts": [
+        {
+          "content": "hbots live 1.60.5 (2026-09-30, d755ebab2f5d, 16:17 BST); rollback 1.60.4 = f2d316afb195.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.58.x (2026-09-30): select mode on Files, Memory, Routines and Saved logins; tool-aware working pose, so pinned tiles get the comet. 1.59.0: the thinking cloud (design B) and \"Thinking\" status.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.59.1-1.59.4 (2026-09-30): QA bug hunt H1-H8 fixed (archived groups, relay chats hidden, missing-chat message, pinned menu, routine default Planner, 44 px tabs, count flash, perf).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.59.5/1.60.0 (2026-09-30): chat opens about 0.2 s; Bots list kept mounted; composer clears on Send; upload auto-retry. 1.59.6: chats follow a bot to a new provider; \"Couldn't send\" with Retry.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.60.1 (2026-09-30): shared browser handles dialogs; no more host drops; iPhone keyboard proxy. 1.60.2: busy task chats unarchive, and status counts archived running chats.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots 1.60.3-1.60.5 (2026-09-30): Desktop remote keyboard opens on the first tap (editable-rect map); the keyboard button glows.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "hbots QA (2026-09-30): final 1.60.1 pass all PASS, 0 open bugs. Perf budget J1 ceilings recalibrated from 1.30.1; J2.chatShell = 237 (5-run median).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Matchday live 0.185.3 (2026-09-30): SofaSport by-date endpoint retired, now fetched by category; next reset 30 Oct; counter 16. DevOps re-checks 1 Oct 14:30.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Deleted (2026-09-30): zonely and SplitDaddy fully (Vercel, Neon, Blob, Edge Config, GitHub repos, local folders); the Sync reports bot (its routines moved to DevOps).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Dev team models (2026-09-30): QA, DevOps, Security, IT and Backend on GPT-6.1 Sol high; Assistant on Sol medium; Frontend on Opus 5.5 medium; Designer on Opus high.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Upcoming (as of 2026-09-30): Fri 2 Oct 11:00 tennis heads-up; Sat 3 Oct 09:00 upstream sync (59 commits, 8 conflicts expected, hand merge by Backend if it stops); Mon 5 Oct 09:00 DevOps weekly health check.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        }
+      ],
+      "reason": "Split the 30 Sep CTO wrap-up into 11 single facts so each surfaces on its own."
+    },
+    {
+      "action": "split",
+      "memoryIds": ["e700f051-aa92-4737-8146-00dce4b27937"],
+      "parts": [
+        {
+          "content": "Harout's overnight rule (2026-09-29/30): \"don't ask, you decide\"; CTO runs the whole loop (QA hunt, fix, ship, re-test) itself.",
+          "kind": "preference",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Dev team models (2026-09-29/30): QA, DevOps, Security, IT and Backend on GPT-6.1 Sol high; Assistant on Sol medium; Frontend on Opus 5.5 medium; Designer on Opus high.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout's decisions (2026-09-29/30): zonely and SplitDaddy deleted with no backup; Sync reports bot deleted. Planner, Scheduler, Scout and Analyst kept.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout's decision (2026-09-29/30): hbots upstream merge waits for Saturday.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout's hbots UI decisions (2026-09-29/30): thinking cloud (design B), with \"Thinking\" text; Bots list kept loaded; Desktop keyboard button glows instead of the pill.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "dev"
+        },
+        {
+          "content": "Harout's speed budget rule (2026-09-29/30): never loosen a limit to pass; recalibrate only from a stable median with evidence.",
+          "kind": "preference",
+          "scope": "team",
+          "scopeId": "dev"
+        }
+      ],
+      "reason": "Split the 29/30 Sep CTO decisions-and-preferences wrap-up into 6 single facts; standing rules marked as preferences. Rules already saved on their own are left out."
+    },
+    {
+      "action": "split",
+      "memoryIds": ["43f3974e-1b2d-402b-97d5-80ffc7b50e1a"],
+      "parts": [
+        {
+          "content": "Harout's home (2026-09-30) is mostly hard flooring with one carpet.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "assistant"
+        },
+        {
+          "content": "Harout's existing Vax Mach Air upright (2026-09-30) has poor suction/floor pickup and feels heavy to move.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "assistant"
+        },
+        {
+          "content": "Vacuum replacement brief (2026-09-30): initial budget £180; priorities effective cleaning, easier handling and battery endurance; interested in handheld conversion (also asked about corded detachable models).",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "assistant"
+        },
+        {
+          "content": "Vacuum decision (2026-09-30): after comparing Shark IZ381UKT, Hoover HF4+, Levoit LVAC200/300 and others, Harout said 'Im going to get latest levoit lvac200', referring to his £109.97 Amazon listing https://www.amazon.co.uk/dp/B0G1YQ9T93 (short https://amzn.eu/d/02AZvE5B). Purchase NOT confirmed.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "assistant"
+        },
+        {
+          "content": "Levoit LVAC200 (2026-09-30): a cheaper listing https://www.amazon.co.uk/dp/B0D6YXMYGH was £89.99. Prices were checked 30 Sep, not lasting prices.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "assistant"
+        },
+        {
+          "content": "Levoit LVAC200 listings (2026-09-30): actual revision/identical hardware unresolved; dearer advertises 3 modes/3h charging, cheaper conflicting modes/4h; same linked manual, no verified suction or floor-runtime gain.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "assistant"
+        },
+        {
+          "content": "Levoit LVAC200 ratings (2026-09-30): both mix vacuum and unrelated purifier/filter reviews; 4.7 vs 4.3 is not a reliable exact-model comparison.",
+          "kind": "note",
+          "scope": "team",
+          "scopeId": "assistant"
+        },
+        {
+          "content": "Harout owns a Garmin Venu3 (2026-09-30) and needs 22mm Quick Release bands (not QuickFit-only).",
+          "kind": "note",
+          "scope": "shared",
+          "scopeId": null
+        },
+        {
+          "content": "Garmin Venu3 band request (2026-09-30): Harout wants bands similar to SEURE magnetic silicone loop/two-tone styles.",
+          "kind": "note",
+          "scope": "shared",
+          "scopeId": null
+        },
+        {
+          "content": "Garmin Venu3 compatible band shortlist (2026-09-30): Bandletic black/orange £25.99 https://www.amazon.co.uk/dp/B0GWQV3ZYG, NotoCity £13.99 https://www.amazon.co.uk/dp/B0GMHFHTWP, LEIXIUER magnetic clasp with green colours £5.99 https://www.amazon.co.uk/dp/B0BMWT3848. No band selection/purchase confirmed.",
+          "kind": "note",
+          "scope": "shared",
+          "scopeId": null
+        },
+        {
+          "content": "Harout checked (2026-09-30) that Assistant cannot see his saved Amazon password; passwords stay server-filled and never go in memory.",
+          "kind": "preference",
+          "scope": "shared",
+          "scopeId": null
+        }
+      ],
+      "reason": "Split the 30 Sep Assistant wrap-up into 11 single facts: vacuum research to assistant team, Harout's watch and password rule to shared."
+    }
+  ]
+}
