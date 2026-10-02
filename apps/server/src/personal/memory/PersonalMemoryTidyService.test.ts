@@ -110,6 +110,8 @@ const answers = (ref: (needle: string) => string): TidyJudgeOutput["decisions"] 
   { action: "supersede", memoryIds: ["E77"], by: ref("1 Oct"), reason: "Hallucinated." },
 ];
 
+const decodeProposalFile = Schema.decodeUnknownSync(ProposalFile);
+
 /** The owner's tap as the card sends it: with the change's hash. */
 const decideWithHash = (changeId: number, approve: boolean) =>
   Effect.gen(function* () {
@@ -1110,7 +1112,7 @@ describe("1.60.21: withdrawing proposals, versioned and shipped proposal files",
   it("every file shipped in the release is a valid proposals file for 1.60.21", () => {
     expect(SHIPPED_MEMORY_PROPOSALS.length).toBe(4);
     for (const shipped of SHIPPED_MEMORY_PROPOSALS) {
-      const file = Schema.decodeUnknownSync(ProposalFile)(shipped.file);
+      const file = decodeProposalFile(shipped.file);
       expect(file.minVersion).toBe("1.60.21");
       expect(file.items.length).toBeGreaterThan(0);
       // Short names: longer token-like names are redacted in the group label.

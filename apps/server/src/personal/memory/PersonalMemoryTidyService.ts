@@ -293,6 +293,8 @@ export function proposalFileReady(
   return true;
 }
 const decodeProposalFile = Schema.decodeUnknownEffect(Schema.fromJsonString(ProposalFile));
+const decodeShippedFile = Schema.decodeUnknownEffect(ProposalFile);
+const encodeProposalFile = Schema.encodeEffect(Schema.fromJsonString(ProposalFile));
 
 /** Why a proposal cannot go on the approval list, or null when it can. */
 export function proposalProblem(
@@ -1018,11 +1020,11 @@ export const make = Effect.gen(function* () {
               (file) => fileSystem.exists(file),
             );
             if (seen.some(Boolean)) continue;
-            yield* fileSystem.makeDirectory(inbox, { recursive: true });
-            yield* fileSystem.writeFileString(
-              path.join(inbox, shipped.name),
-              `${JSON.stringify(shipped.file, null, 1)}\n`,
+            const text = yield* decodeShippedFile(shipped.file).pipe(
+              Effect.flatMap(encodeProposalFile),
             );
+            yield* fileSystem.makeDirectory(inbox, { recursive: true });
+            yield* fileSystem.writeFileString(path.join(inbox, shipped.name), `${text}\n`);
           }
           if (!(yield* fileSystem.exists(inbox))) return;
           const names = (yield* fileSystem.readDirectory(inbox)).filter((name) =>
