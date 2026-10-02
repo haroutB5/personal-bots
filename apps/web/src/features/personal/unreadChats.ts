@@ -173,7 +173,9 @@ export function useRefetchOnTurnsSettled(key: string, refresh: () => void): void
   const baseline = useRef<string | null>(null);
   const timer = useRef<number | null>(null);
   const refreshRef = useRef(refresh);
-  refreshRef.current = refresh;
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
   useEffect(() => {
     if (key === "") return;
     if (baseline.current === null || baseline.current === key) {
