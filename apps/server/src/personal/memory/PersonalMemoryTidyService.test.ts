@@ -1291,3 +1291,126 @@ describe("1.60.21: withdrawing proposals, versioned and shipped proposal files",
     ),
   );
 });
+
+describe("QA (e833b7035aa4): pending supersedes from before 1.60.21", () => {
+  /** A pending supersede as the 1.60.20 nightly Preview stored it: no text, strict versions. */
+  const oldStyleSupersede = (older: string, newer: string) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        INSERT OR IGNORE INTO personal_memory_tidy_runs
+          (run_id, started_at, finished_at, status, dry_run, nightly, model, pending)
+        VALUES ('nightly-16020', '2026-10-02T02:30:00.000Z', '2026-10-02T02:31:00.000Z',
+          'done', 1, 1, 'claude-sonnet-5-5', 1)
+      `;
+      const rows = yield* sql<{ readonly id: number }>`
+        INSERT INTO personal_memory_tidy_changes (
+          run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id, content,
+          versions_json, proposed_by, reason, created_at
+        )
+        VALUES ('nightly-16020', 'pending', 'supersede', 'shared', NULL, ${`["${older}"]`},
+          ${newer}, NULL, ${`{"${older}":1,"${newer}":1}`}, 'tidy-up', 'Newer rule.',
+          '2026-10-02T02:31:00.000Z')
+        RETURNING change_id AS "id"
+      `;
+      return rows[0]!.id;
+    });
+
+  it.effect(
+    "approving the newer entry's reach change first no longer makes the old supersede stale",
+    () =>
+      Effect.gen(function* () {
+        const ids = yield* seed;
+        const memory = yield* PersonalMemoryService;
+        const tidy = yield* PersonalMemoryTidy;
+        // 1. The live database already holds the nightly's pending supersede.
+        const nightly = yield* oldStyleSupersede(ids.capA, ids.capB);
+        // 2. Startup records the text the owner is shown, then the shipped
+        // duplicates file skips the same pair as already asked.
+        expect(yield* tidy.snapshotPendingTexts).toBe(1);
+        const dupes = yield* tidy.importProposals({
+          source: "proposals-2oct-b-duplicates.json",
+          items: [{ action: "supersede", memoryIds: [ids.capA], by: ids.capB, reason: "Dupe." }],
+        });
+        expect(dupes.changes).toHaveLength(0);
+        // 3. The newer entry's reach change is approved first (version 1 -> 2).
+        const dev = yield* tidy.importProposals({
+          source: "proposals-2oct-c-dev-team.json",
+          items: [
+            {
+              action: "reclassify",
+              memoryIds: [ids.capB],
+              toScope: "team",
+              toScopeId: "dev",
+              reason: "Dev only.",
+            },
+          ],
+        });
+        yield* decideWithHash(dev.changes[0]!.changeId, true);
+        // 4. Then the old supersede: it applies.
+        yield* decideWithHash(nightly, true);
+        const archived = (yield* memory.list({ status: "superseded" })).find(
+          (e) => e.memoryId === ids.capA,
+        );
+        expect(archived?.supersededBy).toBe(ids.capB);
+      }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it.effect("a real text edit still refuses, old-style or upgraded", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const upgraded = yield* oldStyleSupersede(ids.pasta, ids.tea);
+      const strict = yield* oldStyleSupersede(ids.flooring, ids.watch);
+      // Edited before the upgrade: the shown text is unknown, so it stays strict.
+      yield* memory.update({
+        memoryId: PersonalMemoryId.make(ids.watch),
+        content: "Owns a Garmin Fenix.",
+      });
+      expect(yield* tidy.snapshotPendingTexts).toBe(1);
+      // Edited after the upgrade: the text no longer reads as shown.
+      yield* memory.update({
+        memoryId: PersonalMemoryId.make(ids.tea),
+        content: "Favourite drink is coffee.",
+      });
+      for (const changeId of [upgraded, strict]) {
+        const error = yield* Effect.flip(decideWithHash(changeId, true));
+        expect(error.message).toContain("nothing was changed");
+      }
+      const current = (yield* memory.list({})).map((e) => e.memoryId);
+      expect(current).toContain(ids.pasta);
+      expect(current).toContain(ids.flooring);
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+
+  it.effect("new proposals hold to text: a bot's forget after a reach change still applies", () =>
+    Effect.gen(function* () {
+      const ids = yield* seed;
+      const memory = yield* PersonalMemoryService;
+      const tidy = yield* PersonalMemoryTidy;
+      const forget = yield* memory.propose({
+        action: "forget",
+        botId: BOT_A,
+        threadId: null,
+        target: yield* memory.get(PersonalMemoryId.make(ids.watch)),
+        reason: "Asked in chat",
+      });
+      const reach = yield* tidy.importProposals({
+        source: "proposals-reach.json",
+        items: [
+          {
+            action: "reclassify",
+            memoryIds: [ids.watch],
+            toScope: "team",
+            toScopeId: "assistant",
+            reason: "Assistant only.",
+          },
+        ],
+      });
+      yield* decideWithHash(reach.changes[0]!.changeId, true);
+      yield* decideWithHash(forget, true);
+      expect((yield* memory.list({})).map((e) => e.memoryId)).not.toContain(ids.watch);
+    }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
+  );
+});

@@ -1,3 +1,5 @@
+import * as NodeCrypto from "node:crypto";
+
 /**
  * The memory tidy-up's pure parts: how alike two entries are, the exact
  * duplicates it can fold without asking a model, the prompt it gives the
@@ -8,6 +10,7 @@
  * (new wording) and retiring an entry with no successor wait for the owner's
  * OK. It never deletes, and anything it is unsure of is left alone and listed.
  */
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { PERSONAL_MEMORY_MAX_LENGTH } from "@t3tools/contracts";
@@ -359,3 +362,26 @@ export function decisionsFromJudge(
     }
   });
 }
+
+/** A fingerprint of an entry's text, for checking it still reads as shown. */
+export const memoryTextHash = (content: string) =>
+  NodeCrypto.createHash("sha256").update(content, "utf8").digest("hex").slice(0, 32);
+
+const TextHashes = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+const encodeTextHashMap = Schema.encodeSync(TextHashes);
+const decodeTextHashMap = Schema.decodeUnknownOption(TextHashes);
+
+/** The text hash of every named entry whose text is known, as stored with a change. */
+export const textHashesJson = (
+  ids: ReadonlyArray<string>,
+  texts: ReadonlyMap<string, string>,
+): string =>
+  encodeTextHashMap(
+    Object.fromEntries(
+      ids.flatMap((id) => (texts.has(id) ? [[id, memoryTextHash(texts.get(id)!)] as const] : [])),
+    ),
+  );
+
+/** The stored text hashes of a change; empty for rows from before 1.60.21. */
+export const readTextHashes = (json: string | null | undefined): ReadonlyMap<string, string> =>
+  new Map(Object.entries(Option.getOrElse(decodeTextHashMap(json ?? ""), () => ({}))));

@@ -33,7 +33,12 @@ import {
   threadExposureKey,
 } from "../browser/sensitiveExposureStore.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
-import { localDay, memorySimilarity, SIMILAR_MEMORY_THRESHOLD } from "./memoryTidy.ts";
+import {
+  localDay,
+  memorySimilarity,
+  SIMILAR_MEMORY_THRESHOLD,
+  textHashesJson,
+} from "./memoryTidy.ts";
 
 /** Default result count for a memory search (the search_memory tool). */
 export const PERSONAL_MEMORY_RETRIEVAL_LIMIT = 8;
@@ -676,7 +681,8 @@ export const make = Effect.gen(function* () {
       const inserted = yield* sql<{ readonly id: number }>`
         INSERT INTO personal_memory_tidy_changes (
           run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id, content,
-          to_kind, to_scope, to_scope_id, versions_json, proposed_by, thread_id, reason, created_at
+          to_kind, to_scope, to_scope_id, versions_json, proposed_by, thread_id, reason, created_at,
+          text_hashes_json
         )
         SELECT
           ${runId}, 'pending', ${input.action},
@@ -689,7 +695,11 @@ export const make = Effect.gen(function* () {
           ${input.action === "save" ? input.scopeId : null},
           ${encodeVersions(versions)}, ${proposedBy}, ${input.threadId},
           ${redactSecrets(input.reason).slice(0, 600)},
-          ${nowIso}
+          ${nowIso},
+          ${textHashesJson(
+            targets.map((entry) => entry.memoryId),
+            new Map(targets.map((entry) => [entry.memoryId, entry.content])),
+          )}
         WHERE (
           SELECT COUNT(*) FROM personal_memory_tidy_changes
           WHERE status = 'pending' AND proposed_by = ${proposedBy}

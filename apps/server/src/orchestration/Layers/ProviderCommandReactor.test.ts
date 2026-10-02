@@ -3014,6 +3014,46 @@ describe("ProviderCommandReactor", () => {
       );
     });
 
+    it("a send the provider refused leaves the full preference list due for the next turn", async () => {
+      // 1.60.21 (QA): the failure happens at the provider boundary, not in the
+      // memory service. Before the fix the refused turn still marked the list
+      // as sent, so the next turn got only the one-line reminder.
+      const harness = await createHarness({
+        personalBotThread: true,
+        personalMemory: true,
+        sendTurnEffect: (call) =>
+          call === 1
+            ? Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: "claudeAgent",
+                  method: "turn/start",
+                  detail: "Claude usage limit reached.",
+                }),
+              )
+            : undefined,
+      });
+      await seedMemory(harness);
+      const contextOf = (call: number) =>
+        (
+          harness.sendTurn.mock.calls[call - 1]?.[0] as
+            | { readonly turnContext?: string }
+            | undefined
+        )?.turnContext ?? "";
+      const turn = async (messageId: string, call: number) => {
+        await startTurn(harness, asMessageId(messageId));
+        await waitFor(() => harness.sendTurn.mock.calls.length === call);
+        await harness.drain();
+      };
+      await turn("user-message-refused", 1);
+      expect(contextOf(1)).toContain("Always reply in British English.");
+      await turn("user-message-retry", 2);
+      expect(contextOf(2)).toContain("Always reply in British English.");
+      // That one went through: the next turn in the same session is reminded only.
+      await turn("user-message-after", 3);
+      expect(contextOf(3)).not.toContain("Always reply in British English.");
+      expect(contextOf(3)).toContain("still apply unchanged");
+    });
+
     it("a chat turn still gets task summaries", async () => {
       const context = await turnContextOf(asMessageId("user-message-benchmark"));
       expect(context).toContain("Known facts (from memory)");

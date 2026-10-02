@@ -39,6 +39,9 @@ import {
   exactDuplicateDecisions,
   localDay,
   localMinuteOfDay,
+  memoryTextHash,
+  readTextHashes,
+  textHashesJson,
   TIDY_MAX_ENTRIES_PER_CALL,
   TidyJudgeOutput,
   validateDecisions,
@@ -99,6 +102,12 @@ export class PersonalMemoryTidy extends Context.Service<
       readonly appVersion: string | null;
       readonly shipped?: ReadonlyArray<ShippedProposalFile> | undefined;
     }) => Effect.Effect<void>;
+    /**
+     * Startup: pending changes from before 1.60.21 whose entries are still as
+     * proposed get their shown text recorded, so approval checks text. Returns
+     * how many were upgraded.
+     */
+    readonly snapshotPendingTexts: Effect.Effect<number, PersonalMemoryError>;
     /** Checks every 10 minutes whether tonight's run is due. Park-aware. */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
@@ -385,6 +394,8 @@ interface RunRow {
 
 interface ChangeRow {
   readonly threadId?: string | null;
+  /** Per-entry text hashes as shown (null on rows from before 1.60.21). */
+  readonly textHashesJson?: string | null;
   readonly createdAt?: string;
   readonly decidedAt?: string | null;
   readonly versionsJson?: string | null;
@@ -509,6 +520,8 @@ export const make = Effect.gen(function* () {
      * fine); otherwise it is held to its recorded version like the rest.
      */
     byText?: string | null,
+    /** Per-entry text as shown; an entry named here is held to its text, not its version. */
+    hashes: ReadonlyMap<string, string> = new Map(),
   ) =>
     Effect.gen(function* () {
       if (decision.action === "leave") return null;
@@ -536,6 +549,8 @@ export const make = Effect.gen(function* () {
         const row = byId.get(id);
         if (row === undefined) return false;
         if (id === by && byText != null) return row.content === byText;
+        // A reach or kind change in between is fine; a text edit is not.
+        if (hashes.has(id)) return memoryTextHash(row.content) === hashes.get(id);
         // Every entry must be exactly as it was when the change was planned.
         return versions.get(id) === row.version;
       });
@@ -592,6 +607,7 @@ export const make = Effect.gen(function* () {
     nowIso: string,
     versions: ReadonlyMap<string, number>,
     reach: { readonly scope: string; readonly scopeId: string | null },
+    texts: ReadonlyMap<string, string>,
     /** A supersede's newer entry text, as listed for the owner. */
     byText: string | null = null,
   ) => {
@@ -599,13 +615,14 @@ export const make = Effect.gen(function* () {
     return sql`
       INSERT INTO personal_memory_tidy_changes (
         run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id, content,
-        versions_json, proposed_by, reason, created_at
+        versions_json, proposed_by, reason, created_at, text_hashes_json
       )
       VALUES (
         ${runId}, ${status}, ${decision.action}, ${reach.scope}, ${reach.scopeId},
         ${encodeIds(decision.memoryIds)}, ${resultId},
         ${decision.action === "merge" ? decision.content.trim() : byText},
-        ${versionsJson(named, versions)}, 'tidy-up', ${safeText(decision.reason)}, ${nowIso}
+        ${versionsJson(named, versions)}, 'tidy-up', ${safeText(decision.reason)}, ${nowIso},
+        ${textHashesJson(named, texts)}
       )
     `;
   };
@@ -719,6 +736,7 @@ export const make = Effect.gen(function* () {
         const entries = yield* readEntries;
         const versions = new Map(entries.map((entry) => [entry.memoryId, entry.version]));
         const byMemoryId = new Map(entries.map((entry) => [entry.memoryId, entry]));
+        const texts = new Map(entries.map((entry) => [entry.memoryId, entry.content]));
         // Each reach on its own: shared entries, then each team's. A rule is
         // never merged into, or archived for, an entry other bots see.
         const reaches = new Map<string, Array<TidyEntry>>();
@@ -764,6 +782,7 @@ export const make = Effect.gen(function* () {
               nowIso,
               versions,
               reachOf(decision),
+              texts,
             );
             leftAlone += 1;
             continue;
@@ -776,6 +795,7 @@ export const make = Effect.gen(function* () {
             nowIso,
             versions,
             reachOf(decision),
+            texts,
             byTextOf(decision),
           );
           superseded += decision.memoryIds.length;
@@ -791,12 +811,22 @@ export const make = Effect.gen(function* () {
             nowIso,
             versions,
             reachOf(decision),
+            texts,
             byTextOf(decision),
           );
           pending += 1;
         }
         for (const decision of proposal.left) {
-          yield* recordChange(runId, "left", decision, null, nowIso, versions, reachOf(decision));
+          yield* recordChange(
+            runId,
+            "left",
+            decision,
+            null,
+            nowIso,
+            versions,
+            reachOf(decision),
+            texts,
+          );
           leftAlone += 1;
         }
         return { merged, superseded, pending, leftAlone, error: proposal.error };
@@ -926,6 +956,7 @@ export const make = Effect.gen(function* () {
       const entries = yield* readEntries;
       const current = new Map(entries.map((entry) => [entry.memoryId, entry] as const));
       const versions = new Map(entries.map((entry) => [entry.memoryId, entry.version]));
+      const texts = new Map(entries.map((entry) => [entry.memoryId, entry.content]));
       let pending = 0;
       let leftAlone = 0;
       // What the owner is shown beside the entries: a supersede's newer
@@ -951,7 +982,8 @@ export const make = Effect.gen(function* () {
       ) => sql`
         INSERT INTO personal_memory_tidy_changes (
           run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id, content,
-          to_kind, to_scope, to_scope_id, versions_json, proposed_by, reason, created_at
+          to_kind, to_scope, to_scope_id, versions_json, proposed_by, reason, created_at,
+          text_hashes_json
         )
         VALUES (
           ${runId}, ${status}, ${status === "left" ? "leave" : item.action},
@@ -966,7 +998,13 @@ export const make = Effect.gen(function* () {
               : item.memoryIds,
             versions,
           )},
-          ${`file:${safeText(input.source)}`.slice(0, 200)}, ${safeText(reason).slice(0, 700)}, ${nowIso}
+          ${`file:${safeText(input.source)}`.slice(0, 200)}, ${safeText(reason).slice(0, 700)}, ${nowIso},
+          ${textHashesJson(
+            item.action === "supersede" && item.by != null
+              ? [...item.memoryIds, item.by]
+              : item.memoryIds,
+            texts,
+          )}
         )
       `;
       for (const item of input.items) {
@@ -1136,7 +1174,8 @@ export const make = Effect.gen(function* () {
           scope_id AS "scopeId", memory_ids_json AS "memoryIdsJson",
           result_memory_id AS "resultMemoryId", content, reason,
           to_kind AS "toKind", to_scope AS "toScope", to_scope_id AS "toScopeId",
-          versions_json AS "versionsJson", proposed_by AS "proposedBy"
+          versions_json AS "versionsJson", proposed_by AS "proposedBy",
+          text_hashes_json AS "textHashesJson"
         FROM personal_memory_tidy_changes WHERE change_id = ${input.changeId}
       `;
       const change = rows[0];
@@ -1165,6 +1204,7 @@ export const make = Effect.gen(function* () {
       const recorded = Option.getOrUndefined(decodeVersionMap(change.versionsJson ?? ""));
       if (recorded === undefined) return yield* stale;
       const versions = new Map(Object.entries(recorded));
+      const hashes = readTextHashes(change.textHashesJson);
       const memoryIds = decodeIds(change.memoryIdsJson);
       // Applying and marking approved happen together, or not at all.
       const outcome = yield* Effect.gen(function* () {
@@ -1177,13 +1217,15 @@ export const make = Effect.gen(function* () {
             break;
           }
           case "save": {
-            const saved = yield* applyBotSave(change, memoryIds, versions, nowIso);
+            const saved = yield* applyBotSave(change, memoryIds, versions, nowIso, hashes);
             if (saved === null) return yield* stale;
             resultId = saved;
             break;
           }
           case "forget": {
-            if (!(yield* applyBotForget(memoryIds, versions, nowIso))) return yield* stale;
+            if (!(yield* applyBotForget(memoryIds, versions, nowIso, hashes))) {
+              return yield* stale;
+            }
             break;
           }
           case "split": {
@@ -1217,6 +1259,7 @@ export const make = Effect.gen(function* () {
               `tidy-approved:${change.runId}`,
               nowIso,
               change.action === "supersede" ? change.content : null,
+              hashes,
             );
             if (applied === null) return yield* stale;
             resultId = applied.resultId;
@@ -1235,18 +1278,30 @@ export const make = Effect.gen(function* () {
       return yield* log({});
     }).pipe(lock.withPermits(1), storageFailure("decide"));
 
-  /** Every named entry still current and exactly at the recorded version. */
-  const unchanged = (ids: ReadonlyArray<string>, versions: ReadonlyMap<string, number>) =>
+  /**
+   * Every named entry still current and reading as shown: held to its text
+   * when the change recorded it (a reach or kind change in between is fine),
+   * else to the recorded version.
+   */
+  const unchanged = (
+    ids: ReadonlyArray<string>,
+    versions: ReadonlyMap<string, number>,
+    hashes: ReadonlyMap<string, string> = new Map(),
+  ) =>
     ids.length === 0
       ? Effect.succeed(true)
-      : sql<{ readonly memoryId: string; readonly version: number }>`
-          SELECT memory_id AS "memoryId", version FROM personal_memory
+      : sql<{ readonly memoryId: string; readonly version: number; readonly content: string }>`
+          SELECT memory_id AS "memoryId", version, content FROM personal_memory
           WHERE deleted_at IS NULL AND superseded_at IS NULL AND ${sql.in("memory_id", ids)}
         `.pipe(
           Effect.map(
             (rows) =>
               rows.length === ids.length &&
-              rows.every((row) => versions.get(row.memoryId) === row.version),
+              rows.every((row) =>
+                hashes.has(row.memoryId)
+                  ? memoryTextHash(row.content) === hashes.get(row.memoryId)
+                  : versions.get(row.memoryId) === row.version,
+              ),
           ),
         );
 
@@ -1256,6 +1311,7 @@ export const make = Effect.gen(function* () {
     replaces: ReadonlyArray<string>,
     versions: ReadonlyMap<string, number>,
     nowIso: string,
+    hashes: ReadonlyMap<string, string>,
   ) =>
     Effect.gen(function* () {
       const content = (change.content ?? "").trim();
@@ -1271,7 +1327,7 @@ export const make = Effect.gen(function* () {
       ) {
         return null;
       }
-      if (!(yield* unchanged(replaces, versions))) return null;
+      if (!(yield* unchanged(replaces, versions, hashes))) return null;
       const memoryId = NodeCrypto.randomUUID();
       yield* sql`
         INSERT INTO personal_memory (
@@ -1299,9 +1355,10 @@ export const make = Effect.gen(function* () {
     ids: ReadonlyArray<string>,
     versions: ReadonlyMap<string, number>,
     nowIso: string,
+    hashes: ReadonlyMap<string, string>,
   ) =>
     Effect.gen(function* () {
-      if (ids.length === 0 || !(yield* unchanged(ids, versions))) return false;
+      if (ids.length === 0 || !(yield* unchanged(ids, versions, hashes))) return false;
       for (const id of ids) {
         yield* sql`
           UPDATE personal_memory
@@ -1425,11 +1482,76 @@ export const make = Effect.gen(function* () {
     WHERE status = 'running'
   `.pipe(Effect.ignore);
 
+  /**
+   * Pending changes from before 1.60.21 hold every entry to its exact
+   * version, so approving a reach change first made them stale. Where every
+   * entry a change names is still at the version it was proposed against, its
+   * current text is the text the owner is shown: record it, and approval then
+   * checks text. Changes whose entries already moved keep the strict check.
+   */
+  const snapshotPendingTexts: PersonalMemoryTidy["Service"]["snapshotPendingTexts"] = Effect.gen(
+    function* () {
+      const rows = yield* sql<{
+        readonly changeId: number;
+        readonly memoryIdsJson: string;
+        readonly resultMemoryId: string | null;
+        readonly action: string;
+        readonly versionsJson: string | null;
+      }>`
+        SELECT change_id AS "changeId", memory_ids_json AS "memoryIdsJson",
+          result_memory_id AS "resultMemoryId", action, versions_json AS "versionsJson"
+        FROM personal_memory_tidy_changes
+        WHERE status = 'pending' AND text_hashes_json IS NULL
+      `;
+      let upgraded = 0;
+      for (const row of rows) {
+        const recorded = Option.getOrUndefined(decodeVersionMap(row.versionsJson ?? ""));
+        if (recorded === undefined) continue;
+        const ids = [
+          ...decodeIds(row.memoryIdsJson),
+          ...(row.action === "supersede" && row.resultMemoryId !== null
+            ? [row.resultMemoryId]
+            : []),
+        ];
+        if (ids.length === 0) continue;
+        const current = yield* sql<{
+          readonly memoryId: string;
+          readonly version: number;
+          readonly content: string;
+        }>`
+          SELECT memory_id AS "memoryId", version, content FROM personal_memory
+          WHERE deleted_at IS NULL AND superseded_at IS NULL AND ${sql.in("memory_id", ids)}
+        `;
+        const asProposed =
+          current.length === new Set(ids).size &&
+          current.every((entry) => recorded[entry.memoryId] === entry.version);
+        if (!asProposed) continue;
+        yield* sql`
+          UPDATE personal_memory_tidy_changes
+          SET text_hashes_json = ${textHashesJson(
+            ids,
+            new Map(current.map((entry) => [entry.memoryId, entry.content])),
+          )}
+          WHERE change_id = ${row.changeId} AND status = 'pending' AND text_hashes_json IS NULL
+        `;
+        upgraded += 1;
+      }
+      if (rows.length > 0) {
+        yield* Effect.logInfo("personal memory pending changes now checked by text", {
+          upgraded,
+          keptStrict: rows.length - upgraded,
+        });
+      }
+      return upgraded;
+    },
+  ).pipe(lock.withPermits(1), storageFailure("snapshot"));
+
   const start: PersonalMemoryTidy["Service"]["start"] = () =>
     process.env.PERSONAL_MEMORY_TIDY === "off"
-      ? Effect.void
+      ? forkParked(snapshotPendingTexts.pipe(Effect.ignore)).pipe(Effect.asVoid)
       : forkParked(
           closeInterrupted.pipe(
+            Effect.andThen(snapshotPendingTexts.pipe(Effect.ignore)),
             Effect.andThen(
               readAppVersion.pipe(
                 Effect.flatMap((appVersion) =>
@@ -1447,6 +1569,7 @@ export const make = Effect.gen(function* () {
     cardsForThread,
     importProposals,
     importInbox,
+    snapshotPendingTexts,
     log,
     setMode,
     start,
