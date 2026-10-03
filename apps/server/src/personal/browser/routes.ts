@@ -9,11 +9,13 @@ import {
   AuthOrchestrationReadScope,
   PERSONAL_BROWSER_FILES_ROUTE_PREFIX,
   PERSONAL_BROWSER_STREAM_PATH,
+  PersonalBrowserInputMessage,
   PersonalBrowserViewerMessage,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
@@ -35,6 +37,21 @@ import { runViewerFrames } from "./viewerFlow.ts";
 const FRAME_ACKS_NOTICE = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserViewerMessage))({
   _tag: "FrameAcks",
 });
+
+const STREAM_STATS_WANTED_NOTICE = Schema.encodeSync(
+  Schema.fromJsonString(PersonalBrowserViewerMessage),
+)({ _tag: "StreamStatsWanted" });
+
+/** What the phone sends for every frame, exactly as its client encodes it. */
+const FRAME_ACK_TEXT = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserInputMessage))({
+  _tag: "FrameAck",
+});
+
+/**
+ * Kill switch: `T3CODE_PERSONAL_BROWSER_ACK_FASTPATH=off` queues acknowledgements
+ * behind the inputs ahead of them again, as in 1.60.31 and 1.60.32.
+ */
+const ackFastPathOn = () => process.env.T3CODE_PERSONAL_BROWSER_ACK_FASTPATH?.trim() !== "off";
 
 /**
  * Bytes the viewer's TCP socket has accepted but not yet handed to the
@@ -108,18 +125,45 @@ export const personalBrowserStreamRouteLayer = HttpRouter.add(
         const control = Stream.fromQueue(viewer.outbox).pipe(Stream.runForEach(write));
         // The writer waits for the reader, so the notice has to go out from here.
         const frames = Effect.andThen(
-          write(FRAME_ACKS_NOTICE),
+          write(FRAME_ACKS_NOTICE).pipe(
+            Effect.andThen(
+              viewer.telemetry === null ? Effect.void : write(STREAM_STATS_WANTED_NOTICE),
+            ),
+          ),
           runViewerFrames(viewer.flow, write),
         );
         const outbound = Effect.raceFirst(control, frames);
-        const inbound = Effect.gen(function* () {
+        // Inputs are handled one at a time, in order, by a worker; the reader only
+        // queues them. A frame acknowledgement must not wait behind a scroll that is
+        // still being dispatched to Chrome (it paces the next frame), so the reader
+        // takes it straight away, ahead of the queue.
+        const inputs = yield* Queue.unbounded<{
+          readonly raw: string;
+          readonly arrivedAt: number;
+        }>();
+        const fastAcks = ackFastPathOn();
+        const reader = Effect.gen(function* () {
           const { pull } = yield* socket.reader;
           while (true) {
             for (const data of yield* pull) {
-              if (typeof data === "string") yield* browser.handleViewerMessage(viewer, data);
+              if (typeof data !== "string") continue;
+              if (fastAcks && data === FRAME_ACK_TEXT) {
+                viewer.flow.acknowledge();
+                continue;
+              }
+              Queue.offerUnsafe(inputs, { raw: data, arrivedAt: performance.now() });
+              viewer.telemetry?.inputQueued(Queue.sizeUnsafe(inputs));
             }
           }
         });
+        const worker = Effect.forever(
+          Queue.take(inputs).pipe(
+            Effect.flatMap(({ raw, arrivedAt }) =>
+              browser.handleViewerMessage(viewer, raw, arrivedAt),
+            ),
+          ),
+        );
+        const inbound = Effect.raceFirst(reader, worker);
         // Whichever side ends first tears the other down via scope teardown.
         yield* Effect.raceFirst(outbound, inbound);
       }),

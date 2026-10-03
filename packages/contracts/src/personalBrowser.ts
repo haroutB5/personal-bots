@@ -174,6 +174,11 @@ const ViewportCoordinate = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(-10
 const FocusSeq = Schema.optional(
   Schema.Finite.check(Schema.isGreaterThanOrEqualTo(1)).check(Schema.isLessThanOrEqualTo(2 ** 31)),
 );
+/** A measured duration in milliseconds or a count, as the phone reports it. */
+const StreamStat = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)).check(
+  Schema.isLessThanOrEqualTo(3_600_000),
+);
+const StreamStatPair = Schema.Struct({ p50: StreamStat, p95: StreamStat });
 const InputModifiers = Schema.optional(
   Schema.Array(Schema.Literals(["Alt", "Control", "Meta", "Shift"])),
 );
@@ -259,6 +264,26 @@ export const PersonalBrowserInputMessage = Schema.Union([
    * may send it, read-only ones included.
    */
   Schema.TaggedStruct("FrameAck", {}),
+  /**
+   * What the phone measured over the last few seconds of the live view, sent
+   * only after the server asked (`StreamStatsWanted`): frames received, the
+   * longest gap between them, decode and paint times, and how long a tap or a
+   * scroll took to show up on screen. Timings only, never page content. Any
+   * viewer may send it; the server just logs it next to its own numbers.
+   */
+  Schema.TaggedStruct("StreamStats", {
+    windowMs: StreamStat,
+    frames: StreamStat,
+    replaced: StreamStat,
+    maxGapMs: StreamStat,
+    taps: StreamStat,
+    wheels: StreamStat,
+    decode: Schema.optional(StreamStatPair),
+    paint: Schema.optional(StreamStatPair),
+    receiveToPaint: Schema.optional(StreamStatPair),
+    tapToPaint: Schema.optional(StreamStatPair),
+    wheelToPaint: Schema.optional(StreamStatPair),
+  }),
 ]);
 export type PersonalBrowserInputMessage = typeof PersonalBrowserInputMessage.Type;
 
@@ -292,6 +317,8 @@ export const PersonalBrowserViewerMessage = Schema.Union([
    * clients ignore it and are paced by the socket alone.
    */
   Schema.TaggedStruct("FrameAcks", {}),
+  /** Asks the client to report what it measures (`StreamStats`). Older clients ignore it. */
+  Schema.TaggedStruct("StreamStatsWanted", {}),
   /**
    * Sent after a human tap: whether that tap left a typable element focused on
    * the remote page.

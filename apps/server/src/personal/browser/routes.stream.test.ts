@@ -18,6 +18,7 @@ import {
   AuthOrchestrationReadScope,
   AuthSessionId,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -116,6 +117,36 @@ const startRelay = (targetPort: number, bytesPerSecond: number, bufferBytes: num
     });
   });
 
+/** The real stream route on a real HTTP server; returns its port. `handle` takes the viewer's inputs. */
+const serveViewerRoute = (viewer: ViewerHandle, handle: (raw: string) => Effect.Effect<void>) =>
+  Effect.gen(function* () {
+    const authLayer = Layer.succeed(EnvironmentAuth, {
+      authenticateWebSocketUpgrade: () =>
+        Effect.succeed({
+          sessionId: AuthSessionId.make("session-1"),
+          subject: "test",
+          method: "bearer-access-token",
+          scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+        }),
+    } as unknown as EnvironmentAuth["Service"]);
+    const browserLayer = Layer.succeed(PersonalBrowser, {
+      attachViewer: () => Effect.succeed(viewer),
+      handleViewerMessage: (_viewer: ViewerHandle, raw: string) => handle(raw),
+    } as unknown as PersonalBrowser["Service"]);
+    yield* HttpRouter.serve(
+      personalBrowserStreamRouteLayer.pipe(
+        Layer.provideMerge(authLayer),
+        Layer.provideMerge(browserLayer),
+        Layer.provideMerge(Layer.mergeAll(NodeHttpPlatform.layer, NodeServices.layer)),
+      ),
+      { disableListenLog: true, disableLogger: true },
+    ).pipe(Layer.build, Effect.provide(Layer.mergeAll(authLayer, browserLayer)));
+    const server = yield* HttpServer.HttpServer;
+    const address = server.address;
+    if (address._tag === "UnixPathAddress") throw new Error("expected a TCP server");
+    return address.port;
+  });
+
 const runScenario = (scenario: Scenario) =>
   Effect.gen(function* () {
     const flowOptions: ViewerFlowOptions = scenario.paced
@@ -129,39 +160,17 @@ const runScenario = (scenario: Scenario) =>
       canOperate: true,
       outbox,
       flow,
+      telemetry: null,
     };
 
-    const authLayer = Layer.succeed(EnvironmentAuth, {
-      authenticateWebSocketUpgrade: () =>
-        Effect.succeed({
-          sessionId: AuthSessionId.make("session-1"),
-          subject: "test",
-          method: "bearer-access-token",
-          scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
-        }),
-    } as unknown as EnvironmentAuth["Service"]);
-    const browserLayer = Layer.succeed(PersonalBrowser, {
-      attachViewer: () => Effect.succeed(viewer),
-      handleViewerMessage: (_viewer: ViewerHandle, raw: string) =>
-        Effect.sync(() => {
-          if (raw.includes("FrameAck")) flow.acknowledge();
-        }),
-    } as unknown as PersonalBrowser["Service"]);
-    yield* HttpRouter.serve(
-      personalBrowserStreamRouteLayer.pipe(
-        Layer.provideMerge(authLayer),
-        Layer.provideMerge(browserLayer),
-        Layer.provideMerge(Layer.mergeAll(NodeHttpPlatform.layer, NodeServices.layer)),
-      ),
-      { disableListenLog: true, disableLogger: true },
-    ).pipe(Layer.build, Effect.provide(Layer.mergeAll(authLayer, browserLayer)));
-    const server = yield* HttpServer.HttpServer;
-    const address = server.address;
-    if (address._tag === "UnixPathAddress") throw new Error("expected a TCP server");
-
+    const port = yield* serveViewerRoute(viewer, (raw) =>
+      Effect.sync(() => {
+        if (raw.includes("FrameAck")) flow.acknowledge();
+      }),
+    );
     const relay = yield* Effect.acquireRelease(
       Effect.promise(() =>
-        startRelay(address.port, scenario.linkBytesPerSecond, scenario.relayBufferBytes),
+        startRelay(port, scenario.linkBytesPerSecond, scenario.relayBufferBytes),
       ),
       (started) => Effect.sync(() => started.close()),
     );
@@ -287,6 +296,90 @@ describe("live viewport socket on a slow link", () => {
       );
       // The old path: late frames, and a delay that only keeps climbing.
       expect(Math.max(...stats.latenciesMs)).toBeGreaterThan(1_500);
+    }),
+  );
+});
+
+// A scroll still being dispatched to Chrome must not hold up the acknowledgement that
+// paces the next frame: in 1.60.31 and 1.60.32 both went through one loop, in order.
+describe("frame acknowledgements while an input is being handled", () => {
+  const WHEEL = '{"_tag":"Wheel","x":10,"y":10,"deltaX":0,"deltaY":40}';
+  const ACK = '{"_tag":"FrameAck"}';
+
+  /** Sends a wheel that never finishes, then an acknowledgement; returns changes seen by the flow. */
+  const acknowledgeBehindWheel = (killSwitch: boolean) =>
+    Effect.gen(function* () {
+      const previous = process.env.T3CODE_PERSONAL_BROWSER_ACK_FASTPATH;
+      if (killSwitch) process.env.T3CODE_PERSONAL_BROWSER_ACK_FASTPATH = "off";
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env.T3CODE_PERSONAL_BROWSER_ACK_FASTPATH;
+          else process.env.T3CODE_PERSONAL_BROWSER_ACK_FASTPATH = previous;
+        }),
+      );
+      const flow = new ViewerFlow();
+      const outbox = yield* Queue.unbounded<string>();
+      const viewer: ViewerHandle = {
+        id: 1,
+        sessionId: "session-1",
+        canOperate: true,
+        outbox,
+        flow,
+        telemetry: null,
+      };
+      const gate = yield* Deferred.make<void>();
+      const handled: string[] = [];
+      const port = yield* serveViewerRoute(viewer, (raw) =>
+        raw.includes("Wheel")
+          ? Deferred.await(gate).pipe(Effect.andThen(Effect.sync(() => handled.push("wheel"))))
+          : Effect.sync(() => {
+              handled.push("other");
+              if (raw.includes("FrameAck")) flow.acknowledge();
+            }),
+      );
+      let acks = 0;
+      flow.subscribe(() => {
+        acks += 1;
+      });
+      yield* Effect.acquireRelease(
+        Effect.promise(
+          () =>
+            new Promise<WebSocket>((resolve, reject) => {
+              const socket = new WebSocket(`ws://127.0.0.1:${port}/api/personal/browser/stream`);
+              socket.addEventListener("open", () => {
+                socket.send(WHEEL);
+                socket.send(ACK);
+                resolve(socket);
+              });
+              socket.addEventListener("error", () => reject(new Error("socket error")), {
+                once: true,
+              });
+            }),
+        ),
+        (socket) => Effect.sync(() => socket.close()),
+      );
+      yield* Effect.sleep(150);
+      const whileWheelBlocked = acks;
+      yield* Deferred.succeed(gate, undefined);
+      yield* Effect.sleep(100);
+      return { whileWheelBlocked, afterRelease: acks, handled };
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest));
+
+  it.live("acknowledges a frame at once, ahead of the input still being dispatched", () =>
+    Effect.gen(function* () {
+      const result = yield* acknowledgeBehindWheel(false);
+      expect(result.whileWheelBlocked).toBe(1);
+      // The wheel still ran, and the acknowledgement was not passed on twice.
+      expect(result.handled).toEqual(["wheel"]);
+    }),
+  );
+
+  it.live("with the kill switch the acknowledgement waits its turn, as before", () =>
+    Effect.gen(function* () {
+      const result = yield* acknowledgeBehindWheel(true);
+      expect(result.whileWheelBlocked).toBe(0);
+      expect(result.afterRelease).toBe(1);
+      expect(result.handled).toEqual(["wheel", "other"]);
     }),
   );
 });

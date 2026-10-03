@@ -115,6 +115,11 @@ import {
   PersonalBrowserProtectionRepository,
 } from "./PersonalBrowserProtectionRepository.ts";
 import { resolveBrowserNavigationTarget, resolveBrowserUrl } from "./urlPolicy.ts";
+import {
+  STREAM_TELEMETRY_FLUSH_MS,
+  type StreamInputKind,
+  ViewerTelemetry,
+} from "./streamTelemetry.ts";
 import { untilAnyFlowTookFrame, VIEWER_FLOW_LIMITS, ViewerFlow } from "./viewerFlow.ts";
 
 /** Chrome did not start; `message` is Playwright's own error text. */
@@ -134,6 +139,8 @@ export interface ViewerHandle {
   readonly outbox: Queue.Queue<string>;
   /** Frames: only the newest unsent one is kept, and it is released at the link's pace. */
   readonly flow: ViewerFlow;
+  /** What this viewer's stream measures about itself; null when the telemetry is switched off. */
+  readonly telemetry: ViewerTelemetry | null;
 }
 
 export interface ResolvedBrowserFile {
@@ -210,7 +217,12 @@ export class PersonalBrowser extends Context.Service<
       readonly sessionId: string;
       readonly canOperate: boolean;
     }) => Effect.Effect<ViewerHandle, never, Scope.Scope>;
-    readonly handleViewerMessage: (viewer: ViewerHandle, raw: string) => Effect.Effect<void>;
+    /** `arrivedAt` (performance.now) is when the socket received it, for the queue-wait telemetry. */
+    readonly handleViewerMessage: (
+      viewer: ViewerHandle,
+      raw: string,
+      arrivedAt?: number,
+    ) => Effect.Effect<void>;
   }
 >()("t3/personal/browser/PersonalBrowser") {}
 
@@ -218,6 +230,8 @@ export interface PersonalBrowserOptions {
   readonly driver: BrowserDriver;
   readonly headless: boolean;
   readonly executablePath: string | undefined;
+  /** Stream telemetry log lines (default on). */
+  readonly streamTelemetry?: boolean;
 }
 
 /**
@@ -229,6 +243,8 @@ export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   driver: makePlaywrightDriver(),
   headless: /^(1|true|yes)$/i.test(process.env.T3CODE_PERSONAL_BROWSER_HEADLESS ?? ""),
   executablePath: process.env.T3CODE_PERSONAL_BROWSER_EXECUTABLE?.trim() || undefined,
+  // Kill switch: T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY=off stops the stream log lines.
+  streamTelemetry: process.env.T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY?.trim() !== "off",
 });
 
 type Phase = "offline" | "starting" | "connected" | "crashed" | "locked";
@@ -342,6 +358,22 @@ const decodeInputMessage = Schema.decodeUnknownEffect(
   Schema.fromJsonString(PersonalBrowserInputMessage),
 );
 const encodeViewerMessage = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserViewerMessage));
+const encodeStreamLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+/** Only the kind of input is ever recorded, never what it did or where. */
+const streamInputKind = (message: PersonalBrowserInputMessage): StreamInputKind => {
+  switch (message._tag) {
+    case "Pointer":
+      return message.action === "tap" ? "tap" : "other";
+    case "Wheel":
+      return "wheel";
+    case "Key":
+    case "InsertText":
+      return "key";
+    default:
+      return "other";
+  }
+};
 
 const FRAMES_HIDDEN_REASON =
   "Hidden while a bot fills a saved password. The view returns when the page moves on, or when you take control.";
@@ -894,8 +926,18 @@ export const make = (options: PersonalBrowserOptions) =>
      */
     const untilViewerTookFrame = (): Promise<void> | undefined => {
       const flows = [...viewers.values()].map((viewer) => viewer.flow);
-      if (flows.length === 0 || flows.some((flow) => !flow.hasPending)) return undefined;
-      return Effect.runPromise(untilAnyFlowTookFrame(flows, VIEWER_FLOW_LIMITS.chromeHoldMs));
+      if (flows.length === 0 || flows.some((flow) => !flow.hasPending)) {
+        for (const viewer of viewers.values()) viewer.telemetry?.chromeHold(0, false);
+        return undefined;
+      }
+      const heldAt = performance.now();
+      return Effect.runPromise(untilAnyFlowTookFrame(flows, VIEWER_FLOW_LIMITS.chromeHoldMs)).then(
+        () => {
+          const heldMs = performance.now() - heldAt;
+          const capped = heldMs >= VIEWER_FLOW_LIMITS.chromeHoldMs - 2;
+          for (const viewer of viewers.values()) viewer.telemetry?.chromeHold(heldMs, capped);
+        },
+      );
     };
 
     /**
@@ -910,7 +952,9 @@ export const make = (options: PersonalBrowserOptions) =>
       const tab = [...runtime.tabs.values()].find((entry) => entry.page === page);
       refreshCredentialProtection(tab);
       let handedOff: Promise<void> | undefined;
+      for (const viewer of viewers.values()) viewer.telemetry?.chromeFrame();
       if (tab?.loginProtected === true && !humanInControl) {
+        for (const viewer of viewers.values()) viewer.telemetry?.frameHidden();
         if (!framesHidden) {
           framesHidden = true;
           const notice = encodeViewerMessage({
@@ -2384,7 +2428,12 @@ export const make = (options: PersonalBrowserOptions) =>
             ...input,
             outbox,
             flow: new ViewerFlow(),
+            telemetry:
+              options.streamTelemetry === false
+                ? null
+                : new ViewerTelemetry({ viewerId: viewerSequence, canOperate: input.canOperate }),
           };
+          if (viewer.telemetry !== null) viewer.flow.setObserver(viewer.telemetry);
           viewers.set(viewer.id, viewer);
           // A phone joining mid-stretch still gets the notice on the next frame.
           framesHidden = false;
@@ -2395,6 +2444,11 @@ export const make = (options: PersonalBrowserOptions) =>
         (viewer) =>
           Effect.gen(function* () {
             viewers.delete(viewer.id);
+            if (viewer.telemetry !== null) {
+              yield* Effect.logInfo(
+                `browser-stream summary ${encodeStreamLine(viewer.telemetry.summary())}`,
+              );
+            }
             // Lets a Chrome ack that was waiting on this phone go.
             viewer.flow.dropPending();
             yield* Queue.shutdown(viewer.outbox);
@@ -2405,7 +2459,15 @@ export const make = (options: PersonalBrowserOptions) =>
           }),
       );
 
+    /** How many inputs each viewer had refused, so the telemetry can tell a failed input. */
+    const rejections = new WeakMap<ViewerHandle, number>();
+
     const rejectInput = (viewer: ViewerHandle, reason: string) =>
+      Effect.sync(() => rejections.set(viewer, (rejections.get(viewer) ?? 0) + 1)).pipe(
+        Effect.andThen(rejectInputNow(viewer, reason)),
+      );
+
+    const rejectInputNow = (viewer: ViewerHandle, reason: string) =>
       Queue.offer(viewer.outbox, JSON.stringify({ _tag: "InputRejected", reason })).pipe(
         Effect.asVoid,
       );
@@ -2519,17 +2581,32 @@ export const make = (options: PersonalBrowserOptions) =>
         );
       });
 
-    const dispatchHumanInput = async (page: BrowserPage, message: PersonalBrowserInputMessage) => {
+    const dispatchHumanInput = async (
+      page: BrowserPage,
+      message: PersonalBrowserInputMessage,
+      telemetry: ViewerTelemetry | null,
+    ) => {
       switch (message._tag) {
         case "Pointer":
-          if (message.action === "tap") return page.mouseClick(message.x, message.y);
+          if (message.action === "tap") {
+            const clickedAt = performance.now();
+            await page.mouseClick(message.x, message.y);
+            telemetry?.cdp("click", performance.now() - clickedAt);
+            return;
+          }
           await page.mouseMove(message.x, message.y);
           if (message.action === "down") await page.mouseDown();
           if (message.action === "up") await page.mouseUp();
           return;
-        case "Wheel":
+        case "Wheel": {
+          const movedAt = performance.now();
           await page.mouseMove(message.x, message.y);
-          return page.mouseWheel(message.deltaX, message.deltaY);
+          const wheeledAt = performance.now();
+          await page.mouseWheel(message.deltaX, message.deltaY);
+          telemetry?.cdp("move", wheeledAt - movedAt);
+          telemetry?.cdp("wheel", performance.now() - wheeledAt);
+          return;
+        }
         case "Key":
           return page.keyPress([...(message.modifiers ?? []), message.key].join("+"));
         case "InsertText":
@@ -2579,13 +2656,34 @@ export const make = (options: PersonalBrowserOptions) =>
         );
       });
 
-    const handleViewerMessage: PersonalBrowser["Service"]["handleViewerMessage"] = (viewer, raw) =>
+    /** Phone-reported stats are logged at most once a second per viewer. */
+    const phoneStatsLoggedAt = new WeakMap<ViewerHandle, number>();
+
+    const handleViewerInput = (
+      viewer: ViewerHandle,
+      raw: string,
+      noteKind: (kind: StreamInputKind) => void,
+    ) =>
       Effect.gen(function* () {
         const decoded = yield* decodeInputMessage(raw).pipe(Effect.option);
         if (Option.isNone(decoded)) return yield* rejectInput(viewer, "Malformed input message.");
         const message = decoded.value;
         // Pacing, not input: any viewer's acknowledgement counts, whoever holds control.
         if (message._tag === "FrameAck") return viewer.flow.acknowledge();
+        // Timings the phone measured: logged next to the server's own, never acted on.
+        if (message._tag === "StreamStats") {
+          const at = performance.now();
+          if (
+            viewer.telemetry !== null &&
+            at - (phoneStatsLoggedAt.get(viewer) ?? -1_000) >= 1_000
+          ) {
+            phoneStatsLoggedAt.set(viewer, at);
+            const { _tag: _ignored, ...stats } = message;
+            viewer.telemetry.phone(stats);
+          }
+          return;
+        }
+        noteKind(streamInputKind(message));
         // A viewport request is the client's own housekeeping, not something
         // the user did, so refusing it (a race with Return to bot) is silent.
         const refuse = (reason: string) =>
@@ -2620,7 +2718,7 @@ export const make = (options: PersonalBrowserOptions) =>
         }
         const exit = yield* Effect.exit(
           Effect.tryPromise({
-            try: () => untilDialog(page, () => dispatchHumanInput(page, message)),
+            try: () => untilDialog(page, () => dispatchHumanInput(page, message, viewer.telemetry)),
             catch: (cause) => classifyPageError(cause),
           }),
         );
@@ -2638,6 +2736,32 @@ export const make = (options: PersonalBrowserOptions) =>
           yield* reportFocus(viewer, page, seq);
         }
       });
+
+    const handleViewerMessage: PersonalBrowser["Service"]["handleViewerMessage"] = (
+      viewer,
+      raw,
+      arrivedAt,
+    ) => {
+      const telemetry = viewer.telemetry;
+      if (telemetry === null) return handleViewerInput(viewer, raw, () => undefined);
+      return Effect.gen(function* () {
+        const startedAt = performance.now();
+        const rejectedBefore = rejections.get(viewer) ?? 0;
+        let kind: StreamInputKind | null = null;
+        yield* handleViewerInput(viewer, raw, (noted) => {
+          kind = noted;
+        });
+        // Acknowledgements and phone stats are not input; they are not timed.
+        if (kind === null) return;
+        telemetry.inputHandled({
+          kind,
+          arrivedAt: arrivedAt ?? startedAt,
+          waitMs: arrivedAt === undefined ? 0 : Math.max(0, startedAt - arrivedAt),
+          handleMs: performance.now() - startedAt,
+          failed: (rejections.get(viewer) ?? 0) > rejectedBefore,
+        });
+      });
+    };
 
     /**
      * Reopens the page the agent had open before the restart so the phone keeps
@@ -2683,6 +2807,28 @@ export const make = (options: PersonalBrowserOptions) =>
     );
 
     yield* restoreAfterRestart.pipe(Effect.forkScoped);
+
+    // One log line per attached viewer every few seconds; nothing while nobody watches.
+    if (options.streamTelemetry !== false) {
+      yield* Effect.forever(
+        Effect.sleep(STREAM_TELEMETRY_FLUSH_MS).pipe(
+          Effect.andThen(
+            Effect.gen(function* () {
+              // A copy: viewers attach and leave while a line is being written.
+              // oxlint-disable-next-line unicorn/no-useless-spread
+              for (const viewer of [...viewers.values()]) {
+                if (viewer.telemetry === null) continue;
+                const control = yield* lease.isHumanController(viewer.sessionId);
+                const line = viewer.telemetry.flush({ control });
+                if (line !== null) {
+                  yield* Effect.logInfo(`browser-stream ${encodeStreamLine(line)}`);
+                }
+              }
+            }),
+          ),
+        ),
+      ).pipe(Effect.forkScoped);
+    }
 
     return PersonalBrowser.of({
       status,

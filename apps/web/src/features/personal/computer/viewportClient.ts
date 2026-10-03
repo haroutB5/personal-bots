@@ -8,7 +8,12 @@ import {
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { perfOptimizationOn } from "../perfFlags";
 import { createFocusReplyGuard } from "./focusReplyGuard";
+import { createPhoneMeter } from "./streamPhoneMeter";
+
+/** How often the phone reports what it measured, once the server asks. */
+const STREAM_STATS_INTERVAL_MS = 5_000;
 
 const encodeInput = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserInputMessage));
 const FRAME_ACK = encodeInput({ _tag: "FrameAck" });
@@ -54,17 +59,39 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
   // Set once the server asks for them; an older server would reject the message.
   let acknowledgeFrames = false;
   const focusGuard = createFocusReplyGuard();
-  let queued: { readonly jpeg: Uint8Array; readonly meta: PersonalBrowserFrameMeta } | null = null;
+  const meter = createPhoneMeter();
+  let statsTimer: ReturnType<typeof setInterval> | undefined;
+  let queued: {
+    readonly jpeg: Uint8Array;
+    readonly meta: PersonalBrowserFrameMeta;
+    readonly receivedAt: number;
+  } | null = null;
+
+  const stopStats = () => {
+    if (statsTimer !== undefined) clearInterval(statsTimer);
+    statsTimer = undefined;
+  };
 
   const pump = () => {
     const next = queued;
     if (next === null || closed) return;
     queued = null;
     decoding = true;
+    const decodeStartedAt = performance.now();
     createImageBitmap(new Blob([next.jpeg.slice()], { type: "image/jpeg" }))
       .then((bitmap) => {
-        if (closed) bitmap.close();
-        else callbacks.onFrame(bitmap, next.meta);
+        if (closed) {
+          bitmap.close();
+          return;
+        }
+        const decodedAt = performance.now();
+        callbacks.onFrame(bitmap, next.meta);
+        meter.framePainted({
+          receivedAt: next.receivedAt,
+          decodeStartedAt,
+          decodedAt,
+          paintedAt: performance.now(),
+        });
       })
       .catch(() => undefined)
       .finally(() => {
@@ -85,6 +112,17 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
         case "FrameAcks":
           acknowledgeFrames = true;
           return;
+        case "StreamStatsWanted":
+          // Timings only, every few seconds; off with bots:perf-off=stream-telemetry.
+          if (statsTimer === undefined && perfOptimizationOn("stream-telemetry")) {
+            statsTimer = setInterval(() => {
+              const stats = meter.snapshot();
+              if (stats !== null && socket.readyState === WebSocket.OPEN) {
+                socket.send(encodeInput(stats));
+              }
+            }, STREAM_STATS_INTERVAL_MS);
+          }
+          return;
         case "FramesHidden":
           callbacks.onHidden(message.value.reason);
           return;
@@ -103,12 +141,15 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
     // On receipt, before decoding: it tells the server the link delivered the
     // frame, so it can send the next without a backlog building up on the way.
     if (acknowledgeFrames && socket.readyState === WebSocket.OPEN) socket.send(FRAME_ACK);
+    const receivedAt = meter.frameReceived();
     const frame = decodePersonalBrowserFrame(new Uint8Array(event.data));
     if (frame === null) return;
-    queued = frame;
+    if (queued !== null) meter.frameReplaced();
+    queued = { ...frame, receivedAt };
     if (!decoding) pump();
   });
   socket.addEventListener("close", () => {
+    stopStats();
     if (closed) return;
     closed = true;
     callbacks.onClosed(opened);
@@ -117,6 +158,8 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
   return {
     send: (message) => {
       if (socket.readyState !== WebSocket.OPEN) return;
+      if (message._tag === "Wheel") meter.inputSent("wheel");
+      else if (message._tag === "Pointer" && message.action === "tap") meter.inputSent("tap");
       // The server echoes the number on the focus report that answers this input.
       socket.send(
         encodeInput(
@@ -128,6 +171,7 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
     },
     close: () => {
       closed = true;
+      stopStats();
       socket.close();
     },
   };

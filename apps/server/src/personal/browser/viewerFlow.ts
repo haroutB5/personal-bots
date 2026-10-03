@@ -46,6 +46,30 @@ export interface ViewerFlowOptions {
 
 const IDLE: ViewerFlowStep = { _tag: "Idle" };
 
+export type ViewerFlowBlock = "fps" | "ack" | "socket";
+
+/** What a flow reports about itself, for the stream telemetry. Timings only. */
+export interface ViewerFlowObserver {
+  /** A frame arrived; `replaced` when it overwrote an unsent one. */
+  readonly offered: (replaced: boolean) => void;
+  /** A frame was written; `queuedMs` is how long it waited since it arrived. */
+  readonly sent: (info: {
+    readonly bytes: number;
+    readonly offeredAt: number;
+    readonly sentAt: number;
+    readonly queuedMs: number;
+  }) => void;
+  /** A frame that was sent had to wait for this (reported once per frame and reason). */
+  readonly blocked: (reason: ViewerFlowBlock) => void;
+  /** The phone's acknowledgement for the oldest frame still owed arrived `ms` after it was sent. */
+  readonly ackRtt: (ms: number) => void;
+  /** Unacknowledged frames were presumed lost after the silence limit. */
+  readonly ackStalled: () => void;
+}
+
+/** Sent-frame times kept to pair acknowledgements with; a client that never acks cannot grow it. */
+const MAX_SENT_TIMES = 16;
+
 export class ViewerFlow {
   private readonly now: () => number;
   private readonly minIntervalMs: number;
@@ -61,6 +85,11 @@ export class ViewerFlow {
   private unacked = 0;
   private acksEnabled = false;
   private changes = 0;
+  private observer: ViewerFlowObserver | null = null;
+  private offeredAt = 0;
+  private blockReason: ViewerFlowBlock | null = null;
+  private blockedSeen = new Set<ViewerFlowBlock>();
+  private readonly sentTimes: number[] = [];
   /** Frames written to the socket. */
   sent = 0;
   /** Frames overwritten by a newer one before they could be sent. */
@@ -94,10 +123,17 @@ export class ViewerFlow {
     return this.acksEnabled ? this.unacked : 0;
   }
 
+  setObserver(observer: ViewerFlowObserver | null): void {
+    this.observer = observer;
+  }
+
   /** The newest frame wins: an unsent older one is dropped. */
   offerFrame(frame: Uint8Array): void {
-    if (this.pending !== null) this.replaced += 1;
+    const replaced = this.pending !== null;
+    if (replaced) this.replaced += 1;
     this.pending = frame;
+    this.offeredAt = this.now();
+    this.observer?.offered(replaced);
     this.changed();
   }
 
@@ -113,6 +149,8 @@ export class ViewerFlow {
     this.acksEnabled = true;
     this.unacked = Math.max(0, this.unacked - 1);
     this.lastActivityAt = this.now();
+    const sentAt = this.sentTimes.shift();
+    if (sentAt !== undefined) this.observer?.ackRtt(this.lastActivityAt - sentAt);
     this.changed();
   }
 
@@ -122,12 +160,28 @@ export class ViewerFlow {
     if (frame === null) return IDLE;
     const now = this.now();
     const waitMs = this.waitMs(now);
-    if (waitMs > 0) return { _tag: "Wait", ms: waitMs };
+    if (waitMs > 0) {
+      const reason = this.blockReason;
+      if (reason !== null && !this.blockedSeen.has(reason)) {
+        this.blockedSeen.add(reason);
+        this.observer?.blocked(reason);
+      }
+      return { _tag: "Wait", ms: waitMs };
+    }
     this.pending = null;
     this.lastSentAt = now;
     this.lastActivityAt = now;
     this.unacked += 1;
     this.sent += 1;
+    this.blockedSeen.clear();
+    this.sentTimes.push(now);
+    if (this.sentTimes.length > MAX_SENT_TIMES) this.sentTimes.shift();
+    this.observer?.sent({
+      bytes: frame.length,
+      offeredAt: this.offeredAt,
+      sentAt: now,
+      queuedMs: now - this.offeredAt,
+    });
     this.changed();
     return { _tag: "Send", frame };
   }
@@ -141,14 +195,27 @@ export class ViewerFlow {
   }
 
   private waitMs(now: number): number {
+    this.blockReason = null;
     const untilNextSlot = this.lastSentAt + this.minIntervalMs - now;
-    if (untilNextSlot > 0) return Math.ceil(untilNextSlot);
+    if (untilNextSlot > 0) {
+      this.blockReason = "fps";
+      return Math.ceil(untilNextSlot);
+    }
     if (this.acksEnabled && this.unacked >= this.maxUnacked) {
       const silentFor = now - this.lastActivityAt;
-      if (silentFor >= this.ackStallMs) this.unacked = 0;
-      else return Math.ceil(this.ackStallMs - silentFor);
+      if (silentFor >= this.ackStallMs) {
+        this.unacked = 0;
+        this.sentTimes.length = 0;
+        this.observer?.ackStalled();
+      } else {
+        this.blockReason = "ack";
+        return Math.ceil(this.ackStallMs - silentFor);
+      }
     }
-    if (this.backlogProbe() > this.backlogLimitBytes) return this.backlogPollMs;
+    if (this.backlogProbe() > this.backlogLimitBytes) {
+      this.blockReason = "socket";
+      return this.backlogPollMs;
+    }
     return 0;
   }
 

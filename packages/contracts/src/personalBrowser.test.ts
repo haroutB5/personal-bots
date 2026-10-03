@@ -52,6 +52,26 @@ describe("personal browser frame pacing messages", () => {
     expect(decodeInput({ _tag: "FrameAck" })).toEqual({ _tag: "FrameAck" });
     expect(decodeViewerMessage({ _tag: "FrameAcks" })).toEqual({ _tag: "FrameAcks" });
   });
+
+  it("decodes the phone's stream stats and refuses text or absurd numbers", () => {
+    const stats = {
+      _tag: "StreamStats",
+      windowMs: 5_000,
+      frames: 80,
+      replaced: 3,
+      maxGapMs: 240,
+      taps: 2,
+      wheels: 120,
+      decode: { p50: 6, p95: 14 },
+    };
+    expect(decodeInput(stats)).toEqual(stats);
+    expect(decodeViewerMessage({ _tag: "StreamStatsWanted" })).toEqual({
+      _tag: "StreamStatsWanted",
+    });
+    expect(() => decodeInput({ ...stats, frames: "https://example.com/" })).toThrow();
+    expect(() => decodeInput({ ...stats, windowMs: 1e12 })).toThrow();
+    expect(() => decodeInput({ ...stats, decode: { p50: -1, p95: 2 } })).toThrow();
+  });
 });
 
 describe("personal browser viewport frames", () => {

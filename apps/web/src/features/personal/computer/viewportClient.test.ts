@@ -126,6 +126,54 @@ describe("viewport client messages", () => {
     });
   });
 
+  describe("stream stats", () => {
+    const frame = () =>
+      encodePersonalBrowserFrame(new Uint8Array([1, 2, 3]), {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 2,
+      }).buffer;
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("reports timings every few seconds once the server asks, and not before", () => {
+      vi.useFakeTimers();
+      vi.stubGlobal("createImageBitmap", () => new Promise(() => {}));
+      const { client, socket } = connect();
+
+      socket.receive(frame());
+      vi.advanceTimersByTime(6_000);
+      expect(socket.sent).toEqual([]);
+
+      socket.receive('{"_tag":"StreamStatsWanted"}');
+      socket.receive(frame());
+      client.send({ _tag: "Pointer", action: "tap", x: 5, y: 5 });
+      vi.advanceTimersByTime(5_000);
+      const reports = socket.sent
+        .map((text) => JSON.parse(text))
+        .filter((m) => m._tag === "StreamStats");
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({ frames: 2, taps: 1, wheels: 0 });
+      // Nothing happened in the next window: nothing is sent.
+      vi.advanceTimersByTime(5_000);
+      expect(socket.sent.filter((text) => text.includes("StreamStats"))).toHaveLength(1);
+    });
+
+    it("sends nothing with the kill switch on", () => {
+      vi.useFakeTimers();
+      vi.stubGlobal("createImageBitmap", () => new Promise(() => {}));
+      vi.stubGlobal("localStorage", { getItem: () => "stream-telemetry" });
+      const { socket } = connect();
+
+      socket.receive('{"_tag":"StreamStatsWanted"}');
+      socket.receive(frame());
+      vi.advanceTimersByTime(10_000);
+      expect(socket.sent.filter((text) => text.includes("StreamStats"))).toEqual([]);
+    });
+  });
+
   describe("frame acknowledgements", () => {
     const frame = () =>
       encodePersonalBrowserFrame(new Uint8Array([1, 2, 3]), {

@@ -53,7 +53,10 @@ export type PerfOptimization =
   // The comet at all (any list, the chat header); off: no comet, poses only.
   | "anim-comet"
   // The thinking pose's thought cloud (1.59.0); off: no cloud, the 1.57.3 pose.
-  | "anim-thought";
+  | "anim-thought"
+  // The shared-browser live view reports frame, decode and tap-to-paint timings
+  // to the server log every 5 s while it is open (1.60.33); off: it reports none.
+  | "stream-telemetry";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

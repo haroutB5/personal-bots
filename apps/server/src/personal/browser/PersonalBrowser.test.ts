@@ -341,8 +341,14 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
   >,
   taskHarness: TaskHarness = { waits: [], resumes: [] },
   baseDir?: string,
+  extra: { readonly streamTelemetry?: boolean } = {},
 ) =>
-  PersonalBrowser.makeLayer({ driver, headless: true, executablePath: undefined }).pipe(
+  PersonalBrowser.makeLayer({
+    driver,
+    headless: true,
+    executablePath: undefined,
+    ...extra,
+  }).pipe(
     Layer.provideMerge(BrowserLease.layer),
     Layer.provideMerge(repository),
     Layer.provideMerge(protections),
@@ -357,12 +363,18 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
     Layer.provideMerge(NodeServices.layer),
   );
 
-const makeLayer = (driver: BrowserDriver, taskHarness?: TaskHarness) =>
+const makeLayer = (
+  driver: BrowserDriver,
+  taskHarness?: TaskHarness,
+  extra?: { readonly streamTelemetry?: boolean },
+) =>
   baseLayer(
     driver,
     PersonalBrowserLeaseRepository.layer,
     PersonalBrowserProtectionRepository.layer,
     taskHarness,
+    undefined,
+    extra,
   );
 
 /** A repository pre-seeded with one persisted row, recording every save. */
@@ -1995,6 +2007,130 @@ describe("PersonalBrowser", () => {
   // The live view fell behind on a slow relay because nothing slowed the frames
   // down. Each viewer now keeps only the newest unsent frame, control messages
   // have their own queue, and Chrome's frame ack waits for a phone to take the frame.
+  // Why the live view lags on a phone is answered from the server log: one line
+  // per attached viewer every few seconds, numbers only.
+  describe("stream telemetry", () => {
+    const wheel = '{"_tag":"Wheel","x":10,"y":10,"deltaX":0,"deltaY":40}';
+    const tapText = '{"_tag":"Pointer","action":"tap","x":10,"y":10}';
+
+    it.effect("measures frames, input waits and handling time per viewer", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.takeControl("session-1");
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({
+              sessionId: "session-1",
+              canOperate: true,
+            });
+            const telemetry = viewer.telemetry!;
+            fake.state.page.paint();
+            expect(viewer.flow.poll()._tag).toBe("Send");
+            const arrivedAt = performance.now() - 25;
+            yield* browser.handleViewerMessage(viewer, wheel, arrivedAt);
+            yield* browser.handleViewerMessage(viewer, tapText, arrivedAt);
+            // Acknowledgements and phone stats are not input.
+            yield* browser.handleViewerMessage(viewer, '{"_tag":"FrameAck"}');
+            const line = telemetry.flush({ control: true }) as Record<string, any>;
+            expect(line.chrome.fps).toBeGreaterThan(0);
+            expect(line.frames.sentPerS).toBeGreaterThan(0);
+            expect(line.input.perS.wheel).toBeGreaterThan(0);
+            expect(line.input.perS.tap).toBeGreaterThan(0);
+            expect(line.input.perS.key).toBe(0);
+            expect(line.input.waitMs.p50).toBeGreaterThanOrEqual(25);
+            expect(line.input.handleMs.wheel).not.toBeNull();
+            expect(line.input.cdpMs.wheel).not.toBeNull();
+            expect(line.input.cdpMs.move).not.toBeNull();
+            expect(line.control).toBe(true);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect(
+      "logs what a phone reports, from a read-only viewer too, at most once a second",
+      () => {
+        const fake = makeFakeDriver();
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const viewer = yield* browser.attachViewer({ sessionId: "s1", canOperate: false });
+              const stats = (frames: number) =>
+                `{"_tag":"StreamStats","windowMs":5000,"frames":${frames},"replaced":0,"maxGapMs":90,"taps":1,"wheels":0,"tapToPaint":{"p50":120,"p95":180}}`;
+              yield* browser.handleViewerMessage(viewer, stats(41));
+              yield* browser.handleViewerMessage(viewer, stats(99));
+              expect(yield* Queue.size(viewer.outbox)).toBe(0);
+              const line = viewer.telemetry!.flush() as Record<string, any>;
+              expect(line.phone).toMatchObject({ frames: 41, tapToPaint: { p50: 120, p95: 180 } });
+              expect(line.phone._tag).toBeUndefined();
+            }),
+          );
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      },
+    );
+
+    it.effect("rejects a phone report with text or out-of-range numbers", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({ sessionId: "s1", canOperate: true });
+            yield* browser.handleViewerMessage(
+              viewer,
+              '{"_tag":"StreamStats","windowMs":"https://secret.example/","frames":1,"replaced":0,"maxGapMs":0,"taps":0,"wheels":0}',
+            );
+            expect(yield* Queue.take(viewer.outbox)).toContain("Malformed");
+            expect(viewer.telemetry!.flush()).toBeNull();
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("flushes on a timer while a viewer is attached", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({ sessionId: "s1", canOperate: false });
+            fake.state.page.paint();
+            yield* TestClock.adjust("5 seconds");
+            // The window with the frame in it was written and cleared.
+            expect(viewer.telemetry!.flush()).toBeNull();
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("is off with the kill switch: no telemetry on the viewer", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.takeControl("session-1");
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({
+              sessionId: "session-1",
+              canOperate: true,
+            });
+            expect(viewer.telemetry).toBeNull();
+            // Input still works.
+            yield* browser.handleViewerMessage(viewer, wheel);
+            expect(yield* Queue.size(viewer.outbox)).toBe(0);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, { streamTelemetry: false })));
+    });
+  });
+
   describe("viewer flow control", () => {
     // Real time: the flow paces by the wall clock, which the TestClock cannot move.
     const later = (ms: number) =>
