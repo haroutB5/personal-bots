@@ -494,7 +494,12 @@ export function GroupConversationScreen({
     >
       <header className="personal-column flex h-16 shrink-0 items-center gap-3 px-2">
         {/* md+: the bot list is always beside the chat, so Back has nowhere to go. */}
-        <Link to="/bots" aria-label="Back to Bots" className={cn(ICON_BUTTON, "md:hidden")}>
+        <Link
+          to="/bots"
+          activeOptions={{ exact: true }}
+          aria-label="Back to Bots"
+          className={cn(ICON_BUTTON, "md:hidden")}
+        >
           <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
         </Link>
         <button
@@ -665,7 +670,11 @@ export function GroupConversationScreen({
           ) : groupsQuery.data !== null && group === null ? (
             <p>
               This group no longer exists.{" "}
-              <Link to="/bots" className="font-medium text-[var(--personal-text)] underline">
+              <Link
+                to="/bots"
+                activeOptions={{ exact: true }}
+                className="font-medium text-[var(--personal-text)] underline"
+              >
                 Back to Bots
               </Link>
             </p>
@@ -675,7 +684,7 @@ export function GroupConversationScreen({
               missingText="This group's conversation no longer exists."
               errorText="Couldn't load this group."
               back={
-                <Link to="/bots" className={CHAT_PROBLEM_BUTTON}>
+                <Link to="/bots" activeOptions={{ exact: true }} className={CHAT_PROBLEM_BUTTON}>
                   Back to Bots
                 </Link>
               }

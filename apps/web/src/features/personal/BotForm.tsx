@@ -258,6 +258,7 @@ function PersonalPageHeader({
       ) : showBack ? (
         <Link
           to={backTarget.to}
+          activeOptions={{ exact: true }}
           aria-label={backTarget.label}
           className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >
@@ -944,7 +945,11 @@ export function EditBotScreen({
       ) : list.data !== null ? (
         <p className="mt-4 text-[15px] text-[var(--personal-text-secondary)]">
           This bot no longer exists.{" "}
-          <Link to={backTarget.to} className="font-medium text-[var(--personal-text)] underline">
+          <Link
+            to={backTarget.to}
+            activeOptions={{ exact: true }}
+            className="font-medium text-[var(--personal-text)] underline"
+          >
             {backTarget.label}
           </Link>
         </p>

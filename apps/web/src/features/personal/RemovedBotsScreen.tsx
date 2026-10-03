@@ -146,6 +146,7 @@ export function RemovedBotsScreen(): JSX.Element {
       <header className="flex h-14 items-center gap-1">
         <Link
           to="/bots/settings"
+          activeOptions={{ exact: true }}
           aria-label="Back to Settings"
           className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         >

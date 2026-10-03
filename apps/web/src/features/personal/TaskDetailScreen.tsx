@@ -138,6 +138,7 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
     <header className="flex h-14 items-center gap-1">
       <Link
         to={backTarget.to === "/bots/team" ? backTarget.to : "/tasks"}
+        activeOptions={{ exact: true }}
         aria-label={backTarget.to === "/bots/team" ? backTarget.label : "Back to Tasks"}
         className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
       >

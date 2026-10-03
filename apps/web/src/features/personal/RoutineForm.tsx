@@ -210,6 +210,7 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
         {routine === null ? (
           <Link
             to="/tasks"
+            activeOptions={{ exact: true }}
             search={{ view: "scheduled" }}
             aria-label="Back to Scheduled"
             className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
@@ -219,6 +220,7 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
         ) : (
           <Link
             to="/tasks/routines/$routineId"
+            activeOptions={{ exact: true }}
             params={{ routineId: routine.routineId }}
             aria-label="Back to routine"
             className="-ml-3 flex size-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"

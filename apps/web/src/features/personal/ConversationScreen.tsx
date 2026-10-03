@@ -858,6 +858,7 @@ export function ConversationScreen({
         {/* md+: the bot list is always beside the chat, so Back has nowhere to go. */}
         <Link
           to={backTarget.to}
+          activeOptions={{ exact: true }}
           aria-label={backTarget.label}
           className={cn(ICON_BUTTON, "md:hidden")}
         >
@@ -1216,7 +1217,12 @@ export function ConversationScreen({
               missingText="This chat no longer exists."
               errorText="Couldn't load this chat."
               back={
-                <Link to="/bots/$botId" params={{ botId }} className={CHAT_PROBLEM_BUTTON}>
+                <Link
+                  to="/bots/$botId"
+                  activeOptions={{ exact: true }}
+                  params={{ botId }}
+                  className={CHAT_PROBLEM_BUTTON}
+                >
                   {bot === null ? "Back to Bots" : `${bot.name}'s chats`}
                 </Link>
               }

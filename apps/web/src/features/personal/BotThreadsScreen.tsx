@@ -448,7 +448,12 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
         />
       ) : (
         <header className="flex h-16 items-center gap-3">
-          <Link to={backTarget.to} aria-label={backTarget.label} className={`-ml-3 ${ICON_LINK}`}>
+          <Link
+            to={backTarget.to}
+            activeOptions={{ exact: true }}
+            aria-label={backTarget.label}
+            className={`-ml-3 ${ICON_LINK}`}
+          >
             <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
           </Link>
           {bot !== null ? (
@@ -516,7 +521,11 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
       {list.data !== null && bot === null ? (
         <p className="mt-4 text-[15px] text-[var(--personal-text-secondary)]">
           This bot no longer exists.{" "}
-          <Link to={backTarget.to} className="font-medium text-[var(--personal-text)] underline">
+          <Link
+            to={backTarget.to}
+            activeOptions={{ exact: true }}
+            className="font-medium text-[var(--personal-text)] underline"
+          >
             {backTarget.label}
           </Link>
         </p>

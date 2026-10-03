@@ -102,6 +102,7 @@ export function ConversationShellHeader({ botId }: { readonly botId: string }): 
       >
         <Link
           to={backTarget.to}
+          activeOptions={{ exact: true }}
           aria-label={backTarget.label}
           className={cn(ICON_BUTTON, "md:hidden")}
         >
