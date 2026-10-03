@@ -474,13 +474,52 @@ describe("PersonalTaskChatArchive", () => {
           },
           { id: "chat-failed", tasks: [{ source: "delegation", status: "failed" }] },
           { id: "chat-cancelled", tasks: [{ source: "delegation", status: "cancelled" }] },
+          { id: "chat-interrupted", tasks: [{ source: "delegation", status: "interrupted" }] },
         ]);
         harness.shells.get("chat-background")!.backgroundLiveness = { liveTaskIds: ["bg-1"] };
 
         // A finished routine-run chat is past its unread window by now, so it
         // goes too (since 1.60.15); the routine's own chat stays.
-        expect(yield* sweepAt(TASK_DONE_MS + 2 * TASK_CHAT_AUTO_ARCHIVE_IDLE_MS)).toBe(3);
-        expect(yield* archivedIds).toEqual(["chat-cancelled", "chat-failed", "chat-routine-task"]);
+        expect(yield* sweepAt(TASK_DONE_MS + 2 * TASK_CHAT_AUTO_ARCHIVE_IDLE_MS)).toBe(4);
+        expect(yield* archivedIds).toEqual([
+          "chat-cancelled",
+          "chat-failed",
+          "chat-interrupted",
+          "chat-routine-task",
+        ]);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect(
+    "archives an interrupted task chat idle for 48 hours, but not one with a live turn or background work",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seed(harness, [
+          { id: "chat-interrupted", tasks: [{ source: "delegation", status: "interrupted" }] },
+          {
+            id: "chat-interrupted-live",
+            sessionStatus: "running",
+            tasks: [{ source: "delegation", status: "interrupted" }],
+          },
+          {
+            id: "chat-interrupted-background",
+            tasks: [{ source: "delegation", status: "interrupted" }],
+          },
+          {
+            id: "chat-interrupted-routine",
+            tasks: [{ source: "routine", status: "interrupted" }],
+          },
+        ]);
+        harness.shells.get("chat-interrupted-background")!.backgroundLiveness = {
+          liveTaskIds: ["bg-1"],
+        };
+
+        // Not yet 48 hours since the task ended (nor since the routine chat was created).
+        expect(yield* sweepAt(TASK_DONE_MS + TASK_CHAT_AUTO_ARCHIVE_IDLE_MS - 20 * MIN)).toBe(0);
+        expect(yield* sweepAt(TASK_DONE_MS + 2 * TASK_CHAT_AUTO_ARCHIVE_IDLE_MS)).toBe(2);
+        expect(yield* archivedIds).toEqual(["chat-interrupted", "chat-interrupted-routine"]);
       }).pipe(Effect.provide(makeLayer(harness)));
     },
   );

@@ -1,10 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
+import { PERSONAL_TASK_TERMINAL_STATUSES } from "@t3tools/contracts";
+
 import {
   decideTaskChatArchive,
   ROUTINE_CHAT_AUTO_ARCHIVE_UNREAD_MS,
   TASK_CHAT_AUTO_ARCHIVE_IDLE_MS,
+  TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL,
+  TASK_CHAT_OPEN_WORK_SQL,
+  TASK_TERMINAL_STATUSES,
   taskChatAutoArchiveEnabled,
   type TaskChatArchiveCandidate,
 } from "./taskChatAutoArchivePolicy.ts";
@@ -90,5 +95,16 @@ describe("decideTaskChatArchive", () => {
     expect(taskChatAutoArchiveEnabled(null)).toBe(true);
     expect(taskChatAutoArchiveEnabled("on")).toBe(true);
     expect(taskChatAutoArchiveEnabled("off")).toBe(false);
+  });
+});
+
+describe("finished task statuses", () => {
+  it("count interrupted as finished, in step with the task contract and the SQL", () => {
+    expect([...TASK_TERMINAL_STATUSES].sort()).toEqual([...PERSONAL_TASK_TERMINAL_STATUSES].sort());
+    expect(TASK_TERMINAL_STATUSES).toContain("interrupted");
+    const list = "('completed', 'failed', 'interrupted', 'cancelled')";
+    expect(TASK_CHAT_OPEN_WORK_SQL).toContain(`NOT IN ${list}`);
+    expect(TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL).toContain(`o.status NOT IN ${list}`);
+    expect(TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL).toContain(`c.status NOT IN ${list}`);
   });
 });

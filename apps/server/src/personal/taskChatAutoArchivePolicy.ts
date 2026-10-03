@@ -26,7 +26,13 @@ export const TASK_CHAT_VIEWED_WRITE_INTERVAL_MS = 60_000;
 /** `personal_meta` key of the Settings toggle. Absent = on. */
 export const TASK_CHAT_AUTO_ARCHIVE_META_KEY = "taskChatAutoArchive";
 
-export const TASK_TERMINAL_STATUSES = ["completed", "failed", "cancelled"] as const;
+/**
+ * Statuses a task never leaves on its own. Interrupted counts as finished: a
+ * restart or a stop leaves it waiting for a retry nobody may ever ask for, and
+ * a retry is a new turn, which unarchives the chat (unarchiveForTurn).
+ */
+export const TASK_TERMINAL_STATUSES = ["completed", "failed", "interrupted", "cancelled"] as const;
+const TERMINAL_SQL_LIST = TASK_TERMINAL_STATUSES.map((status) => `'${status}'`).join(", ");
 
 /**
  * Whether a chat still has unfinished work: one of its tasks, or a child task
@@ -38,13 +44,13 @@ export const TASK_CHAT_OPEN_WORK_SQL = `
     EXISTS (
       SELECT 1 FROM personal_tasks o
       WHERE o.thread_id = ?
-        AND o.status NOT IN ('completed', 'failed', 'cancelled')
+        AND o.status NOT IN (${TERMINAL_SQL_LIST})
     )
     OR EXISTS (
       SELECT 1 FROM personal_tasks c
       JOIN personal_tasks parent ON parent.task_id = c.parent_task_id
       WHERE parent.thread_id = ?
-        AND c.status NOT IN ('completed', 'failed', 'cancelled')
+        AND c.status NOT IN (${TERMINAL_SQL_LIST})
     ) AS "open"
 `;
 
@@ -122,13 +128,13 @@ export const TASK_CHAT_AUTO_ARCHIVE_CANDIDATES_SQL = `
     AND NOT EXISTS (
       SELECT 1 FROM personal_tasks o
       WHERE o.thread_id = bt.thread_id
-        AND (o.source NOT IN ('delegation', 'routine') OR o.status NOT IN ('completed', 'failed', 'cancelled'))
+        AND (o.source NOT IN ('delegation', 'routine') OR o.status NOT IN (${TERMINAL_SQL_LIST}))
     )
     AND NOT EXISTS (
       SELECT 1 FROM personal_tasks c
       JOIN personal_tasks parent ON parent.task_id = c.parent_task_id
       WHERE parent.thread_id = bt.thread_id
-        AND c.status NOT IN ('completed', 'failed', 'cancelled')
+        AND c.status NOT IN (${TERMINAL_SQL_LIST})
     )
     AND NOT EXISTS (SELECT 1 FROM personal_routines r WHERE r.thread_id = bt.thread_id)
     AND NOT EXISTS (SELECT 1 FROM personal_group_members gm WHERE gm.thread_id = bt.thread_id)
