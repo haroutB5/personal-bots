@@ -116,6 +116,12 @@ import {
 } from "./PersonalBrowserProtectionRepository.ts";
 import { resolveBrowserNavigationTarget, resolveBrowserUrl } from "./urlPolicy.ts";
 import {
+  SCROLL_SETTLE_CAP_MS,
+  SCROLL_SETTLE_WINDOW_MS,
+  scrollSettleExpression,
+  settleOutcome,
+} from "./scrollSettle.ts";
+import {
   STREAM_TELEMETRY_FLUSH_MS,
   type StreamInputKind,
   ViewerTelemetry,
@@ -234,6 +240,8 @@ export interface PersonalBrowserOptions {
   readonly streamTelemetry?: boolean;
   /** A phone scroll step is one Chrome call instead of a move and a wheel (default on). */
   readonly wheelFold?: boolean;
+  /** A tap right after a phone scroll waits for the page to apply it (default on). */
+  readonly scrollSettle?: boolean;
 }
 
 /**
@@ -249,6 +257,8 @@ export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   streamTelemetry: process.env.T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY?.trim() !== "off",
   // Kill switch: T3CODE_PERSONAL_BROWSER_WHEEL_FOLD=off sends the move and the wheel separately again.
   wheelFold: process.env.T3CODE_PERSONAL_BROWSER_WHEEL_FOLD?.trim() !== "off",
+  // Kill switch: T3CODE_PERSONAL_BROWSER_SCROLL_SETTLE=off dispatches a tap at once after a scroll again.
+  scrollSettle: process.env.T3CODE_PERSONAL_BROWSER_SCROLL_SETTLE?.trim() !== "off",
 });
 
 type Phase = "offline" | "starting" | "connected" | "crashed" | "locked";
@@ -2585,6 +2595,14 @@ export const make = (options: PersonalBrowserOptions) =>
         );
       });
 
+    /** The last scroll step sent to Chrome, so a pointer input right after it can wait for it to land. */
+    let lastWheel: {
+      readonly page: BrowserPage;
+      readonly at: number;
+      readonly x: number;
+      readonly y: number;
+    } | null = null;
+
     const dispatchHumanInput = async (
       page: BrowserPage,
       message: PersonalBrowserInputMessage,
@@ -2613,6 +2631,7 @@ export const make = (options: PersonalBrowserOptions) =>
               );
             if (folded) {
               telemetry?.cdp("wheel", performance.now() - foldedAt);
+              lastWheel = { page, at: performance.now(), x: message.x, y: message.y };
               return;
             }
             // The one-call form was refused: fall back to a move and a wheel.
@@ -2623,6 +2642,7 @@ export const make = (options: PersonalBrowserOptions) =>
           await page.mouseWheel(message.deltaX, message.deltaY);
           telemetry?.cdp("move", wheeledAt - movedAt);
           telemetry?.cdp("wheel", performance.now() - wheeledAt);
+          lastWheel = { page, at: performance.now(), x: message.x, y: message.y };
           return;
         }
         case "Key":
@@ -2733,6 +2753,27 @@ export const make = (options: PersonalBrowserOptions) =>
         if (page.pendingDialog() !== null) {
           // Every page input waits on the dialog, so it has to be answered first.
           return yield* rejectInput(viewer, "Answer the page's dialog first.");
+        }
+        // A tap straight after a scroll must hit the page the scroll left, not the one before it.
+        if (
+          message._tag === "Pointer" &&
+          options.scrollSettle !== false &&
+          lastWheel !== null &&
+          lastWheel.page === page &&
+          performance.now() - lastWheel.at <= SCROLL_SETTLE_WINDOW_MS
+        ) {
+          const { x, y } = lastWheel;
+          lastWheel = null;
+          const settleStartedAt = performance.now();
+          const settled = yield* Effect.tryPromise(() =>
+            page.evaluate(scrollSettleExpression(x, y)),
+          ).pipe(
+            Effect.timeoutOption(SCROLL_SETTLE_CAP_MS + 150),
+            Effect.map((result) => (Option.isSome(result) ? result.value : -1)),
+            Effect.orElseSucceed(() => -1),
+          );
+          const outcome = settleOutcome(settled, performance.now() - settleStartedAt);
+          viewer.telemetry?.scrollSettle(outcome.waitedMs, outcome.capped);
         }
         const exit = yield* Effect.exit(
           Effect.tryPromise({

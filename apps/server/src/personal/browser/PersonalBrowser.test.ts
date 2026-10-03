@@ -345,7 +345,11 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
   >,
   taskHarness: TaskHarness = { waits: [], resumes: [] },
   baseDir?: string,
-  extra: { readonly streamTelemetry?: boolean; readonly wheelFold?: boolean } = {},
+  extra: {
+    readonly streamTelemetry?: boolean;
+    readonly wheelFold?: boolean;
+    readonly scrollSettle?: boolean;
+  } = {},
 ) =>
   PersonalBrowser.makeLayer({
     driver,
@@ -370,7 +374,11 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
 const makeLayer = (
   driver: BrowserDriver,
   taskHarness?: TaskHarness,
-  extra?: { readonly streamTelemetry?: boolean; readonly wheelFold?: boolean },
+  extra?: {
+    readonly streamTelemetry?: boolean;
+    readonly wheelFold?: boolean;
+    readonly scrollSettle?: boolean;
+  },
 ) =>
   baseLayer(
     driver,
@@ -2090,6 +2098,163 @@ describe("PersonalBrowser", () => {
           }),
         );
       }).pipe(Effect.provide(makeLayer(fake.driver, undefined, { wheelFold: false })));
+    });
+  });
+
+  // A wheel call returns once Chrome has the event, not once the page has applied it.
+  // On a busy page the tap that follows a scroll then hit-tests the old offset and
+  // misses the button the finger was aimed at (QA, 1.60.34: 5 of 5).
+  describe("a tap right after a scroll", () => {
+    const wheel = (deltaY: number) =>
+      `{"_tag":"Wheel","x":190,"y":380,"deltaX":0,"deltaY":${deltaY}}`;
+    const tap = '{"_tag":"Pointer","action":"tap","x":190,"y":380}';
+    const isSettleScript = (expression: string) => expression.includes("requestAnimationFrame");
+
+    /** A page that takes `lagMs` to apply a scroll after Chrome has accepted it. */
+    const lagging = (fake: ReturnType<typeof makeFakeDriver>, lagMs: number) => {
+      const page = fake.state.page;
+      const seen = { target: 0, applied: 0, clickedAt: [] as number[], settleCalls: 0 };
+      page.mouseWheelAt = async (_x, _y, _dx, dy) => {
+        seen.target += dy;
+        const target = seen.target;
+        // @effect-diagnostics-next-line globalTimers:off
+        setTimeout(() => {
+          seen.applied = target;
+        }, lagMs);
+      };
+      page.mouseClick = async () => {
+        seen.clickedAt.push(seen.applied);
+      };
+      page.evaluateImpl = async (expression) => {
+        if (!isSettleScript(expression)) return null;
+        seen.settleCalls += 1;
+        // The in-page wait: returns once the offset has caught up.
+        while (seen.applied !== seen.target) {
+          // @effect-diagnostics-next-line globalTimers:off
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        return 45;
+      };
+      return seen;
+    };
+
+    const scrollThenTap = (extra?: { readonly scrollSettle?: boolean }) => {
+      const fake = makeFakeDriver();
+      const seen = lagging(fake, 60);
+      return {
+        seen,
+        run: Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+          yield* browser.takeControl("session-1");
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const viewer = yield* browser.attachViewer({
+                sessionId: "session-1",
+                canOperate: true,
+              });
+              for (const deltaY of [160, 160, 640]) {
+                yield* browser.handleViewerMessage(viewer, wheel(deltaY));
+              }
+              yield* browser.handleViewerMessage(viewer, tap);
+            }),
+          );
+        }).pipe(Effect.provide(makeLayer(fake.driver, undefined, extra))),
+      };
+    };
+
+    it.effect("lands on the page the scroll left, not the one before it", () => {
+      const { seen, run } = scrollThenTap();
+      return Effect.gen(function* () {
+        yield* run;
+        expect(seen.target).toBe(960);
+        expect(seen.clickedAt).toEqual([960]);
+        expect(seen.settleCalls).toBe(1);
+      });
+    });
+
+    it.effect("missed before: with the kill switch the tap hits the old offset", () => {
+      const { seen, run } = scrollThenTap({ scrollSettle: false });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(seen.settleCalls).toBe(0);
+        expect(seen.clickedAt).toHaveLength(1);
+        expect(seen.clickedAt[0]).toBeLessThan(seen.target);
+      });
+    });
+
+    it.effect("does not wait for a tap that no scroll came before", () => {
+      const fake = makeFakeDriver();
+      const seen = lagging(fake, 60);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.takeControl("session-1");
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({
+              sessionId: "session-1",
+              canOperate: true,
+            });
+            yield* browser.handleViewerMessage(viewer, tap);
+            yield* browser.handleViewerMessage(viewer, tap);
+          }),
+        );
+        expect(seen.settleCalls).toBe(0);
+        expect(seen.clickedAt).toHaveLength(2);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("waits once per scroll, and a key press does not wait at all", () => {
+      const fake = makeFakeDriver();
+      const seen = lagging(fake, 60);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.takeControl("session-1");
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({
+              sessionId: "session-1",
+              canOperate: true,
+            });
+            yield* browser.handleViewerMessage(viewer, wheel(100));
+            yield* browser.handleViewerMessage(viewer, '{"_tag":"Key","key":"a"}');
+            expect(seen.settleCalls).toBe(0);
+            yield* browser.handleViewerMessage(viewer, tap);
+            yield* browser.handleViewerMessage(viewer, tap);
+            expect(seen.settleCalls).toBe(1);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("goes ahead with the tap when the page never answers the wait", () => {
+      const fake = makeFakeDriver();
+      const seen = lagging(fake, 60);
+      fake.state.page.evaluateImpl = (expression) =>
+        isSettleScript(expression) ? new Promise<unknown>(() => {}) : Promise.resolve(null);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.takeControl("session-1");
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({
+              sessionId: "session-1",
+              canOperate: true,
+            });
+            yield* browser.handleViewerMessage(viewer, wheel(100));
+            const handled = yield* Effect.forkChild(browser.handleViewerMessage(viewer, tap));
+            yield* TestClock.adjust("400 millis");
+            yield* Fiber.join(handled);
+            expect(seen.clickedAt).toHaveLength(1);
+            const line = viewer.telemetry!.flush() as Record<string, any>;
+            expect(line.input.failed).toBe(0);
+            expect(line.input.settleCapped).toBe(1);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
     });
   });
 

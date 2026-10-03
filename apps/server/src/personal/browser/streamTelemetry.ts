@@ -235,6 +235,12 @@ export class ViewerTelemetry implements ViewerFlowObserver {
     this.count("wheelMerged");
   }
 
+  /** A tap waited for the page to apply the scroll before it; `capped` when the page ran out the cap. */
+  scrollSettle(waitedMs: number, capped: boolean): void {
+    this.sample("settleMs", waitedMs);
+    if (capped) this.count("settleCapped");
+  }
+
   /** One CDP call inside an input (`move`, `wheel`, `click`). */
   cdp(call: string, ms: number): void {
     this.sample(`cdp:${call}Ms`, ms);
@@ -285,6 +291,8 @@ export class ViewerTelemetry implements ViewerFlowObserver {
         },
         failed: tally.get("inputFailed"),
         wheelMerged: tally.get("wheelMerged"),
+        settleMs: summarise(tally, "settleMs"),
+        settleCapped: tally.get("settleCapped"),
         queueMax: tally.get("inputQueueMax"),
         waitMs: summarise(tally, "inputWaitMs"),
         handleMs: {
