@@ -122,7 +122,7 @@ function parseOpenCodeMessageObject(
     // OpenCode writes zero for models without a known rate, including paid
     // subscription models. Let the shared price table estimate those records.
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : null,
-    fast: false,
+    speed: "standard",
     dedupeKey: id ? `opencode:${id}` : null,
   };
 }

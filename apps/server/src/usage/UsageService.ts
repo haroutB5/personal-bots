@@ -66,7 +66,9 @@ import {
   decodeScanCacheText,
   dedupeWithinFile,
   encodeScanCacheLines,
+  LEGACY_SCAN_CACHE_FILE_NAME,
   pruneScanCache,
+  SCAN_CACHE_FILE_NAME,
   type ScanCache,
 } from "./usageScanCache.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
@@ -199,7 +201,8 @@ export const make = Effect.gen(function* () {
   };
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
-  const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
+  const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
+  const legacyScanCachePath = path.join(config.stateDir, LEGACY_SCAN_CACHE_FILE_NAME);
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
   let ratesStatus: UsagePricing["status"] = "unavailable";
@@ -384,12 +387,20 @@ export const make = Effect.gen(function* () {
    */
   const ensureScanCacheLoaded = yield* Effect.cached(
     Effect.gen(function* () {
-      const text = yield* fileSystem
-        .readFileString(scanCachePath)
-        .pipe(Effect.catchCause(() => Effect.succeed(null)));
-      if (text === null) return;
+      const readText = (filePath: string) =>
+        fileSystem.readFileString(filePath).pipe(Effect.catchCause(() => Effect.succeed(null)));
       // Decoded a file at a time, yielding to the event loop in between.
-      const decoded = yield* Effect.promise(() => decodeScanCacheText(text, makeSliceYield()));
+      const readCache = Effect.fnUntraced(function* (filePath: string) {
+        const text = yield* readText(filePath);
+        if (text === null) return null;
+        return yield* Effect.promise(() => decodeScanCacheText(text, makeSliceYield()));
+      });
+      let decoded = yield* readCache(scanCachePath);
+      if (decoded === null) {
+        decoded = yield* readCache(legacyScanCachePath);
+        // Write the migrated cache to its own file on the next scan.
+        cacheDirty = decoded !== null;
+      }
       if (decoded === null) return;
       for (const [path, entry] of decoded.cache) fileCache.set(path, entry);
       const sources = decodeCachedSources(decoded.document);

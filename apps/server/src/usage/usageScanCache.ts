@@ -18,14 +18,33 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 
 import type { SliceYield } from "./sliceYield.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
-import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
+import type { CodexScanState, UsageRecord, UsageSpeed } from "./usageTranscripts.ts";
 
 // v2: Codex fork-copy suppression changed what a file parses to, so v1
 // entries would keep serving double-counted records forever.
 // v3: entries carry the parse position and reducer state so a grown file
 // re-parses only its appended bytes instead of starting over.
 // v4: records carry Claude fast mode, which v3 rows never captured.
-const USAGE_SCAN_CACHE_VERSION = 4 as const;
+// v5: Codex records carry their service tier. v4 rows store speed the same
+// way, so v4 entries still load; see `decodeScanCache` for v4 Codex entries.
+const USAGE_SCAN_CACHE_VERSION = 5 as const;
+const SPEED_COMPATIBLE_SINCE_VERSION = 4;
+
+/**
+ * Each cache version writes its own file in the state directory. An older
+ * server sharing that directory cannot read a newer cache and would replace
+ * it, dropping saved usage for deleted transcripts. Separate files keep both.
+ * A v5 server reads the legacy (v4) file once, when its own file is missing.
+ */
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
+export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
+
+/** Serialised as the index into this list. */
+const SPEEDS: readonly UsageSpeed[] = ["standard", "fast", "ultrafast"];
+
+function isSpeed(value: unknown): value is UsageSpeed {
+  return SPEEDS.some((speed) => speed === value);
+}
 
 export interface CachedFile {
   readonly size: number;
@@ -60,7 +79,7 @@ type SerializedRecord = readonly [
   reasoningTokens: number,
   dedupeKey: string | null,
   reportedCostUsd: number | null,
-  fast: 0 | 1,
+  speed: number,
 ];
 
 interface SerializedFile {
@@ -115,7 +134,7 @@ function makeCacheSerializer() {
     record.totals.reasoningTokens,
     record.dedupeKey,
     record.reportedCostUsd,
-    record.fast ? 1 : 0,
+    SPEEDS.indexOf(record.speed),
   ];
 
   const serializeFile = (entry: CachedFile): SerializedFile => ({
@@ -156,12 +175,23 @@ export function decodeScanCache(document: unknown): ScanCache {
   if (typeof document !== "object" || document === null) return cache;
 
   const root = document as Partial<SerializedCache>;
-  if (root.version !== USAGE_SCAN_CACHE_VERSION) return cache;
+  const version = root.version;
+  if (
+    typeof version !== "number" ||
+    version < SPEED_COMPATIBLE_SINCE_VERSION ||
+    version > USAGE_SCAN_CACHE_VERSION
+  ) {
+    return cache;
+  }
   if (typeof root.files !== "object" || root.files === null) return cache;
   const tables = readTables(root);
   if (tables === null) return cache;
 
-  const decodeEntry = makeEntryDecoder(tables.models, tables.sessions);
+  const decodeEntry = makeEntryDecoder(
+    tables.models,
+    tables.sessions,
+    version < USAGE_SCAN_CACHE_VERSION,
+  );
   for (const [path, raw] of Object.entries(root.files)) {
     const entry = decodeEntry(raw);
     if (entry !== null) cache.set(path, entry);
@@ -194,6 +224,8 @@ function readTables(root: {
 function makeEntryDecoder(
   models: readonly string[],
   sessions: readonly string[],
+  /** The cache predates Codex service tiers, so its Codex entries are re-parsed. */
+  predatesCodexTiers: boolean,
 ): (raw: unknown) => CachedFile | null {
   // Any corrupt row disqualifies the whole entry. Keeping the survivors
   // under the original (size, mtime) would read as a valid warm hit and the
@@ -216,8 +248,9 @@ function makeEntryDecoder(
         reasoning,
         dedupeKey,
         reportedCostUsd,
-        fast,
+        speedIndex,
       ] = row as SerializedRecord;
+      const speed = typeof speedIndex === "number" ? SPEEDS[speedIndex] : undefined;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
       if (
@@ -229,7 +262,7 @@ function makeEntryDecoder(
         !Number.isFinite(cacheCreation) ||
         !Number.isFinite(output) ||
         !Number.isFinite(reasoning) ||
-        (fast !== 0 && fast !== 1)
+        speed === undefined
       ) {
         return null;
       }
@@ -247,7 +280,7 @@ function makeEntryDecoder(
           reasoningTokens: reasoning,
         },
         reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
-        fast: fast === 1,
+        speed,
         dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
       });
     }
@@ -278,7 +311,11 @@ function makeEntryDecoder(
     ) {
       return null;
     }
-    const codexState = decodeCodexState(entry.cs);
+    // Codex records from before service tiers all priced as standard. Keep
+    // them, because the rollout may be gone, but make a live rollout re-parse
+    // whole: no file has size -1, and a zero position cannot resume.
+    const legacyCodex = entry.p === "codex" && predatesCodexTiers;
+    const codexState = legacyCodex ? null : decodeCodexState(entry.cs);
     if (codexState === undefined) return null;
 
     const provider: UsageProviderKind = entry.p;
@@ -287,17 +324,14 @@ function makeEntryDecoder(
     if (records === null || tailRecords === null) return null;
 
     return {
-      size: entry.s,
+      size: legacyCodex ? -1 : entry.s,
       mtimeMs: entry.m,
       provider,
       records,
       tailRecords,
-      position: {
-        resumeOffset: entry.o,
-        guardLength: entry.gl,
-        guardHash: entry.gh,
-        codexState,
-      },
+      position: legacyCodex
+        ? { resumeOffset: 0, guardLength: 0, guardHash: 0, codexState: null }
+        : { resumeOffset: entry.o, guardLength: entry.gl, guardHash: entry.gh, codexState },
     };
   };
 }
@@ -307,7 +341,7 @@ function makeEntryDecoder(
 /* -------------------------------------------------------------------------- */
 
 /**
- * v5 stores the cache as a header line (the intern tables and the source
+ * The line format (v5, then v6 with Codex service tiers) stores the cache as a header line (the intern tables and the source
  * fingerprints) followed by one line per transcript: `[path, entry]`.
  *
  * It exists so a 6 MB cache is neither stringified nor parsed in one piece.
@@ -317,9 +351,12 @@ function makeEntryDecoder(
  * line (the write is not atomic) costs only that file a re-parse, where the
  * single-document v4 lost the whole cache.
  */
-const USAGE_SCAN_CACHE_LINES_VERSION = 5 as const;
+const USAGE_SCAN_CACHE_LINES_VERSION = 6 as const;
 
-/** Serialises the cache as the v5 line format, yielding between files. */
+/** The line format before Codex service tiers; its Codex entries are re-parsed. */
+const LEGACY_LINES_VERSION = 5 as const;
+
+/** Serialises the cache as the line format (v6), yielding between files. */
 export async function encodeScanCacheLines(
   cache: ScanCache,
   sources: unknown,
@@ -344,15 +381,15 @@ export async function encodeScanCacheLines(
 
 export interface DecodedScanCacheText {
   readonly cache: ScanCache;
-  /** The object that carries `sources`: the v5 header, or the whole v4 document. */
+  /** The object that carries `sources`: the line-format header, or the whole single document. */
   readonly document: unknown;
 }
 
 /**
  * Reads a persisted cache in either format, yielding between files. Returns
  * null when the text is not a cache at all (the caller then cold scans).
- * A v4 single-document file still loads, in one piece, once: the next write
- * replaces it with the v5 form.
+ * A single-document file (v4, v5) and the v5 line format still load, once: the
+ * next write replaces them with the v6 line form.
  */
 export async function decodeScanCacheText(
   text: string,
@@ -368,18 +405,24 @@ export async function decodeScanCacheText(
   }
   if (typeof header !== "object" || header === null) return null;
 
-  const root = header as { readonly version?: unknown };
-  if (root.version === USAGE_SCAN_CACHE_VERSION) {
-    // v4: the first line is the whole document.
+  const root = header as { readonly version?: unknown; readonly files?: unknown };
+  if (root.files !== undefined) {
+    // The single-document form: the first line is the whole document.
     return { cache: decodeScanCache(header), document: header };
   }
-  if (root.version !== USAGE_SCAN_CACHE_LINES_VERSION) return null;
+  if (root.version !== USAGE_SCAN_CACHE_LINES_VERSION && root.version !== LEGACY_LINES_VERSION) {
+    return null;
+  }
 
   const cache: ScanCache = new Map();
   const tables = readTables(header as { models?: unknown; sessions?: unknown });
   if (tables === null || firstNewline === -1) return { cache, document: header };
 
-  const decodeEntry = makeEntryDecoder(tables.models, tables.sessions);
+  const decodeEntry = makeEntryDecoder(
+    tables.models,
+    tables.sessions,
+    root.version === LEGACY_LINES_VERSION,
+  );
   let lineStart = firstNewline + 1;
   while (lineStart < text.length) {
     let lineEnd = text.indexOf("\n", lineStart);
@@ -413,6 +456,7 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
   const state = value as Partial<CodexScanState>;
   if (
     typeof state.model !== "string" ||
+    !isSpeed(state.speed) ||
     typeof state.sessionId !== "string" ||
     (state.lastUsageSignature !== null && typeof state.lastUsageSignature !== "string") ||
     typeof state.sawSessionMeta !== "boolean" ||
@@ -424,6 +468,7 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
   }
   return {
     model: state.model,
+    speed: state.speed,
     sessionId: state.sessionId,
     lastUsageSignature: state.lastUsageSignature ?? null,
     sawSessionMeta: state.sawSessionMeta,
