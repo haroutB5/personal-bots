@@ -232,6 +232,8 @@ export interface PersonalBrowserOptions {
   readonly executablePath: string | undefined;
   /** Stream telemetry log lines (default on). */
   readonly streamTelemetry?: boolean;
+  /** A phone scroll step is one Chrome call instead of a move and a wheel (default on). */
+  readonly wheelFold?: boolean;
 }
 
 /**
@@ -245,6 +247,8 @@ export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   executablePath: process.env.T3CODE_PERSONAL_BROWSER_EXECUTABLE?.trim() || undefined,
   // Kill switch: T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY=off stops the stream log lines.
   streamTelemetry: process.env.T3CODE_PERSONAL_BROWSER_STREAM_TELEMETRY?.trim() !== "off",
+  // Kill switch: T3CODE_PERSONAL_BROWSER_WHEEL_FOLD=off sends the move and the wheel separately again.
+  wheelFold: process.env.T3CODE_PERSONAL_BROWSER_WHEEL_FOLD?.trim() !== "off",
 });
 
 type Phase = "offline" | "starting" | "connected" | "crashed" | "locked";
@@ -2599,6 +2603,20 @@ export const make = (options: PersonalBrowserOptions) =>
           if (message.action === "up") await page.mouseUp();
           return;
         case "Wheel": {
+          if (options.wheelFold !== false) {
+            const foldedAt = performance.now();
+            const folded = await page
+              .mouseWheelAt(message.x, message.y, message.deltaX, message.deltaY)
+              .then(
+                () => true,
+                () => false,
+              );
+            if (folded) {
+              telemetry?.cdp("wheel", performance.now() - foldedAt);
+              return;
+            }
+            // The one-call form was refused: fall back to a move and a wheel.
+          }
           const movedAt = performance.now();
           await page.mouseMove(message.x, message.y);
           const wheeledAt = performance.now();

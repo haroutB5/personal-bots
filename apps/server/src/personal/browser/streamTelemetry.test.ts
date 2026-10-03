@@ -151,6 +151,21 @@ describe("stream telemetry", () => {
     expect(line.input.wheelToFrameMs.p50).toBe(50);
   });
 
+  it("counts wheels merged into the one before them", () => {
+    const { clock, telemetry } = fixture();
+    telemetry.wheelMerged();
+    telemetry.wheelMerged();
+    telemetry.inputHandled({
+      kind: "wheel",
+      arrivedAt: clock.now,
+      waitMs: 0,
+      handleMs: 1,
+      failed: false,
+    });
+    clock.now += 5_000;
+    expect((telemetry.flush() as Record<string, any>).input.wheelMerged).toBe(2);
+  });
+
   it("does not count a failed input as answered by a frame", () => {
     const { clock, flow, telemetry } = fixture();
     telemetry.inputHandled({

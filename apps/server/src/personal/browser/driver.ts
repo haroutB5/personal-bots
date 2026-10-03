@@ -113,6 +113,12 @@ export interface BrowserPage {
   mouseUp(): Promise<void>;
   mouseClick(x: number, y: number): Promise<void>;
   mouseWheel(deltaX: number, deltaY: number): Promise<void>;
+  /**
+   * A wheel turn at a point in one call: the same `Input.dispatchMouseEvent` that
+   * `mouse.wheel` sends after `mouse.move`, without the move. Nothing in the page
+   * sees the pointer arrive first, and Playwright's own pointer position stays put.
+   */
+  mouseWheelAt(x: number, y: number, deltaX: number, deltaY: number): Promise<void>;
   keyPress(combo: string): Promise<void>;
   insertText(text: string): Promise<void>;
   consoleEntries(): ReadonlyArray<ConsoleRecord>;
@@ -416,6 +422,17 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
     mouseUp: () => page.mouse.up(),
     mouseClick: (x, y) => page.mouse.click(x, y),
     mouseWheel: (deltaX, deltaY) => page.mouse.wheel(deltaX, deltaY),
+    mouseWheelAt: async (x, y, deltaX, deltaY) => {
+      const session = await cdp();
+      await session.send("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x,
+        y,
+        deltaX,
+        deltaY,
+        modifiers: 0,
+      });
+    },
     keyPress: (combo) => page.keyboard.press(combo),
     insertText: (text) => page.keyboard.insertText(text),
     consoleEntries: () => [...consoleRing],

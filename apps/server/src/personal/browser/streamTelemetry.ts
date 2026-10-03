@@ -230,6 +230,11 @@ export class ViewerTelemetry implements ViewerFlowObserver {
     if (this.awaitingFrame.length > MAX_AWAITING_FRAME) this.awaitingFrame.shift();
   }
 
+  /** A wheel message was merged into the one before it while the worker was busy. */
+  wheelMerged(): void {
+    this.count("wheelMerged");
+  }
+
   /** One CDP call inside an input (`move`, `wheel`, `click`). */
   cdp(call: string, ms: number): void {
     this.sample(`cdp:${call}Ms`, ms);
@@ -279,6 +284,7 @@ export class ViewerTelemetry implements ViewerFlowObserver {
           other: rate("input:other"),
         },
         failed: tally.get("inputFailed"),
+        wheelMerged: tally.get("wheelMerged"),
         queueMax: tally.get("inputQueueMax"),
         waitMs: summarise(tally, "inputWaitMs"),
         handleMs: {

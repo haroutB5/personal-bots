@@ -140,6 +140,10 @@ class FakePage implements BrowserPage {
   async mouseUp() {}
   async mouseClick() {}
   async mouseWheel() {}
+  readonly wheelsAt: Array<readonly [number, number, number, number]> = [];
+  async mouseWheelAt(x: number, y: number, deltaX: number, deltaY: number) {
+    this.wheelsAt.push([x, y, deltaX, deltaY]);
+  }
   async keyPress() {}
   async insertText() {}
   readonly consoleRecords: ConsoleRecord[] = [];
@@ -341,7 +345,7 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
   >,
   taskHarness: TaskHarness = { waits: [], resumes: [] },
   baseDir?: string,
-  extra: { readonly streamTelemetry?: boolean } = {},
+  extra: { readonly streamTelemetry?: boolean; readonly wheelFold?: boolean } = {},
 ) =>
   PersonalBrowser.makeLayer({
     driver,
@@ -366,7 +370,7 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
 const makeLayer = (
   driver: BrowserDriver,
   taskHarness?: TaskHarness,
-  extra?: { readonly streamTelemetry?: boolean },
+  extra?: { readonly streamTelemetry?: boolean; readonly wheelFold?: boolean },
 ) =>
   baseLayer(
     driver,
@@ -2007,6 +2011,88 @@ describe("PersonalBrowser", () => {
   // The live view fell behind on a slow relay because nothing slowed the frames
   // down. Each viewer now keeps only the newest unsent frame, control messages
   // have their own queue, and Chrome's frame ack waits for a phone to take the frame.
+  // A phone scroll step is one call to Chrome, not a move and then a wheel.
+  describe("scroll steps from the phone", () => {
+    const wheel = '{"_tag":"Wheel","x":12,"y":34,"deltaX":0,"deltaY":56}';
+
+    it.effect("go to Chrome as one wheel at the point", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.takeControl("session-1");
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({
+              sessionId: "session-1",
+              canOperate: true,
+            });
+            yield* browser.handleViewerMessage(viewer, wheel);
+            expect(fake.state.page.wheelsAt).toEqual([[12, 34, 0, 56]]);
+            expect(yield* Queue.size(viewer.outbox)).toBe(0);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("fall back to a move and a wheel when the one-call form is refused", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.takeControl("session-1");
+        const page = fake.state.page;
+        const calls: string[] = [];
+        page.mouseWheelAt = () => Promise.reject(new Error("refused"));
+        page.mouseMove = async () => {
+          calls.push("move");
+        };
+        page.mouseWheel = async () => {
+          calls.push("wheel");
+        };
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({
+              sessionId: "session-1",
+              canOperate: true,
+            });
+            yield* browser.handleViewerMessage(viewer, wheel);
+            expect(calls).toEqual(["move", "wheel"]);
+            expect(yield* Queue.size(viewer.outbox)).toBe(0);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("keep the move and the wheel apart with the kill switch", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.takeControl("session-1");
+        const page = fake.state.page;
+        const calls: string[] = [];
+        page.mouseMove = async () => {
+          calls.push("move");
+        };
+        page.mouseWheel = async () => {
+          calls.push("wheel");
+        };
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({
+              sessionId: "session-1",
+              canOperate: true,
+            });
+            yield* browser.handleViewerMessage(viewer, wheel);
+            expect(calls).toEqual(["move", "wheel"]);
+            expect(page.wheelsAt).toEqual([]);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, { wheelFold: false })));
+    });
+  });
+
   // Why the live view lags on a phone is answered from the server log: one line
   // per attached viewer every few seconds, numbers only.
   describe("stream telemetry", () => {
@@ -2042,7 +2128,8 @@ describe("PersonalBrowser", () => {
             expect(line.input.waitMs.p50).toBeGreaterThanOrEqual(25);
             expect(line.input.handleMs.wheel).not.toBeNull();
             expect(line.input.cdpMs.wheel).not.toBeNull();
-            expect(line.input.cdpMs.move).not.toBeNull();
+            // One folded call: no separate move.
+            expect(line.input.cdpMs.move).toBeNull();
             expect(line.control).toBe(true);
           }),
         );

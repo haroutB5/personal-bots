@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import { perfOptimizationOn } from "../perfFlags";
 import { createFocusReplyGuard } from "./focusReplyGuard";
 import { createPhoneMeter } from "./streamPhoneMeter";
+import { createWheelBatcher } from "./wheelBatcher";
 
 /** How often the phone reports what it measured, once the server asks. */
 const STREAM_STATS_INTERVAL_MS = 5_000;
@@ -155,22 +156,37 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
     callbacks.onClosed(opened);
   });
 
+  const sendNow = (message: PersonalBrowserInputMessage) => {
+    if (socket.readyState !== WebSocket.OPEN) return;
+    if (message._tag === "Wheel") meter.inputSent("wheel");
+    else if (message._tag === "Pointer" && message.action === "tap") meter.inputSent("tap");
+    // The server echoes the number on the focus report that answers this input.
+    socket.send(
+      encodeInput(
+        personalBrowserInputMovesFocus(message)
+          ? ({ ...message, seq: focusGuard.issue() } as PersonalBrowserInputMessage)
+          : message,
+      ),
+    );
+  };
+
+  // At most one scroll step per animation frame, the deltas summed; everything
+  // else waits behind a pending step, so the order the user acted in is kept.
+  const wheels = createWheelBatcher((step) => sendNow({ _tag: "Wheel", ...step }));
+  const batchWheels = perfOptimizationOn("wheel-batch");
+
   return {
     send: (message) => {
-      if (socket.readyState !== WebSocket.OPEN) return;
-      if (message._tag === "Wheel") meter.inputSent("wheel");
-      else if (message._tag === "Pointer" && message.action === "tap") meter.inputSent("tap");
-      // The server echoes the number on the focus report that answers this input.
-      socket.send(
-        encodeInput(
-          personalBrowserInputMovesFocus(message)
-            ? ({ ...message, seq: focusGuard.issue() } as PersonalBrowserInputMessage)
-            : message,
-        ),
-      );
+      if (batchWheels && message._tag === "Wheel") {
+        wheels.push(message);
+        return;
+      }
+      wheels.flush();
+      sendNow(message);
     },
     close: () => {
       closed = true;
+      wheels.cancel();
       stopStats();
       socket.close();
     },

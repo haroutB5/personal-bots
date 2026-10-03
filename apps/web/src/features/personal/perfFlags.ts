@@ -56,7 +56,10 @@ export type PerfOptimization =
   | "anim-thought"
   // The shared-browser live view reports frame, decode and tap-to-paint timings
   // to the server log every 5 s while it is open (1.60.33); off: it reports none.
-  | "stream-telemetry";
+  | "stream-telemetry"
+  // A finger drag on the shared browser sends one summed scroll step per animation
+  // frame (wheelBatcher.ts, 1.60.34); off: one per touch move, as before.
+  | "wheel-batch";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

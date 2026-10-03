@@ -32,6 +32,7 @@ import {
   failEnvironmentScopeRequired,
 } from "../../auth/http.ts";
 import { PersonalBrowser } from "./PersonalBrowser.ts";
+import { InputLine } from "./inputLine.ts";
 import { runViewerFrames } from "./viewerFlow.ts";
 
 const FRAME_ACKS_NOTICE = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserViewerMessage))({
@@ -52,6 +53,12 @@ const FRAME_ACK_TEXT = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserIn
  * behind the inputs ahead of them again, as in 1.60.31 and 1.60.32.
  */
 const ackFastPathOn = () => process.env.T3CODE_PERSONAL_BROWSER_ACK_FASTPATH?.trim() !== "off";
+
+/**
+ * Kill switch: `T3CODE_PERSONAL_BROWSER_WHEEL_COALESCE=off` stops merging queued wheel
+ * messages (see inputLine.ts).
+ */
+const wheelCoalesceOn = () => process.env.T3CODE_PERSONAL_BROWSER_WHEEL_COALESCE?.trim() !== "off";
 
 /**
  * Bytes the viewer's TCP socket has accepted but not yet handed to the
@@ -137,10 +144,8 @@ export const personalBrowserStreamRouteLayer = HttpRouter.add(
         // queues them. A frame acknowledgement must not wait behind a scroll that is
         // still being dispatched to Chrome (it paces the next frame), so the reader
         // takes it straight away, ahead of the queue.
-        const inputs = yield* Queue.unbounded<{
-          readonly raw: string;
-          readonly arrivedAt: number;
-        }>();
+        const line = new InputLine({ coalesceWheels: wheelCoalesceOn() });
+        const wake = yield* Queue.sliding<void>(1);
         const fastAcks = ackFastPathOn();
         const reader = Effect.gen(function* () {
           const { pull } = yield* socket.reader;
@@ -151,15 +156,20 @@ export const personalBrowserStreamRouteLayer = HttpRouter.add(
                 viewer.flow.acknowledge();
                 continue;
               }
-              Queue.offerUnsafe(inputs, { raw: data, arrivedAt: performance.now() });
-              viewer.telemetry?.inputQueued(Queue.sizeUnsafe(inputs));
+              if (line.push(data, performance.now())) viewer.telemetry?.wheelMerged();
+              viewer.telemetry?.inputQueued(line.size);
+              Queue.offerUnsafe(wake, undefined);
             }
           }
         });
         const worker = Effect.forever(
-          Queue.take(inputs).pipe(
-            Effect.flatMap(({ raw, arrivedAt }) =>
-              browser.handleViewerMessage(viewer, raw, arrivedAt),
+          Queue.take(wake).pipe(
+            Effect.andThen(
+              Effect.gen(function* () {
+                for (let next = line.take(); next !== undefined; next = line.take()) {
+                  yield* browser.handleViewerMessage(viewer, next.raw, next.arrivedAt);
+                }
+              }),
             ),
           ),
         );

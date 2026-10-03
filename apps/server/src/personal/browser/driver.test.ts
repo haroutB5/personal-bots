@@ -122,6 +122,20 @@ describe("shared browser driver", () => {
     expect(acks()).toBe(2);
   });
 
+  it("sends a scroll step at a point as one Chrome call", async () => {
+    const context = await launch();
+    const page = context.pages()[0]!;
+    await page.mouseWheelAt(12, 34, 0, 56);
+    expect(fake.send).toHaveBeenCalledWith("Input.dispatchMouseEvent", {
+      type: "mouseWheel",
+      x: 12,
+      y: 34,
+      deltaX: 0,
+      deltaY: 56,
+      modifiers: 0,
+    });
+  });
+
   it("isolates passkey requests before navigating every new page", async () => {
     const context = await launch();
     const page = await context.newPage();

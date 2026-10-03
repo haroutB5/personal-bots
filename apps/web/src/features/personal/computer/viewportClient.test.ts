@@ -126,6 +126,46 @@ describe("viewport client messages", () => {
     });
   });
 
+  describe("scroll steps", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+    const sentTags = (socket: { sent: string[] }) =>
+      socket.sent.map((text) => JSON.parse(text) as { _tag: string; deltaY?: number });
+
+    it("sends one summed step per frame, and anything else after the pending one", () => {
+      vi.useFakeTimers();
+      const { client, socket } = connect();
+
+      client.send({ _tag: "Wheel", x: 1, y: 1, deltaX: 0, deltaY: 4 });
+      client.send({ _tag: "Wheel", x: 2, y: 2, deltaX: 0, deltaY: 6 });
+      expect(socket.sent).toEqual([]);
+      vi.advanceTimersByTime(20);
+      expect(sentTags(socket).map((m) => [m._tag, m.deltaY])).toEqual([["Wheel", 10]]);
+
+      client.send({ _tag: "Wheel", x: 2, y: 2, deltaX: 0, deltaY: 3 });
+      client.send({ _tag: "Pointer", action: "tap", x: 5, y: 5 });
+      client.send({ _tag: "Wheel", x: 2, y: 2, deltaX: 0, deltaY: 2 });
+      vi.advanceTimersByTime(20);
+      expect(sentTags(socket).map((m) => [m._tag, m.deltaY])).toEqual([
+        ["Wheel", 10],
+        ["Wheel", 3],
+        ["Pointer", undefined],
+        ["Wheel", 2],
+      ]);
+    });
+
+    it("sends every step as it happens with the kill switch", () => {
+      vi.useFakeTimers();
+      vi.stubGlobal("localStorage", { getItem: () => "wheel-batch" });
+      const { client, socket } = connect();
+
+      client.send({ _tag: "Wheel", x: 1, y: 1, deltaX: 0, deltaY: 4 });
+      client.send({ _tag: "Wheel", x: 2, y: 2, deltaX: 0, deltaY: 6 });
+      expect(sentTags(socket).map((m) => m.deltaY)).toEqual([4, 6]);
+    });
+  });
+
   describe("stream stats", () => {
     const frame = () =>
       encodePersonalBrowserFrame(new Uint8Array([1, 2, 3]), {

@@ -383,3 +383,86 @@ describe("frame acknowledgements while an input is being handled", () => {
     }),
   );
 });
+
+// While the worker is busy with one input, wheels waiting behind it merge; a tap in
+// between ends the run and nothing changes order.
+describe("scroll steps queued behind a busy worker", () => {
+  const wheel = (deltaY: number) => `{"_tag":"Wheel","x":10,"y":10,"deltaX":0,"deltaY":${deltaY}}`;
+  const TAP = '{"_tag":"Pointer","action":"tap","x":5,"y":5}';
+
+  const handledAfterBurst = (killSwitch: boolean) =>
+    Effect.gen(function* () {
+      const previous = process.env.T3CODE_PERSONAL_BROWSER_WHEEL_COALESCE;
+      if (killSwitch) process.env.T3CODE_PERSONAL_BROWSER_WHEEL_COALESCE = "off";
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env.T3CODE_PERSONAL_BROWSER_WHEEL_COALESCE;
+          else process.env.T3CODE_PERSONAL_BROWSER_WHEEL_COALESCE = previous;
+        }),
+      );
+      const flow = new ViewerFlow();
+      const outbox = yield* Queue.unbounded<string>();
+      const viewer: ViewerHandle = {
+        id: 1,
+        sessionId: "session-1",
+        canOperate: true,
+        outbox,
+        flow,
+        telemetry: null,
+      };
+      const gate = yield* Deferred.make<void>();
+      const handled: string[] = [];
+      const port = yield* serveViewerRoute(viewer, (raw) =>
+        Effect.gen(function* () {
+          // The first wheel stays in "Chrome" until the whole burst has been queued.
+          if (handled.length === 0) yield* Deferred.await(gate);
+          handled.push(raw);
+        }),
+      );
+      yield* Effect.acquireRelease(
+        Effect.promise(
+          () =>
+            new Promise<WebSocket>((resolve, reject) => {
+              const socket = new WebSocket(`ws://127.0.0.1:${port}/api/personal/browser/stream`);
+              socket.addEventListener("open", () => {
+                socket.send(wheel(1));
+                // Let the worker take the first wheel and stay busy with it.
+                setTimeout(() => {
+                  for (const deltaY of [2, 3, 4, 5]) socket.send(wheel(deltaY));
+                  socket.send(TAP);
+                  for (const deltaY of [6, 7]) socket.send(wheel(deltaY));
+                  resolve(socket);
+                }, 100);
+              });
+              socket.addEventListener("error", () => reject(new Error("socket error")), {
+                once: true,
+              });
+            }),
+        ),
+        (socket) => Effect.sync(() => socket.close()),
+      );
+      yield* Effect.sleep(200);
+      yield* Deferred.succeed(gate, undefined);
+      yield* Effect.sleep(200);
+      return handled.map((raw) => JSON.parse(raw) as { _tag: string; deltaY?: number });
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest));
+
+  it.live("merges the wheels that waited, keeps the order, and never merges across a tap", () =>
+    Effect.gen(function* () {
+      const handled = yield* handledAfterBurst(false);
+      expect(handled.map((entry) => [entry._tag, entry.deltaY])).toEqual([
+        ["Wheel", 1],
+        ["Wheel", 14],
+        ["Pointer", undefined],
+        ["Wheel", 13],
+      ]);
+    }),
+  );
+
+  it.live("with the kill switch every step is handled on its own, as before", () =>
+    Effect.gen(function* () {
+      const handled = yield* handledAfterBurst(true);
+      expect(handled.map((entry) => entry.deltaY)).toEqual([1, 2, 3, 4, 5, undefined, 6, 7]);
+    }),
+  );
+});
