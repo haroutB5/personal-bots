@@ -244,7 +244,7 @@ export const SaveMemoryInput = Schema.Struct({
   ),
   kind: Schema.Literals(["note", "preference"]).annotate({
     description:
-      "Required. preference: a standing instruction or rule the user wants bots to follow (always / never / when X do Y, how to report, who does what). Every bot it reaches gets every preference in every turn. note: a fact about the user, their things, a decision or an event; notes are looked up when relevant.",
+      "Required. preference: a standing instruction or rule the user wants bots to follow (always / never / when X do Y, how to report, who does what). Every bot it reaches gets the full preference list when its session starts and again whenever the set changes, after a context compaction, or every 12 turns; the turns in between carry a one-line reminder that it still applies. note: a fact about the user, their things, a decision or an event; notes are looked up when relevant.",
   }),
   scope: Schema.optional(
     Schema.Literals(["team", "shared", "bot"]).annotate({

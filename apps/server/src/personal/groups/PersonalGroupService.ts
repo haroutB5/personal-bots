@@ -935,7 +935,8 @@ export const make = Effect.gen(function* () {
       const speaking = live.filter((round) => round.activeBotId !== null).length;
       if (speaking >= PERSONAL_GROUP_CONCURRENCY) {
         // PERSONAL_GROUP_CONCURRENCY = 1, and this slot is disjoint from the
-        // task system's two, so the worst case stays three provider turns.
+        // task system's five (PERSONAL_TASKS_CONCURRENCY), so the worst case
+        // stays six provider turns.
         return;
       }
       const now = yield* DateTime.now;

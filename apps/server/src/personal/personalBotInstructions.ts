@@ -38,7 +38,11 @@ export interface PersonalBotPersona {
 /**
  * The bot-specific half of the memory rule. The app rules say to save when
  * asked; a bot the owner gave standing permission is told it may save on its
- * own, and the server skips the explicit-ask check for it (save_memory).
+ * own. For it the server drops only the remember-word requirement on the
+ * quoted message (save_memory): the quote must still be the owner's own words,
+ * word for word, from a chat the owner started, is refused once a sensitive
+ * site was open in the chat, and a preference still waits for the owner's tap
+ * on its card.
  */
 export const MEMORY_AUTO_SAVE_RULE =
   "The user has given you standing permission to propose rules: when they give you a standing rule worth keeping for later chats, or one you saved has changed, call save_memory with kind preference without waiting to be asked, and pass the user's message it came from as userRequest; the user still taps Save on its card. Save what the user told you, not your own guesses. Once a site the user marked sensitive has been open in a chat, nothing from it is saved: say what you would have saved and ask the user to repeat it in a new chat.";

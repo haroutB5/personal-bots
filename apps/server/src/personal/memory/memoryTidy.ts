@@ -5,7 +5,8 @@ import * as NodeCrypto from "node:crypto";
  * duplicates it can fold without asking a model, the prompt it gives the
  * model, and the checks every proposed change must pass before it is made.
  *
- * The tidy-up reads shared entries only. On its own it only archives an
+ * The tidy-up reads shared and team entries (each reach on its own; bot and
+ * project entries are never touched). On its own it only archives an
  * older entry in favour of a newer one whose text stays verbatim; merges
  * (new wording) and retiring an entry with no successor wait for the owner's
  * OK. It never deletes, and anything it is unsure of is left alone and listed.

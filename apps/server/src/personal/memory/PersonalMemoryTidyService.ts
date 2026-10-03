@@ -53,8 +53,8 @@ import { looksLikeSecret, redactSecrets } from "./PersonalMemoryService.ts";
 
 /**
  * The nightly memory tidy-up. At 03:30 local time (or the first check after,
- * if the laptop slept) it reads every current note and preference, scope by
- * scope, folds exact duplicates itself, asks a cheap model which entries are
+ * if the laptop slept) it reads every current shared and team note and
+ * preference (bot and project entries are left alone), reach by reach, folds exact duplicates itself, asks a cheap model which entries are
  * the same subject or out of date, checks each answer (`memoryTidy.ts`) and,
  * in mode "on", supersedes or merges. It never deletes: superseded entries
  * keep their text and can be restored from the Memory screen. Every run and
@@ -799,7 +799,9 @@ export const make = Effect.gen(function* () {
           decision.action === "supersede" && decision.by !== null
             ? (byMemoryId.get(decision.by)?.content ?? null)
             : null;
-        let merged = 0;
+        // Merges (new wording) never apply on their own: each waits for the
+        // owner's OK, so this run applies none. They are counted as proposed.
+        let mergesProposed = 0;
         let superseded = 0;
         let pending = 0;
         let leftAlone = 0;
@@ -853,6 +855,7 @@ export const make = Effect.gen(function* () {
             byTextOf(decision),
           );
           pending += 1;
+          if (decision.action === "merge") mergesProposed += 1;
         }
         for (const decision of proposal.left) {
           yield* recordChange(
@@ -867,7 +870,7 @@ export const make = Effect.gen(function* () {
           );
           leftAlone += 1;
         }
-        return { merged, superseded, pending, leftAlone, error: proposal.error };
+        return { mergesProposed, superseded, pending, leftAlone, error: proposal.error };
       }).pipe(Effect.result);
       const finishedIso = DateTime.formatIso(yield* DateTime.now);
       if (outcome._tag === "Failure") {
@@ -878,11 +881,12 @@ export const make = Effect.gen(function* () {
           WHERE run_id = ${runId}
         `;
       } else {
-        const { merged, superseded, pending, leftAlone, error } = outcome.success;
+        const { superseded, pending, leftAlone, error } = outcome.success;
+        // `merged` is the merges this run applied itself: none (see mergesProposed).
         yield* sql`
           UPDATE personal_memory_tidy_runs
           SET status = ${error === null ? "done" : "failed"}, finished_at = ${finishedIso},
-              merged = ${merged}, superseded = ${superseded}, pending = ${pending},
+              merged = 0, superseded = ${superseded}, pending = ${pending},
               left_alone = ${leftAlone}, error = ${error === null ? null : safeText(error).slice(0, 1_000)}
           WHERE run_id = ${runId}
         `;
@@ -896,6 +900,7 @@ export const make = Effect.gen(function* () {
           ? {
               superseded: outcome.success.superseded,
               pending: outcome.success.pending,
+              mergesProposed: outcome.success.mergesProposed,
               leftAlone: outcome.success.leftAlone,
               judgeError: outcome.success.error !== null,
             }

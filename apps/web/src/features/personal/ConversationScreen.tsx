@@ -395,7 +395,7 @@ export function ConversationScreen({
     for (const request of userInputs) requests.set(request.requestId, request);
     setSeenUserInputs({ threadId, requests });
   }
-  // The chat's own context size, shown in the header once it is large.
+  // The chat's own context size, shown in the header at any size once the chat has reported one.
   const contextBadge = useMemo(
     () => contextBadgeLabel(deriveLatestContextWindowSnapshot(activities)?.usedTokens),
     [activities],
