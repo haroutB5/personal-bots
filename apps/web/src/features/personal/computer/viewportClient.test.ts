@@ -1,3 +1,4 @@
+import { encodePersonalBrowserFrame } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { connectViewport } from "./viewportClient";
@@ -10,6 +11,7 @@ class FakeSocket {
   static readonly OPEN = 1;
   readonly readyState = 1;
   binaryType = "blob";
+  readonly sent: string[] = [];
   private readonly listeners = new Map<string, Listener[]>();
   constructor(readonly url: string) {
     FakeSocket.last = this;
@@ -20,7 +22,9 @@ class FakeSocket {
   receive(data: unknown) {
     for (const listener of this.listeners.get("message") ?? []) listener({ data });
   }
-  send() {}
+  send(data: string) {
+    this.sent.push(data);
+  }
   close() {}
 }
 
@@ -67,5 +71,33 @@ describe("viewport client messages", () => {
     expect(calls.focus).toEqual([true, false]);
     expect(calls.rejected).toEqual([]);
     expect(calls.hidden).toEqual([]);
+  });
+
+  // The server paces frames by these replies, but only once it has asked for
+  // them: a server from before this release would answer one with an input
+  // rejection for every frame.
+  describe("frame acknowledgements", () => {
+    const frame = () =>
+      encodePersonalBrowserFrame(new Uint8Array([1, 2, 3]), {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 2,
+      }).buffer;
+
+    it("sends one per frame once the server asks, and never before", () => {
+      // Decoding is not under test: a bitmap that never arrives is enough.
+      vi.stubGlobal("createImageBitmap", () => new Promise(() => {}));
+      const { calls, socket } = connect();
+
+      socket.receive(frame());
+      expect(socket.sent).toEqual([]);
+
+      socket.receive('{"_tag":"FrameAcks"}');
+      socket.receive(frame());
+      socket.receive(frame());
+      expect(socket.sent).toEqual(['{"_tag":"FrameAck"}', '{"_tag":"FrameAck"}']);
+      // The request itself is housekeeping, not an input rejection.
+      expect(calls.rejected).toEqual([]);
+    });
   });
 });

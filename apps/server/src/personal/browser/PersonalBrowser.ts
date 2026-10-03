@@ -114,6 +114,7 @@ import {
   PersonalBrowserProtectionRepository,
 } from "./PersonalBrowserProtectionRepository.ts";
 import { resolveBrowserNavigationTarget, resolveBrowserUrl } from "./urlPolicy.ts";
+import { untilAnyFlowTookFrame, VIEWER_FLOW_LIMITS, ViewerFlow } from "./viewerFlow.ts";
 
 /** Chrome did not start; `message` is Playwright's own error text. */
 class PersonalBrowserLaunchError extends Data.TaggedError("PersonalBrowserLaunchError")<{
@@ -125,8 +126,13 @@ export interface ViewerHandle {
   readonly id: number;
   readonly sessionId: string;
   readonly canOperate: boolean;
-  /** Frames and control replies; sliding so a slow phone drops frames, not the server. */
-  readonly outbox: Queue.Queue<Uint8Array | string>;
+  /**
+   * Control messages (rejections, focus, hidden notices). Unbounded so none is
+   * ever dropped; they are rare and tiny, and a closed socket shuts it down.
+   */
+  readonly outbox: Queue.Queue<string>;
+  /** Frames: only the newest unsent one is kept, and it is released at the link's pace. */
+  readonly flow: ViewerFlow;
 }
 
 export interface ResolvedBrowserFile {
@@ -880,6 +886,18 @@ export const make = (options: PersonalBrowserOptions) =>
     });
 
     /**
+     * Settles once some phone has taken the frame just offered (sent it to its
+     * socket), or after a short cap. Chrome's ack waits for it: a phone on a
+     * slow link makes Chrome render fewer frames, instead of rendering at full
+     * speed for frames that are overwritten before they can be sent.
+     */
+    const untilViewerTookFrame = (): Promise<void> | undefined => {
+      const flows = [...viewers.values()].map((viewer) => viewer.flow);
+      if (flows.length === 0 || flows.some((flow) => !flow.hasPending)) return undefined;
+      return Effect.runPromise(untilAnyFlowTookFrame(flows, VIEWER_FLOW_LIMITS.chromeHoldMs));
+    };
+
+    /**
      * Forwards one screencast frame to every attached phone, unless it shows
      * the credential form a bot just filled while a bot (not a person) holds
      * the browser: a reveal-password widget would stream the plaintext. The
@@ -890,6 +908,7 @@ export const make = (options: PersonalBrowserOptions) =>
     const onFrame = (page: BrowserPage, jpeg: Uint8Array, meta: ScreencastMeta) => {
       const tab = [...runtime.tabs.values()].find((entry) => entry.page === page);
       refreshCredentialProtection(tab);
+      let handedOff: Promise<void> | undefined;
       if (tab?.loginProtected === true && !humanInControl) {
         if (!framesHidden) {
           framesHidden = true;
@@ -899,10 +918,13 @@ export const make = (options: PersonalBrowserOptions) =>
           });
           for (const viewer of viewers.values()) Queue.offerUnsafe(viewer.outbox, notice);
         }
+        // A frame still waiting for the link was taken before the form was filled.
+        for (const viewer of viewers.values()) viewer.flow.dropPending();
       } else {
         framesHidden = false;
         const frame = encodePersonalBrowserFrame(jpeg, meta);
-        for (const viewer of viewers.values()) Queue.offerUnsafe(viewer.outbox, frame);
+        for (const viewer of viewers.values()) viewer.flow.offerFrame(frame);
+        handedOff = untilViewerTookFrame();
       }
       // Frames only arrive when the page repaints, so they double as a cheap
       // trigger for noticing human navigation (url/title) without polling.
@@ -911,6 +933,7 @@ export const make = (options: PersonalBrowserOptions) =>
         lastPageInfoRefresh = now;
         runFork(Effect.andThen(refreshPageInfo, notify));
       }
+      return handedOff;
     };
 
     /** Screencast runs exactly while a viewer is attached to a live page. */
@@ -2354,8 +2377,13 @@ export const make = (options: PersonalBrowserOptions) =>
     const attachViewer: PersonalBrowser["Service"]["attachViewer"] = (input) =>
       Effect.acquireRelease(
         Effect.gen(function* () {
-          const outbox = yield* Queue.sliding<Uint8Array | string>(4);
-          const viewer: ViewerHandle = { id: ++viewerSequence, ...input, outbox };
+          const outbox = yield* Queue.unbounded<string>();
+          const viewer: ViewerHandle = {
+            id: ++viewerSequence,
+            ...input,
+            outbox,
+            flow: new ViewerFlow(),
+          };
           viewers.set(viewer.id, viewer);
           // A phone joining mid-stretch still gets the notice on the next frame.
           framesHidden = false;
@@ -2366,6 +2394,8 @@ export const make = (options: PersonalBrowserOptions) =>
         (viewer) =>
           Effect.gen(function* () {
             viewers.delete(viewer.id);
+            // Lets a Chrome ack that was waiting on this phone go.
+            viewer.flow.dropPending();
             yield* Queue.shutdown(viewer.outbox);
             // A phone that disconnects mid-control leaves the page as it found it.
             yield* syncHumanViewport;
@@ -2545,6 +2575,8 @@ export const make = (options: PersonalBrowserOptions) =>
         const decoded = yield* decodeInputMessage(raw).pipe(Effect.option);
         if (Option.isNone(decoded)) return yield* rejectInput(viewer, "Malformed input message.");
         const message = decoded.value;
+        // Pacing, not input: any viewer's acknowledgement counts, whoever holds control.
+        if (message._tag === "FrameAck") return viewer.flow.acknowledge();
         // A viewport request is the client's own housekeeping, not something
         // the user did, so refusing it (a race with Return to bot) is silent.
         const refuse = (reason: string) =>

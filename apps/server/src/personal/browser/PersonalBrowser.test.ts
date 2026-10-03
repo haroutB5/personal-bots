@@ -151,8 +151,8 @@ class FakePage implements BrowserPage {
     return this.networkRecords;
   }
   /** The live screencast's frame callback, so a test can paint a frame. */
-  frameSink: ((jpeg: Uint8Array, meta: ScreencastMeta) => void) | null = null;
-  async startScreencast(onFrame: (jpeg: Uint8Array, meta: ScreencastMeta) => void) {
+  frameSink: ((jpeg: Uint8Array, meta: ScreencastMeta) => void | Promise<void>) | null = null;
+  async startScreencast(onFrame: (jpeg: Uint8Array, meta: ScreencastMeta) => void | Promise<void>) {
     this.screencasts++;
     this.frameSink = onFrame;
     return async () => {
@@ -161,7 +161,7 @@ class FakePage implements BrowserPage {
     };
   }
   paint() {
-    this.frameSink?.(new Uint8Array([0xff, 0xd8, 0xff]), {
+    return this.frameSink?.(new Uint8Array([0xff, 0xd8, 0xff]), {
       width: 390,
       height: 844,
       deviceScaleFactor: 1,
@@ -1850,10 +1850,21 @@ describe("PersonalBrowser", () => {
   // plaintext to every phone watching. The person at the controls is never
   // masked: it is their own screen, and they need it to type.
   describe("screencast mask", () => {
+    // Control messages from the outbox, then the frame the viewer's flow holds
+    // (waiting out the frame-rate cap, as the real socket writer would).
     const drain = (viewer: PersonalBrowser.ViewerHandle) =>
       Effect.gen(function* () {
         const items: Array<Uint8Array | string> = [];
         while ((yield* Queue.size(viewer.outbox)) > 0) items.push(yield* Queue.take(viewer.outbox));
+        while (viewer.flow.hasPending) {
+          const step = viewer.flow.poll();
+          if (step._tag === "Send") items.push(step.frame);
+          else if (step._tag === "Wait") {
+            // Real time: the flow paces by the wall clock, which the TestClock cannot move.
+            // @effect-diagnostics-next-line globalTimers:off
+            yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, step.ms)));
+          }
+        }
         return items;
       });
 
@@ -1924,6 +1935,108 @@ describe("PersonalBrowser", () => {
             expect((yield* drain(viewer)).some((item) => item instanceof Uint8Array)).toBe(true);
           }),
         );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+  });
+
+  // The live view fell behind on a slow relay because nothing slowed the frames
+  // down. Each viewer now keeps only the newest unsent frame, control messages
+  // have their own queue, and Chrome's frame ack waits for a phone to take the frame.
+  describe("viewer flow control", () => {
+    // Real time: the flow paces by the wall clock, which the TestClock cannot move.
+    const later = (ms: number) =>
+      // @effect-diagnostics-next-line globalTimers:off
+      Effect.promise(() => new Promise((resolve) => setTimeout(resolve, ms)));
+
+    it.effect("keeps every control message while frames flood a stalled phone", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const page = fake.state.page;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            // Read-only: every key press is answered with an InputRejected.
+            const viewer = yield* browser.attachViewer({ sessionId: "s1", canOperate: false });
+            viewer.flow.setBacklogProbe(() => 5_000_000);
+            for (let press = 0; press < 40; press += 1) {
+              page.paint();
+              yield* browser.handleViewerMessage(viewer, '{"_tag":"Key","key":"a"}');
+            }
+            expect(yield* Queue.size(viewer.outbox)).toBe(40);
+            // Of 40 frames, one waits (the newest) and 39 were overwritten.
+            expect(viewer.flow.hasPending).toBe(true);
+            expect(viewer.flow.replaced).toBe(39);
+            expect(viewer.flow.sent).toBe(0);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("takes frame acknowledgements from any viewer, read-only ones included", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({ sessionId: "s1", canOperate: false });
+            let changes = 0;
+            viewer.flow.subscribe(() => {
+              changes += 1;
+            });
+            yield* browser.handleViewerMessage(viewer, '{"_tag":"FrameAck"}');
+            expect(changes).toBe(1);
+            expect(yield* Queue.size(viewer.outbox)).toBe(0);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("holds Chrome's frame ack until a phone takes the frame", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const page = fake.state.page;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({ sessionId: "s1", canOperate: false });
+            const handoff = page.paint();
+            expect(handoff).toBeInstanceOf(Promise);
+            let acked = false;
+            void handoff?.then(() => {
+              acked = true;
+            });
+            yield* later(20);
+            expect(acked).toBe(false);
+            expect(viewer.flow.poll()._tag).toBe("Send");
+            yield* later(20);
+            expect(acked).toBe(true);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("lets Chrome's ack go when the phone it waited on leaves", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const page = fake.state.page;
+        let acked = false;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* browser.attachViewer({ sessionId: "s1", canOperate: false });
+            void page.paint()?.then(() => {
+              acked = true;
+            });
+            yield* later(20);
+            expect(acked).toBe(false);
+          }),
+        );
+        yield* later(20);
+        expect(acked).toBe(true);
       }).pipe(Effect.provide(makeLayer(fake.driver)));
     });
   });

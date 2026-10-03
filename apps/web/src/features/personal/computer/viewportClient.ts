@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 const encodeInput = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserInputMessage));
+const FRAME_ACK = encodeInput({ _tag: "FrameAck" });
 const decodeViewerMessage = Schema.decodeUnknownOption(
   Schema.fromJsonString(PersonalBrowserViewerMessage),
 );
@@ -47,6 +48,8 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
   let opened = false;
   let closed = false;
   let decoding = false;
+  // Set once the server asks for them; an older server would reject the message.
+  let acknowledgeFrames = false;
   let queued: { readonly jpeg: Uint8Array; readonly meta: PersonalBrowserFrameMeta } | null = null;
 
   const pump = () => {
@@ -75,6 +78,9 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
       const message = decodeViewerMessage(event.data);
       if (Option.isNone(message)) return;
       switch (message.value._tag) {
+        case "FrameAcks":
+          acknowledgeFrames = true;
+          return;
         case "FramesHidden":
           callbacks.onHidden(message.value.reason);
           return;
@@ -87,6 +93,9 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
       }
     }
     if (!(event.data instanceof ArrayBuffer)) return;
+    // On receipt, before decoding: it tells the server the link delivered the
+    // frame, so it can send the next without a backlog building up on the way.
+    if (acknowledgeFrames && socket.readyState === WebSocket.OPEN) socket.send(FRAME_ACK);
     const frame = decodePersonalBrowserFrame(new Uint8Array(event.data));
     if (frame === null) return;
     queued = frame;

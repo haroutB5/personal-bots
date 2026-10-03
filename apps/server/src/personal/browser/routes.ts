@@ -9,10 +9,12 @@ import {
   AuthOrchestrationReadScope,
   PERSONAL_BROWSER_FILES_ROUTE_PREFIX,
   PERSONAL_BROWSER_STREAM_PATH,
+  PersonalBrowserViewerMessage,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
   HttpRouter,
@@ -28,6 +30,22 @@ import {
   failEnvironmentScopeRequired,
 } from "../../auth/http.ts";
 import { PersonalBrowser } from "./PersonalBrowser.ts";
+import { runViewerFrames } from "./viewerFlow.ts";
+
+const FRAME_ACKS_NOTICE = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserViewerMessage))({
+  _tag: "FrameAcks",
+});
+
+/**
+ * Bytes the viewer's TCP socket has accepted but not yet handed to the
+ * network. The Effect socket writer sends without a completion callback, so
+ * this is the only sign that the link is slower than the frames being sent.
+ */
+const socketBacklogBytes = (source: unknown): (() => number) => {
+  const socket = (source as { readonly socket?: { readonly writableLength?: unknown } } | null)
+    ?.socket;
+  return () => (typeof socket?.writableLength === "number" ? socket.writableLength : 0);
+};
 
 /**
  * Authenticates a personal HTTP route the way the `/ws` upgrade does (session
@@ -84,7 +102,16 @@ export const personalBrowserStreamRouteLayer = HttpRouter.add(
           sessionId: session.sessionId,
           canOperate: session.scopes.includes(AuthOrchestrationOperateScope),
         });
-        const outbound = Stream.fromQueue(viewer.outbox).pipe(Stream.runForEach(write));
+        // Control messages go out at once and are never dropped. Frames go through
+        // the viewer's flow control: only the newest waits, paced by the link.
+        viewer.flow.setBacklogProbe(socketBacklogBytes(request.source));
+        const control = Stream.fromQueue(viewer.outbox).pipe(Stream.runForEach(write));
+        // The writer waits for the reader, so the notice has to go out from here.
+        const frames = Effect.andThen(
+          write(FRAME_ACKS_NOTICE),
+          runViewerFrames(viewer.flow, write),
+        );
+        const outbound = Effect.raceFirst(control, frames);
         const inbound = Effect.gen(function* () {
           const { pull } = yield* socket.reader;
           while (true) {

@@ -7,6 +7,7 @@ import {
   encodePersonalBrowserFrame,
   PERSONAL_BROWSER_FRAME_HEADER_BYTES,
   PersonalBrowserInputMessage,
+  PersonalBrowserViewerMessage,
 } from "./personalBrowser.ts";
 
 describe("personal browser phone viewport", () => {
@@ -40,6 +41,16 @@ describe("personal browser phone viewport", () => {
     expect(() => decode({ _tag: "Viewport", width: 0, height: 700 })).toThrow();
     expect(() => decode({ _tag: "Viewport", width: 390, height: 20_000 })).toThrow();
     expect(() => decode({ _tag: "Viewport", width: Number.NaN, height: 700 })).toThrow();
+  });
+});
+
+const decodeInput = Schema.decodeUnknownSync(PersonalBrowserInputMessage);
+const decodeViewerMessage = Schema.decodeUnknownSync(PersonalBrowserViewerMessage);
+
+describe("personal browser frame pacing messages", () => {
+  it("decodes a frame acknowledgement and the server's request for them", () => {
+    expect(decodeInput({ _tag: "FrameAck" })).toEqual({ _tag: "FrameAck" });
+    expect(decodeViewerMessage({ _tag: "FrameAcks" })).toEqual({ _tag: "FrameAcks" });
   });
 });
 

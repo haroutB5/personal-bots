@@ -241,6 +241,13 @@ export const PersonalBrowserInputMessage = Schema.Union([
     accept: Schema.Boolean,
     promptText: Schema.optional(Schema.String.check(Schema.isMaxLength(4000))),
   }),
+  /**
+   * One frame has reached the phone. Sent for every binary frame, and only
+   * after the server said it wants them (`FrameAcks`), so the server never
+   * has more than a couple of frames travelling to a slow link. Any viewer
+   * may send it, read-only ones included.
+   */
+  Schema.TaggedStruct("FrameAck", {}),
 ]);
 export type PersonalBrowserInputMessage = typeof PersonalBrowserInputMessage.Type;
 
@@ -254,6 +261,12 @@ export const PersonalBrowserViewerMessage = Schema.Union([
    * decode this tag and simply keep the last frame they drew.
    */
   Schema.TaggedStruct("FramesHidden", { reason: Schema.String }),
+  /**
+   * The first message on a socket: the server paces frames by the client's
+   * `FrameAck` replies, so the client should send one per frame. Older
+   * clients ignore it and are paced by the socket alone.
+   */
+  Schema.TaggedStruct("FrameAcks", {}),
   /**
    * Sent after a human tap: whether that tap left a typable element focused on
    * the remote page.

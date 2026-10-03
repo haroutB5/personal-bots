@@ -75,6 +75,53 @@ describe("shared browser driver", () => {
     expect(frame.mock.calls[0]![1]).toEqual({ width: 390, height: 560, deviceScaleFactor: 2 });
   });
 
+  it("acks Chrome's frame at once, or once the consumer's promise settles", async () => {
+    const context = await launch();
+    const acks = () =>
+      fake.send.mock.calls.filter(([method]) => method === "Page.screencastFrameAck").length;
+    const event = {
+      data: "eA==",
+      sessionId: 7,
+      metadata: { deviceWidth: 390, deviceHeight: 560 },
+    };
+    await context.pages()[0]!.startScreencast(vi.fn());
+    fake.listeners.get("Page.screencastFrame")!(event);
+    expect(acks()).toBe(1);
+    expect(fake.send).toHaveBeenCalledWith("Page.screencastFrameAck", { sessionId: 7 });
+
+    let release: () => void = () => {};
+    const slow = vi.fn(() => new Promise<void>((resolve) => (release = resolve)));
+    await context.pages()[0]!.startScreencast(slow);
+    fake.listeners.get("Page.screencastFrame")!(event);
+    await Promise.resolve();
+    expect(acks()).toBe(1);
+    release();
+    // @effect-diagnostics-next-line globalTimers:off
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(acks()).toBe(2);
+  });
+
+  it("still acks when the consumer throws or rejects, so Chrome never stalls", async () => {
+    const context = await launch();
+    const acks = () =>
+      fake.send.mock.calls.filter(([method]) => method === "Page.screencastFrameAck").length;
+    const event = {
+      data: "eA==",
+      sessionId: 8,
+      metadata: { deviceWidth: 390, deviceHeight: 560 },
+    };
+    await context.pages()[0]!.startScreencast(() => {
+      throw new Error("boom");
+    });
+    fake.listeners.get("Page.screencastFrame")!(event);
+    expect(acks()).toBe(1);
+    await context.pages()[0]!.startScreencast(() => Promise.reject(new Error("boom")));
+    fake.listeners.get("Page.screencastFrame")!(event);
+    // @effect-diagnostics-next-line globalTimers:off
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(acks()).toBe(2);
+  });
+
   it("isolates passkey requests before navigating every new page", async () => {
     const context = await launch();
     const page = await context.newPage();

@@ -117,9 +117,14 @@ export interface BrowserPage {
   insertText(text: string): Promise<void>;
   consoleEntries(): ReadonlyArray<ConsoleRecord>;
   networkEntries(): ReadonlyArray<NetworkRecord>;
-  /** Streams JPEG frames until the returned stop function runs. Frames are acked per frame. */
+  /**
+   * Streams JPEG frames until the returned stop function runs. Chrome gets its
+   * ack for a frame when `onFrame` returns, or, if it returns a promise, when
+   * that settles: Chrome renders the next frame only after the ack, so a slow
+   * consumer paces Chrome instead of having frames thrown away.
+   */
   startScreencast(
-    onFrame: (jpeg: Uint8Array, meta: ScreencastMeta) => void,
+    onFrame: (jpeg: Uint8Array, meta: ScreencastMeta) => void | Promise<void>,
   ): Promise<() => Promise<void>>;
   onClose(listener: () => void): void;
   /** Main-frame origin changes, including an away-and-back navigation. */
@@ -427,18 +432,30 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
           readonly pageScaleFactor?: number;
         };
       }) => {
-        void session
-          .send("Page.screencastFrameAck", { sessionId: event.sessionId })
-          .catch(() => {});
+        const ack = () => {
+          void session
+            .send("Page.screencastFrameAck", { sessionId: event.sessionId })
+            .catch(() => {});
+        };
         // A desktop-width page without a mobile viewport shrinks into the
         // device. CDP mouse coordinates still use its layout CSS pixels.
         const scale = event.metadata.pageScaleFactor ?? 1;
         const pageScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
-        onFrame(Buffer.from(event.data, "base64"), {
-          width: event.metadata.deviceWidth / pageScale,
-          height: event.metadata.deviceHeight / pageScale,
-          deviceScaleFactor,
-        });
+        let handedOff: void | Promise<void>;
+        try {
+          handedOff = onFrame(Buffer.from(event.data, "base64"), {
+            width: event.metadata.deviceWidth / pageScale,
+            height: event.metadata.deviceHeight / pageScale,
+            deviceScaleFactor,
+          });
+        } catch {
+          handedOff = undefined;
+        }
+        // Chrome sends the next frame only after this ack, so holding it until
+        // the consumer has taken the frame stops Chrome rendering frames that
+        // would be thrown away.
+        if (handedOff === undefined) ack();
+        else void handedOff.then(ack, ack);
       };
       session.on("Page.screencastFrame", listener);
       await session.send("Page.startScreencast", SCREENCAST_OPTIONS);
