@@ -38,6 +38,7 @@ import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
+import { lowerBotProcessPriorityEffect } from "../botProcessPriority.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
@@ -1365,6 +1366,7 @@ export const makeCodexSessionRuntime = (
             }),
         ),
       );
+    yield* lowerBotProcessPriorityEffect(Number(child.pid), "codex");
 
     const clientContext = yield* CodexClient.layerChildProcess(child).pipe(
       Layer.build,

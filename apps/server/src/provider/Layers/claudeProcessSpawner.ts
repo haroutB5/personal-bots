@@ -20,6 +20,8 @@ import { type ChildProcess, spawn } from "node:child_process";
 
 import type { SpawnedProcess, SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
 
+import { lowerBotProcessPriority } from "../botProcessPriority.ts";
+
 const STDERR_TAIL_CHARS = 8_192;
 
 export interface ClaudeProcessHandle {
@@ -52,6 +54,7 @@ export function makeRecordingClaudeSpawner(
     readonly signal: NodeJS.Signals | null;
     readonly stderrTail: string;
   }) => void,
+  lowerPriority: (pid: number | undefined) => void = (pid) => void lowerBotProcessPriority(pid),
 ): (options: SpawnOptions) => SpawnedProcess {
   return (options) => {
     const child = spawn(options.command, options.args, {
@@ -61,6 +64,8 @@ export function makeRecordingClaudeSpawner(
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
+    // Every shell command and build this CLI runs inherits its priority class.
+    lowerPriority(child.pid);
     handle.child = child;
     handle.stderrTail = "";
     // Unread, a full stderr pipe would stall the CLI.

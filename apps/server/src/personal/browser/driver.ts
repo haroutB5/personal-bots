@@ -11,6 +11,8 @@ import * as NodePath from "node:path";
 
 import type * as Playwright from "playwright-core";
 
+import { keepBrowserPriorityNormal } from "./browserPriority.ts";
+
 export interface ViewportSize {
   readonly width: number;
   readonly height: number;
@@ -522,6 +524,8 @@ export const makePlaywrightDriver = (): BrowserDriver => ({
         "--disable-features=WebAuthenticationUseNativeWinApi",
       ],
     });
+    // Off the launch path: the process list takes a second or two to read.
+    void keepBrowserPriorityNormal(options.executablePath).catch(() => undefined);
     const wrappers = new WeakMap<Playwright.Page, BrowserPage>();
     const wrap = (page: Playwright.Page) => {
       let wrapped = wrappers.get(page);

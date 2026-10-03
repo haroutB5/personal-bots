@@ -31,6 +31,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { isWindowsCommandNotFound } from "../processRunner.ts";
+import { lowerBotProcessPriorityEffect } from "./botProcessPriority.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -720,6 +721,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
               }),
           ),
         );
+      yield* lowerBotProcessPriorityEffect(Number(child.pid), "opencode");
 
       const killOpenCodeProcessGroup = (signal: NodeJS.Signals) =>
         hostPlatform === "win32"

@@ -22,6 +22,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
+import { lowerBotProcessPriorityEffect } from "../botProcessPriority.ts";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./AcpStderr.ts";
 import {
   collectSessionConfigOptionValues,
@@ -483,6 +484,7 @@ export const make = (
             }),
         ),
       );
+    yield* lowerBotProcessPriorityEffect(Number(child.pid), "acp");
 
     yield* child.stderr.pipe(
       Stream.decodeText(),

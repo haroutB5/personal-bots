@@ -133,7 +133,8 @@ export function parsePosixSnapshot(text: string): ProcessEntry[] {
   return out;
 }
 
-const snapshotProcesses = Effect.promise(async (): Promise<ProcessEntry[] | null> => {
+/** Every live process, or null when the platform's process list could not be read. */
+export async function listProcesses(): Promise<ProcessEntry[] | null> {
   if (process.platform === "win32") {
     const result = await run(
       "powershell.exe",
@@ -144,7 +145,9 @@ const snapshotProcesses = Effect.promise(async (): Promise<ProcessEntry[] | null
   }
   const result = await run("ps", ["-A", "-o", "pid=,ppid=,comm="], 15_000);
   return result.code === 0 ? parsePosixSnapshot(result.stdout) : null;
-});
+}
+
+const snapshotProcesses = Effect.promise(listProcesses);
 
 const killOne = (pid: number) =>
   Effect.promise(async (): Promise<boolean> => {
