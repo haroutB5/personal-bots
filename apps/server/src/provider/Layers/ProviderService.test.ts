@@ -42,6 +42,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -5177,6 +5178,12 @@ describe("agent browser access", () => {
       readonly turnInstructions?: string;
       /** Context the recovering turn carries (the reactor's memory block). */
       readonly turnContext?: string;
+      /** Smaller versions of it, most complete first (what the reactor offers). */
+      readonly turnContextFallbacks?: ReadonlyArray<{ text: string; dropped: string }>;
+      /** Receives what provider.sendTurn answered for the recovering turn. */
+      readonly turnResults?: Array<unknown>;
+      /** Receives every log record (level and message arguments) while the turn is sent. */
+      readonly logs?: Array<{ readonly level: string; readonly message: ReadonlyArray<unknown> }>;
       /** Text of the recovering turn; defaults to "resume". */
       readonly turnInput?: string;
       /** Receives each input the adapter's sendTurn got during recovery. */
@@ -5323,16 +5330,37 @@ describe("agent browser access", () => {
         if (options?.recoveryInputs === undefined) return;
         yield* codex.stopAll();
         codex.startSession.mockClear();
-        yield* provider.sendTurn({
+        const turnResult = yield* provider.sendTurn({
           threadId,
           input: options.turnInput ?? "resume",
           attachments: [],
           ...(options.turnInstructions ? { systemInstructions: options.turnInstructions } : {}),
           ...(options.turnContext ? { turnContext: options.turnContext } : {}),
+          ...(options.turnContextFallbacks
+            ? { turnContextFallbacks: options.turnContextFallbacks }
+            : {}),
         });
+        options.turnResults?.push(turnResult);
         options.recoveryInputs.push(...codex.startSession.mock.calls.map(([input]) => input));
         options.sentTurns?.push(...codex.sendTurn.mock.calls.map(([input]) => input));
-      }).pipe(Effect.provide(providerLayer));
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            providerLayer,
+            Logger.layer(
+              [
+                Logger.make<unknown, void>(({ logLevel, message }) => {
+                  options?.logs?.push({
+                    level: logLevel,
+                    message: Array.isArray(message) ? message : [message],
+                  });
+                }),
+              ],
+              { mergeWithExisting: true },
+            ),
+          ),
+        ),
+      );
 
       return issued;
     });
@@ -5557,6 +5585,108 @@ describe("agent browser access", () => {
       assert.equal((oversizedTurns[0] as { input?: string } | undefined)?.input, longInput);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  // 1.60.27: a block that does not fit used to vanish silently. Preferences
+  // are Harout's standing rules, so the notes go first, and every degraded case
+  // is logged (sizes and what was left out, never the memory text).
+  describe("turn context that does not fit the input limit", () => {
+    const header = "Known facts (from memory).";
+    const full = `${header}\n- [preference] Always quote prices in USD.\n- [note] Likes tea ${"x".repeat(500)}`;
+    const preferencesOnly = `${header}\n- [preference] Always quote prices in USD.`;
+    // Room for the preferences-only block but not for the full one.
+    const roomyInput = "y".repeat(
+      PROVIDER_SEND_TURN_MAX_INPUT_CHARS - preferencesOnly.length - 2 - 20,
+    );
+    const fallbacks = [{ text: preferencesOnly, dropped: "notes and task summaries" }];
+
+    const sendWith = (
+      name: string,
+      turnInput: string,
+      turnContextFallbacks: ReadonlyArray<{ text: string; dropped: string }> | undefined,
+    ) =>
+      Effect.gen(function* () {
+        const sentTurns: Array<unknown> = [];
+        const turnResults: Array<unknown> = [];
+        const logs: Array<{ readonly level: string; readonly message: ReadonlyArray<unknown> }> =
+          [];
+        yield* startSessionWith(false, asThreadId(name), undefined, {
+          personalBotThread: true,
+          turnContext: full,
+          ...(turnContextFallbacks ? { turnContextFallbacks } : {}),
+          turnInput,
+          recoveryInputs: [],
+          sentTurns,
+          turnResults,
+          logs,
+        });
+        return {
+          input: (sentTurns[0] as { input?: string } | undefined)?.input,
+          delivery: (turnResults[0] as { turnContextDelivery?: string } | undefined)
+            ?.turnContextDelivery,
+          warnings: logs.filter((entry) => entry.level === "Warn"),
+        };
+      }).pipe(Effect.provide(NodeServices.layer));
+
+    it.effect("sends the whole block when it fits, without a warning", () =>
+      Effect.gen(function* () {
+        const sent = yield* sendWith("thread-ctx-fits", "resume", fallbacks);
+        assert.equal(sent.input, `${full}\n\nresume`);
+        assert.equal(sent.delivery, "full");
+        assert.deepEqual(sent.warnings, []);
+      }),
+    );
+
+    it.effect("keeps the preferences and drops the notes, with a warning", () =>
+      Effect.gen(function* () {
+        const sent = yield* sendWith("thread-ctx-reduced", roomyInput, fallbacks);
+        assert.equal(sent.input, `${preferencesOnly}\n\n${roomyInput}`);
+        assert.equal(sent.delivery, "reduced");
+        assert.equal(sent.warnings.length, 1);
+        const [message, fields] = sent.warnings[0]!.message as [string, Record<string, unknown>];
+        assert.include(message, "smaller one");
+        assert.deepInclude(fields, {
+          threadId: "thread-ctx-reduced",
+          inputChars: roomyInput.length,
+          contextChars: full.length,
+          sentChars: preferencesOnly.length,
+          limit: PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+          dropped: "notes and task summaries",
+        });
+        // Sizes and a label only: never the memory text itself.
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        assert.notInclude(JSON.stringify(sent.warnings), "USD");
+      }),
+    );
+
+    it.effect("drops the whole block only when even the preferences do not fit", () =>
+      Effect.gen(function* () {
+        const longInput = "z".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - 10);
+        const sent = yield* sendWith("thread-ctx-none", longInput, fallbacks);
+        assert.equal(sent.input, longInput);
+        assert.equal(sent.delivery, "none");
+        assert.equal(sent.warnings.length, 1);
+        const [message, fields] = sent.warnings[0]!.message as [string, Record<string, unknown>];
+        assert.include(message, "sent without it");
+        assert.deepInclude(fields, {
+          threadId: "thread-ctx-none",
+          inputChars: longInput.length,
+          contextChars: full.length,
+          limit: PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+        });
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        assert.notInclude(JSON.stringify(sent.warnings), "USD");
+      }),
+    );
+
+    it.effect("drops the whole block, with a warning, when no smaller version is offered", () =>
+      Effect.gen(function* () {
+        const sent = yield* sendWith("thread-ctx-nofallback", roomyInput, undefined);
+        assert.equal(sent.input, roomyInput);
+        assert.equal(sent.delivery, "none");
+        assert.equal(sent.warnings.length, 1);
+      }),
+    );
+  });
 
   it.effect("issues a credential with preview when agent browser access is on", () =>
     Effect.gen(function* () {

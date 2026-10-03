@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -375,6 +376,101 @@ it.effect("Fable follow-up (1.60.21): a failed send leaves the full list due on 
     yield* savePreference("Lead with the outcome.");
     expect(yield* build).toContain("Lead with the outcome.");
     expect(yield* build).toContain("Lead with the outcome.");
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("a block with preferences and notes also offers the preferences alone", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    yield* savePreference("Reply in short plain sentences.");
+    const build = (query: string) =>
+      memory.contextForThread({
+        threadId: THREAD_A,
+        query,
+        record: false,
+        session: { key: "s1", fresh: false },
+      });
+
+    // Only preferences: nothing smaller to fall back to.
+    const bare = yield* build("tea");
+    expect(bare.block).toContain("Reply in short plain sentences.");
+    expect(bare.preferencesBlock).toBeUndefined();
+
+    yield* memory.save({
+      scope: "shared",
+      scopeId: null,
+      kind: "note",
+      content: "Harout likes green tea in the evening.",
+      source: "user",
+    });
+    const both = yield* build("green tea");
+    expect(both.block).toContain("Harout likes green tea");
+    expect(both.preferencesBlock).toContain("Known facts (from memory)");
+    expect(both.preferencesBlock).toContain("Reply in short plain sentences.");
+    expect(both.preferencesBlock).not.toContain("green tea");
+    expect(both.block!.length).toBeGreaterThan(both.preferencesBlock!.length);
+
+    // Once the session has the list, the fallback is the one-line reminder.
+    yield* memory.confirmPreferencesSent(THREAD_A);
+    const repeat = yield* build("green tea");
+    expect(repeat.block).toContain("Harout likes green tea");
+    expect(repeat.preferencesBlock).toContain("still apply unchanged");
+    expect(repeat.preferencesBlock).not.toContain("green tea");
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("a retrieval error is logged as a warning with its error tag, not silently dropped", () =>
+  Effect.gen(function* () {
+    yield* linkThreads;
+    const memory = yield* PersonalMemoryService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* savePreference("Reply in short plain sentences.");
+    const logs: Array<{ readonly level: string; readonly message: ReadonlyArray<unknown> }> = [];
+    const build = memory
+      .contextForThread({
+        threadId: THREAD_A,
+        query: "hello",
+        record: false,
+        session: { key: "s1", fresh: false },
+      })
+      .pipe(
+        Effect.provide(
+          Logger.layer(
+            [
+              Logger.make<unknown, void>(({ logLevel, message }) => {
+                logs.push({
+                  level: logLevel,
+                  message: Array.isArray(message) ? message : [message],
+                });
+              }),
+            ],
+            { mergeWithExisting: false },
+          ),
+        ),
+      );
+
+    // A build that went out but was never confirmed...
+    expect((yield* build).block).toContain("Reply in short plain sentences.");
+    expect(logs).toEqual([]);
+    // ...then a build whose lookup fails: no block, a warning that names the
+    // thread and the kind of error but carries no memory text.
+    yield* sql`ALTER TABLE personal_memory RENAME TO personal_memory_away`;
+    const failed = yield* build;
+    expect(failed).toEqual({ block: null, memoryIds: [] });
+    const warnings = logs.filter((entry) => entry.level === "Warn");
+    expect(warnings).toHaveLength(1);
+    const [message, fields] = warnings[0]!.message as [string, Record<string, unknown>];
+    expect(message).toBe("personal memory retrieval failed; continuing without memory");
+    expect(fields).toMatchObject({ threadId: THREAD_A, errorTag: "PersonalMemoryError" });
+    // @effect-diagnostics-next-line preferSchemaOverJson:off
+    expect(JSON.stringify(warnings)).not.toContain("short plain sentences");
+
+    // The failed build left nothing to confirm: the first build's pending
+    // record must not be taken as sent, so the list is still due in full.
+    yield* memory.confirmPreferencesSent(THREAD_A);
+    yield* sql`ALTER TABLE personal_memory_away RENAME TO personal_memory`;
+    expect((yield* build).block).toContain("Reply in short plain sentences.");
   }).pipe(Effect.provide(TestLayer)),
 );
 

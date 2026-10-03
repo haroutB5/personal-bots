@@ -119,9 +119,16 @@ export const ProviderSendTurnInput = Schema.Struct({
   /** Context for this turn only (a personal bot's memory matched to the
       message). The server puts it in front of the provider prompt, never in
       the visible message, so it stays in the transcript with its turn and the
-      session's system prompt is the same on every start. Dropped when it would
-      push the prompt past the input limit. */
+      session's system prompt is the same on every start. When it would push the
+      prompt past the input limit, the first `turnContextFallbacks` entry that
+      fits goes instead; when none fits it is left out (the result's
+      `turnContextDelivery` says which, and the server logs a warning). */
   turnContext: Schema.optional(TrimmedNonEmptyString),
+  /** Smaller versions of `turnContext`, most complete first, each with a short
+      plain-words label of what it leaves out (never the content itself). */
+  turnContextFallbacks: Schema.optional(
+    Schema.Array(Schema.Struct({ text: TrimmedNonEmptyString, dropped: TrimmedNonEmptyString })),
+  ),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 
@@ -129,6 +136,10 @@ export const ProviderTurnStartResult = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
   resumeCursor: Schema.optional(Schema.Unknown),
+  /** Only when the turn carried a `turnContext`: the whole of it went in front
+      of the prompt ("full"), a `turnContextFallbacks` entry did ("reduced"), or
+      nothing of it did ("none"). */
+  turnContextDelivery: Schema.optional(Schema.Literals(["full", "reduced", "none"])),
 });
 export type ProviderTurnStartResult = typeof ProviderTurnStartResult.Type;
 

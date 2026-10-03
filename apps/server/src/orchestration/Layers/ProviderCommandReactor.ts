@@ -266,14 +266,17 @@ const make = Effect.gen(function* () {
       ),
     );
   /**
-   * Every preference the bot can see (capped, newest first) plus up to 20
-   * notes and task summaries relevant to a turn's text ("Known facts (from
+   * Every preference the bot can see (capped, newest first) plus up to 6 notes
+   * and 6 task summaries relevant to a turn's text ("Known facts (from
    * memory)"), sent as that turn's context rather than in the bot's system
    * instructions: those must read the same on every session start of a
    * conversation, and a Claude session reads them only when it starts. Memory
-   * only applies to personal-bot threads and never fails the turn. A task or
-   * routine attempt (and a steer into one) starts with a personal-task-
-   * message; its facts leave out task summaries, which belong to other tasks.
+   * only applies to personal-bot threads and never fails the turn: a lookup
+   * that fails is logged and the turn goes without. `preferencesBlock` is the
+   * same block without its notes and task summaries, for a turn whose input
+   * leaves too little room for all of it. A task or routine attempt (and a
+   * steer into one) starts with a personal-task-message; its facts leave out
+   * task summaries, which belong to other tasks.
    */
   const personalMemoryForTurn = (
     threadId: ThreadId,
@@ -307,8 +310,25 @@ const make = Effect.gen(function* () {
               },
       });
       const block = context.block?.trim() ?? "";
-      return block.length > 0 ? block : undefined;
-    });
+      if (block.length === 0) return undefined;
+      const preferencesBlock = context.preferencesBlock?.trim() ?? "";
+      return {
+        block,
+        ...(preferencesBlock.length > 0 && preferencesBlock !== block ? { preferencesBlock } : {}),
+      };
+    }).pipe(
+      // contextForThread logs its own failures; this catches what escapes it
+      // (a defect in a lookup around it), so the loss is never silent either.
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal memory lookup failed; sending the turn without memory", {
+              threadId,
+              errorTag: PersonalMemoryService.errorTagOf(Cause.squash(cause)),
+              cause: PersonalMemoryService.redactSecrets(Cause.pretty(cause)).slice(0, 2_000),
+            }).pipe(Effect.as(undefined)),
+      ),
+    );
   /**
    * A bot chat whose bot now runs on another provider than the chat's session
    * (the owner moved the bot, e.g. Claude to Codex). The chat moves with the
@@ -1159,7 +1179,7 @@ const make = Effect.gen(function* () {
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
     const systemInstructions = yield* personalBotInstructions(input.threadId);
-    const memoryContext = normalizedInput
+    const memory = normalizedInput
       ? yield* personalMemoryForTurn(
           input.threadId,
           input.messageText,
@@ -1167,6 +1187,7 @@ const make = Effect.gen(function* () {
           input.freshSession === true,
         )
       : undefined;
+    const memoryContext = memory?.block;
     // A fresh session knows nothing of the chat: its earlier messages go in
     // front of the memory, in whatever room the turn's input has left.
     const handoff =
@@ -1181,10 +1202,36 @@ const make = Effect.gen(function* () {
               HANDOFF_INPUT_MARGIN_CHARS,
           })
         : undefined;
-    const turnContext =
-      handoff !== undefined && memoryContext !== undefined
-        ? `${handoff}\n\n${memoryContext}`
-        : (handoff ?? memoryContext);
+    const withHandoff = (memoryText: string | undefined) =>
+      handoff !== undefined && memoryText !== undefined
+        ? `${handoff}\n\n${memoryText}`
+        : (handoff ?? memoryText);
+    const turnContext = withHandoff(memoryContext);
+    // What the turn falls back to when the input leaves too little room, most
+    // complete first: the preferences without the notes and task summaries,
+    // then the memory without the chat handoff (the handoff is sized to the
+    // room that was left, so it is what a long input squeezes out first).
+    const turnContextFallbacks: Array<{ text: string; dropped: string }> = [
+      ...(memory?.preferencesBlock !== undefined
+        ? [
+            {
+              text: withHandoff(memory.preferencesBlock)!,
+              dropped: "notes and task summaries",
+            },
+          ]
+        : []),
+      ...(handoff !== undefined && memoryContext !== undefined
+        ? [
+            {
+              text: memory?.preferencesBlock ?? memoryContext,
+              dropped:
+                memory?.preferencesBlock !== undefined
+                  ? "notes, task summaries and the earlier-chat handoff"
+                  : "the earlier-chat handoff",
+            },
+          ]
+        : []),
+    ];
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
@@ -1222,6 +1269,9 @@ const make = Effect.gen(function* () {
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
       ...(systemInstructions !== undefined ? { systemInstructions } : {}),
       ...(turnContext !== undefined ? { turnContext } : {}),
+      ...(turnContext !== undefined && turnContextFallbacks.length > 0
+        ? { turnContextFallbacks }
+        : {}),
     };
   });
 
@@ -1950,7 +2000,7 @@ const make = Effect.gen(function* () {
           freshSession: true,
           providerRetry,
         });
-        yield* providerService.sendTurn(request);
+        return yield* providerService.sendTurn(request);
       });
 
     const send = providerService.sendTurn(sendTurnRequest.value.request).pipe(
@@ -1962,9 +2012,10 @@ const make = Effect.gen(function* () {
           : Effect.failCause(cause),
       ),
       // The bot has its memory's preference list only once the send went
-      // through; a failed send leaves the full list due on the next try.
-      Effect.tap(() =>
-        Option.isSome(personalMemory)
+      // through with the block in front of the prompt; a failed send, or one
+      // that had to leave the block out, leaves the full list due next time.
+      Effect.tap((turn) =>
+        Option.isSome(personalMemory) && turn.turnContextDelivery !== "none"
           ? personalMemory.value.confirmPreferencesSent(event.payload.threadId)
           : Effect.void,
       ),

@@ -1803,15 +1803,45 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     // start of the same conversation, and a Claude session reads it only once.
     // In front rather than behind, because Claude Code dispatches a skill from
     // the last text block and would take trailing context as the skill's
-    // arguments. It is optional: when it does not fit, the turn goes without.
-    const { turnContext, ...parsedWithoutTurnContext } = parsed;
-    if (
-      turnContext !== undefined &&
-      inputTextWithAttachmentContext !== undefined &&
-      turnContext.length + 2 + inputTextWithAttachmentContext.length <=
-        PROVIDER_SEND_TURN_MAX_INPUT_CHARS
-    ) {
-      inputTextWithAttachmentContext = `${turnContext}\n\n${inputTextWithAttachmentContext}`;
+    // arguments. It is optional: when it does not fit, the turn goes with the
+    // first smaller version that does (a bot's preferences matter more than
+    // its notes), else without it. Either way it is logged, and the result
+    // says which, so the memory bookkeeping only counts what went in.
+    const { turnContext, turnContextFallbacks, ...parsedWithoutTurnContext } = parsed;
+    let turnContextDelivery: "full" | "reduced" | "none" | undefined;
+    if (turnContext !== undefined) {
+      const inputChars = inputTextWithAttachmentContext?.length;
+      const fits = (text: string) =>
+        inputChars !== undefined &&
+        text.length + 2 + inputChars <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
+      const chosen = fits(turnContext)
+        ? { text: turnContext, dropped: null }
+        : (turnContextFallbacks ?? []).find((candidate) => fits(candidate.text));
+      if (chosen === undefined) {
+        turnContextDelivery = "none";
+        yield* Effect.logWarning("turn context did not fit the input limit; sent without it", {
+          threadId: parsed.threadId,
+          inputChars: inputChars ?? null,
+          contextChars: turnContext.length,
+          limit: PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+          dropped: "the whole turn context (memory and any earlier-chat handoff)",
+        });
+      } else {
+        inputTextWithAttachmentContext = `${chosen.text}\n\n${inputTextWithAttachmentContext}`;
+        if (chosen.dropped === null) {
+          turnContextDelivery = "full";
+        } else {
+          turnContextDelivery = "reduced";
+          yield* Effect.logWarning("turn context did not fit the input limit; sent a smaller one", {
+            threadId: parsed.threadId,
+            inputChars,
+            contextChars: turnContext.length,
+            sentChars: chosen.text.length,
+            limit: PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+            dropped: chosen.dropped,
+          });
+        }
+      }
     }
 
     // The reactor always sends a bot's instructions; turns sent from elsewhere
@@ -1947,7 +1977,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         attachmentCount: attachments.length,
         hasInput: typeof input.input === "string" && input.input.trim().length > 0,
       });
-      return turn;
+      return turnContextDelivery === undefined ? turn : { ...turn, turnContextDelivery };
     }).pipe(
       withMetrics({
         counter: providerTurnsTotal,

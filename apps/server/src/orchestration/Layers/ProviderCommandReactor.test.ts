@@ -186,11 +186,13 @@ describe("ProviderCommandReactor", () => {
     /** The linked bot's own model selection (personalBotThread). */
     readonly botModelSelection?: ModelSelection;
     /** Replaces sendTurn's answer for the given call (1-based). */
-    readonly sendTurnEffect?: (
-      call: number,
-    ) =>
+    readonly sendTurnEffect?: (call: number) =>
       | Effect.Effect<
-          { readonly threadId: ThreadId; readonly turnId: TurnId },
+          {
+            readonly threadId: ThreadId;
+            readonly turnId: TurnId;
+            readonly turnContextDelivery?: "full" | "reduced" | "none";
+          },
           ProviderServiceError
         >
       | undefined;
@@ -3052,6 +3054,67 @@ describe("ProviderCommandReactor", () => {
       await turn("user-message-after", 3);
       expect(contextOf(3)).not.toContain("Always reply in British English.");
       expect(contextOf(3)).toContain("still apply unchanged");
+    });
+
+    it("a send that had to leave the memory block out leaves the full list due, like a failed one", async () => {
+      // 1.60.27: the provider service drops a block that does not fit and says
+      // so in its answer; marking the preferences as sent then would leave the
+      // bot with only the one-line reminder of a list it never saw.
+      const harness = await createHarness({
+        personalBotThread: true,
+        personalMemory: true,
+        sendTurnEffect: (call) =>
+          call === 1
+            ? Effect.succeed({
+                threadId: ThreadId.make("thread-1"),
+                turnId: asTurnId("turn-1"),
+                turnContextDelivery: "none" as const,
+              })
+            : undefined,
+      });
+      await seedMemory(harness);
+      const contextOf = (call: number) =>
+        (
+          harness.sendTurn.mock.calls[call - 1]?.[0] as
+            | { readonly turnContext?: string }
+            | undefined
+        )?.turnContext ?? "";
+      const turn = async (messageId: string, call: number) => {
+        await startTurn(harness, asMessageId(messageId));
+        await waitFor(() => harness.sendTurn.mock.calls.length === call);
+        await harness.drain();
+      };
+      await turn("user-message-dropped", 1);
+      expect(contextOf(1)).toContain("Always reply in British English.");
+      // The next turn carries the whole list again...
+      await turn("user-message-again", 2);
+      expect(contextOf(2)).toContain("Always reply in British English.");
+      // ...and once that one went in, the turn after is reminded only.
+      await turn("user-message-after", 3);
+      expect(contextOf(3)).not.toContain("Always reply in British English.");
+      expect(contextOf(3)).toContain("still apply unchanged");
+    });
+
+    it("offers the preferences without the notes as a smaller version of the block", async () => {
+      const harness = await createHarness({ personalBotThread: true, personalMemory: true });
+      await seedMemory(harness);
+      await startTurn(harness, asMessageId("user-message-benchmark"));
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+      const request = harness.sendTurn.mock.calls[0]?.[0] as {
+        readonly turnContext?: string;
+        readonly turnContextFallbacks?: ReadonlyArray<{ text: string; dropped: string }>;
+      };
+      expect(request.turnContext).toContain("Benchmark machines are in the lab.");
+      expect(request.turnContextFallbacks).toHaveLength(1);
+      const [fallback] = request.turnContextFallbacks!;
+      expect(fallback!.dropped).toBe("notes and task summaries");
+      expect(fallback!.text).toContain("Known facts (from memory)");
+      expect(fallback!.text).toContain("Always reply in British English.");
+      expect(fallback!.text).toContain("Benchmark results go in a table.");
+      expect(fallback!.text).not.toContain("Benchmark machines are in the lab.");
+      expect(fallback!.text).not.toContain("batch 1 scored 42");
+      expect(fallback!.text.length).toBeLessThan(request.turnContext!.length);
     });
 
     it("a chat turn still gets task summaries", async () => {

@@ -252,6 +252,14 @@ const encodeVersions = Schema.encodeSync(
 );
 const isMemoryError = Schema.is(PersonalMemoryError);
 
+/** A failure's `_tag` when it has one, for a log line that names the kind of error. */
+export const errorTagOf = (error: unknown): string =>
+  typeof error === "object" && error !== null && "_tag" in error && typeof error._tag === "string"
+    ? error._tag
+    : error instanceof Error
+      ? error.name
+      : "UnknownError";
+
 const MEMORY_COLUMNS = `
   m.memory_id AS "memoryId",
   m.scope AS "scope",
@@ -513,12 +521,21 @@ export class PersonalMemoryService extends Context.Service<
       readonly session?: { readonly key: string; readonly fresh: boolean } | undefined;
     }) => Effect.Effect<{
       readonly block: string | null;
+      /**
+       * The same block without its notes and task summaries: the header and the
+       * preferences (or the one-line reminder). Set only when it differs from
+       * `block`, i.e. when there are preferences and relevant entries; it is
+       * what a turn falls back to when the whole block would not fit.
+       */
+      readonly preferencesBlock?: string | null;
       readonly memoryIds: ReadonlyArray<PersonalMemoryId>;
     }>;
     /**
      * The provider accepted the turn contextForThread last built for this
-     * thread: only now does that session count as having the preference list
-     * (or one more reminder turn). A send that failed leaves the full list due.
+     * thread, with its preferences in front of the prompt: only now does that
+     * session count as having the preference list (or one more reminder turn).
+     * A send that failed, or that went without the block, leaves the full list
+     * due.
      */
     readonly confirmPreferencesSent: (threadId: ThreadId) => Effect.Effect<void>;
     /** Stores a labelled summary of a completed task (idempotent per task). */
@@ -1118,6 +1135,9 @@ export const make = Effect.gen(function* () {
 
   const contextForThread: PersonalMemoryService["Service"]["contextForThread"] = (input) =>
     Effect.gen(function* () {
+      // Whatever an earlier build left unconfirmed is stale from here on, and a
+      // build that fails below must not leave it to be confirmed by this turn.
+      pendingSent.delete(input.threadId);
       const botId = yield* botForThread(input.threadId);
       if (Option.isNone(botId)) return { block: null, memoryIds: [] };
       const scope = { botId: botId.value, projectId: input.projectId };
@@ -1202,13 +1222,19 @@ export const make = Effect.gen(function* () {
       if (input.record && memoryIds.length > 0) {
         yield* recordUsage(input.threadId, memoryIds);
       }
+      const blockInput = {
+        preferences: sentPreferenceEntries,
+        droppedPreferences: preferences.dropped,
+        preferencesRepeat: repeat ? { count: preferences.kept.length } : undefined,
+      };
+      const block = formatMemoryBlock({ ...blockInput, relevant });
+      const preferencesBlock =
+        relevant.length > 0 && (sentPreferenceEntries.length > 0 || repeat)
+          ? formatMemoryBlock({ ...blockInput, relevant: [] })
+          : null;
       return {
-        block: formatMemoryBlock({
-          preferences: sentPreferenceEntries,
-          relevant,
-          droppedPreferences: preferences.dropped,
-          preferencesRepeat: repeat ? { count: preferences.kept.length } : undefined,
-        }),
+        block,
+        ...(preferencesBlock === null ? {} : { preferencesBlock }),
         memoryIds,
       };
     }).pipe(
@@ -1217,6 +1243,7 @@ export const make = Effect.gen(function* () {
           ? Effect.interrupt
           : Effect.logWarning("personal memory retrieval failed; continuing without memory", {
               threadId: input.threadId,
+              errorTag: errorTagOf(Cause.squash(cause)),
               cause: redactSecrets(Cause.pretty(cause)).slice(0, 2_000),
             }).pipe(Effect.as({ block: null, memoryIds: [] })),
       ),
