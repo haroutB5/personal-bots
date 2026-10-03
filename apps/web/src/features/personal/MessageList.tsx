@@ -37,6 +37,7 @@ import { LeadBotChangeCard } from "./LeadBotChangeCard";
 import { MemoryChangeCard } from "./MemoryChangeCard";
 import { ToolDetails } from "./ToolDetails";
 import type { LatestMessageReadStatus, MessageReadStatus } from "./messageReadStatus";
+import { consumeChatSwitched } from "./chatChipHandoff";
 
 /** A message the user sent that the server has not echoed back yet. */
 export interface PendingOutgoingMessage {
@@ -720,12 +721,14 @@ export function MessageList({
   }, [items, working]);
 
   const empty = items.length === 0 && pending.length === 0;
+  // A chat chip switch eases the new transcript in (chatChipHandoff.ts).
+  const [enterClass] = useState(() => (consumeChatSwitched() ? "personal-chat-enter" : undefined));
 
   return (
     // The jump button floats over the transcript's bottom edge, just above the
     // composer and any strip resting on it, so it never shifts the layout and
     // rides up with the keyboard.
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className={cn("relative flex min-h-0 flex-1 flex-col", enterClass)}>
       {/* `relative`: the scroller must be the containing block of the
           sr-only speaker labels (absolute). Otherwise they escape it, sit at
           their place deep in a long transcript and make the page column

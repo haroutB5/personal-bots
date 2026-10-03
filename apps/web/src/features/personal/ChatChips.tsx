@@ -12,6 +12,7 @@ import { cn } from "~/lib/utils";
 
 import { chatSwitchNavigation } from "./chatChipNavigation";
 import type { ChatChip } from "./chatChipRows";
+import { markChatSwitched } from "./chatChipHandoff";
 import { composerHasFocus, requestComposerRefocus } from "./composerRefocus";
 
 const NO_IDS: ReadonlySet<string> = new Set();
@@ -171,6 +172,7 @@ export function ChatChips({
                 event.preventDefault();
                 return;
               }
+              markChatSwitched();
               if (composerHadFocus.current) requestComposerRefocus();
               composerHadFocus.current = false;
             }}

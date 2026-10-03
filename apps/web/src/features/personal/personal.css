@@ -1050,3 +1050,23 @@
     }
   }
 }
+
+/* A chat chip switch eases the new transcript in (chatChipHandoff.ts). */
+.personal-chat-enter {
+  animation: personal-chat-enter 180ms ease-out;
+}
+@keyframes personal-chat-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .personal-chat-enter {
+    animation: personal-chip-fade 120ms linear;
+  }
+}

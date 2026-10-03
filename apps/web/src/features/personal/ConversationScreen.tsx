@@ -64,6 +64,7 @@ import { CHAT_PROBLEM_BUTTON, ChatLoadProblem } from "./ChatLoadProblem";
 import { threadLoadProblem } from "./threadLoadProblem";
 import { BotMuteMenuItems, useSetBotMute } from "./BotMute";
 import { ChatChips } from "./ChatChips";
+import { markChatSwitched, rememberChipsShown } from "./chatChipHandoff";
 import { buildChatChips } from "./chatChipRows";
 import { ConversationHeaderLine, ConversationHeaderName } from "./ConversationHeaderName";
 import { NewChatDialog } from "./NewChatDialog";
@@ -784,12 +785,16 @@ export function ConversationScreen({
     ],
   );
   const chipsShown = bot !== null && chipModel !== null && chipModel.visible;
+  useEffect(() => {
+    rememberChipsShown(botId, chipsShown);
+  }, [botId, chipsShown]);
   // Another chat finishing a turn lights its chip: refetch the list (it carries
   // the unread flag), debounced, as the bot's chat list does.
   useRefetchOnTurnsSettled(chipsShown ? chipModel.turnsKey : "", list.refresh);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const onStartNamedChat = async (title: string) => {
     const name = renameChatDraftTitle(title, "");
+    markChatSwitched();
     await startNewChat({
       replace: true,
       keepState: true,
@@ -884,7 +889,7 @@ export function ConversationScreen({
                 to="/bots/$botId/edit"
                 params={{ botId: bot.botId }}
                 aria-label={`Edit ${bot.name}${botMuted ? ", notifications muted" : ""}`}
-                className="flex h-[31px] min-w-0 shrink-0 items-start rounded-[var(--personal-radius-button)] pt-[7px] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+                className="flex h-[31px] min-w-0 shrink-0 items-start rounded-[var(--personal-radius-button)] pt-1.75 outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
               >
                 <ConversationHeaderLine
                   name={bot.name}

@@ -8,6 +8,7 @@ import { cn } from "~/lib/utils";
 import { primaryServerProvidersAtom } from "~/state/server";
 
 import { BotAvatar } from "./BotAvatar";
+import { chipsShownFor } from "./chatChipHandoff";
 import { botModelShortLabel } from "./botModelLabel";
 import { ConversationHeaderName } from "./ConversationHeaderName";
 import { ConversationSubtitle } from "./ConversationSubtitle";
@@ -92,7 +93,13 @@ export function ConversationShellHeader({ botId }: { readonly botId: string }): 
       className="relative flex h-full min-h-0 flex-col overflow-clip"
       style={{ paddingBottom: "max(env(safe-area-inset-bottom), 8px)" }}
     >
-      <header className="personal-column flex h-16 shrink-0 items-center gap-3 px-2">
+      <header
+        // As tall as the real header will be, so the chat mounting does not drop it 8 px.
+        className={cn(
+          "personal-column flex shrink-0 items-center gap-3 px-2",
+          chipsShownFor(botId) ? "h-[72px]" : "h-16",
+        )}
+      >
         <Link
           to={backTarget.to}
           aria-label={backTarget.label}
