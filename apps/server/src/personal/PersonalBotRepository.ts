@@ -607,7 +607,7 @@ export const make = Effect.gen(function* () {
         UPDATE personal_bots
         SET is_lead = 0,
             updated_at = ${updatedAt}
-        WHERE team = ${team}
+        WHERE lower(team) = lower(${team})
           AND bot_id <> ${exceptBotId}
           AND is_lead = 1
           AND deleted_at IS NULL

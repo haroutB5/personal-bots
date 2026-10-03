@@ -312,7 +312,7 @@ const make = Effect.gen(function* () {
   const teamOpenTasks = Effect.fn("BotsToolkit.teamOpenTasks")(function* (team: string) {
     const bots = yield* listBots;
     const teamBotIds = new Set<string>(
-      bots.filter((bot) => botTeam(bot) === team).map((bot) => bot.botId),
+      bots.filter((bot) => isBotOnTeam(bot, team)).map((bot) => bot.botId),
     );
     const open = yield* tasks
       .list({ statuses: PERSONAL_TASK_STATUSES_OPEN })
@@ -381,7 +381,7 @@ const make = Effect.gen(function* () {
     }
     if (caller.lead) {
       const bot = (yield* listBots).find((entry) => entry.botId === task.botId);
-      if (bot !== undefined && botTeam(bot) === caller.team) {
+      if (bot !== undefined && isBotOnTeam(bot, caller.team)) {
         return task;
       }
     }
@@ -430,7 +430,7 @@ const make = Effect.gen(function* () {
           // Own team only. The other team is not this bot's to reach, and a
           // roster it cannot delegate to would only invite it to try.
           bots: bots
-            .filter((bot) => bot.enabled && botTeam(bot) === caller.team)
+            .filter((bot) => bot.enabled && isBotOnTeam(bot, caller.team))
             .map((bot) => ({
               botId: bot.botId,
               name: bot.name,
@@ -450,7 +450,7 @@ const make = Effect.gen(function* () {
         const teamMates = (bots: ReadonlyArray<PersonalBot>) =>
           bots
             .filter(
-              (bot) => bot.enabled && bot.botId !== caller.botId && botTeam(bot) === caller.team,
+              (bot) => bot.enabled && bot.botId !== caller.botId && isBotOnTeam(bot, caller.team),
             )
             .map((bot) => bot.name);
         if (target === null) {
@@ -462,7 +462,7 @@ const make = Effect.gen(function* () {
         if (target.botId === caller.botId) {
           return yield* toolError("You cannot delegate a task to yourself.");
         }
-        if (botTeam(target) !== caller.team) {
+        if (!isBotOnTeam(target, caller.team)) {
           const asked = yield* ownerNamedBot(caller.threadId, target);
           if (!asked) {
             const available = teamMates(yield* listBots);

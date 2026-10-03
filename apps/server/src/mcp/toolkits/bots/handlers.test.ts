@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import type { Tool } from "effect/unstable/ai";
 
@@ -905,6 +906,38 @@ describe("bots toolkit handlers", () => {
           objective: "Investigate.",
         }).pipe(Effect.flip);
         expect(error.message).toContain("Research");
+      }),
+    ),
+  );
+
+  it.effect("custom team names match without regard to case in list_bots and delegate_task", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const bots = yield* PersonalBotService.PersonalBotService;
+        const sql = yield* SqlClient.SqlClient;
+        yield* bots.setProfile({ teamChange: { operation: "create", name: "Field Ops" } });
+        yield* bots.update({ botId: botId("assistant"), team: "Field Ops" });
+        yield* bots.update({ botId: botId("planner"), team: "Field Ops" });
+        // A row filed before the teams were registered keeps the case it was
+        // written with; reading it has to treat it as the same team.
+        yield* sql`UPDATE personal_bots SET team = 'field ops' WHERE bot_id = ${botId("planner")}`;
+
+        const listed = yield* call("list_bots", {});
+        expect(listed.bots.map((bot) => bot.name)).toEqual(["Assistant", "Planner"]);
+
+        const child = yield* call("delegate_task", {
+          targetBot: "planner",
+          objective: "Plan the release.",
+        });
+        expect(child.targetBotId).toBe(botId("planner"));
+
+        // A bot on another team is still refused.
+        const refused = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Write the migration.",
+        }).pipe(Effect.flip);
+        expect(refused.message).toContain("not yours");
       }),
     ),
   );
