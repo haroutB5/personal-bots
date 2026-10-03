@@ -13,3 +13,6 @@ export function chatSwitchNavigation(botId: string, threadId: string) {
     state: <State extends object>(previous: State) => previous,
   } as const;
 }
+
+/** The row's open chat: the one element in the chip row that carries aria-current. */
+export const CURRENT_CHIP_SELECTOR = '[aria-current="page"]';

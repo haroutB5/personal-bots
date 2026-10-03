@@ -7,8 +7,11 @@ import * as Effect from "effect/Effect";
 
 import {
   descendantsOf,
+  listProcesses,
   parseWindowsSnapshot,
   type ProcessEntry,
+  resolveWindowsPowerShell,
+  resolveWindowsTaskkill,
   terminateDescendants,
 } from "./processTree.ts";
 
@@ -62,6 +65,92 @@ describe("descendantsOf", () => {
     );
     assert.equal(parsed[0]?.createdAtMs, null);
     assert.isNumber(parsed[1]?.createdAtMs);
+  });
+});
+
+const POWERSHELL = String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`;
+const WINDOWS_ENV = { SystemRoot: String.raw`C:\Windows` } as NodeJS.ProcessEnv;
+
+describe("Windows system tool paths", () => {
+  it("resolves powershell.exe under %SystemRoot%\\System32 when it exists", () => {
+    assert.equal(
+      resolveWindowsPowerShell({ env: WINDOWS_ENV, exists: (path) => path === POWERSHELL }),
+      POWERSHELL,
+    );
+  });
+
+  it("follows windir without SystemRoot, and falls back to the bare name when the file is absent", () => {
+    const seen: string[] = [];
+    assert.equal(
+      resolveWindowsPowerShell({
+        env: { windir: String.raw`D:\Win` } as NodeJS.ProcessEnv,
+        exists: (path) => {
+          seen.push(path);
+          return false;
+        },
+      }),
+      "powershell.exe",
+    );
+    assert.deepEqual(seen, [String.raw`D:\Win\System32\WindowsPowerShell\v1.0\powershell.exe`]);
+    assert.equal(
+      resolveWindowsPowerShell({ env: WINDOWS_ENV, exists: () => false }),
+      "powershell.exe",
+    );
+  });
+
+  it("resolves taskkill.exe the same way", () => {
+    assert.equal(
+      resolveWindowsTaskkill({ env: WINDOWS_ENV, exists: () => true }),
+      String.raw`C:\Windows\System32\taskkill.exe`,
+    );
+    assert.equal(resolveWindowsTaskkill({ env: WINDOWS_ENV, exists: () => false }), "taskkill.exe");
+  });
+});
+
+describe("listProcesses", () => {
+  const output = "1234 900 134036544000000000 node.exe\r\n";
+
+  it("runs the resolved powershell path on Windows and parses its list", async () => {
+    const calls: string[] = [];
+    const list = await listProcesses({
+      platform: "win32",
+      env: WINDOWS_ENV,
+      exists: (path) => path === POWERSHELL,
+      run: async (file) => {
+        calls.push(file);
+        return { code: 0, stdout: output, stderr: "" };
+      },
+    });
+    assert.deepEqual(calls, [POWERSHELL]);
+    assert.deepEqual(
+      list?.map((entry) => entry.pid),
+      [1234],
+    );
+  });
+
+  it("falls back to the bare powershell.exe name when System32's is missing", async () => {
+    const calls: string[] = [];
+    await listProcesses({
+      platform: "win32",
+      env: WINDOWS_ENV,
+      exists: () => false,
+      run: async (file) => {
+        calls.push(file);
+        return { code: 1, stdout: "", stderr: "" };
+      },
+    });
+    assert.deepEqual(calls, ["powershell.exe"]);
+  });
+
+  it("returns null when the list could not be read", async () => {
+    assert.isNull(
+      await listProcesses({
+        platform: "win32",
+        env: WINDOWS_ENV,
+        exists: () => true,
+        run: async () => ({ code: Number.NaN, stdout: "", stderr: "" }),
+      }),
+    );
   });
 });
 

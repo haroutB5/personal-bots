@@ -10,7 +10,7 @@ import { Plus } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
-import { chatSwitchNavigation } from "./chatChipNavigation";
+import { CURRENT_CHIP_SELECTOR, chatSwitchNavigation } from "./chatChipNavigation";
 import type { ChatChip } from "./chatChipRows";
 import { markChatSwitched } from "./chatChipHandoff";
 import { composerHasFocus, requestComposerRefocus } from "./composerRefocus";
@@ -99,7 +99,7 @@ export function ChatChips({
   useLayoutEffect(() => {
     const row = rowRef.current;
     if (row === null) return;
-    const target = row.querySelector<HTMLElement>('[aria-current="page"]');
+    const target = row.querySelector<HTMLElement>(CURRENT_CHIP_SELECTOR);
     if (target !== null && typeof row.scrollTo === "function") {
       const left = target.offsetLeft - (row.clientWidth - target.offsetWidth) / 2;
       row.scrollTo({
@@ -206,6 +206,10 @@ export function ChatChips({
         <Link
           to="/bots/$botId"
           params={{ botId }}
+          // The router marks a link active (data-status, aria-current="page") when its path
+          // is a prefix of the location, and /bots/<id> prefixes every chat of the bot. Exact
+          // keeps the row's one aria-current on the open chat's chip, which centring reads.
+          activeOptions={{ exact: true }}
           data-chip-item=""
           aria-label={`All chats with ${botName}, ${openCount} open`}
           tabIndex={tabbableId === "all" ? 0 : -1}

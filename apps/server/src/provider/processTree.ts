@@ -21,6 +21,8 @@
  * @module provider/processTree
  */
 import { execFile } from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import * as Effect from "effect/Effect";
 
@@ -94,6 +96,37 @@ const run = (file: string, args: ReadonlyArray<string>, timeoutMs: number) =>
     },
   );
 
+type RunFn = typeof run;
+
+export interface WindowsToolDeps {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly exists?: (path: string) => boolean;
+}
+
+/**
+ * A Windows system tool by its full path under `%SystemRoot%\System32`, so a
+ * server started with a trimmed PATH still finds it (a Chrome launch from a
+ * service-like parent has had no `powershell.exe` on PATH). When the file is
+ * not there, the bare name, which is what the callers used before.
+ */
+export function resolveWindowsSystemTool(
+  segments: ReadonlyArray<string>,
+  deps: WindowsToolDeps = {},
+): string {
+  const env = deps.env ?? process.env;
+  const exists = deps.exists ?? NodeFS.existsSync;
+  const root = env.SystemRoot?.trim() || env.windir?.trim() || "C:\\Windows";
+  const full = NodePath.win32.join(root, "System32", ...segments);
+  return exists(full) ? full : segments[segments.length - 1]!;
+}
+
+/** The one place the server's own process listing finds `powershell.exe`. */
+export const resolveWindowsPowerShell = (deps?: WindowsToolDeps): string =>
+  resolveWindowsSystemTool(["WindowsPowerShell", "v1.0", "powershell.exe"], deps);
+
+export const resolveWindowsTaskkill = (deps?: WindowsToolDeps): string =>
+  resolveWindowsSystemTool(["taskkill.exe"], deps);
+
 /** `pid ppid createdFileTimeUtc name` per line (Windows). */
 const WINDOWS_SNAPSHOT_SCRIPT =
   "Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate,Name | " +
@@ -134,26 +167,29 @@ export function parsePosixSnapshot(text: string): ProcessEntry[] {
 }
 
 /** Every live process, or null when the platform's process list could not be read. */
-export async function listProcesses(): Promise<ProcessEntry[] | null> {
-  if (process.platform === "win32") {
-    const result = await run(
-      "powershell.exe",
+export async function listProcesses(
+  deps: WindowsToolDeps & { readonly platform?: NodeJS.Platform; readonly run?: RunFn } = {},
+): Promise<ProcessEntry[] | null> {
+  const exec = deps.run ?? run;
+  if ((deps.platform ?? process.platform) === "win32") {
+    const result = await exec(
+      resolveWindowsPowerShell(deps),
       ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_SNAPSHOT_SCRIPT],
       30_000,
     );
     return result.code === 0 ? parseWindowsSnapshot(result.stdout) : null;
   }
-  const result = await run("ps", ["-A", "-o", "pid=,ppid=,comm="], 15_000);
+  const result = await exec("ps", ["-A", "-o", "pid=,ppid=,comm="], 15_000);
   return result.code === 0 ? parsePosixSnapshot(result.stdout) : null;
 }
 
-const snapshotProcesses = Effect.promise(listProcesses);
+const snapshotProcesses = Effect.promise(() => listProcesses());
 
 const killOne = (pid: number) =>
   Effect.promise(async (): Promise<boolean> => {
     if (process.platform === "win32") {
       // By PID, without /T: the tree was already walked with the reuse guard.
-      const result = await run("taskkill.exe", ["/PID", String(pid), "/F"], 15_000);
+      const result = await run(resolveWindowsTaskkill(), ["/PID", String(pid), "/F"], 15_000);
       return result.code === 0;
     }
     try {
