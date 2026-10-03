@@ -39,3 +39,16 @@ An older client that sends no acknowledgements is held only by the socket backlo
 ## For QA
 
 On the real phone, take control of the shared browser and scroll a long page; compare with 1.60.30. Taps and scrolls should answer within a fraction of a second and the picture should never freeze and then fast-forward. Check a read-only session (watching while a bot drives) still updates, the password-form `FramesHidden` notice still appears while a bot fills a login, and the view still resumes after backgrounding the app for a while.
+
+## 1.60.32: stale focus reports no longer close the phone keyboard (QA NO-SHIP on 1.60.31)
+
+QA found: tap a button, then at once a text field, then type. The button's "no field" `FocusChanged(false)` arrives after the field tap and `ComputerScreen.onFocusChanged` blurs the keyboard, so typed text is dropped (1 of 3 characters in one run). It is not new with the pacing: the handler blurred on any `editable=false`, whenever it arrived, in 1.60.30 too. The pacing only changed reply timing (QA's 1.60.30 runs happened to get the replies in order). The server also had a second source: the button's delayed second look (250 ms later) could report after the field tap.
+
+Fix: the phone numbers every focus-moving input (a tap, Tab, Enter; on the Computer tab a click or button release, any key, text with a newline) with `seq`, and the server echoes it on the `FocusChanged` that answers it.
+
+- `focusReplyGuard.ts` (web): `issue()` numbers an input; `accept(seq)` is false for a report older than the newest input sent or than one already applied. A report with no `seq` (older server) is always acted on. `viewportClient.ts` (shared browser) and `desktopViewClient.ts` (Computer tab) both use it, so `ComputerScreen` and `DesktopPane` only hear current reports.
+- Server, shared browser: `reportFocus` echoes `seq`, and the delayed second look is dropped when a newer focus-moving input arrived from that viewer. Server, Computer tab: `checkFocus` echoes `seq` (its older-look dropping by generation stays).
+- Contracts: optional `seq` on browser `Pointer`/`Key` and `FocusChanged`, on desktop `Pointer`/`Keys`/`Text` and `FocusChanged`; `personalBrowserInputMovesFocus` and `personalDesktopInputMovesFocus` (the server's `movesFocus` now calls the second) are the one definition of which inputs get a number. Older clients and servers ignore the extra field and behave as before.
+- Tests: `focusReplyGuard.test.ts`; `viewportClient.test.ts` and `desktopViewClient.test.ts` (button then field: the late false is ignored, a straggler after the newer answer too); `PersonalBrowser.test.ts` (tap numbers echoed, the older tap's second look says nothing); desktop `routes.test.ts` (click echoes its number).
+
+For QA: repeat the 600 kB/s repro (Hit, then Sample text field at once, type three characters, repeat) and assert both the characters and that the keyboard proxy keeps focus; then a tap on a plain button alone still lowers the keyboard.

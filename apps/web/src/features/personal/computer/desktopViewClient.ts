@@ -1,6 +1,7 @@
 import {
   decodePersonalBrowserFrame,
   decodePersonalDesktopFrame,
+  personalDesktopInputMovesFocus,
   PersonalDesktopViewInput,
   PersonalDesktopViewMessage,
   type PersonalDesktopViewRegion,
@@ -8,6 +9,8 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+
+import { createFocusReplyGuard } from "./focusReplyGuard";
 
 const encodeInput = Schema.encodeSync(Schema.fromJsonString(PersonalDesktopViewInput));
 const decodeMessage = Schema.decodeUnknownOption(Schema.fromJsonString(PersonalDesktopViewMessage));
@@ -97,8 +100,18 @@ export function connectDesktopView(
     region?: PersonalDesktopViewRegion;
   } | null = null;
 
+  const focusGuard = createFocusReplyGuard();
+
   const send = (message: PersonalDesktopViewInput) => {
-    if (!closed && socket.readyState === WebSocket.OPEN) socket.send(encodeInput(message));
+    if (closed || socket.readyState !== WebSocket.OPEN) return;
+    // The server echoes the number on the focus report that answers this input.
+    socket.send(
+      encodeInput(
+        personalDesktopInputMovesFocus(message)
+          ? ({ ...message, seq: focusGuard.issue() } as PersonalDesktopViewInput)
+          : message,
+      ),
+    );
   };
 
   socket.addEventListener("open", () => {
@@ -123,7 +136,8 @@ export function connectDesktopView(
           return;
         case "FocusChanged": {
           const { _tag: _, ...focus } = message;
-          callbacks.onFocus?.(focus);
+          // A reply to an earlier click must not undo what a newer one did.
+          if (focusGuard.accept(focus.seq)) callbacks.onFocus?.(focus);
           return;
         }
         case "EditableRegions":

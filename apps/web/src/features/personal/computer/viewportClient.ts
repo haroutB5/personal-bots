@@ -1,11 +1,14 @@
 import {
   decodePersonalBrowserFrame,
+  personalBrowserInputMovesFocus,
   PersonalBrowserInputMessage,
   PersonalBrowserViewerMessage,
   type PersonalBrowserFrameMeta,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+
+import { createFocusReplyGuard } from "./focusReplyGuard";
 
 const encodeInput = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserInputMessage));
 const FRAME_ACK = encodeInput({ _tag: "FrameAck" });
@@ -50,6 +53,7 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
   let decoding = false;
   // Set once the server asks for them; an older server would reject the message.
   let acknowledgeFrames = false;
+  const focusGuard = createFocusReplyGuard();
   let queued: { readonly jpeg: Uint8Array; readonly meta: PersonalBrowserFrameMeta } | null = null;
 
   const pump = () => {
@@ -85,7 +89,10 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
           callbacks.onHidden(message.value.reason);
           return;
         case "FocusChanged":
-          callbacks.onFocusChanged(message.value.editable, message.value.field);
+          // A reply to an earlier tap must not undo what a newer tap did.
+          if (focusGuard.accept(message.value.seq)) {
+            callbacks.onFocusChanged(message.value.editable, message.value.field);
+          }
           return;
         default:
           callbacks.onRejected(message.value.reason);
@@ -109,7 +116,15 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
 
   return {
     send: (message) => {
-      if (socket.readyState === WebSocket.OPEN) socket.send(encodeInput(message));
+      if (socket.readyState !== WebSocket.OPEN) return;
+      // The server echoes the number on the focus report that answers this input.
+      socket.send(
+        encodeInput(
+          personalBrowserInputMovesFocus(message)
+            ? ({ ...message, seq: focusGuard.issue() } as PersonalBrowserInputMessage)
+            : message,
+        ),
+      );
     },
     close: () => {
       closed = true;

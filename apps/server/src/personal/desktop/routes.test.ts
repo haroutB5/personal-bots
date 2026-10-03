@@ -369,6 +369,21 @@ describe("personal desktop live view socket", () => {
     expect(socket.sent).toHaveLength(before);
   });
 
+  it("answers a click with the number it carried, so the app can tell which one", async () => {
+    const socket = socketFixture({ focus: () => Promise.resolve({ editable: false }) });
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    socket.handler.handle(json({ _tag: "Control", on: true }));
+    await wait(20);
+    const before = socket.sent.length;
+    socket.handler.handle(json({ _tag: "Pointer", action: "click", ...point, seq: 7 }));
+    await wait(40);
+    expect(socket.sent.slice(before)).toEqual([{ _tag: "FocusChanged", editable: false, seq: 7 }]);
+    // A client that numbers nothing is answered as before.
+    socket.handler.handle(json({ _tag: "Keys", keys: "tab" }));
+    await wait(40);
+    expect(socket.sent.at(-1)).toEqual({ _tag: "FocusChanged", editable: false });
+  });
+
   it("drops an older look's answer when a newer click asks again", async () => {
     const answers: Array<(focus: RemoteFocus) => void> = [];
     const socket = socketFixture({

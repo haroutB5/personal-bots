@@ -93,6 +93,10 @@ const DesktopFrameCoordinate = Schema.Finite.check(Schema.isGreaterThanOrEqualTo
   Schema.isLessThanOrEqualTo(20_000),
 );
 const DesktopMouseButton = Schema.Literals(["left", "right", "middle"]);
+/** Numbers a focus-moving input; the server echoes it on the `FocusChanged` that answers it. */
+const FocusSeq = Schema.optional(
+  Schema.Finite.check(Schema.isGreaterThanOrEqualTo(1)).check(Schema.isLessThanOrEqualTo(2 ** 31)),
+);
 /** Modifier keys a remote click may hold (the special-keys row's sticky modifiers). */
 export const PersonalDesktopModifier = Schema.Literals(["ctrl", "alt", "shift", "win"]);
 export type PersonalDesktopModifier = typeof PersonalDesktopModifier.Type;
@@ -165,6 +169,7 @@ export const PersonalDesktopViewInput = Schema.Union([
   Schema.TaggedStruct("Pointer", {
     action: Schema.Literals(["move", "down", "up", "click"]),
     ...FramePoint,
+    seq: FocusSeq,
     button: Schema.optional(DesktopMouseButton),
     count: Schema.optional(Schema.Literals([1, 2])),
     modifiers: Schema.optional(Schema.Array(PersonalDesktopModifier).check(Schema.isMaxLength(4))),
@@ -180,15 +185,35 @@ export const PersonalDesktopViewInput = Schema.Union([
    */
   Schema.TaggedStruct("Keys", {
     keys: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(48)),
+    seq: FocusSeq,
   }),
   /** Text typed as Unicode characters; a newline presses Enter. */
   Schema.TaggedStruct("Text", {
     text: Schema.String.check(Schema.isNonEmpty()).check(
       Schema.isMaxLength(PERSONAL_DESKTOP_REMOTE_TEXT_MAX),
     ),
+    seq: FocusSeq,
   }),
 ]);
 export type PersonalDesktopViewInput = typeof PersonalDesktopViewInput.Type;
+
+/**
+ * Could this input have moved keyboard focus? A click or button release
+ * (tap, mouse), any key (Tab, Enter, Esc, Alt+Tab, Win), and text with a
+ * newline (Enter submits a form or opens a result). These carry `seq`.
+ */
+export function personalDesktopInputMovesFocus(input: PersonalDesktopViewInput): boolean {
+  switch (input._tag) {
+    case "Pointer":
+      return input.action === "click" || input.action === "up";
+    case "Keys":
+      return true;
+    case "Text":
+      return input.text.includes("\n");
+    default:
+      return false;
+  }
+}
 
 export const PersonalDesktopViewState = Schema.Literals(["live", "locked", "unavailable"]);
 export type PersonalDesktopViewState = typeof PersonalDesktopViewState.Type;
@@ -225,6 +250,8 @@ export const PersonalDesktopViewMessage = Schema.Union([
     editable: Schema.Boolean,
     password: Schema.optional(Schema.Boolean),
     rect: Schema.optional(PersonalDesktopViewRegion),
+    /** The `seq` of the input this answers, so a late reply never undoes a newer one. */
+    seq: FocusSeq,
   }),
   /** Editable geometry before a tap, in monitor fractions, independent of stream scale/zoom. */
   Schema.TaggedStruct("EditableRegions", {

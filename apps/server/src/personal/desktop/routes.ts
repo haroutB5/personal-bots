@@ -124,10 +124,11 @@ export function makeDesktopSocketHandler(
     look();
   };
 
-  const sendFocus = (focus: RemoteFocus) => {
+  const sendFocus = (focus: RemoteFocus, seq: number | undefined) => {
     send({
       _tag: "FocusChanged",
       editable: focus.editable,
+      ...(seq === undefined ? {} : { seq }),
       ...(focus.password === true ? { password: true } : {}),
       ...(focus.rect === undefined ? {} : { rect: focus.rect }),
     });
@@ -137,7 +138,7 @@ export function makeDesktopSocketHandler(
    * Tells the controlling app whether focus is now in a text field. A look
    * that fails says nothing: the app keeps what it had rather than guess.
    */
-  const checkFocus = (current: RemoteControlSession) => {
+  const checkFocus = (current: RemoteControlSession, seq?: number) => {
     const probe = current.focus;
     if (probe === undefined) return;
     const generation = ++focusGeneration;
@@ -153,7 +154,7 @@ export function makeDesktopSocketHandler(
             focusTimer = setTimeout(() => look(true), focusCheckMs.again);
             return;
           }
-          sendFocus(focus);
+          sendFocus(focus, seq);
         },
         () => undefined,
       );
@@ -280,7 +281,9 @@ export function makeDesktopSocketHandler(
       current.input(message).then(
         () => {
           viewer.nudge();
-          if (movesFocus(message)) checkFocus(current);
+          if (movesFocus(message)) {
+            checkFocus(current, message._tag === "Scroll" ? undefined : message.seq);
+          }
         },
         (error: unknown) => {
           if (closed || droppable) return;

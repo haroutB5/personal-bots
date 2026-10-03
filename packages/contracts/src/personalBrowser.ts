@@ -165,6 +165,15 @@ export const PERSONAL_BROWSER_FILES_ROUTE_PREFIX = "/api/personal/browser/files"
 const ViewportCoordinate = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(-10_000)).check(
   Schema.isLessThanOrEqualTo(100_000),
 );
+/**
+ * Which focus-moving input a `FocusChanged` answers. The phone numbers its taps
+ * and Tab/Enter presses and the server echoes the number back, so a slow reply
+ * to an earlier tap can never undo what a later tap did. Absent from older
+ * clients and servers, which then behave as before.
+ */
+const FocusSeq = Schema.optional(
+  Schema.Finite.check(Schema.isGreaterThanOrEqualTo(1)).check(Schema.isLessThanOrEqualTo(2 ** 31)),
+);
 const InputModifiers = Schema.optional(
   Schema.Array(Schema.Literals(["Alt", "Control", "Meta", "Shift"])),
 );
@@ -207,6 +216,7 @@ export const PersonalBrowserInputMessage = Schema.Union([
     action: Schema.Literals(["tap", "move", "down", "up"]),
     x: ViewportCoordinate,
     y: ViewportCoordinate,
+    seq: FocusSeq,
   }),
   Schema.TaggedStruct("Wheel", {
     x: ViewportCoordinate,
@@ -217,6 +227,7 @@ export const PersonalBrowserInputMessage = Schema.Union([
   Schema.TaggedStruct("Key", {
     key: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(32)),
     modifiers: InputModifiers,
+    seq: FocusSeq,
   }),
   Schema.TaggedStruct("InsertText", {
     text: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(4000)),
@@ -250,6 +261,20 @@ export const PersonalBrowserInputMessage = Schema.Union([
   Schema.TaggedStruct("FrameAck", {}),
 ]);
 export type PersonalBrowserInputMessage = typeof PersonalBrowserInputMessage.Type;
+
+/**
+ * Inputs after which the server reports where focus ended up: a tap, and Tab or
+ * Enter (the next field, or off the form it submitted). These carry `seq`.
+ */
+export function personalBrowserInputMovesFocus(message: PersonalBrowserInputMessage): boolean {
+  if (message._tag === "Pointer") return message.action === "tap";
+  if (message._tag === "Key") {
+    return (
+      (message.key === "Tab" || message.key === "Enter") && (message.modifiers?.length ?? 0) <= 1
+    );
+  }
+  return false;
+}
 
 /** Server -> client JSON text messages; binary messages are viewport frames. */
 export const PersonalBrowserViewerMessage = Schema.Union([
@@ -285,6 +310,8 @@ export const PersonalBrowserViewerMessage = Schema.Union([
     field: Schema.optional(
       Schema.Literals(["text", "email", "numeric", "decimal", "tel", "url", "search", "password"]),
     ),
+    /** The `seq` of the input this answers, when it carried one. */
+    seq: FocusSeq,
   }),
 ]);
 export type PersonalBrowserViewerMessage = typeof PersonalBrowserViewerMessage.Type;

@@ -18,6 +18,7 @@ import {
   encodePersonalBrowserFrame,
   PERSONAL_TASK_TERMINAL_STATUSES,
   PersonalBrowserError,
+  personalBrowserInputMovesFocus,
   PersonalBrowserInputMessage,
   PersonalBrowserViewerMessage,
   PersonalTaskStatus,
@@ -2475,7 +2476,10 @@ export const make = (options: PersonalBrowserOptions) =>
         catch: (cause) => classifyPageError(cause),
       }).pipe(Effect.option);
 
-    const offerFocus = (viewer: ViewerHandle, probed: unknown) => {
+    /** The newest focus-moving input each viewer sent: an older input's late look is dropped. */
+    const focusInputs = new WeakMap<ViewerHandle, number>();
+
+    const offerFocus = (viewer: ViewerHandle, probed: unknown, seq: number | undefined) => {
       const field = typeof probed === "string" && PHONE_FIELDS.has(probed) ? probed : undefined;
       const editable = field !== undefined || probed === true;
       return Queue.offer(
@@ -2484,6 +2488,7 @@ export const make = (options: PersonalBrowserOptions) =>
           _tag: "FocusChanged",
           editable,
           ...(field === undefined ? {} : { field }),
+          ...(seq === undefined ? {} : { seq }),
         }),
       ).pipe(Effect.asVoid);
     };
@@ -2495,17 +2500,21 @@ export const make = (options: PersonalBrowserOptions) =>
      * is only said after a second look, off the input path, so a page that
      * focuses its field a beat late keeps the keyboard the tap raised.
      */
-    const reportFocus = (viewer: ViewerHandle, page: BrowserPage) =>
+    const reportFocus = (viewer: ViewerHandle, page: BrowserPage, seq: number | undefined) =>
       Effect.gen(function* () {
+        const mine = (focusInputs.get(viewer) ?? 0) + 1;
+        focusInputs.set(viewer, mine);
         const probed = yield* probeFocus(page);
         if (Option.isNone(probed)) return;
-        if (probed.value !== false) return yield* offerFocus(viewer, probed.value);
+        if (probed.value !== false) return yield* offerFocus(viewer, probed.value, seq);
         runFork(
           Effect.gen(function* () {
             yield* Effect.sleep(FOCUS_RECHECK_MS);
             if (page.isClosed() || page.pendingDialog() !== null) return;
+            // A newer tap or key has taken over; its own look speaks for focus now.
+            if (focusInputs.get(viewer) !== mine) return;
             const again = yield* probeFocus(page);
-            if (Option.isSome(again)) yield* offerFocus(viewer, again.value);
+            if (Option.isSome(again)) yield* offerFocus(viewer, again.value, seq);
           }),
         );
       });
@@ -2622,14 +2631,11 @@ export const make = (options: PersonalBrowserOptions) =>
         }
         // A tap is what the phone raises its own keyboard for; Tab and Enter
         // move focus on (the next field, or off the form it submitted).
-        const movesFocus =
-          (message._tag === "Pointer" && message.action === "tap") ||
-          (message._tag === "Key" &&
-            (message.key === "Tab" || message.key === "Enter") &&
-            (message.modifiers?.length ?? 0) <= 1);
-        if (movesFocus) {
+        if (personalBrowserInputMovesFocus(message)) {
           if (page.pendingDialog() !== null) return yield* notify;
-          yield* reportFocus(viewer, page);
+          const seq =
+            message._tag === "Pointer" || message._tag === "Key" ? message.seq : undefined;
+          yield* reportFocus(viewer, page, seq);
         }
       });
 

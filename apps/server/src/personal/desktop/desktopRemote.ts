@@ -10,7 +10,11 @@
  * the input as the remote user's (neither a bot's nor the person at the PC's)
  * and skip the "wait for the user to stop typing" pause bots get.
  */
-import type { PersonalDesktopModifier, PersonalDesktopViewInput } from "@t3tools/contracts";
+import {
+  personalDesktopInputMovesFocus,
+  type PersonalDesktopModifier,
+  type PersonalDesktopViewInput,
+} from "@t3tools/contracts";
 
 import { type DesktopRect, type ScreenFrame, toPhysical } from "./desktopGeometry.ts";
 import { DesktopKeyError, parseKeyCombos } from "./desktopKeys.ts";
@@ -240,14 +244,5 @@ export function editableRegionsReport(
  * newline (Enter submits a form or opens a result).
  */
 export function movesFocus(input: RemoteDesktopInput): boolean {
-  switch (input._tag) {
-    case "Pointer":
-      return input.action === "click" || input.action === "up";
-    case "Keys":
-      return true;
-    case "Text":
-      return input.text.includes("\n");
-    case "Scroll":
-      return false;
-  }
+  return personalDesktopInputMovesFocus(input);
 }

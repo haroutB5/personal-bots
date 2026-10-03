@@ -985,6 +985,59 @@ describe("PersonalBrowser", () => {
     }).pipe(Effect.provide(makeLayer(fake.driver)));
   });
 
+  // Tap a button, then at once a text field. The button's "no field" look runs a
+  // beat later; if it spoke after the field's answer it would put the keyboard down.
+  it.effect("answers a tap with its own number and drops an older tap's late look", () => {
+    const fake = makeFakeDriver();
+    return Effect.gen(function* () {
+      const browser = yield* PersonalBrowser.PersonalBrowser;
+      yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+      yield* browser.takeControl("session-1");
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const viewer = yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+          const tap = (seq?: number) =>
+            browser.handleViewerMessage(
+              viewer,
+              encodeInput({
+                _tag: "Pointer",
+                action: "tap",
+                x: 10,
+                y: 20,
+                ...(seq === undefined ? {} : { seq }),
+              }),
+            );
+          let focused: unknown = false;
+          fake.state.page.evaluateImpl = (expression) =>
+            Promise.resolve(expression.includes("activeElement") ? focused : null);
+
+          // The button tap finds no field yet, so its answer waits for a second look.
+          yield* tap(1);
+          expect(yield* Queue.size(viewer.outbox)).toBe(0);
+          // The field tap lands at once and is answered at once, with its number.
+          focused = "text";
+          yield* tap(2);
+          expect(yield* Queue.take(viewer.outbox)).toBe(
+            encodeViewer({ _tag: "FocusChanged", editable: true, field: "text", seq: 2 }),
+          );
+          // The button's second look finds a field too, but says nothing: a newer
+          // tap speaks for focus now.
+          yield* TestClock.adjust("250 millis");
+          expect(yield* Queue.size(viewer.outbox)).toBe(0);
+
+          // Without a newer tap the second look is still told, with its own number.
+          focused = false;
+          yield* tap(3);
+          focused = "search";
+          yield* TestClock.adjust("250 millis");
+          expect(yield* Queue.take(viewer.outbox)).toBe(
+            encodeViewer({ _tag: "FocusChanged", editable: true, field: "search", seq: 3 }),
+          );
+        }),
+      );
+    }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
   it.effect("records the agent's page so a later restart can reopen it", () => {
     const fake = makeFakeDriver();
     return Effect.gen(function* () {

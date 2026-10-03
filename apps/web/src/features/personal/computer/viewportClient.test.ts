@@ -31,7 +31,7 @@ class FakeSocket {
 const connect = () => {
   const calls = { rejected: [] as string[], hidden: [] as string[], focus: [] as boolean[] };
   vi.stubGlobal("WebSocket", FakeSocket);
-  connectViewport("ws://laptop/stream", {
+  const client = connectViewport("ws://laptop/stream", {
     onOpen: () => {},
     onFrame: () => {},
     onRejected: (reason) => calls.rejected.push(reason),
@@ -39,7 +39,7 @@ const connect = () => {
     onFocusChanged: (editable) => calls.focus.push(editable),
     onClosed: () => {},
   });
-  return { calls, socket: FakeSocket.last! };
+  return { calls, client, socket: FakeSocket.last! };
 };
 
 afterEach(() => {
@@ -76,6 +76,56 @@ describe("viewport client messages", () => {
   // The server paces frames by these replies, but only once it has asked for
   // them: a server from before this release would answer one with an input
   // rejection for every frame.
+  // A tap on a button is answered "no field" a beat later. If the next tap lands
+  // on a text field first, that late answer must not put the keyboard down.
+  describe("focus reports and taps", () => {
+    const tapAt = (x: number) => ({ _tag: "Pointer", action: "tap", x, y: 10 }) as const;
+
+    it("numbers each tap, and Tab or Enter, but not other input", () => {
+      const { client, socket } = connect();
+
+      client.send(tapAt(1));
+      client.send({ _tag: "Key", key: "Tab" });
+      client.send({ _tag: "Key", key: "a" });
+      client.send({ _tag: "Wheel", x: 1, y: 1, deltaX: 0, deltaY: 5 });
+      client.send(tapAt(2));
+
+      expect(socket.sent.map((text) => JSON.parse(text).seq)).toEqual([
+        1,
+        2,
+        undefined,
+        undefined,
+        3,
+      ]);
+    });
+
+    it("ignores the late answer to a button tap once a field was tapped", () => {
+      const { calls, client, socket } = connect();
+
+      client.send(tapAt(1));
+      client.send(tapAt(2));
+      socket.receive('{"_tag":"FocusChanged","editable":false,"seq":1}');
+      expect(calls.focus).toEqual([]);
+
+      socket.receive('{"_tag":"FocusChanged","editable":true,"field":"text","seq":2}');
+      expect(calls.focus).toEqual([true]);
+      // Even a straggler that arrives after the newer answer.
+      socket.receive('{"_tag":"FocusChanged","editable":false,"seq":1}');
+      expect(calls.focus).toEqual([true]);
+    });
+
+    it("acts on an answer when nothing newer was sent, and on one with no number", () => {
+      const { calls, client, socket } = connect();
+
+      client.send(tapAt(1));
+      socket.receive('{"_tag":"FocusChanged","editable":false,"seq":1}');
+      client.send(tapAt(2));
+      socket.receive('{"_tag":"FocusChanged","editable":false}');
+
+      expect(calls.focus).toEqual([false, false]);
+    });
+  });
+
   describe("frame acknowledgements", () => {
     const frame = () =>
       encodePersonalBrowserFrame(new Uint8Array([1, 2, 3]), {

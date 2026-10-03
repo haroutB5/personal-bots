@@ -212,4 +212,35 @@ describe("desktop live view client", () => {
       [{ editable: false }],
     ]);
   });
+
+  // Click a button, then at once a text field: the button's late "no field" report
+  // must not close the keyboard the field click opened.
+  it("numbers focus-moving input and ignores a late report for an older click", () => {
+    const { socket, callbacks, client } = setup(() => Promise.resolve(bitmap()));
+    socket.open();
+    client.send({
+      _tag: "Pointer",
+      action: "click",
+      x: 10,
+      y: 10,
+      frameWidth: 640,
+      frameHeight: 400,
+    });
+    client.send({
+      _tag: "Scroll",
+      x: 10,
+      y: 10,
+      frameWidth: 640,
+      frameHeight: 400,
+      deltaX: 0,
+      deltaY: 120,
+    });
+    client.send({ _tag: "Keys", keys: "enter" });
+    expect(socket.sent.map((text) => JSON.parse(text).seq)).toEqual([1, undefined, 2]);
+
+    socket.emit("message", JSON.stringify({ _tag: "FocusChanged", editable: false, seq: 1 }));
+    expect(callbacks.onFocus).not.toHaveBeenCalled();
+    socket.emit("message", JSON.stringify({ _tag: "FocusChanged", editable: true, seq: 2 }));
+    expect(callbacks.onFocus).toHaveBeenCalledTimes(1);
+  });
 });
