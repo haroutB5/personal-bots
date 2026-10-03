@@ -20,6 +20,13 @@ const state = vi.hoisted(() => ({
   retry: (() => {}) as (...args: unknown[]) => unknown,
   sendWrapup: (() => {}) as (...args: unknown[]) => unknown,
   startNewChat: (() => {}) as (...args: unknown[]) => unknown,
+  chipModel: null as null | {
+    chips: Array<{ threadId: string; text: string; current: boolean }>;
+    openCount: number;
+    visible: boolean;
+    turnsKey: string;
+  },
+  renamed: [] as Array<[string, string]>,
 }));
 
 const ARCHIVE_COMMAND = vi.hoisted(() => ({ name: "personalBotArchiveThread" }));
@@ -77,6 +84,7 @@ vi.mock("~/state/entities", () => ({
   useProject: () => null,
   useThreadDetail: () => state.thread,
   useThreadShell: () => state.shell,
+  useThreadShells: () => [],
   useThreadStatus: () => "ready",
 }));
 vi.mock("~/state/server", () => ({ primaryServerProvidersAtom: {} }));
@@ -107,6 +115,37 @@ vi.mock("./BotMute", () => ({
 }));
 vi.mock("./ConversationHeaderName", () => ({
   ConversationHeaderName: ({ name }: { name: string }) => <h1>{name}</h1>,
+  ConversationHeaderLine: ({ name }: { name: string }) => <h1 data-header-line="">{name}</h1>,
+}));
+vi.mock("./usePersonalGroups", () => ({ usePersonalGroupRelayThreadIds: () => new Set() }));
+vi.mock("./chatChipRows", () => ({ buildChatChips: () => state.chipModel }));
+vi.mock("./ChatChips", () => ({
+  ChatChips: ({
+    chips,
+    openCount,
+    onNewChat,
+  }: {
+    chips: Array<{ threadId: string; text: string }>;
+    openCount: number;
+    onNewChat: () => void;
+  }) => (
+    <nav data-chips={openCount}>
+      {chips.map((chip) => (
+        <span key={chip.threadId}>{chip.text}</span>
+      ))}
+      <button type="button" onClick={onNewChat}>
+        plus
+      </button>
+    </nav>
+  ),
+}));
+vi.mock("./NewChatDialog", () => ({
+  NewChatDialog: ({ open, onStart }: { open: boolean; onStart: (title: string) => void }) =>
+    open ? (
+      <button type="button" onClick={() => onStart("  Plan B  ")}>
+        start named
+      </button>
+    ) : null,
 }));
 vi.mock("./ConversationSubtitle", () => ({ ConversationSubtitle: () => null }));
 vi.mock("./botMuteModel", () => ({ botMuteState: () => ({ muted: false }) }));
@@ -278,7 +317,11 @@ vi.mock("./RenameChatDialog", () => ({ RenameChatDialog: () => null }));
 vi.mock("./pendingOutgoing", () => ({ pendingForThread: () => [] }));
 vi.mock("./renameChat", () => ({
   renameChatInitialTitle: (title: string | undefined) => title ?? "",
-  useRenameChat: () => async () => true,
+  renameChatDraftTitle: (draft: string) => (draft.trim() === "" ? null : draft.trim()),
+  useRenameChat: () => async (threadId: string, title: string) => {
+    state.renamed.push([threadId, title]);
+    return null;
+  },
 }));
 vi.mock("./retryFailedTurn", () => ({
   findRetryTarget: () => null,
@@ -319,6 +362,8 @@ beforeEach(() => {
   state.retry = vi.fn(async () => true);
   state.sendWrapup = vi.fn(async () => true);
   state.startNewChat = vi.fn(async () => undefined);
+  state.chipModel = null;
+  state.renamed = [];
   state.prewarm = [];
   state.viewing = [];
   state.messageListProps = [];
@@ -508,4 +553,60 @@ it("an open chat keeps its composer, Retry and session prewarm", async () => {
   expect(buttonsLabelled("Unarchive chat")).toHaveLength(0);
   expect(buttonsLabelled("Wrapup chat")[0]!.props.disabled).toBe(false);
   expect(renderer!.root.findAll((node) => node.props["data-routines"] === "")).toHaveLength(1);
+});
+
+const CHIPS = {
+  chips: [
+    { threadId: "thread-1", text: "Plans", current: true },
+    { threadId: "thread-2", text: "hbots", current: false },
+  ],
+  openCount: 2,
+  visible: true,
+  turnsKey: "",
+};
+
+function headerClass(): string {
+  const header = renderer!.root.findAll((node) => node.type === "header")[0];
+  return String(header!.props.className);
+}
+
+it("keeps the 64 px header and no chips with one chat", async () => {
+  state.chipModel = { ...CHIPS, chips: CHIPS.chips.slice(0, 1), openCount: 1, visible: false };
+  await renderScreen();
+  expect(headerClass()).toContain("h-16");
+  expect(headerClass()).not.toContain("h-[72px]");
+  expect(renderer!.root.findAll((node) => node.props["data-chips"] !== undefined)).toHaveLength(0);
+  expect(renderer!.root.findAll((node) => node.props["data-header-line"] === "")).toHaveLength(0);
+});
+
+it("takes the 72 px header and shows the chips from two chats", async () => {
+  state.chipModel = CHIPS;
+  await renderScreen();
+  expect(headerClass()).toContain("h-[72px]");
+  expect(headerClass()).not.toContain("h-16");
+  expect(renderer!.root.findAll((node) => node.props["data-chips"] === 2)).toHaveLength(1);
+  // The name line carries the status now: the chat title lives in the chip.
+  expect(renderer!.root.findAll((node) => node.props["data-header-line"] === "")).toHaveLength(1);
+  expect(text()).toContain("hbots");
+});
+
+it("+ opens the name sheet and Start chat creates it, replacing history and naming it", async () => {
+  state.chipModel = CHIPS;
+  await renderScreen();
+  await act(async () => {
+    buttonsLabelled("plus")[0]!.props.onClick();
+  });
+  await act(async () => {
+    buttonsLabelled("start named")[0]!.props.onClick();
+  });
+  expect(state.startNewChat).toHaveBeenCalledTimes(1);
+  const options = (state.startNewChat as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+    replace: boolean;
+    keepState: boolean;
+    onCreated: (threadId: string) => Promise<unknown>;
+  };
+  expect(options.replace).toBe(true);
+  expect(options.keepState).toBe(true);
+  await options.onCreated("new-thread");
+  expect(state.renamed).toEqual([["new-thread", "Plan B"]]);
 });

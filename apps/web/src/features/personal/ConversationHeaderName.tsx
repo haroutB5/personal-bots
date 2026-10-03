@@ -1,4 +1,4 @@
-import type { JSX } from "react";
+import type { JSX, ReactNode } from "react";
 
 import { MutedBell } from "./BotMute";
 
@@ -9,6 +9,22 @@ const UNTITLED_CHAT_TITLE = "New chat";
 export function conversationChatTitle(title: string | null | undefined): string | null {
   const trimmed = title?.trim() ?? "";
   return trimmed === "" || trimmed === UNTITLED_CHAT_TITLE ? null : trimmed;
+}
+
+/**
+ * The chat's context size, at every size. A quiet outlined chip, so it reads
+ * as a measure of the chat and not as a second, smaller word of the name.
+ */
+function contextBadgeElement(label: string): JSX.Element {
+  return (
+    <span
+      role="img"
+      aria-label={`Chat context ${label} tokens`}
+      className="shrink-0 rounded-full border border-[var(--personal-border-strong)] px-1.5 text-[11px] leading-[18px] font-medium tabular-nums text-[var(--personal-text-secondary)]"
+    >
+      {label}
+    </span>
+  );
 }
 
 /**
@@ -41,18 +57,7 @@ export function ConversationHeaderName({
           {title !== null ? <span className="sr-only">, chat {title}</span> : null}
         </h1>
         {muted ? <MutedBell size={16} className="-ml-0.5 shrink-0" /> : null}
-        {contextBadge !== null ? (
-          // The chat's context size, at every size. A quiet outlined chip, so it
-          // reads as a measure of the chat and not as a second, smaller word of
-          // the name.
-          <span
-            role="img"
-            aria-label={`Chat context ${contextBadge} tokens`}
-            className="shrink-0 rounded-full border border-[var(--personal-border-strong)] px-1.5 text-[11px] leading-[18px] font-medium tabular-nums text-[var(--personal-text-secondary)]"
-          >
-            {contextBadge}
-          </span>
-        ) : null}
+        {contextBadge !== null ? contextBadgeElement(contextBadge) : null}
       </span>
       {title !== null ? (
         <span
@@ -67,6 +72,43 @@ export function ConversationHeaderName({
           {title}
         </span>
       ) : null}
+    </span>
+  );
+}
+
+/**
+ * The first line of the header while the chat chips show (they take the
+ * second line, and the chat's own title becomes the highlighted chip): the
+ * bot name with its bell and context badge, then the state and model line
+ * (`children`, a ConversationSubtitle) on the same row. The status never
+ * truncates; the model label runs out first. The h1 keeps the chat's title
+ * for screen readers.
+ */
+export function ConversationHeaderLine({
+  name,
+  chatTitle,
+  muted,
+  contextBadge,
+  children,
+}: {
+  name: string;
+  chatTitle: string | null | undefined;
+  muted: boolean;
+  contextBadge: string | null;
+  children?: ReactNode;
+}): JSX.Element {
+  const title = conversationChatTitle(chatTitle);
+  return (
+    <span className="flex h-6 min-w-0 flex-1 items-center gap-2 overflow-hidden">
+      <span data-name-group="" className="flex max-w-full min-w-0 shrink-0 items-center gap-2">
+        <h1 className="min-w-0 truncate text-[19px] leading-6 font-bold text-[var(--personal-text)]">
+          {name}
+          {title !== null ? <span className="sr-only">, chat {title}</span> : null}
+        </h1>
+        {muted ? <MutedBell size={16} className="-ml-0.5 shrink-0" /> : null}
+        {contextBadge !== null ? contextBadgeElement(contextBadge) : null}
+      </span>
+      {children}
     </span>
   );
 }

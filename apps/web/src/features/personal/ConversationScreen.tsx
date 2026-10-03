@@ -39,7 +39,13 @@ import {
   deriveWorkLogEntries,
   type TimelineEntriesProjection,
 } from "~/session-logic";
-import { useProject, useThreadDetail, useThreadShell, useThreadStatus } from "~/state/entities";
+import {
+  useProject,
+  useThreadDetail,
+  useThreadShell,
+  useThreadShells,
+  useThreadStatus,
+} from "~/state/entities";
 import { primaryServerProvidersAtom } from "~/state/server";
 import {
   threadEnvironment,
@@ -57,7 +63,10 @@ import { ArchivedChatBar } from "./ArchivedChatBar";
 import { CHAT_PROBLEM_BUTTON, ChatLoadProblem } from "./ChatLoadProblem";
 import { threadLoadProblem } from "./threadLoadProblem";
 import { BotMuteMenuItems, useSetBotMute } from "./BotMute";
-import { ConversationHeaderName } from "./ConversationHeaderName";
+import { ChatChips } from "./ChatChips";
+import { buildChatChips } from "./chatChipRows";
+import { ConversationHeaderLine, ConversationHeaderName } from "./ConversationHeaderName";
+import { NewChatDialog } from "./NewChatDialog";
 import { ConversationSubtitle } from "./ConversationSubtitle";
 import { botMuteState } from "./botMuteModel";
 import { conversationHeaderStatus, resolveBotProvider, taskCardBotLine } from "./botSummaries";
@@ -119,7 +128,7 @@ import { setPersonalPreference, usePersonalPreference } from "./personalPreferen
 import { diagnosticsEnabled, DiagnosticsOverlay } from "./DiagnosticsOverlay";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { useReportViewingThread } from "./useReportViewingThread";
-import { useMarkChatSeen } from "./unreadChats";
+import { useChatSeenState, useMarkChatSeen, useRefetchOnTurnsSettled } from "./unreadChats";
 import { markMessageSent, observeChatMessages, reportChatUsable } from "./perfRum";
 import { warmHighlighterWhenIdle } from "./highlighterWarmup";
 import { PersonalComposer } from "./PersonalComposer";
@@ -140,9 +149,10 @@ import { useWrapupChat } from "./wrapupChat";
 import { useDeleteChat } from "./useDeleteChat";
 import { RenameChatDialog } from "./RenameChatDialog";
 import { pendingForThread } from "./pendingOutgoing";
-import { renameChatInitialTitle, useRenameChat } from "./renameChat";
+import { renameChatDraftTitle, renameChatInitialTitle, useRenameChat } from "./renameChat";
 import { findRetryTarget, useRetryFailedTurn } from "./retryFailedTurn";
 import { usePersonalBackTarget } from "./usePersonalBackTarget";
+import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -742,6 +752,52 @@ export function ConversationScreen({
   const [renameOpen, setRenameOpen] = useState(false);
   const chatTitle = threadShell?.title ?? thread?.title;
 
+  // Chat chips: the owner's other chats with this bot, one tap away in the
+  // header. They need two or more chips; with one chat the header stays as it was.
+  const allShells = useThreadShells();
+  const relayThreadIds = usePersonalGroupRelayThreadIds(environmentId);
+  const chatSeen = useChatSeenState();
+  const chipModel = useMemo(
+    () =>
+      list.data === null
+        ? null
+        : buildChatChips({
+            botId,
+            currentThreadId: threadIdParam,
+            links: list.data.threads,
+            shells: allShells.filter((shell) => shell.environmentId === environmentId),
+            relayThreadIds,
+            tasks,
+            waitingLabels,
+            seen: chatSeen,
+          }),
+    [
+      allShells,
+      botId,
+      chatSeen,
+      environmentId,
+      list.data,
+      relayThreadIds,
+      tasks,
+      threadIdParam,
+      waitingLabels,
+    ],
+  );
+  const chipsShown = bot !== null && chipModel !== null && chipModel.visible;
+  // Another chat finishing a turn lights its chip: refetch the list (it carries
+  // the unread flag), debounced, as the bot's chat list does.
+  useRefetchOnTurnsSettled(chipsShown ? chipModel.turnsKey : "", list.refresh);
+  const [newChatOpen, setNewChatOpen] = useState(false);
+  const onStartNamedChat = async (title: string) => {
+    const name = renameChatDraftTitle(title, "");
+    await startNewChat({
+      replace: true,
+      keepState: true,
+      ...(name === null ? {} : { onCreated: (newThreadId) => renameChat(newThreadId, name) }),
+    });
+    setNewChatOpen(false);
+  };
+
   const loadEarlier =
     environmentId !== null && threadHasOlderTurns(threadState)
       ? {
@@ -788,7 +844,12 @@ export function ConversationScreen({
       }}
     >
       {diagnosticsEnabled() ? <DiagnosticsOverlay /> : null}
-      <header className="personal-column flex h-16 shrink-0 items-center gap-3 px-2">
+      <header
+        className={cn(
+          "personal-column flex shrink-0 items-center gap-3 px-2",
+          chipsShown ? "h-[72px]" : "h-16",
+        )}
+      >
         {/* md+: the bot list is always beside the chat, so Back has nowhere to go. */}
         <Link
           to={backTarget.to}
@@ -797,7 +858,59 @@ export function ConversationScreen({
         >
           <ChevronLeft aria-hidden="true" className="size-6" strokeWidth={1.75} />
         </Link>
-        {bot !== null ? (
+        {bot !== null && chipsShown ? (
+          <>
+            {/* Chips on: the avatar and the first line are both Edit bot (the
+                avatar stays the full-size target), and the chips take line 2. */}
+            <Link
+              to="/bots/$botId/edit"
+              params={{ botId: bot.botId }}
+              aria-hidden="true"
+              tabIndex={-1}
+              className="shrink-0 rounded-full outline-none active:opacity-70"
+            >
+              <BotAvatar
+                shape={bot.avatarShape}
+                color={bot.avatarColor}
+                size={48}
+                label={bot.name}
+                motion={motionForConversationState(conversationState, turnThinking)}
+                comet={perfOptimizationOn("anim-comet")}
+                thought="header"
+              />
+            </Link>
+            <div className="flex h-full min-w-0 flex-1 flex-col">
+              <Link
+                to="/bots/$botId/edit"
+                params={{ botId: bot.botId }}
+                aria-label={`Edit ${bot.name}${botMuted ? ", notifications muted" : ""}`}
+                className="flex h-[31px] min-w-0 shrink-0 items-start rounded-[var(--personal-radius-button)] pt-[7px] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+              >
+                <ConversationHeaderLine
+                  name={bot.name}
+                  chatTitle={chatTitle}
+                  muted={botMuted}
+                  contextBadge={contextBadge}
+                >
+                  {provider !== null || conversationState !== "idle" ? (
+                    <ConversationSubtitle
+                      state={conversationState}
+                      modelLabel={headerModelLabel}
+                      status={headerStatus}
+                    />
+                  ) : null}
+                </ConversationHeaderLine>
+              </Link>
+              <ChatChips
+                botId={botId}
+                botName={bot.name}
+                chips={chipModel.chips}
+                openCount={chipModel.openCount}
+                onNewChat={() => setNewChatOpen(true)}
+              />
+            </div>
+          </>
+        ) : bot !== null ? (
           <Link
             to="/bots/$botId/edit"
             params={{ botId: bot.botId }}
@@ -868,7 +981,11 @@ export function ConversationScreen({
             aria-expanded={sidePanelOpen}
             aria-controls={sidePanelOpen ? CONVERSATION_SIDE_PANEL_ID : undefined}
             onClick={() => setPersonalPreference("showChatSidePanel", !sidePanelOpen)}
-            className={cn(ICON_BUTTON, "text-[var(--personal-text-secondary)]")}
+            className={cn(
+              ICON_BUTTON,
+              "text-[var(--personal-text-secondary)]",
+              chipsShown && "mt-0.5 self-start",
+            )}
           >
             {sidePanelOpen ? (
               <PanelRightClose aria-hidden="true" className="size-[22px]" strokeWidth={1.75} />
@@ -879,7 +996,13 @@ export function ConversationScreen({
         ) : null}
         <Menu>
           <MenuTrigger
-            render={<button type="button" aria-label="Chat options" className={ICON_BUTTON} />}
+            render={
+              <button
+                type="button"
+                aria-label="Chat options"
+                className={cn(ICON_BUTTON, chipsShown && "mt-0.5 self-start")}
+              />
+            }
           >
             <Ellipsis aria-hidden="true" className="size-6" strokeWidth={1.75} />
           </MenuTrigger>
@@ -947,6 +1070,15 @@ export function ConversationScreen({
           </MenuPopup>
         </Menu>
       </header>
+      {bot !== null ? (
+        <NewChatDialog
+          open={newChatOpen}
+          botName={bot.name}
+          starting={starting}
+          onOpenChange={setNewChatOpen}
+          onStart={(title) => void onStartNamedChat(title)}
+        />
+      ) : null}
       <RenameChatDialog
         open={renameOpen}
         initialTitle={renameChatInitialTitle(chatTitle)}

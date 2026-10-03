@@ -44,6 +44,7 @@ import { attachmentChipUploadPresentation } from "./attachmentChipUploadPresenta
 import { AttachmentPreview, type AttachmentPreviewData } from "./AttachmentPreview";
 import { activeMentionDraft, applyMention, matchMentionCandidates } from "./mentionDraft";
 import { MentionPopover, type MentionRow } from "./MentionPopover";
+import { COMPOSER_INPUT_ATTRIBUTE, consumeComposerRefocus } from "./composerRefocus";
 
 const LINE_HEIGHT_PX = 22;
 const MAX_LINES = 5;
@@ -290,6 +291,12 @@ export function PersonalComposer({
     textarea.focus();
     textarea.setSelectionRange(at, at);
   }, [prompt]);
+
+  // The owner switched chats with a chat chip while typing: this composer is
+  // the new chat's, and takes the focus over so the keyboard stays up.
+  useLayoutEffect(() => {
+    if (consumeComposerRefocus()) textareaRef.current?.focus({ preventScroll: true });
+  }, []);
 
   // ---------------------------------------------------------------------
   // @mention autocomplete. All the text arithmetic lives in `mentionDraft`;
@@ -775,6 +782,7 @@ export function PersonalComposer({
           <span className="sr-only">{botName === null ? "Message" : `Message ${botName}`}</span>
           <textarea
             ref={textareaRef}
+            {...{ [COMPOSER_INPUT_ATTRIBUTE]: "" }}
             rows={1}
             value={prompt}
             onChange={(event) => {

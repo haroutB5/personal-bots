@@ -57,6 +57,12 @@
   --personal-primary-text: #ffffff;
   --personal-team-line: #707070;
   --personal-team-live: #188038;
+  /* Chat chips (ChatChips.tsx). Green on the chip fill is only 2.75:1 in light, so the
+   * dot takes the darker team green (4.52:1); the amber dot gets a darker edge
+   * (--personal-review-text, 5.0:1) because amber on its pill is 2.24:1. */
+  --personal-chip-live: var(--personal-team-live);
+  --personal-chip-review-dot: var(--personal-review-text);
+  --personal-chip-dot-edge: var(--personal-review-text);
   --personal-team-recent: #8a8a86;
 
   /* Chat preview line: one step darker than --personal-text-secondary so the
@@ -168,6 +174,10 @@
   --personal-primary-text: #141413; /* 11.6:1 on --personal-primary */
   --personal-team-line: #8f8f8a;
   --personal-team-live: #49c46e;
+  /* Chat chips: the dark values already clear 3:1 (green 7.7:1, amber 8.8:1). */
+  --personal-chip-live: var(--personal-live);
+  --personal-chip-review-dot: var(--personal-review);
+  --personal-chip-dot-edge: transparent;
   --personal-team-recent: #6f6f6b;
   /* Elevation on a dark surface comes from the border, not a black shadow, so
    * the card shadow is dropped and only the drag lift keeps a (deeper) one. */
@@ -858,5 +868,185 @@
   }
   to {
     opacity: 1;
+  }
+}
+
+/* Chat chips in a bot's chat header (ChatChips.tsx): 24 px pills inside a 44 px
+ * tap band. Colours come from the tokens above; the dots are the one place
+ * the light and dark values differ (--personal-chip-*). */
+.personal-chip-row {
+  --chip-fade-left: 0px;
+  --chip-fade-right: 0px;
+  display: flex;
+  align-items: center;
+  height: 44px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.personal-chip-row::-webkit-scrollbar {
+  display: none;
+}
+.personal-chip-row[data-fade-left="true"] {
+  --chip-fade-left: 24px;
+}
+.personal-chip-row[data-fade-right="true"] {
+  --chip-fade-right: 24px;
+}
+.personal-chip-row[data-fade-left="true"],
+.personal-chip-row[data-fade-right="true"] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--chip-fade-left),
+    #000 calc(100% - var(--chip-fade-right)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--chip-fade-left),
+    #000 calc(100% - var(--chip-fade-right)),
+    transparent 100%
+  );
+}
+
+/* The tap target: 44 px tall, 3 px each side, so pills sit 6 px apart and no two tap areas overlap. */
+.personal-chip-hit {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: 44px;
+  min-width: 44px;
+  justify-content: center;
+  padding: 0 3px;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-decoration: none;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.personal-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 140px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 9999px;
+  background-color: var(--personal-fill-muted);
+  color: var(--personal-text);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    background-color 150ms ease,
+    transform 80ms ease-out,
+    opacity 80ms ease-out;
+}
+.personal-chip[data-unread="true"] {
+  font-weight: 800;
+}
+.personal-chip[data-current="true"] {
+  background-color: var(--personal-primary);
+  color: var(--personal-primary-text);
+}
+.personal-chip[data-state="needs_you"] {
+  background-color: var(--personal-review-bg);
+  box-shadow: inset 0 0 0 1px var(--personal-review);
+}
+.personal-chip-plus {
+  width: 24px;
+  padding: 0;
+  justify-content: center;
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--personal-border-strong);
+}
+.personal-chip-all {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--personal-border-strong);
+  color: var(--personal-text-secondary);
+}
+.personal-chip-hit:active .personal-chip {
+  transform: scale(0.96);
+  opacity: 0.8;
+}
+.personal-chip-hit:focus-visible .personal-chip {
+  outline: 2px solid var(--personal-text);
+  outline-offset: 2px;
+}
+@media (hover: hover) {
+  .personal-chip-hit:hover .personal-chip:not([data-current="true"]):not([data-state="needs_you"]) {
+    background-color: var(--personal-border);
+  }
+  .personal-chip-hit:hover .personal-chip-plus,
+  .personal-chip-hit:hover .personal-chip-all {
+    background-color: var(--personal-fill-muted);
+  }
+}
+
+/* One dot per chip, the strongest state wins (chatChipRows.ts). */
+.personal-chip-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  box-sizing: border-box;
+}
+.personal-chip-dot[data-state="needs_you"] {
+  background-color: var(--personal-review);
+  box-shadow: 0 0 0 1px var(--personal-chip-dot-edge);
+}
+.personal-chip-dot[data-state="rate_limited"] {
+  border: 1.5px solid var(--personal-chip-review-dot);
+}
+.personal-chip-dot[data-state="working"] {
+  background-color: var(--personal-chip-live);
+}
+.personal-chip-dot[data-state="waiting"] {
+  border: 1px solid var(--personal-text-secondary);
+}
+.personal-chip-dot[data-state="unread"] {
+  width: 7px;
+  height: 7px;
+  background-color: var(--personal-text);
+}
+
+.personal-chip-in {
+  animation: personal-chip-in 160ms ease-out;
+}
+@keyframes personal-chip-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .personal-chip {
+    transition: background-color 150ms ease;
+  }
+  .personal-chip-hit:active .personal-chip {
+    transform: none;
+  }
+  .personal-chip-in {
+    animation: personal-chip-fade 120ms linear;
+  }
+  @keyframes personal-chip-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 }

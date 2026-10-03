@@ -1,0 +1,103 @@
+import type { JSX } from "react";
+import { useRef, useState } from "react";
+
+import {
+  AlertDialog,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "~/components/ui/alert-dialog";
+import { Button } from "~/components/ui/button";
+
+import { RENAME_CHAT_MAX_CHARS } from "./renameChat";
+import { useKeyboardInset } from "./useKeyboardInset";
+
+const PHONE_BUTTON = "max-sm:h-11 max-sm:text-[15px]";
+/** Same as the rename sheet: the buttons never take the keyboard down mid-tap. */
+const keepFieldFocus = (event: React.SyntheticEvent) => event.preventDefault();
+
+/**
+ * "+" in the chat chips: an optional name, then Start chat. An empty name
+ * keeps today's auto-title (the chat is named after its first message).
+ */
+export function NewChatDialog(props: {
+  readonly open: boolean;
+  readonly botName: string;
+  readonly starting: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onStart: (title: string) => void;
+}): JSX.Element {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const keyboardInset = useKeyboardInset();
+  const [draft, setDraft] = useState("");
+  const [wasOpen, setWasOpen] = useState(props.open);
+  // A fresh, empty field per opening.
+  if (props.open !== wasOpen) {
+    setWasOpen(props.open);
+    if (props.open) setDraft("");
+  }
+  return (
+    <AlertDialog open={props.open} onOpenChange={props.onOpenChange}>
+      <AlertDialogPopup
+        initialFocus={inputRef}
+        className="personal-app max-w-lg border-[var(--personal-border)] bg-[var(--personal-surface)] text-[var(--personal-text)] max-sm:pb-[env(safe-area-inset-bottom)]"
+        style={keyboardInset > 0 ? { marginBottom: keyboardInset, paddingBottom: 0 } : undefined}
+      >
+        <AlertDialogHeader className="text-left">
+          <AlertDialogTitle className="text-[18px] leading-snug text-[var(--personal-text)]">
+            New chat with {props.botName}
+          </AlertDialogTitle>
+        </AlertDialogHeader>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!props.starting) props.onStart(draft);
+          }}
+        >
+          <div className="px-6 pb-4">
+            <input
+              ref={inputRef}
+              type="text"
+              value={draft}
+              maxLength={RENAME_CHAT_MAX_CHARS}
+              placeholder="Name (optional)"
+              aria-label="Chat name (optional)"
+              autoComplete="off"
+              enterKeyHint="go"
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                props.onOpenChange(false);
+              }}
+              // 16px keeps iOS from zooming the page when the field takes focus.
+              className="h-11 w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-bg)] px-3 text-[16px] text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            />
+          </div>
+          <AlertDialogFooter className="border-[var(--personal-border)] bg-transparent">
+            <Button
+              type="button"
+              variant="outline"
+              className={PHONE_BUTTON}
+              onPointerDown={keepFieldFocus}
+              onMouseDown={keepFieldFocus}
+              onClick={() => props.onOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={props.starting}
+              className={PHONE_BUTTON}
+              onPointerDown={keepFieldFocus}
+              onMouseDown={keepFieldFocus}
+            >
+              {props.starting ? "Starting…" : "Start chat"}
+            </Button>
+          </AlertDialogFooter>
+        </form>
+      </AlertDialogPopup>
+    </AlertDialog>
+  );
+}
