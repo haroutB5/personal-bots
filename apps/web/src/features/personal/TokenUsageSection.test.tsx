@@ -150,7 +150,7 @@ describe("TokenUsageCard", () => {
     expect(text).toContain("in 15.4M · cached 100.0M · out 5.0M");
     expect(text).toContain("CTO");
     expect(text).toContain("Opus 5.5 · M");
-    // 120.4M of the 223.4M week total
+    // 120.4M of the 222.4M the bots used in the week
     expect(text).toContain("54%");
   });
 
@@ -199,6 +199,16 @@ describe("TokenUsageCard", () => {
     expect(first.props.className).toContain("min-h-[60px]");
   });
 
+  it("leaves the owner's work outside the bots out of every bot's share and bar", async () => {
+    // 30 days: CTO is the only bot, Outside Bots is 1.0M of the 440.0M total.
+    const tree = await render();
+    await act(async () => radios(tree)[2]!.props.onClick());
+    const cto = rowsOf(tree)[0]!;
+    expect(textOf(cto)).toContain("100%");
+    const bar = cto.findAll((n) => n.props["data-testid"] === "token-usage-bar")[0]!;
+    expect(bar.props.style.width).toBe("100%");
+  });
+
   it("switches the window and recounts every row from it", async () => {
     const tree = await render();
     await act(async () => radios(tree)[0]!.props.onClick());
@@ -214,11 +224,13 @@ describe("TokenUsageCard", () => {
     expect(textOf(tree.root.findByType("section"))).toContain("5 Sep to 4 Oct");
   });
 
-  it("ends with Other / not attributed, the total and when it was updated", async () => {
+  it("ends with Outside Bots, the total and when it was updated", async () => {
     const tree = await render();
     const text = textOf(tree.root.findByType("section"));
-    expect(text).toContain("Other / not attributed");
-    expect(text).toContain("1.0M · <1%");
+    expect(text).toContain("Outside Bots");
+    expect(text).toContain("your own Claude Code and older sessions");
+    expect(text).not.toContain("not attributed");
+    expect(textOf(tree.root.findByProps({ "data-testid": "token-usage-outside" }))).toBe("1.0M");
     expect(text).toContain("Total");
     expect(textOf(tree.root.findByProps({ "data-testid": "token-usage-total" }))).toBe("223.4M");
     expect(textOf(tree.root.findByProps({ "data-testid": "token-usage-updated" }))).toBe(
@@ -272,7 +284,7 @@ describe("TokenUsageCard", () => {
       ),
     };
     const tree = await render({ result: empty });
-    expect(textOf(tree.root.findByType("section"))).toContain("No tokens used in this period.");
+    expect(textOf(tree.root.findByType("section"))).toContain("No bot used tokens in this period.");
     expect(rowsOf(tree)).toHaveLength(5);
     expect(byTestId(tree, "token-usage-rank")).toHaveLength(0);
   });

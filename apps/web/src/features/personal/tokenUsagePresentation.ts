@@ -97,7 +97,7 @@ export interface TokenUsageRowView {
   readonly botId: string;
   readonly name: string;
   readonly tokens: number;
-  /** Share of everything counted in the window, 0 to 100. */
+  /** Share of what the bots used in the window (Outside Bots left out), 0 to 100. */
   readonly sharePercent: number;
   /** 1 to 3 for the heaviest users, else null. A bot with no use has no rank. */
   readonly rank: 1 | 2 | 3 | null;
@@ -107,8 +107,14 @@ export interface TokenUsageRowView {
 
 export interface TokenUsageTable {
   readonly rows: ReadonlyArray<TokenUsageRowView>;
-  /** Tokens of sessions no bot owns, plus any bot this screen does not list. */
-  readonly other: { readonly tokens: number; readonly sharePercent: number };
+  /**
+   * Outside Bots: tokens of sessions no bot owns (the owner's own Claude Code,
+   * older and deleted sessions), plus any bot this screen does not list.
+   */
+  readonly other: { readonly tokens: number };
+  /** What the listed bots used. Rows' shares and bars are over this. */
+  readonly botsTotal: number;
+  /** Everything counted: the bots plus Outside Bots. */
   readonly total: number;
   readonly sinceDay: string;
   readonly untilDay: string;
@@ -129,9 +135,10 @@ function share(tokens: number, total: number): number {
  * The table for one window. `bots` is every bot the screen can open (a bot
  * with use always has a row); `listedBotIds` are the ones that get a row even
  * with no use, so the table reads as the whole team. Rows run from most to
- * least tokens, ties by name. A bot with use that is not in `bots` (it was
- * removed since the scan) is counted under Other, so the rows and Other still
- * add up to the total.
+ * least tokens, ties by name. Shares are of the bots' own total, so the owner's
+ * work outside the bots (Outside Bots) does not shrink them. A bot with use
+ * that is not in `bots` (it was removed since the scan) is counted under
+ * Outside Bots, so the rows and Outside Bots still add up to the total.
  */
 export function buildTokenUsageTable(input: {
   readonly window: PersonalBotTokenUsageWindow;
@@ -157,6 +164,7 @@ export function buildTokenUsageTable(input: {
     }
   }
 
+  const botsTotal = [...used.values()].reduce((sum, entry) => sum + entry.tokens, 0);
   const ids = new Set<string>(used.keys());
   for (const botId of input.listedBotIds) if (byId.has(botId)) ids.add(botId);
 
@@ -180,7 +188,7 @@ export function buildTokenUsageTable(input: {
       botId: entry.botId,
       name: entry.name,
       tokens: entry.tokens,
-      sharePercent: share(entry.tokens, total),
+      sharePercent: share(entry.tokens, botsTotal),
       rank,
       split: splitOf(entry.totals),
       sessions: entry.sessions,
@@ -189,7 +197,8 @@ export function buildTokenUsageTable(input: {
 
   return {
     rows,
-    other: { tokens: otherTokens, sharePercent: share(otherTokens, total) },
+    other: { tokens: otherTokens },
+    botsTotal,
     total,
     sinceDay: window.sinceDay,
     untilDay: window.untilDay,
@@ -235,7 +244,7 @@ export const TOKEN_USAGE_MAX_POLLS = 30;
 export function tokenUsageRowLabel(row: TokenUsageRowView): string {
   if (row.tokens === 0) return `${row.name}: no tokens used. Open ${row.name}.`;
   const rank = row.rank === null ? "" : `Number ${row.rank} user. `;
-  return `${row.name}: ${formatTokenCount(row.tokens)} tokens, ${formatShare(row.sharePercent)} of the total. ${rank}${formatSplit(row.split)}. Open ${row.name}.`;
+  return `${row.name}: ${formatTokenCount(row.tokens)} tokens, ${formatShare(row.sharePercent)} of the bots' use. ${rank}${formatSplit(row.split)}. Open ${row.name}.`;
 }
 
 /** `5 Sep to 4 Oct`, or `4 Oct` for a single day: what the window covers, for the hint line. */

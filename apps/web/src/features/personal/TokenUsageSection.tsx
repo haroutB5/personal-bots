@@ -181,9 +181,9 @@ export function TokenUsageCard({
 
       {table !== null ? (
         <>
-          {table.total === 0 ? (
+          {table.botsTotal === 0 ? (
             <p className="py-1 text-[15px] leading-snug text-[var(--personal-text-secondary)]">
-              No tokens used {windowId === "today" ? "today" : "in this period"}.
+              No bot used tokens {windowId === "today" ? "today" : "in this period"}.
             </p>
           ) : null}
           <ul className="-mx-1 flex flex-col">
@@ -203,9 +203,14 @@ export function TokenUsageCard({
           </ul>
           <div className="flex flex-col gap-1.5 border-t border-[var(--personal-border)] pt-3">
             <div className="flex items-baseline justify-between gap-3 text-[14px] leading-5 text-[var(--personal-text-secondary)]">
-              <span className="min-w-0 truncate">Other / not attributed</span>
-              <span className="shrink-0 tabular-nums">
-                {formatTokenCount(table.other.tokens)} · {formatShare(table.other.sharePercent)}
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate">Outside Bots</span>
+                <span className="truncate text-[12px] leading-4 text-[var(--personal-text-tertiary)]">
+                  your own Claude Code and older sessions
+                </span>
+              </span>
+              <span className="shrink-0 tabular-nums" data-testid="token-usage-outside">
+                {formatTokenCount(table.other.tokens)}
               </span>
             </div>
             <div className="flex items-baseline justify-between gap-3 text-[15px] leading-5 font-semibold text-[var(--personal-text)]">

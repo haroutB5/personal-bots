@@ -173,6 +173,8 @@ export interface OpenCodeUsageReadResult {
   readonly files: readonly { readonly path: string; readonly records: readonly UsageRecord[] }[];
   readonly missing: boolean;
   readonly error: boolean;
+  /** `message` rows over the size cap that were not read (user messages carrying file diffs). */
+  readonly skippedRows: number;
 }
 
 /** Reads current SQLite and pre-migration JSON stores without modifying either. */
@@ -187,6 +189,7 @@ export async function readOpenCodeUsage(
   const slice = makeSliceYield();
   let found = false;
   let error = false;
+  let skippedRows = 0;
   const append = (records: UsageRecord[], record: UsageRecord | null) => {
     if (record === null || record.timestampMs < sinceMs) return;
     if (record.dedupeKey !== null) {
@@ -212,6 +215,7 @@ export async function readOpenCodeUsage(
     files.push(file);
     const result = fetched?.find((candidate) => candidate.name === name);
     if (result === undefined || result.error) error = true;
+    skippedRows += result?.skipped ?? 0;
     for (const [id, sessionId, fields, created] of result?.rows ?? []) {
       const message = messageFromFields(text(fields));
       append(
@@ -258,5 +262,5 @@ export async function readOpenCodeUsage(
       if (object(cause).code !== "ENOENT") error = true;
     }
   }
-  return { files, missing: !found && !error, error };
+  return { files, missing: !found && !error, error, skippedRows };
 }

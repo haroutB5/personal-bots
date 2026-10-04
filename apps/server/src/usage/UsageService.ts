@@ -572,6 +572,12 @@ export const make = Effect.gen(function* () {
       ),
     ])) {
       const result = yield* Effect.promise(() => readOpenCodeUsage(dir, windowStartMs));
+      // Numbers only. Once per scan; nothing when the cap skipped nothing.
+      if (result.skippedRows > 0) {
+        yield* Effect.logInfo("opencode usage skipped oversized message rows", {
+          skippedRows: result.skippedRows,
+        });
+      }
       scanned.push({
         provider: "opencode",
         dir,

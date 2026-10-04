@@ -16,7 +16,7 @@
  * slices, so the rules live in one place.
  *
  * Input (`workerData`): `{ root, names, sinceMs, fieldsSql, maxRowChars }`.
- * Output (one message): `[{ name, error, rows: [id, sessionId, fields, created][] }]`.
+ * Output (one message): `[{ name, error, skipped, rows: [id, sessionId, fields, created][] }]`, `skipped` being the rows over `maxRowChars`.
  */
 export const OPENCODE_ROWS_WORKER_SOURCE = `
 const { workerData, parentPort } = require("node:worker_threads");
@@ -26,7 +26,7 @@ const path = require("node:path");
 const { root, names, sinceMs, fieldsSql, maxRowChars } = workerData;
 const results = [];
 for (const name of names) {
-  const entry = { name, error: false, rows: [] };
+  const entry = { name, error: false, rows: [], skipped: 0 };
   let database;
   try {
     database = new DatabaseSync(path.join(root, name), { readOnly: true });
@@ -52,6 +52,16 @@ for (const name of names) {
       for (const row of statement.iterate(...(timestamp === "NULL" ? [] : [sinceMs]))) {
         entry.rows.push([row.id, row.session_id, row.fields, row.created]);
       }
+      if (table === "message") {
+        // Rows left out by the size cap, counted so the reader can say how many.
+        const skipped = database
+          .prepare(
+            "SELECT count(*) AS n FROM message WHERE length(data) > " + maxRowChars +
+              (timestamp === "NULL" ? "" : " AND time_created >= ?"),
+          )
+          .get(...(timestamp === "NULL" ? [] : [sinceMs]));
+        entry.skipped += Number(skipped.n) || 0;
+      }
     }
   } catch {
     entry.error = true;
@@ -67,5 +77,7 @@ parentPort.postMessage(results);
 export interface OpenCodeRowsResult {
   readonly name: string;
   readonly error: boolean;
+  /** `message` rows over the size cap, left unread. */
+  readonly skipped: number;
   readonly rows: ReadonlyArray<readonly [unknown, unknown, unknown, unknown]>;
 }

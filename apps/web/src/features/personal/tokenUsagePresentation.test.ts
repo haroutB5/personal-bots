@@ -130,16 +130,20 @@ describe("buildTokenUsageTable", () => {
     expect(table.total).toBe(2200);
   });
 
-  it("gives each row its share of everything counted, Other included", () => {
+  it("gives each row its share of what the bots used, Outside Bots left out", () => {
     const table = buildTokenUsageTable({
-      window: windowOf([row("cto", totals(0, 0, 0, 750))], totals(0, 0, 0, 250)),
+      window: windowOf(
+        [row("cto", totals(0, 0, 0, 750)), row("qa", totals(0, 0, 0, 250))],
+        totals(0, 0, 0, 9000),
+      ),
       bots: BOTS,
       listedBotIds: new Set(),
     });
-    expect(table.rows).toHaveLength(1);
-    expect(table.rows[0]?.sharePercent).toBe(75);
-    expect(table.other).toEqual({ tokens: 250, sharePercent: 25 });
-    expect(table.total).toBe(1000);
+    expect(table.rows.map((r) => r.sharePercent)).toEqual([75, 25]);
+    expect(table.botsTotal).toBe(1000);
+    expect(table.other).toEqual({ tokens: 9000 });
+    // The grand total still counts everything.
+    expect(table.total).toBe(10_000);
   });
 
   it("lists every listed bot, with zeros for the ones that used nothing", () => {
@@ -168,7 +172,7 @@ describe("buildTokenUsageTable", () => {
     expect(table.rows.map((r) => r.botId)).toEqual(["design", "cto"]);
   });
 
-  it("counts a bot this screen cannot open under Other, so the rows still add up", () => {
+  it("counts a bot this screen cannot open under Outside Bots, so the rows still add up", () => {
     const table = buildTokenUsageTable({
       window: windowOf(
         [row("cto", totals(0, 0, 0, 600)), row("removed-bot", totals(0, 0, 0, 300))],
@@ -180,6 +184,7 @@ describe("buildTokenUsageTable", () => {
     expect(table.rows.map((r) => r.botId)).toEqual(["cto"]);
     expect(table.other.tokens).toBe(400);
     const rowsTotal = table.rows.reduce((n, r) => n + r.tokens, 0);
+    expect(rowsTotal).toBe(table.botsTotal);
     expect(rowsTotal + table.other.tokens).toBe(table.total);
   });
 
@@ -193,7 +198,8 @@ describe("buildTokenUsageTable", () => {
     expect(table.rows.every((r) => r.tokens === 0 && r.sharePercent === 0 && r.rank === null)).toBe(
       true,
     );
-    expect(table.other).toEqual({ tokens: 0, sharePercent: 0 });
+    expect(table.other).toEqual({ tokens: 0 });
+    expect(table.botsTotal).toBe(0);
   });
 
   it("keeps the window's days for the hint line", () => {
@@ -229,7 +235,7 @@ describe("labels", () => {
       listedBotIds: new Set(),
     });
     expect(tokenUsageRowLabel(table.rows[0]!)).toBe(
-      "CTO: 875 tokens, 100% of the total. Number 1 user. in 50 · cached 800 · out 25. Open CTO.",
+      "CTO: 875 tokens, 100% of the bots' use. Number 1 user. in 50 · cached 800 · out 25. Open CTO.",
     );
     const idle = buildTokenUsageTable({
       window: windowOf([]),

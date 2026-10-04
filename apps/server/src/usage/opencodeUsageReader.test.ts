@@ -71,6 +71,7 @@ describe("readOpenCodeUsage", () => {
     );
     const records = result.files.flatMap((file) => file.records);
     expect(result.error).toBe(false);
+    expect(result.skippedRows).toBe(0);
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       provider: "opencode",
@@ -104,6 +105,7 @@ describe("readOpenCodeUsage", () => {
       (root) => readOpenCodeUsage(root, SINCE_MS),
     );
     expect(result.error).toBe(false);
+    expect(result.skippedRows).toBe(1);
     expect(result.files.flatMap((file) => file.records).map((record) => record.dedupeKey)).toEqual([
       "opencode:msg_ok",
     ]);
