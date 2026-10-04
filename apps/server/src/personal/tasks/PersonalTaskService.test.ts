@@ -2886,6 +2886,77 @@ describe("work record (1.60.41)", () => {
     },
   );
 
+  it.effect(
+    "a steer carries the steering chat's sensitive mark into the task's tree, whichever way it is delivered",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const sql = yield* SqlClient.SqlClient;
+        const store = makeSensitiveExposureStore(sql);
+        // The steering chat opened a sensitive site after it had delegated: its own keys carry it.
+        const steerer = yield* createRoot("wr-steerer");
+        yield* store.record(
+          [threadExposureKey(threadOf(steerer))],
+          "source",
+          "https://bank.example",
+        );
+        yield* store.record(
+          [threadExposureKey(threadOf(steerer))],
+          "approved",
+          "https://ok.example",
+        );
+
+        const steered = yield* createRoot("wr-steered");
+        yield* runTurn(harness, threadOf(steered), "Done for now.");
+        const rootKey = rootExposureKey(steered.rootTaskId);
+        expect([...(yield* store.read([rootKey])).sources]).toEqual([]);
+        const before = yield* service.workRecord({ taskId: steered.taskId });
+        expect(before?.updates ?? []).toEqual([]);
+
+        // Reopened by the steer: the mark arrives first, so the update is not written into the record.
+        const outcome = yield* service.steer({
+          taskId: steered.taskId,
+          fromName: "CTO",
+          message: "The balance is 1,234, carry on.",
+          fromThreadId: threadOf(steerer),
+        });
+        expect(outcome.outcome).toBe("reopened");
+        const carried = yield* store.read([rootKey]);
+        expect([...carried.sources]).toEqual(["https://bank.example"]);
+        expect([...carried.approved]).toEqual([]);
+        const record = yield* service.workRecord({ taskId: steered.taskId });
+        expect(JSON.stringify(record ?? {})).not.toContain("1,234");
+        const refused = yield* Effect.flip(
+          service.updateWorkRecord({ taskId: steered.taskId, patch: { nextStep: "x" } }),
+        );
+        expect(refused.message).toContain("sensitive");
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect("a steer with no marked chat behind it is recorded as before", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const steerer = yield* createRoot("wr-steerer-clean");
+      const steered = yield* createRoot("wr-steered-clean");
+      yield* runTurn(harness, threadOf(steered), "Done for now.");
+      yield* service.steer({
+        taskId: steered.taskId,
+        fromName: "CTO",
+        message: "Carry on with the second half.",
+        fromThreadId: threadOf(steerer),
+      });
+      const record = yield* service.workRecord({ taskId: steered.taskId });
+      expect(record?.updates.map((update) => update.text)).toEqual([
+        "Carry on with the second half.",
+      ]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
   it.effect("a chat that saw nothing sensitive hands nothing to the tasks it delegates", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

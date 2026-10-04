@@ -92,6 +92,13 @@ The CTO's additions:
 
 Tests added: `replacedSessions.test.ts` (30 s, mark list, unmark), ingestion and reactor (failing new session not swallowed; failed stop leaves no mark), `workRecord.test.ts` (author labels, state-not-instructions, SHA and blob links kept, a key dropped), `secretText.test.ts`, `PersonalMemoryService.apps.test.ts` (marks cleared), `PersonalTaskService.test.ts` (renewal same attempt, no renewal fails after the wait, other error fails at once, taint carried and not carried), `handlers.test.ts` (get_task reach and its limits), `memoryRetrieval.test.ts` and `contextUsed.test.tsx` (matched words).
 
+## Third review: Fable's last changes on 0ddb1d0f0e (final rebuild)
+
+1. **A steer carries the steering chat's sensitive mark.** `steer_task` passes the caller's thread (`fromThreadId`); `steer` copies the sources (never approvals) from that thread's key and its own tree's root key to the target's root key before anything is delivered or recorded, and refuses the steer if the copy fails (same as `delegate`). A chat that opens a sensitive site after delegating can no longer put text from it into the child's work record. Tests: service (reopen path, mark arrives, approval does not, nothing recorded, clean chat recorded as before) and tool (`steer_task`).
+2. **64-hex is exempt only inside a link or a path.** 40-hex commit ids stay exempt everywhere; a bare 64-hex token (an HMAC or webhook secret) is a key again. A path needs four or more parts, a 40 or 64-hex part counts as short. Memory is still strict. Tests in `secretText.test.ts` and `workRecord.test.ts`.
+3. The renewal-wait key is deleted when the error is finally counted.
+4. `get_task` (and `steer_task`) fall through to the reopen reach only on the not-in-tree failure; a storage error stays an error.
+
 ## Rollback
 
 Previous live release. Migrations 094 and 095 only add (095: three triggers and one clean-up of orphaned marks). Kill switches: `T3CODE_PERSONAL_TASK_REOPEN_FRESH_TOKENS=off` (reopens resume as before), plus the 1.60.40 switches (`T3CODE_PERSONAL_MEMORY_APP_SCOPING=off`, `T3CODE_PERSONAL_MEMORY_RETRIEVAL=legacy`).

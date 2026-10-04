@@ -15,10 +15,27 @@ describe("the long-token rule", () => {
     expect(redactSecrets(`commit ${SHA1}`)).toBe("commit [redacted]");
   });
 
-  it("lenient mode lets pure hex ids of 40 and 64 characters through", () => {
+  it("lenient mode lets a 40-hex commit id through everywhere", () => {
     expect(looksLikeSecret(`commit ${SHA1}`, { lenient: true })).toBe(false);
-    expect(looksLikeSecret(`digest ${SHA256}`, { lenient: true })).toBe(false);
     expect(redactSecrets(`commit ${SHA1}`, { lenient: true })).toBe(`commit ${SHA1}`);
+  });
+
+  it("lenient mode keeps a bare 64-hex token as a key, and lets one through only inside a link or a path", () => {
+    // 32-byte HMAC and webhook secrets are 64 hex characters.
+    expect(looksLikeSecret(`webhook secret ${SHA256}`, { lenient: true })).toBe(true);
+    expect(redactSecrets(`digest ${SHA256}`, { lenient: true })).toBe("digest [redacted]");
+    expect(looksLikeSecret(`secret=${SHA256}`, { lenient: true })).toBe(true);
+    // Inside a link.
+    const link = `https://registry.example/v2/blobs/sha256:${SHA256}`;
+    expect(looksLikeSecret(`see ${link}`, { lenient: true })).toBe(false);
+    // As a part of a path.
+    const path = `C:/Users/Ht/.cache/store/${SHA256}/index.json`;
+    expect(looksLikeSecret(`file ${path}`, { lenient: true })).toBe(false);
+    expect(redactSecrets(`file ${path}`, { lenient: true })).toBe(`file ${path}`);
+    // A path of two parts is not enough to call it a path.
+    expect(looksLikeSecret(`a/${SHA256}`, { lenient: true })).toBe(true);
+    // Strict mode is unchanged.
+    expect(looksLikeSecret(link)).toBe(true);
   });
 
   it("lenient mode lets anything inside an https link through, and paths with many short parts", () => {

@@ -32,6 +32,11 @@ import {
   type ProjectionThreadMessageRepositoryShape,
 } from "../../../persistence/Services/ProjectionThreadMessages.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
+import {
+  makeSensitiveExposureStore,
+  rootExposureKey,
+  threadExposureKey,
+} from "../../../personal/browser/sensitiveExposureStore.ts";
 import * as PersonalBrowser from "../../../personal/browser/PersonalBrowser.ts";
 import * as PersonalGroupRepository from "../../../personal/groups/PersonalGroupRepository.ts";
 import * as PersonalGroupService from "../../../personal/groups/PersonalGroupService.ts";
@@ -706,6 +711,40 @@ describe("bots toolkit handlers", () => {
           expect(tooOld.message).toBe("That task is not in your task tree.");
         }),
       ),
+  );
+
+  it.effect("steer_task hands the caller's sensitive mark to the steered task's tree", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const tasks = yield* PersonalTaskService.PersonalTaskService;
+        const sql = yield* SqlClient.SqlClient;
+        const store = makeSensitiveExposureStore(sql);
+        const child = yield* call("delegate_task", {
+          targetBot: "developer",
+          objective: "Animate the avatars.",
+        });
+        yield* tasks.drain;
+        const childTask = (yield* tasks.get({ taskId: child.childTaskId as never })).task;
+        // The chat opens a sensitive site after it delegated, then steers with what it read.
+        yield* store.record([threadExposureKey(CALLER_THREAD)], "source", "https://bank.example");
+        expect([...(yield* store.read([rootExposureKey(childTask.rootTaskId)])).sources]).toEqual(
+          [],
+        );
+
+        yield* call("stop_task", { taskId: child.childTaskId as never, reason: "Paused." });
+        yield* call("steer_task", {
+          taskId: child.childTaskId as never,
+          message: "Balance 1,234.",
+        });
+        expect([...(yield* store.read([rootExposureKey(childTask.rootTaskId)])).sources]).toEqual([
+          "https://bank.example",
+        ]);
+        // The update reached the task, but the record did not take it.
+        const record = yield* tasks.workRecord({ taskId: childTask.taskId });
+        expect(record?.updates ?? []).toEqual([]);
+      }),
+    ),
   );
 
   it.effect("steer_task cannot reopen a finished task outside the caller's reach", () =>

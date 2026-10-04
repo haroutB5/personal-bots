@@ -19,8 +19,9 @@ const SECRET_PATTERNS: ReadonlyArray<RegExp> = [
 /**
  * `lenient` is for text that is mostly links, paths and commit ids (a task's
  * work record): the long-token rule then leaves alone a pure hex token of 40
- * or 64 characters (a commit or a sha256), anything inside an http(s) link,
- * and a path (four or more short segments). The named credential formats
+ * characters (a commit id), anything inside an http(s) link, and a path (four
+ * or more short segments; a 40 or 64-hex part counts as short). A bare 64-hex
+ * token stays a key: it can be an HMAC or webhook secret. The named credential formats
  * (private keys, sk-, ghp_, xox, AKIA, JWTs, "password: ...") still apply.
  * Memory stays strict.
  */
@@ -30,7 +31,8 @@ export interface SecretCheckOptions {
 
 const LONG_TOKEN = /[A-Za-z0-9+/_=-]{40,}/g;
 const URL_SPAN = /https?:\/\/[^\s)>\]"'`]+/g;
-const PURE_HEX = /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/;
+const HEX_40 = /^[0-9a-fA-F]{40}$/;
+const HEX_64 = /^[0-9a-fA-F]{64}$/;
 
 /** Whether a long token reads as a key (letters and digits mixed), given the exemptions of `lenient`. */
 function readsAsKey(
@@ -41,10 +43,19 @@ function readsAsKey(
 ): boolean {
   if (!(/[A-Za-z]/.test(token) && /\d/.test(token))) return false;
   if (!lenient) return true;
-  if (PURE_HEX.test(token)) return false;
+  // A commit id (40 hex) is not a secret anywhere.
+  if (HEX_40.test(token)) return false;
   if (urls.some(([from, to]) => offset >= from && offset < to)) return false;
+  // A bare 64-hex token is as likely a 32-byte HMAC or webhook secret as a sha256: it is
+  // let through only inside a link (above) or as a part of a path (below).
+  if (HEX_64.test(token)) return true;
   const segments = token.split("/");
-  return !(segments.length >= 4 && segments.every((segment) => segment.length <= 32));
+  return !(
+    segments.length >= 4 &&
+    segments.every(
+      (segment) => segment.length <= 32 || HEX_40.test(segment) || HEX_64.test(segment),
+    )
+  );
 }
 
 const urlSpans = (text: string): ReadonlyArray<readonly [number, number]> =>

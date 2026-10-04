@@ -211,14 +211,23 @@ describe("a task's work record", () => {
       emptyWorkRecord("o", AT),
       {
         decisions: [`Fixed in ${sha}, digest ${sha256}.`],
-        evidence: [{ label: "file", ref: blob }],
+        evidence: [
+          { label: "file", ref: blob },
+          { label: "cache", ref: `C:/Users/Ht/.cache/store/${sha256}/index.json` },
+        ],
         nextStep: "Key is Zk3Jd9Qw2Lm8Xv5Tn1Bc7Rp4Hs6Ye0Ua9Gf2Di3Kj8Ox (rotate it)",
       },
       AT,
     );
     expect(record.decisions[0]).toContain(sha);
-    expect(record.decisions[0]).toContain(sha256);
-    expect(record.evidence.map((item) => item.ref)).toEqual([blob]);
+    // A bare 64-hex token could be an HMAC secret: it does not stay.
+    expect(record.decisions[0]).not.toContain(sha256);
+    expect(record.decisions[0]).toContain("[redacted]");
+    // Inside a link or a path it is evidence.
+    expect(record.evidence.map((item) => item.ref)).toEqual([
+      blob,
+      `C:/Users/Ht/.cache/store/${sha256}/index.json`,
+    ]);
     expect(record.nextStep).not.toContain("Zk3Jd9Qw2Lm8");
     expect(record.nextStep).toContain("[redacted]");
     // A result that names a blob link keeps it as evidence.

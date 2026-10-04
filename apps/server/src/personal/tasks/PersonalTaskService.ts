@@ -203,6 +203,12 @@ export interface PersonalTaskSteerInput {
   /** Who is steering, as the bot reads it: "Update from <fromName>: ...". */
   readonly fromName: string;
   readonly message: string;
+  /**
+   * The chat the update comes from. What that chat has seen of the sites the
+   * user marked sensitive goes with the update into the task's tree, so its
+   * work record keeps nothing of it (see `carryExposureToTree`).
+   */
+  readonly fromThreadId?: ThreadId;
 }
 
 /**
@@ -741,26 +747,49 @@ export const make = Effect.gen(function* () {
    * records and summaries of text the chat took from that site. Groups do the same with
    * their transcript. Fails closed: if the mark cannot be carried, the delegation is refused.
    */
-  const carryExposureToTree = (parent: PersonalTask, root: PersonalTask) =>
+  const carryExposure = (
+    fromKeys: ReadonlyArray<string>,
+    rootTaskId: PersonalTask["rootTaskId"],
+    refusal: string,
+  ) =>
     Option.match(workStore, {
       onNone: () => Effect.void,
       onSome: ({ exposures }) =>
         exposures
-          .copySources(
-            [
-              rootExposureKey(parent.rootTaskId),
-              ...(parent.threadId === null ? [] : [threadExposureKey(parent.threadId)]),
-            ],
-            rootExposureKey(root.taskId),
-          )
-          .pipe(
-            Effect.mapError((cause) =>
-              fail(
-                "Personal tasks could not carry the chat's sensitive-site mark to the new task, so nothing was delegated. Try again.",
-                cause,
-              ),
-            ),
-          ),
+          .copySources(fromKeys, rootExposureKey(rootTaskId))
+          .pipe(Effect.mapError((cause) => fail(refusal, cause))),
+    });
+
+  const carryExposureToTree = (parent: PersonalTask, root: PersonalTask) =>
+    carryExposure(
+      [
+        rootExposureKey(parent.rootTaskId),
+        ...(parent.threadId === null ? [] : [threadExposureKey(parent.threadId)]),
+      ],
+      root.taskId,
+      "Personal tasks could not carry the chat's sensitive-site mark to the new task, so nothing was delegated. Try again.",
+    );
+
+  /**
+   * A steer carries what the steering chat has seen, the same way a delegation does: a
+   * chat can open a sensitive site after it delegated, then steer with text from it.
+   * Fails closed: the steer is refused when the mark cannot be carried.
+   */
+  const carryExposureFromSteerer = (threadId: ThreadId, target: PersonalTask) =>
+    Effect.gen(function* () {
+      const active = yield* activeAttemptForThread(threadId);
+      const own =
+        active !== null
+          ? yield* repository.getTask(active.taskId)
+          : yield* repository.latestTaskForThread(threadId);
+      yield* carryExposure(
+        [
+          threadExposureKey(threadId),
+          ...(Option.isSome(own) ? [rootExposureKey(own.value.rootTaskId)] : []),
+        ],
+        target.rootTaskId,
+        "Personal tasks could not carry the chat's sensitive-site mark to the task, so the update was not sent. Try again.",
+      );
     });
 
   /** The latest context size the thread's provider reported, in tokens. */
@@ -1729,6 +1758,7 @@ export const make = Effect.gen(function* () {
           if (nowMs - since < PERSONAL_TASKS_RENEWAL_WAIT_MS) {
             return;
           }
+          renewalWaitSince.delete(renewalKey);
         }
         // A turn that failed on a rate limit the adapter recognised waits for
         // the reset it reported (Codex usage limits), not a pattern guess.
@@ -2480,6 +2510,9 @@ export const make = Effect.gen(function* () {
           const task = yield* requireTask(input.taskId);
           if (input.message.trim().length === 0) {
             return yield* fail("The update is empty; say what should change.");
+          }
+          if (input.fromThreadId !== undefined) {
+            yield* carryExposureFromSteerer(input.fromThreadId, task);
           }
           const now = yield* DateTime.now;
           const steerId = NodeCrypto.randomUUID().replaceAll("-", "");

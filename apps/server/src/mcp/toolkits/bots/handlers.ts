@@ -307,7 +307,10 @@ const make = Effect.gen(function* () {
       Effect.mapError(readable),
     );
 
-  const notInTree = () => toolError("That task is not in your task tree.");
+  const NOT_IN_TREE = "That task is not in your task tree.";
+  const notInTree = () => toolError(NOT_IN_TREE);
+  /** Only "not in your tree" falls through to the reopen reach: a storage error stays an error. */
+  const isNotInTree = (error: BotsToolError) => error.reason === NOT_IN_TREE;
 
   /** Unfinished tasks of the caller's team's bots, newest first (team leads). */
   const teamOpenTasks = Effect.fn("BotsToolkit.teamOpenTasks")(function* (team: string) {
@@ -493,7 +496,7 @@ const make = Effect.gen(function* () {
         // Same reach as steer_task, read-only: a lead can read a finished task's record
         // before it steers the task back to life.
         const { task, tree } = yield* reachableTask(caller, input.taskId).pipe(
-          Effect.catch(() =>
+          Effect.catchIf(isNotInTree, () =>
             reopenableTask(caller, input.taskId).pipe(
               Effect.flatMap((reopenable) =>
                 treeOf(reopenable.rootTaskId).pipe(
@@ -616,13 +619,18 @@ const make = Effect.gen(function* () {
         const caller = yield* callerTask();
         const target = yield* reachableTask(caller, input.taskId).pipe(
           Effect.map((reached) => reached.task),
-          Effect.catch(() => reopenableTask(caller, input.taskId)),
+          Effect.catchIf(isNotInTree, () => reopenableTask(caller, input.taskId)),
         );
         if (target.taskId === caller.task.taskId) {
           return yield* toolError("That is your own task; just carry on with the change yourself.");
         }
         const steered = yield* tasks
-          .steer({ taskId: target.taskId, fromName: caller.botName, message: input.message })
+          .steer({
+            taskId: target.taskId,
+            fromName: caller.botName,
+            message: input.message,
+            fromThreadId: caller.threadId,
+          })
           .pipe(Effect.mapError(readable));
         return {
           taskId: steered.task.taskId,
