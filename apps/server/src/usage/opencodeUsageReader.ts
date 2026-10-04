@@ -1,8 +1,9 @@
-// node:sqlite reads live OpenCode databases; Node fs walks legacy JSON history.
+// A worker thread reads the live OpenCode databases (node:sqlite); Node fs walks legacy JSON history.
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeSqlite from "node:sqlite";
+import * as NodeWorkerThreads from "node:worker_threads";
+import { OPENCODE_ROWS_WORKER_SOURCE, type OpenCodeRowsResult } from "./opencodeRowsWorker.ts";
 import { makeSliceYield } from "./sliceYield.ts";
 import { totalTokens, type UsageRecord } from "./usageTranscripts.ts";
 
@@ -126,6 +127,47 @@ function parseOpenCodeMessageObject(
   };
 }
 
+/** The worker gets this long to read every database before it is given up on. */
+const WORKER_TIMEOUT_MS = 120_000;
+
+/**
+ * The databases' message rows, fetched on a worker thread (see
+ * `opencodeRowsWorker.ts`). Null when the worker failed or timed out, which the
+ * caller reports as a partial source.
+ */
+function readRowsInWorker(
+  root: string,
+  names: ReadonlyArray<string>,
+  sinceMs: number,
+): Promise<ReadonlyArray<OpenCodeRowsResult> | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const worker = new NodeWorkerThreads.Worker(OPENCODE_ROWS_WORKER_SOURCE, {
+      eval: true,
+      workerData: {
+        root,
+        names,
+        sinceMs,
+        fieldsSql: MESSAGE_FIELDS_SQL,
+        maxRowChars: MAX_MESSAGE_ROW_CHARS,
+      },
+      // Rows are a few hundred bytes each; this only bounds a runaway.
+      resourceLimits: { maxOldGenerationSizeMb: 512 },
+    });
+    const finish = (value: ReadonlyArray<OpenCodeRowsResult> | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      void worker.terminate();
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), WORKER_TIMEOUT_MS);
+    worker.once("message", (value: ReadonlyArray<OpenCodeRowsResult>) => finish(value));
+    worker.once("error", () => finish(null));
+    worker.once("exit", () => finish(null));
+  });
+}
+
 export interface OpenCodeUsageReadResult {
   readonly files: readonly { readonly path: string; readonly records: readonly UsageRecord[] }[];
   readonly missing: boolean;
@@ -162,61 +204,26 @@ export async function readOpenCodeUsage(
   } catch (cause) {
     if (object(cause).code !== "ENOENT") error = true;
   }
+  const fetched = databases.length === 0 ? [] : await readRowsInWorker(root, databases, sinceMs);
   for (const name of databases) {
     found = true;
     const file = { path: NodePath.join(root, name), records: [] as UsageRecord[] };
     files.push(file);
-    let database: NodeSqlite.DatabaseSync | undefined;
-    try {
-      database = new NodeSqlite.DatabaseSync(NodePath.join(root, name), { readOnly: true });
-      // A busy live provider should fail this source promptly rather than
-      // stalling the server while SQLite waits for its writer.
-      database.exec("PRAGMA busy_timeout = 100");
-      const tables = new Set(
-        database
-          .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
-          .all()
-          .map((row) => row.name),
+    const result = fetched?.find((candidate) => candidate.name === name);
+    if (result === undefined || result.error) error = true;
+    for (const [id, sessionId, fields, created] of result?.rows ?? []) {
+      const message = messageFromFields(text(fields));
+      append(
+        file.records,
+        message === null
+          ? null
+          : parseOpenCodeMessageObject(message, {
+              id: text(id),
+              sessionId: text(sessionId),
+              ...(typeof created === "number" ? { timestampMs: created } : {}),
+            }),
       );
-      if (!tables.has("message") && !tables.has("session_message")) error = true;
-      for (const table of ["message", "session_message"] as const) {
-        if (!tables.has(table)) continue;
-        const columns = new Set(
-          database
-            .prepare(`PRAGMA table_info(${table})`)
-            .all()
-            .map((row) => row.name),
-        );
-        const timestamp = columns.has("time_created") ? "time_created" : "NULL";
-        const predicates =
-          table === "session_message"
-            ? ["type = 'assistant'"]
-            : // See MAX_MESSAGE_ROW_CHARS: `length()` reads the row's header, not its body.
-              [`length(data) <= ${MAX_MESSAGE_ROW_CHARS}`];
-        if (timestamp !== "NULL") predicates.push("time_created >= ?");
-        const where = predicates.length > 0 ? ` WHERE ${predicates.join(" AND ")}` : "";
-        const statement = database.prepare(
-          `SELECT id, session_id, ${MESSAGE_FIELDS_SQL} AS fields, ${timestamp} AS created FROM ${table}${where}`,
-        );
-        for (const row of statement.iterate(...(timestamp === "NULL" ? [] : [sinceMs]))) {
-          const message = messageFromFields(text(row.fields));
-          append(
-            file.records,
-            message === null
-              ? null
-              : parseOpenCodeMessageObject(message, {
-                  id: text(row.id),
-                  sessionId: text(row.session_id),
-                  ...(typeof row.created === "number" ? { timestampMs: row.created } : {}),
-                }),
-          );
-          if (slice.due()) await slice.yieldNow();
-        }
-      }
-    } catch {
-      error = true;
-    } finally {
-      database?.close();
+      if (slice.due()) await slice.yieldNow();
     }
   }
 

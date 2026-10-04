@@ -200,6 +200,11 @@ describe("windows", () => {
     }
   });
 
+  it("leaves Claude's synthetic stub replies out of a bot's models", () => {
+    const [today] = windows([cell(), cell({ model: "<synthetic>", totals: bigTotals(1) })]);
+    expect(today?.rows[0]?.models.map((entry) => entry.model)).toEqual(["claude-opus-5-5"]);
+  });
+
   it("lists at most five models, most tokens first", () => {
     const models = ["m1", "m2", "m3", "m4", "m5", "m6", "m7"];
     const [today] = windows(

@@ -29,6 +29,8 @@ import { botUsageTotalTokens, type BotUsageCell } from "../usage/botUsage.ts";
 export const TOKEN_USAGE_MONTH_DAYS = 30;
 const TOKEN_USAGE_WEEK_DAYS = 7;
 
+const SYNTHETIC_MODEL = "<synthetic>";
+
 /** Models listed per bot. */
 const MAX_MODELS_PER_ROW = 5;
 
@@ -227,8 +229,12 @@ function toSum(accumulator: Accumulator): PersonalBotTokenUsageSum {
 }
 
 function topModels(models: ReadonlyMap<string, number>): PersonalBotTokenUsageModel[] {
-  return [...models]
-    .toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, MAX_MODELS_PER_ROW)
-    .map(([model, totalTokens]) => ({ model, totalTokens }));
+  return (
+    [...models]
+      // Claude writes "<synthetic>" for the stub replies it makes itself (no model ran).
+      .filter(([model]) => model !== SYNTHETIC_MODEL)
+      .toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, MAX_MODELS_PER_ROW)
+      .map(([model, totalTokens]) => ({ model, totalTokens }))
+  );
 }
