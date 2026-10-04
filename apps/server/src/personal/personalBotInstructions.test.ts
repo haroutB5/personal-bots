@@ -17,7 +17,7 @@ describe("personalBotSystemInstructions", () => {
       ),
     );
     assert.include(text, "as notes with the save_memory tool yourself, without asking");
-    assert.include(text, "rules wait for the user's tap on a card");
+    assert.include(text, "it is saved at once, with an Undo line in the chat");
     assert.include(text, "call search_memory");
     assert.include(text, "Never write memory to files");
     assert.include(text, "ask for them with request_secret");

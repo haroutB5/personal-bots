@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { looksLikeSecret, redactSecrets } from "./secretText.ts";
+import { evidenceFromText } from "./tasks/workRecord.ts";
 
 const SHA1 = "a1d6a63cde9e4f0b8c7d2e1f3a4b5c6d7e8f9a0b";
 const SHA256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -61,6 +62,97 @@ describe("the long-token rule", () => {
     expect(looksLikeSecret(`${KEY.slice(0, 20)}/${KEY.slice(20)}`, { lenient: true })).toBe(true);
     // A key beside a link is not saved by the link.
     expect(looksLikeSecret(`${BLOB} and ${KEY}`, { lenient: true })).toBe(true);
+  });
+
+  describe("a link that carries a secret", () => {
+    // Made of parts: a whole literal reads as a real webhook to a secret scanner.
+    const link = (...parts: ReadonlyArray<string>) => parts.join("");
+    const SLACK = link(
+      "https://hooks.",
+      "slack.com/services/",
+      "T0123ABCD/",
+      "B0456EFGH/",
+      "xYzAbCdEfGhIjKlMnOpQrStU",
+    );
+    const DISCORD = link(
+      "https://disc",
+      "ord.com/api/web",
+      "hooks/1122334455667788/",
+      "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+    );
+    const TEAMS =
+      "https://contoso.webhook.office.com/webhookb2/aaaa-bbbb@cccc/IncomingWebhook/dddd/eeee";
+    const OUTLOOK = "https://outlook.office.com/webhook/aaaa-bbbb@cccc/IncomingWebhook/dddd/eeee";
+    const ZAPIER = "https://hooks.zapier.com/hooks/catch/123456/abcdef/";
+    const TELEGRAM = link(
+      "https://api.tele",
+      "gram.org/bot",
+      "123456789:",
+      "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw",
+      "/sendMessage",
+    );
+    const IFTTT = "https://maker.ifttt.com/trigger/door/with/key/dXyZ1234";
+    const MATTERMOST = "https://chat.example.com/hooks/abcdefghijklmnopqrstuvwxyz";
+    const LOGIC =
+      "https://prod-12.westeurope.logic.azure.com:443/workflows/abc123/triggers/manual/paths/invoke?api-version=2016-06-01";
+    const KEYS = [
+      "https://maps.example.com/api?key=AbCd1234EfGh",
+      "https://files.example.com/a.zip?sig=Zm9vYmFyYmF6",
+      "https://store.example.net/blob?sv=2024&signature=abcdef123456",
+      "https://api.example.com/v1/items?auth=Bearer123456",
+      "https://api.example.com/v1/items?secret=hunter2hunter2",
+      "https://app.example.com/cb#access_token=abc123def456&state=x",
+      "https://user:hunter2@git.example.com/repo.git",
+      "https://ghtoken1234567890abcdef@git.example.com/repo.git",
+    ];
+
+    it("is a secret in both modes, whatever its length", () => {
+      for (const link of [
+        SLACK,
+        DISCORD,
+        TEAMS,
+        OUTLOOK,
+        ZAPIER,
+        TELEGRAM,
+        IFTTT,
+        MATTERMOST,
+        LOGIC,
+        ...KEYS,
+      ]) {
+        expect(looksLikeSecret(`see ${link}`, { lenient: true }), link).toBe(true);
+        expect(looksLikeSecret(`see ${link}`), link).toBe(true);
+      }
+    });
+
+    it("is redacted whole, and the words around it stay", () => {
+      for (const link of [SLACK, DISCORD, TEAMS, ZAPIER, TELEGRAM, MATTERMOST, ...KEYS]) {
+        const out = redactSecrets(`Post to ${link} when done.`, { lenient: true });
+        expect(out, link).toBe("Post to [redacted] when done.");
+      }
+      expect(redactSecrets(`${SLACK} and ${BLOB}`, { lenient: true })).toBe(
+        `[redacted] and ${BLOB}`,
+      );
+    });
+
+    it("is not saved as evidence, but an ordinary link is", () => {
+      expect(
+        evidenceFromText(`Posted to ${SLACK}. Change: ${BLOB}`).map((item) => item.ref),
+      ).toEqual([BLOB]);
+    });
+
+    it("an ordinary link, and a switch that happens to be called auth, stay as they are", () => {
+      for (const link of [
+        BLOB,
+        "https://example.com/docs?page=2&key=",
+        "https://example.com/search?q=hooks&author=jo&keyword=slack&auth=1",
+        "https://github.com/haroutB5/personal-bots/pull/9",
+        "https://discord.com/channels/123/456",
+        "https://api.telegram.org/",
+      ]) {
+        expect(looksLikeSecret(`see ${link}`, { lenient: true }), link).toBe(false);
+        expect(redactSecrets(`see ${link}`, { lenient: true }), link).toBe(`see ${link}`);
+      }
+    });
   });
 
   it("lenient mode keeps the named formats", () => {

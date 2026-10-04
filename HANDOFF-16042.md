@@ -1,0 +1,54 @@
+# hbots 1.60.42: memory without manual approval
+
+Branch `feat/memory-app-scope`, on top of 1.60.41 (`59becadc1c`). Migration **096** (one nullable column). `PERSONAL_TASKS_CONCURRENCY` stays 5. Staged with `build.ps1 -CopyExternals -NoActivate`. Harout: "I don't want this to be a manual task. Users in Grok bot don't go selecting memory to save. It's done automatically." (memory 58cb840f)
+
+**Kill switch:** `T3CODE_PERSONAL_MEMORY_AUTO_APPLY=off` brings the cards back everywhere (bots propose, the tidy-up lists under "Waiting for your OK", the nightly run starts as a preview, nothing is applied at startup). Everything below is the default.
+
+## 1. A rule the user states is saved at once (a)
+
+- `save_memory` with `kind: preference`, from the user's own words in a chat the user started, saves immediately (`memory.save`, source `bot:<id>;from=chat[+web];rule`) and the chat shows **"Saved a rule: ..."** with Undo (the same line as a note). No card. The standing-permission flow (a bot with `memoryAutoSave`) works the same way. `forget_memory` on a rule is the same: forgotten at once, "Forgot a rule" with Undo.
+- **Undo** on the line (the existing `personalMemory.undoNote` RPC) archives the rule and brings back the rules it replaced, or restores a forgotten one. It works only for a rule saved this way (source marker `;rule`) or forgotten for the new reason; a rule saved any other way, or a bot note that later became a rule, has no chat Undo (tests).
+- **What stays closed (c), refused, never queued:** a turn the owner did not start (a task, a routine, another bot's message, a web page's text) · a quote that is not the owner's own words (existing check) · a chat that had a site the user marked sensitive open (nothing saved) · a bot without standing permission and no "remember" ask (existing).
+- **New guard, because there is no card to read any more:** the quote only proves the owner said something; the rule's text is the bot's. `memoryRule.ts` compares them (lexical, no model, so a page cannot talk it round): at least 60 % of the rule's significant words must be in the owner's message (85 % in a turn that had read web pages), and every link, address, handle, path, number and id in the rule must be in the message word for word. A rule it replaces must share a subject word with the new one; a rule is forgotten only when the message asks to drop something (forget, remove, stop using, no longer...) and shares a word with that rule. A refusal tells the bot which words are not the user's. This is stricter than "the quote exists"; say so if you would rather loosen it (`RULE_WORDS_IN_MESSAGE`).
+
+## 2. Tidy-ups apply on their own (b)
+
+- `validateDecisions({ autoAll })` (default): the model's merges, retirements and supersedes are made like exact duplicates; the cap stays (15 archived entries a night, 50 % of the entries). Recorded as **applied** in the log with an **Undo**. The prompt tells the model they are made at once.
+- **Proposal files** (rescope, reclassify, split, supersede, shipped or in the inbox) are applied as they are imported; an item whose entries moved is left (with the reason).
+- **Mode default is on:** at startup the seeded preview mode nobody chose (`updated_at IS NULL`) moves to on; a mode the owner set stays. Off and Preview only are still there.
+- **Undo** (`personalMemory.tidyUndo`, bound to the log's change hash, new status `undone`): restores what a supersede/merge/retirement/forget/split archived, archives what a merge/save/split made, puts a rescope or reclassify back **only while the entry still has the value the change gave it** (an edit since wins). `undo_json` (migration 096) keeps what a rescope, reclassify or split needs. A change made before 1.60.42 that kept no such data (old rescope, reclassify, split) shows no Undo. An undone change is not proposed again (same action on the same entries).
+- **Web:** the changelog (Nightly tidy-up) has an Undo button on each change that was made; "Waiting for your OK" is not on the screen at all when nothing waits (it comes back with the kill switch); copy updated (Memory intro, Context used note, bot instructions and tool descriptions).
+
+## 3. Upgrade (d)
+
+At startup (before the inbox import) every change still waiting is made now. A change whose entries moved since it was proposed is left as it is (reason added); a bot's change with no chat of the owner's behind it (no provenance for the new auto path) is withdrawn. **Measured on the 22:01 backup** (`tidyUpgrade.measure.test.ts`, replay into memory, counts only): the 21 tidy-up changes waiting there (18 supersedes, 3 merges) become **16 applied (14 supersedes, 2 merges) and 5 left as stale** in 10 ms, mode preview to on; 11 rescopes were approved already, 0 pending. The 16 are model-judged changes Harout never read: each is undoable in the log.
+
+## 4. Renewal after a lost conversation, properly (QA 59becadc NO-SHIP)
+
+QA's captured sequence: the failed resume answers "No conversation found", exits, the SDK stream then fails with a generic `Claude runtime stream failed.`, and only then does the app's fresh session start. Two fixes: the adapter's stream-failure error now carries the missing-conversation words when the session had that failure (`handleStreamExit`), and the task service holds any error while the renewal wait (60 s) is open for that attempt, not only one that reads as a missing conversation. Tests replay the order: adapter (result then stream failure, both errors carry the words, none is the generic text) and service (error, 300 ms, generic stream error, 2 s, still running, then the renewed turn completes on attempt 1; a stream error alone still fails at once).
+
+## 5. Links that carry a secret (CTO's privacy item)
+
+`secretText.ts`: a link with a login in it (`https://user:pass@host`), a known webhook address (Slack, Discord, Teams and Outlook, Zapier, Airtable, IFTTT, Telegram bots, Logic Apps, any `/hooks/<token>` or `/webhooks/<id>/<token>` path), or a query/fragment parameter named token, key, secret, sig, signature, auth, password, apikey, credential... with a value, is **redacted whole** and never exempt, in the work record and (an improvement) in memory too (strict mode). Such a link is not kept as evidence; a reference that was only a secret is dropped. Ordinary links, a blob link with a commit id, `?auth=1`, `?keyword=` stay.
+
+## Tests
+
+Server `src/personal src/orchestration src/persistence src/mcp` pass; `src/provider` has the same 10 failures as on 1.60.41 (Antigravity 3, Cursor symlink, OpenCode Go path, Claude usage 4 in this environment, userInputAttachments path), none touched. Web `src/features/personal` passes; both type checks, lint (warnings only, none new) and the format check are clean. New: `memoryRule.test.ts`, `PersonalMemoryTidyService.auto.test.ts` (run, preview, every Undo, imports, startup settle, mode), `memoryHandlers.test.ts` (rule saved at once, grounding refusals, turn not by the owner, web-read strictness, replace subject, sensitive chat, forget, tool text), `PersonalMemoryService.replace.test.ts` (rule Undo), `memoryTidy.test.ts` (autoAll and cap), `secretText.test.ts` and `workRecord.test.ts` (secret links), `PersonalTaskService.test.ts` and `ClaudeAdapter.test.ts` (renewal sequence), web `MemoryTidyPanels.test.tsx` (Undo button, tap, no Waiting section). The older cards tests (`PersonalMemoryTidyService.test.ts`, `.rescope.test.ts`, the first half of `memoryHandlers.test.ts`) now run with the kill switch on; they are the cards mode's tests. `tidyUpgrade.measure.test.ts` is off unless `HBOTS_TIDY_UPGRADE_DB` names a backup.
+
+## Notes for QA
+
+- Throwaway root, fake Claude: in a chat the "user" starts, a scripted `save_memory` (preference, "remember to quote coin prices in USD", content "Quote coin prices in USD.") saves with no card and the line "Saved a rule: ..." appears at 390 px with Undo; tap Undo, the rule is archived (Memory screen, Archived) and a rule it replaced is back. Same call with unrelated content, with a link the user did not type, from a routine or task turn, or after a sensitive site: refused, nothing saved, no card.
+- Nightly: seed notes, run `personalMemory.tidyRun` with `dryRun: false`: changes are applied and listed with Undo; Undo each kind (merge, supersede, retire, rescope, reclassify, split); the same change does not come back on the next run.
+- Upgrade: boot a copy of the live backup first on 1.60.41, then on this release: mode on, the waiting changes applied or left, log shows them; 11 rescope proposals already approved are untouched. Kill switch: the same boot with `T3CODE_PERSONAL_MEMORY_AUTO_APPLY=off` changes nothing and the cards work as in 1.60.41.
+- Renewal: the 59becadc script (`final-renew.mjs`): the steered task completes on attempt 1 with the reply.
+
+## Notes for Fable's review
+
+- The new guard is `memoryRule.ts` (grounding) and the branch in `handlers.ts` `save_memory` / `forget_memory`; the order of checks is: quote is the owner's, sensitive chat, then (auto) turn is the owner's, grounding, replace subject. Think about a page that talks the bot into a rule whose words the owner also used.
+- `applyChange` is the one place a pending change is made (owner tap `approved`, startup/import `applied`); `settlePending` withdraws a bot change with no chat behind it.
+- Undo reads: `restoreArchived` only brings back entries archived by that change (superseded_by and reason), `archiveMade` archives what it made.
+- The startup settle ignores the nightly caps on purpose (the CTO asked to apply what waits); 16 model-judged changes apply on the first start.
+
+## Rollback
+
+Previous live release. Migration 096 only adds a column (the old release ignores it). Kill switch `T3CODE_PERSONAL_MEMORY_AUTO_APPLY=off`, plus the earlier ones (`T3CODE_PERSONAL_MEMORY_APP_SCOPING`, `T3CODE_PERSONAL_MEMORY_RETRIEVAL`, `T3CODE_PERSONAL_TASK_REOPEN_FRESH_TOKENS`). Changes made automatically stay made after a rollback, each undoable on the Memory screen (restore from Archived).

@@ -2,6 +2,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   botNoteSource,
+  botRuleSource,
   describePersonalRoutineTrigger,
   type PersonalBotId,
   type PersonalMemoryEntry,
@@ -19,6 +20,12 @@ import * as Schema from "effect/Schema";
 
 import { appsNamedIn, unknownApps } from "../../../personal/memory/memoryApps.ts";
 import { quoteInMessage } from "../../../personal/memory/memoryQuote.ts";
+import { memoryAutoApplyEnabled } from "../../../personal/memory/memoryAutoApply.ts";
+import {
+  FORGET_REQUEST,
+  ruleGrounding,
+  sharesSubject,
+} from "../../../personal/memory/memoryRule.ts";
 import { noteChangedLine, writeNoteNotice } from "../../../personal/memory/memoryNotice.ts";
 import * as OrchestrationEngine from "../../../orchestration/Services/OrchestrationEngine.ts";
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
@@ -755,8 +762,6 @@ const make = Effect.gen(function* () {
             ),
           };
         }
-        // A rule is followed in every later chat, so a preference waits for
-        // the owner's tap even when only this bot will see it.
         const targets = yield* Effect.forEach(replaceIds, (id) =>
           memory.get(id).pipe(Effect.mapError((error) => refuse(error.message))),
         );
@@ -768,6 +773,64 @@ const make = Effect.gen(function* () {
           );
         }
         const inChat = owner.current !== null && owner.current.byOwner;
+        if (memoryAutoApplyEnabled()) {
+          // A rule the owner states in a chat they started is saved at once, with an Undo line
+          // like a note: no card. What is refused, not queued: a turn the owner did not start
+          // (a task, routine or another bot), and a rule whose words are not the owner's own.
+          if (!inChat) {
+            return yield* refuse(
+              "Not saved: a rule is saved only from a message the user typed in this chat, and this turn was not started by one (a task, a routine or another bot). Put it in your result, or ask the user to say it in this chat.",
+            );
+          }
+          const origin = yield* memory.noteOrigin(invocation.threadId);
+          const grounding = ruleGrounding(input.content, source, { strict: origin.readWeb });
+          if (!grounding.ok) {
+            return yield* refuse(
+              `Not saved: the rule's wording must come from the user's own message, and ${
+                grounding.missing.length === 0
+                  ? "it has nothing of theirs in it"
+                  : `these are not in it: ${grounding.missing.join(", ")}`
+              }${origin.readWeb ? " (this turn read web pages, so the wording is held to the user's message more closely)" : ""}. State the rule in the user's own words, or ask them to say it again.`,
+            );
+          }
+          const unrelated = targets.find((target) => !sharesSubject(input.content, target.content));
+          if (unrelated !== undefined) {
+            return yield* refuse(
+              `Not saved: the rule you would replace ("${unrelated.content.slice(0, 80)}") is not about the same thing as the new one. Replace only a rule on the same subject.`,
+            );
+          }
+          const entry = yield* memory
+            .save({
+              scope,
+              scopeId: scope === "team" ? team : scope === "bot" ? botId : null,
+              kind: "preference",
+              content: input.content,
+              source: botRuleSource(botId, origin.readWeb),
+              apps: input.apps ?? null,
+              replaces: replaceIds,
+              actorBotId: botId,
+              actorTeam: team ?? undefined,
+            })
+            .pipe(Effect.mapError((error) => refuse(error.message)));
+          if (entry.created === true) {
+            yield* noteLine({
+              threadId: invocation.threadId,
+              line: noteChangedLine("saved", entry.content, "rule"),
+              memoryId: entry.memoryId,
+              undo: "archive",
+            });
+          }
+          return {
+            memoryId: PersonalMemoryService.memoryRef(entry),
+            scope: entry.scope,
+            kind: entry.kind,
+            replaced: replaceIds.filter((id) => id !== entry.memoryId).map((id) => id.slice(0, 8)),
+            similar: [],
+            status: "saved" as const,
+            note: "Saved as a rule: bots follow it from their next turn. The chat shows a line with Undo. Tell the user briefly; do not save it again.",
+          };
+        }
+        // Cards mode (the kill switch): a rule waits for the owner's tap.
         const changeId = yield* memory
           .propose({
             action: "save",
@@ -836,6 +899,37 @@ const make = Effect.gen(function* () {
           };
         }
         const inChat = owner.current !== null && owner.current.byOwner;
+        if (memoryAutoApplyEnabled()) {
+          if (!inChat) {
+            return yield* refuse(
+              "Not forgotten: a rule is forgotten only at the word of a message the user typed in this chat, and this turn was not started by one (a task, a routine or another bot).",
+            );
+          }
+          if (!FORGET_REQUEST.test(source) || !sharesSubject(source, target.content)) {
+            return yield* refuse(
+              "Not forgotten: the user's message must ask to drop this rule and be about it. Quote the words in which they asked, and check the rule is the one they mean.",
+            );
+          }
+          const entry = yield* memory
+            .forget({
+              memoryId: target.memoryId,
+              actorBotId: botId,
+              reason: PersonalMemoryService.RULE_FORGOTTEN_REASON,
+            })
+            .pipe(Effect.mapError((error) => refuse(error.message)));
+          yield* noteLine({
+            threadId: invocation.threadId,
+            line: noteChangedLine("forgot", entry.content, "rule"),
+            memoryId: entry.memoryId,
+            undo: "restore",
+          });
+          return {
+            memoryId: PersonalMemoryService.memoryRef(entry),
+            content: entry.content,
+            summary:
+              "Forgotten: bots no longer receive it. The chat shows a line with Undo, and it is in Archived on the Memory screen. Tell the user briefly.",
+          };
+        }
         yield* memory
           .propose({
             action: "forget",

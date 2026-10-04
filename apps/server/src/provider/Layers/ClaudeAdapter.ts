@@ -4503,7 +4503,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const failures = exit.cause.reasons.flatMap((reason) =>
           Cause.isFailReason(reason) ? [reason.error] : [],
         );
-        const message = failures[0]?.detail ?? "Claude runtime stream failed.";
+        // The CLI of a resume whose conversation is gone exits right after its error result, and the
+        // stream then fails: that is the same failure, so it carries the same words (the app renews
+        // the session on them), not a generic stream error that reads as a new one.
+        const message =
+          context.missingConversation ?? failures[0]?.detail ?? "Claude runtime stream failed.";
         yield* emitRuntimeError(context, message, {
           failureCount: failures.length,
           failureTags: failures.map((failure) => failure._tag),

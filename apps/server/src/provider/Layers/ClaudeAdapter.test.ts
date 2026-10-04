@@ -7340,6 +7340,64 @@ describe("ClaudeAdapterLive", () => {
     },
   );
 
+  it.effect(
+    "the stream failure after a lost conversation's result carries the same words, not a generic error",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+        const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          Effect.sync(() => {
+            runtimeEvents.push(event);
+          }),
+        ).pipe(Effect.forkChild);
+        const session = yield* adapter.startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: {
+            threadId: "resume-thread-1",
+            resume: "853cc750-05e8-4fe6-92e7-48ffd8259294",
+            turnCount: 2,
+          },
+          runtimeMode: "full-access",
+        });
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "hello again",
+          interactionMode: "default",
+          attachments: [],
+        });
+        // The captured order: the error result, then the CLI exits and the stream fails.
+        harness.query.emit({
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          errors: ["No conversation found with session ID: 853cc750-05e8-4fe6-92e7-48ffd8259294"],
+          num_turns: 0,
+          session_id: "853cc750-05e8-4fe6-92e7-48ffd8259294",
+          uuid: "result-missing-2",
+        } as unknown as SDKMessage);
+        for (let index = 0; index < 30; index += 1) yield* Effect.yieldNow;
+        harness.query.fail(new Error("Claude Code process exited with code 1"));
+        for (let index = 0; index < 30; index += 1) yield* Effect.yieldNow;
+        runtimeEventsFiber.interruptUnsafe();
+
+        const messages = runtimeEvents.flatMap((event) =>
+          event.type === "runtime.error" ? [event.payload.message] : [],
+        );
+        assert.isAtLeast(messages.length, 2);
+        for (const message of messages) {
+          assert.include(message, "No conversation found with session ID");
+        }
+        assert.isFalse(messages.some((message) => message === "Claude runtime stream failed."));
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("preserves durable resume ids across Claude resume hooks", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

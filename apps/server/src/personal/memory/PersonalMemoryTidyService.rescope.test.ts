@@ -13,6 +13,11 @@ import {
   PersonalMemoryTidyJudge,
   layer as tidyLayer,
 } from "./PersonalMemoryTidyService.ts";
+import { MEMORY_AUTO_APPLY_ENV } from "./memoryAutoApply.ts";
+
+// These tests are the cards mode, where every change waits for the owner's OK: the kill
+// switch. The automatic mode (the default) has its own tests in PersonalMemoryTidyService.auto.test.ts.
+process.env[MEMORY_AUTO_APPLY_ENV] = "off";
 
 const BOT_A = PersonalBotId.make("bot-a");
 const THREAD_M = ThreadId.make("thread-matchday");

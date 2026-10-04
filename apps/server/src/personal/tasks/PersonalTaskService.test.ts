@@ -1133,6 +1133,62 @@ it.effect("a renewal after a lost conversation continues the same attempt", () =
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+it.effect(
+  "the stream error that follows a failed resume is part of the renewal, not a new failure",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("renewal-sequence");
+      const thread = threadOf(root);
+
+      // What a throwaway server captured (1.60.41 QA): the resume answers "No conversation found",
+      // the CLI exits, the SDK's stream then fails with an error of its own, and only after that
+      // does the app's fresh session start and answer.
+      const turnId = yield* beginTurn(harness, thread);
+      yield* endTurn(harness, thread, turnId, "", { status: "error", lastError: LOST });
+      yield* TestClock.adjust("300 millis");
+      yield* setSession(
+        harness,
+        makeSession({
+          threadId: thread,
+          status: "error",
+          activeTurnId: null,
+          lastError: "Claude runtime stream failed.",
+          updatedAt: DateTime.formatIso(yield* DateTime.now),
+        }),
+      );
+      yield* TestClock.adjust("2 seconds");
+      yield* service.sweep;
+      yield* service.drain;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      yield* runTurn(harness, thread, "Read the logs: nothing wrong.");
+      const done = yield* reload(root.taskId);
+      expect([done.status, done.errorCategory]).toEqual(["completed", null]);
+      expect((yield* service.get({ taskId: root.taskId })).attempts.length).toBe(1);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("a stream error with no failed resume before it still fails the task at once", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const root = yield* createRoot("stream-error-alone");
+    yield* runTurn(harness, threadOf(root), "", {
+      status: "error",
+      lastError: "Claude runtime stream failed.",
+    });
+    const failed = yield* reload(root.taskId);
+    expect([failed.status, failed.errorMessage]).toEqual([
+      "failed",
+      "Claude runtime stream failed.",
+    ]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 it.effect("a lost conversation with no renewal still fails the task once the wait is over", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {

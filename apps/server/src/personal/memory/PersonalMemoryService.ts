@@ -27,6 +27,7 @@ import {
   type PersonalMemoryTurnContext,
   type PersonalMemoryTurnContextInput,
   PERSONAL_MEMORY_RULES_WARN_SHARE,
+  isBotRuleSource,
   noteSourceTag,
   type PersonalMemorySearchInput,
   type PersonalMemoryUpdateInput,
@@ -338,6 +339,8 @@ export interface PersonalMemorySaveInput {
 const FORGOTTEN_REASON = "Forgotten at the user's request.";
 /** Why a note a bot forgot on its own was archived. */
 export const NOTE_FORGOTTEN_REASON = "Forgotten by a bot (a note it found out of date).";
+/** Why a rule was archived at the owner's word in a chat; only this does a rule's Undo bring back. */
+export const RULE_FORGOTTEN_REASON = "Forgotten by a bot at the user's word.";
 /** Tools that bring web or browser content into a turn (app tools and provider built-ins). */
 const WEB_TOOL_PATTERN =
   /(search_web|read_pages|search_google|search_products|preview_[a-z_]+|computer_[a-z_]+|use_login|WebFetch|WebSearch|web_fetch|web_search)/i;
@@ -1080,6 +1083,10 @@ export const make = Effect.gen(function* () {
   const undoNote: PersonalMemoryService["Service"]["undoNote"] = (input) =>
     Effect.gen(function* () {
       const current = yield* readEntry(input.memoryId);
+      // A rule a bot saved at the owner's word (1.60.42) has its own Undo; no other rule has one.
+      if (current.kind === "preference" && isBotRuleSource(current.source)) {
+        return yield* undoRule(input, current);
+      }
       if (current.kind !== "note") {
         return yield* fail("Only a note a bot saved can be undone from the chat.");
       }
@@ -1129,6 +1136,54 @@ export const make = Effect.gen(function* () {
       }).pipe(sql.withTransaction);
       return yield* readEntry(input.memoryId);
     }).pipe(storageFailure("undo"));
+
+  /**
+   * The Undo of a "Saved a rule" / "Forgot a rule" chat line. The kind, the source and the reason
+   * are part of each update itself, so a rule that changed since (or was archived some other way)
+   * is never touched, and a note that became a rule has no such Undo.
+   */
+  const undoRule = (
+    input: {
+      readonly memoryId: PersonalMemoryId;
+      readonly undo?: "archive" | "restore" | undefined;
+    },
+    current: PersonalMemoryEntry,
+  ) =>
+    Effect.gen(function* () {
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      if (input.undo === "restore") {
+        yield* sql`
+          UPDATE personal_memory
+          SET superseded_at = NULL, superseded_by = NULL, superseded_reason = NULL,
+              version = version + 1
+          WHERE memory_id = ${input.memoryId} AND kind = 'preference' AND deleted_at IS NULL
+            AND superseded_at IS NOT NULL AND source = ${current.source}
+            AND superseded_reason = ${RULE_FORGOTTEN_REASON}
+        `;
+        return yield* readEntry(input.memoryId);
+      }
+      if (current.supersededAt != null) return current;
+      yield* Effect.gen(function* () {
+        const archived = yield* sql<{ readonly id: string }>`
+          UPDATE personal_memory
+          SET superseded_at = ${nowIso}, superseded_by = NULL,
+              superseded_reason = ${UNDONE_REASON}, version = version + 1
+          WHERE memory_id = ${input.memoryId} AND kind = 'preference' AND source = ${current.source}
+            AND deleted_at IS NULL AND superseded_at IS NULL
+          RETURNING memory_id AS "id"
+        `;
+        if (archived.length === 0) return;
+        // The rules this rule's own save replaced come back.
+        yield* sql`
+          UPDATE personal_memory
+          SET superseded_at = NULL, superseded_by = NULL, superseded_reason = NULL,
+              version = version + 1
+          WHERE superseded_by = ${input.memoryId} AND kind = 'preference'
+            AND superseded_reason = ${REPLACED_REASON} AND deleted_at IS NULL
+        `;
+      }).pipe(sql.withTransaction);
+      return yield* readEntry(input.memoryId);
+    });
 
   const similar: PersonalMemoryService["Service"]["similar"] = (input) =>
     Effect.gen(function* () {
@@ -1804,7 +1859,7 @@ export const make = Effect.gen(function* () {
       const entry = yield* readEntry(input.memoryId);
       if (entry.kind === "preference") {
         return yield* fail(
-          "A rule cannot be marked: rules change only when you approve a card on the Memory screen.",
+          "A rule cannot be marked outdated or not relevant here: tell the bot to change or forget it, or change it on the Memory screen.",
         );
       }
       if (input.signal === "clear") {

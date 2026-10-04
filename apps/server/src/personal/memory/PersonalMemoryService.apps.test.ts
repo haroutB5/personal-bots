@@ -703,7 +703,7 @@ describe("Context used: what a turn was given, and the owner's marks (1.60.41)",
       const refused = yield* Effect.flip(
         memory.setFeedback({ memoryId: rule.memoryId, signal: "outdated" }),
       );
-      expect(refused.message).toContain("approve a card");
+      expect(refused.message).toContain("cannot be marked");
       expect((yield* memory.get(rule.memoryId)).demoted).toBeNull();
     }).pipe(Effect.provide(TestLayer)),
   );

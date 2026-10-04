@@ -322,6 +322,14 @@ export const personalMemoryTidyDecide = createEnvironmentRpcCommand(connectionAt
     ),
 });
 
+/** Takes back a change made on its own: both memory lists and the log change. */
+export const personalMemoryTidyUndo = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-memory:tidy-undo",
+  tag: WS_METHODS.personalMemoryTidyUndo,
+  onSuccess: (target, registry) =>
+    Effect.andThen(refreshTidyLog(target, registry), refreshMemoryAndReplaced(target, registry)),
+});
+
 export const personalPushSubscribe = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-push:subscribe",
   tag: WS_METHODS.personalPushSubscribe,

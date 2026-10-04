@@ -6,13 +6,21 @@ import { MemoryTidySection, MemoryWaitingSection, TidyChangeItem } from "./Memor
 import { UNLISTED_MEMORY_TEXT } from "./memoryPresentation";
 
 const tidyLog = vi.hoisted(() => ({ data: null as unknown, error: null as string | null }));
+/** Every command the screen sent, by the command it was made from. */
+const sent = vi.hoisted(() => [] as Array<{ command: unknown; args: unknown }>);
 
-vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => undefined }));
+vi.mock("~/state/use-atom-command", () => ({
+  useAtomCommand: (command: unknown) => async (args: unknown) => {
+    sent.push({ command, args });
+    return { _tag: "Success" };
+  },
+}));
 vi.mock("./usePersonalAutomation", () => ({
   personalMemoryRestore: {},
   personalMemoryTidyDecide: {},
   personalMemoryTidyRun: {},
   personalMemoryTidySetMode: {},
+  personalMemoryTidyUndo: { name: "undo" },
   usePersonalMemoryTidyLog: () => tidyLog,
 }));
 
@@ -42,6 +50,7 @@ afterEach(() => {
   act(() => renderer?.unmount());
   renderer = null;
   tidyLog.data = null;
+  sent.length = 0;
 });
 
 const textOf = (item: PersonalMemoryTidyChange): string => {
@@ -261,6 +270,86 @@ const textIn = (node: ReactTestRenderer["root"]): string =>
 const toggleOf = (root: ReactTestRenderer["root"]) =>
   root.find((node) => node.type === "button" && node.props["aria-expanded"] !== undefined);
 
+describe("1.60.42: changes made on their own can be undone from the changelog", () => {
+  const log = {
+    mode: "on",
+    runs: [
+      {
+        runId: "tidy-1",
+        startedAt: "2026-10-05T03:30:00.000Z",
+        finishedAt: "2026-10-05T03:31:00.000Z",
+        status: "done",
+        dryRun: false,
+        model: "fake",
+        merged: 0,
+        superseded: 2,
+        pending: 0,
+        leftAlone: 0,
+        error: null,
+        changes: [
+          change({ changeId: 5, changeHash: "hash-5", undoable: true }),
+          change({ changeId: 6, changeHash: "hash-6", status: "left", undoable: false }),
+          change({ changeId: 7, changeHash: "hash-7", status: "undone", undoable: false }),
+        ],
+      },
+    ],
+  };
+
+  const render = (environmentId: string | null = null) => {
+    act(() => {
+      renderer = create(
+        <MemoryTidySection
+          environmentId={environmentId as never}
+          texts={texts}
+          botName={() => undefined}
+        />,
+      );
+    });
+    return renderer!.root;
+  };
+  const undoButtons = (root: ReactTestRenderer["root"]) =>
+    root.findAll((node) => node.type === "button" && textIn(node) === "Undo");
+
+  it("offers Undo only on a change that was made and not undone yet", () => {
+    tidyLog.data = log;
+    const root = render();
+    expect(undoButtons(root)).toHaveLength(1);
+    const json = JSON.stringify(renderer!.toJSON());
+    expect(json).toContain("Undone");
+  });
+
+  it("an Undo tap sends the change's id with the hash on screen", async () => {
+    tidyLog.data = log;
+    const root = render("env-1");
+    await act(async () => {
+      undoButtons(root)[0]!.props.onClick();
+    });
+    expect(sent).toEqual([
+      {
+        command: { name: "undo" },
+        args: { environmentId: "env-1", input: { changeId: 5, changeHash: "hash-5" } },
+      },
+    ]);
+  });
+
+  it("with no connection the tap sends nothing", async () => {
+    tidyLog.data = log;
+    const root = render(null);
+    await act(async () => {
+      undoButtons(root)[0]!.props.onClick();
+    });
+    expect(sent).toEqual([]);
+  });
+
+  it("the intro says the changes are made at once, with an Undo", () => {
+    tidyLog.data = log;
+    render();
+    const json = JSON.stringify(renderer!.toJSON());
+    expect(json).toContain("made at once");
+    expect(json).not.toContain("wait under Waiting");
+  });
+});
+
 describe("1.60.22: Waiting for your OK is its own section, open when something waits", () => {
   it("shows the count, open, with Select all per group, when 82 changes wait", () => {
     tidyLog.data = liveLikeLog(82);
@@ -293,12 +382,9 @@ describe("1.60.22: Waiting for your OK is its own section, open when something w
     expect(toggleOf(root).props["aria-expanded"]).toBe(false);
   });
 
-  it("is a closed one-line section when nothing waits", () => {
+  it("is not on the screen at all when nothing waits (changes are made on their own now)", () => {
     tidyLog.data = liveLikeLog(0);
-    const toggle = toggleOf(renderWaiting().root);
-    expect(textIn(toggle)).toContain("Waiting for your OK (0)");
-    expect(textIn(toggle)).toContain("Nothing is waiting.");
-    expect(toggle.props["aria-expanded"]).toBe(false);
+    expect(renderWaiting().toJSON()).toBeNull();
   });
 
   it("renders nothing while the log loads", () => {

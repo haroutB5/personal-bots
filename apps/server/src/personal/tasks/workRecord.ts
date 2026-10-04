@@ -105,7 +105,8 @@ export function applyWorkRecordPatch(
       label: safe(item.label, L.evidenceLabel),
       ref: safe(item.ref, L.evidenceRef),
     }))
-    .filter((item) => item.ref.length > 0);
+    // A reference that was only a secret is dropped, not kept as a bare "[redacted]".
+    .filter((item) => item.ref.length > 0 && item.ref !== "[redacted]");
   return {
     ...record,
     objective:

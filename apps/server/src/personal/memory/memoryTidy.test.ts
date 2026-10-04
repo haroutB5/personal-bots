@@ -101,6 +101,42 @@ describe("validateDecisions", () => {
     expect(result.left).toEqual([]);
   });
 
+  it("with autoAll (the default mode) the model's merges and retirements are made too, within the nightly cap", () => {
+    const decisions = [
+      { action: "supersede" as const, memoryIds: ["a"], by: "b", reason: "B restates A." },
+      {
+        action: "merge" as const,
+        memoryIds: ["c", "d"],
+        content: "Rules C and D.",
+        reason: "Same rule.",
+      },
+      { action: "supersede" as const, memoryIds: ["f"], by: null, reason: "Says it ended." },
+    ];
+    const result = validateDecisions(entries, decisions, NOW, undefined, { autoAll: true });
+    expect(result.pending).toEqual([]);
+    expect(result.auto.map((decision) => decision.memoryIds)).toEqual([["a"], ["c", "d"], ["f"]]);
+    // The cap on entries archived in a night counts them all.
+    const many = Array.from({ length: MAX_AUTO_PER_NIGHT + 3 }, (_, index) =>
+      entry(`m${index}`, `Model note ${index}.`),
+    );
+    const capped = validateDecisions(
+      [...many, entry("keep", "A newer note.", { createdAtMs: NOW - DAY })],
+      many.map((older, index) => ({
+        action: "supersede" as const,
+        memoryIds: [older.memoryId],
+        by: "keep",
+        reason: `Covered ${index}.`,
+      })),
+      NOW,
+      undefined,
+      { autoAll: true },
+    );
+    expect(capped.auto.length + capped.left.length).toBeGreaterThan(0);
+    expect(
+      capped.auto.reduce((sum, decision) => sum + decision.memoryIds.length, 0),
+    ).toBeLessThanOrEqual(MAX_AUTO_PER_NIGHT);
+  });
+
   it("asks first when the successor is older, or of another kind", () => {
     const result = validateDecisions(
       entries,

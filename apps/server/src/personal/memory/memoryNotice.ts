@@ -19,11 +19,15 @@ import { PERSONAL_NOTICE_MESSAGE_ID_PREFIX } from "../personalChatResumePolicy.t
 /** How much of a note its chat line shows. */
 const SHOWN_CHARS = 80;
 
-/** "Saved a note: <first 80 chars>" / "Forgot a note: ...", on one line. */
-export function noteChangedLine(action: "saved" | "forgot", content: string): string {
+/** "Saved a note: <first 80 chars>" / "Forgot a rule: ...", on one line. */
+export function noteChangedLine(
+  action: "saved" | "forgot",
+  content: string,
+  kind: "note" | "rule" = "note",
+): string {
   const text = content.replace(/\s+/g, " ").trim();
   const shown = text.length > SHOWN_CHARS ? `${text.slice(0, SHOWN_CHARS).trimEnd()}...` : text;
-  return `${action === "saved" ? "Saved" : "Forgot"} a note: ${shown}`;
+  return `${action === "saved" ? "Saved" : "Forgot"} a ${kind}: ${shown}`;
 }
 
 /**

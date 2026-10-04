@@ -1749,9 +1749,14 @@ export const make = Effect.gen(function* () {
           return;
         }
         // The failed resume reports its error before the app's renewal starts the fresh
-        // session: the renewal is the same attempt, so the error is not yet its end. If no
-        // renewal follows, the error counts once the wait is over (the sweep settles it).
-        if (isMissingProviderConversationText(session.lastError)) {
+        // session: the renewal is the same attempt, so the error is not yet its end. The CLI
+        // then exits and the stream fails with an error of its own: while the wait is open that
+        // follow-on error belongs to the same failed resume. If no renewal follows, the error
+        // counts once the wait is over (the sweep settles it).
+        if (
+          isMissingProviderConversationText(session.lastError) ||
+          renewalWaitSince.has(renewalKey)
+        ) {
           const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
           const since = renewalWaitSince.get(renewalKey) ?? nowMs;
           renewalWaitSince.set(renewalKey, since);

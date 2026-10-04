@@ -46,6 +46,7 @@ import {
   personalMemoryTidyDecide,
   personalMemoryTidyRun,
   personalMemoryTidySetMode,
+  personalMemoryTidyUndo,
   usePersonalMemoryTidyLog,
 } from "./usePersonalAutomation";
 
@@ -681,7 +682,9 @@ export function MemoryWaitingSection({
   const [openChoice, setOpenChoice] = useState<boolean | null>(null);
   const open = openChoice ?? total > 0;
   const panelId = useId();
-  if (log.data === null) return null;
+  // Changes are made on their own now (each with an Undo in the changelog): nothing to show
+  // unless some still wait for an answer (the automatic mode switched off).
+  if (log.data === null || total === 0) return null;
   return (
     <section
       aria-label="Waiting for your OK"
@@ -712,12 +715,63 @@ export function MemoryWaitingSection({
   );
 }
 
+/**
+ * Undo for a change that was made on its own (or approved): the entries it archived come back,
+ * what it made is archived, a rescope is put back. The tap is bound to the change on screen.
+ */
+function UndoChangeButton({
+  environmentId,
+  change,
+}: {
+  environmentId: EnvironmentId | null;
+  change: PersonalMemoryTidyChange;
+}): JSX.Element | null {
+  const undo = useAtomCommand(personalMemoryTidyUndo);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (change.undoable !== true) return null;
+  const onUndo = async () => {
+    if (environmentId === null || busy) return;
+    setBusy(true);
+    setError(null);
+    const result = await undo({
+      environmentId,
+      input: { changeId: change.changeId, changeHash: change.changeHash },
+    });
+    setBusy(false);
+    setError(commandFailureMessage(result, "Could not undo that change."));
+  };
+  return (
+    <div className="mt-1.5">
+      <button
+        type="button"
+        disabled={environmentId === null || busy}
+        aria-busy={busy}
+        onClick={() => void onUndo()}
+        className={cn(
+          "h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)] px-4 text-[15px] font-semibold text-[var(--personal-text)] disabled:opacity-60",
+          FOCUS_RING,
+        )}
+      >
+        {busy ? "Undoing…" : "Undo"}
+      </button>
+      {error !== null ? (
+        <p role="alert" className="mt-1 text-[14px] text-[var(--personal-error)]">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 /** One run in the changelog, with its changes folded behind a button. */
 function TidyRunItem({
+  environmentId,
   run,
   texts,
   botName,
 }: {
+  environmentId: EnvironmentId | null;
   run: PersonalMemoryTidyRun;
   texts: ReadonlyMap<string, string>;
   botName: BotName;
@@ -752,12 +806,9 @@ function TidyRunItem({
           </button>
           <ul id={changesId} hidden={!open} className="divide-y divide-[var(--personal-border)]">
             {run.changes.map((change) => (
-              <TidyChangeItem
-                key={change.changeId}
-                change={change}
-                texts={texts}
-                botName={botName}
-              />
+              <TidyChangeItem key={change.changeId} change={change} texts={texts} botName={botName}>
+                <UndoChangeButton environmentId={environmentId} change={change} />
+              </TidyChangeItem>
             ))}
           </ul>
         </>
@@ -826,9 +877,9 @@ export function MemoryTidySection({
       />
       <div id={panelId} hidden={!open} className="flex flex-col gap-3 pt-1">
         <p className="text-[14px] leading-snug text-[var(--personal-text-secondary)]">
-          Each night at 03:30 duplicates are merged and outdated entries are replaced. Preview only
-          lists what it would do and changes nothing. Changes that need your OK wait under Waiting
-          for your OK at the top of this screen.
+          Each night at 03:30 duplicates are merged and outdated entries are replaced. The changes
+          are made at once, and each one is in the changelog below with an Undo. Preview only lists
+          what it would do and changes nothing.
         </p>
         <TidyModeControl
           mode={mode}
@@ -865,7 +916,13 @@ export function MemoryTidySection({
         ) : (
           <ul className="-mt-2 divide-y divide-[var(--personal-border)]">
             {runs.map((run) => (
-              <TidyRunItem key={run.runId} run={run} texts={texts} botName={botName} />
+              <TidyRunItem
+                key={run.runId}
+                environmentId={environmentId}
+                run={run}
+                texts={texts}
+                botName={botName}
+              />
             ))}
           </ul>
         )}

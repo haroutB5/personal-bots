@@ -1,4 +1,4 @@
-import { PersonalBotId, ThreadId } from "@t3tools/contracts";
+import { botRuleSource, isBotRuleSource, PersonalBotId, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -9,7 +9,11 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { localDay } from "./memoryTidy.ts";
-import { PersonalMemoryService, layer as memoryLayer } from "./PersonalMemoryService.ts";
+import {
+  PersonalMemoryService,
+  RULE_FORGOTTEN_REASON,
+  layer as memoryLayer,
+} from "./PersonalMemoryService.ts";
 
 const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
 
@@ -576,6 +580,81 @@ it.effect("1.60.22: Undo never archives a preference", () =>
     expect(error.message).toContain("Only a note");
     expect((yield* memory.list({})).map((entry) => entry.memoryId)).toEqual([rule.memoryId]);
   }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "1.60.42: a rule a bot saved at the user's word has its own Undo, and nothing else does",
+  () =>
+    Effect.gen(function* () {
+      const memory = yield* PersonalMemoryService;
+      const older = yield* memory.save({
+        scope: "shared",
+        scopeId: null,
+        kind: "preference",
+        content: "Quote coin prices in pounds.",
+        source: "user",
+      });
+      const rule = yield* memory.save({
+        scope: "shared",
+        scopeId: null,
+        kind: "preference",
+        content: "Quote coin prices in USD.",
+        source: botRuleSource(BOT_A, false),
+        replaces: [older.memoryId],
+        actorBotId: BOT_A,
+      });
+      expect((yield* memory.list({})).map((entry) => entry.memoryId)).toEqual([rule.memoryId]);
+      expect(isBotRuleSource(rule.source)).toBe(true);
+
+      // Undo on the "Saved a rule" line: the rule goes (archived), the rule it replaced comes back.
+      const undone = yield* memory.undoNote({ memoryId: rule.memoryId });
+      expect(undone.supersededAt).not.toBeNull();
+      expect((yield* memory.list({})).map((entry) => entry.memoryId)).toEqual([older.memoryId]);
+
+      // A rule saved any other way, or a note a bot saved that became a rule, has no such Undo.
+      for (const source of [`bot:${BOT_A}`, "user", `bot:${BOT_A};from=chat`]) {
+        const other = yield* memory.save({
+          scope: "shared",
+          scopeId: null,
+          kind: "preference",
+          content: `Another rule from ${source}.`,
+          source,
+        });
+        const error = yield* memory.undoNote({ memoryId: other.memoryId }).pipe(Effect.flip);
+        expect(error.message).toContain("Only a note");
+      }
+    }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "1.60.42: forgetting a rule at the user's word is undone from its line, only for that reason",
+  () =>
+    Effect.gen(function* () {
+      yield* linkThreads;
+      const memory = yield* PersonalMemoryService;
+      const rule = yield* memory.save({
+        scope: "shared",
+        scopeId: null,
+        kind: "preference",
+        content: "Quote coin prices in USD.",
+        source: botRuleSource(BOT_A, false),
+      });
+      yield* memory.forget({
+        memoryId: rule.memoryId,
+        actorBotId: BOT_A,
+        reason: RULE_FORGOTTEN_REASON,
+      });
+      expect(yield* memory.list({})).toEqual([]);
+      const restored = yield* memory.undoNote({ memoryId: rule.memoryId, undo: "restore" });
+      expect(restored.supersededAt ?? null).toBeNull();
+      expect((yield* memory.list({})).map((entry) => entry.memoryId)).toEqual([rule.memoryId]);
+
+      // Archived some other way (here: forgotten with the generic reason): not brought back.
+      yield* memory.forget({ memoryId: rule.memoryId, actorBotId: BOT_A });
+      const still = yield* memory.undoNote({ memoryId: rule.memoryId, undo: "restore" });
+      expect(still.supersededAt).not.toBeNull();
+      expect(yield* memory.list({})).toEqual([]);
+    }).pipe(Effect.provide(TestLayer)),
 );
 
 /** A running turn on THREAD_A started by `messageId`, optionally after some tool calls. */

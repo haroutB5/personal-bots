@@ -192,6 +192,7 @@ describe("pending tidy changes", () => {
       rejected: "Rejected",
       left: "Left alone",
       withdrawn: "Withdrawn",
+      undone: "Undone",
     });
     expect(tidySummaryLine("on", run("2026-10-01T02:30:00Z"), 2)).toBe(
       "Make changes · last run 2026-10-01 03:30: 1 merged, 2 replaced · 2 waiting for your OK",

@@ -234,8 +234,8 @@ export function ContextUsedView({
       ) : null}
 
       <p className="text-[12px] leading-snug text-[var(--personal-text-tertiary)]">
-        Marking a note ranks it lower in later turns; nothing is deleted. Rules change only when you
-        approve a card on the Memory screen.
+        Marking a note ranks it lower in later turns; nothing is deleted. A rule is not marked here:
+        tell the bot to change or forget it, or change it on the Memory screen.
       </p>
     </div>
   );

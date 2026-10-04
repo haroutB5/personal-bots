@@ -224,7 +224,7 @@ describe("ContextUsedView", () => {
     expect(text).toContain(
       "Your message said little, so the chat's topic led the search: matchday, dots.",
     );
-    expect(text).toContain("Rules change only when you approve a card");
+    expect(text).toContain("A rule is not marked here");
   });
 
   it("a note picked on its words alone says so", () => {

@@ -409,14 +409,14 @@ export function MemoryScreen(): JSX.Element {
 
       <p className="text-[14px] leading-snug text-[var(--personal-text-secondary)]">
         Bots save notes (facts, decisions, events) here on their own and say so in the chat, with
-        Undo; rules (preferences) are saved only when you tap Save on their card. Finished tasks add
-        short summaries. Shared entries (facts about you) reach every bot, team entries reach one
-        team's bots, and bot entries reach one bot. Preferences go to every turn of the bots they
-        reach, except a rule limited to one app, which is listed only in chats about that app (the
-        rest get a one-line index); up to 6 notes and 6 task summaries are picked by relevance. When
-        a fact changes, the newer entry replaces the older one, which moves to Archived and can be
-        restored. Deleting an entry stops bots receiving it; chat transcripts where it came up still
-        contain the text.
+        Undo; a rule (preference) you state in a chat is saved at once, in your own words, with an
+        Undo line there too. Finished tasks add short summaries. Shared entries (facts about you)
+        reach every bot, team entries reach one team's bots, and bot entries reach one bot.
+        Preferences go to every turn of the bots they reach, except a rule limited to one app, which
+        is listed only in chats about that app (the rest get a one-line index); up to 6 notes and 6
+        task summaries are picked by relevance. When a fact changes, the newer entry replaces the
+        older one, which moves to Archived and can be restored. Deleting an entry stops bots
+        receiving it; chat transcripts where it came up still contain the text.
       </p>
 
       {selecting ? null : <RulesUsageCard environmentId={environmentId} />}

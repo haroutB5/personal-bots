@@ -33,6 +33,7 @@ import * as ProviderInstanceRegistry from "../../provider/Services/ProviderInsta
 import { forkParked } from "../../serverActivation.ts";
 import { isExpensiveSeedModel } from "../seedModel.ts";
 import { SHIPPED_MEMORY_PROPOSALS } from "./shippedProposals.ts";
+import { memoryAutoApplyEnabled } from "./memoryAutoApply.ts";
 import { appsToJson, normaliseApps, parseAppsJson, unknownApps } from "./memoryApps.ts";
 import {
   buildTidyPrompt,
@@ -62,8 +63,10 @@ import { withStallJob } from "../../observability/stallJobs.ts";
  * keep their text and can be restored from the Memory screen. Every run and
  * change is written to the changelog, including what it left alone.
  *
- * Mode "preview" (the default) does all of that but changes nothing, so the
- * owner can read what it would do first. Mode "off" skips the nightly run.
+ * Mode "on" (the default since 1.60.42) makes every change it checked itself,
+ * its merges and retirements too, each with an Undo in the changelog (see
+ * memoryAutoApply.ts). Mode "preview" does all of that but changes nothing, so
+ * the owner can read what it would do first. Mode "off" skips the nightly run.
  */
 export class PersonalMemoryTidy extends Context.Service<
   PersonalMemoryTidy,
@@ -79,6 +82,26 @@ export class PersonalMemoryTidy extends Context.Service<
       /** The hash the owner's card or list showed; refused when it is not this change's. */
       readonly changeHash: string;
     }) => Effect.Effect<PersonalMemoryTidyLogResult, PersonalMemoryError>;
+    /**
+     * Takes back a change that was made (on its own, or approved): the entries
+     * it archived are restored, what it made is archived, a rescope or
+     * reclassify is put back. The tidy-up does not propose that change again.
+     */
+    readonly undo: (input: {
+      readonly changeId: number;
+      /** The hash the log showed; refused when it is not this change's. */
+      readonly changeHash: string;
+    }) => Effect.Effect<PersonalMemoryTidyLogResult, PersonalMemoryError>;
+    /**
+     * Startup: with the automatic mode on, the nightly mode nobody chose moves
+     * to "on", and every change still waiting for the owner's OK is made now (one
+     * whose entries moved since is left as it is; a bot's change with no chat of
+     * the owner's behind it is taken off the list). A no-op with the switch off.
+     */
+    readonly applyWaiting: Effect.Effect<
+      { readonly applied: number; readonly left: number; readonly withdrawn: number },
+      PersonalMemoryError
+    >;
     /** Bots' save/forget cards shown in one chat: pending, and decided in the last 7 days. */
     readonly cardsForThread: (
       threadId: string,
@@ -265,6 +288,30 @@ const encodeSplit = Schema.encodeSync(Schema.fromJsonString(StoredSplit));
 const decodeSplit = Schema.decodeUnknownOption(Schema.fromJsonString(StoredSplit));
 
 /**
+ * What a change needs to be taken back: the entries a rescope, reclassify or
+ * split touched, as they were, and the entries a split made.
+ */
+const StoredUndo = Schema.Struct({
+  before: Schema.Array(
+    Schema.Struct({
+      memoryId: Schema.String,
+      kind: Schema.String,
+      scope: Schema.String,
+      scopeId: Schema.NullOr(Schema.String),
+      appsJson: Schema.NullOr(Schema.String),
+    }),
+  ),
+  created: Schema.optional(Schema.Array(Schema.String)),
+});
+const encodeUndo = Schema.encodeSync(Schema.fromJsonString(StoredUndo));
+const decodeUndo = Schema.decodeUnknownOption(Schema.fromJsonString(StoredUndo));
+
+/** Why an entry was archived by a tidy-up change; an Undo brings back only these. */
+const RETIRED_PREFIX = "Retired by the tidy-up";
+const BOT_FORGET_REASON = "Forgotten with your approval.";
+const UNDONE_FROM_LOG = "Undone from the log.";
+
+/**
  * A pending item an earlier proposals file put on the list, taken back. The
  * entries it names must match, so an id from another data root cannot take
  * back an unrelated item.
@@ -414,6 +461,10 @@ interface RunRow {
 }
 
 interface ChangeRow {
+  /** What an Undo needs (see StoredUndo); null on changes made before it existed. */
+  readonly undoJson?: string | null;
+  /** 1 when undoJson is set (the log's select does not carry the text itself). */
+  readonly hasUndo?: number;
   readonly toAppsJson?: string | null;
   readonly threadId?: string | null;
   /** Per-entry text, kind and reach as shown (null on rows from before 1.60.21). */
@@ -471,7 +522,15 @@ export const make = Effect.gen(function* () {
 
   const readMode = sql<{ readonly mode: string }>`
     SELECT mode FROM personal_memory_tidy_settings WHERE settings_id = 1
-  `.pipe(Effect.map((rows) => (isTidyMode(rows[0]?.mode) ? rows[0]!.mode : ("preview" as const))));
+  `.pipe(
+    Effect.map((rows) =>
+      isTidyMode(rows[0]?.mode)
+        ? rows[0]!.mode
+        : memoryAutoApplyEnabled()
+          ? ("on" as const)
+          : ("preview" as const),
+    ),
+  );
 
   // Shared and team entries; bot-only entries are left to the bot that owns them.
   const readEntries = sql`
@@ -522,7 +581,9 @@ export const make = Effect.gen(function* () {
         } else error = output.failure;
       }
       return {
-        ...validateDecisions(entries, [...exact, ...judged], nowMs, looksLikeSecret),
+        ...validateDecisions(entries, [...exact, ...judged], nowMs, looksLikeSecret, {
+          autoAll: memoryAutoApplyEnabled(),
+        }),
         error,
       };
     });
@@ -692,7 +753,8 @@ export const make = Effect.gen(function* () {
   }) =>
     sql<{ readonly count: number }>`
       SELECT COUNT(*) AS "count" FROM personal_memory_tidy_changes
-      WHERE status IN ('pending', 'rejected') AND action = ${change.action}
+      WHERE (
+        status IN ('pending', 'rejected') AND action = ${change.action}
         AND memory_ids_json = ${encodeIds(change.memoryIds)}
         AND result_memory_id IS ${change.resultId}
         AND ${change.content === undefined ? sql`1 = 1` : sql`content IS ${change.content}`}
@@ -700,6 +762,12 @@ export const make = Effect.gen(function* () {
         AND to_scope IS ${change.toScope}
         AND to_scope_id IS ${change.toScopeId}
         AND to_apps_json IS ${change.toAppsJson ?? null}
+      ) OR (
+        -- Taken back by the owner: the same action on the same entries is not made again,
+        -- whatever its new wording or result.
+        status = 'undone' AND action = ${change.action}
+        AND memory_ids_json = ${encodeIds(change.memoryIds)}
+      )
     `.pipe(Effect.map((rows) => (rows[0]?.count ?? 0) > 0));
 
   /**
@@ -736,7 +804,8 @@ export const make = Effect.gen(function* () {
           result_memory_id AS "resultMemoryId", content, reason,
           to_kind AS "toKind", to_scope AS "toScope", to_scope_id AS "toScopeId",
           proposed_by AS "proposedBy", versions_json AS "versionsJson",
-          entry_snapshots_json AS "entrySnapshotsJson", to_apps_json AS "toAppsJson"
+          entry_snapshots_json AS "entrySnapshotsJson", to_apps_json AS "toAppsJson",
+          undo_json IS NOT NULL AS "hasUndo"
         FROM personal_memory_tidy_changes
         WHERE ${sql.in(
           "run_id",
@@ -783,6 +852,15 @@ export const make = Effect.gen(function* () {
                   : null,
               proposedBy: change.proposedBy ?? null,
               changeHash: changeHashOf(change),
+              // A rescope, reclassify or split made before 1.60.42 kept nothing to put back.
+              undoable:
+                (change.status === "applied" || change.status === "approved") &&
+                (change.hasUndo === 1 ||
+                  !(
+                    change.action === "rescope" ||
+                    change.action === "reclassify" ||
+                    change.action === "split"
+                  )),
               content: change.action === "split" ? null : change.content,
               reason: change.reason,
             })),
@@ -829,13 +907,16 @@ export const make = Effect.gen(function* () {
           decision.action === "supersede" && decision.by !== null
             ? (byMemoryId.get(decision.by)?.content ?? null)
             : null;
-        // Merges (new wording) never apply on their own: each waits for the
-        // owner's OK, so this run applies none. They are counted as proposed.
+        // With the automatic mode on, merges and retirements are made like the rest (each
+        // with an Undo); with it off, a merge's new wording waits for the owner's OK.
         let mergesProposed = 0;
+        let merged = 0;
         let superseded = 0;
         let pending = 0;
         let leftAlone = 0;
         for (const decision of proposal.auto) {
+          // Taken back, turned down or already waiting: not made again.
+          if (yield* alreadyAsked(decision)) continue;
           const applied = dryRun
             ? { resultId: decision.action === "supersede" ? decision.by : null }
             : yield* applyDecision(decision, versions, `tidy:${runId}`, nowIso);
@@ -868,7 +949,8 @@ export const make = Effect.gen(function* () {
             byMemoryId,
             byTextOf(decision),
           );
-          superseded += decision.memoryIds.length;
+          if (decision.action === "merge") merged += 1;
+          else superseded += decision.memoryIds.length;
         }
         for (const decision of proposal.pending) {
           if (yield* alreadyAsked(decision)) continue;
@@ -900,7 +982,7 @@ export const make = Effect.gen(function* () {
           );
           leftAlone += 1;
         }
-        return { mergesProposed, superseded, pending, leftAlone, error: proposal.error };
+        return { mergesProposed, merged, superseded, pending, leftAlone, error: proposal.error };
       }).pipe(Effect.result);
       const finishedIso = DateTime.formatIso(yield* DateTime.now);
       if (outcome._tag === "Failure") {
@@ -911,12 +993,12 @@ export const make = Effect.gen(function* () {
           WHERE run_id = ${runId}
         `;
       } else {
-        const { superseded, pending, leftAlone, error } = outcome.success;
-        // `merged` is the merges this run applied itself: none (see mergesProposed).
+        const { merged, superseded, pending, leftAlone, error } = outcome.success;
+        // `merged` is the merges this run made itself (none while the automatic mode is off).
         yield* sql`
           UPDATE personal_memory_tidy_runs
           SET status = ${error === null ? "done" : "failed"}, finished_at = ${finishedIso},
-              merged = 0, superseded = ${superseded}, pending = ${pending},
+              merged = ${merged}, superseded = ${superseded}, pending = ${pending},
               left_alone = ${leftAlone}, error = ${error === null ? null : safeText(error).slice(0, 1_000)}
           WHERE run_id = ${runId}
         `;
@@ -928,6 +1010,7 @@ export const make = Effect.gen(function* () {
         model: judge.model,
         ...(outcome._tag === "Success"
           ? {
+              merged: outcome.success.merged,
               superseded: outcome.success.superseded,
               pending: outcome.success.pending,
               mergesProposed: outcome.success.mergesProposed,
@@ -1107,10 +1190,17 @@ export const make = Effect.gen(function* () {
         SET status = 'done', finished_at = ${nowIso}, pending = ${pending}, left_alone = ${leftAlone}
         WHERE run_id = ${runId}
       `;
+      // The owner's OK is not waited for: the items are made now, each with an Undo in the log.
+      const settled = memoryAutoApplyEnabled()
+        ? yield* settlePending(yield* readPending(runId))
+        : { applied: 0, left: 0, withdrawn: 0 };
       yield* Effect.logInfo("personal memory proposals imported", {
         source: safeText(input.source),
         pending,
         leftAlone,
+        ...(settled.applied + settled.left > 0
+          ? { applied: settled.applied, leftStale: settled.left }
+          : {}),
       });
       const [run] = yield* readRuns(1, runId);
       return run!;
@@ -1251,18 +1341,150 @@ export const make = Effect.gen(function* () {
       });
     }).pipe(storageFailure("cards"));
 
+  /** One change by id, with what an answer or an Undo needs. */
+  const readChange = (changeId: number) =>
+    sql<ChangeRow>`
+      SELECT change_id AS "changeId", run_id AS "runId", status, action, scope,
+        scope_id AS "scopeId", memory_ids_json AS "memoryIdsJson",
+        result_memory_id AS "resultMemoryId", content, reason,
+        to_kind AS "toKind", to_scope AS "toScope", to_scope_id AS "toScopeId",
+        versions_json AS "versionsJson", proposed_by AS "proposedBy",
+        thread_id AS "threadId", entry_snapshots_json AS "entrySnapshotsJson",
+        to_apps_json AS "toAppsJson", undo_json AS "undoJson", decided_at AS "decidedAt"
+      FROM personal_memory_tidy_changes WHERE change_id = ${changeId}
+    `.pipe(Effect.map((rows) => rows[0]));
+
+  /** The changes waiting for an answer, oldest first: one run's, or all of them. */
+  const readPending = (runId?: string) =>
+    sql<ChangeRow>`
+      SELECT change_id AS "changeId", run_id AS "runId", status, action, scope,
+        scope_id AS "scopeId", memory_ids_json AS "memoryIdsJson",
+        result_memory_id AS "resultMemoryId", content, reason,
+        to_kind AS "toKind", to_scope AS "toScope", to_scope_id AS "toScopeId",
+        versions_json AS "versionsJson", proposed_by AS "proposedBy",
+        thread_id AS "threadId", entry_snapshots_json AS "entrySnapshotsJson",
+        to_apps_json AS "toAppsJson"
+      FROM personal_memory_tidy_changes
+      WHERE status = 'pending' AND ${runId === undefined ? sql`1 = 1` : sql`run_id = ${runId}`}
+      ORDER BY change_id
+    `;
+
+  /** The kind, reach and apps of entries as they are now, kept for an Undo. */
+  const readBefore = (ids: ReadonlyArray<string>) =>
+    ids.length === 0
+      ? Effect.succeed([])
+      : sql<{
+          readonly memoryId: string;
+          readonly kind: string;
+          readonly scope: string;
+          readonly scopeId: string | null;
+          readonly appsJson: string | null;
+        }>`
+          SELECT memory_id AS "memoryId", kind, scope, scope_id AS "scopeId", apps_json AS "appsJson"
+          FROM personal_memory WHERE ${sql.in("memory_id", ids)}
+        `;
+
+  /**
+   * Makes one pending change and records it. `status` is "approved" when the
+   * owner said yes and "applied" when the automatic mode made it. Fails (and
+   * rolls back) when an entry it names changed since it was proposed. What an
+   * Undo needs is kept with the change.
+   */
+  const applyChange = (change: ChangeRow, status: "approved" | "applied", nowIso: string) =>
+    Effect.gen(function* () {
+      const stale = fail(
+        "One of these entries changed, was archived or was deleted since this was proposed; nothing was changed.",
+      );
+      // The versions the owner saw when it was proposed: any later edit wins.
+      const recorded = Option.getOrUndefined(decodeVersionMap(change.versionsJson ?? ""));
+      if (recorded === undefined) return yield* stale;
+      const versions = new Map(Object.entries(recorded));
+      const snapshots = readEntrySnapshots(change.entrySnapshotsJson);
+      const memoryIds = decodeIds(change.memoryIdsJson);
+      let resultId: string | null = change.resultMemoryId;
+      let undoJson: string | null = null;
+      const touchesInPlace =
+        change.action === "rescope" || change.action === "reclassify" || change.action === "split";
+      const before = touchesInPlace ? yield* readBefore(memoryIds) : [];
+      switch (change.action) {
+        case "reclassify": {
+          if (!(yield* applyReclassify(memoryIds[0] ?? "", change, versions, nowIso))) {
+            return yield* stale;
+          }
+          undoJson = encodeUndo({ before });
+          break;
+        }
+        case "rescope": {
+          if (!(yield* applyRescope(memoryIds, change, versions, nowIso, snapshots))) {
+            return yield* stale;
+          }
+          undoJson = encodeUndo({ before });
+          break;
+        }
+        case "save": {
+          const saved = yield* applyBotSave(change, memoryIds, versions, nowIso, snapshots);
+          if (saved === null) return yield* stale;
+          resultId = saved;
+          break;
+        }
+        case "forget": {
+          if (!(yield* applyBotForget(memoryIds, versions, nowIso, snapshots))) {
+            return yield* stale;
+          }
+          break;
+        }
+        case "split": {
+          const split = yield* applySplit(change, memoryIds, nowIso, snapshots);
+          if (split === null) return yield* stale;
+          resultId = split.first;
+          undoJson = encodeUndo({ before, created: split.created });
+          break;
+        }
+        case "merge":
+        case "supersede": {
+          const decision: TidyDecision =
+            change.action === "merge"
+              ? {
+                  action: "merge",
+                  memoryIds,
+                  content: change.content ?? "",
+                  reason: change.reason,
+                }
+              : {
+                  action: "supersede",
+                  memoryIds,
+                  by: change.resultMemoryId,
+                  reason: change.reason,
+                };
+          if (decision.action === "merge" && looksLikeSecret(decision.content)) {
+            return yield* fail("The merged text looks like it carries a secret; not applied.");
+          }
+          const applied = yield* applyDecision(
+            decision,
+            versions,
+            `tidy-approved:${change.runId}`,
+            nowIso,
+            change.action === "supersede" ? change.content : null,
+            snapshots,
+          );
+          if (applied === null) return yield* stale;
+          resultId = applied.resultId;
+          break;
+        }
+        default:
+          return yield* fail("That tidy-up change cannot be approved.");
+      }
+      yield* sql`
+        UPDATE personal_memory_tidy_changes
+        SET status = ${status}, decided_at = ${nowIso}, result_memory_id = ${resultId},
+            undo_json = ${undoJson}
+        WHERE change_id = ${change.changeId} AND status = 'pending'
+      `;
+    }).pipe(sql.withTransaction);
+
   const decide: PersonalMemoryTidy["Service"]["decide"] = (input) =>
     Effect.gen(function* () {
-      const rows = yield* sql<ChangeRow>`
-        SELECT change_id AS "changeId", run_id AS "runId", status, action, scope,
-          scope_id AS "scopeId", memory_ids_json AS "memoryIdsJson",
-          result_memory_id AS "resultMemoryId", content, reason,
-          to_kind AS "toKind", to_scope AS "toScope", to_scope_id AS "toScopeId",
-          versions_json AS "versionsJson", proposed_by AS "proposedBy",
-          entry_snapshots_json AS "entrySnapshotsJson", to_apps_json AS "toAppsJson"
-        FROM personal_memory_tidy_changes WHERE change_id = ${input.changeId}
-      `;
-      const change = rows[0];
+      const change = yield* readChange(input.changeId);
       if (change === undefined) return yield* fail("That tidy-up change was not found.");
       // Every answer, Save or Don't save, is bound to the change the owner was shown.
       if (input.changeHash !== changeHashOf(change)) {
@@ -1281,92 +1503,206 @@ export const make = Effect.gen(function* () {
         `;
         return yield* log({});
       }
-      const stale = fail(
-        "One of these entries changed, was archived or was deleted since this was proposed; nothing was changed.",
-      );
-      // The versions the owner saw when it was proposed: any later edit wins.
-      const recorded = Option.getOrUndefined(decodeVersionMap(change.versionsJson ?? ""));
-      if (recorded === undefined) return yield* stale;
-      const versions = new Map(Object.entries(recorded));
-      const snapshots = readEntrySnapshots(change.entrySnapshotsJson);
-      const memoryIds = decodeIds(change.memoryIdsJson);
       // Applying and marking approved happen together, or not at all.
-      const outcome = yield* Effect.gen(function* () {
-        let resultId: string | null = change.resultMemoryId;
+      yield* applyChange(change, "approved", nowIso);
+      return yield* log({});
+    }).pipe(lock.withPermits(1), storageFailure("decide"));
+
+  /**
+   * Makes the changes the automatic mode owns: each is applied and marked
+   * "applied". A change whose entries moved since it was proposed is left as it
+   * is (with the reason); a bot's change with no chat of the owner's behind it
+   * has no proof its wording is the owner's, so it is taken off the list.
+   */
+  const settlePending = (rows: ReadonlyArray<ChangeRow>) =>
+    Effect.gen(function* () {
+      let applied = 0;
+      let left = 0;
+      let withdrawn = 0;
+      for (const change of rows) {
+        const nowIso = DateTime.formatIso(yield* DateTime.now);
+        if ((change.proposedBy ?? "").startsWith("bot:") && (change.threadId ?? null) === null) {
+          yield* sql`
+            UPDATE personal_memory_tidy_changes SET status = 'withdrawn', decided_at = ${nowIso}
+            WHERE change_id = ${change.changeId} AND status = 'pending'
+          `;
+          withdrawn += 1;
+          continue;
+        }
+        const result = yield* applyChange(change, "applied", nowIso).pipe(Effect.result);
+        if (result._tag === "Success") {
+          applied += 1;
+          continue;
+        }
+        // Only "an entry changed" leaves a change; a storage failure stays one.
+        if (!isMemoryError(result.failure)) return yield* Effect.fail(result.failure);
+        yield* sql`
+          UPDATE personal_memory_tidy_changes
+          SET status = 'left', decided_at = ${nowIso},
+              reason = ${safeText(`${change.reason} (changed since it was proposed; left as it is)`).slice(0, 700)}
+          WHERE change_id = ${change.changeId} AND status = 'pending'
+        `;
+        left += 1;
+      }
+      if (rows.length > 0) {
+        yield* sql`
+          UPDATE personal_memory_tidy_runs SET pending = (
+            SELECT COUNT(*) FROM personal_memory_tidy_changes c
+            WHERE c.run_id = personal_memory_tidy_runs.run_id AND c.status = 'pending'
+          )
+          WHERE ${sql.in("run_id", [...new Set(rows.map((change) => change.runId))])}
+        `;
+      }
+      return { applied, left, withdrawn };
+    });
+
+  const applyWaiting: PersonalMemoryTidy["Service"]["applyWaiting"] = Effect.gen(function* () {
+    if (!memoryAutoApplyEnabled()) return { applied: 0, left: 0, withdrawn: 0 };
+    const nowIso = DateTime.formatIso(yield* DateTime.now);
+    // The seeded default (a mode nobody chose) moves to "on"; a mode the owner set stays.
+    yield* sql`
+      UPDATE personal_memory_tidy_settings SET mode = 'on', updated_at = ${nowIso}
+      WHERE settings_id = 1 AND mode = 'preview' AND updated_at IS NULL
+    `;
+    const result = yield* settlePending(yield* readPending());
+    if (result.applied + result.left + result.withdrawn > 0) {
+      yield* Effect.logInfo("personal memory changes that were waiting were settled", result);
+    }
+    return result;
+  }).pipe(lock.withPermits(1), storageFailure("applyWaiting"));
+
+  /** Entries an Undo brings back: archived by this change and not since by anything else. */
+  const restoreArchived = (
+    ids: ReadonlyArray<string>,
+    archivedBy: { readonly supersededBy: string | null; readonly reasonLike: string },
+    nowIso: string,
+  ) =>
+    Effect.forEach(
+      ids,
+      (id) => sql`
+        UPDATE personal_memory
+        SET superseded_at = NULL, superseded_by = NULL, superseded_reason = NULL,
+            updated_at = ${nowIso}, version = version + 1
+        WHERE memory_id = ${id} AND deleted_at IS NULL AND superseded_at IS NOT NULL
+          AND superseded_by IS ${archivedBy.supersededBy}
+          AND superseded_reason LIKE ${archivedBy.reasonLike}
+      `,
+    );
+
+  /** Archives what a change made (a merge, a save, a split's parts), restorable like any entry. */
+  const archiveMade = (ids: ReadonlyArray<string>, nowIso: string) =>
+    Effect.forEach(
+      ids,
+      (id) => sql`
+        UPDATE personal_memory
+        SET superseded_at = ${nowIso}, superseded_by = NULL, superseded_reason = ${UNDONE_FROM_LOG},
+            version = version + 1
+        WHERE memory_id = ${id} AND deleted_at IS NULL AND superseded_at IS NULL
+      `,
+    );
+
+  const undo: PersonalMemoryTidy["Service"]["undo"] = (input) =>
+    Effect.gen(function* () {
+      const change = yield* readChange(input.changeId);
+      if (change === undefined) return yield* fail("That tidy-up change was not found.");
+      if (input.changeHash !== changeHashOf(change)) {
+        return yield* fail("That change is out of date; reload it before undoing it.");
+      }
+      if (change.status !== "applied" && change.status !== "approved") {
+        return yield* fail("That change was not made, or is already undone.");
+      }
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const ids = decodeIds(change.memoryIdsJson);
+      const stored = Option.getOrUndefined(decodeUndo(change.undoJson ?? ""));
+      yield* Effect.gen(function* () {
         switch (change.action) {
-          case "reclassify": {
-            if (!(yield* applyReclassify(memoryIds[0] ?? "", change, versions, nowIso))) {
-              return yield* stale;
-            }
-            break;
-          }
-          case "rescope": {
-            if (!(yield* applyRescope(memoryIds, change, versions, nowIso, snapshots))) {
-              return yield* stale;
-            }
-            break;
-          }
-          case "save": {
-            const saved = yield* applyBotSave(change, memoryIds, versions, nowIso, snapshots);
-            if (saved === null) return yield* stale;
-            resultId = saved;
-            break;
-          }
-          case "forget": {
-            if (!(yield* applyBotForget(memoryIds, versions, nowIso, snapshots))) {
-              return yield* stale;
-            }
-            break;
-          }
-          case "split": {
-            const first = yield* applySplit(change, memoryIds, nowIso, snapshots);
-            if (first === null) return yield* stale;
-            resultId = first;
-            break;
-          }
-          case "merge":
-          case "supersede": {
-            const decision: TidyDecision =
-              change.action === "merge"
-                ? {
-                    action: "merge",
-                    memoryIds,
-                    content: change.content ?? "",
-                    reason: change.reason,
-                  }
-                : {
-                    action: "supersede",
-                    memoryIds,
-                    by: change.resultMemoryId,
-                    reason: change.reason,
-                  };
-            if (decision.action === "merge" && looksLikeSecret(decision.content)) {
-              return yield* fail("The merged text looks like it carries a secret; not applied.");
-            }
-            const applied = yield* applyDecision(
-              decision,
-              versions,
-              `tidy-approved:${change.runId}`,
+          case "supersede":
+            // Archived for a newer entry (which stays), or retired with none.
+            yield* restoreArchived(
+              ids,
+              change.resultMemoryId === null
+                ? { supersededBy: null, reasonLike: `${RETIRED_PREFIX}%` }
+                : { supersededBy: change.resultMemoryId, reasonLike: "%" },
               nowIso,
-              change.action === "supersede" ? change.content : null,
-              snapshots,
             );
-            if (applied === null) return yield* stale;
-            resultId = applied.resultId;
+            break;
+          case "merge":
+            yield* restoreArchived(
+              ids,
+              { supersededBy: change.resultMemoryId, reasonLike: "%" },
+              nowIso,
+            );
+            if (change.resultMemoryId !== null) yield* archiveMade([change.resultMemoryId], nowIso);
+            break;
+          case "forget":
+            yield* restoreArchived(
+              ids,
+              { supersededBy: null, reasonLike: BOT_FORGET_REASON },
+              nowIso,
+            );
+            break;
+          case "save":
+            // The entry the save made goes, and what it replaced comes back.
+            if (change.resultMemoryId !== null) {
+              yield* restoreArchived(
+                ids,
+                { supersededBy: change.resultMemoryId, reasonLike: "%" },
+                nowIso,
+              );
+              yield* archiveMade([change.resultMemoryId], nowIso);
+            }
+            break;
+          case "split":
+            if (stored === undefined) return yield* fail("This split cannot be undone.");
+            yield* restoreArchived(
+              ids,
+              { supersededBy: change.resultMemoryId, reasonLike: "Split into%" },
+              nowIso,
+            );
+            yield* archiveMade(stored.created ?? [], nowIso);
+            break;
+          case "rescope": {
+            if (stored === undefined) return yield* fail("This change cannot be undone.");
+            // Only while the rule still has the scope this change gave it.
+            const appliedApps = appsToJson(parseAppsJson(change.toAppsJson));
+            for (const entry of stored.before) {
+              yield* sql`
+                UPDATE personal_memory
+                SET apps_json = ${entry.appsJson}, updated_at = ${nowIso}, version = version + 1
+                WHERE memory_id = ${entry.memoryId} AND deleted_at IS NULL
+                  AND superseded_at IS NULL AND apps_json IS ${appliedApps}
+              `;
+            }
+            break;
+          }
+          case "reclassify": {
+            if (stored === undefined) return yield* fail("This change cannot be undone.");
+            for (const entry of stored.before) {
+              // Only while the entry still has the kind and reach this change gave it.
+              const kind = change.toKind ?? entry.kind;
+              const scope = change.toScope ?? "shared";
+              const scopeId = scope === "team" ? (change.toScopeId ?? null) : null;
+              yield* sql`
+                UPDATE personal_memory
+                SET kind = ${entry.kind}, scope = ${entry.scope}, scope_id = ${entry.scopeId},
+                    updated_at = ${nowIso}, version = version + 1
+                WHERE memory_id = ${entry.memoryId} AND deleted_at IS NULL
+                  AND superseded_at IS NULL AND kind = ${kind} AND scope = ${scope}
+                  AND scope_id IS ${scopeId}
+              `;
+            }
             break;
           }
           default:
-            return yield* fail("That tidy-up change cannot be approved.");
+            return yield* fail("That tidy-up change cannot be undone.");
         }
         yield* sql`
-          UPDATE personal_memory_tidy_changes
-          SET status = 'approved', decided_at = ${nowIso}, result_memory_id = ${resultId}
-          WHERE change_id = ${input.changeId} AND status = 'pending'
+          UPDATE personal_memory_tidy_changes SET status = 'undone', decided_at = ${nowIso}
+          WHERE change_id = ${change.changeId} AND status IN ('applied', 'approved')
         `;
       }).pipe(sql.withTransaction);
-      void outcome;
       return yield* log({});
-    }).pipe(lock.withPermits(1), storageFailure("decide"));
+    }).pipe(lock.withPermits(1), storageFailure("undo"));
 
   /**
    * Every named entry still current and as shown: held to its snapshot (text,
@@ -1540,6 +1876,7 @@ export const make = Effect.gen(function* () {
       if (shown === undefined || !matchesSnapshot(original[0], shown)) return null;
       const createdAt = original[0].createdAt;
       const made: Array<string> = [];
+      const created: Array<string> = [];
       for (const part of parts) {
         const content = part.content.trim();
         const scopeId = part.scope === "team" ? part.scopeId!.trim() : null;
@@ -1567,6 +1904,7 @@ export const make = Effect.gen(function* () {
           )
         `;
         made.push(memoryId);
+        created.push(memoryId);
       }
       yield* sql`
         UPDATE personal_memory
@@ -1575,7 +1913,7 @@ export const make = Effect.gen(function* () {
             version = version + 1
         WHERE memory_id = ${ids[0]!} AND deleted_at IS NULL AND superseded_at IS NULL
       `;
-      return made[0]!;
+      return { first: made[0]!, created };
     });
 
   const run: PersonalMemoryTidy["Service"]["run"] = (input) => runOnce(input.dryRun, false);
@@ -1701,6 +2039,7 @@ export const make = Effect.gen(function* () {
       : forkParked(
           closeInterrupted.pipe(
             Effect.andThen(snapshotPendingTexts.pipe(Effect.ignore)),
+            Effect.andThen(applyWaiting.pipe(Effect.ignore)),
             Effect.andThen(
               readAppVersion.pipe(
                 Effect.flatMap((appVersion) =>
@@ -1720,6 +2059,8 @@ export const make = Effect.gen(function* () {
   return {
     run,
     decide,
+    undo,
+    applyWaiting,
     cardsForThread,
     importProposals,
     importInbox,

@@ -130,10 +130,11 @@ const SECRET_SHAPED =
   /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:password|passwd|token|api[_ -]?key|secret|bearer)\b\s*(?:is|=|:)\s*\S+/i;
 
 /**
- * The only change made without asking: an older entry archived in favour of
+ * The change that needs no judgement: an older entry archived in favour of
  * a newer one with exactly the same text (case and spacing aside), same kind
- * and scope. Words like "not" and every number count. Every other supersede, every merge and every retirement is the
- * model's judgement and needs the owner's OK: a model can be wrong or misled.
+ * and scope. Words like "not" and every number count. Every other supersede,
+ * merge and retirement is the model's judgement: with `autoAll` (the default)
+ * it is made too, with an Undo; without it the owner's OK is waited for.
  */
 export function isAutoChange(
   decision: TidyDecision,
@@ -159,12 +160,18 @@ export function isAutoChange(
  * A change is left when it names an entry that is not in the list, reuses
  * one, would undo a user's edit from the last day, merges different kinds,
  * carries secret-shaped text, or goes past the nightly caps.
+ *
+ * `autoAll` (the default since 1.60.42) makes every valid change `auto`: the
+ * model's merges and retirements are made too, each with an Undo in the log, and
+ * the nightly cap on archived entries counts them all. Without it only an exact
+ * duplicate is made on its own and the rest wait for the owner.
  */
 export function validateDecisions(
   entries: ReadonlyArray<TidyEntry>,
   proposed: ReadonlyArray<TidyDecision>,
   nowMs: number,
   looksLikeSecret: (text: string) => boolean = (text) => SECRET_SHAPED.test(text),
+  options: { readonly autoAll?: boolean } = {},
 ): {
   readonly auto: ReadonlyArray<TidyDecision>;
   readonly pending: ReadonlyArray<TidyDecision>;
@@ -235,7 +242,7 @@ export function validateDecisions(
       leave(decision, "Too many changes for one night; left for the next run");
       continue;
     }
-    const isAuto = isAutoChange(decision, byId);
+    const isAuto = options.autoAll === true || isAutoChange(decision, byId);
     if (
       isAuto &&
       auto.reduce((sum, item) => sum + item.memoryIds.length, 0) + ids.length > MAX_AUTO_PER_NIGHT
@@ -305,8 +312,8 @@ export function buildTidyPrompt(input: {
     "",
     "Propose operations on these entries only, by ref:",
     '- "supersede" with by = a ref: the older entries (memoryIds) are fully covered or contradicted by a NEWER entry on the same subject (by), which stays word for word. Example: an older list of which model each bot runs, when a newer list covers the same bots; a rule later restated or changed.',
-    '- "supersede" with by = null: the entry says itself it stopped applying, and the other entries or the app version show that happened (e.g. "being built in 1.47.3" while the app is past 1.47.3). The owner approves these.',
-    '- "merge": two or more entries of the same kind state the same fact or rule, each with details worth keeping. content: one entry that keeps every detail still true, starts with the newest date it carries, under 300 characters where possible. The owner approves these.',
+    '- "supersede" with by = null: the entry says itself it stopped applying, and the other entries or the app version show that happened (e.g. "being built in 1.47.3" while the app is past 1.47.3). It is made at once, and the owner can undo it: propose it only when the entry says so itself.',
+    '- "merge": two or more entries of the same kind state the same fact or rule, each with details worth keeping. content: one entry that keeps every detail still true, starts with the newest date it carries, under 300 characters where possible. It is made at once, and the owner can undo it: merge only entries that really state the same thing, and never change what a rule asks for.',
     '- "leave": entries you looked at and are unsure about, with why.',
     "Rules:",
     "- Only list entries you change or are unsure about. Entries you do not mention stay as they are.",

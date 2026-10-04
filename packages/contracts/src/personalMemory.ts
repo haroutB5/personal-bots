@@ -85,6 +85,18 @@ export function botNoteSource(
   return `bot:${botId};from=${origin}${readWeb ? "+web" : ""}`;
 }
 
+/**
+ * The `source` of a rule a bot saved at once from the owner's own message
+ * (1.60.42): a note's source plus `;rule`. Only such a rule can be undone from
+ * its chat line; a rule saved any other way, or a note that became one, cannot.
+ */
+export function botRuleSource(botId: string, readWeb: boolean): string {
+  return `${botNoteSource(botId, "chat", readWeb)};rule`;
+}
+
+export const isBotRuleSource = (source: string): boolean =>
+  source.startsWith("bot:") && source.split(";").includes("rule");
+
 export type PersonalMemorySource =
   | { readonly kind: "user" }
   | {
@@ -102,7 +114,8 @@ export function parseMemorySource(source: string): PersonalMemorySource {
   if (source.startsWith("task:")) return { kind: "task", taskId: source.slice(5) };
   if (!source.startsWith("bot:")) return { kind: "other", source };
   const [botId = "", detail = ""] = source.slice(4).split(";from=");
-  const [origin = "", web] = detail.split("+");
+  const [originAndWeb = ""] = detail.split(";");
+  const [origin = "", web] = originAndWeb.split("+");
   return {
     kind: "bot",
     botId,
@@ -223,9 +236,11 @@ export const PersonalMemoryTidyAction = Schema.Literals([
 export type PersonalMemoryTidyAction = typeof PersonalMemoryTidyAction.Type;
 
 /**
- * applied: made by the run. preview: a preview run listed it. pending: needs
- * the owner's OK (a merge's new wording, or retiring an entry with no newer
- * one). approved / rejected: the owner's answer. left: unsure, untouched.
+ * applied: made on its own (a nightly run, a proposals file, or a bot's change
+ * the owner's own words asked for), with an Undo. preview: a preview run listed
+ * it. pending: waits for the owner's OK (only when the automatic mode is
+ * switched off). approved / rejected: the owner's answer. left: unsure,
+ * untouched. undone: made, then taken back with Undo.
  */
 export const PersonalMemoryTidyChangeStatus = Schema.Literals([
   "applied",
@@ -236,6 +251,8 @@ export const PersonalMemoryTidyChangeStatus = Schema.Literals([
   "left",
   /** Taken back by a later proposals file before the owner answered. */
   "withdrawn",
+  /** Made, then taken back by the owner with Undo; the tidy-up does not propose it again. */
+  "undone",
 ]);
 export type PersonalMemoryTidyChangeStatus = typeof PersonalMemoryTidyChangeStatus.Type;
 
@@ -297,6 +314,8 @@ export const PersonalMemoryTidyChange = Schema.Struct({
   proposedBy: Schema.optional(Schema.NullOr(Schema.String)),
   /** What an approval is bound to: the change and every entry version it saw. */
   changeHash: Schema.String,
+  /** Made (applied or approved) and not yet undone: the log offers Undo. */
+  undoable: Schema.optional(Schema.Boolean),
   reason: Schema.String,
 });
 export type PersonalMemoryTidyChange = typeof PersonalMemoryTidyChange.Type;
@@ -326,9 +345,9 @@ export const PersonalMemoryTidyLogInput = Schema.Struct({
 export type PersonalMemoryTidyLogInput = typeof PersonalMemoryTidyLogInput.Type;
 
 /**
- * What the nightly tidy-up (03:30) does. preview: lists what it would change
- * and changes nothing (the default until the owner has reviewed one). on:
- * makes the changes. off: does not run.
+ * What the nightly tidy-up (03:30) does. on (the default): makes the changes
+ * itself, each with an Undo in the changelog. preview: lists what it would
+ * change and changes nothing. off: does not run.
  */
 export const PersonalMemoryTidyMode = Schema.Literals(["off", "preview", "on"]);
 export type PersonalMemoryTidyMode = typeof PersonalMemoryTidyMode.Type;
@@ -349,6 +368,14 @@ export const PersonalMemoryTidyDecideInput = Schema.Struct({
   /** The hash the card or list was showing; the tap is refused unless it is this change's. */
   changeHash: Schema.String,
 });
+
+/** Takes back a change that was made on its own (or approved): the log's Undo. */
+export const PersonalMemoryTidyUndoInput = Schema.Struct({
+  changeId: Schema.Number,
+  /** The hash the log was showing; refused when it is not this change's. */
+  changeHash: Schema.String,
+});
+export type PersonalMemoryTidyUndoInput = typeof PersonalMemoryTidyUndoInput.Type;
 
 /** An entry a bot's change would replace or forget, shown whole on the card. */
 export const PersonalMemoryCardTarget = Schema.Struct({

@@ -203,6 +203,44 @@ describe("a task's work record", () => {
     expect(text.indexOf("Objective: Ship the build.")).toBeGreaterThan(appAt);
   });
 
+  it("redacts a link that carries a secret, even though the text of a link is let through", () => {
+    // Made of parts: a whole literal reads as a real webhook to a secret scanner.
+    const slack = [
+      "https://hooks.",
+      "slack.com/services/",
+      "T0123ABCD/",
+      "B0456EFGH/",
+      "xYzAbCdEfGhIjKlMnOpQrStU",
+    ].join("");
+    const signed = "https://files.example.com/a.zip?sig=Zm9vYmFyYmF6&expires=1";
+    const record = applyWorkRecordPatch(
+      emptyWorkRecord("Post the result to the team channel.", AT),
+      {
+        decisions: [`Notify through ${slack} after the build.`],
+        evidence: [
+          { label: "hook", ref: slack },
+          { label: "file", ref: signed },
+          { label: "pr", ref: "https://github.com/haroutB5/personal-bots/pull/9" },
+        ],
+        nextStep: `Download ${signed} and run it.`,
+      },
+      AT,
+    );
+    const text = renderWorkRecord(record);
+    expect(text).not.toContain("hooks.slack.com");
+    expect(text).not.toContain("xYzAbCd");
+    expect(text).not.toContain("Zm9vYmFy");
+    expect(record.decisions[0]).toBe("Notify through [redacted] after the build.");
+    // The links that were only a secret leave no evidence behind; the ordinary one stays.
+    expect(record.evidence.map((item) => item.ref)).toEqual([
+      "https://github.com/haroutB5/personal-bots/pull/9",
+    ]);
+    // A result that names such a link does not keep it as evidence either.
+    expect(
+      evidenceFromText(`Sent to ${slack}, see https://example.com/status`).map((item) => item.ref),
+    ).toEqual(["https://example.com/status"]);
+  });
+
   it("keeps commit ids and blob links, and still drops a key", () => {
     const sha = "a1d6a63cde9e4f0b8c7d2e1f3a4b5c6d7e8f9a0b";
     const sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
