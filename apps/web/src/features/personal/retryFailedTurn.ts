@@ -15,6 +15,7 @@ import { threadEnvironment } from "~/state/threads";
 import type { ChatAttachment, ChatMessage, Thread } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { chatTurnModelSelection } from "./chatModelSelection";
 import { readChatNotice } from "./chatNotices";
 import { readServerTurn } from "./delegationModel";
 import { readGroupMarker } from "./groupModel";
@@ -75,8 +76,8 @@ export function findRetryTarget(messages: ReadonlyArray<ChatMessage>): RetryTarg
 /**
  * The `thread.turn.start` input for a Retry. Pure (the new id and timestamp
  * are parameters) so the same-id / new-id rule is unit-testable. Model and
- * modes follow `PersonalComposer`: the bot's selection wins while it is on the
- * thread's provider instance, else the thread's own.
+ * modes follow `PersonalComposer`: the bot's selection wins (see
+ * `chatTurnModelSelection`), else the thread's own.
  */
 export function buildRetryTurnInput({
   threadId,
@@ -103,11 +104,7 @@ export function buildRetryTurnInput({
       attachments: [...target.attachments],
       ...(target.context !== undefined ? { context: target.context } : {}),
     },
-    modelSelection:
-      botModelSelection !== null &&
-      botModelSelection.instanceId === thread.modelSelection.instanceId
-        ? botModelSelection
-        : thread.modelSelection,
+    modelSelection: chatTurnModelSelection(botModelSelection, thread.modelSelection),
     titleSeed: truncate(
       target.text ||
         (first ? `${first.type === "image" ? "Image" : "File"}: ${first.name}` : "New chat"),

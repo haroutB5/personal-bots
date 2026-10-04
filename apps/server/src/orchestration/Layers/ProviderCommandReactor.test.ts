@@ -5068,6 +5068,45 @@ describe("ProviderCommandReactor", () => {
       ).toEqual([]);
     });
 
+    it("a stale client selection never refuses a bot chat that already follows its bot", async () => {
+      const harness = await createHarness({
+        threadModelSelection: CODEX,
+        personalBotThread: true,
+        botModelSelection: CODEX,
+      });
+      await sendMessage(harness, "msg-codex", "Hello.", { modelSelection: CODEX });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+
+      // The owner moves the bot to Claude; the next turn moves the chat.
+      await setBotModel(harness, CLAUDE_SONNET);
+      await sendMessage(harness, "msg-moved", "Are you on Claude?", { modelSelection: CODEX });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+      await harness.drain();
+      expect(startedSession(harness, 1)?.providerInstanceId).toBe("claudeAgent");
+
+      // The phone was backgrounded across the move and still sends Codex, both
+      // for a new message and for its Retry under the same id.
+      await sendMessage(harness, "msg-stale", "And now?", { modelSelection: CODEX });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 3);
+      await harness.drain();
+      await sendMessage(harness, "msg-stale-2", "Still there?", { modelSelection: CODEX });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 4);
+      await harness.drain();
+
+      expect(sentTurn(harness, 2)?.modelSelection).toEqual(CLAUDE_SONNET);
+      expect(sentTurn(harness, 3)?.modelSelection).toEqual(CLAUDE_SONNET);
+      // No new session for either: the chat keeps resuming on Claude.
+      expect(harness.startSession.mock.calls.length).toBe(2);
+      const thread = await readThread(harness);
+      expect(thread?.modelSelection).toEqual(CLAUDE_SONNET);
+      expect(thread?.session?.providerInstanceId).toBe("claudeAgent");
+      expect(thread?.session?.status).not.toBe("error");
+      expect(
+        thread?.activities.filter((activity) => activity.kind === "provider.turn.start.failed"),
+      ).toEqual([]);
+    });
+
     it("a model change on the same provider keeps resuming the conversation", async () => {
       const harness = await createHarness({
         threadModelSelection: CLAUDE,

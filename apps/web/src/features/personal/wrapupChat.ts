@@ -8,13 +8,15 @@ import { threadEnvironment } from "~/state/threads";
 import type { Thread } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { chatTurnModelSelection } from "./chatModelSelection";
+
 export { WRAPUP_CHAT_PROMPT };
 
 /**
  * Builds the `thread.turn.start` input for a wrapup turn. Pure (message id
  * and timestamp are parameters) so the send shape is unit-testable. Field
  * selection mirrors `PersonalComposer`: the bot's current model settings win
- * when it is still on the same provider instance, and the existing title is
+ * (see `chatTurnModelSelection`), and the existing title is
  * kept so a wrapup never renames the chat.
  */
 export function buildWrapupTurnInput({
@@ -38,11 +40,7 @@ export function buildWrapupTurnInput({
       text: WRAPUP_CHAT_PROMPT,
       attachments: [],
     },
-    modelSelection:
-      botModelSelection !== null &&
-      botModelSelection.instanceId === thread.modelSelection.instanceId
-        ? botModelSelection
-        : thread.modelSelection,
+    modelSelection: chatTurnModelSelection(botModelSelection, thread.modelSelection),
     titleSeed: thread.title,
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,

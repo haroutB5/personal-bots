@@ -44,7 +44,7 @@ describe("buildWrapupTurnInput", () => {
     expect(input.createdAt).toBe("2026-09-13T20:40:00.000Z");
   });
 
-  it("prefers the bot's current model on the same provider instance", () => {
+  it("prefers the bot's current model", () => {
     const input = buildWrapupTurnInput({
       ...base,
       botModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-newer" },
@@ -55,7 +55,7 @@ describe("buildWrapupTurnInput", () => {
     });
   });
 
-  it("keeps the thread's model when the bot moved provider instances", () => {
+  it("sends the bot's model when the bot moved provider instances, not the thread's older one", () => {
     const input = buildWrapupTurnInput({
       ...base,
       botModelSelection: {
@@ -64,6 +64,13 @@ describe("buildWrapupTurnInput", () => {
       },
     });
     expect(input.modelSelection).toEqual({
+      instanceId: ProviderInstanceId.make("claude"),
+      model: "claude-fable-5-1",
+    });
+  });
+
+  it("falls back to the thread's model while the bot is not known", () => {
+    expect(buildWrapupTurnInput(base).modelSelection).toEqual({
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-6-astra",
     });

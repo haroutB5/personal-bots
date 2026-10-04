@@ -219,11 +219,11 @@ describe("Retry for a failed message", () => {
     expect(input.message.attachments[0]).not.toHaveProperty("previewUrl");
   });
 
-  it("uses the bot's model only while it is on the thread's instance", () => {
+  it("sends the bot's model whatever provider it is on, the thread's only while the bot is unknown", () => {
     const target = findRetryTarget([message({})])!;
     const same = { instanceId: "claudeAgent", model: "claude-sonnet" } as unknown as ModelSelection;
     const other = { instanceId: "codex", model: "gpt" } as unknown as ModelSelection;
-    const input = (bot: ModelSelection) =>
+    const input = (bot: ModelSelection | null) =>
       buildRetryTurnInput({
         threadId: ThreadId.make("thread-1"),
         thread: threadFields,
@@ -233,7 +233,9 @@ describe("Retry for a failed message", () => {
         createdAt: "2026-09-30T10:05:00.000Z",
       });
     expect(input(same).modelSelection).toBe(same);
-    expect(input(other).modelSelection).toBe(threadFields.modelSelection);
+    // A thread copy older than a provider switch must not beat the bot's.
+    expect(input(other).modelSelection).toBe(other);
+    expect(input(null).modelSelection).toBe(threadFields.modelSelection);
   });
 
   it("finds nothing to retry when the last user message is not the owner's", () => {

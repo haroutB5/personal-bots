@@ -335,14 +335,24 @@ const make = Effect.gen(function* () {
    * bot: its next turn runs on the bot's current selection. A session of the
    * other provider can never be resumed, so that turn starts a fresh one and
    * carries the chat over; an instance of the same driver with compatible
-   * resume state keeps resuming. Undefined for other threads and when the bot
-   * is on the chat's instance (the send's own selection applies).
+   * resume state keeps resuming. Undefined for other threads.
+   *
+   * The bot's selection wins even when the bot is already on the chat's
+   * instance (no new session then): a client holding a stale selection, such
+   * as a phone that was backgrounded across the move, would otherwise send the
+   * old provider and the turn would be refused as "bound to driver".
    */
   const botProviderSwitch = Effect.fnUntraced(function* (thread: OrchestrationThreadShell) {
     const botSelection = yield* botModelSelectionForThread(personalBots, thread.id, undefined);
     if (botSelection === undefined) return undefined;
     const boundInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
-    if (botSelection.instanceId === boundInstanceId) return undefined;
+    if (botSelection.instanceId === boundInstanceId) {
+      return {
+        modelSelection: botSelection,
+        freshSession: false,
+        fromInstanceId: boundInstanceId,
+      } as const;
+    }
     const wanted = yield* providerService
       .getInstanceInfo(botSelection.instanceId)
       .pipe(Effect.option);

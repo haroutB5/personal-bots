@@ -41,6 +41,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import type { PendingOutgoingMessage } from "./MessageList";
 import { attachmentChipUploadPresentation } from "./attachmentChipUploadPresentation";
+import { chatTurnModelSelection } from "./chatModelSelection";
 import { AttachmentPreview, type AttachmentPreviewData } from "./AttachmentPreview";
 import { activeMentionDraft, applyMention, matchMentionCandidates } from "./mentionDraft";
 import { MentionPopover, type MentionRow } from "./MentionPopover";
@@ -536,11 +537,7 @@ export function PersonalComposer({
                 text: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
                 attachments: uploaded,
               },
-              modelSelection:
-                botModelSelection !== null &&
-                botModelSelection.instanceId === thread.modelSelection.instanceId
-                  ? botModelSelection
-                  : thread.modelSelection,
+              modelSelection: chatTurnModelSelection(botModelSelection, thread.modelSelection),
               titleSeed,
               runtimeMode: thread.runtimeMode,
               interactionMode: thread.interactionMode,
