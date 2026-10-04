@@ -24,6 +24,7 @@ import {
   pendingTidyChanges,
   pendingTidyGroups,
   reclassifyDescription,
+  rescopeDescription,
   memoryReachTag,
   splitPartTag,
   supersedeKeptText,
@@ -303,6 +304,9 @@ export function TidyChangeItem({
 }): JSX.Element {
   const involved = tidyEntryTexts(change.memoryIds, texts);
   const reclassify = change.action === "reclassify" ? reclassifyDescription(change) : "";
+  const rescope = rescopeDescription(change);
+  // A rescope shows the whole rule it applies to: the owner approves exactly this text.
+  const clamp = change.action === "rescope" ? "" : "line-clamp-3 ";
   const headline = tidyRequestHeadline(change, botName);
   // Provenance only where the owner decides: the changelog's runs say where they came from.
   const provenance =
@@ -339,6 +343,9 @@ export function TidyChangeItem({
         {reclassify !== "" ? (
           <p className="mt-0.5 text-[14px] font-medium text-[var(--personal-text)]">{reclassify}</p>
         ) : null}
+        {rescope !== "" ? (
+          <p className="mt-0.5 text-[14px] font-medium text-[var(--personal-text)]">{rescope}</p>
+        ) : null}
         {change.reason.trim().length > 0 ? (
           <p className="mt-0.5 text-[13px] leading-snug text-[var(--personal-text-secondary)]">
             {change.reason}
@@ -348,6 +355,9 @@ export function TidyChangeItem({
           <p className={SUBHEAD}>Would replace</p>
         ) : null}
         {archives && involved.length > 0 ? <p className={SUBHEAD}>Archives</p> : null}
+        {change.action === "rescope" && involved.length > 0 ? (
+          <p className={SUBHEAD}>The rule</p>
+        ) : null}
         {involved.length > 0 ? (
           <ul className="mt-1.5 flex flex-col gap-1">
             {involved.map((text, index) => (
@@ -356,7 +366,12 @@ export function TidyChangeItem({
                 key={index}
                 className="border-l-2 border-[var(--personal-border)] pl-2"
               >
-                <p className="line-clamp-3 text-[13px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text-secondary)]">
+                <p
+                  className={cn(
+                    clamp,
+                    "text-[13px] leading-snug break-words whitespace-pre-wrap text-[var(--personal-text-secondary)]",
+                  )}
+                >
                   {text}
                 </p>
                 {/* Its own line, outside the clamp: a long entry never hides it. */}

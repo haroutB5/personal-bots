@@ -76,6 +76,34 @@ describe("TidyChangeItem", () => {
     );
   });
 
+  it("shows a pending rescope with the whole rule and the new app scope", () => {
+    const rule =
+      "Matchday average positions rule: show ONLY at half-time and full time, never during open play, and keep them unchanged all second half so the labels never flip while the match runs.";
+    act(() => {
+      renderer = create(
+        <TidyChangeItem
+          change={change({
+            status: "pending",
+            action: "rescope",
+            memoryIds: ["m-rule"],
+            resultMemoryId: null,
+            toApps: ["matchday"],
+            reason: "A Matchday display rule.",
+          })}
+          texts={new Map([["m-rule", rule]])}
+          botName={() => undefined}
+        />,
+      );
+    });
+    const json = JSON.stringify(renderer!.toJSON());
+    expect(json).toContain("Set app scope");
+    expect(json).toContain("New app scope: only Matchday");
+    expect(json).toContain("The rule");
+    // The exact text is shown, never clamped to three lines.
+    expect(json).toContain(rule);
+    expect(json).not.toContain("line-clamp-3");
+  });
+
   it("shows a retirement as just the archived list", () => {
     const shown = textOf(change({ resultMemoryId: null }));
     expect(shown).toContain("Archives|Lives in Leeds");

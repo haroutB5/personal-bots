@@ -26,6 +26,7 @@ import {
 import { commandFailureMessage } from "./commandFeedback";
 import { MemoryContent } from "./MemoryContent";
 import {
+  appScopeChip,
   isNewBotPreference,
   memoryMetaLine,
   memorySourceLabel,
@@ -34,6 +35,7 @@ import {
   writeMemoryLastSeen,
 } from "./memoryPresentation";
 import { MemoryTidySection, MemoryWaitingSection, ArchivedMemorySection } from "./MemoryTidyPanels";
+import { RulesUsageCard } from "./RulesUsageCard";
 import { mergeTaskLists } from "./taskPresentation";
 import {
   personalMemoryDelete,
@@ -98,6 +100,11 @@ function MemoryEntryBody({
         <span className="text-[12px] text-[var(--personal-text-secondary)]">
           {KIND_LABEL[entry.kind]}
         </span>
+        {appScopeChip(entry) !== "" ? (
+          <span className="rounded-[var(--personal-radius-pill)] border border-[var(--personal-border)] px-2 py-0.5 text-[12px] font-medium text-[var(--personal-text)]">
+            {appScopeChip(entry)}
+          </span>
+        ) : null}
         {isNew ? (
           <span className="rounded-[var(--personal-radius-pill)] bg-[var(--personal-primary)] px-2 py-0.5 text-[12px] font-semibold text-[var(--personal-primary-text)]">
             New
@@ -376,10 +383,14 @@ export function MemoryScreen(): JSX.Element {
         Undo; rules (preferences) are saved only when you tap Save on their card. Finished tasks add
         short summaries. Shared entries (facts about you) reach every bot, team entries reach one
         team's bots, and bot entries reach one bot. Preferences go to every turn of the bots they
-        reach; up to 6 notes and 6 task summaries are picked by relevance. When a fact changes, the
-        newer entry replaces the older one, which moves to Archived and can be restored. Deleting an
-        entry stops bots receiving it; chat transcripts where it came up still contain the text.
+        reach, except a rule limited to one app, which is listed only in chats about that app (the
+        rest get a one-line index); up to 6 notes and 6 task summaries are picked by relevance. When
+        a fact changes, the newer entry replaces the older one, which moves to Archived and can be
+        restored. Deleting an entry stops bots receiving it; chat transcripts where it came up still
+        contain the text.
       </p>
+
+      {selecting ? null : <RulesUsageCard environmentId={environmentId} />}
 
       {selecting ? null : (
         <MemoryWaitingSection

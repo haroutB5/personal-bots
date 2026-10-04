@@ -29,6 +29,7 @@ const entry = (
   createdAtMs: NOW - 5 * DAY,
   updatedAtMs: NOW - 5 * DAY,
   version: 1,
+  apps: null,
   ...overrides,
 });
 

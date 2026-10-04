@@ -42,6 +42,12 @@ export const PersonalMemoryEntry = Schema.Struct({
   supersededBy: Schema.optional(Schema.NullOr(PersonalMemoryId)),
   /** Why, in words: "Replaced by a newer save", or the tidy-up's reason. */
   supersededReason: Schema.optional(Schema.NullOr(Schema.String)),
+  /**
+   * Apps a rule is limited to (slugs such as "matchday"). Null or absent: global,
+   * listed on every turn of every bot that can see it. A scoped rule is listed in
+   * full only on a turn about one of its apps.
+   */
+  apps: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
 });
 export type PersonalMemoryEntry = typeof PersonalMemoryEntry.Type;
 
@@ -190,7 +196,9 @@ export type PersonalMemoryGetInput = typeof PersonalMemoryGetInput.Type;
  * reclassify: one entry's kind or reach changes (never its text). save: a bot's new
  * entry (content, toKind, toScope, toScopeId), replacing memoryIds if any. forget: a
  * bot asks to archive memoryIds. split: one long entry becomes several single
- * facts (parts), and the long one is archived. leave: unsure, untouched.
+ * facts (parts), and the long one is archived. rescope: one entry's app scope
+ * changes (toApps; null is global), never its text, kind or reach. leave:
+ * unsure, untouched.
  */
 export const PersonalMemoryTidyAction = Schema.Literals([
   "merge",
@@ -199,6 +207,7 @@ export const PersonalMemoryTidyAction = Schema.Literals([
   "save",
   "forget",
   "split",
+  "rescope",
   "leave",
 ]);
 export type PersonalMemoryTidyAction = typeof PersonalMemoryTidyAction.Type;
@@ -272,6 +281,8 @@ export const PersonalMemoryTidyChange = Schema.Struct({
   toKind: Schema.optional(Schema.NullOr(Schema.Literals(["note", "preference"]))),
   toScope: Schema.optional(Schema.NullOr(Schema.Literals(["shared", "team", "bot"]))),
   toScopeId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** A rescope's new app scope (slugs); null is global. */
+  toApps: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
   /** Who proposed it: the tidy-up, a bot ("bot:<id>") or a local proposals file. */
   proposedBy: Schema.optional(Schema.NullOr(Schema.String)),
   /** What an approval is bound to: the change and every entry version it saw. */
@@ -356,6 +367,8 @@ export const PersonalMemoryCard = Schema.Struct({
   /** "bot": only the proposing bot will see it. */
   scope: Schema.NullOr(Schema.Literals(["shared", "team", "bot"])),
   scopeId: Schema.NullOr(Schema.String),
+  /** A save's apps (slugs) when the rule is limited to some; null is global. */
+  apps: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
   /** The entries it replaces (save) or forgets (forget), whole, as they were proposed. */
   targets: Schema.Array(PersonalMemoryCardTarget),
   status: PersonalMemoryTidyChangeStatus,
@@ -379,6 +392,44 @@ export const PersonalMemoryTidyRunInput = Schema.Struct({
 });
 export type PersonalMemoryTidyRunInput = typeof PersonalMemoryTidyRunInput.Type;
 
+/** Share of a per-turn rule cap at which the Memory screen warns. */
+export const PERSONAL_MEMORY_RULES_WARN_SHARE = 0.8;
+
+/**
+ * How full the most rules any bot can receive at once are, against the
+ * per-turn caps. Computed with every app counted as active, the worst case.
+ */
+export const PersonalMemoryRulesUsageRow = Schema.Struct({
+  botId: Schema.String,
+  botName: Schema.String,
+  /** Rules this bot can receive at once: global plus every app's. */
+  entries: Schema.Number,
+  chars: Schema.Number,
+  globalRules: Schema.Number,
+  appRules: Schema.Number,
+  /** entries / maxEntries and chars / maxChars. */
+  entryShare: Schema.Number,
+  charShare: Schema.Number,
+  /** The larger of the two shares. */
+  share: Schema.Number,
+  /** Rules that would not fit when every app is active: named, never silently dropped. */
+  leftOut: Schema.Array(Schema.Struct({ memoryId: PersonalMemoryId, content: Schema.String })),
+});
+export type PersonalMemoryRulesUsageRow = typeof PersonalMemoryRulesUsageRow.Type;
+
+export const PersonalMemoryRulesUsage = Schema.Struct({
+  maxEntries: Schema.Number,
+  maxChars: Schema.Number,
+  warnShare: Schema.Number,
+  /** ok: under the warning share. near: at or over it. over: some rules would not fit. */
+  level: Schema.Literals(["ok", "near", "over"]),
+  /** False when the kill switch makes every rule global. */
+  scoping: Schema.Boolean,
+  /** The fullest bots, fullest first (at most 3). */
+  rows: Schema.Array(PersonalMemoryRulesUsageRow),
+});
+export type PersonalMemoryRulesUsage = typeof PersonalMemoryRulesUsage.Type;
+
 export class PersonalMemoryError extends Schema.TaggedError<PersonalMemoryError>()(
   "PersonalMemoryError",
   {
@@ -396,3 +447,49 @@ export class PersonalMemoryError extends Schema.TaggedError<PersonalMemoryError>
  */
 export const WRAPUP_CHAT_PROMPT =
   "Wrap up this chat: summarize the key points, decisions and any preferences I expressed, then remember that summary with save_memory so future chats can find it. Keep the summary concise.";
+
+/** An app a rule can be limited to: its slug is the name of its sheet in dev-team/apps. */
+export interface PersonalMemoryApp {
+  readonly slug: string;
+  /** How it is named in the index line and on the Memory screen. */
+  readonly label: string;
+  /** Other names the owner and the bots use for it. */
+  readonly aliases: ReadonlyArray<string>;
+}
+
+export const PERSONAL_MEMORY_APPS: ReadonlyArray<PersonalMemoryApp> = [
+  { slug: "matchday", label: "Matchday", aliases: ["matchday"] },
+  { slug: "caltrack", label: "CalTrack", aliases: ["caltrack", "cal track"] },
+  { slug: "rainhb", label: "rainhb", aliases: ["rainhb", "rain hb"] },
+  {
+    slug: "gymming-ironflow",
+    label: "IronFlow",
+    aliases: ["ironflow", "iron flow", "gymming", "irongymm", "gymming-ironflow"],
+  },
+  { slug: "coachbuild", label: "CoachBuild", aliases: ["coachbuild", "coach build"] },
+  {
+    slug: "tennis-poll",
+    label: "tennis-poll",
+    aliases: ["tennis-poll", "tennis poll", "tennispoll"],
+  },
+  {
+    slug: "personal-bots",
+    label: "hbots",
+    aliases: ["hbots", "personal-bots", "personal bots", "bots app", "the bots app"],
+  },
+  { slug: "homegym", label: "HomeGym", aliases: ["homegym", "home gym"] },
+  {
+    slug: "tennisstringrec",
+    label: "StringFit",
+    aliases: ["stringfit", "string fit", "tennisstringrec", "tennis string rec"],
+  },
+  { slug: "credittracker", label: "CreditTracker", aliases: ["credittracker", "credit tracker"] },
+  { slug: "sofamatch", label: "sofamatch", aliases: ["sofamatch", "sofa match"] },
+  { slug: "splitmoney", label: "splitmoney", aliases: ["splitmoney", "split money"] },
+  { slug: "shutterbook", label: "shutterbook", aliases: ["shutterbook"] },
+  { slug: "pianotut", label: "pianoTut", aliases: ["pianotut", "piano tut"] },
+];
+
+/** An app's display name; an unregistered slug reads as itself. */
+export const personalMemoryAppLabel = (slug: string): string =>
+  PERSONAL_MEMORY_APPS.find((app) => app.slug === slug)?.label ?? slug;

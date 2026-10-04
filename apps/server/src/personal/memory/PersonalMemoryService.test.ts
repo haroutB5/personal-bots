@@ -17,8 +17,25 @@ import {
   PersonalMemoryService,
   layer as memoryLayer,
 } from "./PersonalMemoryService.ts";
+import { APP_SCOPING_ENV } from "./memoryApps.ts";
 
 const TestLayer = memoryLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+
+/** Runs an effect with an environment switch set, then puts it back. */
+const withEnv = <A, E, R>(name: string, value: string, effect: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const previous = process.env[name];
+      process.env[name] = value;
+      return previous;
+    }),
+    () => effect,
+    (previous) =>
+      Effect.sync(() => {
+        if (previous === undefined) delete process.env[name];
+        else process.env[name] = previous;
+      }),
+  );
 
 const BOT_A = PersonalBotId.make("bot-a");
 const BOT_B = PersonalBotId.make("bot-b");
@@ -359,7 +376,7 @@ it.effect("a task turn with only task summaries to match gets no memory block", 
       record: true,
       excludeTaskSummaries: true,
     });
-    expect(taskTurn).toEqual({ block: null, memoryIds: [] });
+    expect(taskTurn).toMatchObject({ block: null, memoryIds: [] });
   }).pipe(Effect.provide(TestLayer)),
 );
 
@@ -505,7 +522,7 @@ describe("standing preferences", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
-  it.effect("preferences are capped by count, oldest dropped first", () =>
+  it.effect("preferences are capped by count, oldest dropped first (app scoping off)", () =>
     Effect.gen(function* () {
       yield* linkThread;
       const memory = yield* PersonalMemoryService;
@@ -531,10 +548,10 @@ describe("standing preferences", () => {
       );
       expect(context.block).not.toContain("Standing rule number 4.");
       expect(context.block).toContain("Standing rule number 5.");
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe((effect) => withEnv(APP_SCOPING_ENV, "off", effect), Effect.provide(TestLayer)),
   );
 
-  it.effect("preferences are capped by characters, oldest dropped first", () =>
+  it.effect("preferences are capped by characters, oldest dropped first (app scoping off)", () =>
     Effect.gen(function* () {
       yield* linkThread;
       const memory = yield* PersonalMemoryService;
@@ -560,7 +577,7 @@ describe("standing preferences", () => {
       expect(included * 1_880).toBeLessThanOrEqual(PERSONAL_MEMORY_PREFERENCE_MAX_CHARS);
       expect(block).toContain(`Rule ${String(count - 1).padStart(2, "0")}:`);
       expect(block).not.toContain("Rule 00:");
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe((effect) => withEnv(APP_SCOPING_ENV, "off", effect), Effect.provide(TestLayer)),
   );
 
   it.effect("notes are relevance-picked with their own quota, weak matches dropped", () =>

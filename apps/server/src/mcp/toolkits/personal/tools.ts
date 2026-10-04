@@ -226,6 +226,8 @@ export const SearchMemoryResult = Schema.Struct({
       scope: Schema.String,
       content: Schema.String,
       updatedAt: Schema.String,
+      /** App slugs a rule is limited to; absent for a global rule or a note. */
+      apps: Schema.optional(Schema.Array(Schema.String)),
     }),
   ),
 });
@@ -250,6 +252,12 @@ export const SaveMemoryInput = Schema.Struct({
     Schema.Literals(["team", "shared", "bot"]).annotate({
       description:
         "team (default): the bots on your team. shared: every bot; use it for facts about the user themselves (their home, health, tastes) and rules they gave for all bots. bot: only you.",
+    }),
+  ),
+  apps: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(8)).annotate({
+      description:
+        "Only for a preference about one or more apps: the app slugs it applies to (e.g. ['matchday'], ['personal-bots']; the names of the sheets in dev-team/apps). A scoped rule is listed in full only in chats and tasks about those apps; other bots get a one-line index of it. Omit for a rule that applies everywhere (global). The user approves the exact scope on the card.",
     }),
   ),
   replaces: Schema.optional(

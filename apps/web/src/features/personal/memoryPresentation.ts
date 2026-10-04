@@ -1,6 +1,7 @@
 import type {
   PersonalMemoryEntry,
   PersonalMemoryNoteOrigin,
+  PersonalMemoryRulesUsage,
   PersonalMemorySplitPart,
   PersonalMemoryTidyAction,
   PersonalMemoryTidyChange,
@@ -10,7 +11,11 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { parseMemorySource, personalBotTeamLabel } from "@t3tools/contracts";
+import {
+  parseMemorySource,
+  personalBotTeamLabel,
+  personalMemoryAppLabel,
+} from "@t3tools/contracts";
 
 import { PERSONAL_TIME_ZONE } from "./greeting";
 import { formatRelativeTime } from "./relativeTime";
@@ -65,6 +70,7 @@ export const TIDY_ACTION_LABEL: Readonly<Record<PersonalMemoryTidyAction, string
   save: "New entry",
   forget: "Forgotten",
   split: "Split",
+  rescope: "App scope",
   leave: "Left alone",
 };
 
@@ -159,6 +165,7 @@ export function tidyActionLabel(
     if (change.action === "reclassify") return "Reclassify";
     if (change.action === "save") return "Save";
     if (change.action === "forget") return "Forget";
+    if (change.action === "rescope") return "Set app scope";
   }
   return TIDY_ACTION_LABEL[change.action];
 }
@@ -180,6 +187,37 @@ export function reclassifyDescription(
   }
   if (change.toScope === "bot") parts.push("Reach: One bot");
   return parts.join(" · ");
+}
+
+/** "Matchday", "Matchday and CalTrack", "Matchday, CalTrack and hbots": app slugs in words. */
+export function appsLabel(apps: ReadonlyArray<string>): string {
+  const names = apps.map(personalMemoryAppLabel);
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+/** A rule's app scope as a short chip: "Only: Matchday"; empty for a global rule. */
+export function appScopeChip(entry: Pick<PersonalMemoryEntry, "apps">): string {
+  const apps = entry.apps ?? [];
+  return apps.length === 0 ? "" : `Only: ${appsLabel(apps)}`;
+}
+
+/**
+ * What a rescope does, in words: "App scope: only in Matchday chats and tasks"
+ * or "App scope: all apps (global)". Empty for other actions.
+ */
+export function rescopeDescription(
+  change: Pick<PersonalMemoryTidyChange, "action" | "toApps">,
+): string {
+  const apps = change.toApps ?? [];
+  // A rescope always says its scope; a bot's new rule only when it is limited to apps.
+  if (change.action === "save") {
+    return apps.length === 0 ? "" : `App scope: only ${appsLabel(apps)}`;
+  }
+  if (change.action !== "rescope") return "";
+  return apps.length === 0
+    ? "New app scope: all apps (global, listed on every turn)"
+    : `New app scope: only ${appsLabel(apps)} (listed in chats and tasks about ${apps.length === 1 ? "it" : "them"}; other chats get a one-line index)`;
 }
 
 /** A split part's short tag: "Preference · Dev team", "Note · All bots". */
@@ -432,3 +470,58 @@ const NOTE_ORIGIN_WORDS: Record<PersonalMemoryNoteOrigin, string> = {
   bot: "from another bot's message",
   app: "from an app notice",
 };
+
+/** "12.1k": a character count short enough for a phone line. */
+const compactChars = (chars: number): string =>
+  chars >= 1_000 ? `${(chars / 1_000).toFixed(1).replace(/\.0$/, "")}k` : String(chars);
+
+export interface RulesUsageCardModel {
+  readonly tone: "near" | "over";
+  readonly headline: string;
+  readonly detail: string;
+  /** The fullest bots: one line each with a bar share (0 to 1, capped at 1 for the bar). */
+  readonly rows: ReadonlyArray<{
+    readonly key: string;
+    readonly label: string;
+    readonly line: string;
+    readonly share: number;
+  }>;
+  /** Rules that would not fit when every app counts, whole. */
+  readonly leftOut: ReadonlyArray<{ readonly memoryId: string; readonly content: string }>;
+}
+
+/**
+ * The Memory screen's rules warning, or null while every bot is under 80% of
+ * the per-turn caps. Counts every app as active: the most rules one turn can
+ * carry.
+ */
+export function rulesUsageCardModel(usage: PersonalMemoryRulesUsage): RulesUsageCardModel | null {
+  if (usage.level === "ok" || usage.rows.length === 0) return null;
+  const worst = usage.rows[0]!;
+  const percent = Math.round(worst.share * 100);
+  const unscoped = usage.scoping
+    ? ""
+    : " App scoping is off, so every rule goes to every chat and the oldest are dropped first.";
+  const rows = usage.rows.map((row) => ({
+    key: row.botId,
+    label: row.botName,
+    line: `${row.entries} of ${usage.maxEntries} rules · ${compactChars(row.chars)} of ${compactChars(usage.maxChars)} characters`,
+    share: Math.min(1, row.share),
+  }));
+  if (usage.level === "over") {
+    return {
+      tone: "over",
+      headline: `${worst.leftOut.length} ${worst.leftOut.length === 1 ? "rule does" : "rules do"} not fit`,
+      detail: `${worst.botName} would be given ${worst.entries} rules (${compactChars(worst.chars)} characters) in a chat that covers every app, over the limit of ${usage.maxEntries} rules or ${compactChars(usage.maxChars)} characters. These are left out of such a chat, and the bot is told which, so none is lost silently. Rules for one app only count in chats about that app.${unscoped}`,
+      rows,
+      leftOut: worst.leftOut,
+    };
+  }
+  return {
+    tone: "near",
+    headline: `Rules are ${percent}% of the limit`,
+    detail: `${worst.botName} can be given up to ${worst.entries} of ${usage.maxEntries} rules at once (${compactChars(worst.chars)} of ${compactChars(usage.maxChars)} characters), counting every app. Rules for one app are only listed in chats about it. Past the limit some app rules would be left out of a chat, and the bot told which.${unscoped}`,
+    rows,
+    leftOut: [],
+  };
+}

@@ -204,6 +204,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalMemoryRestore]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalMemoryUndoNote]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalMemoryGet]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalMemoryRulesUsage]: AuthOrchestrationReadScope,
   [WS_METHODS.personalMemoryTidyLog]: AuthOrchestrationReadScope,
   [WS_METHODS.personalMemoryTidySetMode]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalMemoryTidyRun]: AuthOrchestrationOperateScope,

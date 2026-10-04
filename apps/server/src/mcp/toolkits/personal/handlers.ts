@@ -651,6 +651,7 @@ const make = Effect.gen(function* () {
             scope: entry.scope,
             content: entry.content,
             updatedAt: DateTime.formatIso(entry.updatedAt),
+            ...(entry.apps == null ? {} : { apps: [...entry.apps] }),
           })),
         };
       }),
@@ -760,6 +761,7 @@ const make = Effect.gen(function* () {
             scope,
             scopeId: scope === "team" ? team : scope === "bot" ? botId : null,
             content: input.content,
+            apps: input.apps ?? null,
             replaces: targets,
             reason: `Asked in chat: "${source.replace(/\s+/g, " ").slice(0, 300)}"`,
           })

@@ -21,6 +21,8 @@ import {
   type PersonalMemoryEntry,
   type PersonalMemoryListInput,
   type PersonalMemoryNoteOrigin,
+  type PersonalMemoryRulesUsage,
+  PERSONAL_MEMORY_RULES_WARN_SHARE,
   noteSourceTag,
   type PersonalMemorySearchInput,
   type PersonalMemoryUpdateInput,
@@ -36,11 +38,38 @@ import {
 } from "../browser/sensitiveExposureStore.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import {
+  APP_SIGNAL_RECENT_CHARS,
+  APP_SIGNAL_RECENT_MESSAGES,
+  appLabel,
+  appScopingEnabled,
+  appsToJson,
+  detectActiveApps,
+  formatAppIndex,
+  MEMORY_APPS,
+  mentionsApp,
+  parseAppsJson,
+  selectRules,
+  type ActiveApp,
+} from "./memoryApps.ts";
+import {
   localDay,
   memorySimilarity,
   SIMILAR_MEMORY_THRESHOLD,
   entrySnapshotsJson,
 } from "./memoryTidy.ts";
+import {
+  candidateQueryTerms,
+  capByChars,
+  contextualRetrievalEnabled,
+  memoryQueryTerms,
+  rankCandidates,
+  RELEVANT_MAX_CHARS,
+  selectQueryTerms,
+  termsToMatch,
+  type Ranked,
+} from "./memoryRetrieval.ts";
+
+export { memoryQueryTerms };
 
 /** Default result count for a memory search (the search_memory tool). */
 export const PERSONAL_MEMORY_RETRIEVAL_LIMIT = 8;
@@ -118,22 +147,6 @@ export function looksLikeSecret(text: string): boolean {
   return false;
 }
 
-const STOP_WORDS = new Set(
-  "a an and are as at be but by can could do does for from had has have how i if in into is it its me my no not of on or our please should so than that the their them then there these they this to up us was we were what when where which who why will with would you your".split(
-    " ",
-  ),
-);
-
-/** A message's searchable words, in order, once each. */
-export function memoryQueryTerms(text: string): ReadonlyArray<string> {
-  const terms: Array<string> = [];
-  for (const raw of text.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? []) {
-    if (STOP_WORDS.has(raw) || terms.includes(raw)) continue;
-    terms.push(raw);
-  }
-  return terms;
-}
-
 /**
  * Turns free text into an FTS5 OR query of quoted terms; null when nothing is
  * searchable. With `documentFrequency` (how many entries hold each term), the
@@ -200,6 +213,9 @@ const memoryLine = (entry: PersonalMemoryEntry) => {
   return `- [${KIND_LABEL[entry.kind]}] [${memoryDay(entry)} · ${memoryRef(entry)}${tag === null ? "" : ` · ${tag}`}] ${content.replace(/\s+/g, " ")}`;
 };
 
+/** Left-out rules named in the block, at most this many with their words; the rest are counted. */
+const LEFT_OUT_NAMED = 8;
+
 /**
  * The block put in front of a bot's turn: it travels with the user's message,
  * so it says who wrote it. `preferencesRepeat` replaces the preference list
@@ -211,6 +227,10 @@ export function formatMemoryBlock(input: {
   /** Older preferences left out by the caps. */
   readonly droppedPreferences?: number | undefined;
   readonly preferencesRepeat?: { readonly count: number } | undefined;
+  /** "Matchday: 5 rules, CalTrack: 1 rule": rules of apps this turn is not about, not listed. */
+  readonly appIndex?: string | null | undefined;
+  /** Rules of this turn's apps that did not fit the caps, named so none is unreachable. */
+  readonly leftOutRules?: ReadonlyArray<PersonalMemoryEntry> | undefined;
 }): string | null {
   const lines: Array<string> = [];
   if (input.preferencesRepeat !== undefined) {
@@ -224,6 +244,23 @@ export function formatMemoryBlock(input: {
         `- ${input.droppedPreferences} older preferences are not shown here (too many to list); use search_memory to find them.`,
       );
     }
+  }
+  if (input.appIndex !== undefined && input.appIndex !== null) {
+    lines.push(
+      `- Rules for other apps are not listed here (${input.appIndex}). When this chat or task touches one of those apps, call search_memory with its name to read its rules first.`,
+    );
+  }
+  const leftOut = input.leftOutRules ?? [];
+  if (leftOut.length > 0) {
+    const named = leftOut
+      .slice(0, LEFT_OUT_NAMED)
+      .map(
+        (rule) => `[${memoryRef(rule)}] ${clipAtSentence(rule.content.replace(/\s+/g, " "), 90)}`,
+      )
+      .join("; ");
+    lines.push(
+      `- ${leftOut.length} rules for this chat's apps did not fit the per-turn limit and are not listed: ${named}${leftOut.length > LEFT_OUT_NAMED ? `; and ${leftOut.length - LEFT_OUT_NAMED} more` : ""}. Call search_memory to read them.`,
+    );
   }
   lines.push(...input.relevant.map(memoryLine));
   if (lines.length === 0) return null;
@@ -244,6 +281,7 @@ const MemoryDbRow = Schema.Struct({
   supersededAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   supersededBy: Schema.NullOr(PersonalMemoryId),
   supersededReason: Schema.NullOr(Schema.String),
+  appsJson: Schema.NullOr(Schema.String),
 });
 const decodeMemoryRow = Schema.decodeUnknownEffect(MemoryDbRow);
 const encodeMemoryIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -273,7 +311,8 @@ const MEMORY_COLUMNS = `
   m.version AS "version",
   m.superseded_at AS "supersededAt",
   m.superseded_by AS "supersededBy",
-  m.superseded_reason AS "supersededReason"
+  m.superseded_reason AS "supersededReason",
+  m.apps_json AS "appsJson"
 `;
 
 export interface PersonalMemorySaveInput {
@@ -282,6 +321,8 @@ export interface PersonalMemorySaveInput {
   readonly kind: "note" | "preference";
   readonly content: string;
   readonly source: string;
+  /** Apps a preference is limited to (slugs); null or absent is global. Ignored for notes. */
+  readonly apps?: ReadonlyArray<string> | null | undefined;
   /**
    * Entries this one replaces: they are superseded by it, kept for Restore
    * and never given to a bot again.
@@ -329,6 +370,8 @@ export type PersonalMemoryProposal =
       readonly scope: "shared" | "team" | "bot";
       readonly scopeId: string | null;
       readonly content: string;
+      /** Apps a preference is limited to; null or absent is global. */
+      readonly apps?: ReadonlyArray<string> | null | undefined;
       readonly replaces: ReadonlyArray<PersonalMemoryEntry>;
       readonly reason: string;
     }
@@ -399,6 +442,30 @@ export function capPreferences(entries: ReadonlyArray<PersonalMemoryEntry>): {
     chars += entry.content.length;
   }
   return { kept: kept.toReversed(), dropped };
+}
+
+/** What a turn's memory was about, and why each entry was picked or left out. */
+export interface MemoryTurnTrace {
+  readonly activeApps: ReadonlyArray<ActiveApp>;
+  /** Rules listed in full, global and of an active app. */
+  readonly rules: { readonly global: number; readonly scoped: number };
+  /** Rule groups of other apps counted in the index line. */
+  readonly appIndex: ReadonlyArray<{ readonly slug: string; readonly count: number }>;
+  /** Rules of an active app that did not fit the caps. */
+  readonly rulesLeftOut: ReadonlyArray<PersonalMemoryId>;
+  /** The words searched, and whether the message alone was too thin so the chat led. */
+  readonly query: { readonly terms: ReadonlyArray<string>; readonly followUp: boolean };
+  readonly picked: ReadonlyArray<{
+    readonly memoryId: PersonalMemoryId;
+    readonly kind: PersonalMemoryKind;
+    readonly score: number;
+    readonly why: ReadonlyArray<string>;
+  }>;
+  readonly leftOut: ReadonlyArray<{
+    readonly memoryId: PersonalMemoryId;
+    readonly kind: PersonalMemoryKind;
+    readonly reason: string;
+  }>;
 }
 
 export class PersonalMemoryService extends Context.Service<
@@ -513,6 +580,8 @@ export class PersonalMemoryService extends Context.Service<
       readonly projectId?: string | undefined;
       readonly record: boolean;
       readonly excludeTaskSummaries?: boolean | undefined;
+      /** The message that starts this turn: left out of the recent turns read for context. */
+      readonly messageId?: string | undefined;
       /**
        * The provider session this turn runs in. Given: the full preference
        * list is sent once per session and again only when it changed, after
@@ -529,7 +598,14 @@ export class PersonalMemoryService extends Context.Service<
        */
       readonly preferencesBlock?: string | null;
       readonly memoryIds: ReadonlyArray<PersonalMemoryId>;
+      /** What the turn was about and why each entry was picked or left out. */
+      readonly trace?: MemoryTurnTrace | undefined;
     }>;
+    /**
+     * How full the most rules any bot can receive at once are against the
+     * per-turn caps (every app counted as active), for the Memory screen.
+     */
+    readonly rulesUsage: () => Effect.Effect<PersonalMemoryRulesUsage, PersonalMemoryError>;
     /**
      * The provider accepted the turn contextForThread last built for this
      * thread, with its preferences in front of the prompt: only now does that
@@ -564,7 +640,14 @@ export const make = Effect.gen(function* () {
       );
 
   const decodeAll = (rows: ReadonlyArray<unknown>) =>
-    Effect.forEach(rows, (row) => decodeMemoryRow(row));
+    Effect.forEach(rows, (row) =>
+      decodeMemoryRow(row).pipe(
+        Effect.map(({ appsJson, ...entry }): PersonalMemoryEntry => ({
+          ...entry,
+          apps: parseAppsJson(appsJson),
+        })),
+      ),
+    );
 
   /** Current or superseded; never a deleted one. */
   const readEntry = (memoryId: PersonalMemoryId) =>
@@ -646,6 +729,27 @@ export const make = Effect.gen(function* () {
           GROUP BY q.value
         `.pipe(Effect.map((rows) => new Map(rows.map((row) => [row.term, row.df]))));
 
+  /** The FTS rows for a match, best first, with their bm25 score (negative: more negative is better). */
+  const searchScored = (match: string, filter: PersonalMemoryScopeFilter, limit: number) =>
+    Effect.gen(function* () {
+      const rows = yield* sql<{ readonly score: number }>`
+        SELECT ${sql.literal(MEMORY_COLUMNS)}, bm25(personal_memory_fts) AS "score"
+        FROM personal_memory_fts f
+        JOIN personal_memory m ON m.seq = f.rowid
+        WHERE personal_memory_fts MATCH ${match}
+          AND m.deleted_at IS NULL
+          AND m.superseded_at IS NULL
+          AND ${scopeCondition(filter)}
+          AND ${filter.excludeTaskSummaries === true ? sql`m.kind <> 'task_summary'` : sql`1 = 1`}
+          AND ${filter.excludePreferences === true ? sql`m.kind <> 'preference'` : sql`1 = 1`}
+          AND ${filter.onlyKind === undefined ? sql`1 = 1` : sql`m.kind = ${filter.onlyKind}`}
+        ORDER BY bm25(personal_memory_fts) ASC, m.updated_at DESC
+        LIMIT ${limit}
+      `;
+      const entries = yield* decodeAll(rows);
+      return entries.map((entry, index) => ({ entry, bm25: rows[index]!.score }));
+    });
+
   const search: PersonalMemoryService["Service"]["search"] = (input) =>
     Effect.gen(function* () {
       const frequency =
@@ -654,27 +758,18 @@ export const make = Effect.gen(function* () {
           : undefined;
       const match = buildMemoryMatchQuery(input.query, frequency);
       if (match === null) return [];
-      const rows = yield* sql<{ readonly score: number }>`
-        SELECT ${sql.literal(MEMORY_COLUMNS)}, bm25(personal_memory_fts) AS "score"
-        FROM personal_memory_fts f
-        JOIN personal_memory m ON m.seq = f.rowid
-        WHERE personal_memory_fts MATCH ${match}
-          AND m.deleted_at IS NULL
-          AND m.superseded_at IS NULL
-          AND ${scopeCondition(input)}
-          AND ${input.excludeTaskSummaries === true ? sql`m.kind <> 'task_summary'` : sql`1 = 1`}
-          AND ${input.excludePreferences === true ? sql`m.kind <> 'preference'` : sql`1 = 1`}
-          AND ${input.onlyKind === undefined ? sql`1 = 1` : sql`m.kind = ${input.onlyKind}`}
-        ORDER BY bm25(personal_memory_fts) ASC, m.updated_at DESC
-        LIMIT ${input.limit ?? PERSONAL_MEMORY_RETRIEVAL_LIMIT}
-      `;
+      const scored = yield* searchScored(
+        match,
+        input,
+        input.limit ?? PERSONAL_MEMORY_RETRIEVAL_LIMIT,
+      );
       // bm25 is negative, best first: keep what scores within the floor of the best.
-      const best = rows[0]?.score ?? 0;
+      const best = scored[0]?.bm25 ?? 0;
       const kept =
         input.ranked === true
-          ? rows.filter((row) => row.score <= best * PERSONAL_MEMORY_SCORE_FLOOR)
-          : rows;
-      return yield* decodeAll(kept);
+          ? scored.filter((row) => row.bm25 <= best * PERSONAL_MEMORY_SCORE_FLOOR)
+          : scored;
+      return kept.map((row) => row.entry);
     }).pipe(storageFailure("search"));
 
   const ownerMessages: PersonalMemoryService["Service"]["ownerMessages"] = (threadId) =>
@@ -784,7 +879,7 @@ export const make = Effect.gen(function* () {
         INSERT INTO personal_memory_tidy_changes (
           run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id, content,
           to_kind, to_scope, to_scope_id, versions_json, proposed_by, thread_id, reason, created_at,
-          entry_snapshots_json
+          entry_snapshots_json, to_apps_json
         )
         SELECT
           ${runId}, 'pending', ${input.action},
@@ -798,7 +893,8 @@ export const make = Effect.gen(function* () {
           ${encodeVersions(versions)}, ${proposedBy}, ${input.threadId},
           ${redactSecrets(input.reason).slice(0, 600)},
           ${nowIso},
-          ${entrySnapshotsJson(targets)}
+          ${entrySnapshotsJson(targets)},
+          ${input.action === "save" && input.kind === "preference" ? appsToJson(input.apps) : null}
         WHERE (
           SELECT COUNT(*) FROM personal_memory_tidy_changes
           WHERE status = 'pending' AND proposed_by = ${proposedBy}
@@ -916,11 +1012,12 @@ export const make = Effect.gen(function* () {
           yield* sql`
             INSERT INTO personal_memory (
               memory_id, scope, scope_id, kind, content, source, sensitivity,
-              created_at, updated_at, deleted_at, version
+              created_at, updated_at, deleted_at, version, apps_json
             )
             VALUES (
               ${memoryId}, ${input.scope}, ${input.scopeId}, ${input.kind}, ${content},
-              ${input.source}, 'normal', ${nowIso}, ${nowIso}, NULL, 1
+              ${input.source}, 'normal', ${nowIso}, ${nowIso}, NULL, 1,
+              ${input.kind === "preference" ? appsToJson(input.apps) : null}
             )
           `;
         }
@@ -1133,6 +1230,176 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => true),
     );
 
+  /** What the turn is about besides its own message: the chat's title, the messages just before it, the bot's role. */
+  const turnSignals = (
+    threadId: ThreadId,
+    botId: PersonalBotId,
+    currentMessageId: string | undefined,
+  ) =>
+    Effect.gen(function* () {
+      const titles = yield* sql<{ readonly title: string }>`
+        SELECT title FROM projection_threads WHERE thread_id = ${threadId} LIMIT 1
+      `;
+      const recent = yield* sql<{ readonly text: string }>`
+        SELECT substr(text, 1, ${APP_SIGNAL_RECENT_CHARS}) AS "text"
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId} AND message_id <> ${currentMessageId ?? ""}
+          AND role IN ('user', 'assistant')
+        ORDER BY created_at DESC LIMIT ${APP_SIGNAL_RECENT_MESSAGES}
+      `;
+      const roles = yield* sql<{ readonly name: string; readonly description: string }>`
+        SELECT name, description FROM personal_bots WHERE bot_id = ${botId} LIMIT 1
+      `;
+      return {
+        title: titles[0]?.title ?? "",
+        recent: recent.map((row) => row.text),
+        botRole: `${roles[0]?.name ?? ""}\n${roles[0]?.description ?? ""}`,
+      };
+    }).pipe(
+      // Context only sharpens the pick: without it the message alone decides.
+      Effect.orElseSucceed(() => ({ title: "", recent: [] as Array<string>, botRole: "" })),
+    );
+
+  const entryWithTime = (entry: PersonalMemoryEntry) => ({
+    ...entry,
+    updatedAtMs: DateTime.toEpochMillis(entry.updatedAt),
+  });
+
+  /** Most candidates fetched per kind before they are scored, weighed and capped. */
+  const CANDIDATES_PER_KIND = 30;
+
+  /**
+   * The notes and task summaries a turn is given. Contextual (default): the
+   * search words come from the message, the chat title, the active apps and
+   * the last few turns; status entries lose weight with age; the result is
+   * capped by count and by characters. Legacy (kill switch): the message's
+   * rarest words alone, as before 1.60.40.
+   */
+  const pickRelevant = (input: {
+    readonly scope: PersonalMemoryScopeFilter;
+    readonly query: string;
+    readonly signals: { readonly title: string; readonly recent: ReadonlyArray<string> };
+    readonly activeApps: ReadonlyArray<ActiveApp>;
+    readonly ruleApps: ReadonlyArray<string>;
+    readonly nowMs: number;
+    readonly excludeTaskSummaries: boolean;
+  }) =>
+    Effect.gen(function* () {
+      const empty = {
+        entries: [] as Array<PersonalMemoryEntry>,
+        picked: [] as MemoryTurnTrace["picked"],
+        leftOut: [] as MemoryTurnTrace["leftOut"],
+        query: { terms: [] as ReadonlyArray<string>, followUp: false },
+      };
+      if (!contextualRetrievalEnabled()) {
+        const notes = yield* search({
+          query: input.query,
+          ...input.scope,
+          onlyKind: "note",
+          ranked: true,
+          limit: PERSONAL_MEMORY_CONTEXT_NOTE_LIMIT,
+        });
+        const summaries = input.excludeTaskSummaries
+          ? []
+          : yield* search({
+              query: input.query,
+              ...input.scope,
+              onlyKind: "task_summary",
+              ranked: true,
+              limit: PERSONAL_MEMORY_CONTEXT_SUMMARY_LIMIT,
+            });
+        const entries = [...notes, ...summaries];
+        return {
+          ...empty,
+          entries,
+          picked: entries.map((entry) => ({
+            memoryId: entry.memoryId,
+            kind: entry.kind,
+            score: 0,
+            why: ["keyword match (legacy retrieval)"],
+          })),
+        };
+      }
+      const appWords = input.activeApps.map((app) => `${appLabel(app.slug)} ${app.slug}`);
+      const queryInput = {
+        current: input.query,
+        title: input.signals.title,
+        appWords,
+        recent: input.signals.recent,
+      };
+      const frequency = yield* documentFrequency(candidateQueryTerms(queryInput).slice(0, 300));
+      const totals = yield* sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS "n" FROM personal_memory WHERE deleted_at IS NULL AND superseded_at IS NULL
+      `;
+      const chosen = selectQueryTerms(queryInput, frequency, totals[0]?.n ?? 0);
+      const match = termsToMatch(chosen.terms);
+      const query = { terms: chosen.terms, followUp: chosen.followUp };
+      if (match === null) return { ...empty, query };
+      const activeSet = new Set(input.activeApps.map((app) => app.slug));
+      const knownApps = [...new Set([...MEMORY_APPS.map((app) => app.slug), ...input.ruleApps])];
+      const rank =
+        (limit: number) =>
+        (
+          candidates: ReadonlyArray<{ readonly entry: PersonalMemoryEntry; readonly bm25: number }>,
+        ) =>
+          rankCandidates(
+            candidates.map((row) => ({ entry: entryWithTime(row.entry), bm25: row.bm25 })),
+            {
+              nowMs: input.nowMs,
+              activeApps: activeSet,
+              mentionsApp,
+              knownApps,
+              floor: PERSONAL_MEMORY_SCORE_FLOOR,
+              limit,
+            },
+          );
+      const notes = rank(PERSONAL_MEMORY_CONTEXT_NOTE_LIMIT)(
+        yield* searchScored(match, { ...input.scope, onlyKind: "note" }, CANDIDATES_PER_KIND),
+      );
+      const summaries = input.excludeTaskSummaries
+        ? { picked: [], leftOut: [] }
+        : rank(PERSONAL_MEMORY_CONTEXT_SUMMARY_LIMIT)(
+            yield* searchScored(
+              match,
+              { ...input.scope, onlyKind: "task_summary" },
+              CANDIDATES_PER_KIND,
+            ),
+          );
+      // Notes first: when the characters run out, task summaries go first.
+      const capped = capByChars(
+        [...notes.picked, ...summaries.picked],
+        (row: Ranked<PersonalMemoryEntry & { readonly updatedAtMs: number }>) =>
+          memoryLine(row.entry).length,
+        RELEVANT_MAX_CHARS,
+      );
+      const leftOut = [
+        ...capped.leftOut.map((row) => ({
+          memoryId: row.entry.memoryId,
+          kind: row.entry.kind,
+          reason: "over the per-turn character limit",
+        })),
+        ...[...notes.leftOut, ...summaries.leftOut].map((row) => ({
+          memoryId: row.entry.memoryId,
+          kind: row.entry.kind,
+          reason: row.why.length > 0 ? row.why.join(", ") : "matched less than the best entries",
+        })),
+      ];
+      return {
+        entries: capped.kept.map((row): PersonalMemoryEntry => {
+          const { updatedAtMs: _ignored, ...entry } = row.entry;
+          return entry;
+        }),
+        picked: capped.kept.map((row) => ({
+          memoryId: row.entry.memoryId,
+          kind: row.entry.kind,
+          score: Number(row.score.toFixed(3)),
+          why: row.why,
+        })),
+        leftOut,
+        query,
+      };
+    });
+
   const contextForThread: PersonalMemoryService["Service"]["contextForThread"] = (input) =>
     Effect.gen(function* () {
       // Whatever an earlier build left unconfirmed is stale from here on, and a
@@ -1141,8 +1408,9 @@ export const make = Effect.gen(function* () {
       const botId = yield* botForThread(input.threadId);
       if (Option.isNone(botId)) return { block: null, memoryIds: [] };
       const scope = { botId: botId.value, projectId: input.projectId };
-      // Every preference the bot can see, whatever the message says; the
-      // caps keep the newest by when they were saved.
+      const nowDate = yield* DateTime.now;
+      const nowMs = DateTime.toEpochMillis(nowDate);
+      // Every preference the bot can see, whatever the message says.
       const allPreferences = yield* sql`
         SELECT ${sql.literal(MEMORY_COLUMNS)} FROM personal_memory m
         WHERE m.deleted_at IS NULL
@@ -1152,38 +1420,81 @@ export const make = Effect.gen(function* () {
         ORDER BY m.created_at DESC, m.seq DESC
         LIMIT 500
       `.pipe(Effect.flatMap(decodeAll), storageFailure("preferences"));
-      const preferences = capPreferences(allPreferences);
-      if (preferences.dropped > 0) {
-        yield* Effect.logWarning("personal memory preferences capped for a turn", {
-          threadId: input.threadId,
-          included: preferences.kept.length,
-          dropped: preferences.dropped,
-          maxEntries: PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES,
-          maxChars: PERSONAL_MEMORY_PREFERENCE_MAX_CHARS,
-        });
-      }
-      // Long briefs keep their tail: the rarest terms often sit near the end.
+
+      // Long briefs keep their head: the rarest terms are picked from all of it.
       const query = input.query.slice(0, PERSONAL_MEMORY_QUERY_MAX_CHARS) || " ";
-      const notes = yield* search({
+      const signals = yield* turnSignals(input.threadId, botId.value, input.messageId);
+      const scoping = appScopingEnabled();
+      const ruleApps = [...new Set(allPreferences.flatMap((entry) => entry.apps ?? []))];
+      const activeApps = detectActiveApps({ ...signals, current: query }, ruleApps);
+      const active = new Set(activeApps.map((app) => app.slug));
+
+      // The rules listed this turn. App scoping on: global rules always, plus
+      // the rules of this turn's apps while they fit the caps; the rest are
+      // counted in an index line, and any that do not fit are named. Off: the
+      // old list (newest first up to the caps, older ones dropped and counted).
+      let listed: ReadonlyArray<PersonalMemoryEntry>;
+      let droppedPreferences = 0;
+      let appIndex: string | null = null;
+      let appIndexGroups: ReadonlyArray<{ readonly slug: string; readonly count: number }> = [];
+      let leftOutRules: ReadonlyArray<PersonalMemoryEntry> = [];
+      if (scoping) {
+        const picked = selectRules(
+          allPreferences.map((entry) => ({
+            entry,
+            memoryId: entry.memoryId,
+            content: entry.content,
+            apps: entry.apps ?? null,
+          })),
+          {
+            active,
+            scoping: true,
+            caps: {
+              maxEntries: PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES,
+              maxChars: PERSONAL_MEMORY_PREFERENCE_MAX_CHARS,
+            },
+          },
+        );
+        listed = picked.kept.map((rule) => rule.entry).toReversed();
+        leftOutRules = picked.leftOut.map((rule) => rule.entry);
+        appIndex = formatAppIndex(picked.index);
+        appIndexGroups = picked.index.map((group) => ({ slug: group.slug, count: group.count }));
+        if (leftOutRules.length > 0) {
+          yield* Effect.logWarning("personal memory rules left out for a turn", {
+            threadId: input.threadId,
+            activeApps: [...active],
+            leftOut: leftOutRules.map((entry) => memoryRef(entry)),
+            maxEntries: PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES,
+            maxChars: PERSONAL_MEMORY_PREFERENCE_MAX_CHARS,
+          });
+        }
+      } else {
+        const capped = capPreferences(allPreferences);
+        listed = capped.kept;
+        droppedPreferences = capped.dropped;
+        if (capped.dropped > 0) {
+          yield* Effect.logWarning("personal memory preferences capped for a turn", {
+            threadId: input.threadId,
+            included: capped.kept.length,
+            dropped: capped.dropped,
+            maxEntries: PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES,
+            maxChars: PERSONAL_MEMORY_PREFERENCE_MAX_CHARS,
+          });
+        }
+      }
+
+      const picks = yield* pickRelevant({
+        scope,
         query,
-        ...scope,
-        onlyKind: "note",
-        ranked: true,
-        limit: PERSONAL_MEMORY_CONTEXT_NOTE_LIMIT,
+        signals,
+        activeApps,
+        ruleApps,
+        nowMs,
+        excludeTaskSummaries: input.excludeTaskSummaries === true,
       });
-      const summaries =
-        input.excludeTaskSummaries === true
-          ? []
-          : yield* search({
-              query,
-              ...scope,
-              onlyKind: "task_summary",
-              ranked: true,
-              limit: PERSONAL_MEMORY_CONTEXT_SUMMARY_LIMIT,
-            });
-      const seen = new Set(preferences.kept.map((entry) => dedupeKey(entry.content)));
+      const seen = new Set(listed.map((entry) => dedupeKey(entry.content)));
       const relevant: Array<PersonalMemoryEntry> = [];
-      for (const entry of [...notes, ...summaries]) {
+      for (const entry of picks.entries) {
         const key = dedupeKey(entry.content);
         if (seen.has(key)) continue;
         seen.add(key);
@@ -1192,15 +1503,17 @@ export const make = Effect.gen(function* () {
 
       // The full list once per session; then a one-line reminder while
       // nothing changed, the chat was not compacted and it is not due again.
-      const setKey = preferences.kept
-        .map((entry) => `${entry.memoryId}:${entry.version}`)
-        .join(",");
-      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const setKey = [
+        listed.map((entry) => `${entry.memoryId}:${entry.version}`).join(","),
+        appIndex ?? "",
+        leftOutRules.map((entry) => entry.memoryId).join(","),
+      ].join("|");
+      const nowIso = DateTime.formatIso(nowDate);
       const previous = sentPreferences.get(input.threadId);
       const repeat =
         input.session !== undefined &&
         !input.session.fresh &&
-        preferences.kept.length > 0 &&
+        listed.length > 0 &&
         previous !== undefined &&
         previous.sessionKey === input.session.key &&
         previous.setKey === setKey &&
@@ -1217,25 +1530,40 @@ export const make = Effect.gen(function* () {
         );
       } else pendingSent.delete(input.threadId);
 
-      const sentPreferenceEntries = repeat ? [] : preferences.kept;
+      const sentPreferenceEntries = repeat ? [] : listed;
       const memoryIds = [...sentPreferenceEntries, ...relevant].map((entry) => entry.memoryId);
       if (input.record && memoryIds.length > 0) {
         yield* recordUsage(input.threadId, memoryIds);
       }
       const blockInput = {
         preferences: sentPreferenceEntries,
-        droppedPreferences: preferences.dropped,
-        preferencesRepeat: repeat ? { count: preferences.kept.length } : undefined,
+        droppedPreferences,
+        preferencesRepeat: repeat ? { count: listed.length } : undefined,
+        appIndex,
+        leftOutRules,
       };
       const block = formatMemoryBlock({ ...blockInput, relevant });
       const preferencesBlock =
         relevant.length > 0 && (sentPreferenceEntries.length > 0 || repeat)
           ? formatMemoryBlock({ ...blockInput, relevant: [] })
           : null;
+      const trace: MemoryTurnTrace = {
+        activeApps,
+        rules: {
+          global: listed.filter((entry) => !scoping || (entry.apps ?? null) === null).length,
+          scoped: listed.filter((entry) => scoping && (entry.apps ?? null) !== null).length,
+        },
+        appIndex: appIndexGroups,
+        rulesLeftOut: leftOutRules.map((entry) => entry.memoryId),
+        query: picks.query,
+        picked: picks.picked,
+        leftOut: picks.leftOut,
+      };
       return {
         block,
         ...(preferencesBlock === null ? {} : { preferencesBlock }),
         memoryIds,
+        trace,
       };
     }).pipe(
       Effect.catchCause((cause) =>
@@ -1248,6 +1576,96 @@ export const make = Effect.gen(function* () {
             }).pipe(Effect.as({ block: null, memoryIds: [] })),
       ),
     );
+
+  const rulesUsage: PersonalMemoryService["Service"]["rulesUsage"] = () =>
+    Effect.gen(function* () {
+      const bots = yield* sql<{
+        readonly botId: PersonalBotId;
+        readonly name: string;
+        readonly team: string | null;
+      }>`SELECT bot_id AS "botId", name, team FROM personal_bots`;
+      const prefs = yield* sql`
+        SELECT ${sql.literal(MEMORY_COLUMNS)} FROM personal_memory m
+        WHERE m.deleted_at IS NULL AND m.superseded_at IS NULL AND m.kind = 'preference'
+          AND m.scope <> 'project'
+        ORDER BY m.created_at DESC, m.seq DESC
+        LIMIT 1000
+      `.pipe(Effect.flatMap(decodeAll));
+      const scoping = appScopingEnabled();
+      const caps = {
+        maxEntries: PERSONAL_MEMORY_PREFERENCE_MAX_ENTRIES,
+        maxChars: PERSONAL_MEMORY_PREFERENCE_MAX_CHARS,
+      };
+      const allApps = new Set(prefs.flatMap((entry) => entry.apps ?? []));
+      // Bots that can see the same rules are one row: their team, or the bot alone.
+      const groups = new Map<
+        string,
+        {
+          names: Array<string>;
+          team: string | null;
+          visible: Array<PersonalMemoryEntry>;
+          botId: string;
+        }
+      >();
+      for (const bot of bots) {
+        const visible = prefs.filter((entry) => visibleTo(entry, bot.botId, bot.team));
+        const key = visible.map((entry) => entry.memoryId).join(",");
+        const group = groups.get(key);
+        if (group === undefined) {
+          groups.set(key, { names: [bot.name], team: bot.team, visible, botId: bot.botId });
+        } else group.names.push(bot.name);
+      }
+      const rows = [...groups.values()].map((group) => {
+        const rules = group.visible.map((entry) => ({
+          entry,
+          memoryId: entry.memoryId,
+          content: entry.content,
+          apps: entry.apps ?? null,
+        }));
+        const picked = selectRules(rules, { active: allApps, scoping, caps });
+        const legacy = scoping ? null : capPreferences(group.visible);
+        const kept = legacy === null ? picked.kept.map((rule) => rule.entry) : legacy.kept;
+        const leftOut =
+          legacy === null
+            ? picked.leftOut.map((rule) => rule.entry)
+            : group.visible.filter((entry) => !legacy.kept.includes(entry)).slice(0, 20);
+        const all = [...kept, ...leftOut];
+        const chars = all.reduce((total, entry) => total + entry.content.length, 0);
+        const entryShare = all.length / caps.maxEntries;
+        const charShare = chars / caps.maxChars;
+        return {
+          botId: group.botId,
+          botName:
+            group.names.length > 1
+              ? `${group.team === null ? "Bots" : group.team} (${group.names.length} bots)`
+              : (group.names[0] ?? group.botId),
+          entries: all.length,
+          chars,
+          globalRules: all.filter((entry) => !scoping || (entry.apps ?? null) === null).length,
+          appRules: all.filter((entry) => scoping && (entry.apps ?? null) !== null).length,
+          entryShare,
+          charShare,
+          share: Math.max(entryShare, charShare),
+          leftOut: leftOut.map((entry) => ({ memoryId: entry.memoryId, content: entry.content })),
+        };
+      });
+      const top = rows.toSorted((a, b) => b.share - a.share).slice(0, 3);
+      const worst = top[0];
+      return {
+        ...caps,
+        warnShare: PERSONAL_MEMORY_RULES_WARN_SHARE,
+        level:
+          worst === undefined
+            ? ("ok" as const)
+            : worst.leftOut.length > 0
+              ? ("over" as const)
+              : worst.share >= PERSONAL_MEMORY_RULES_WARN_SHARE
+                ? ("near" as const)
+                : ("ok" as const),
+        scoping,
+        rows: top,
+      };
+    }).pipe(storageFailure("rules usage"));
 
   const saveTaskSummary: PersonalMemoryService["Service"]["saveTaskSummary"] = (task) =>
     Effect.gen(function* () {
@@ -1325,6 +1743,7 @@ export const make = Effect.gen(function* () {
     similar,
     botForThread,
     contextForThread,
+    rulesUsage,
     confirmPreferencesSent,
     saveTaskSummary,
     start,

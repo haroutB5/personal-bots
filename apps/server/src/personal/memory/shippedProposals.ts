@@ -1,3 +1,4 @@
+import appScopes from "./proposals/proposals-4oct-a-apps.json" with { type: "json" };
 import duplicates from "./proposals/proposals-2oct-b-duplicates.json" with { type: "json" };
 import devTeam from "./proposals/proposals-2oct-c-dev-team.json" with { type: "json" };
 import splits from "./proposals/proposals-2oct-d-splits.json" with { type: "json" };
@@ -17,4 +18,5 @@ export const SHIPPED_MEMORY_PROPOSALS: ReadonlyArray<ShippedProposalFile> = [
   { name: "proposals-2oct-c-dev-team.json", file: devTeam },
   { name: "proposals-2oct-d-splits.json", file: splits },
   { name: "proposals-2oct-e-finance.json", file: finance },
+  { name: "proposals-4oct-a-apps.json", file: appScopes },
 ];

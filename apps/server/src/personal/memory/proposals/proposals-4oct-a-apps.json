@@ -1,0 +1,71 @@
+{
+  "minVersion": "1.60.40",
+  "items": [
+    {
+      "action": "rescope",
+      "memoryIds": ["12d9b82b-b6c4-4ccb-817a-13fdc0037ec9"],
+      "toApps": ["matchday"],
+      "reason": "A Matchday rule: only needed in chats and tasks about Matchday. Other chats get a one-line index of it and can fetch it with search_memory. Reject it to keep the rule global."
+    },
+    {
+      "action": "rescope",
+      "memoryIds": ["f12d0af5-e0e4-4d89-81be-6fd7cb490266"],
+      "toApps": ["matchday"],
+      "reason": "A Matchday rule: only needed in chats and tasks about Matchday. Other chats get a one-line index of it and can fetch it with search_memory. Reject it to keep the rule global."
+    },
+    {
+      "action": "rescope",
+      "memoryIds": ["c673a113-6d39-4f0a-a62e-5b5fd1ccd44c"],
+      "toApps": ["matchday"],
+      "reason": "A Matchday rule: only needed in chats and tasks about Matchday. Other chats get a one-line index of it and can fetch it with search_memory. Reject it to keep the rule global."
+    },
+    {
+      "action": "rescope",
+      "memoryIds": ["69484b0d-aa15-4c18-90fb-cf5539bfe2de"],
+      "toApps": ["matchday"],
+      "reason": "A Matchday rule: only needed in chats and tasks about Matchday. Other chats get a one-line index of it and can fetch it with search_memory. Reject it to keep the rule global."
+    },
+    {
+      "action": "rescope",
+      "memoryIds": ["31e5834a-e68a-4806-8278-86bfc855ab63"],
+      "toApps": ["caltrack"],
+      "reason": "A CalTrack rule: only needed in chats and tasks about CalTrack. Other chats get a one-line index of it and can fetch it with search_memory. Reject it to keep the rule global."
+    },
+    {
+      "action": "rescope",
+      "memoryIds": ["24303e25-d454-45e1-b3f0-7296b3c79070"],
+      "toApps": ["personal-bots"],
+      "reason": "A hbots rule: only needed in chats and tasks about hbots. Other chats get a one-line index of it and can fetch it with search_memory. Reject it to keep the rule global."
+    },
+    {
+      "action": "rescope",
+      "memoryIds": ["924b2db2-7f50-4825-97e9-f0e07959cfd5"],
+      "toApps": ["personal-bots"],
+      "reason": "A hbots rule: only needed in chats and tasks about hbots. Other chats get a one-line index of it and can fetch it with search_memory. Reject it to keep the rule global."
+    },
+    {
+      "action": "rescope",
+      "memoryIds": ["953fac88-2a05-4c5f-9b3d-5af885ada46b"],
+      "toApps": ["personal-bots"],
+      "reason": "A hbots rule: only needed in chats and tasks about hbots. Other chats get a one-line index of it and can fetch it with search_memory. Reject it to keep the rule global."
+    },
+    {
+      "action": "rescope",
+      "memoryIds": ["58ccc89f-9ef2-44a2-9d74-06d248834da7"],
+      "toApps": ["personal-bots"],
+      "reason": "A hbots rule: only needed in chats and tasks about hbots. Other chats get a one-line index of it and can fetch it with search_memory. Reject it to keep the rule global."
+    },
+    {
+      "action": "rescope",
+      "memoryIds": ["de08c4ef-d6b3-4a5f-b700-7c7de28c7457"],
+      "toApps": ["personal-bots"],
+      "reason": "A hbots rule: only needed in chats and tasks about hbots. Other chats get a one-line index of it and can fetch it with search_memory. Reject it to keep the rule global."
+    },
+    {
+      "action": "rescope",
+      "memoryIds": ["e95f19df-9765-416a-89b9-2b91bd311791"],
+      "toApps": ["personal-bots"],
+      "reason": "A hbots rule: only needed in chats and tasks about hbots. Other chats get a one-line index of it and can fetch it with search_memory. Reject it to keep the rule global."
+    }
+  ]
+}

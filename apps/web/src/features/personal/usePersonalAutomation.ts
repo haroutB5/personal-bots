@@ -87,6 +87,13 @@ export const personalMemoryList = createEnvironmentRpcQueryAtomFamily(connection
 /** Replaced entries (kept for Restore, never given to a bot): the Memory screen's "Replaced" list. */
 export const SUPERSEDED_MEMORY_INPUT = { status: "superseded" } as const;
 
+/** How full the most rules any bot can receive at once are, for the Memory screen's warning card. */
+export const personalMemoryRulesUsage = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "personal-memory:rules-usage",
+  tag: WS_METHODS.personalMemoryRulesUsage,
+  staleTimeMs: 10_000,
+});
+
 /** How many tidy-up runs the Memory screen's changelog shows. */
 export const TIDY_LOG_INPUT = { limit: 10 } as const;
 
@@ -444,6 +451,14 @@ export function usePersonalReplacedMemory(environmentId: EnvironmentId | null) {
       environmentId === null
         ? null
         : personalMemoryList({ environmentId, input: SUPERSEDED_MEMORY_INPUT }),
+    [environmentId],
+  );
+  return useEnvironmentQuery(atom);
+}
+
+export function usePersonalMemoryRulesUsage(environmentId: EnvironmentId | null) {
+  const atom = useMemo(
+    () => (environmentId === null ? null : personalMemoryRulesUsage({ environmentId, input: {} })),
     [environmentId],
   );
   return useEnvironmentQuery(atom);

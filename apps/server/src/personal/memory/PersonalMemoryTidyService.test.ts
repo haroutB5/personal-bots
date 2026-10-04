@@ -1,4 +1,9 @@
-import { PersonalBotId, PersonalMemoryId, ThreadId } from "@t3tools/contracts";
+import {
+  PERSONAL_MEMORY_APPS,
+  PersonalBotId,
+  PersonalMemoryId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -1197,15 +1202,39 @@ describe("1.60.21: withdrawing proposals, versioned and shipped proposal files",
     }).pipe(Effect.provide(testLayer(fakeJudge(() => [])))),
   );
 
-  it("every file shipped in the release is a valid proposals file for 1.60.21", () => {
-    expect(SHIPPED_MEMORY_PROPOSALS.length).toBe(4);
+  it("every file shipped in the release is a valid proposals file", () => {
+    expect(SHIPPED_MEMORY_PROPOSALS.length).toBe(5);
     for (const shipped of SHIPPED_MEMORY_PROPOSALS) {
       const file = decodeProposalFile(shipped.file);
-      expect(file.minVersion).toBe("1.60.21");
+      expect(file.minVersion).toBe(shipped.name.includes("4oct") ? "1.60.40" : "1.60.21");
       expect(file.items.length).toBeGreaterThan(0);
       // Short names: longer token-like names are redacted in the group label.
       expect(shipped.name.replace(/\.json$/, "").length).toBeLessThan(40);
     }
+  });
+
+  it("the 1.60.40 file only rescopes rules to a known app, once each, and never anything else", () => {
+    const shipped = SHIPPED_MEMORY_PROPOSALS.find(
+      (file) => file.name === "proposals-4oct-a-apps.json",
+    )!;
+    const file = decodeProposalFile(shipped.file);
+    const known = new Set(PERSONAL_MEMORY_APPS.map((app) => app.slug));
+    const seen = new Set<string>();
+    for (const item of file.items) {
+      expect(item.action).toBe("rescope");
+      expect(item.memoryIds).toHaveLength(1);
+      expect(seen.has(item.memoryIds[0]!)).toBe(false);
+      seen.add(item.memoryIds[0]!);
+      expect(item.toApps).toHaveLength(1);
+      expect(known.has(item.toApps![0]!)).toBe(true);
+      // The rule's text, kind and reach never change: only the app scope does.
+      expect(item.toKind ?? null).toBeNull();
+      expect(item.toScope ?? null).toBeNull();
+    }
+    expect(file.items.length).toBe(11);
+    expect(file.items.filter((item) => item.toApps![0] === "matchday")).toHaveLength(4);
+    expect(file.items.filter((item) => item.toApps![0] === "caltrack")).toHaveLength(1);
+    expect(file.items.filter((item) => item.toApps![0] === "personal-bots")).toHaveLength(6);
   });
 
   it("a proposals file waits until the running version reaches its minVersion", () => {

@@ -300,6 +300,7 @@ const make = Effect.gen(function* () {
         query,
         projectId: Option.isSome(thread) ? thread.value.projectId : undefined,
         record: true,
+        ...(messageId !== undefined ? { messageId } : {}),
         excludeTaskSummaries: messageId !== undefined && isPersonalTaskMessageId(messageId),
         session:
           session === undefined

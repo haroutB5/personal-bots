@@ -474,21 +474,42 @@ it.effect("a retrieval error is logged as a warning with its error tag, not sile
   }).pipe(Effect.provide(TestLayer)),
 );
 
-it.effect("when the cap bites, the oldest go, none jumps the queue, and the bot is told", () =>
-  Effect.gen(function* () {
-    yield* linkThreads;
-    const sql = yield* SqlClient.SqlClient;
-    const big = "x".repeat(1_900);
-    // Oldest: a short rule; then enough long ones to fill the 15k-char cap.
-    const short = yield* savePreference("Short old rule.");
-    yield* sql`UPDATE personal_memory SET created_at = '1960-01-01T00:00:00.000Z' WHERE memory_id = ${short.memoryId}`;
-    for (let index = 0; index < 9; index++) {
-      yield* savePreference(`Long rule ${index}: ${big}`);
-    }
-    const text = yield* block(THREAD_A);
-    expect(text).not.toContain("Short old rule.");
-    expect(text).toMatch(/- \d+ older preferences are not shown here/);
-  }).pipe(Effect.provide(TestLayer)),
+/** Runs an effect with an environment switch set, then puts it back. */
+const withEnv = <A, E, R>(name: string, value: string, effect: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const previous = process.env[name];
+      process.env[name] = value;
+      return previous;
+    }),
+    () => effect,
+    (previous) =>
+      Effect.sync(() => {
+        if (previous === undefined) delete process.env[name];
+        else process.env[name] = previous;
+      }),
+  );
+
+it.effect(
+  "when the cap bites (app scoping off), the oldest go, none jumps the queue, and the bot is told",
+  () =>
+    Effect.gen(function* () {
+      yield* linkThreads;
+      const sql = yield* SqlClient.SqlClient;
+      const big = "x".repeat(1_900);
+      // Oldest: a short rule; then enough long ones to fill the 15k-char cap.
+      const short = yield* savePreference("Short old rule.");
+      yield* sql`UPDATE personal_memory SET created_at = '1960-01-01T00:00:00.000Z' WHERE memory_id = ${short.memoryId}`;
+      for (let index = 0; index < 9; index++) {
+        yield* savePreference(`Long rule ${index}: ${big}`);
+      }
+      const text = yield* block(THREAD_A);
+      expect(text).not.toContain("Short old rule.");
+      expect(text).toMatch(/- \d+ older preferences are not shown here/);
+    }).pipe(
+      (effect) => withEnv("T3CODE_PERSONAL_MEMORY_APP_SCOPING", "off", effect),
+      Effect.provide(TestLayer),
+    ),
 );
 
 it.effect("owner messages leave out task briefs, relays and notices", () =>

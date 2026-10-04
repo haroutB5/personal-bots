@@ -33,6 +33,7 @@ import * as ProviderInstanceRegistry from "../../provider/Services/ProviderInsta
 import { forkParked } from "../../serverActivation.ts";
 import { isExpensiveSeedModel } from "../seedModel.ts";
 import { SHIPPED_MEMORY_PROPOSALS } from "./shippedProposals.ts";
+import { appsToJson, normaliseApps, parseAppsJson } from "./memoryApps.ts";
 import {
   buildTidyPrompt,
   decisionsFromJudge,
@@ -188,6 +189,8 @@ export const changeHashOf = (change: {
   readonly toScopeId?: string | null;
   readonly versionsJson?: string | null;
   readonly entrySnapshotsJson?: string | null;
+  /** A rescope's or a bot save's apps; only rows that have them add it to the hash. */
+  readonly toAppsJson?: string | null;
 }) =>
   NodeCrypto.createHash("sha256")
     .update(
@@ -203,6 +206,7 @@ export const changeHashOf = (change: {
         change.versionsJson ?? "",
         // Only rows that have snapshots: older rows keep the hash they had.
         ...(change.entrySnapshotsJson == null ? [] : [change.entrySnapshotsJson]),
+        ...(change.toAppsJson == null ? [] : [`apps:${change.toAppsJson}`]),
       ].join("\u0000"),
     )
     .digest("hex")
@@ -234,7 +238,7 @@ export const MEMORY_PROPOSALS_MAX_BYTES = 256 * 1024;
 export const MEMORY_PROPOSALS_DIR = "memory-proposals";
 
 const ProposalItemSchema = Schema.Struct({
-  action: Schema.Literals(["reclassify", "supersede", "split"]),
+  action: Schema.Literals(["reclassify", "supersede", "split", "rescope"]),
   memoryIds: Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
   by: Schema.optional(Schema.NullOr(Schema.String)),
   /** A split's single facts, each with its own kind and reach. */
@@ -242,6 +246,8 @@ const ProposalItemSchema = Schema.Struct({
   toKind: Schema.optional(Schema.NullOr(Schema.Literals(["note", "preference"]))),
   toScope: Schema.optional(Schema.NullOr(Schema.Literals(["shared", "team"]))),
   toScopeId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** A rescope's apps (slugs); null or empty is global. */
+  toApps: Schema.optional(Schema.NullOr(Schema.Array(Schema.String).check(Schema.isMaxLength(8)))),
   reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(600)),
 });
 export type ProposalItem = typeof ProposalItemSchema.Type;
@@ -314,10 +320,17 @@ const encodeProposalFile = Schema.encodeEffect(Schema.fromJsonString(ProposalFil
 /** Why a proposal cannot go on the approval list, or null when it can. */
 export function proposalProblem(
   item: ProposalItem,
-  current: ReadonlyMap<string, Pick<TidyEntry, "kind" | "scope">>,
+  current: ReadonlyMap<string, Pick<TidyEntry, "kind" | "scope" | "apps">>,
 ): string | null {
   if (item.memoryIds.some((id) => !current.has(id))) {
     return "Names an entry that is not a current shared or team entry";
+  }
+  if (item.action === "rescope") {
+    if (item.memoryIds.length !== 1) return "A rescope names exactly one entry";
+    const entry = current.get(item.memoryIds[0]!)!;
+    if (entry.kind !== "preference") return "Only a rule (a preference) has an app scope";
+    if (appsToJson(item.toApps) === appsToJson(parseAppsJson(entry.apps))) return "Changes nothing";
+    return null;
   }
   if (item.action === "reclassify") {
     if (item.memoryIds.length !== 1) return "A reclassify names exactly one entry";
@@ -376,6 +389,7 @@ const EntryRow = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String,
   version: Schema.Number,
+  appsJson: Schema.NullOr(Schema.String),
 });
 const decodeEntryRows = Schema.decodeUnknownEffect(Schema.Array(EntryRow));
 const encodeIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -399,6 +413,7 @@ interface RunRow {
 }
 
 interface ChangeRow {
+  readonly toAppsJson?: string | null;
   readonly threadId?: string | null;
   /** Per-entry text, kind and reach as shown (null on rows from before 1.60.21). */
   readonly entrySnapshotsJson?: string | null;
@@ -460,7 +475,7 @@ export const make = Effect.gen(function* () {
   // Shared and team entries; bot-only entries are left to the bot that owns them.
   const readEntries = sql`
     SELECT memory_id AS "memoryId", scope, scope_id AS "scopeId", kind, content, source,
-      created_at AS "createdAt", updated_at AS "updatedAt", version
+      created_at AS "createdAt", updated_at AS "updatedAt", version, apps_json AS "appsJson"
     FROM personal_memory
     WHERE deleted_at IS NULL AND superseded_at IS NULL AND scope IN ('shared', 'team')
       AND kind IN ('note', 'preference')
@@ -478,6 +493,7 @@ export const make = Effect.gen(function* () {
         createdAtMs: Date.parse(row.createdAt),
         updatedAtMs: Date.parse(row.updatedAt),
         version: row.version,
+        apps: row.appsJson,
       })),
     ),
   );
@@ -543,9 +559,10 @@ export const make = Effect.gen(function* () {
         readonly scopeId: string | null;
         readonly createdAt: string;
         readonly content: string;
+        readonly appsJson: string | null;
       }>`
         SELECT memory_id AS "memoryId", version, kind, scope, scope_id AS "scopeId",
-          created_at AS "createdAt", content
+          created_at AS "createdAt", content, apps_json AS "appsJson"
         FROM personal_memory
         WHERE deleted_at IS NULL AND superseded_at IS NULL AND scope IN ('shared', 'team')
           AND ${sql.in("memory_id", touched)}
@@ -566,7 +583,10 @@ export const make = Effect.gen(function* () {
       // The entries archived or merged share one reach: a merge never moves a
       // fact to bots that did not have it.
       const reaches = new Set(
-        ids.map((id) => `${byId.get(id)!.scope}:${byId.get(id)!.scopeId ?? ""}`),
+        ids.map(
+          (id) =>
+            `${byId.get(id)!.scope}:${byId.get(id)!.scopeId ?? ""}:${byId.get(id)!.appsJson ?? ""}`,
+        ),
       );
       if (reaches.size > 1) return null;
       let resultId: string | null = decision.action === "supersede" ? decision.by : null;
@@ -584,11 +604,12 @@ export const make = Effect.gen(function* () {
         yield* sql`
           INSERT INTO personal_memory (
             memory_id, scope, scope_id, kind, content, source, sensitivity,
-            created_at, updated_at, deleted_at, version
+            created_at, updated_at, deleted_at, version, apps_json
           )
           VALUES (
             ${resultId}, ${first.scope}, ${first.scopeId}, ${first.kind},
-            ${decision.content.trim()}, ${source}, 'normal', ${newest}, ${nowIso}, NULL, 1
+            ${decision.content.trim()}, ${source}, 'normal', ${newest}, ${nowIso}, NULL, 1,
+            ${first.kind === "preference" ? (members[0]!.appsJson ?? null) : null}
           )
         `;
       }
@@ -665,6 +686,8 @@ export const make = Effect.gen(function* () {
     readonly toKind: string | null;
     readonly toScope: string | null;
     readonly toScopeId: string | null;
+    /** A rescope's apps as stored (null: global, or not a rescope). */
+    readonly toAppsJson?: string | null;
   }) =>
     sql<{ readonly count: number }>`
       SELECT COUNT(*) AS "count" FROM personal_memory_tidy_changes
@@ -675,6 +698,7 @@ export const make = Effect.gen(function* () {
         AND to_kind IS ${change.toKind}
         AND to_scope IS ${change.toScope}
         AND to_scope_id IS ${change.toScopeId}
+        AND to_apps_json IS ${change.toAppsJson ?? null}
     `.pipe(Effect.map((rows) => (rows[0]?.count ?? 0) > 0));
 
   /**
@@ -711,7 +735,7 @@ export const make = Effect.gen(function* () {
           result_memory_id AS "resultMemoryId", content, reason,
           to_kind AS "toKind", to_scope AS "toScope", to_scope_id AS "toScopeId",
           proposed_by AS "proposedBy", versions_json AS "versionsJson",
-          entry_snapshots_json AS "entrySnapshotsJson"
+          entry_snapshots_json AS "entrySnapshotsJson", to_apps_json AS "toAppsJson"
         FROM personal_memory_tidy_changes
         WHERE ${sql.in(
           "run_id",
@@ -752,6 +776,10 @@ export const make = Effect.gen(function* () {
               toKind: change.toKind ?? null,
               toScope: change.toScope ?? null,
               toScopeId: change.toScopeId ?? null,
+              toApps:
+                change.action === "rescope" || change.action === "save"
+                  ? parseAppsJson(change.toAppsJson)
+                  : null,
               proposedBy: change.proposedBy ?? null,
               changeHash: changeHashOf(change),
               content: change.action === "split" ? null : change.content,
@@ -780,7 +808,7 @@ export const make = Effect.gen(function* () {
         // never merged into, or archived for, an entry other bots see.
         const reaches = new Map<string, Array<TidyEntry>>();
         for (const entry of entries) {
-          const key = `${entry.scope}:${entry.scopeId ?? ""}`;
+          const key = `${entry.scope}:${entry.scopeId ?? ""}:${entry.apps ?? ""}`;
           reaches.set(key, [...(reaches.get(key) ?? []), entry]);
         }
         const plans = yield* Effect.forEach([...reaches.values()], (group) =>
@@ -1026,7 +1054,7 @@ export const make = Effect.gen(function* () {
         INSERT INTO personal_memory_tidy_changes (
           run_id, status, action, scope, scope_id, memory_ids_json, result_memory_id, content,
           to_kind, to_scope, to_scope_id, versions_json, proposed_by, reason, created_at,
-          entry_snapshots_json
+          entry_snapshots_json, to_apps_json
         )
         VALUES (
           ${runId}, ${status}, ${status === "left" ? "leave" : item.action},
@@ -1048,7 +1076,8 @@ export const make = Effect.gen(function* () {
               : item.memoryIds
             ).flatMap((id) => (current.has(id) ? [current.get(id)!] : [])),
             new Set(item.action === "supersede" && item.by != null ? [item.by] : []),
-          )}
+          )},
+          ${item.action === "rescope" && status !== "left" ? appsToJson(item.toApps) : null}
         )
       `;
       for (const item of input.items) {
@@ -1066,6 +1095,7 @@ export const make = Effect.gen(function* () {
           toKind: item.toKind ?? null,
           toScope: item.toScope ?? null,
           toScopeId: item.toScope === "team" ? (item.toScopeId ?? null) : null,
+          toAppsJson: item.action === "rescope" ? appsToJson(item.toApps) : null,
         });
         if (asked) continue;
         yield* insert("pending", item, item.reason);
@@ -1168,7 +1198,7 @@ export const make = Effect.gen(function* () {
           to_kind AS "toKind", to_scope AS "toScope", to_scope_id AS "toScopeId",
           versions_json AS "versionsJson", proposed_by AS "proposedBy",
           thread_id AS "threadId", created_at AS "createdAt", decided_at AS "decidedAt",
-          entry_snapshots_json AS "entrySnapshotsJson"
+          entry_snapshots_json AS "entrySnapshotsJson", to_apps_json AS "toAppsJson"
         FROM personal_memory_tidy_changes
         WHERE thread_id = ${threadId} AND action IN ('save', 'forget')
           AND (status = 'pending' OR created_at >= ${since})
@@ -1201,6 +1231,7 @@ export const make = Effect.gen(function* () {
           kind: row.toKind ?? null,
           scope: row.toScope ?? null,
           scopeId: row.toScopeId ?? null,
+          apps: parseAppsJson(row.toAppsJson),
           // Each target as the card is bound to it: its kind and reach as proposed.
           targets: decodeIds(row.memoryIdsJson).flatMap((id) => {
             const target = byId.get(id);
@@ -1227,7 +1258,7 @@ export const make = Effect.gen(function* () {
           result_memory_id AS "resultMemoryId", content, reason,
           to_kind AS "toKind", to_scope AS "toScope", to_scope_id AS "toScopeId",
           versions_json AS "versionsJson", proposed_by AS "proposedBy",
-          entry_snapshots_json AS "entrySnapshotsJson"
+          entry_snapshots_json AS "entrySnapshotsJson", to_apps_json AS "toAppsJson"
         FROM personal_memory_tidy_changes WHERE change_id = ${input.changeId}
       `;
       const change = rows[0];
@@ -1264,6 +1295,12 @@ export const make = Effect.gen(function* () {
         switch (change.action) {
           case "reclassify": {
             if (!(yield* applyReclassify(memoryIds[0] ?? "", change, versions, nowIso))) {
+              return yield* stale;
+            }
+            break;
+          }
+          case "rescope": {
+            if (!(yield* applyRescope(memoryIds, change, versions, nowIso, snapshots))) {
               return yield* stale;
             }
             break;
@@ -1365,6 +1402,33 @@ export const make = Effect.gen(function* () {
           ),
         );
 
+  /**
+   * A rescope the owner approved: one current rule's app scope changes, never
+   * its text, kind or reach. It must still read, and reach, exactly as shown.
+   */
+  const applyRescope = (
+    ids: ReadonlyArray<string>,
+    change: Pick<ChangeRow, "toAppsJson">,
+    versions: ReadonlyMap<string, number>,
+    nowIso: string,
+    snapshots: ReadonlyMap<string, EntrySnapshot>,
+  ) =>
+    Effect.gen(function* () {
+      if (ids.length !== 1 || !(yield* unchanged(ids, versions, snapshots))) return false;
+      const rows = yield* sql<{ readonly kind: string }>`
+        SELECT kind FROM personal_memory
+        WHERE memory_id = ${ids[0]!} AND deleted_at IS NULL AND superseded_at IS NULL
+      `;
+      if (rows[0]?.kind !== "preference") return false;
+      yield* sql`
+        UPDATE personal_memory
+        SET apps_json = ${appsToJson(parseAppsJson(change.toAppsJson))},
+            updated_at = ${nowIso}, version = version + 1
+        WHERE memory_id = ${ids[0]!} AND deleted_at IS NULL AND superseded_at IS NULL
+      `;
+      return true;
+    });
+
   /** A bot's save the owner approved: the new entry, and its replaced ones archived. */
   const applyBotSave = (
     change: ChangeRow,
@@ -1392,11 +1456,12 @@ export const make = Effect.gen(function* () {
       yield* sql`
         INSERT INTO personal_memory (
           memory_id, scope, scope_id, kind, content, source, sensitivity,
-          created_at, updated_at, deleted_at, version
+          created_at, updated_at, deleted_at, version, apps_json
         )
         VALUES (
           ${memoryId}, ${scope}, ${scope === "shared" ? null : change.toScopeId}, ${kind},
-          ${content}, ${change.proposedBy ?? "approved"}, 'normal', ${nowIso}, ${nowIso}, NULL, 1
+          ${content}, ${change.proposedBy ?? "approved"}, 'normal', ${nowIso}, ${nowIso}, NULL, 1,
+          ${kind === "preference" ? appsToJson(parseAppsJson(change.toAppsJson)) : null}
         )
       `;
       for (const id of replaces) {
@@ -1462,8 +1527,10 @@ export const make = Effect.gen(function* () {
         readonly kind: string;
         readonly scope: string;
         readonly scopeId: string | null;
+        readonly appsJson: string | null;
       }>`
-        SELECT created_at AS "createdAt", content, kind, scope, scope_id AS "scopeId"
+        SELECT created_at AS "createdAt", content, kind, scope, scope_id AS "scopeId",
+          apps_json AS "appsJson"
         FROM personal_memory
         WHERE memory_id = ${ids[0]!} AND deleted_at IS NULL AND superseded_at IS NULL
       `;
@@ -1490,11 +1557,12 @@ export const make = Effect.gen(function* () {
         yield* sql`
           INSERT INTO personal_memory (
             memory_id, scope, scope_id, kind, content, source, sensitivity,
-            created_at, updated_at, deleted_at, version
+            created_at, updated_at, deleted_at, version, apps_json
           )
           VALUES (
             ${memoryId}, ${part.scope}, ${scopeId}, ${part.kind}, ${content},
-            ${`tidy-approved:${change.runId}`}, 'normal', ${createdAt}, ${nowIso}, NULL, 1
+            ${`tidy-approved:${change.runId}`}, 'normal', ${createdAt}, ${nowIso}, NULL, 1,
+            ${part.kind === "preference" ? original[0].appsJson : null}
           )
         `;
         made.push(memoryId);

@@ -12,7 +12,7 @@ import {
   memoryCardSettledLine,
   type MemoryCardItem,
 } from "./memoryCards";
-import { memoryReachTag } from "./memoryPresentation";
+import { appsLabel, memoryReachTag } from "./memoryPresentation";
 
 const CARD_CLASS =
   "rounded-[var(--personal-radius-card)] border border-[var(--personal-review-border)] bg-[var(--personal-review-bg)] p-3.5";
@@ -149,6 +149,12 @@ export function MemoryChangeCard({
         <p className="mt-1.5 text-[13px] leading-[1.4] text-[var(--personal-text-secondary)]">
           Saving replaces {card.targets.length === 1 ? "that entry" : "those entries"}; you can
           restore {card.targets.length === 1 ? "it" : "them"} from Memory.
+        </p>
+      ) : null}
+      {card.action === "save" && (card.apps ?? []).length > 0 ? (
+        <p className="mt-1.5 text-[13px] leading-[1.4] font-medium text-[var(--personal-text)]">
+          App scope: only {appsLabel(card.apps ?? [])}. Chats about other apps get a one-line index
+          of it, not the rule.
         </p>
       ) : null}
       <p className="mt-1.5 text-[13px] leading-[1.4] text-[var(--personal-text-secondary)]">

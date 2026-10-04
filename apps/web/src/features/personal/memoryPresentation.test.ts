@@ -1,8 +1,14 @@
-import type { PersonalMemoryTidyChangeStatus } from "@t3tools/contracts";
+import type {
+  PersonalMemoryRulesUsage,
+  PersonalMemoryRulesUsageRow,
+  PersonalMemoryTidyChangeStatus,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  appScopeChip,
+  appsLabel,
   memorySourceLabel,
   isNewBotPreference,
   MEMORY_LAST_SEEN_KEY,
@@ -15,6 +21,8 @@ import {
   pendingTidyGroups,
   proposerBotName,
   reclassifyDescription,
+  rescopeDescription,
+  rulesUsageCardModel,
   readMemoryLastSeen,
   memoryReachTag,
   splitPartTag,
@@ -78,6 +86,7 @@ describe("tidy labels", () => {
       save: "New entry",
       forget: "Forgotten",
       split: "Split",
+      rescope: "App scope",
       leave: "Left alone",
     });
     expect(TIDY_MODE_LABEL).toEqual({ off: "Off", preview: "Preview only", on: "Make changes" });
@@ -437,5 +446,109 @@ describe("1.60.22: a note says where it came from", () => {
       "Saved by CTO when you asked",
     );
     expect(memorySourceLabel({ source: "user" }, name, task)).toBe("Saved by you");
+  });
+});
+
+describe("1.60.40: app scopes in words", () => {
+  it("names the apps and chips a scoped rule", () => {
+    expect(appsLabel(["matchday"])).toBe("Matchday");
+    expect(appsLabel(["matchday", "caltrack"])).toBe("Matchday and CalTrack");
+    expect(appsLabel(["matchday", "caltrack", "personal-bots"])).toBe(
+      "Matchday, CalTrack and hbots",
+    );
+    expect(appsLabel(["gizmo-app"])).toBe("gizmo-app");
+    expect(appScopeChip({ apps: ["personal-bots"] })).toBe("Only: hbots");
+    expect(appScopeChip({ apps: null })).toBe("");
+    expect(appScopeChip({})).toBe("");
+  });
+
+  it("says what a pending rescope does, and the action's label", () => {
+    expect(rescopeDescription({ action: "rescope", toApps: ["matchday"] })).toContain(
+      "New app scope: only Matchday",
+    );
+    expect(rescopeDescription({ action: "rescope", toApps: null })).toContain("all apps (global");
+    expect(rescopeDescription({ action: "save", toApps: ["caltrack"] })).toBe(
+      "App scope: only CalTrack",
+    );
+    expect(rescopeDescription({ action: "save", toApps: null })).toBe("");
+    expect(rescopeDescription({ action: "merge", toApps: null })).toBe("");
+    expect(tidyActionLabel({ action: "rescope", status: "pending" })).toBe("Set app scope");
+    expect(TIDY_ACTION_LABEL.rescope).toBe("App scope");
+  });
+});
+
+describe("1.60.40: the rules limit warning", () => {
+  const row = (
+    overrides: Partial<PersonalMemoryRulesUsageRow> = {},
+  ): PersonalMemoryRulesUsageRow => ({
+    botId: "dev",
+    botName: "dev (35 bots)",
+    entries: 49,
+    chars: 12_100,
+    globalRules: 19,
+    appRules: 30,
+    entryShare: 49 / 60,
+    charShare: 12_100 / 15_000,
+    share: 49 / 60,
+    leftOut: [],
+    ...overrides,
+  });
+  const usage = (
+    level: PersonalMemoryRulesUsage["level"],
+    rows: PersonalMemoryRulesUsageRow[],
+    scoping = true,
+  ): PersonalMemoryRulesUsage => ({
+    maxEntries: 60,
+    maxChars: 15_000,
+    warnShare: 0.8,
+    level,
+    scoping,
+    rows,
+  });
+
+  it("shows nothing while every bot is under 80%", () => {
+    expect(rulesUsageCardModel(usage("ok", [row({ share: 0.5 })]))).toBeNull();
+    expect(rulesUsageCardModel(usage("near", []))).toBeNull();
+  });
+
+  it("warns near the limit with the percentage and what counts", () => {
+    const model = rulesUsageCardModel(usage("near", [row()]))!;
+    expect(model.tone).toBe("near");
+    expect(model.headline).toBe("Rules are 82% of the limit");
+    expect(model.detail).toContain("49 of 60 rules at once (12.1k of 15k characters)");
+    expect(model.detail).toContain("counting every app");
+    expect(model.rows[0]).toMatchObject({
+      label: "dev (35 bots)",
+      line: "49 of 60 rules · 12.1k of 15k characters",
+    });
+    expect(model.leftOut).toEqual([]);
+  });
+
+  it("names exactly the rules that would not fit when over", () => {
+    const model = rulesUsageCardModel(
+      usage("over", [
+        row({
+          entries: 64,
+          share: 64 / 60,
+          leftOut: [
+            { memoryId: "m1" as never, content: "Old Matchday rule." },
+            { memoryId: "m2" as never, content: "Older Matchday rule." },
+          ],
+        }),
+      ]),
+    )!;
+    expect(model.tone).toBe("over");
+    expect(model.headline).toBe("2 rules do not fit");
+    expect(model.leftOut.map((rule) => rule.content)).toEqual([
+      "Old Matchday rule.",
+      "Older Matchday rule.",
+    ]);
+    // The bar never passes its track.
+    expect(model.rows[0]!.share).toBe(1);
+  });
+
+  it("says when app scoping is switched off", () => {
+    const model = rulesUsageCardModel(usage("near", [row()], false))!;
+    expect(model.detail).toContain("App scoping is off");
   });
 });

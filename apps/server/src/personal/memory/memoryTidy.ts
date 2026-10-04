@@ -58,6 +58,8 @@ export interface TidyEntry {
   readonly createdAtMs: number;
   readonly updatedAtMs: number;
   readonly version: number;
+  /** The apps column as stored (JSON array of slugs); null is global. */
+  readonly apps: string | null;
 }
 
 export type TidyDecision =
@@ -94,7 +96,7 @@ export function exactDuplicateDecisions(
 ): ReadonlyArray<TidyDecision> {
   const byText = new Map<string, Array<TidyEntry>>();
   for (const entry of entries) {
-    const key = `${entry.scope}:${entry.scopeId ?? ""}:${entry.kind}\n${normalised(entry.content)}`;
+    const key = `${entry.scope}:${entry.scopeId ?? ""}:${entry.kind}:${entry.apps ?? ""}\n${normalised(entry.content)}`;
     const twins = byText.get(key);
     if (twins === undefined) byText.set(key, [entry]);
     else twins.push(entry);

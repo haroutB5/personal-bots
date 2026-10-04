@@ -104,6 +104,7 @@ import Migration0089 from "./Migrations/089_PersonalLoginRequests.ts";
 import Migration0090 from "./Migrations/090_PersonalBrowserLoginOrigins.ts";
 import Migration0091 from "./Migrations/091_PersonalMemorySupersede.ts";
 import Migration0092 from "./Migrations/092_PersonalMemoryTidySnapshots.ts";
+import Migration0093 from "./Migrations/093_PersonalMemoryApps.ts";
 import MigrationUpstream0053 from "./Migrations/053_PullRequestFilesViewed.ts";
 import MigrationUpstream0054 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 
@@ -213,6 +214,7 @@ const migrationEntries = [
   [90, "PersonalBrowserLoginOrigins", Migration0090],
   [91, "PersonalMemorySupersede", Migration0091],
   [92, "PersonalMemoryTidySnapshots", Migration0092],
+  [93, "PersonalMemoryApps", Migration0093],
   // Ids are contiguous. The migrator runs only ids above the latest applied
   // one, so every new migration (ours or upstream's) takes the next free id;
   // never deploy a gap. Upstream migrations keep their file name and are
