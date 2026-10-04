@@ -42,6 +42,7 @@ import {
 } from "./personalChatResumePolicy.ts";
 import { isPersonalGroupMessageId, isPersonalTaskMessageId } from "./personalThreadTitles.ts";
 import * as PersonalTaskService from "./tasks/PersonalTaskService.ts";
+import { withStallJob } from "../observability/stallJobs.ts";
 
 /**
  * Continues a bot chat that stopped on a provider usage limit, once the limit
@@ -482,6 +483,7 @@ export const make = Effect.gen(function* () {
       yield* forkParked(
         worker.drain.pipe(
           Effect.andThen(sweep),
+          withStallJob("job:chat-resume-sweep"),
           Effect.repeat(Schedule.spaced(PERSONAL_CHAT_RESUME_SWEEP_MS)),
           Effect.asVoid,
         ),

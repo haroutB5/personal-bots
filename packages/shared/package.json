@@ -335,6 +335,10 @@
       "types": "./src/nodeSqliteClient.ts",
       "import": "./src/nodeSqliteClient.ts"
     },
+    "./stallContext": {
+      "types": "./src/stallContext.ts",
+      "import": "./src/stallContext.ts"
+    },
     "./hostClassification": {
       "types": "./src/hostClassification.ts",
       "import": "./src/hostClassification.ts"

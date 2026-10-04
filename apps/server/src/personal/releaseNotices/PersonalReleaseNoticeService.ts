@@ -47,6 +47,7 @@ import * as ProjectionSnapshotQuery from "../../orchestration/Services/Projectio
 import { forkParked } from "../../serverActivation.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import { withStallJob } from "../../observability/stallJobs.ts";
 
 export const RELEASE_NOTICE_DIR = "release-notices";
 export const RELEASE_NOTICE_SWEEP_MS = 5_000;
@@ -274,7 +275,11 @@ export const make = Effect.gen(function* () {
 
   const start: PersonalReleaseNotices["Service"]["start"] = () =>
     forkParked(
-      sweep.pipe(Effect.repeat(Schedule.spaced(RELEASE_NOTICE_SWEEP_MS)), Effect.asVoid),
+      sweep.pipe(
+        withStallJob("job:release-notice-sweep"),
+        Effect.repeat(Schedule.spaced(RELEASE_NOTICE_SWEEP_MS)),
+        Effect.asVoid,
+      ),
     ).pipe(Effect.asVoid);
 
   return { start, sweep } satisfies PersonalReleaseNotices["Service"];

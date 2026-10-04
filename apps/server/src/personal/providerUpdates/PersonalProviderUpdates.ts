@@ -49,6 +49,7 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalPushService from "../push/PersonalPushService.ts";
+import { withStallJob } from "../../observability/stallJobs.ts";
 
 /** Catches restarts the turn-end event raced (the projection lags the provider). */
 const RESTART_SWEEP_INTERVAL = Duration.seconds(30);
@@ -480,6 +481,7 @@ export const makeWith = (
         );
         yield* forkParked(
           restartStaleSessions.pipe(
+            withStallJob("job:provider-update-restart-sweep"),
             Effect.repeat(Schedule.spaced(RESTART_SWEEP_INTERVAL)),
             Effect.asVoid,
           ),

@@ -54,6 +54,7 @@ import {
 } from "./webPushCrypto.ts";
 import { TASK_CHAT_VIEWED_WRITE_INTERVAL_MS } from "../taskChatAutoArchivePolicy.ts";
 import { ForegroundPresence, ViewingPresence } from "./viewingPresence.ts";
+import { withStallJob } from "../../observability/stallJobs.ts";
 
 /**
  * How long a page in front has to acknowledge an in-app notification before
@@ -1400,7 +1401,11 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           yield* kick;
           yield* worker.drain;
-        }).pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL)), Effect.asVoid),
+        }).pipe(
+          withStallJob("job:push-sweep"),
+          Effect.repeat(Schedule.spaced(SWEEP_INTERVAL)),
+          Effect.asVoid,
+        ),
       );
     });
 

@@ -84,6 +84,7 @@ import {
   type LeadModelRequest,
   type LeadModelResult,
 } from "./leadBotModel.ts";
+import { withStallJob } from "../../observability/stallJobs.ts";
 
 export const LEAD_BOT_NAME_MAX = 60;
 export const LEAD_BOT_TITLE_MAX = 60;
@@ -1642,6 +1643,7 @@ export const make = Effect.gen(function* () {
   const start: PersonalLeadBotService["Service"]["start"] = () =>
     forkParked(
       sweepExpired.pipe(
+        withStallJob("job:lead-bot-confirm-sweep"),
         Effect.repeat(Schedule.spaced(Duration.millis(LEAD_BOT_CONFIRM_SWEEP_MS))),
         Effect.asVoid,
       ),

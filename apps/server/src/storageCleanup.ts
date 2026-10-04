@@ -35,6 +35,7 @@ import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { withStallJob } from "./observability/stallJobs.ts";
 
 export class StorageCleanup extends Context.Service<
   StorageCleanup,
@@ -450,6 +451,7 @@ export const make = Effect.gen(function* () {
         .enqueue(undefined)
         .pipe(
           Effect.andThen(worker.drain),
+          withStallJob("job:storage-cleanup"),
           Effect.repeat(Schedule.spaced("1 hour")),
           Effect.asVoid,
         ),

@@ -66,6 +66,7 @@ import {
 } from "../personalThreadTitles.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import { serverPerfOptimizationOn } from "../perfFlags.ts";
+import { withStallJob } from "../../observability/stallJobs.ts";
 
 /** Global cap on active provider turns started by the dispatcher. */
 export const PERSONAL_TASKS_CONCURRENCY = 5;
@@ -2618,7 +2619,11 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           yield* worker.enqueue({ type: "sweep" });
           yield* worker.drain;
-        }).pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL)), Effect.asVoid),
+        }).pipe(
+          withStallJob("job:task-sweep"),
+          Effect.repeat(Schedule.spaced(SWEEP_INTERVAL)),
+          Effect.asVoid,
+        ),
       );
     },
   );

@@ -29,6 +29,7 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import { forkParked } from "../serverActivation.ts";
 import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
+import { withStallJob } from "../observability/stallJobs.ts";
 
 export class ThreadPullRequestReactor extends Context.Service<
   ThreadPullRequestReactor,
@@ -403,7 +404,11 @@ export const make = Effect.gen(function* () {
         yield* Effect.gen(function* () {
           yield* worker.enqueue({ threadId: null, refresh: false });
           yield* worker.drain;
-        }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.delay("1 minute"));
+        }).pipe(
+          withStallJob("job:thread-pull-request-refresh"),
+          Effect.repeat(Schedule.spaced("1 minute")),
+          Effect.delay("1 minute"),
+        );
       }).pipe(Effect.asVoid),
     );
   });

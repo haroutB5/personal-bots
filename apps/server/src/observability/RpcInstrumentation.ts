@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream";
 
 import { outcomeFromExit } from "./Attributes.ts";
 import { metricAttributes, rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
+import { withStallJob } from "./stallJobs.ts";
 
 const RPC_SPAN_PREFIX = "ws.rpc";
 const DEFAULT_RPC_SPAN_ATTRIBUTES = {
@@ -92,6 +93,7 @@ export const observeRpcEffect = <A, E, R>(
   traceAttributes?: Readonly<Record<string, unknown>>,
 ): Effect.Effect<A, E, R> => {
   const instrumented = effect.pipe(
+    withStallJob(`rpc:${method}`),
     withMetrics({
       counter: rpcRequestsTotal,
       timer: rpcRequestDuration,

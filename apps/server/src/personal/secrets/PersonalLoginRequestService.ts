@@ -21,6 +21,7 @@ import * as PersonalBrowser from "../browser/PersonalBrowser.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalLoginService from "./PersonalLoginService.ts";
 import * as Repository from "./PersonalLoginRequestRepository.ts";
+import { withStallJob } from "../../observability/stallJobs.ts";
 
 interface RequestInput {
   readonly taskId: PersonalTaskId;
@@ -110,6 +111,7 @@ export const layer = Layer.effect(
     }
     yield* lock.withPermit(sweep()).pipe(
       Effect.catch(() => Effect.void),
+      withStallJob("job:login-request-sweep"),
       Effect.repeat(Schedule.spaced("10 seconds")),
       Effect.forkScoped,
     );

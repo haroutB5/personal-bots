@@ -11,6 +11,7 @@ import { CLOUD_REPLAY_MARKER_PREFIXES } from "../cloud/http.ts";
 import * as ServerConfig from "../config.ts";
 import { forkParked } from "../serverActivation.ts";
 import { DPOP_REPLAY_MARKER_PREFIX } from "./dpop.ts";
+import { withStallJob } from "../observability/stallJobs.ts";
 
 const REPLAY_MARKER_PREFIXES = [DPOP_REPLAY_MARKER_PREFIX, ...CLOUD_REPLAY_MARKER_PREFIXES];
 
@@ -71,6 +72,7 @@ export const layer = Layer.effectDiscard(
       Effect.catch((cause) =>
         Effect.logWarning("Failed to prune expired replay markers", { cause }),
       ),
+      withStallJob("job:replay-markers-prune"),
       Effect.repeat(Schedule.spaced(Duration.hours(1))),
     ),
   ),

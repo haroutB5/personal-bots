@@ -47,6 +47,7 @@ import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { buildEventRoutinePrompt, formatHookPayload } from "./eventPrompt.ts";
 import { dueRoutineSlots, nextRoutineSlot, type RoutineSlot } from "./routineSchedule.ts";
 import { isValidTimeZone, parseLocal } from "./zonedTime.ts";
+import { withStallJob } from "../../observability/stallJobs.ts";
 
 /** A slot this late (or less) counts as on time and always runs, whatever the policy. */
 export const PERSONAL_ROUTINE_MISSED_GRACE_MS = 2 * 60_000;
@@ -985,9 +986,13 @@ export const make = Effect.gen(function* () {
   ) => Effect.sync(() => void preparers.set(routineId, preparer));
 
   const start: PersonalRoutineService["Service"]["start"] = () =>
-    forkParked(tick.pipe(Effect.repeat(Schedule.spaced(TICK_INTERVAL)), Effect.asVoid)).pipe(
-      Effect.asVoid,
-    );
+    forkParked(
+      tick.pipe(
+        withStallJob("job:routine-tick"),
+        Effect.repeat(Schedule.spaced(TICK_INTERVAL)),
+        Effect.asVoid,
+      ),
+    ).pipe(Effect.asVoid);
 
   return {
     list,

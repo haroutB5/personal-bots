@@ -29,6 +29,7 @@ import {
   resolveAutoSettlementAt,
   type SettlementPullRequest,
 } from "./ThreadSettlementPolicy.ts";
+import { withStallJob } from "../observability/stallJobs.ts";
 
 export class ThreadSettlementReactor extends Context.Service<
   ThreadSettlementReactor,
@@ -363,7 +364,11 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* worker.enqueue(undefined);
         yield* worker.drain;
-      }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.asVoid),
+      }).pipe(
+        withStallJob("job:thread-settlement"),
+        Effect.repeat(Schedule.spaced("1 minute")),
+        Effect.asVoid,
+      ),
     );
     yield* forkParked(
       Stream.runForEach(settingsChanges, (settings) => {

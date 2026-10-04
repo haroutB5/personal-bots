@@ -50,6 +50,7 @@ import {
   type TidyEntry,
 } from "./memoryTidy.ts";
 import { looksLikeSecret, redactSecrets } from "./PersonalMemoryService.ts";
+import { withStallJob } from "../../observability/stallJobs.ts";
 
 /**
  * The nightly memory tidy-up. At 03:30 local time (or the first check after,
@@ -1638,7 +1639,12 @@ export const make = Effect.gen(function* () {
                 ),
               ),
             ),
-            Effect.andThen(nightly.pipe(Effect.repeat(Schedule.spaced(TIDY_CHECK_MS)))),
+            Effect.andThen(
+              nightly.pipe(
+                withStallJob("job:memory-tidy-check"),
+                Effect.repeat(Schedule.spaced(TIDY_CHECK_MS)),
+              ),
+            ),
           ),
         ).pipe(Effect.asVoid);
 

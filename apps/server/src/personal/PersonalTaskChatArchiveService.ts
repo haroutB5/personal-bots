@@ -26,6 +26,7 @@ import {
   taskChatAutoArchiveEnabled,
   type TaskChatArchiveCandidate,
 } from "./taskChatAutoArchivePolicy.ts";
+import { withStallJob } from "../observability/stallJobs.ts";
 
 /**
  * Archives finished delegated-task chats after 48 idle hours. Routine-run
@@ -224,6 +225,7 @@ export const make = Effect.gen(function* () {
       );
       yield* forkParked(
         runSweep.pipe(
+          withStallJob("job:task-chat-archive-sweep"),
           Effect.repeat(Schedule.spaced(TASK_CHAT_AUTO_ARCHIVE_SWEEP_MS)),
           Effect.asVoid,
         ),

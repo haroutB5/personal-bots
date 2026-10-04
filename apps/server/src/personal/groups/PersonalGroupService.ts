@@ -84,6 +84,7 @@ import { admitMentions, nextStep, roundBudget, roundWallClockMs } from "./groupR
 import { buildCatchUpBrief, type GroupCatchUpMessage } from "./groupTurnText.ts";
 import { normaliseQuestion, tallyVote } from "./groupVotePolicy.ts";
 import * as PersonalGroupRepository from "./PersonalGroupRepository.ts";
+import { withStallJob } from "../../observability/stallJobs.ts";
 
 const LEASE_MINUTES = 2;
 const SWEEP_INTERVAL = "30 seconds";
@@ -2697,7 +2698,11 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           yield* worker.enqueue({ type: "sweep" });
           yield* worker.drain;
-        }).pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL)), Effect.asVoid),
+        }).pipe(
+          withStallJob("job:group-sweep"),
+          Effect.repeat(Schedule.spaced(SWEEP_INTERVAL)),
+          Effect.asVoid,
+        ),
       );
     },
   );

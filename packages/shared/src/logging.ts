@@ -3,6 +3,8 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 
+import { noteSlowOp } from "./stallContext.ts";
+
 export interface RotatingFileSinkOptions {
   readonly filePath: string;
   readonly maxBytes: number;
@@ -86,6 +88,8 @@ export class RotatingFileSink {
     const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
     if (buffer.length === 0) return;
 
+    // These writes are synchronous: a slow disk or a rotation holds the event loop.
+    const startedAt = performance.now();
     try {
       if (this.currentSize > 0 && this.currentSize + buffer.length > this.maxBytes) {
         this.rotate();
@@ -93,6 +97,7 @@ export class RotatingFileSink {
 
       NodeFS.appendFileSync(this.filePath, buffer);
       this.currentSize += buffer.length;
+      noteSlowOp("fs", startedAt, buffer.length, () => NodePath.basename(this.filePath));
     } catch (cause) {
       if (isRotatingFileSinkError(cause)) {
         throw cause;

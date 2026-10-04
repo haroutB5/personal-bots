@@ -39,6 +39,7 @@ import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { withStallJob } from "../observability/stallJobs.ts";
 
 export class PortDiscovery extends Context.Service<
   PortDiscovery,
@@ -581,7 +582,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 
   // Single layer-scoped polling fiber. Ticks are no-ops when no client is
   // currently retained, so the cost is one Ref.get every POLL_INTERVAL.
-  yield* Effect.forkScoped(pollTick().pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
+  yield* Effect.forkScoped(
+    pollTick().pipe(withStallJob("job:port-scan"), Effect.repeat(Schedule.spaced(POLL_INTERVAL))),
+  );
 
   const acquireRetention = Effect.fn("PortDiscovery.retain")(function* () {
     const wasIdle = yield* Ref.modify(stateRef, (state) => [

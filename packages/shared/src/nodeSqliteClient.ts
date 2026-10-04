@@ -24,6 +24,8 @@ import type { Connection } from "effect/unstable/sql/SqlConnection";
 import { SqlError, classifySqliteError } from "effect/unstable/sql/SqlError";
 import * as Statement from "effect/unstable/sql/Statement";
 
+import { noteSlowOp } from "./stallContext.ts";
+
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 
 export interface SqliteClientConfig {
@@ -160,10 +162,15 @@ const make = Effect.fn("makeWithDatabase")(function* (
       Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
         try {
           statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
+          // The call is synchronous, so its duration is how long it held the event loop.
+          const startedAt = performance.now();
           if (hasRows(statement)) {
-            return Effect.succeed(statement.all(...(params as any)));
+            const rows = statement.all(...(params as any));
+            noteSlowOp("sql", startedAt, rows.length, () => statement.sourceSQL);
+            return Effect.succeed(rows);
           }
           const result = statement.run(...(params as any));
+          noteSlowOp("sql", startedAt, 0, () => statement.sourceSQL);
           return Effect.succeed(raw ? (result as unknown as ReadonlyArray<any>) : []);
         } catch (cause) {
           return Effect.fail(
@@ -189,14 +196,18 @@ const make = Effect.fn("makeWithDatabase")(function* (
         (statement) =>
           Effect.try({
             try: () => {
+              const startedAt = performance.now();
               if (hasRows(statement)) {
                 statement.setReturnArrays(true);
                 // Safe to cast to array after we've setReturnArrays(true)
-                return statement.all(...(params as any)) as unknown as ReadonlyArray<
+                const rows = statement.all(...(params as any)) as unknown as ReadonlyArray<
                   ReadonlyArray<unknown>
                 >;
+                noteSlowOp("sql", startedAt, rows.length, () => statement.sourceSQL);
+                return rows;
               }
               statement.run(...(params as any));
+              noteSlowOp("sql", startedAt, 0, () => statement.sourceSQL);
               return [];
             },
             catch: (cause) =>
