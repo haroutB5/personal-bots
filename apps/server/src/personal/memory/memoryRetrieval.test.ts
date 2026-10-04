@@ -6,10 +6,13 @@ import {
   capByChars,
   contextualRetrievalEnabled,
   isStatusLike,
+  limitSummariesPerTitle,
   memoryQueryTerms,
   RETRIEVAL_ENV,
   rankCandidates,
   selectQueryTerms,
+  statedDateMs,
+  MAX_FOLLOW_UP_TERMS,
   STATUS_HALF_LIFE_DAYS,
   STATUS_MIN_WEIGHT,
   termsToMatch,
@@ -233,5 +236,57 @@ describe("ranking and caps", () => {
     const capped = capByChars(ranked, () => 1_500, 4_000);
     expect(capped.kept.map((row) => row.entry.memoryId)).toEqual(["a", "b"]);
     expect(capped.leftOut.map((row) => row.entry.memoryId)).toEqual(["c", "d"]);
+  });
+});
+
+describe("1.60.40 refinements", () => {
+  it("reads the date an entry states, and ages by it when a later edit made it look newer", () => {
+    expect(statedDateMs("2026-09-25: hbots 1.43.0 live")).toBe(Date.UTC(2026, 8, 25));
+    expect(statedDateMs("(2026-10-02) Backend runs Opus.")).toBe(Date.UTC(2026, 9, 2));
+    expect(
+      statedDateMs(`${"Backend runs Opus and many other things. ".repeat(3)}Since 2026-10-02.`),
+    ).toBeNull();
+    expect(statedDateMs("No date here.")).toBeNull();
+    // Written 2 days ago, but about a release armed 20 days ago.
+    const edited = entry("a", "2026-09-14: hbots 1.40.0 armed and live.", { daysOld: 2 });
+    const plain = entry("b", "hbots 1.40.0 armed and live.", { daysOld: 2 });
+    expect(ageWeight(edited, NOW)).toBeLessThan(ageWeight(plain, NOW));
+    expect(ageWeight(edited, NOW)).toBeCloseTo(0.5 ** (20.5 / STATUS_HALF_LIFE_DAYS), 1);
+  });
+
+  it("keeps at most two task summaries of one title, in rank order, and passes notes through", () => {
+    const summary = (title: string, n: number) => ({
+      kind: "task_summary",
+      content: `Task "${title}": run ${n}.`,
+    });
+    const kept = limitSummariesPerTitle([
+      summary("Hourly monitor", 1),
+      summary("Hourly monitor", 2),
+      { kind: "note", content: "A note." },
+      summary("Hourly monitor", 3),
+      summary("Other task", 1),
+      summary("Hourly monitor", 4),
+    ]);
+    expect(kept.map((row) => row.content)).toEqual([
+      'Task "Hourly monitor": run 1.',
+      'Task "Hourly monitor": run 2.',
+      "A note.",
+      'Task "Other task": run 1.',
+    ]);
+  });
+
+  it("uses fewer words on a follow-up", () => {
+    const frequency = new Map(Array.from({ length: 30 }, (_, i) => [`topic${i}`, 3] as const));
+    const picked = selectQueryTerms(
+      {
+        current: "ok",
+        title: "topic0 topic1 topic2 topic3 topic4 topic5 topic6",
+        recent: ["topic7 topic8 topic9 topic10 topic11 topic12 topic13"],
+      },
+      frequency,
+      400,
+    );
+    expect(picked.followUp).toBe(true);
+    expect(picked.terms.length).toBeLessThanOrEqual(MAX_FOLLOW_UP_TERMS);
   });
 });

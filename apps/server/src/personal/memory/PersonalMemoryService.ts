@@ -61,6 +61,8 @@ import {
   candidateQueryTerms,
   capByChars,
   contextualRetrievalEnabled,
+  FOLLOW_UP_FLOOR,
+  limitSummariesPerTitle,
   memoryQueryTerms,
   rankCandidates,
   RELEVANT_MAX_CHARS,
@@ -1343,13 +1345,17 @@ export const make = Effect.gen(function* () {
           candidates: ReadonlyArray<{ readonly entry: PersonalMemoryEntry; readonly bm25: number }>,
         ) =>
           rankCandidates(
-            candidates.map((row) => ({ entry: entryWithTime(row.entry), bm25: row.bm25 })),
+            // An hourly routine writes dozens of summaries that read alike: keep two per title.
+            limitSummariesPerTitle(candidates.map((row) => row.entry)).map((entry) => ({
+              entry: entryWithTime(entry),
+              bm25: candidates.find((row) => row.entry === entry)!.bm25,
+            })),
             {
               nowMs: input.nowMs,
               activeApps: activeSet,
               mentionsApp,
               knownApps,
-              floor: PERSONAL_MEMORY_SCORE_FLOOR,
+              floor: chosen.followUp ? FOLLOW_UP_FLOOR : PERSONAL_MEMORY_SCORE_FLOOR,
               limit,
             },
           );

@@ -49,6 +49,10 @@ export const COMMON_TERM_SHARE = 0.2;
 const COMMON_TERM_MIN_DOCS = 50;
 /** Most search words in one query. */
 export const MAX_QUERY_TERMS = 16;
+/** A follow-up searches by the chat's topic: fewer words, so weak matches stay out. */
+export const MAX_FOLLOW_UP_TERMS = 12;
+/** An entry must reach this share of the best score on a follow-up (0.2 otherwise). */
+export const FOLLOW_UP_FLOOR = 0.3;
 /** Context words added when the message itself is rich enough to search by. */
 const CONTEXT_TERMS_WITH_RICH_MESSAGE = 3;
 /** Fewer informative words than this and the message is a follow-up: the chat's topic leads. */
@@ -130,7 +134,7 @@ export function selectQueryTerms(
   const followUp = message.length < RICH_MESSAGE_TERMS;
   const context = [...apps, ...title, ...recent];
   const terms = followUp
-    ? [...message, ...context].slice(0, MAX_QUERY_TERMS)
+    ? [...message, ...context].slice(0, MAX_FOLLOW_UP_TERMS)
     : [
         ...message.slice(0, MAX_QUERY_TERMS - CONTEXT_TERMS_WITH_RICH_MESSAGE),
         ...context.slice(0, CONTEXT_TERMS_WITH_RICH_MESSAGE),
@@ -169,13 +173,29 @@ export const STATUS_HALF_LIFE_DAYS = 14;
 export const STATUS_MIN_WEIGHT = 0.15;
 const DAY_MS = 86_400_000;
 
-/** 1 for a durable entry; for a status entry 0.5 per half-life since it was last written, floored. */
+const STATED_DATE = /(?:^|[\s("])(\d{4})-(\d{2})-(\d{2})(?![\d])/;
+
+/**
+ * When a status entry says it happened: the first ISO date in its opening
+ * words ("2026-09-25: hbots 1.43.0 live"), else null. A later edit of the
+ * entry (a tidy-up, a replaced reach) does not make the event newer.
+ */
+export function statedDateMs(content: string): number | null {
+  const found = STATED_DATE.exec(content.slice(0, 60));
+  if (found === null) return null;
+  const ms = Date.UTC(Number(found[1]), Number(found[2]) - 1, Number(found[3]));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** 1 for a durable entry; for a status entry 0.5 per half-life since it happened (or was last written), floored. */
 export function ageWeight(
   entry: Pick<RankEntry, "kind" | "content" | "source" | "updatedAtMs">,
   nowMs: number,
 ): number {
   if (!isStatusLike(entry)) return 1;
-  const days = Math.max(0, (nowMs - entry.updatedAtMs) / DAY_MS);
+  const stated = statedDateMs(entry.content);
+  const happenedMs = stated === null ? entry.updatedAtMs : Math.min(entry.updatedAtMs, stated);
+  const days = Math.max(0, (nowMs - happenedMs) / DAY_MS);
   return Math.max(STATUS_MIN_WEIGHT, 0.5 ** (days / STATUS_HALF_LIFE_DAYS));
 }
 
@@ -293,4 +313,28 @@ export function capByChars<T extends { readonly entry: { readonly content: strin
     kept.push(item);
   }
   return { kept, leftOut };
+}
+
+/** Task summaries of one task title in a turn: an hourly routine writes dozens that read alike. */
+export const MAX_SUMMARIES_PER_TITLE = 2;
+
+const SUMMARY_TITLE = /^Task "([^"]*)"/;
+
+/**
+ * Keeps the first (best-ranked) few task summaries of each task title and
+ * passes every other entry through, so a routine that runs hourly cannot fill
+ * the turn with near-identical summaries.
+ */
+export function limitSummariesPerTitle<
+  T extends { readonly content: string; readonly kind: string },
+>(candidates: ReadonlyArray<T>, perTitle: number = MAX_SUMMARIES_PER_TITLE): ReadonlyArray<T> {
+  const seen = new Map<string, number>();
+  return candidates.filter((entry) => {
+    if (entry.kind !== "task_summary") return true;
+    const title = SUMMARY_TITLE.exec(entry.content)?.[1];
+    if (title === undefined) return true;
+    const count = seen.get(title) ?? 0;
+    seen.set(title, count + 1);
+    return count < perTitle;
+  });
 }
