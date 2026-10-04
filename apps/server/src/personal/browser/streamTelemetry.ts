@@ -19,6 +19,8 @@ import type { ViewerFlowBlock, ViewerFlowObserver } from "./viewerFlow.ts";
 
 export const STREAM_TELEMETRY_FLUSH_MS = 5_000;
 /** Samples kept per metric in a window, and over the viewer's whole stay. */
+/** A window is cut into slices this long to find how much of it the page was moving. */
+const ACTIVE_BUCKET_MS = 250;
 const WINDOW_SAMPLES = 512;
 const TOTAL_SAMPLES = 2_048;
 /** Inputs waiting for a frame that shows their effect; a flood cannot grow it. */
@@ -124,6 +126,11 @@ export class ViewerTelemetry implements ViewerFlowObserver {
     readonly dispatchedAt: number;
   }> = [];
   private lastPhone: StreamTelemetryLine | null = null;
+  private lastOfferedAt: number | null = null;
+  /** Quarter-seconds in which anything happened, so rates can be read over the time the page moved. */
+  private windowActive = new Set<number>();
+  private readonly totalActive = new Set<number>();
+  private lastSentAt: number | null = null;
   private readonly options: ViewerTelemetryOptions;
 
   constructor(options: ViewerTelemetryOptions) {
@@ -134,6 +141,12 @@ export class ViewerTelemetry implements ViewerFlowObserver {
   }
 
   // -- recording ----------------------------------------------------------
+
+  private mark(at: number): void {
+    const bucket = Math.floor(at / ACTIVE_BUCKET_MS);
+    this.windowActive.add(bucket);
+    this.totalActive.add(bucket);
+  }
 
   private count(name: string, amount = 1): void {
     this.window.count(name, amount);
@@ -152,12 +165,14 @@ export class ViewerTelemetry implements ViewerFlowObserver {
     this.count("chromeFrames");
   }
 
-  /** How long Chrome's ack waited for a phone to take the frame; 0 when it did not wait. */
+  /** Chrome's ack for a frame was held until a phone is done with it (counted when the frame arrives). */
+  chromeHeld(): void {
+    this.count("chromeHeld");
+  }
+
+  /** How long Chrome's ack for a frame was held, once released. */
   chromeHold(ms: number, capped: boolean): void {
-    if (ms > 0) {
-      this.count("chromeHeld");
-      this.sample("chromeHoldMs", ms);
-    }
+    this.sample("chromeHoldMs", ms);
     if (capped) this.count("chromeHoldCapped");
   }
 
@@ -167,6 +182,12 @@ export class ViewerTelemetry implements ViewerFlowObserver {
   }
 
   offered(replaced: boolean): void {
+    const at = this.now();
+    this.mark(at);
+    if (this.lastOfferedAt !== null && at - this.lastOfferedAt < 1_000) {
+      this.sample("offerGapMs", at - this.lastOfferedAt);
+    }
+    this.lastOfferedAt = at;
     this.count("offered");
     if (replaced) this.count("replaced");
   }
@@ -176,8 +197,16 @@ export class ViewerTelemetry implements ViewerFlowObserver {
     readonly offeredAt: number;
     readonly sentAt: number;
     readonly queuedMs: number;
+    readonly lateMs: number;
   }): void {
+    this.mark(info.sentAt);
     this.count("sent");
+    this.sample("lateMs", info.lateMs);
+    // Spacing of sends; a pause in the page's changes is not a gap worth reading.
+    if (this.lastSentAt !== null && info.sentAt - this.lastSentAt < 1_000) {
+      this.sample("sendGapMs", info.sentAt - this.lastSentAt);
+    }
+    this.lastSentAt = info.sentAt;
     this.count("bytes", info.bytes);
     this.sample("queuedMs", info.queuedMs);
     // Inputs whose effect this frame can show: it arrived after they were dispatched.
@@ -217,6 +246,7 @@ export class ViewerTelemetry implements ViewerFlowObserver {
     readonly handleMs: number;
     readonly failed: boolean;
   }): void {
+    this.mark(this.now());
     this.count(`input:${info.kind}`);
     if (info.failed) this.count("inputFailed");
     this.sample("inputWaitMs", info.waitMs);
@@ -253,13 +283,21 @@ export class ViewerTelemetry implements ViewerFlowObserver {
 
   // -- reporting ----------------------------------------------------------
 
-  private static describe(tally: Tally, seconds: number) {
+  private static describe(tally: Tally, seconds: number, activeBuckets: number) {
     const rate = (name: string) => round(tally.get(name) / seconds, 2);
+    // Scrolling comes in bursts, so a rate over the whole window understates what a burst gets.
+    const activeSeconds = Math.max(
+      ACTIVE_BUCKET_MS / 1_000,
+      (activeBuckets * ACTIVE_BUCKET_MS) / 1_000,
+    );
+    const activeRate = (name: string) => round(tally.get(name) / activeSeconds, 2);
     const sent = tally.get("sent");
     return {
       seconds: round(seconds),
+      activeSeconds: round(activeSeconds, 2),
       chrome: {
         fps: rate("chromeFrames"),
+        fpsActive: activeRate("chromeFrames"),
         hiddenPerS: rate("framesHidden"),
         heldPct:
           tally.get("chromeFrames") === 0
@@ -271,9 +309,16 @@ export class ViewerTelemetry implements ViewerFlowObserver {
       frames: {
         offeredPerS: rate("offered"),
         sentPerS: rate("sent"),
+        offeredPerActiveS: activeRate("offered"),
+        sentPerActiveS: activeRate("sent"),
         replaced: tally.get("replaced"),
         avgBytes: sent === 0 ? 0 : Math.round(tally.get("bytes") / sent),
         queuedMs: summarise(tally, "queuedMs"),
+        // Spacing of Chrome's frames, of our writes, and how late a write was after its slot opened:
+        // sparse arrivals, or a writer that wakes late, are told apart here.
+        offerGapMs: summarise(tally, "offerGapMs"),
+        sendGapMs: summarise(tally, "sendGapMs"),
+        lateMs: summarise(tally, "lateMs"),
         ackRttMs: summarise(tally, "ackRttMs"),
         blocked: {
           fps: tally.get("blocked:fps"),
@@ -338,10 +383,11 @@ export class ViewerTelemetry implements ViewerFlowObserver {
           viewer: this.options.viewerId,
           operate: this.options.canOperate,
           ...extra,
-          ...ViewerTelemetry.describe(this.window, seconds),
+          ...ViewerTelemetry.describe(this.window, seconds, this.windowActive.size),
           ...(this.lastPhone === null ? {} : { phone: this.lastPhone }),
         };
     this.window = new Tally(WINDOW_SAMPLES);
+    this.windowActive = new Set();
     this.windowStartedAt = at;
     this.lastPhone = null;
     return line;
@@ -354,7 +400,7 @@ export class ViewerTelemetry implements ViewerFlowObserver {
       viewer: this.options.viewerId,
       operate: this.options.canOperate,
       ...extra,
-      ...ViewerTelemetry.describe(this.total, seconds),
+      ...ViewerTelemetry.describe(this.total, seconds, this.totalActive.size),
     };
   }
 }

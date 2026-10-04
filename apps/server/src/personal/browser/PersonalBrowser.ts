@@ -126,7 +126,12 @@ import {
   type StreamInputKind,
   ViewerTelemetry,
 } from "./streamTelemetry.ts";
-import { untilAnyFlowTookFrame, VIEWER_FLOW_LIMITS, ViewerFlow } from "./viewerFlow.ts";
+import {
+  offerFrameToFlows,
+  untilAnyFlowTookFrame,
+  VIEWER_FLOW_LIMITS,
+  ViewerFlow,
+} from "./viewerFlow.ts";
 
 /** Chrome did not start; `message` is Playwright's own error text. */
 class PersonalBrowserLaunchError extends Data.TaggedError("PersonalBrowserLaunchError")<{
@@ -242,6 +247,15 @@ export interface PersonalBrowserOptions {
   readonly wheelFold?: boolean;
   /** A tap right after a phone scroll waits for the page to apply it (default on). */
   readonly scrollSettle?: boolean;
+  /**
+   * Chrome's ack for a frame goes as soon as the frame is written, overwritten by a newer one or
+   * dropped (default on); off holds every frame's ack until the next write, as in 1.60.35.
+   */
+  readonly frameAckEarly?: boolean;
+  /** A third unacknowledged frame while the link is not queueing (default on); off: always two. */
+  readonly adaptiveAckWindow?: boolean;
+  /** Frames per second one viewer is sent at most (default 30). */
+  readonly streamMaxFps?: number | undefined;
 }
 
 /**
@@ -249,6 +263,12 @@ export interface PersonalBrowserOptions {
  * `T3CODE_PERSONAL_BROWSER_HEADLESS=1` runs headless;
  * `T3CODE_PERSONAL_BROWSER_EXECUTABLE` overrides the system Chrome channel.
  */
+/** A frame rate from the environment, or undefined for the default. */
+const streamMaxFpsFromEnvironment = (value: string | undefined): number | undefined => {
+  const parsed = Number(value?.trim());
+  return Number.isFinite(parsed) && parsed >= 5 && parsed <= 60 ? parsed : undefined;
+};
+
 export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   driver: makePlaywrightDriver(),
   headless: /^(1|true|yes)$/i.test(process.env.T3CODE_PERSONAL_BROWSER_HEADLESS ?? ""),
@@ -259,6 +279,12 @@ export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   wheelFold: process.env.T3CODE_PERSONAL_BROWSER_WHEEL_FOLD?.trim() !== "off",
   // Kill switch: T3CODE_PERSONAL_BROWSER_SCROLL_SETTLE=off dispatches a tap at once after a scroll again.
   scrollSettle: process.env.T3CODE_PERSONAL_BROWSER_SCROLL_SETTLE?.trim() !== "off",
+  // Kill switches: T3CODE_PERSONAL_BROWSER_FRAME_ACK_EARLY=off holds Chrome's ack for every frame until the next
+  // write again; T3CODE_PERSONAL_BROWSER_STREAM_MAX_FPS=20 restores the old frame rate cap.
+  frameAckEarly: process.env.T3CODE_PERSONAL_BROWSER_FRAME_ACK_EARLY?.trim() !== "off",
+  // Kill switch: T3CODE_PERSONAL_BROWSER_ADAPTIVE_ACK_WINDOW=off keeps the window at two frames.
+  adaptiveAckWindow: process.env.T3CODE_PERSONAL_BROWSER_ADAPTIVE_ACK_WINDOW?.trim() !== "off",
+  streamMaxFps: streamMaxFpsFromEnvironment(process.env.T3CODE_PERSONAL_BROWSER_STREAM_MAX_FPS),
 });
 
 type Phase = "offline" | "starting" | "connected" | "crashed" | "locked";
@@ -933,24 +959,50 @@ export const make = (options: PersonalBrowserOptions) =>
     });
 
     /**
-     * Settles once some phone has taken the frame just offered (sent it to its
-     * socket), or after a short cap. Chrome's ack waits for it: a phone on a
-     * slow link makes Chrome render fewer frames, instead of rendering at full
-     * speed for frames that are overwritten before they can be sent.
+     * Hands a frame to every phone and returns what Chrome's ack for it waits for: the
+     * moment some phone has written it, a newer frame has overwritten it or it was
+     * dropped (at most a short cap). The ack must not wait for anything else. Holding
+     * every frame's ack until the next write (1.60.35) left Chrome, which keeps at
+     * most two frames unacknowledged, idle between our writes: it rendered 22 frames
+     * a second and we sent 9. Replaced frames are useless, so their ack goes at once
+     * and Chrome keeps rendering; the newest frame is the one that goes out.
+     * Kill switch `T3CODE_PERSONAL_BROWSER_FRAME_ACK_EARLY=off`: the old holding.
      */
-    const untilViewerTookFrame = (): Promise<void> | undefined => {
+    const offerToViewers = (frame: Uint8Array): Promise<void> | undefined => {
       const flows = [...viewers.values()].map((viewer) => viewer.flow);
-      if (flows.length === 0 || flows.some((flow) => !flow.hasPending)) {
-        for (const viewer of viewers.values()) viewer.telemetry?.chromeHold(0, false);
-        return undefined;
+      if (flows.length === 0) return undefined;
+      if (options.frameAckEarly === false) {
+        for (const flow of flows) flow.offerFrame(frame);
+        return untilViewerTookFrame(flows);
       }
+      let released: () => void = () => undefined;
+      const done = new Promise<void>((resolve) => {
+        released = resolve;
+      });
       const heldAt = performance.now();
+      offerFrameToFlows(flows, frame, released);
+      for (const viewer of viewers.values()) viewer.telemetry?.chromeHeld();
+      return Effect.runPromise(
+        Effect.raceFirst(
+          Effect.promise(() => done),
+          Effect.sleep(VIEWER_FLOW_LIMITS.chromeHoldMs),
+        ),
+      ).then(() => recordHold(heldAt));
+    };
+
+    const recordHold = (heldAt: number) => {
+      const heldMs = performance.now() - heldAt;
+      const capped = heldMs >= VIEWER_FLOW_LIMITS.chromeHoldMs - 2;
+      for (const viewer of viewers.values()) viewer.telemetry?.chromeHold(heldMs, capped);
+    };
+
+    /** The 1.60.35 holding, kept behind its kill switch: the ack waits until some phone has no pending frame. */
+    const untilViewerTookFrame = (flows: ReadonlyArray<ViewerFlow>): Promise<void> | undefined => {
+      if (flows.some((flow) => !flow.hasPending)) return undefined;
+      const heldAt = performance.now();
+      for (const viewer of viewers.values()) viewer.telemetry?.chromeHeld();
       return Effect.runPromise(untilAnyFlowTookFrame(flows, VIEWER_FLOW_LIMITS.chromeHoldMs)).then(
-        () => {
-          const heldMs = performance.now() - heldAt;
-          const capped = heldMs >= VIEWER_FLOW_LIMITS.chromeHoldMs - 2;
-          for (const viewer of viewers.values()) viewer.telemetry?.chromeHold(heldMs, capped);
-        },
+        () => recordHold(heldAt),
       );
     };
 
@@ -982,8 +1034,7 @@ export const make = (options: PersonalBrowserOptions) =>
       } else {
         framesHidden = false;
         const frame = encodePersonalBrowserFrame(jpeg, meta);
-        for (const viewer of viewers.values()) viewer.flow.offerFrame(frame);
-        handedOff = untilViewerTookFrame();
+        handedOff = offerToViewers(frame);
       }
       // Frames only arrive when the page repaints, so they double as a cheap
       // trigger for noticing human navigation (url/title) without polling.
@@ -2441,7 +2492,10 @@ export const make = (options: PersonalBrowserOptions) =>
             id: ++viewerSequence,
             ...input,
             outbox,
-            flow: new ViewerFlow(),
+            flow: new ViewerFlow({
+              adaptiveWindow: options.adaptiveAckWindow !== false,
+              ...(options.streamMaxFps === undefined ? {} : { maxFps: options.streamMaxFps }),
+            }),
             telemetry:
               options.streamTelemetry === false
                 ? null
@@ -2878,7 +2932,7 @@ export const make = (options: PersonalBrowserOptions) =>
               for (const viewer of [...viewers.values()]) {
                 if (viewer.telemetry === null) continue;
                 const control = yield* lease.isHumanController(viewer.sessionId);
-                const line = viewer.telemetry.flush({ control });
+                const line = viewer.telemetry.flush({ control, window: viewer.flow.windowSize });
                 if (line !== null) {
                   yield* Effect.logInfo(`browser-stream ${encodeStreamLine(line)}`);
                 }

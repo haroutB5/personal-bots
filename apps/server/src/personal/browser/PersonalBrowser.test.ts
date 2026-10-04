@@ -349,6 +349,8 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
     readonly streamTelemetry?: boolean;
     readonly wheelFold?: boolean;
     readonly scrollSettle?: boolean;
+    readonly frameAckEarly?: boolean;
+    readonly streamMaxFps?: number;
   } = {},
 ) =>
   PersonalBrowser.makeLayer({
@@ -378,6 +380,8 @@ const makeLayer = (
     readonly streamTelemetry?: boolean;
     readonly wheelFold?: boolean;
     readonly scrollSettle?: boolean;
+    readonly frameAckEarly?: boolean;
+    readonly streamMaxFps?: number;
   },
 ) =>
   baseLayer(
@@ -2432,6 +2436,87 @@ describe("PersonalBrowser", () => {
           }),
         );
       }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("releases Chrome's ack for a frame at once when a newer frame replaces it", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const page = fake.state.page;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({ sessionId: "s1", canOperate: false });
+            const settled = { first: false, second: false };
+            void page.paint()?.then(() => {
+              settled.first = true;
+            });
+            void page.paint()?.then(() => {
+              settled.second = true;
+            });
+            yield* later(15);
+            // The first frame was overwritten before any write: Chrome may render the next one.
+            expect(settled).toEqual({ first: true, second: false });
+            expect(viewer.flow.poll()._tag).toBe("Send");
+            yield* later(15);
+            expect(settled.second).toBe(true);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("keeps the old holding with the kill switch: every ack waits for a write", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const page = fake.state.page;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({ sessionId: "s1", canOperate: false });
+            const settled = { first: false, second: false };
+            void page.paint()?.then(() => {
+              settled.first = true;
+            });
+            void page.paint()?.then(() => {
+              settled.second = true;
+            });
+            yield* later(15);
+            expect(settled).toEqual({ first: false, second: false });
+            expect(viewer.flow.poll()._tag).toBe("Send");
+            yield* later(15);
+            expect(settled).toEqual({ first: true, second: true });
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, { frameAckEarly: false })));
+    });
+
+    it.effect("sends at most the configured frame rate, 30 a second by default", () => {
+      const fast = makeFakeDriver();
+      const slow = makeFakeDriver();
+      const gapAfterFirstWrite = (fake: ReturnType<typeof makeFakeDriver>, extra?: object) =>
+        Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+          return yield* Effect.scoped(
+            Effect.gen(function* () {
+              const viewer = yield* browser.attachViewer({ sessionId: "s1", canOperate: false });
+              fake.state.page.paint();
+              expect(viewer.flow.poll()._tag).toBe("Send");
+              fake.state.page.paint();
+              const step = viewer.flow.poll();
+              return step._tag === "Wait" ? step.ms : 0;
+            }),
+          );
+        }).pipe(Effect.provide(makeLayer(fake.driver, undefined, extra)));
+      return Effect.gen(function* () {
+        const byDefault = yield* gapAfterFirstWrite(fast);
+        const atFive = yield* gapAfterFirstWrite(slow, { streamMaxFps: 5 });
+        expect(byDefault).toBeGreaterThan(20);
+        expect(byDefault).toBeLessThanOrEqual(34);
+        expect(atFive).toBeGreaterThan(150);
+        expect(atFive).toBeLessThanOrEqual(200);
+      });
     });
 
     it.effect("holds Chrome's frame ack until a phone takes the frame", () => {

@@ -126,8 +126,10 @@ export interface BrowserPage {
   /**
    * Streams JPEG frames until the returned stop function runs. Chrome gets its
    * ack for a frame when `onFrame` returns, or, if it returns a promise, when
-   * that settles: Chrome renders the next frame only after the ack, so a slow
-   * consumer paces Chrome instead of having frames thrown away.
+   * that settles. Chrome keeps at most two frames unacknowledged and a page change
+   * that finds two out is not rendered later, so a consumer that holds acks costs
+   * frames (and can lose the last one): settle the promise as soon as the frame is
+   * written, replaced or dropped.
    */
   startScreencast(
     onFrame: (jpeg: Uint8Array, meta: ScreencastMeta) => void | Promise<void>,

@@ -56,3 +56,38 @@ Real Chrome, busy page (35 ms frames), 8 runs each: tap straight after the scrol
 **Tap coordinates.** They are checked: `pointAt` maps the touch into the CSS-pixel size of the frame the phone last drew (`metaRef`, carried on every frame), so a resize cannot skew it. A tap is a viewport point, not a document point: it lands on whatever is at that point when it is dispatched. A phone that taps on a frame older than the page's scroll state (about 70 ms unthrottled, about 0.5 s at 600 kB/s) aims at what it saw; the wait only makes the outcome the scroll's final position. It does not translate the tap by the scroll the phone had not yet seen.
 
 Tests: `scrollSettle.test.ts` (the page script run in a vm: waits out movement, returns when idle, gives up at the cap, numbers only), `PersonalBrowser.test.ts` "a tap right after a scroll" (a page that applies a scroll 60 ms after Chrome accepts it: the tap lands at the final offset; with the kill switch the same sequence misses, which is the QA failure; no wait without a scroll; once per scroll and not for keys; a page that never answers does not block the tap).
+
+## 1.60.36: Chrome's ack no longer waits on our writes; 30 fps cap; a third frame while the link is not queueing
+
+Harout still felt lag on 1.60.35. His log (`browser-stream` lines, 00:12 to 00:13, 3 and 4 Oct) was read before changing anything.
+
+**What the log says.** Inputs are healthy (wheel wait p50 6 ms, queue max 1, tap to frame 61 to 116 ms, phone decode 10 ms). The 5 s lines mix bursts with pauses: `sentPerS` 9.2 against `chrome.fps` 22 is an average over a window that was moving for only part of it. Over the moving part the writer sent at the cap (20 a second): `blocked.fps` 41 of 46 sends, `queuedMs` p50 16 ms, `blocked.ack` 3, `blocked.socket` 0. So the halving the CTO saw is largely the averaging (the line now has `activeSeconds`, `chrome.fpsActive`, `frames.sentPerActiveS`), not a stall. What is real: the 20 fps cap clipped every burst, and the tail of the phone's `wheelToPaint` (p95 467 to 574 ms) and `maxGapMs` (640 to 1358 ms) came with `replaced` 65 of 111 frames and `heldPct` 95.
+
+**Hypotheses checked against the code.**
+
+- (a) "a frame blocked by the fps cap only goes out when the next Chrome frame arrives, no timer": not so. `runViewerFrames` sleeps the remaining `step.ms` and wakes on any change; a test now pins it (`runViewerFrames` "sends a frame that waited for its slot with nothing arriving after it"). The new `frames.lateMs` shows how late a write is after its slot opened.
+- (b) holding Chrome's ack until a phone takes the frame (1.60.35): confirmed, and worse than slow. A replaced frame's ack waited for the next write (`untilAnyFlowTookFrame` only checks whether the slot is empty). Chrome keeps at most two frames unacknowledged and a page change that finds two out is dropped and never rendered later. In real Chrome (16 runs each, link and page held the same) the page's last change never reached the phone in about 2 of 13 held runs (Chrome's last frame showed scroll 8160 while the page stood at 8200) and in 0 of 16 with the fix.
+
+**Changes** (each with a kill switch):
+
+1. `ViewerFlow.offerFrame(frame, release)` runs `release` when the frame is written, overwritten (at once) or dropped; `offerFrameToFlows` hands one Chrome frame to every viewer and releases Chrome's ack on the first. Chrome keeps rendering at its own pace and the newest frame is the one that goes out. Kill switch `T3CODE_PERSONAL_BROWSER_FRAME_ACK_EARLY=off` (the 1.60.35 holding).
+2. Frame rate cap 30 (was 20). `T3CODE_PERSONAL_BROWSER_STREAM_MAX_FPS=20` restores it (5 to 60 accepted).
+3. Adaptive ack window: a third unacknowledged frame while the acknowledgements come back within 1.3 x the quickest round trip seen plus 15 ms (the link is not queueing); two again as soon as they slow down. With a round trip of 85 ms two frames carry only 23 a second whatever the cap, and Harout's ack RTT is 85 (p95 145 to 186) so the window, not the cap, would have been the next limit. `T3CODE_PERSONAL_BROWSER_ADAPTIVE_ACK_WINDOW=off` keeps it at two.
+4. Telemetry: `activeSeconds`, `chrome.fpsActive`, `frames.offeredPerActiveS`, `frames.sentPerActiveS`, `frames.offerGapMs`, `frames.sendGapMs`, `frames.lateMs`, and `window` (2 or 3). `heldPct` counts a frame when it arrives (it read 101 before).
+
+**Numbers** (`C:/Claude/AI/_wt/streamlag-scroll-exp/pacing-real-service.test.ts`: the real PersonalBrowser service on real Chrome with the phone's viewport emulation, a scroll step every 35 ms, a modelled link; Chrome renders about 28 frames a second on that page, 160 kB per frame; two runs each, old = all three kill switches):
+
+| link (round trip)                         | old: sent/s | 1.60.36: sent/s |                                               |
+| ----------------------------------------- | ----------- | --------------- | --------------------------------------------- |
+| fast (70 ms)                              | 17.2        | 23.5            | +36%                                          |
+| fast (93 ms)                              | 17.2        | 23.2 to 24      | +35%                                          |
+| fast (142 ms)                             | 13.0        | 19.5            | +50%                                          |
+| 900 kB/s (link-limited, 5.6 fps possible) | 5.3 to 5.5  | 5.5             | same, same 185 ms send gap, no extra queueing |
+
+I could not reproduce a 9 fps send rate locally in any setting (old code sends 17 at best there), which fits the log being an average. Chrome's own rendering rate during the 900 kB/s runs is 16 old, 28 new (no longer kept waiting). The virtual-time model (`framePacingSim.ts`, used by `framePacing.test.ts`) gives the same ordering and exact gaps: at the cap, max gap between writes 34 ms; with the old holding Chrome dropped 100+ page changes in the same runs and the last change was lost in 3 of 12 cases, with the fix never.
+
+**Frame size (data only, no change).** Wikipedia pages, 390 x 700 emulated at 2x, scrolling: q60 at 780 px 117 to 127 kB (what ships), q50 104 to 113 kB (-11%), q40 92 to 100 kB (-21%), q60 at 585 px 73 to 80 kB (-38%), q50 at 585 px 66 to 72 kB (-44%), q60 at 390 px 42 to 47 kB. Harout's real pages run 85 to 90 kB. At his round trip (85 ms) size matters only once the link, not the round trip, is the limit: `blocked.ack` rising with a `window` of 2 and `ackRttMs` close to the transmit time of a frame would say so. Quality 50 alone is a small win; a smaller width is a big one but costs sharpness on a 3x phone. Left as is.
+
+**Window of three on slow links.** At 0.6 MB/s with 90 kB frames the adaptive window can briefly allow a third frame at the start and the longest gap read 300 ms against 201 ms in the model (steady state the same 6.8 frames a second); at 0.3 MB/s it never leaves two.
+
+Tests: `framePacing.test.ts` (virtual time: sent tracks Chrome up to the cap, never above it, gaps, ack-window and link limits, the page's last change always reaches the phone and Chrome never drops a change, and the same checks fail on the old holding), `viewerFlow.test.ts` (release on replace, write and drop, once; first release across flows; lateness; the adaptive window up, down and off; a pending frame goes out at its slot with nothing after it), `PersonalBrowser.test.ts` (an overwritten frame's ack goes at once, kill switch holds, configured cap), `streamTelemetry.test.ts` (gaps, lateness, active-time rates).

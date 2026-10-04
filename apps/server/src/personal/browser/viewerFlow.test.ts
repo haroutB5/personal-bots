@@ -2,9 +2,14 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { describe, expect, it } from "@effect/vitest";
 
-import { runViewerFrames, untilAnyFlowTookFrame, ViewerFlow } from "./viewerFlow.ts";
+import {
+  offerFrameToFlows,
+  runViewerFrames,
+  untilAnyFlowTookFrame,
+  ViewerFlow,
+} from "./viewerFlow.ts";
 
-const frame = (tag: number) => new Uint8Array([tag]);
+const frame = (tag = 0) => new Uint8Array([tag]);
 
 /** A flow on a clock the test moves by hand, with a settable socket backlog. */
 const makeFlow = (options: ConstructorParameters<typeof ViewerFlow>[0] = {}) => {
@@ -151,6 +156,132 @@ describe("ViewerFlow", () => {
     expect(calls).toBe(1);
   });
 
+  // Chrome's ack for a frame goes when this runs; holding it until the next write made
+  // Chrome (two frames out at most) drop page changes and send about half of what it rendered.
+  describe("releasing a frame", () => {
+    it("releases a frame the moment a newer one overwrites it, not when anything is written", () => {
+      const { flow } = makeFlow();
+      const released: number[] = [];
+      flow.offerFrame(frame(1), () => released.push(1));
+      expect(released).toEqual([]);
+      flow.offerFrame(frame(2), () => released.push(2));
+      // The first is useless now: its ack goes at once, before any poll or write.
+      expect(released).toEqual([1]);
+      flow.offerFrame(frame(3), () => released.push(3));
+      expect(released).toEqual([1, 2]);
+    });
+
+    it("releases the frame that is written, once, when it is written", () => {
+      const { flow, clock } = makeFlow();
+      const released: number[] = [];
+      flow.offerFrame(frame(1), () => released.push(1));
+      expect(flow.poll()._tag).toBe("Send");
+      expect(released).toEqual([1]);
+      // A frame waiting for its slot is not released until it goes.
+      clock.now += 5;
+      flow.offerFrame(frame(2), () => released.push(2));
+      expect(flow.poll()._tag).toBe("Wait");
+      expect(released).toEqual([1]);
+      clock.now += 50;
+      expect(flow.poll()._tag).toBe("Send");
+      expect(released).toEqual([1, 2]);
+    });
+
+    it("releases a frame that is dropped", () => {
+      const { flow } = makeFlow();
+      const released: number[] = [];
+      flow.offerFrame(frame(1), () => released.push(1));
+      flow.dropPending();
+      expect(released).toEqual([1]);
+      flow.dropPending();
+      expect(released).toEqual([1]);
+    });
+
+    it("releases a frame offered to several flows once, when the first is done with it", () => {
+      const first = makeFlow();
+      const second = makeFlow();
+      let released = 0;
+      offerFrameToFlows([first.flow, second.flow], frame(1), () => {
+        released += 1;
+      });
+      expect(released).toBe(0);
+      expect(second.flow.poll()._tag).toBe("Send");
+      expect(released).toBe(1);
+      expect(first.flow.poll()._tag).toBe("Send");
+      expect(released).toBe(1);
+    });
+
+    it("reports how late a write was after its frame and its slot were both there", () => {
+      const { flow, clock } = makeFlow();
+      const late: number[] = [];
+      flow.setObserver({
+        offered: () => {},
+        sent: (info) => late.push(info.lateMs),
+        blocked: () => {},
+        ackRtt: () => {},
+        ackStalled: () => {},
+      });
+      flow.offerFrame(frame(1));
+      flow.poll();
+      clock.now += 10;
+      flow.offerFrame(frame(2));
+      flow.poll();
+      // The slot opens 33.3 ms after the first write; the writer wakes 12 ms later than that.
+      clock.now += 35;
+      flow.poll();
+      expect(late[0]).toBe(0);
+      expect(late[1]).toBeCloseTo(10 + 35 - 1_000 / 30, 0);
+    });
+  });
+
+  describe("the adaptive acknowledgement window", () => {
+    /** Sends a frame, lets `rtt` pass, and has the phone acknowledge it. */
+    const roundTrip = (env: ReturnType<typeof makeFlow>, rtt: number) => {
+      env.flow.offerFrame(frame());
+      env.clock.now += 40;
+      expect(env.flow.poll()._tag).toBe("Send");
+      env.clock.now += rtt;
+      env.flow.acknowledge();
+    };
+
+    it("stays at two frames unless switched on", () => {
+      const env = makeFlow();
+      for (let i = 0; i < 12; i += 1) roundTrip(env, 80);
+      expect(env.flow.windowSize).toBe(2);
+    });
+
+    it("allows a third frame while the acknowledgements come back as fast as ever", () => {
+      const env = makeFlow({ adaptiveWindow: true });
+      for (let i = 0; i < 4; i += 1) roundTrip(env, 80);
+      // Too few round trips to know yet.
+      expect(env.flow.windowSize).toBe(2);
+      for (let i = 0; i < 6; i += 1) roundTrip(env, 82);
+      expect(env.flow.windowSize).toBe(3);
+      // Two frames out and unacknowledged: a third still goes.
+      for (let i = 0; i < 2; i += 1) {
+        env.flow.offerFrame(frame());
+        env.clock.now += 40;
+        expect(env.flow.poll()._tag).toBe("Send");
+      }
+      env.flow.offerFrame(frame());
+      env.clock.now += 40;
+      expect(env.flow.poll()._tag).toBe("Send");
+      expect(env.flow.inFlight).toBe(3);
+      env.flow.offerFrame(frame());
+      env.clock.now += 40;
+      expect(env.flow.poll()._tag).toBe("Wait");
+    });
+
+    it("drops back to two as soon as the acknowledgements slow down", () => {
+      const env = makeFlow({ adaptiveWindow: true });
+      for (let i = 0; i < 10; i += 1) roundTrip(env, 80);
+      expect(env.flow.windowSize).toBe(3);
+      // A queueing link: every round trip takes twice as long.
+      for (let i = 0; i < 6; i += 1) roundTrip(env, 170);
+      expect(env.flow.windowSize).toBe(2);
+    });
+  });
+
   it("tells subscribers about every change until they leave", () => {
     const { flow } = makeFlow();
     let changes = 0;
@@ -168,6 +299,31 @@ describe("ViewerFlow", () => {
 });
 
 describe("runViewerFrames", () => {
+  // The last frame of a gesture has no later Chrome frame to push it out: the writer's
+  // own timer must send it the moment its slot opens.
+  it.live("sends a frame that waited for its slot with nothing arriving after it", () =>
+    Effect.gen(function* () {
+      const flow = new ViewerFlow({ maxFps: 20 });
+      const written: Array<{ tag: number; at: number }> = [];
+      const startedAt = performance.now();
+      const fiber = yield* Effect.forkChild(
+        runViewerFrames(flow, (bytes) =>
+          Effect.sync(() => {
+            written.push({ tag: bytes[0]!, at: performance.now() - startedAt });
+          }),
+        ),
+      );
+      flow.offerFrame(frame(1));
+      yield* Effect.sleep(5);
+      // The last frame of the gesture, inside the first frame's 50 ms slot, and nothing after it.
+      flow.offerFrame(frame(2));
+      yield* Effect.sleep(160);
+      yield* Fiber.interrupt(fiber);
+      expect(written.map((entry) => entry.tag)).toEqual([1, 2]);
+      expect(written[1]!.at - written[0]!.at).toBeLessThan(50 + 40);
+    }),
+  );
+
   it.live("sends frames as they arrive and as the link frees up, then stops on interrupt", () =>
     Effect.gen(function* () {
       const link = { backlog: 0 };

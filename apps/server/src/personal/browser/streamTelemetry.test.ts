@@ -151,6 +151,45 @@ describe("stream telemetry", () => {
     expect(line.input.wheelToFrameMs.p50).toBe(50);
   });
 
+  it("reports the spacing of Chrome's frames, of our writes, and how late a write was", () => {
+    const { clock, flow, telemetry } = fixture();
+    flow.setBacklogProbe(() => 0);
+    // Chrome renders every 40 ms; the cap (30 per second) lets one write out about every 40 ms.
+    for (let i = 0; i < 20; i += 1) {
+      flow.offerFrame(frame());
+      flow.poll();
+      flow.acknowledge();
+      clock.now += 40;
+    }
+    clock.now += 100;
+    const line = telemetry.flush() as Record<string, any>;
+    expect(line.frames.offerGapMs.p50).toBe(40);
+    expect(line.frames.sendGapMs.p50).toBe(40);
+    expect(line.frames.lateMs.p95).toBe(0);
+  });
+
+  // Scrolling comes in bursts, and a rate over a whole window then reads as a fraction of
+  // what a burst gets (a 5 s line showed 9 frames a second for bursts that ran at the cap).
+  it("reads rates over the time the page was moving as well as over the window", () => {
+    const { clock, flow, telemetry } = fixture();
+    // One second of about 29 frames a second, then four quiet seconds.
+    for (let i = 0; i < 30; i += 1) {
+      telemetry.chromeFrame();
+      flow.offerFrame(frame());
+      flow.poll();
+      flow.acknowledge();
+      clock.now += 34;
+    }
+    clock.now += 4_010;
+    const line = telemetry.flush() as Record<string, any>;
+    expect(line.frames.sentPerS).toBeCloseTo(6, 0);
+    expect(line.activeSeconds).toBeGreaterThanOrEqual(1);
+    expect(line.activeSeconds).toBeLessThanOrEqual(1.25);
+    expect(line.frames.sentPerActiveS).toBeGreaterThanOrEqual(24);
+    expect(line.frames.sentPerActiveS).toBeLessThanOrEqual(30);
+    expect(line.chrome.fpsActive).toBeGreaterThanOrEqual(24);
+  });
+
   it("counts wheels merged into the one before them", () => {
     const { clock, telemetry } = fixture();
     telemetry.wheelMerged();
@@ -224,7 +263,17 @@ describe("stream telemetry", () => {
       expect(["number", "boolean", "object"], path).toContain(typeof value);
     }
     expect(Object.keys(line as object).sort()).toEqual(
-      ["chrome", "control", "frames", "input", "operate", "phone", "seconds", "viewer"].sort(),
+      [
+        "activeSeconds",
+        "chrome",
+        "control",
+        "frames",
+        "input",
+        "operate",
+        "phone",
+        "seconds",
+        "viewer",
+      ].sort(),
     );
   });
 });
