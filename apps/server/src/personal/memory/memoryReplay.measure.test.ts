@@ -240,7 +240,9 @@ describe.skipIf(LIVE_DB === undefined)("replay of real messages: before and afte
                 const chatApps = detectActiveApps({
                   title: sample.title,
                   current: sample.text,
-                  recent: sample.before.map((before) => before.text),
+                  recent: sample.before
+                    .filter((before) => before.role === "user")
+                    .map((before) => before.text),
                 }).map((app) => app.slug);
                 const otherAppEntries =
                   chatApps.length === 0
