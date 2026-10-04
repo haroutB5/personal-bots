@@ -32,6 +32,7 @@ import {
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 import { useCloseTaskNotifications } from "./staleNotifications";
 import { usePersonalBackTarget } from "./usePersonalBackTarget";
+import { WorkRecordCard } from "./WorkRecordCard";
 
 export const DETAIL_CARD =
   "rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)] p-4";
@@ -247,6 +248,8 @@ export function TaskDetailScreen({ taskId }: { taskId: PersonalTaskId }): JSX.El
           </div>
         </section>
       ) : null}
+
+      {detail.data?.workRecord != null ? <WorkRecordCard record={detail.data.workRecord} /> : null}
 
       {parent !== undefined ? (
         <section>

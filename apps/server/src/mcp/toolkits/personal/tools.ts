@@ -213,7 +213,8 @@ export const SearchMemoryInput = Schema.Struct({
   query: TrimmedNonEmptyString.annotate({ description: "Words to look for in saved memory." }),
   limit: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })).annotate({
-      description: "How many entries to return, 1 to 20. Defaults to 8.",
+      description:
+        "How many entries to return, 1 to 20. Defaults to 8. Rules scoped to an app the query names are added on top of this.",
     }),
   ),
 });
@@ -388,7 +389,7 @@ const DeleteRoutineTool = Tool.make("delete_routine", {
 
 const SearchMemoryTool = Tool.make("search_memory", {
   description:
-    "Search saved memory: what the user asked bots to remember (entries for all bots, for your team, and your own) and summaries of past tasks. An entry matches when it contains any of the query's words (longer words also match their plurals and extensions; common words are ignored), best matches first. A message usually arrives with its most relevant entries already in front of it under 'Known facts (from memory)', so search for what those do not cover. Task summaries describe past work, not preferences.",
+    "Search saved memory: what the user asked bots to remember (entries for all bots, for your team, and your own) and summaries of past tasks. An entry matches when it contains any of the query's words (longer words also match their plurals and extensions; common words are ignored), best matches first. A message usually arrives with its most relevant entries already in front of it under 'Known facts (from memory)', so search for what those do not cover. Task summaries describe past work, not preferences. When the query names an app (matchday, hbots, caltrack ...), every rule scoped to that app comes first and on top of the limit, so a search can return more entries than limit.",
   parameters: SearchMemoryInput,
   success: SearchMemoryResult,
   failure: PersonalToolFailure,

@@ -24,6 +24,7 @@ import {
   visibleSelection,
 } from "./bulkSelection";
 import { commandFailureMessage } from "./commandFeedback";
+import { feedbackLabel } from "./contextUsed";
 import { MemoryContent } from "./MemoryContent";
 import {
   appScopeChip,
@@ -39,6 +40,7 @@ import { RulesUsageCard } from "./RulesUsageCard";
 import { mergeTaskLists } from "./taskPresentation";
 import {
   personalMemoryDelete,
+  personalMemoryFeedback,
   usePersonalMemory,
   usePersonalReplacedMemory,
   usePersonalTasks,
@@ -81,7 +83,10 @@ function MemoryEntryBody({
   now,
   folded,
   isNew,
+  onClearMark,
 }: {
+  /** Takes back the owner's "outdated" / "not relevant" mark (a plain row only). */
+  onClearMark?: (() => void) | undefined;
   entry: PersonalMemoryEntry;
   scope: string;
   source: string;
@@ -108,6 +113,23 @@ function MemoryEntryBody({
         {isNew ? (
           <span className="rounded-[var(--personal-radius-pill)] bg-[var(--personal-primary)] px-2 py-0.5 text-[12px] font-semibold text-[var(--personal-primary-text)]">
             New
+          </span>
+        ) : null}
+        {entry.demoted != null ? (
+          <span className="rounded-[var(--personal-radius-pill)] border border-[var(--personal-border)] px-2 py-0.5 text-[12px] font-medium text-[var(--personal-text)]">
+            {feedbackLabel(entry.demoted)} · ranks lower
+            {onClearMark !== undefined ? (
+              <>
+                {" · "}
+                <button
+                  type="button"
+                  onClick={onClearMark}
+                  className="min-h-6 font-semibold underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+                >
+                  Clear
+                </button>
+              </>
+            ) : null}
           </span>
         ) : null}
       </div>
@@ -147,6 +169,8 @@ function MemoryRow({
 }): JSX.Element {
   const memoryId = entry.memoryId;
   const longPress = useLongPress(useCallback(() => onLongPress(memoryId), [onLongPress, memoryId]));
+  const sendFeedback = useAtomCommand(personalMemoryFeedback);
+  const environmentId = usePersonalEnvironmentId();
   return (
     <li {...longPress} className={cn("flex items-start gap-2 py-3", NO_TOUCH_SELECT)}>
       <MemoryEntryBody
@@ -156,6 +180,11 @@ function MemoryRow({
         now={now}
         isNew={isNew}
         folded={false}
+        onClearMark={
+          environmentId === null
+            ? undefined
+            : () => void sendFeedback({ environmentId, input: { memoryId, signal: "clear" } })
+        }
       />
       <button
         type="button"

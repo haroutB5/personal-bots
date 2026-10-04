@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from "react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 
 import type { PendingApproval } from "@t3tools/client-runtime/pending-requests";
 import type {
@@ -25,6 +25,8 @@ import { BotAvatar, type BotAvatarShape } from "./BotAvatar";
 import { type ConversationItem, formatDayDivider } from "./conversationModel";
 import type { ServerTurn } from "./delegationModel";
 import { chatNoticeLabel, chatNoticeUndo, isServerTurnNotice } from "./chatNotices";
+import { ContextUsed } from "./ContextUsedPanel";
+import { turnStartByAssistantItem } from "./contextUsed";
 import { NoteNoticeRow } from "./NoteNoticeRow";
 import { groupSystemLabel, readGroupMarker } from "./groupModel";
 import { QuestionCard } from "./QuestionCard";
@@ -447,6 +449,7 @@ export function MessageList({
   renderDelegation,
   groupSpeaker,
   readOnly = false,
+  showContextUsed = false,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
@@ -519,7 +522,16 @@ export function MessageList({
    * answered (a reply would start a turn), and pinned approvals are hidden.
    */
   readOnly?: boolean;
+  /**
+   * A one-to-one bot chat: under the last reply of each turn, a tucked-away
+   * "Context used" line shows which rules and notes the turn was given.
+   */
+  showContextUsed?: boolean;
 }): JSX.Element {
+  const turnStarts = useMemo(
+    () => (showContextUsed ? turnStartByAssistantItem(items) : new Map<string, string>()),
+    [items, showContextUsed],
+  );
   const scrollerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -973,13 +985,22 @@ export function MessageList({
                     }
                   />
                 ) : (
-                  <AssistantMessage
-                    key={item.id}
-                    message={item.message}
-                    threadRef={threadRef}
-                    workspaceRoot={workspaceRoot}
-                    botName={botName}
-                  />
+                  <Fragment key={item.id}>
+                    <AssistantMessage
+                      message={item.message}
+                      threadRef={threadRef}
+                      workspaceRoot={workspaceRoot}
+                      botName={botName}
+                    />
+                    {item.message.streaming || !turnStarts.has(item.id) ? null : (
+                      <ContextUsed
+                        environmentId={environmentId}
+                        threadId={String(threadRef.threadId)}
+                        messageId={turnStarts.get(item.id)!}
+                        readOnly={readOnly}
+                      />
+                    )}
+                  </Fragment>
                 );
               case "plan":
                 return (

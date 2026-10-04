@@ -1099,6 +1099,7 @@ export function ConversationScreen({
           <MessageList
             environmentId={environmentId}
             threadRef={threadRef}
+            showContextUsed
             items={items}
             pending={visiblePending}
             latestMessageStatus={latestMessageStatus}

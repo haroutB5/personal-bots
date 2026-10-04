@@ -516,7 +516,7 @@ describe("1.60.40: the rules limit warning", () => {
     expect(model.tone).toBe("near");
     expect(model.headline).toBe("Rules are 82% of the limit");
     expect(model.detail).toContain("49 of 60 rules at once (12.1k of 15k characters)");
-    expect(model.detail).toContain("counting every app");
+    expect(model.detail).toContain("characters). That counts every app.");
     expect(model.rows[0]).toMatchObject({
       label: "dev (35 bots)",
       line: "49 of 60 rules · 12.1k of 15k characters",
@@ -550,6 +550,8 @@ describe("1.60.40: the rules limit warning", () => {
   it("says when app scoping is switched off", () => {
     const model = rulesUsageCardModel(usage("near", [row()], false))!;
     expect(model.detail).toContain("App scoping is off, so every rule goes to every chat");
+    // A full stop before the sentence, not a comma.
+    expect(model.detail).toContain("characters). App scoping is off");
     // Only the true sentence: with scoping off, a rule for one app counts everywhere.
     expect(model.detail).not.toContain("only listed in chats about it");
     expect(model.detail).not.toContain("only count in chats about that app");

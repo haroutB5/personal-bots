@@ -94,6 +94,20 @@ export const personalMemoryRulesUsage = createEnvironmentRpcQueryAtomFamily(conn
   staleTimeMs: 10_000,
 });
 
+/**
+ * What one assistant turn's memory block held and why (the "Context used"
+ * view), read only when the owner opens it. The turn is named by the message
+ * that started it.
+ */
+export const personalMemoryTurnContext = createEnvironmentRpcQueryAtomFamily(
+  connectionAtomRuntime,
+  {
+    label: "personal-memory:turn-context",
+    tag: WS_METHODS.personalMemoryTurnContext,
+    staleTimeMs: 30_000,
+  },
+);
+
 /** How many tidy-up runs the Memory screen's changelog shows. */
 export const TIDY_LOG_INPUT = { limit: 10 } as const;
 
@@ -229,6 +243,13 @@ export const personalRoutineRegenerateHook = createEnvironmentRpcCommand(connect
 export const personalMemoryDelete = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-memory:delete",
   tag: WS_METHODS.personalMemoryDelete,
+  onSuccess: refreshMemory,
+});
+
+/** Marks a note or task summary outdated or not relevant (ranked lower, never deleted), or clears it. */
+export const personalMemoryFeedback = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-memory:feedback",
+  tag: WS_METHODS.personalMemoryFeedback,
   onSuccess: refreshMemory,
 });
 
@@ -452,6 +473,23 @@ export function usePersonalReplacedMemory(environmentId: EnvironmentId | null) {
         ? null
         : personalMemoryList({ environmentId, input: SUPERSEDED_MEMORY_INPUT }),
     [environmentId],
+  );
+  return useEnvironmentQuery(atom);
+}
+
+/** One turn's memory, fetched only while `turn` is given (the panel is open). */
+export function usePersonalMemoryTurnContext(
+  environmentId: EnvironmentId | null,
+  turn: { readonly threadId: string; readonly messageId: string } | null,
+) {
+  const threadId = turn?.threadId ?? null;
+  const messageId = turn?.messageId ?? null;
+  const atom = useMemo(
+    () =>
+      environmentId === null || threadId === null || messageId === null
+        ? null
+        : personalMemoryTurnContext({ environmentId, input: { threadId, messageId } }),
+    [environmentId, threadId, messageId],
   );
   return useEnvironmentQuery(atom);
 }

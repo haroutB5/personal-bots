@@ -521,9 +521,9 @@ export function rulesUsageCardModel(usage: PersonalMemoryRulesUsage): RulesUsage
   return {
     tone: "near",
     headline: `Rules are ${percent}% of the limit`,
-    detail: `${worst.botName} can be given up to ${worst.entries} of ${usage.maxEntries} rules at once (${compactChars(worst.chars)} of ${compactChars(usage.maxChars)} characters), ${
+    detail: `${worst.botName} can be given up to ${worst.entries} of ${usage.maxEntries} rules at once (${compactChars(worst.chars)} of ${compactChars(usage.maxChars)} characters). ${
       usage.scoping
-        ? "counting every app. Rules for one app are only listed in chats about it. Past the limit some app rules would be left out of a chat, and the bot told which."
+        ? "That counts every app. Rules for one app are only listed in chats about it. Past the limit some app rules would be left out of a chat, and the bot told which."
         : "App scoping is off, so every rule goes to every chat, and past the limit the oldest are dropped first."
     }`,
     rows,
