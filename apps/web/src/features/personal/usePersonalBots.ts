@@ -42,16 +42,16 @@ export const personalFilesList = createEnvironmentRpcQueryAtomFamily(connectionA
 });
 
 /**
- * Tokens used per bot over Today, 7 days and 30 days, for the Team screen. The
- * server answers from a snapshot it refreshes at most every ten minutes, so
- * this reads it as often and no oftener while the screen is open.
+ * Tokens used per bot over Today, 7 days and 30 days, for the Team screen. No
+ * `refreshIntervalMs` on purpose: the atom's timer would outlive the card for
+ * the whole idle retention and ask the server (which starts a scan) with
+ * nobody looking. The mounted card refreshes it (`useTokenUsageRefresh`).
  */
 export const personalBotsTokenUsage = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "personal-bots:token-usage",
   tag: WS_METHODS.personalBotsTokenUsage,
   staleTimeMs: 60_000,
   idleTtlMs: 10 * 60_000,
-  refreshIntervalMs: 10 * 60_000,
 });
 
 const refreshBotsList = (

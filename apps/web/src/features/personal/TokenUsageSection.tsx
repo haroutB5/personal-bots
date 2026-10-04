@@ -38,6 +38,83 @@ import {
  * chip and a strong bar, so the top is plain without colour. A tap opens the
  * bot, the same link the diagram's nodes use, so Back lands on this screen.
  */
+/** The refresh while the card is open: what is shown is never older than this by much. */
+export const TOKEN_USAGE_REFRESH_MS = 10 * 60_000;
+
+const pageVisible = (): boolean =>
+  typeof document === "undefined" || document.visibilityState !== "hidden";
+
+/**
+ * Everything that re-asks the server for token usage, and nothing else does:
+ * the query atom has no refresh timer of its own, because an atom's timer
+ * outlives its subscriber for the whole idle retention (it asked, and so
+ * started a scan, ten minutes after the card had gone). These timers belong to
+ * the mounted card, so unmounting stops them, and they stand down while the
+ * page is hidden.
+ *
+ * - every ten minutes, to keep the numbers current while the card is open;
+ * - every few seconds while the server is still counting (`warming`, or a
+ *   stale snapshot being refreshed), up to a bound;
+ * - once when the page comes back from hidden with numbers older than ten
+ *   minutes.
+ */
+export function useTokenUsageRefresh(input: {
+  readonly status: PersonalBotTokenUsageResult["status"] | undefined;
+  readonly dataUpdatedAt: number | null;
+  readonly refresh: () => void;
+}): { readonly restartPolling: () => void } {
+  const { status } = input;
+  const pollsRef = useRef(0);
+  const refreshRef = useRef(input.refresh);
+  const updatedRef = useRef(input.dataUpdatedAt);
+  useEffect(() => {
+    refreshRef.current = input.refresh;
+    updatedRef.current = input.dataUpdatedAt;
+  });
+  const [visible, setVisible] = useState(pageVisible);
+
+  useEffect(() => {
+    const onChange = () => {
+      const nowVisible = pageVisible();
+      setVisible(nowVisible);
+      if (!nowVisible) return;
+      const updated = updatedRef.current;
+      if (updated === null || Date.now() - updated >= TOKEN_USAGE_REFRESH_MS) refreshRef.current();
+    };
+    document.addEventListener("visibilitychange", onChange);
+    return () => document.removeEventListener("visibilitychange", onChange);
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    const timer = window.setInterval(() => refreshRef.current(), TOKEN_USAGE_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [visible]);
+
+  useEffect(() => {
+    if (!isTokenUsagePending(status)) {
+      pollsRef.current = 0;
+      return;
+    }
+    if (!visible) return;
+    const timer = window.setInterval(() => {
+      if (pollsRef.current >= TOKEN_USAGE_MAX_POLLS) {
+        window.clearInterval(timer);
+        return;
+      }
+      pollsRef.current += 1;
+      refreshRef.current();
+    }, TOKEN_USAGE_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [status, visible]);
+
+  return {
+    restartPolling: () => {
+      pollsRef.current = 0;
+    },
+  };
+}
+
 export function TokenUsageSection({
   environmentId,
   bots,
@@ -55,37 +132,18 @@ export function TokenUsageSection({
   const nowMs = useMinuteNow();
   const status = usage.data?.status;
 
-  // Ask again soon while the server is still counting (the first count after a
-  // restart, or a stale snapshot being refreshed), then leave it to the
-  // ten-minute refresh.
-  const pollsRef = useRef(0);
-  const refreshRef = useRef(usage.refresh);
-  useEffect(() => {
-    refreshRef.current = usage.refresh;
+  const { restartPolling } = useTokenUsageRefresh({
+    status,
+    dataUpdatedAt: usage.dataUpdatedAt,
+    refresh: usage.refresh,
   });
-  useEffect(() => {
-    if (!isTokenUsagePending(status)) {
-      pollsRef.current = 0;
-      return;
-    }
-    const timer = window.setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      if (pollsRef.current >= TOKEN_USAGE_MAX_POLLS) {
-        window.clearInterval(timer);
-        return;
-      }
-      pollsRef.current += 1;
-      refreshRef.current();
-    }, TOKEN_USAGE_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [status]);
 
   return (
     <TokenUsageCard
       result={usage.data}
       error={usage.error}
       onRetry={() => {
-        pollsRef.current = 0;
+        restartPolling();
         usage.refresh();
       }}
       bots={bots}

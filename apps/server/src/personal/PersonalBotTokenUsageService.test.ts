@@ -199,6 +199,34 @@ it.effect("a snapshot under ten minutes old is served without scanning", () => {
   }).pipe(Effect.provide(harness(scanner)));
 });
 
+it.effect("starts no scan on its own: an expired snapshot waits for the next read", () => {
+  const scanner = fakeScanner();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* TestClock.setTime(NOW_MS);
+    const service = yield* PersonalBotTokenUsage.PersonalBotTokenUsage;
+    yield* service.read(input);
+    yield* settle;
+    yield* Deferred.succeed(scanner.runs[0]!.release, undefined);
+    yield* settle;
+
+    // Hours pass with nobody looking: nothing runs.
+    yield* TestClock.adjust(6 * 60 * MINUTE_MS);
+    yield* settle;
+    expect(scanner.runs).toHaveLength(1);
+
+    // One read starts exactly one refresh; when it lands, nothing follows it.
+    yield* service.read(input);
+    yield* settle;
+    expect(scanner.runs).toHaveLength(2);
+    yield* Deferred.succeed(scanner.runs[1]!.release, undefined);
+    yield* settle;
+    yield* TestClock.adjust(6 * 60 * MINUTE_MS);
+    yield* settle;
+    expect(scanner.runs).toHaveLength(2);
+  }).pipe(Effect.provide(harness(scanner)));
+});
+
 it.effect("an older snapshot is returned at once while one background refresh runs", () => {
   const scanner = fakeScanner();
   return Effect.gen(function* () {
