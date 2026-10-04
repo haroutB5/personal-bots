@@ -14,6 +14,7 @@ import {
   SqlitePersistenceMemory,
   WAL_SIZE_LIMIT_BYTES,
   makeSqlitePersistenceLive,
+  sqliteSynchronousFromEnv,
 } from "./Sqlite.ts";
 
 const lockHolderSource = `
@@ -93,4 +94,47 @@ it.effect("applies busy_timeout in the shared persistence setup", () =>
     const rows = yield* sql<{ readonly timeout: number }>`PRAGMA busy_timeout`;
     assert.equal(rows[0]?.timeout, 5000);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it("syncs the WAL only at checkpoints unless the kill switch asks for FULL", () => {
+  assert.strictEqual(sqliteSynchronousFromEnv(undefined), "NORMAL");
+  assert.strictEqual(sqliteSynchronousFromEnv(""), "NORMAL");
+  assert.strictEqual(sqliteSynchronousFromEnv("normal"), "NORMAL");
+  assert.strictEqual(sqliteSynchronousFromEnv("full"), "FULL");
+  assert.strictEqual(sqliteSynchronousFromEnv(" FULL "), "FULL");
+  assert.strictEqual(sqliteSynchronousFromEnv("2"), "FULL");
+});
+
+const readSynchronous = (envValue: string | undefined) => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-sync-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+  const previous = process.env.T3CODE_SQLITE_SYNCHRONOUS;
+  if (envValue === undefined) delete process.env.T3CODE_SQLITE_SYNCHRONOUS;
+  else process.env.T3CODE_SQLITE_SYNCHRONOUS = envValue;
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql<{ readonly synchronous: number }>`PRAGMA synchronous`;
+    return row!.synchronous;
+  }).pipe(
+    Effect.provide(makeSqlitePersistenceLive(dbPath).pipe(Layer.provide(NodeServices.layer))),
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (previous === undefined) delete process.env.T3CODE_SQLITE_SYNCHRONOUS;
+        else process.env.T3CODE_SQLITE_SYNCHRONOUS = previous;
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }),
+    ),
+  );
+};
+
+it.effect("opens the server database with synchronous=NORMAL (1) by default", () =>
+  Effect.gen(function* () {
+    assert.strictEqual(yield* readSynchronous(undefined), 1);
+  }),
+);
+
+it.effect("opens the server database with synchronous=FULL (2) when the kill switch is set", () =>
+  Effect.gen(function* () {
+    assert.strictEqual(yield* readSynchronous("full"), 2);
+  }),
 );

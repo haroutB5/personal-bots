@@ -49,6 +49,8 @@ $nodeExe = Resolve-NodeExe -Node $Node
 $null = Import-RepoDotEnv
 Clear-DevOriginEnv
 $env:T3CODE_ENVIRONMENT_LABEL = $Label
+# Event loop stall reports (one small JSON per stall, 20 kept) go beside the server logs.
+$env:T3CODE_PERSONAL_STALL_DIR = Join-Path $paths.LogsDir 'stalls'
 
 # A fixed port per root. On a loopback bind the server names its session cookie
 # t3_session_<port>_<instance>, so a random port per start would sign every
