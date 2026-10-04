@@ -1893,7 +1893,23 @@ const make = Effect.gen(function* () {
             Option.isSome(pendingTurnStart)
           : false;
 
+      // The exit of a session the thread has since moved off: a bot chat that
+      // follows its bot to another provider stops the old session after the
+      // thread already points at the new one. That exit says nothing about the
+      // new session, and as a "stopped" state it ended the task, routine or
+      // group turn that caused the move. An event that names no instance is
+      // compared by driver.
+      const replacedSessionExit =
+        event.type === "session.exited" &&
+        thread.session != null &&
+        (event.providerInstanceId !== undefined && thread.session.providerInstanceId != null
+          ? event.providerInstanceId !== thread.session.providerInstanceId
+          : event.provider !== thread.session.providerName);
+
       const shouldApplyThreadLifecycle = (() => {
+        if (replacedSessionExit) {
+          return false;
+        }
         if (!STRICT_PROVIDER_LIFECYCLE_GUARD) {
           return true;
         }

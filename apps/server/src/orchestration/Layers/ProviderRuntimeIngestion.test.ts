@@ -5284,6 +5284,69 @@ describe("ProviderRuntimeIngestion", () => {
     expect((await session())?.status).toBe("stopped");
   });
 
+  it("the exit of a session the thread moved off is not the new session's stop", async () => {
+    // A bot chat that follows its bot to another provider stops the old session
+    // once the thread already points at the new one. That exit used to set the
+    // thread "stopped", which ended the task, routine or group turn that caused
+    // the move although its reply was on the way.
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const setSession = (
+      instance: string,
+      driver: string,
+      status: "starting" | "ready",
+      at: string,
+    ) =>
+      harness.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make(`cmd-session-${instance}-${status}-${at}`),
+        threadId,
+        session: {
+          threadId,
+          status,
+          providerName: driver,
+          providerInstanceId: ProviderInstanceId.make(instance),
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: at,
+        },
+        createdAt: at,
+      });
+    const exited = (id: string, driver: string, instance: string | undefined, at: string) =>
+      harness.emitAndDrain([
+        {
+          type: "session.exited",
+          eventId: asEventId(id),
+          provider: ProviderDriverKind.make(driver),
+          ...(instance === undefined
+            ? {}
+            : { providerInstanceId: ProviderInstanceId.make(instance) }),
+          createdAt: at,
+          threadId,
+          payload: {},
+        },
+      ]);
+    const session = async () =>
+      (await harness.readModel()).threads.find((entry) => entry.id === threadId)?.session;
+
+    // The chat moved to Claude; Codex's exit arrives afterwards, with or without its instance.
+    await setSession("claudeAgent", "claudeAgent", "starting", "2026-01-01T00:00:01.000Z");
+    await exited("evt-old-codex-exit", "codex", "codex", "2026-01-01T00:00:02.000Z");
+    expect(await session()).toMatchObject({ status: "starting", providerName: "claudeAgent" });
+    await exited("evt-old-codex-exit-bare", "codex", undefined, "2026-01-01T00:00:02.500Z");
+    expect(await session()).toMatchObject({ status: "starting", providerName: "claudeAgent" });
+
+    // Two instances of one driver are told apart by instance.
+    await setSession("claude_work", "claudeAgent", "ready", "2026-01-01T00:00:03.000Z");
+    await exited("evt-old-instance-exit", "claudeAgent", "claude_home", "2026-01-01T00:00:04.000Z");
+    expect(await session()).toMatchObject({ status: "ready", providerInstanceId: "claude_work" });
+
+    // The current session's own exit still stops the thread.
+    await exited("evt-current-exit", "claudeAgent", "claude_work", "2026-01-01T00:00:05.000Z");
+    expect((await session())?.status).toBe("stopped");
+  });
+
   it("projects structured user input request and resolution as thread activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

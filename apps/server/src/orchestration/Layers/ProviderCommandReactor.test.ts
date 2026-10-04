@@ -5068,6 +5068,36 @@ describe("ProviderCommandReactor", () => {
       ).toEqual([]);
     });
 
+    it("the thread already points at the new provider when the old session is stopped", async () => {
+      // The old session's exit arrives after the stop. It is told apart from
+      // the new session's by the instance the thread points at, so the thread
+      // must be moved first: otherwise a task, routine or group turn that
+      // caused the move reads the exit as its own turn's end.
+      const seen: Array<string | undefined> = [];
+      const holder: { harness?: Harness } = {};
+      const harness = await createHarness({
+        threadModelSelection: CLAUDE,
+        personalBotThread: true,
+        botModelSelection: CLAUDE,
+        stopSessionEffect: () =>
+          Effect.promise(async () => {
+            const thread = (await holder.harness!.readModel()).threads.find(
+              (entry) => entry.id === threadId,
+            );
+            seen.push(thread?.session?.providerInstanceId ?? undefined);
+          }),
+      });
+      holder.harness = harness;
+      await sendMessage(harness, "msg-before-move", "Hello.", { modelSelection: CLAUDE });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+      await setBotModel(harness, CODEX);
+      await sendMessage(harness, "msg-move", "Are you on Codex?", { modelSelection: CLAUDE });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+      await harness.drain();
+      expect(seen).toEqual(["codex"]);
+    });
+
     it("a stale client selection never refuses a bot chat that already follows its bot", async () => {
       const harness = await createHarness({
         threadModelSelection: CODEX,
