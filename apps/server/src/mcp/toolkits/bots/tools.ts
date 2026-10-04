@@ -529,7 +529,7 @@ const UpdateWorkRecordTool = Tool.make("update_work_record", {
 
 const ReadChatHistoryTool = Tool.make("read_chat_history", {
   description:
-    "Read earlier messages of THIS chat, newest first, when you need an exact detail (a command, a message, a number, a result) that is not in your context. A reopened task can start a fresh session with only its work record and the end of the chat, and this is how you reach the rest: search with query, or page back with beforeMessageId (use the messageId of the oldest message you have). Each text is cut at 1,200 characters. It reads only this chat, never another.",
+    "Read earlier messages of THIS chat, newest first, when you need an exact detail (a command, a message, a number, a result) that is not in your context. A reopened task can start a fresh session with only its work record and the end of the chat, and this is how you reach the rest: search with query, or page back with beforeMessageId (use the messageId of the oldest message you have). Each text is cut at 1,200 characters. It reads messages only: it cannot show tool output (files you read, command results), so run the command or read the file again if you need it. It reads only this chat, never another.",
   parameters: ReadChatHistoryInput,
   success: ReadChatHistoryResult,
   failure: BotsToolFailure,

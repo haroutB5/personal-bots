@@ -20,7 +20,7 @@ import {
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
-import { markSessionReplaced } from "../replacedSessions.ts";
+import { markSessionReplaced, unmarkSessionReplaced } from "../replacedSessions.ts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -1022,13 +1022,15 @@ const make = Effect.gen(function* () {
         // instance it looks like the new session's own, so the stop is marked:
         // the ingestion ignores that one exit instead of reading it as the end
         // of the turn that caused the restart.
-        markSessionReplaced({
+        // Set before the stop: the exit can arrive before stopSession returns.
+        const markId = markSessionReplaced({
           threadId,
           provider: activeSession.provider,
           instanceId: activeSession.providerInstanceId,
           nowMs: DateTime.toEpochMillis(yield* DateTime.now),
         });
-        yield* providerService.stopSession({ threadId }).pipe(
+        const stopped = yield* providerService.stopSession({ threadId }).pipe(
+          Effect.as(true),
           Effect.catchCause((cause) =>
             Cause.hasInterruptsOnly(cause)
               ? Effect.interrupt
@@ -1036,9 +1038,19 @@ const make = Effect.gen(function* () {
                   threadId,
                   provider: activeSession.provider,
                   cause: Cause.pretty(cause),
-                }),
+                }).pipe(Effect.as(false)),
           ),
         );
+        // A stop that failed, or that left the session listed, stopped nothing:
+        // no exit will come for the mark, and it must not wait to swallow the
+        // exit of a new session that fails.
+        const stillListed = stopped
+          ? yield* providerService.listSessions().pipe(
+              Effect.map((sessions) => sessions.some((session) => session.threadId === threadId)),
+              Effect.orElseSucceed(() => false),
+            )
+          : false;
+        if (!stopped || stillListed) unmarkSessionReplaced(threadId, markId);
       }
       yield* Effect.logInfo("provider command reactor starting a fresh provider session", {
         threadId,

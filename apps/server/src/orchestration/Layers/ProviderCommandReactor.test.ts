@@ -5297,6 +5297,36 @@ describe("ProviderCommandReactor", () => {
       expect(isFreshTaskTurn(undefined)).toBe(false);
     });
 
+    it("a stop that failed leaves no mark behind", async () => {
+      clearReplacedSessions();
+      const harness = await createHarness({
+        threadModelSelection: CLAUDE,
+        personalBotThread: true,
+        botModelSelection: CLAUDE,
+        sendTurnEffect: (call) => (call === 2 ? Effect.fail(missingConversation()) : undefined),
+        stopSessionEffect: () =>
+          Effect.fail(
+            new ProviderAdapterRequestError({
+              provider: "claudeAgent",
+              method: "stopSession",
+              detail: "The session was already gone.",
+            }),
+          ),
+      });
+      await sendMessage(harness, "msg-first-failed-stop", "Remember 42.", {
+        modelSelection: CLAUDE,
+      });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+      await sendMessage(harness, "msg-lost-failed-stop", "And again?", { modelSelection: CLAUDE });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 3);
+      await harness.drain();
+      // The stop was tried, nothing stopped, so no exit is awaited and no mark waits.
+      expect(harness.stopSession).toHaveBeenCalledWith({ threadId });
+      expect(peekReplacedSession("thread-1")).toBeUndefined();
+      clearReplacedSessions();
+    });
+
     it("a renewal that fails too leaves the chat in error with the real reason", async () => {
       const harness = await createHarness({
         threadModelSelection: CLAUDE,

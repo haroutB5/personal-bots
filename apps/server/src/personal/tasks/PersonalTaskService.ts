@@ -505,7 +505,7 @@ const PERSONAL_TASK_REOPEN_NOTE_PREFIX = "reopen:";
 
 /** Tells a bot that a reopened task started a fresh session, and where its state is. */
 export const FRESH_SESSION_NOTE =
-  "This task was reopened after a long chat, so you start a fresh session and the earlier conversation is not in your context. The work record below is your state. When you need an exact detail (a command, a message, a result), call read_chat_history: it reads this chat's earlier messages, newest first, and can search them.";
+  "This task was reopened after a long chat, so you start a fresh session and the earlier conversation is not in your context. The work record below is your state. When you need an exact detail from a message (a request, a number, a decision), call read_chat_history: it reads this chat's earlier messages, newest first, and can search them. It cannot show tool output (files you read, command results): run the command or read the file again if you need it.";
 
 /** Ends a reopened task's continuation turn text, after the steer that reopened it. */
 export const reopenNote = (status: PersonalTaskStatus) =>
@@ -1154,7 +1154,19 @@ export const make = Effect.gen(function* () {
     const record = yield* readWorkRecord(task.taskId).pipe(Effect.orElseSucceed(() => null));
     if (record === null || !workRecordHasContent(record)) return null;
     const used = yield* latestContextTokens(attempt.providerThreadId);
-    if (used === null || used < threshold) return null;
+    if (used === null) {
+      // Said once per reopen, so a resume that looks like it should have been fresh is explained.
+      yield* Effect.logInfo(
+        "personal task reopened and resumed: the provider reported no context size for this chat",
+        {
+          taskId: task.taskId,
+          threadId: attempt.providerThreadId,
+          threshold,
+        },
+      );
+      return null;
+    }
+    if (used < threshold) return null;
     const text = renderWorkRecord(record);
     yield* Effect.logInfo("personal task reopened on a fresh session", {
       taskId: task.taskId,

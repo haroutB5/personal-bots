@@ -38,7 +38,11 @@ import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
-import { clearReplacedSessions, markSessionReplaced } from "../replacedSessions.ts";
+import {
+  clearReplacedSessions,
+  markSessionReplaced,
+  unmarkSessionReplaced,
+} from "../replacedSessions.ts";
 import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
@@ -5396,6 +5400,53 @@ describe("ProviderRuntimeIngestion", () => {
     expect(await status()).toBe("ready");
     await exited("evt-new-session-exit", "2026-01-01T00:00:04.000Z");
     expect(await status()).toBe("stopped");
+    clearReplacedSessions();
+  });
+
+  it("a failing new session's exit is not swallowed once the stop is taken back", async () => {
+    // The reactor marked a stop that stopped nothing, then took the mark back: the new
+    // session that fails right after starting must stop the thread, not vanish.
+    clearReplacedSessions();
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const instance = ProviderInstanceId.make("claudeAgent");
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-ready-unmarked"),
+      threadId,
+      session: {
+        threadId,
+        status: "ready",
+        providerName: "claudeAgent",
+        providerInstanceId: instance,
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-01-01T00:00:01.000Z",
+      },
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    const id = markSessionReplaced({
+      threadId,
+      provider: "claudeAgent",
+      instanceId: instance,
+      nowMs: Date.parse("2026-01-01T00:00:02.000Z"),
+    });
+    unmarkSessionReplaced(threadId, id);
+    await harness.emitAndDrain([
+      {
+        type: "session.exited",
+        eventId: asEventId("evt-new-session-fails"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: instance,
+        createdAt: "2026-01-01T00:00:03.000Z",
+        threadId,
+        payload: {},
+      },
+    ]);
+    const status = (await harness.readModel()).threads.find((entry) => entry.id === threadId)
+      ?.session?.status;
+    expect(status).toBe("stopped");
     clearReplacedSessions();
   });
 

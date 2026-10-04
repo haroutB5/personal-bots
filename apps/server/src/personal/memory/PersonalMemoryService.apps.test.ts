@@ -659,6 +659,42 @@ describe("Context used: what a turn was given, and the owner's marks (1.60.41)",
       }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.effect(
+    "an entry's mark goes when it is forgotten, removed or superseded, and a restored entry starts clean",
+    () =>
+      Effect.gen(function* () {
+        yield* linkThread("Chat");
+        const memory = yield* PersonalMemoryService;
+        const sql = yield* SqlClient.SqlClient;
+        const marks = () =>
+          sql<{ readonly memoryId: string }>`
+            SELECT memory_id AS "memoryId" FROM personal_memory_feedback ORDER BY memory_id
+          `.pipe(Effect.map((rows) => rows.map((row) => row.memoryId)));
+
+        const forgotten = yield* saveNote("The old gate code note.");
+        const removed = yield* saveNote("The old alarm note.");
+        const hardDeleted = yield* saveNote("The old router note.");
+        const kept = yield* saveNote("The kitchen note.");
+        for (const entry of [forgotten, removed, hardDeleted, kept]) {
+          yield* memory.setFeedback({ memoryId: entry.memoryId, signal: "outdated" });
+        }
+        expect(yield* marks()).toHaveLength(4);
+
+        // Forgetting (a supersede with no successor) takes its mark; restoring does not bring it back.
+        yield* memory.forget({ memoryId: forgotten.memoryId, actorBotId: BOT_A });
+        expect(yield* marks()).not.toContain(forgotten.memoryId);
+        yield* memory.restore({ memoryId: forgotten.memoryId });
+        expect((yield* memory.get(forgotten.memoryId)).demoted).toBeNull();
+
+        // A soft delete and a hard delete do too.
+        const now = DateTime.formatIso(yield* DateTime.now);
+        yield* sql`UPDATE personal_memory SET deleted_at = ${now} WHERE memory_id = ${removed.memoryId}`;
+        expect(yield* marks()).not.toContain(removed.memoryId);
+        yield* sql`DELETE FROM personal_memory WHERE memory_id = ${hardDeleted.memoryId}`;
+        expect(yield* marks()).toEqual([kept.memoryId]);
+      }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("a rule cannot be marked: rules change only through an approval", () =>
     Effect.gen(function* () {
       yield* linkThread("Chat");

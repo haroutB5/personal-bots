@@ -17,10 +17,46 @@ const SECRET_PATTERNS: ReadonlyArray<RegExp> = [
 ];
 
 /**
+ * `lenient` is for text that is mostly links, paths and commit ids (a task's
+ * work record): the long-token rule then leaves alone a pure hex token of 40
+ * or 64 characters (a commit or a sha256), anything inside an http(s) link,
+ * and a path (four or more short segments). The named credential formats
+ * (private keys, sk-, ghp_, xox, AKIA, JWTs, "password: ...") still apply.
+ * Memory stays strict.
+ */
+export interface SecretCheckOptions {
+  readonly lenient?: boolean | undefined;
+}
+
+const LONG_TOKEN = /[A-Za-z0-9+/_=-]{40,}/g;
+const URL_SPAN = /https?:\/\/[^\s)>\]"'`]+/g;
+const PURE_HEX = /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/;
+
+/** Whether a long token reads as a key (letters and digits mixed), given the exemptions of `lenient`. */
+function readsAsKey(
+  token: string,
+  offset: number,
+  urls: ReadonlyArray<readonly [number, number]>,
+  lenient: boolean,
+): boolean {
+  if (!(/[A-Za-z]/.test(token) && /\d/.test(token))) return false;
+  if (!lenient) return true;
+  if (PURE_HEX.test(token)) return false;
+  if (urls.some(([from, to]) => offset >= from && offset < to)) return false;
+  const segments = token.split("/");
+  return !(segments.length >= 4 && segments.every((segment) => segment.length <= 32));
+}
+
+const urlSpans = (text: string): ReadonlyArray<readonly [number, number]> =>
+  [...text.matchAll(URL_SPAN)].map(
+    (match) => [match.index, match.index + match[0].length] as const,
+  );
+
+/**
  * The text with anything credential-shaped replaced by "[redacted]": for
  * reasons, errors and file names the app stores or shows beside memory.
  */
-export function redactSecrets(text: string): string {
+export function redactSecrets(text: string, options: SecretCheckOptions = {}): string {
   let out = text;
   for (const pattern of SECRET_PATTERNS) {
     out = out.replace(
@@ -28,8 +64,9 @@ export function redactSecrets(text: string): string {
       "[redacted]",
     );
   }
-  return out.replace(/[A-Za-z0-9+/_=-]{40,}/g, (token) =>
-    /[A-Za-z]/.test(token) && /\d/.test(token) ? "[redacted]" : token,
+  const urls = options.lenient === true ? urlSpans(out) : [];
+  return out.replace(LONG_TOKEN, (token, offset: number) =>
+    readsAsKey(token, offset, urls, options.lenient === true) ? "[redacted]" : token,
   );
 }
 
@@ -37,11 +74,13 @@ export function redactSecrets(text: string): string {
  * True when text looks like it carries a credential. Memory never stores
  * secrets: the secret store is the only place for those.
  */
-export function looksLikeSecret(text: string): boolean {
+export function looksLikeSecret(text: string, options: SecretCheckOptions = {}): boolean {
   if (SECRET_PATTERNS.some((pattern) => pattern.test(text))) return true;
   // A long unbroken token mixing letters and digits reads as a key.
-  for (const token of text.match(/[A-Za-z0-9+/_=-]{40,}/g) ?? []) {
-    if (/[A-Za-z]/.test(token) && /\d/.test(token)) return true;
+  const lenient = options.lenient === true;
+  const urls = lenient ? urlSpans(text) : [];
+  for (const match of text.matchAll(LONG_TOKEN)) {
+    if (readsAsKey(match[0], match.index, urls, lenient)) return true;
   }
   return false;
 }
