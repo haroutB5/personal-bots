@@ -1,6 +1,6 @@
 # hbots 1.60.40: app-scoped rules, rules cap warning, conversation-aware memory retrieval
 
-Branch `feat/memory-app-scope`, on top of `fix/bot-chat-provider-wins` (1.60.39, `9c7d97bf75`). Migration **093** (additive). `PERSONAL_TASKS_CONCURRENCY` stays 5. Staged with `build.ps1 -CopyExternals -NoActivate`. Two commits: the memory work, and a separate fix for a bug QA found on 1.60.38 (below). Astra's review items 1 to 3, approved by Harout ("Do all").
+Branch `feat/memory-app-scope`, on top of `fix/bot-chat-provider-wins` (1.60.39, `9c7d97bf75`). Migration **093** (additive). `PERSONAL_TASKS_CONCURRENCY` stays 5. Staged with `build.ps1 -CopyExternals -NoActivate`. Commits: the memory work, a separate fix for a bug QA found on 1.60.38 (section 4), and the retrieval refinements with this HANDOFF. Astra's review items 1 to 3, approved by Harout ("Do all").
 
 ## What the premise was, and what the live memory really holds
 
