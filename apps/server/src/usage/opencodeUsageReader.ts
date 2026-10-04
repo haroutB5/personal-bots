@@ -161,6 +161,7 @@ function readRowsInWorker(
       void worker.terminate();
       resolve(value);
     };
+    // @effect-diagnostics-next-line globalTimers:off - a plain promise around a worker, outside any fiber
     const timer = setTimeout(() => finish(null), WORKER_TIMEOUT_MS);
     worker.once("message", (value: ReadonlyArray<OpenCodeRowsResult>) => finish(value));
     worker.once("error", () => finish(null));
