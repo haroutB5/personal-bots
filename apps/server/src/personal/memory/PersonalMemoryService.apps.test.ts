@@ -563,6 +563,9 @@ describe("Context used: what a turn was given, and the owner's marks (1.60.41)",
         expect(view!.rules.index).toBe("hbots: 1 rule");
         expect(view!.notes.map((entry) => entry.memoryId)).toEqual([note.memoryId]);
         expect(view!.notes[0]).toMatchObject({ kind: "note", feedback: null, current: true });
+        // Whatever was cut says why, in words the owner can read.
+        for (const cut of view!.leftOut)
+          expect(cut.reason).toContain("matched much less than the best");
         expect(view!.notes[0]!.snippet).toContain("Matchday dots were redesigned");
         expect(view!.query.terms.length).toBeGreaterThan(0);
         // A message that started no recorded turn has nothing.

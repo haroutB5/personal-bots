@@ -59,6 +59,14 @@ export function feedbackLabel(signal: PersonalMemoryFeedbackSignal): string {
   return signal === "outdated" ? "Marked outdated" : "Marked not relevant";
 }
 
+/** A turn's trace is kept this long (the server clears older ones): older replies show no line. */
+export const CONTEXT_USED_KEEP_DAYS = 14;
+
+/** Whether a reply is recent enough to still have a recorded turn. */
+export function hasRecordedContext(replyAt: Date, now: Date): boolean {
+  return now.getTime() - replyAt.getTime() < CONTEXT_USED_KEEP_DAYS * 86_400_000;
+}
+
 /** The note kind in words. */
 export function noteKindLabel(kind: string): string {
   return kind === "task_summary" ? "Task summary" : kind === "preference" ? "Rule" : "Note";

@@ -1459,7 +1459,10 @@ export const make = Effect.gen(function* () {
         ...[...notes.leftOut, ...summaries.leftOut].map((row) => ({
           memoryId: row.entry.memoryId,
           kind: row.entry.kind,
-          reason: row.why.length > 0 ? row.why.join(", ") : "matched less than the best entries",
+          reason:
+            row.why.length > 0
+              ? `matched much less than the best entries (${row.why.join(", ")})`
+              : "matched much less than the best entries",
           snippet: snippetOf(row.entry.content, TRACE_LEFT_OUT_SNIPPET_CHARS),
         })),
       ].slice(0, TRACE_LEFT_OUT_MAX);

@@ -8,6 +8,7 @@ import {
   appChipLabel,
   contextUsedSummary,
   feedbackLabel,
+  hasRecordedContext,
   nextFeedback,
   rulesHeadline,
   turnStartByAssistantItem,
@@ -143,6 +144,13 @@ describe("Context used helpers", () => {
       "The 2 rules listed earlier in this chat still applied.",
     );
     expect(rulesHeadline({ ...context().rules, items: [] })).toBe("No rules applied.");
+  });
+
+  it("shows the line only for replies recent enough to have a recorded turn", () => {
+    const now = new Date("2026-10-20T12:00:00.000Z");
+    expect(hasRecordedContext(new Date("2026-10-19T12:00:00.000Z"), now)).toBe(true);
+    expect(hasRecordedContext(new Date("2026-10-07T12:00:00.000Z"), now)).toBe(true);
+    expect(hasRecordedContext(new Date("2026-10-05T12:00:00.000Z"), now)).toBe(false);
   });
 
   it("pressing a mark sets it, pressing it again takes it back, the other one switches", () => {

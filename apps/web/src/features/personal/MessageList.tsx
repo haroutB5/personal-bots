@@ -26,7 +26,7 @@ import { type ConversationItem, formatDayDivider } from "./conversationModel";
 import type { ServerTurn } from "./delegationModel";
 import { chatNoticeLabel, chatNoticeUndo, isServerTurnNotice } from "./chatNotices";
 import { ContextUsed } from "./ContextUsedPanel";
-import { turnStartByAssistantItem } from "./contextUsed";
+import { hasRecordedContext, turnStartByAssistantItem } from "./contextUsed";
 import { NoteNoticeRow } from "./NoteNoticeRow";
 import { groupSystemLabel, readGroupMarker } from "./groupModel";
 import { QuestionCard } from "./QuestionCard";
@@ -992,7 +992,9 @@ export function MessageList({
                       workspaceRoot={workspaceRoot}
                       botName={botName}
                     />
-                    {item.message.streaming || !turnStarts.has(item.id) ? null : (
+                    {item.message.streaming ||
+                    !turnStarts.has(item.id) ||
+                    !hasRecordedContext(new Date(item.message.createdAt), now) ? null : (
                       <ContextUsed
                         environmentId={environmentId}
                         threadId={String(threadRef.threadId)}
