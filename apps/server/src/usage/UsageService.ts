@@ -63,9 +63,9 @@ import {
   readTranscriptRecords,
 } from "./usageTranscriptReader.ts";
 import {
-  decodeScanCache,
+  decodeScanCacheText,
   dedupeWithinFile,
-  encodeScanCache,
+  encodeScanCacheLines,
   pruneScanCache,
   type ScanCache,
 } from "./usageScanCache.ts";
@@ -105,11 +105,10 @@ const encodeRatesCache = Schema.encodeEffect(
   Schema.fromJsonString(RatesCacheFile as unknown as Schema.Codec<typeof RatesCacheFile.Type>),
 );
 
-/** The scan cache is narrowed by hand in `usageScanCache`, so JSON is enough here. */
-const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
-const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
-const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
-const encodeUsageRecordKey = Schema.encodeSync(ScanCacheJson);
+/** Codex events have no id of their own, so the summary keys them by their JSON content. */
+const encodeUsageRecordKey = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>),
+);
 const CachedSource = Schema.Struct({ dir: Schema.String, volumeId: Schema.String });
 const decodeCachedSources = Schema.decodeUnknownOption(
   Schema.Struct({ sources: Schema.Record(Schema.String, CachedSource) }),
@@ -385,13 +384,15 @@ export const make = Effect.gen(function* () {
    */
   const ensureScanCacheLoaded = yield* Effect.cached(
     Effect.gen(function* () {
-      const document = yield* fileSystem.readFileString(scanCachePath).pipe(
-        Effect.flatMap((raw) => decodeScanCacheFile(raw)),
-        Effect.catchCause(() => Effect.succeed(null)),
-      );
-      if (document === null) return;
-      for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
-      const sources = decodeCachedSources(document);
+      const text = yield* fileSystem
+        .readFileString(scanCachePath)
+        .pipe(Effect.catchCause(() => Effect.succeed(null)));
+      if (text === null) return;
+      // Decoded a file at a time, yielding to the event loop in between.
+      const decoded = yield* Effect.promise(() => decodeScanCacheText(text, makeSliceYield()));
+      if (decoded === null) return;
+      for (const [path, entry] of decoded.cache) fileCache.set(path, entry);
+      const sources = decodeCachedSources(decoded.document);
       if (Option.isSome(sources)) {
         for (const [key, source] of Object.entries(sources.value.sources))
           sourceCache.set(key, source);
@@ -399,20 +400,31 @@ export const make = Effect.gen(function* () {
     }),
   );
 
+  // One write at a time: two scans finishing together must not interleave their
+  // writes into one file.
+  const persistLock = yield* Semaphore.make(1);
+
   const persistScanCache = Effect.fn("UsageService.persistScanCache")(function* () {
     if (!cacheDirty) return;
-    // Cleared only after the write lands, so a failed persist is retried on
-    // the next scan instead of leaving disk permanently stale.
-    yield* encodeScanCacheFile({
-      ...encodeScanCache(fileCache),
-      sources: Object.fromEntries(sourceCache),
-    }).pipe(
-      Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
-      Effect.map(() => {
+    yield* persistLock.withPermit(
+      Effect.gen(function* () {
+        if (!cacheDirty) return;
+        // Cleared before the slow part: encoding yields to the event loop, and
+        // a scan that changes the cache meanwhile marks it dirty again. A
+        // failed write sets it back, so the next scan retries.
         cacheDirty = false;
-      }),
-      // A cache we cannot write is a slower next start, not a failed read.
-      Effect.ignoreCause,
+        const serialized = yield* Effect.promise(() =>
+          encodeScanCacheLines(fileCache, Object.fromEntries(sourceCache), makeSliceYield()),
+        );
+        yield* fileSystem.writeFileString(scanCachePath, serialized);
+      }).pipe(
+        // A cache we cannot write is a slower next start, not a failed read.
+        Effect.catchCause(() =>
+          Effect.sync(() => {
+            cacheDirty = true;
+          }),
+        ),
+      ),
     );
   });
 

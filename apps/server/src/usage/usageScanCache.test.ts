@@ -1,9 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 
+import { makeSliceYield } from "./sliceYield.ts";
 import {
   decodeScanCache,
+  decodeScanCacheText,
   dedupeWithinFile,
   encodeScanCache,
+  encodeScanCacheLines,
   pruneScanCache,
   type CachedFile,
   type ScanCache,
@@ -241,5 +244,83 @@ describe("dedupeWithinFile", () => {
     expect(
       dedupeWithinFile([record({ dedupeKey: null }), record({ dedupeKey: null })]),
     ).toHaveLength(2);
+  });
+});
+
+describe("scan cache line format", () => {
+  // A zero budget makes every file yield, so the sliced paths really run.
+  const everyFile = () => makeSliceYield(0);
+
+  const sample = (): ScanCache => {
+    const cache = cacheWith([
+      ["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5-5" })]],
+      ["/b.jsonl", 200, [record({ sessionId: "session-b", reportedCostUsd: 1.5 })]],
+    ]);
+    cache.set("/codex.jsonl", {
+      size: 80,
+      mtimeMs: 400,
+      provider: "codex",
+      records: [record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null })],
+      tailRecords: [],
+      position: position({
+        codexState: {
+          model: "gpt-6-astra",
+          sessionId: "rollout-1",
+          lastUsageSignature: "{}",
+          sawSessionMeta: true,
+          suppressingForkCopies: false,
+          forkCopyAnchorMs: 0,
+        },
+      }),
+    });
+    return cache;
+  };
+
+  it("restores the same cache as the single-document form, and the sources", async () => {
+    const original = sample();
+    const sources = { "claude\u0000/home": { dir: "/home", volumeId: "1:2" } };
+    const text = await encodeScanCacheLines(original, sources, everyFile());
+    const decoded = await decodeScanCacheText(text, everyFile());
+
+    expect(decoded).not.toBeNull();
+    expect(decoded?.cache).toEqual(
+      decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original)))),
+    );
+    expect(decoded?.cache).toEqual(original);
+    expect((decoded?.document as { sources: unknown }).sources).toEqual(sources);
+  });
+
+  it("is one header line and one line per file", async () => {
+    const text = await encodeScanCacheLines(sample(), {}, everyFile());
+    const lines = text.trimEnd().split("\n");
+    expect(lines).toHaveLength(1 + 3);
+    expect(JSON.parse(lines[0]!)).toMatchObject({ version: 5 });
+  });
+
+  it("still reads a v4 single-document file", async () => {
+    const original = sample();
+    const legacy = JSON.stringify({ ...encodeScanCache(original), sources: {} });
+    const decoded = await decodeScanCacheText(legacy, everyFile());
+    expect(decoded?.cache).toEqual(original);
+  });
+
+  it("loses only the damaged or truncated file, never the whole cache", async () => {
+    const text = await encodeScanCacheLines(sample(), {}, everyFile());
+    const lines = text.trimEnd().split("\n");
+    const damaged = [lines[0], "{not json", lines[2], lines[3]!.slice(0, 40)].join("\n");
+    const decoded = await decodeScanCacheText(damaged, everyFile());
+    expect([...(decoded?.cache.keys() ?? [])]).toEqual(["/b.jsonl"]);
+  });
+
+  it("rejects text that is not a cache, and a cache with corrupt tables", async () => {
+    expect(await decodeScanCacheText("", everyFile())).toBeNull();
+    expect(await decodeScanCacheText("not json", everyFile())).toBeNull();
+    expect(await decodeScanCacheText('{"version":9}', everyFile())).toBeNull();
+    const text = await encodeScanCacheLines(sample(), {}, everyFile());
+    const lines = text.split("\n");
+    const header = JSON.parse(lines[0]!);
+    lines[0] = JSON.stringify({ ...header, models: [42] });
+    const decoded = await decodeScanCacheText(lines.join("\n"), everyFile());
+    expect(decoded?.cache.size).toBe(0);
   });
 });

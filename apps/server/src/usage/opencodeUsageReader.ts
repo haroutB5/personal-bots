@@ -3,8 +3,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
-import * as NodeTimersPromises from "node:timers/promises";
-
+import { makeSliceYield } from "./sliceYield.ts";
 import { totalTokens, type UsageRecord } from "./usageTranscripts.ts";
 
 function object(value: unknown): Record<string, unknown> {
@@ -19,6 +18,54 @@ function tokens(value: unknown): number {
 
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+/** The message fields usage needs; everything else in a row's JSON is skipped. */
+const MESSAGE_FIELDS = [
+  "role",
+  "model",
+  "modelID",
+  "tokens",
+  "time",
+  "cost",
+  "sessionID",
+  "id",
+] as const;
+
+/**
+ * SQL that hands back only {@link MESSAGE_FIELDS}, as a JSON array in that
+ * order, instead of the row's whole `data`. A message row can carry megabytes
+ * of tool output (the largest in the live store is 12 MB): fetching and
+ * parsing that in JavaScript held the event loop for about 100 ms, while
+ * SQLite skims past it inside one step. `json_valid` first, so a damaged row
+ * reads as no fields (skipped, as before) instead of failing the whole table.
+ */
+const MESSAGE_FIELDS_SQL = `CASE WHEN json_valid(data) THEN json_extract(data, ${MESSAGE_FIELDS.map((field) => `'$.${field}'`).join(", ")}) END`;
+
+/**
+ * `message` rows longer than this are skipped without being read. Message rows
+ * hold a role, a model and token counts, a few KB; the exceptions are user
+ * messages that carry file diffs (the six largest in the live store are 1.1 to
+ * 12.5 MB, all role user, and reading one costs about 100 ms of event loop
+ * when its pages are not cached). Token usage lives on assistant rows.
+ */
+const MAX_MESSAGE_ROW_CHARS = 2_000_000;
+
+/** The projection back as a message object: absent fields stay absent. */
+function messageFromFields(fields: string): Record<string, unknown> | null {
+  let values: unknown;
+  try {
+    values = JSON.parse(fields);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(values)) return null;
+  const message: Record<string, unknown> = {};
+  MESSAGE_FIELDS.forEach((field, index) => {
+    const value: unknown = values[index];
+    if (value !== null && value !== undefined) message[field] = value;
+  });
+  return message;
 }
 
 /** OpenCode stores uncached input and reasoning separately from input/output. */
@@ -36,7 +83,17 @@ function parseOpenCodeMessage(
   } catch {
     return null;
   }
-  const message = object(parsed);
+  return parseOpenCodeMessageObject(object(parsed), fallback);
+}
+
+function parseOpenCodeMessageObject(
+  message: Record<string, unknown>,
+  fallback: {
+    readonly id?: string;
+    readonly sessionId?: string;
+    readonly timestampMs?: number;
+  },
+): UsageRecord | null {
   if (message.role !== undefined && message.role !== "assistant") return null;
   const usage = object(message.tokens);
   const cache = object(usage.cache);
@@ -82,6 +139,9 @@ export async function readOpenCodeUsage(
 ): Promise<OpenCodeUsageReadResult> {
   const files: { path: string; records: UsageRecord[] }[] = [];
   const seen = new Set<string>();
+  // Message rows run to several KB of JSON each, so a fixed count of rows per
+  // yield is not a bound on how long the loop holds the event loop; time is.
+  const slice = makeSliceYield();
   let found = false;
   let error = false;
   const append = (records: UsageRecord[], record: UsageRecord | null) => {
@@ -128,23 +188,29 @@ export async function readOpenCodeUsage(
             .map((row) => row.name),
         );
         const timestamp = columns.has("time_created") ? "time_created" : "NULL";
-        const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
+        const predicates =
+          table === "session_message"
+            ? ["type = 'assistant'"]
+            : // See MAX_MESSAGE_ROW_CHARS: `length()` reads the row's header, not its body.
+              [`length(data) <= ${MAX_MESSAGE_ROW_CHARS}`];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
         const where = predicates.length > 0 ? ` WHERE ${predicates.join(" AND ")}` : "";
         const statement = database.prepare(
-          `SELECT id, session_id, data, ${timestamp} AS created FROM ${table}${where}`,
+          `SELECT id, session_id, ${MESSAGE_FIELDS_SQL} AS fields, ${timestamp} AS created FROM ${table}${where}`,
         );
-        let count = 0;
         for (const row of statement.iterate(...(timestamp === "NULL" ? [] : [sinceMs]))) {
+          const message = messageFromFields(text(row.fields));
           append(
             file.records,
-            parseOpenCodeMessage(text(row.data), {
-              id: text(row.id),
-              sessionId: text(row.session_id),
-              ...(typeof row.created === "number" ? { timestampMs: row.created } : {}),
-            }),
+            message === null
+              ? null
+              : parseOpenCodeMessageObject(message, {
+                  id: text(row.id),
+                  sessionId: text(row.session_id),
+                  ...(typeof row.created === "number" ? { timestampMs: row.created } : {}),
+                }),
           );
-          if (++count % 256 === 0) await NodeTimersPromises.setImmediate();
+          if (slice.due()) await slice.yieldNow();
         }
       }
     } catch {

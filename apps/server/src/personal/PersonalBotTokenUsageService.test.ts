@@ -24,6 +24,7 @@ const decodeInsertThreadLink = Schema.decodeSync(
   PersonalBotRepository.InsertPersonalBotThreadInput,
 );
 const encodeResult = Schema.encodeUnknownSync(PersonalBotTokenUsageResult);
+const toJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const NOW_MS = Date.parse("2026-10-04T12:00:00.000Z");
 const MINUTE_MS = 60_000;
@@ -172,7 +173,7 @@ it.effect("serves the finished scan with sessions attributed to bots and the res
     expect(today.total.totals.outputTokens).toBe(40);
     // The payload is valid against the contract: numbers and bot ids, nothing else.
     expect(() => encodeResult(ready)).not.toThrow();
-    expect(JSON.stringify(ready)).not.toContain("claude-session");
+    expect(toJsonString(ready)).not.toContain("claude-session");
     // And serving it started nothing.
     expect(scanner.runs).toHaveLength(1);
   }).pipe(Effect.provide(harness(scanner)));
