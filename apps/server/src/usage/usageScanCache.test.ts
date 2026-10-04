@@ -287,7 +287,7 @@ describe("scan cache line format", () => {
       decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original)))),
     );
     expect(decoded?.cache).toEqual(original);
-    expect((decoded?.document as { sources: unknown }).sources).toEqual(sources);
+    expect(decoded?.document).toMatchObject({ sources });
   });
 
   it("is one header line and one line per file", async () => {

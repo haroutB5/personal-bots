@@ -11,6 +11,7 @@ import { connectionAtomRuntime } from "../../connection/runtime";
 import { useActiveEnvironmentId } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
+import { PERSONAL_TIME_ZONE } from "./greeting";
 
 /** Bots, bot-thread links and the personal project id for one environment. */
 export const personalBotsList = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
@@ -38,6 +39,19 @@ export const personalFilesList = createEnvironmentRpcQueryAtomFamily(connectionA
   staleTimeMs: 30_000,
   idleTtlMs: 5 * 60_000,
   refreshIntervalMs: 20 * 60_000,
+});
+
+/**
+ * Tokens used per bot over Today, 7 days and 30 days, for the Team screen. The
+ * server answers from a snapshot it refreshes at most every ten minutes, so
+ * this reads it as often and no oftener while the screen is open.
+ */
+export const personalBotsTokenUsage = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "personal-bots:token-usage",
+  tag: WS_METHODS.personalBotsTokenUsage,
+  staleTimeMs: 60_000,
+  idleTtlMs: 10 * 60_000,
+  refreshIntervalMs: 10 * 60_000,
 });
 
 const refreshBotsList = (
@@ -159,6 +173,26 @@ export function usePersonalFiles(environmentId: EnvironmentId | null) {
 export function usePersonalProfile(environmentId: EnvironmentId | null) {
   const atom = useMemo(
     () => (environmentId === null ? null : personalProfile({ environmentId, input: {} })),
+    [environmentId],
+  );
+  return useEnvironmentQuery(atom);
+}
+
+/** The zone "today" is cut in: this device's, else the app's own. */
+function deviceTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || PERSONAL_TIME_ZONE;
+  } catch {
+    return PERSONAL_TIME_ZONE;
+  }
+}
+
+export function usePersonalTokenUsage(environmentId: EnvironmentId | null) {
+  const atom = useMemo(
+    () =>
+      environmentId === null
+        ? null
+        : personalBotsTokenUsage({ environmentId, input: { timeZone: deviceTimeZone() } }),
     [environmentId],
   );
   return useEnvironmentQuery(atom);

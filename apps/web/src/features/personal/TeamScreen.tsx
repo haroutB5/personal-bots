@@ -37,6 +37,7 @@ import { TeamMembersSheet, type MemberListRow } from "./TeamMembersSheet";
 import { TeamMoveOverlay } from "./TeamMoveOverlay";
 import { TeamMoveToast } from "./TeamMoveToast";
 import { TeamWorkingNow } from "./TeamWorkingNow";
+import { TokenUsageSection } from "./TokenUsageSection";
 import {
   applyTeamUpdate,
   deriveDelegationCounts,
@@ -877,6 +878,19 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
   // Group-only bots stay out of the chart, as they do out of Chats (leads
   // excepted).
   const chartBots = useMemo(() => shownInTeamChart(bots), [bots]);
+  const chartBotIds = useMemo(
+    () => new Set(chartBots.map((bot) => bot.botId as string)),
+    [chartBots],
+  );
+  const providers = useAtomValue(primaryServerProvidersAtom);
+  // The short model line the diagram shows, for the token table's rows.
+  const tokenUsageModelLabels = useMemo(
+    () =>
+      new Map(
+        bots.map((bot) => [bot.botId as string, botModelShortLabel(bot.modelSelection, providers)]),
+      ),
+    [bots, providers],
+  );
   const feedTasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);
   const tasks = useTeamHandoffTasks(environmentId, feedTasks, taskFeed !== null);
   const liveBotIds = useMemo(() => {
@@ -988,6 +1002,15 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
           focusTeam={notice?.team ?? null}
           onCreated={setNotice}
           initialView={initialView}
+        />
+      ) : null}
+
+      {environmentId !== null && bots.length > 0 ? (
+        <TokenUsageSection
+          environmentId={environmentId}
+          bots={bots}
+          listedBotIds={chartBotIds}
+          modelLabels={tokenUsageModelLabels}
         />
       ) : null}
     </div>

@@ -27,6 +27,7 @@ const LEFT_ALONE: Readonly<Record<string, string>> = {
   "PersonalSettingsScreen.tsx": "/tasks from /bots/settings: not a parent",
   "TeamConstellationCard.tsx": "/bots/<id> from /bots/team: not a parent",
   "TeamMembersSheet.tsx": "/bots/<id> from /bots/team: not a parent",
+  "TokenUsageSection.tsx": "/bots/<id> from /bots/team: not a parent",
 };
 
 /** The `<Link ...>` opening tags of a source file, found by balancing braces and quotes. */
