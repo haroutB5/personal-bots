@@ -73,7 +73,13 @@ function saveMemory(input: {
   /** The owner's own messages in the chat; defaults to one holding userRequest. */
   readonly ownerTexts?: ReadonlyArray<string>;
   readonly startedByOwner?: boolean;
-  readonly tool?: "save_memory" | "forget_memory";
+  readonly tool?: "save_memory" | "forget_memory" | "search_memory";
+  /** The apps a save names. */
+  readonly apps?: ReadonlyArray<string>;
+  /** search_memory: the query, what the text search finds, and the rules scoped to the apps it names. */
+  readonly query?: string;
+  readonly found?: ReadonlyArray<ReturnType<typeof entryFor>>;
+  readonly appRules?: ReadonlyArray<ReturnType<typeof entryFor>>;
   readonly kind?: "note" | "preference";
   /** The message that started this turn; defaults to the first owner text. */
   readonly current?: { readonly text: string; readonly byOwner: boolean } | null;
@@ -100,6 +106,7 @@ function saveMemory(input: {
   const forgotten = vi.fn();
   const notices = vi.fn();
   const proposed = vi.fn();
+  const rulesForApps = vi.fn();
   const texts = input.ownerTexts ?? (input.userRequest === undefined ? [] : [input.userRequest]);
   const targetKind = input.target?.kind ?? "preference";
   const layer = PersonalToolkitHandlersLive.pipe(
@@ -116,6 +123,12 @@ function saveMemory(input: {
     Layer.provide(
       Layer.mock(PersonalMemoryService)({
         botForThread: () => Effect.succeed(Option.some(botId)),
+        search: () => Effect.succeed(input.found ?? []),
+        rulesForApps: (query) =>
+          Effect.sync(() => {
+            rulesForApps(query.apps);
+            return input.appRules ?? [];
+          }),
         noteOrigin: () => Effect.succeed(input.origin ?? { origin: "chat", readWeb: false }),
         save: (entry) =>
           input.saveFails !== undefined
@@ -185,25 +198,28 @@ function saveMemory(input: {
     const result = yield* toolkit
       .handle(
         (input.tool ?? "save_memory") as "save_memory",
-        (input.tool === "forget_memory"
-          ? {
-              memoryId: "0123abcd",
-              ...(input.userRequest === undefined ? {} : { userRequest: input.userRequest }),
-            }
-          : {
-              content: input.content ?? "Holds 2 ETH on Kraken, bought at about 1,900 GBP.",
-              ...(input.userRequest === undefined ? {} : { userRequest: input.userRequest }),
-              kind: input.kind ?? "note",
-              ...(input.scope === undefined ? {} : { scope: input.scope }),
-              ...(input.replaces === undefined ? {} : { replaces: input.replaces }),
-            }) as never,
+        (input.tool === "search_memory"
+          ? { query: input.query ?? "anything" }
+          : input.tool === "forget_memory"
+            ? {
+                memoryId: "0123abcd",
+                ...(input.userRequest === undefined ? {} : { userRequest: input.userRequest }),
+              }
+            : {
+                content: input.content ?? "Holds 2 ETH on Kraken, bought at about 1,900 GBP.",
+                ...(input.userRequest === undefined ? {} : { userRequest: input.userRequest }),
+                kind: input.kind ?? "note",
+                ...(input.scope === undefined ? {} : { scope: input.scope }),
+                ...(input.replaces === undefined ? {} : { replaces: input.replaces }),
+                ...(input.apps === undefined ? {} : { apps: input.apps }),
+              }) as never,
       )
       .pipe(
         Stream.unwrap,
         Stream.runCollect,
         Effect.catch((error) => Effect.succeed(String(error))),
       );
-    return { encoded: encodeResult(result), saved, forgotten, notices, proposed };
+    return { encoded: encodeResult(result), saved, forgotten, notices, proposed, rulesForApps };
   }).pipe(
     Effect.provide(layer),
     Effect.provideService(McpInvocationContext, {
@@ -1040,6 +1056,87 @@ describe("Security (1.60.22): a note records where it came from", () => {
         content: "Vendor X raised prices in October.",
       });
       expect(saved.mock.calls[0]?.[0]).toMatchObject({ source: "bot:cfo;from=routine+web" });
+    }),
+  );
+});
+
+describe("1.60.40: app scopes on save_memory and search_memory", () => {
+  const rule = (id: string, content: string, apps: ReadonlyArray<string>) => ({
+    ...entryFor({ scope: "shared", kind: "preference", content }),
+    memoryId: PersonalMemoryId.make(id),
+    apps,
+  });
+
+  it.effect("refuses an app that is not registered and lists the valid slugs", () =>
+    Effect.gen(function* () {
+      const { encoded, proposed, saved } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: [],
+        userRequest: "Remember that gizmo dots show the name only.",
+        kind: "preference",
+        content: "Gizmo dots show the name only.",
+        apps: ["gizmo-app"],
+      });
+      expect(proposed).not.toHaveBeenCalled();
+      expect(saved).not.toHaveBeenCalled();
+      expect(encoded).toContain("'gizmo-app' is not a registered app");
+      expect(encoded).toContain("Valid apps: matchday, caltrack");
+      expect(encoded).toContain("personal-bots");
+    }),
+  );
+
+  it.effect("accepts a registered app, by slug or by its name, and proposes it normalised", () =>
+    Effect.gen(function* () {
+      const { proposed } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: [],
+        userRequest: "Remember that matchday dots show the name only.",
+        kind: "preference",
+        content: "Matchday dots show the name only.",
+        apps: ["Matchday"],
+      });
+      expect(proposed).toHaveBeenCalledTimes(1);
+      expect(proposed.mock.calls[0]![0]).toMatchObject({ action: "save", apps: ["Matchday"] });
+    }),
+  );
+
+  it.effect("a search that names an app brings every rule scoped to it, first, once", () =>
+    Effect.gen(function* () {
+      const dots = rule("aaaa1111-rule", "Dots show the name only.", ["matchday"]);
+      const half = rule("bbbb2222-rule", "Half-time positions stay all second half.", ["matchday"]);
+      const note = {
+        ...entryFor({ scope: "shared", kind: "note", content: "Matchday uses FotMob." }),
+        memoryId: PersonalMemoryId.make("cccc3333-note"),
+      };
+      const { encoded, rulesForApps } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: [],
+        tool: "search_memory",
+        query: "what are the matchday rules for dots",
+        // The text search finds one of the rules and a note; the other rule shares no word with it.
+        found: [dots, note],
+        appRules: [dots, half],
+      });
+      expect(rulesForApps).toHaveBeenCalledWith(["matchday"]);
+      // The encoded result carries each entry twice (its result and its encoded form).
+      const ids = [
+        ...new Set([...encoded.matchAll(/"memoryId":"([^"]+)"/g)].map((match) => match[1])),
+      ];
+      expect(ids).toEqual(["aaaa1111-rule", "bbbb2222-rule", "cccc3333-note"]);
+      expect(encoded).toContain('"apps":["matchday"]');
+    }),
+  );
+
+  it.effect("a search that names no app looks up no app rules", () =>
+    Effect.gen(function* () {
+      const { rulesForApps } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: [],
+        tool: "search_memory",
+        query: "tea or coffee",
+        found: [],
+      });
+      expect(rulesForApps).toHaveBeenCalledWith([]);
     }),
   );
 });

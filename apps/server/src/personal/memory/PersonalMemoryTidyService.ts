@@ -33,7 +33,7 @@ import * as ProviderInstanceRegistry from "../../provider/Services/ProviderInsta
 import { forkParked } from "../../serverActivation.ts";
 import { isExpensiveSeedModel } from "../seedModel.ts";
 import { SHIPPED_MEMORY_PROPOSALS } from "./shippedProposals.ts";
-import { appsToJson, normaliseApps, parseAppsJson } from "./memoryApps.ts";
+import { appsToJson, normaliseApps, parseAppsJson, unknownApps } from "./memoryApps.ts";
 import {
   buildTidyPrompt,
   decisionsFromJudge,
@@ -329,6 +329,7 @@ export function proposalProblem(
     if (item.memoryIds.length !== 1) return "A rescope names exactly one entry";
     const entry = current.get(item.memoryIds[0]!)!;
     if (entry.kind !== "preference") return "Only a rule (a preference) has an app scope";
+    if (unknownApps(item.toApps ?? []).length > 0) return "Names an app that is not registered";
     if (appsToJson(item.toApps) === appsToJson(parseAppsJson(entry.apps))) return "Changes nothing";
     return null;
   }

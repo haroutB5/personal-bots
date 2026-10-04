@@ -215,6 +215,9 @@ const memoryLine = (entry: PersonalMemoryEntry) => {
   return `- [${KIND_LABEL[entry.kind]}] [${memoryDay(entry)} · ${memoryRef(entry)}${tag === null ? "" : ` · ${tag}`}] ${content.replace(/\s+/g, " ")}`;
 };
 
+/** Most apps one session's chat can have been about. */
+const STICKY_APPS_MAX = 8;
+
 /** Left-out rules named in the block, at most this many with their words; the rest are counted. */
 const LEFT_OUT_NAMED = 8;
 
@@ -228,7 +231,13 @@ export function formatMemoryBlock(input: {
   readonly relevant: ReadonlyArray<PersonalMemoryEntry>;
   /** Older preferences left out by the caps. */
   readonly droppedPreferences?: number | undefined;
-  readonly preferencesRepeat?: { readonly count: number } | undefined;
+  readonly preferencesRepeat?:
+    | {
+        readonly count: number;
+        /** Rules of newly active apps sent now, on top of the ones listed earlier. */
+        readonly added?: ReadonlyArray<PersonalMemoryEntry> | undefined;
+      }
+    | undefined;
   /** "Matchday: 5 rules, CalTrack: 1 rule": rules of apps this turn is not about, not listed. */
   readonly appIndex?: string | null | undefined;
   /** Rules of this turn's apps that did not fit the caps, named so none is unreachable. */
@@ -236,9 +245,17 @@ export function formatMemoryBlock(input: {
 }): string | null {
   const lines: Array<string> = [];
   if (input.preferencesRepeat !== undefined) {
-    lines.push(
-      `- The ${input.preferencesRepeat.count} saved preferences listed earlier in this chat still apply unchanged; none were added, replaced or forgotten since.`,
-    );
+    const added = input.preferencesRepeat.added ?? [];
+    if (added.length === 0) {
+      lines.push(
+        `- The ${input.preferencesRepeat.count} saved preferences listed earlier in this chat still apply unchanged; none were added, replaced or forgotten since.`,
+      );
+    } else {
+      lines.push(
+        `- The ${input.preferencesRepeat.count} saved preferences listed earlier in this chat still apply unchanged. This chat now also covers ${added.length === 1 ? "an app whose rule is" : "apps whose rules are"} listed here:`,
+        ...added.map(memoryLine),
+      );
+    }
   } else {
     lines.push(...input.preferences.map(memoryLine));
     if ((input.droppedPreferences ?? 0) > 0) {
@@ -603,6 +620,14 @@ export class PersonalMemoryService extends Context.Service<
       /** What the turn was about and why each entry was picked or left out. */
       readonly trace?: MemoryTurnTrace | undefined;
     }>;
+    /**
+     * Every current rule a bot can see that is scoped to any of `apps`: what a
+     * search that names an app must bring, whatever its words match.
+     */
+    readonly rulesForApps: (input: {
+      readonly botId: PersonalBotId;
+      readonly apps: ReadonlyArray<string>;
+    }) => Effect.Effect<ReadonlyArray<PersonalMemoryEntry>, PersonalMemoryError>;
     /**
      * How full the most rules any bot can receive at once are against the
      * per-turn caps (every app counted as active), for the Memory screen.
@@ -1203,11 +1228,23 @@ export const make = Effect.gen(function* () {
    */
   type SentPreferences = {
     readonly sessionKey: string;
+    /** The ids and versions of the listed rules, as one string. */
     readonly setKey: string;
+    /** The same, as a map: what the session has, to tell an addition from a change. */
+    readonly ids: ReadonlyMap<string, number>;
     readonly sentAt: string;
     readonly turns: number;
   };
   const sentPreferences = new Map<string, SentPreferences>();
+  /**
+   * The apps a session's chat has been about. They only grow until the session
+   * key changes, so a chat that drifts between apps lists each app's rules
+   * once instead of every time the topic flips back.
+   */
+  const stickyApps = new Map<
+    string,
+    { readonly sessionKey: string; readonly slugs: Set<string> }
+  >();
   /** What the last built turn would record, kept until its send succeeds. */
   const pendingSent = new Map<string, SentPreferences>();
 
@@ -1246,7 +1283,7 @@ export const make = Effect.gen(function* () {
         SELECT substr(text, 1, ${APP_SIGNAL_RECENT_CHARS}) AS "text"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId} AND message_id <> ${currentMessageId ?? ""}
-          AND role IN ('user', 'assistant')
+          AND role = 'user'
         ORDER BY created_at DESC LIMIT ${APP_SIGNAL_RECENT_MESSAGES}
       `;
       const roles = yield* sql<{ readonly name: string; readonly description: string }>`
@@ -1432,7 +1469,30 @@ export const make = Effect.gen(function* () {
       const signals = yield* turnSignals(input.threadId, botId.value, input.messageId);
       const scoping = appScopingEnabled();
       const ruleApps = [...new Set(allPreferences.flatMap((entry) => entry.apps ?? []))];
-      const activeApps = detectActiveApps({ ...signals, current: query }, ruleApps);
+      const detected = detectActiveApps({ ...signals, current: query }, ruleApps);
+      // A session keeps the apps it has been about (they only grow), so a chat
+      // that flips between apps lists each one's rules once, not on every flip.
+      const sticky = input.session === undefined ? undefined : stickyApps.get(input.threadId);
+      const carried =
+        input.session !== undefined &&
+        !input.session.fresh &&
+        sticky !== undefined &&
+        sticky.sessionKey === input.session.key
+          ? [...sticky.slugs]
+          : [];
+      const detectedSlugs = new Set(detected.map((app) => app.slug));
+      const activeApps: Array<ActiveApp> = [
+        ...detected,
+        ...carried
+          .filter((slug) => !detectedSlugs.has(slug))
+          .map((slug): ActiveApp => ({ slug, via: ["earlier"] })),
+      ].slice(0, STICKY_APPS_MAX);
+      if (input.session !== undefined) {
+        stickyApps.set(input.threadId, {
+          sessionKey: input.session.key,
+          slugs: new Set(activeApps.map((app) => app.slug)),
+        });
+      } else stickyApps.delete(input.threadId);
       const active = new Set(activeApps.map((app) => app.slug));
 
       // The rules listed this turn. App scoping on: global rules always, plus
@@ -1509,48 +1569,72 @@ export const make = Effect.gen(function* () {
 
       // The full list once per session; then a one-line reminder while
       // nothing changed, the chat was not compacted and it is not due again.
-      const setKey = [
-        listed.map((entry) => `${entry.memoryId}:${entry.version}`).join(","),
-        appIndex ?? "",
-        leftOutRules.map((entry) => entry.memoryId).join(","),
-      ].join("|");
+      // Rules of an app the chat has since started covering are sent alone,
+      // on top of the list already there. The index and any left-out line are
+      // printed on every turn, so a change in them needs no resend.
+      const currentIds = new Map<string, number>(
+        listed.map((entry) => [entry.memoryId as string, entry.version] as const),
+      );
+      const setKey = listed.map((entry) => `${entry.memoryId}:${entry.version}`).join(",");
       const nowIso = DateTime.formatIso(nowDate);
       const previous = sentPreferences.get(input.threadId);
-      const repeat =
+      const reusable =
         input.session !== undefined &&
         !input.session.fresh &&
         listed.length > 0 &&
         previous !== undefined &&
         previous.sessionKey === input.session.key &&
-        previous.setKey === setKey &&
         previous.turns + 1 < PERSONAL_MEMORY_RESEND_EVERY_TURNS &&
         !(yield* compactedSince(input.threadId, previous.sentAt));
+      const repeat = reusable && previous !== undefined && previous.setKey === setKey;
+      const addedRules =
+        reusable &&
+        !repeat &&
+        previous !== undefined &&
+        scoping &&
+        [...previous.ids].every(([id, version]) => currentIds.get(id) === version)
+          ? listed.filter((entry) => !previous.ids.has(entry.memoryId))
+          : [];
+      const delta =
+        addedRules.length > 0 && addedRules.every((entry) => (entry.apps ?? null) !== null);
       // Recorded only once the send succeeds (confirmPreferencesSent): a turn
       // that never reached the provider must not mark the list as given.
       if (input.session !== undefined) {
         pendingSent.set(
           input.threadId,
-          repeat && previous !== undefined
-            ? { ...previous, turns: previous.turns + 1 }
-            : { sessionKey: input.session.key, setKey, sentAt: nowIso, turns: 0 },
+          (repeat || delta) && previous !== undefined
+            ? { ...previous, setKey, ids: currentIds, turns: previous.turns + 1 }
+            : {
+                sessionKey: input.session.key,
+                setKey,
+                ids: currentIds,
+                sentAt: nowIso,
+                turns: 0,
+              },
         );
       } else pendingSent.delete(input.threadId);
 
-      const sentPreferenceEntries = repeat ? [] : listed;
-      const memoryIds = [...sentPreferenceEntries, ...relevant].map((entry) => entry.memoryId);
+      const sentPreferenceEntries = repeat || delta ? [] : listed;
+      const memoryIds = [...sentPreferenceEntries, ...(delta ? addedRules : []), ...relevant].map(
+        (entry) => entry.memoryId,
+      );
       if (input.record && memoryIds.length > 0) {
         yield* recordUsage(input.threadId, memoryIds);
       }
       const blockInput = {
         preferences: sentPreferenceEntries,
         droppedPreferences,
-        preferencesRepeat: repeat ? { count: listed.length } : undefined,
+        preferencesRepeat: repeat
+          ? { count: listed.length }
+          : delta && previous !== undefined
+            ? { count: previous.ids.size, added: addedRules }
+            : undefined,
         appIndex,
         leftOutRules,
       };
       const block = formatMemoryBlock({ ...blockInput, relevant });
       const preferencesBlock =
-        relevant.length > 0 && (sentPreferenceEntries.length > 0 || repeat)
+        relevant.length > 0 && (sentPreferenceEntries.length > 0 || repeat || delta)
           ? formatMemoryBlock({ ...blockInput, relevant: [] })
           : null;
       const trace: MemoryTurnTrace = {
@@ -1582,6 +1666,20 @@ export const make = Effect.gen(function* () {
             }).pipe(Effect.as({ block: null, memoryIds: [] })),
       ),
     );
+
+  const rulesForApps: PersonalMemoryService["Service"]["rulesForApps"] = (input) =>
+    Effect.gen(function* () {
+      if (input.apps.length === 0) return [];
+      const wanted = new Set(input.apps);
+      const rows = yield* sql`
+        SELECT ${sql.literal(MEMORY_COLUMNS)} FROM personal_memory m
+        WHERE m.deleted_at IS NULL AND m.superseded_at IS NULL AND m.kind = 'preference'
+          AND m.apps_json IS NOT NULL AND ${scopeCondition({ botId: input.botId })}
+        ORDER BY m.created_at DESC, m.seq DESC
+        LIMIT 500
+      `.pipe(Effect.flatMap(decodeAll));
+      return rows.filter((entry) => (entry.apps ?? []).some((app) => wanted.has(app)));
+    }).pipe(storageFailure("rules for apps"));
 
   const rulesUsage: PersonalMemoryService["Service"]["rulesUsage"] = () =>
     Effect.gen(function* () {
@@ -1749,6 +1847,7 @@ export const make = Effect.gen(function* () {
     similar,
     botForThread,
     contextForThread,
+    rulesForApps,
     rulesUsage,
     confirmPreferencesSent,
     saveTaskSummary,

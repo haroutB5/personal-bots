@@ -92,3 +92,14 @@ Fix, in `ProviderRuntimeIngestion.ts`: an exit from an instance (or, when the ev
 ## Rollback
 
 Previous live release (1.60.39 or 1.60.38). Migration 093 only adds two nullable columns that older code ignores. If the rescope proposals were already approved, older code lists those rules to every chat again (they are ordinary rules to it). Kill switches: `T3CODE_PERSONAL_MEMORY_APP_SCOPING=off`, `T3CODE_PERSONAL_MEMORY_RETRIEVAL=legacy` (server environment, applied by the usual idle restart).
+
+## Fable's review fixes (in this release)
+
+1. **Title and message apps are never cut.** The cap of 4 now limits only what recent turns and the bot's role add (by number of signals, role first); a page naming four other apps in an hbots chat no longer pushes hbots out. The rules caps still bound the size, and any overflow is named.
+2. **Active apps are sticky per session** (they only grow until the session key changes), and the resend key no longer includes the index or the left-out line (both print every turn). A chat that drifts between apps lists each app's rules once: a newly covered app's rules are sent alone ("This chat now also covers an app whose rule is listed here"), on top of the list already there; a flip back sends nothing. A new or changed global rule still resends the full list.
+3. `save_memory` validates `apps` against the registry and refuses with the valid slugs (also for a rescope proposal).
+4. `search_memory`: a query that names a registered app brings every rule scoped to it (`rulesForApps`), first and once, whatever its words match.
+5. App signals are the owner's messages and task briefs only (user role), not assistant replies.
+6. A note is a status only with a status word AND a version (or written by an app, task or routine); a version alone never makes one ("Node 22.1.0 is required" does not decay).
+7. A rule for several apps counts once in the index ("CalTrack + Matchday: 1 rule").
+8. `rankCandidates` builds a Set for the left-out list.

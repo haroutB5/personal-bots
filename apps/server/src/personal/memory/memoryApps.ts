@@ -112,7 +112,7 @@ export interface AppSignals {
 export interface ActiveApp {
   readonly slug: string;
   /** Where it was found: title, message, recent, role. */
-  readonly via: ReadonlyArray<"title" | "message" | "recent" | "role">;
+  readonly via: ReadonlyArray<"title" | "message" | "recent" | "role" | "earlier">;
 }
 
 /** Messages before the current one that count, each read up to this long. */
@@ -125,7 +125,8 @@ export const MAX_ACTIVE_APPS = 4;
  * The apps this turn is about, among those any rule is scoped to (plus the
  * registered apps): found by name in the chat title, the message or brief, the
  * last few messages, and the bot's own name or description. Strong signals
- * (title, message) first; at most {@link MAX_ACTIVE_APPS}.
+ * (title, message) first and never cut; recent turns and the role fill what
+ * is left of {@link MAX_ACTIVE_APPS}.
  */
 export function detectActiveApps(
   signals: AppSignals,
@@ -150,11 +151,31 @@ export function detectActiveApps(
       via.includes("title") || via.includes("message") ? 0 : via.includes("role") ? 1 : 2;
     found.push({ slug, via, rank });
   }
-  return found
-    .toSorted((a, b) => a.rank - b.rank)
-    .slice(0, MAX_ACTIVE_APPS)
-    .map(({ slug, via }) => ({ slug, via }));
+  // An app the title or the message names is never cut: a pasted page naming
+  // several other apps must not push the chat's own app, and so its rules, out
+  // of the turn. The cap only limits what recent turns and the bot's role add;
+  // the rules caps bound how much the named apps can bring.
+  const named = found.filter((app) => app.rank === 0);
+  const room = Math.max(0, MAX_ACTIVE_APPS - named.length);
+  // Among the weaker finds, the one found by more signals first, then the role.
+  const weaker = found
+    .filter((app) => app.rank !== 0)
+    .toSorted((a, b) => b.via.length - a.via.length || a.rank - b.rank)
+    .slice(0, room);
+  return [...named, ...weaker].map(({ slug, via }) => ({ slug, via }));
 }
+
+/** The slugs among `apps` that are not a registered app. */
+export function unknownApps(apps: ReadonlyArray<string>): ReadonlyArray<string> {
+  return apps.filter((app) => {
+    const slug = normaliseAppSlug(app);
+    return slug === null || !APP_BY_SLUG.has(slug);
+  });
+}
+
+/** Every registered app a text names (a search for "matchday rules" names Matchday). */
+export const appsNamedIn = (text: string): ReadonlyArray<string> =>
+  MEMORY_APPS.filter((app) => mentionsApp(text, app.slug)).map((app) => app.slug);
 
 /** What is needed of a rule to pick and cap it. */
 export interface RuleLike {
@@ -241,12 +262,19 @@ export function selectRules<T extends RuleLike>(
     entries += 1;
     chars += rule.content.length;
   }
+  // A rule counts once, under its apps ("Matchday + CalTrack: 1 rule"), however
+  // many apps it names: the index line must add up to the rules it stands for.
   const counts = new Map<string, number>();
   for (const rule of indexed) {
-    for (const app of rule.apps!) counts.set(app, (counts.get(app) ?? 0) + 1);
+    const key = rule.apps!.toSorted().join("+");
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   const index = [...counts]
-    .map(([slug, count]) => ({ slug, label: appLabel(slug), count }))
+    .map(([slug, count]) => ({
+      slug,
+      label: slug.split("+").map(appLabel).join(" + "),
+      count,
+    }))
     .toSorted((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   return {
     kept: unique.filter((rule) => keptIds.has(rule.memoryId)),

@@ -115,6 +115,19 @@ describe("ageing of status entries", () => {
       isStatusLike(entry("c", "hbots 1.60.38 is the rollback.", { source: "bot:x;from=task" })),
     ).toBe(true);
     expect(isStatusLike(entry("d", "Harout's favourite drink is green tea."))).toBe(false);
+    // A version alone is not a status, and a status word alone only where a version or an app wrote it.
+    expect(
+      isStatusLike(
+        entry("n", "Node 22.1.0 is required to build hbots.", { source: "bot:x;from=task" }),
+      ),
+    ).toBe(false);
+    expect(
+      isStatusLike(entry("u", "Harout decided every fix is QA tested before it is shipped.")),
+    ).toBe(false);
+    expect(
+      isStatusLike(entry("w", "The waiter restarts the server.", { source: "bot:x;from=task" })),
+    ).toBe(true);
+    expect(isStatusLike(entry("v", "hbots 1.60.30 armed and live."))).toBe(true);
     expect(isStatusLike(entry("e", "Harout lives in London."))).toBe(false);
     expect(isStatusLike(entry("f", "Task summary.", { kind: "task_summary" }))).toBe(true);
     expect(isStatusLike(entry("g", "Always release on Fridays.", { kind: "preference" }))).toBe(

@@ -193,6 +193,21 @@ it.effect("leaves notes, unchanged scopes and unknown entries alone, and never a
   }).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("a rescope to an app that is not registered is left alone", () =>
+  Effect.gen(function* () {
+    const { dots } = yield* setup;
+    const tidy = yield* PersonalMemoryTidy;
+    const run = yield* tidy.importProposals({
+      source: "unknown.json",
+      items: [
+        { action: "rescope", memoryIds: [dots.memoryId], toApps: ["gizmo-app"], reason: "x" },
+      ],
+    });
+    expect(run.changes[0]!.status).toBe("left");
+    expect(run.changes[0]!.reason).toContain("not registered");
+  }).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("a bot's new rule carries its apps onto the card and into the saved entry", () =>
   Effect.gen(function* () {
     const { memory } = yield* setup;

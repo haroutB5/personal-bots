@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   APP_SCOPING_ENV,
   appScopingEnabled,
+  appsNamedIn,
   appsToJson,
   detectActiveApps,
   formatAppIndex,
@@ -11,6 +12,7 @@ import {
   normaliseApps,
   parseAppsJson,
   selectRules,
+  unknownApps,
   type RuleLike,
 } from "./memoryApps.ts";
 
@@ -104,6 +106,43 @@ describe("which apps a turn is about", () => {
     ).toEqual(["matchday", "rainhb"]);
   });
 
+  it("never cuts an app the title or the message names, whatever else is named", () => {
+    // A pasted page naming four other apps in an hbots chat must not push hbots out.
+    const found = detectActiveApps({
+      title: "hbots memory",
+      current: "compare with matchday, caltrack, rainhb and homegym please",
+    });
+    const slugs = found.map((app) => app.slug);
+    expect(slugs).toContain("personal-bots");
+    expect(slugs.toSorted()).toEqual(
+      ["caltrack", "homegym", "matchday", "personal-bots", "rainhb"].toSorted(),
+    );
+    expect(found.length).toBeGreaterThan(MAX_ACTIVE_APPS);
+  });
+
+  it("caps only what recent turns and the role add, by what is left of the limit", () => {
+    const found = detectActiveApps({
+      title: "hbots",
+      current: "go on",
+      recent: ["matchday caltrack rainhb homegym coachbuild"],
+      botRole: "Helps with tennis-poll",
+    });
+    expect(found).toHaveLength(MAX_ACTIVE_APPS);
+    expect(found[0]!.slug).toBe("personal-bots");
+    // The role beats a lone recent mention for the free places.
+    expect(found.map((app) => app.slug)).toContain("tennis-poll");
+  });
+
+  it("knows which apps are registered", () => {
+    expect(unknownApps(["matchday", "Personal Bots"])).toEqual([]);
+    expect(unknownApps(["matchday", "gizmo-app", "!!"])).toEqual(["gizmo-app", "!!"]);
+    expect(appsNamedIn("what are the Matchday rules, and hbots?").toSorted()).toEqual([
+      "matchday",
+      "personal-bots",
+    ]);
+    expect(appsNamedIn("tea or coffee")).toEqual([]);
+  });
+
   it("reads only the last few turns, each bounded", () => {
     const old = detectActiveApps({
       current: "ok",
@@ -158,13 +197,13 @@ describe("a turn's rules", () => {
     expect(formatAppIndex([])).toBeNull();
   });
 
-  it("counts a rule for two apps under both", () => {
-    const picked = selectRules([rule("x", "Both.", ["matchday", "caltrack"])], {
-      active: new Set(),
-      caps,
-      scoping: true,
-    });
-    expect(formatAppIndex(picked.index)).toBe("CalTrack: 1 rule, Matchday: 1 rule");
+  it("counts a rule for two apps once, so the index adds up to the rules it stands for", () => {
+    const picked = selectRules(
+      [rule("x", "Both.", ["matchday", "caltrack"]), rule("y", "Matchday too.", ["matchday"])],
+      { active: new Set(), caps, scoping: true },
+    );
+    expect(formatAppIndex(picked.index)).toBe("CalTrack + Matchday: 1 rule, Matchday: 1 rule");
+    expect(picked.index.reduce((total, group) => total + group.count, 0)).toBe(2);
   });
 
   it("never drops a global rule, even when the caps are exceeded", () => {

@@ -219,7 +219,7 @@ describe("app-scoped rules in a turn", () => {
   );
 
   it.effect(
-    "the index line stays in the one-line reminder turns, and a changed index resends",
+    "the index line stays in the one-line reminder turns, and a changed index alone resends nothing",
     () =>
       Effect.gen(function* () {
         yield* linkThread("hbots");
@@ -235,12 +235,104 @@ describe("app-scoped rules in a turn", () => {
         expect(second.block).not.toContain("Always answer in plain words.");
         expect(second.block).toContain("Matchday: 1 rule");
         yield* memory.confirmPreferencesSent(THREAD_A);
-        // A rule added for another app changes the index: the list is sent in full again.
+        // A rule added for another app changes the index line, which every turn prints:
+        // the list is not sent again for that.
         yield* saveRule("CalTrack keeps the weight form value.", ["caltrack"]);
         const third = yield* context("one more", { session: { ...session, fresh: false } });
-        expect(third.block).toContain("Always answer in plain words.");
+        expect(third.block).toContain("still apply unchanged");
+        expect(third.block).not.toContain("Always answer in plain words.");
         expect(third.block).toContain("CalTrack: 1 rule");
+        expect(third.block).toContain("Matchday: 1 rule");
+        yield* memory.confirmPreferencesSent(THREAD_A);
+        // A new global rule does change what the session holds: the full list again.
+        yield* saveRule("Never use em dashes.");
+        const fourth = yield* context("and this", { session: { ...session, fresh: false } });
+        expect(fourth.block).toContain("Always answer in plain words.");
+        expect(fourth.block).toContain("Never use em dashes.");
       }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("a chat that flips between apps lists each app's rules once, not on every flip", () =>
+    Effect.gen(function* () {
+      yield* linkThread("Chat");
+      const memory = yield* PersonalMemoryService;
+      yield* saveRule("Always answer in plain words.");
+      yield* saveRule("Matchday dots show the name only.", ["matchday"]);
+      yield* saveRule("CalTrack keeps the weight form value.", ["caltrack"]);
+      const session = { key: "claude:1", fresh: true };
+      const turn = (query: string, fresh = false) =>
+        context(query, { session: { ...session, fresh } }).pipe(
+          Effect.tap(() => memory.confirmPreferencesSent(THREAD_A)),
+        );
+
+      const first = yield* turn("Look at the Matchday standings", true);
+      expect(first.block).toContain("Always answer in plain words.");
+      expect(first.block).toContain("Matchday dots show the name only.");
+      expect(first.block).not.toContain("CalTrack keeps");
+
+      // The chat moves to CalTrack: only that app's rule is sent, on top of the list there.
+      const second = yield* turn("Now the CalTrack weight form");
+      expect(second.block).toContain("still apply unchanged. This chat now also covers an app");
+      expect(second.block).toContain("CalTrack keeps the weight form value.");
+      expect(second.block).not.toContain("Always answer in plain words.");
+      expect(second.block).not.toContain("Matchday dots show");
+      expect(second.trace?.activeApps.map((app) => app.slug).toSorted()).toEqual([
+        "caltrack",
+        "matchday",
+      ]);
+
+      // And back to Matchday, then CalTrack again: nothing is sent again, the rules still apply.
+      for (const query of ["Back to the Matchday dots", "And the CalTrack form again"]) {
+        const flipped = yield* turn(query);
+        expect(flipped.block).toContain("still apply unchanged; none were added");
+        expect(flipped.block).not.toContain("CalTrack keeps the weight form value.");
+        expect(flipped.block).not.toContain("Matchday dots show");
+        expect(flipped.memoryIds).toEqual([]);
+        expect(flipped.trace?.rules.scoped).toBe(2);
+      }
+
+      // A new session starts over: the apps it is about now, the full list.
+      const next = yield* context("Look at the Matchday standings", {
+        session: { key: "claude:2", fresh: true },
+      });
+      expect(next.block).toContain("Matchday dots show the name only.");
+      expect(next.block).not.toContain("CalTrack keeps");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("a page naming four other apps in an hbots chat does not hide hbots' rules", () =>
+    Effect.gen(function* () {
+      yield* linkThread("hbots");
+      yield* saveRule("hbots Back goes to the Bots page.", ["personal-bots"]);
+      yield* saveRule("Matchday dots show the name only.", ["matchday"]);
+      const turn = yield* context(
+        "Here is a list: matchday, caltrack, rainhb, homegym, coachbuild are all fine.",
+      );
+      expect(turn.block).toContain("hbots Back goes to the Bots page.");
+      expect(turn.block).toContain("Matchday dots show the name only.");
+      expect(turn.trace?.activeApps.map((app) => app.slug)).toContain("personal-bots");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("only the owner's messages and task briefs name an app, not a bot's reply", () =>
+    Effect.gen(function* () {
+      yield* linkThread("Chat");
+      // A reply that quotes a web page about Matchday is not what the chat is about.
+      yield* addMessage(
+        "a1",
+        "assistant",
+        "From the page: Matchday standings and Matchday fixtures",
+        30,
+      );
+      yield* saveRule("Matchday dots show the name only.", ["matchday"]);
+      const turn = yield* context("ok thanks");
+      expect(turn.block).not.toContain("Matchday dots show the name only.");
+      expect(turn.trace?.activeApps).toEqual([]);
+      // A task brief is a user-role message: it counts.
+      yield* addMessage("personal-task-1", "user", "[Delegated task] Fix the Matchday dots", 20);
+      const withBrief = yield* context("ok thanks");
+      expect(withBrief.block).toContain("Matchday dots show the name only.");
+    }).pipe(Effect.provide(TestLayer)),
   );
 
   it.effect("a scoped rule of another app is still found by search_memory", () =>

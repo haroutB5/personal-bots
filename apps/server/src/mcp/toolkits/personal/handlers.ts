@@ -5,6 +5,7 @@ import {
   describePersonalRoutineTrigger,
   type PersonalBotId,
   type PersonalMemoryEntry,
+  PERSONAL_MEMORY_APPS,
   PersonalRoutineId,
   type PersonalRoutine,
   type PersonalRoutineSchedule,
@@ -16,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { appsNamedIn, unknownApps } from "../../../personal/memory/memoryApps.ts";
 import { quoteInMessage } from "../../../personal/memory/memoryQuote.ts";
 import { noteChangedLine, writeNoteNotice } from "../../../personal/memory/memoryNotice.ts";
 import * as OrchestrationEngine from "../../../orchestration/Services/OrchestrationEngine.ts";
@@ -641,9 +643,17 @@ const make = Effect.gen(function* () {
     search_memory: (input) =>
       Effect.gen(function* () {
         const { botId } = yield* requireBotThread;
-        const entries = yield* memory
+        const found = yield* memory
           .search({ query: input.query, botId, limit: input.limit ?? 8 })
           .pipe(Effect.mapError((error) => refuse(error.message)));
+        // A query that names an app brings every rule scoped to it, first: the
+        // index line sends a bot here to read exactly those, and a rule whose
+        // words the query happens to miss must not stay out of reach.
+        const appRules = yield* memory
+          .rulesForApps({ botId, apps: appsNamedIn(input.query) })
+          .pipe(Effect.mapError((error) => refuse(error.message)));
+        const seen = new Set(appRules.map((entry) => entry.memoryId));
+        const entries = [...appRules, ...found.filter((entry) => !seen.has(entry.memoryId))];
         return {
           entries: entries.map((entry) => ({
             memoryId: entry.memoryId,
@@ -658,6 +668,12 @@ const make = Effect.gen(function* () {
     save_memory: (input) =>
       Effect.gen(function* () {
         const { scope: invocation, botId } = yield* requireBotThread;
+        const unknown = unknownApps(input.apps ?? []);
+        if (unknown.length > 0) {
+          return yield* refuse(
+            `Not saved: ${unknown.map((app) => `'${app}'`).join(", ")} ${unknown.length === 1 ? "is" : "are"} not a registered app. Valid apps: ${PERSONAL_MEMORY_APPS.map((app) => app.slug).join(", ")}. Leave apps out for a rule that applies everywhere.`,
+          );
+        }
         if (input.kind === "note") return yield* saveNote(input, invocation.threadId, botId);
         const userRequest = input.userRequest;
         if (userRequest === undefined) {

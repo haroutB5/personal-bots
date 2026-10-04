@@ -158,13 +158,16 @@ const VERSION = /\b\d+\.\d+\.\d+\b/;
 /**
  * Whether an entry records a state that goes stale: a task summary, or a note
  * about a release, a QA result or a pending step. A durable fact (a rule, a
- * preference, a fact about the owner) is not.
+ * preference, a fact about the owner, "Node 22.1.0 is required") is not: a
+ * version alone never makes a note a status, and a status word alone does only
+ * where the note says which version, or where an app, task or routine (not the
+ * owner or a chat) wrote it.
  */
 export function isStatusLike(entry: Pick<RankEntry, "kind" | "content" | "source">): boolean {
   if (entry.kind === "task_summary") return true;
   if (entry.kind !== "note") return false;
-  if (STATUS_WORDS.test(entry.content)) return true;
-  return VERSION.test(entry.content) && /;from=(?:app|task|routine)/.test(entry.source);
+  if (!STATUS_WORDS.test(entry.content)) return false;
+  return VERSION.test(entry.content) || /;from=(?:app|task|routine)/.test(entry.source);
 }
 
 /** Days after which a status entry's weight halves. */
@@ -280,9 +283,11 @@ export function rankCandidates<T extends RankEntry>(
   );
   const best = ordered[0]?.score ?? 0;
   const strong = ordered.filter((row) => row.score > 0 && row.score >= best * options.floor);
+  const picked = strong.slice(0, options.limit);
+  const pickedSet = new Set(picked);
   return {
-    picked: strong.slice(0, options.limit),
-    leftOut: ordered.filter((row) => !strong.slice(0, options.limit).includes(row)),
+    picked,
+    leftOut: ordered.filter((row) => !pickedSet.has(row)),
   };
 }
 
