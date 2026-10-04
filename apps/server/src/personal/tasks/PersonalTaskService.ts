@@ -59,6 +59,7 @@ import {
 } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { isMissingProviderConversationText } from "../../provider/missingProviderConversation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
@@ -129,6 +130,13 @@ const RATE_LIMIT_PATTERN =
 /** Rate limits and an unreachable provider back off; anything else fails the attempt. */
 export const classifyProviderError = (message: string | null): "rate_limited" | "provider_error" =>
   message !== null && RATE_LIMIT_PATTERN.test(message) ? "rate_limited" : "provider_error";
+
+/**
+ * A turn that ends on "No conversation found" is followed by the app's own
+ * renewal: a fresh session that sends the same message again. The attempt
+ * waits this long for the renewal to start before that error counts as its end.
+ */
+export const PERSONAL_TASKS_RENEWAL_WAIT_MS = 60_000;
 
 /** A provider wait longer than this gives the task's slot back instead of holding it. */
 export const PERSONAL_TASKS_LONG_PROVIDER_WAIT_MS = 2 * 60_000;
@@ -629,6 +637,8 @@ export const make = Effect.gen(function* () {
   const externalSlots = new Set<string>();
   // Provider threads with an active attempt; filters the hot event stream.
   const activeThreadIds = new Set<string>();
+  // When an attempt's turn first ended on a lost conversation (see PERSONAL_TASKS_RENEWAL_WAIT_MS).
+  const renewalWaitSince = new Map<string, number>();
   // Threads whose waiting task queues once their provider session is gone.
   const resumingThreadIds = new Set<string>();
   // Threads with a queued task held back because a turn (usually the user's
@@ -721,6 +731,35 @@ export const make = Effect.gen(function* () {
             Effect.map((exposure) => exposure.sources.size > 0),
             // A record that cannot be read counts as tainted.
             Effect.orElseSucceed(() => true),
+          ),
+    });
+
+  /**
+   * A delegation carries what the delegating chat saw. A chat that had a site the user
+   * marked sensitive open in an earlier request starts a new request (a new root) with
+   * nothing under that root, so without this the tasks it delegates would keep work
+   * records and summaries of text the chat took from that site. Groups do the same with
+   * their transcript. Fails closed: if the mark cannot be carried, the delegation is refused.
+   */
+  const carryExposureToTree = (parent: PersonalTask, root: PersonalTask) =>
+    Option.match(workStore, {
+      onNone: () => Effect.void,
+      onSome: ({ exposures }) =>
+        exposures
+          .copySources(
+            [
+              rootExposureKey(parent.rootTaskId),
+              ...(parent.threadId === null ? [] : [threadExposureKey(parent.threadId)]),
+            ],
+            rootExposureKey(root.taskId),
+          )
+          .pipe(
+            Effect.mapError((cause) =>
+              fail(
+                "Personal tasks could not carry the chat's sensitive-site mark to the new task, so nothing was delegated. Try again.",
+                cause,
+              ),
+            ),
           ),
     });
 
@@ -1609,6 +1648,9 @@ export const make = Effect.gen(function* () {
         ? anchorRow.value
         : undefined;
     const observed = attempt.turnId !== null;
+    const renewalKey = `${attempt.taskId}:${attempt.attempt}`;
+    // Any state after the lost-conversation error (the renewal starting) ends the wait.
+    if (session.status !== "error") renewalWaitSince.delete(renewalKey);
     // Newest assistant reply: by the observed turn id when it has one, else
     // the newest reply written after the anchor. Two bounded lookups replace
     // loading every message of the thread on each event and 30s sweep.
@@ -1676,6 +1718,17 @@ export const make = Effect.gen(function* () {
       case "error": {
         if (!observed && !fresh) {
           return;
+        }
+        // The failed resume reports its error before the app's renewal starts the fresh
+        // session: the renewal is the same attempt, so the error is not yet its end. If no
+        // renewal follows, the error counts once the wait is over (the sweep settles it).
+        if (isMissingProviderConversationText(session.lastError)) {
+          const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+          const since = renewalWaitSince.get(renewalKey) ?? nowMs;
+          renewalWaitSince.set(renewalKey, since);
+          if (nowMs - since < PERSONAL_TASKS_RENEWAL_WAIT_MS) {
+            return;
+          }
         }
         // A turn that failed on a rate limit the adapter recognised waits for
         // the reset it reported (Codex usage limits), not a pattern guess.
@@ -2096,6 +2149,7 @@ export const make = Effect.gen(function* () {
               `Delegation loop: bot '${input.targetBotId}' is already working on this request.`,
             );
           }
+          yield* carryExposureToTree(parent, root);
           const now = yield* DateTime.now;
           const taskId = PersonalTaskId.make(NodeCrypto.randomUUID());
           const child: PersonalTask = {

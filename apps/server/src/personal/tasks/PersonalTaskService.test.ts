@@ -48,7 +48,11 @@ import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
-import { makeSensitiveExposureStore, rootExposureKey } from "../browser/sensitiveExposureStore.ts";
+import {
+  makeSensitiveExposureStore,
+  rootExposureKey,
+  threadExposureKey,
+} from "../browser/sensitiveExposureStore.ts";
 import * as PersonalTaskService from "./PersonalTaskService.ts";
 
 /**
@@ -1101,6 +1105,68 @@ it.effect("retry of a failed task creates attempt 2 on the same thread", () => {
     expect(detail.attempts[1]!.providerThreadId).toBe(thread);
     const retryStart = turnStarts(harness).findLast((command) => command.threadId === thread)!;
     expect(retryStart.message.text).toContain("Retry, attempt 2.");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+const LOST = "No conversation found with session ID: 0a1b2c3d-1111-2222-3333-444455556666";
+
+it.effect("a renewal after a lost conversation continues the same attempt", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("renewal");
+    const thread = threadOf(root);
+
+    // The resumed session answers with the error first, and only then does the app start a fresh one.
+    yield* runTurn(harness, thread, "", { status: "error", lastError: LOST });
+    yield* service.sweep;
+    yield* service.drain;
+    expect((yield* reload(root.taskId)).status).toBe("running");
+
+    // The renewed turn runs and replies: the task completes, on its first attempt.
+    yield* TestClock.adjust("10 seconds");
+    yield* runTurn(harness, thread, "Read the logs: nothing wrong.");
+    const done = yield* reload(root.taskId);
+    expect([done.status, done.errorCategory]).toEqual(["completed", null]);
+    expect((yield* service.get({ taskId: root.taskId })).attempts.length).toBe(1);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a lost conversation with no renewal still fails the task once the wait is over", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("no-renewal");
+    yield* runTurn(harness, threadOf(root), "", { status: "error", lastError: LOST });
+    yield* service.sweep;
+    yield* service.drain;
+    expect((yield* reload(root.taskId)).status).toBe("running");
+
+    yield* TestClock.adjust(`${PersonalTaskService.PERSONAL_TASKS_RENEWAL_WAIT_MS + 1_000} millis`);
+    yield* service.sweep;
+    yield* service.drain;
+    const failed = yield* reload(root.taskId);
+    expect([failed.status, failed.errorCategory, failed.errorMessage]).toEqual([
+      "failed",
+      "provider_error",
+      LOST,
+    ]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a renewal that fails with another error fails the task at once", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const root = yield* createRoot("renewal-fails");
+    const thread = threadOf(root);
+    yield* runTurn(harness, thread, "", { status: "error", lastError: LOST });
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    yield* runTurn(harness, thread, "", { status: "error", lastError: "Tool crashed" });
+    const failed = yield* reload(root.taskId);
+    expect([failed.status, failed.errorMessage]).toEqual(["failed", "Tool crashed"]);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
@@ -2779,6 +2845,71 @@ describe("work record (1.60.41)", () => {
       });
       expect(JSON.stringify(record)).not.toContain("hunter2");
       expect(record.decisions[0]).toContain("[redacted]");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect(
+    "a chat that saw a sensitive site in an earlier request hands the mark to the tasks it delegates",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const sql = yield* SqlClient.SqlClient;
+        const store = makeSensitiveExposureStore(sql);
+        const root = yield* createRoot("wr-carry");
+        const turnId = yield* beginTurn(harness, threadOf(root));
+        // The chat's own mark only, as from an earlier request: nothing under this request's root.
+        yield* store.record([threadExposureKey(threadOf(root))], "source", "https://bank.example");
+        yield* store.record([threadExposureKey(threadOf(root))], "approved", "https://ok.example");
+        expect([...(yield* store.read([rootExposureKey(root.rootTaskId)])).sources]).toEqual([]);
+
+        const child = yield* service.delegate({
+          parentTaskId: root.taskId,
+          targetBotId: botId("developer"),
+          brief: brief("Look it up"),
+        });
+        yield* endTurn(harness, threadOf(root), turnId, "Waiting on Developer.");
+        yield* service.drain;
+
+        // The tree carries the mark (not the approval), so the child keeps no record of what it reads.
+        const carried = yield* store.read([rootExposureKey(root.rootTaskId)]);
+        expect([...carried.sources]).toEqual(["https://bank.example"]);
+        expect([...carried.approved]).toEqual([]);
+        const refused = yield* Effect.flip(
+          service.updateWorkRecord({ taskId: child.taskId, patch: { nextStep: "x" } }),
+        );
+        expect(refused.message).toContain("sensitive");
+        yield* runTurn(harness, threadOf(yield* reload(child.taskId)), "Balance is 1,234.");
+        expect(yield* service.workRecord({ taskId: child.taskId })).toBeNull();
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect("a chat that saw nothing sensitive hands nothing to the tasks it delegates", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const sql = yield* SqlClient.SqlClient;
+      const root = yield* createRoot("wr-carry-none");
+      const turnId = yield* beginTurn(harness, threadOf(root));
+      const child = yield* service.delegate({
+        parentTaskId: root.taskId,
+        targetBotId: botId("developer"),
+        brief: brief("Look it up"),
+      });
+      yield* endTurn(harness, threadOf(root), turnId, "Waiting on Developer.");
+      yield* service.drain;
+      expect([
+        ...(yield* makeSensitiveExposureStore(sql).read([rootExposureKey(root.rootTaskId)]))
+          .sources,
+      ]).toEqual([]);
+      const record = yield* service.updateWorkRecord({
+        taskId: child.taskId,
+        patch: { nextStep: "x" },
+      });
+      expect(record.nextStep).toBe("x");
     }).pipe(Effect.provide(makeLayer(harness)));
   });
 

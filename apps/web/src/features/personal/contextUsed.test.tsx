@@ -227,6 +227,17 @@ describe("ContextUsedView", () => {
     expect(text).toContain("Rules change only when you approve a card");
   });
 
+  it("a note picked on its words alone says so", () => {
+    const base = context();
+    const text = flat(
+      render({
+        ...base,
+        notes: [{ ...base.notes[0]!, why: [] }],
+      }).toJSON(),
+    );
+    expect(text).toContain("matched words");
+  });
+
   it("marks: the held mark shows, a mark set here wins, pressing calls back with the next one", () => {
     const onMark = vi.fn();
     const view = render(context(), { onMark, marks: new Map([["n1", "not_relevant"]]) });

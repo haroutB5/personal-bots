@@ -654,6 +654,60 @@ describe("bots toolkit handlers", () => {
     ),
   );
 
+  it.effect(
+    "get_task reads a finished task from an earlier request, as far as steer_task could reopen it, and changes nothing",
+    () =>
+      withHarness((harness) =>
+        Effect.gen(function* () {
+          const { call } = yield* setup(harness);
+          const tasks = yield* PersonalTaskService.PersonalTaskService;
+          const child = yield* call("delegate_task", {
+            targetBot: "developer",
+            objective: "Animate the avatars.",
+          });
+          yield* tasks.drain;
+          const childTask = (yield* tasks.get({ taskId: child.childTaskId as never })).task;
+          yield* tasks.cancel({ taskId: childTask.parentTaskId! });
+          harness.sessions.set(CALLER_THREAD, {
+            ...runningSession(CALLER_THREAD),
+            activeTurnId: TurnId.make("turn-2"),
+          });
+          const before = harness.dispatched.length;
+
+          // Not in this request's tree any more, but delegated from this chat and recent.
+          const read = yield* call("get_task", { taskId: child.childTaskId as never });
+          expect(read.task.taskId).toBe(child.childTaskId);
+          expect(read.task.status).toBe("cancelled");
+          // Read only: the task was not reopened, and nothing was sent.
+          expect((yield* tasks.get({ taskId: childTask.taskId })).task.status).toBe("cancelled");
+          expect(harness.dispatched.length).toBe(before);
+        }),
+      ),
+  );
+
+  it.effect(
+    "get_task still refuses a finished task outside the caller's reach or past 24 hours",
+    () =>
+      withHarness((harness) =>
+        Effect.gen(function* () {
+          const { call } = yield* setup(harness);
+          const tasks = yield* PersonalTaskService.PersonalTaskService;
+          const elsewhere = yield* routineTask(harness, "researcher", "read-elsewhere");
+          yield* tasks.cancel({ taskId: elsewhere.taskId });
+          const refused = yield* Effect.flip(call("get_task", { taskId: elsewhere.taskId }));
+          expect(refused.message).toBe("That task is not in your task tree.");
+
+          // A team lead reads its team's finished task, but only inside the reopen window.
+          yield* makeAssistantLead;
+          const read = yield* call("get_task", { taskId: elsewhere.taskId });
+          expect(read.task.status).toBe("cancelled");
+          yield* TestClock.adjust("25 hours");
+          const tooOld = yield* Effect.flip(call("get_task", { taskId: elsewhere.taskId }));
+          expect(tooOld.message).toBe("That task is not in your task tree.");
+        }),
+      ),
+  );
+
   it.effect("steer_task cannot reopen a finished task outside the caller's reach", () =>
     withHarness((harness) =>
       Effect.gen(function* () {

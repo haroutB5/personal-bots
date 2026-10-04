@@ -25,6 +25,9 @@ import { personalMemoryFeedback, usePersonalMemoryTurnContext } from "./usePerso
 
 const SECTION_LABEL =
   "text-[12px] font-semibold tracking-wide text-[var(--personal-text-secondary)] uppercase";
+/** What the panel says for a note picked on its keywords alone. */
+const MATCHED_WORDS = "matched words";
+
 const CHIP =
   "rounded-[var(--personal-radius-pill)] bg-[var(--personal-fill-muted)] px-2 py-0.5 text-[12px] text-[var(--personal-text-secondary)]";
 const MARK_BUTTON =
@@ -156,15 +159,14 @@ export function ContextUsedView({
                   <p className="mt-1 text-[14px] leading-snug break-words text-[var(--personal-text)]">
                     {note.snippet}
                   </p>
-                  {note.why.length > 0 ? (
-                    <ul className="mt-1.5 flex flex-wrap gap-1.5">
-                      {note.why.map((reason) => (
-                        <li key={reason} className={CHIP}>
-                          {reason}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
+                  <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                    {/* Traces kept from before the server named it: a note with no other reason matched on words. */}
+                    {(note.why.length > 0 ? note.why : [MATCHED_WORDS]).map((reason) => (
+                      <li key={reason} className={CHIP}>
+                        {reason}
+                      </li>
+                    ))}
+                  </ul>
                   {readOnly || !note.current ? null : (
                     <div
                       className="mt-2 flex flex-wrap gap-2"

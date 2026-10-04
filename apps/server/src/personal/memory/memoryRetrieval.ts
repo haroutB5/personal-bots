@@ -237,6 +237,8 @@ export interface Ranked<T extends RankEntry> {
 export const OTHER_APP_WEIGHT = 0.6;
 /** Weight of an entry that names an active app. */
 export const ACTIVE_APP_WEIGHT = 1.25;
+/** The reason shown for an entry picked on its keywords alone. */
+export const MATCHED_WORDS = "matched words";
 /** What the owner said about an entry in the "Context used" view. */
 export type DemotionSignal = "outdated" | "not_relevant";
 /** Weight of an entry marked outdated (no longer true) or not relevant (off topic). */
@@ -289,10 +291,11 @@ export function rankCandidates<T extends RankEntry>(
   );
   const best = ordered[0]?.score ?? 0;
   const strong = ordered.filter((row) => row.score > 0 && row.score >= best * options.floor);
-  const picked = strong.slice(0, options.limit);
-  const pickedSet = new Set(picked);
+  const chosen = strong.slice(0, options.limit);
+  const pickedSet = new Set(chosen);
   return {
-    picked,
+    // An entry nothing weighed on was picked on its words alone: say so.
+    picked: chosen.map((row) => (row.why.length > 0 ? row : { ...row, why: [MATCHED_WORDS] })),
     leftOut: ordered.filter((row) => !pickedSet.has(row)),
   };
 }

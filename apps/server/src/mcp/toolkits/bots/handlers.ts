@@ -490,7 +490,19 @@ const make = Effect.gen(function* () {
     get_task: (input) =>
       Effect.gen(function* () {
         const caller = yield* callerBot();
-        const { task, tree } = yield* reachableTask(caller, input.taskId);
+        // Same reach as steer_task, read-only: a lead can read a finished task's record
+        // before it steers the task back to life.
+        const { task, tree } = yield* reachableTask(caller, input.taskId).pipe(
+          Effect.catch(() =>
+            reopenableTask(caller, input.taskId).pipe(
+              Effect.flatMap((reopenable) =>
+                treeOf(reopenable.rootTaskId).pipe(
+                  Effect.map((reopenableTree) => ({ task: reopenable, tree: reopenableTree })),
+                ),
+              ),
+            ),
+          ),
+        );
         const names = yield* botNames;
         const steers = yield* tasks.steers({ taskId: task.taskId }).pipe(Effect.mapError(readable));
         const workRecord = yield* tasks

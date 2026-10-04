@@ -9,6 +9,7 @@ import {
   limitSummariesPerTitle,
   memoryQueryTerms,
   RETRIEVAL_ENV,
+  MATCHED_WORDS,
   rankCandidates,
   selectQueryTerms,
   statedDateMs,
@@ -158,6 +159,23 @@ describe("ageing of status entries", () => {
     );
     expect(picked.map((row) => row.entry.memoryId)).toEqual(["fact", "status"]);
     expect(picked[1]!.why[0]).toContain("older status entry");
+  });
+
+  it("names an entry picked on its words alone, and leaves a left out entry without a reason", () => {
+    const plain = entry("plain", "The garden shed key is under the blue pot.", { daysOld: 3 });
+    const faint = entry("faint", "The shed was repainted.", { daysOld: 3 });
+    const { picked, leftOut } = rankCandidates(
+      [
+        { entry: plain, bm25: -6 },
+        { entry: faint, bm25: -0.5 },
+      ],
+      { nowMs: NOW, floor: 0.2, limit: 6 },
+    );
+    expect(picked.map((row) => [row.entry.memoryId, row.why])).toEqual([
+      ["plain", [MATCHED_WORDS]],
+    ]);
+    expect(MATCHED_WORDS).toBe("matched words");
+    expect(leftOut.map((row) => [row.entry.memoryId, row.why])).toEqual([["faint", []]]);
   });
 
   it("lets a much more relevant old status entry still win: ranked lower, never lost", () => {

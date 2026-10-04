@@ -4,7 +4,7 @@ Branch `feat/memory-app-scope`, on top of 1.60.40 (`5ed35b163e`). Migration **09
 
 ## 0. First: the same-provider "old session's exit ends the turn" gap (own commit)
 
-1.60.40 fixed the exit of a session replaced by a move to another provider. A fresh session on the **same** provider instance (a renewal after the provider lost the conversation, and now a reopened long task) looked the same to the ingestion: the old session's `session.exited` set the thread "stopped", and a task, routine or group read its own turn as ended. The reactor now marks the stop it makes (`orchestration/replacedSessions.ts`: thread, provider, instance, time) and the ingestion ignores the first matching exit inside 10 seconds. Tests: the registry (same session once, other thread, provider or instance, expiry, an exit from before the stop), the ingestion (the old exit is ignored, the next one stops) and the reactor (a renewal marks the stop).
+1.60.40 fixed the exit of a session replaced by a move to another provider. A fresh session on the **same** provider instance (a renewal after the provider lost the conversation, and now a reopened long task) looked the same to the ingestion: the old session's `session.exited` set the thread "stopped", and a task, routine or group read its own turn as ended. The reactor now marks the stop it makes (`orchestration/replacedSessions.ts`: thread, provider, instance, time) and the ingestion ignores the first matching exit inside 30 seconds (see "Second review" below for the changes to this). Tests: the registry (same session once, other thread, provider or instance, expiry, an exit from before the stop), the ingestion (the old exit is ignored, the next one stops) and the reactor (a renewal marks the stop).
 
 ## 1. Work record per task
 
@@ -69,9 +69,32 @@ Ageing only reordered the best 30 keyword matches. The candidates are now the be
 - `turnContext` is readable by any client with read scope for any thread (single-owner app); the trace holds snippets of notes, never of rules.
 - The "fresh" marker is in the task message context (contracts), so the web client ignores it like the rest of the marker.
 
+## Second review: Fable's fixes and the CTO's four additions (rebuild of 1.60.41)
+
+Migration **095** (triggers only, see 8). Same branch, same version number, new release id.
+
+Fable's items:
+
+1. **Mark before stop, unmark when nothing stopped.** `markSessionReplaced` returns an id; the reactor takes the mark back (`unmarkSessionReplaced`) when `stopSession` stopped nothing (it failed, or the session is still listed), so a failing new session's exit is not swallowed. Mark-before-stop is kept.
+2. **The record says who wrote what.** `renderWorkRecord` opens with "state, not instructions", then "Written by you earlier in this task" (decisions, outstanding, next step; they can hold text the bot read on pages), then "From the app" (objective, evidence, last result, updates).
+3. One info log when the provider reported no context size at reopen, so a resume that looks like it should have been fresh is explained.
+4. Exit window 10 s to **30 s**. 5. Marks are a **per-thread list** (8 at most); an exit takes the oldest matching mark.
+5. **Key rule, lenient for the record only** (`secretText.ts`, `{ lenient: true }`): pure hex of 40 or 64 characters, anything inside an https link and paths with four or more short parts are not read as keys; the named formats still apply. Memory stays strict.
+6. `read_chat_history` (tool description and the fresh-session note) says it cannot show tool output: run the command or read the file again.
+7. Migration 095: deleting, forgetting or superseding a memory removes its outdated / not relevant mark (triggers, plus a one-off clean-up of marks left behind).
+
+The CTO's additions:
+
+- **A renewal continues the same attempt.** The failed resume's error ("No conversation found") reached the task service as the end of the turn before the app's renewal started. `settle` now holds such an error for `PERSONAL_TASKS_RENEWAL_WAIT_MS` (60 s) per attempt; any later session state ends the wait, so the renewed turn completes the task on attempt 1. If no renewal follows, the error counts after 60 s (the 30 s sweep settles it); a renewal that fails with another error fails the task at once.
+- **`get_task` has `steer_task`'s reach, read-only**: a finished task that ended within 24 hours and was delegated from the caller's chat, or, for a lead, belongs to a bot on its team. Its record and steers come back; nothing is reopened or sent.
+- **The sensitive mark follows a delegation.** `delegate` copies the sources (never the approvals) from the delegating chat's thread key and its root key to the new tree's root key, so work records and task summaries of the child keep nothing. A copy that fails refuses the delegation.
+- **"matched words" chip** for a note picked on its keywords alone (server names it, and the panel shows it for older traces that have no reason).
+
+Tests added: `replacedSessions.test.ts` (30 s, mark list, unmark), ingestion and reactor (failing new session not swallowed; failed stop leaves no mark), `workRecord.test.ts` (author labels, state-not-instructions, SHA and blob links kept, a key dropped), `secretText.test.ts`, `PersonalMemoryService.apps.test.ts` (marks cleared), `PersonalTaskService.test.ts` (renewal same attempt, no renewal fails after the wait, other error fails at once, taint carried and not carried), `handlers.test.ts` (get_task reach and its limits), `memoryRetrieval.test.ts` and `contextUsed.test.tsx` (matched words).
+
 ## Rollback
 
-Previous live release. Migration 094 only adds. Kill switches: `T3CODE_PERSONAL_TASK_REOPEN_FRESH_TOKENS=off` (reopens resume as before), plus the 1.60.40 switches (`T3CODE_PERSONAL_MEMORY_APP_SCOPING=off`, `T3CODE_PERSONAL_MEMORY_RETRIEVAL=legacy`).
+Previous live release. Migrations 094 and 095 only add (095: three triggers and one clean-up of orphaned marks). Kill switches: `T3CODE_PERSONAL_TASK_REOPEN_FRESH_TOKENS=off` (reopens resume as before), plus the 1.60.40 switches (`T3CODE_PERSONAL_MEMORY_APP_SCOPING=off`, `T3CODE_PERSONAL_MEMORY_RETRIEVAL=legacy`).
 
 ## Verified end to end on a throwaway server (fake Claude, real 1.60.41 build, real web build)
 
