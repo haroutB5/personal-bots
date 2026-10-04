@@ -21,7 +21,11 @@ import {
   type PersonalMemoryEntry,
   type PersonalMemoryListInput,
   type PersonalMemoryNoteOrigin,
+  type PersonalMemoryFeedbackInput,
+  type PersonalMemoryFeedbackResult,
   type PersonalMemoryRulesUsage,
+  type PersonalMemoryTurnContext,
+  type PersonalMemoryTurnContextInput,
   PERSONAL_MEMORY_RULES_WARN_SHARE,
   noteSourceTag,
   type PersonalMemorySearchInput,
@@ -59,6 +63,16 @@ import {
   entrySnapshotsJson,
 } from "./memoryTidy.ts";
 import {
+  decodeTraceJson,
+  encodeTraceJson,
+  snippetOf,
+  TRACE_KEEP_DAYS,
+  TRACE_LEFT_OUT_MAX,
+  TRACE_LEFT_OUT_SNIPPET_CHARS,
+  TRACE_PICKED_SNIPPET_CHARS,
+  type MemoryTurnTrace,
+} from "./memoryTurnTrace.ts";
+import {
   candidateQueryTerms,
   capByChars,
   contextualRetrievalEnabled,
@@ -66,6 +80,7 @@ import {
   limitSummariesPerTitle,
   memoryQueryTerms,
   rankCandidates,
+  type DemotionSignal,
   RELEVANT_MAX_CHARS,
   selectQueryTerms,
   termsToMatch,
@@ -262,6 +277,7 @@ const MemoryDbRow = Schema.Struct({
   supersededBy: Schema.NullOr(PersonalMemoryId),
   supersededReason: Schema.NullOr(Schema.String),
   appsJson: Schema.NullOr(Schema.String),
+  demotedSignal: Schema.NullOr(Schema.Literals(["outdated", "not_relevant"])),
 });
 const decodeMemoryRow = Schema.decodeUnknownEffect(MemoryDbRow);
 const encodeMemoryIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -292,7 +308,8 @@ const MEMORY_COLUMNS = `
   m.superseded_at AS "supersededAt",
   m.superseded_by AS "supersededBy",
   m.superseded_reason AS "supersededReason",
-  m.apps_json AS "appsJson"
+  m.apps_json AS "appsJson",
+  (SELECT f.signal FROM personal_memory_feedback f WHERE f.memory_id = m.memory_id) AS "demotedSignal"
 `;
 
 export interface PersonalMemorySaveInput {
@@ -424,29 +441,7 @@ export function capPreferences(entries: ReadonlyArray<PersonalMemoryEntry>): {
   return { kept: kept.toReversed(), dropped };
 }
 
-/** What a turn's memory was about, and why each entry was picked or left out. */
-export interface MemoryTurnTrace {
-  readonly activeApps: ReadonlyArray<ActiveApp>;
-  /** Rules listed in full, global and of an active app. */
-  readonly rules: { readonly global: number; readonly scoped: number };
-  /** Rule groups of other apps counted in the index line. */
-  readonly appIndex: ReadonlyArray<{ readonly slug: string; readonly count: number }>;
-  /** Rules of an active app that did not fit the caps. */
-  readonly rulesLeftOut: ReadonlyArray<PersonalMemoryId>;
-  /** The words searched, and whether the message alone was too thin so the chat led. */
-  readonly query: { readonly terms: ReadonlyArray<string>; readonly followUp: boolean };
-  readonly picked: ReadonlyArray<{
-    readonly memoryId: PersonalMemoryId;
-    readonly kind: PersonalMemoryKind;
-    readonly score: number;
-    readonly why: ReadonlyArray<string>;
-  }>;
-  readonly leftOut: ReadonlyArray<{
-    readonly memoryId: PersonalMemoryId;
-    readonly kind: PersonalMemoryKind;
-    readonly reason: string;
-  }>;
-}
+export type { MemoryTurnTrace };
 
 export class PersonalMemoryService extends Context.Service<
   PersonalMemoryService,
@@ -585,6 +580,23 @@ export class PersonalMemoryService extends Context.Service<
      * Every current rule a bot can see that is scoped to any of `apps`: what a
      * search that names an app must bring, whatever its words match.
      */
+    /**
+     * What one turn's memory block held and why (the "Context used" view): the
+     * trace recorded when the message `messageId` started its turn, rules as
+     * they read now. Null when none was recorded (older than 14 days, or no
+     * memory in that turn).
+     */
+    readonly turnContext: (
+      input: PersonalMemoryTurnContextInput,
+    ) => Effect.Effect<PersonalMemoryTurnContext | null, PersonalMemoryError>;
+    /**
+     * The owner marks a note or task summary outdated or not relevant (ranked
+     * lower from now on, never deleted), or clears the mark. Rules are not
+     * marked: they change only through an approval.
+     */
+    readonly setFeedback: (
+      input: PersonalMemoryFeedbackInput,
+    ) => Effect.Effect<PersonalMemoryFeedbackResult, PersonalMemoryError>;
     readonly rulesForApps: (input: {
       readonly botId: PersonalBotId;
       readonly apps: ReadonlyArray<string>;
@@ -630,9 +642,10 @@ export const make = Effect.gen(function* () {
   const decodeAll = (rows: ReadonlyArray<unknown>) =>
     Effect.forEach(rows, (row) =>
       decodeMemoryRow(row).pipe(
-        Effect.map(({ appsJson, ...entry }): PersonalMemoryEntry => ({
+        Effect.map(({ appsJson, demotedSignal, ...entry }): PersonalMemoryEntry => ({
           ...entry,
           apps: parseAppsJson(appsJson),
+          demoted: demotedSignal,
         })),
       ),
     );
@@ -718,7 +731,12 @@ export const make = Effect.gen(function* () {
         `.pipe(Effect.map((rows) => new Map(rows.map((row) => [row.term, row.df]))));
 
   /** The FTS rows for a match, best first, with their bm25 score (negative: more negative is better). */
-  const searchScored = (match: string, filter: PersonalMemoryScopeFilter, limit: number) =>
+  const searchScored = (
+    match: string,
+    filter: PersonalMemoryScopeFilter,
+    limit: number,
+    order: "score" | "newest" = "score",
+  ) =>
     Effect.gen(function* () {
       const rows = yield* sql<{ readonly score: number }>`
         SELECT ${sql.literal(MEMORY_COLUMNS)}, bm25(personal_memory_fts) AS "score"
@@ -731,7 +749,11 @@ export const make = Effect.gen(function* () {
           AND ${filter.excludeTaskSummaries === true ? sql`m.kind <> 'task_summary'` : sql`1 = 1`}
           AND ${filter.excludePreferences === true ? sql`m.kind <> 'preference'` : sql`1 = 1`}
           AND ${filter.onlyKind === undefined ? sql`1 = 1` : sql`m.kind = ${filter.onlyKind}`}
-        ORDER BY bm25(personal_memory_fts) ASC, m.updated_at DESC
+        ORDER BY ${
+          order === "score"
+            ? sql`bm25(personal_memory_fts) ASC, m.updated_at DESC`
+            : sql`m.updated_at DESC, bm25(personal_memory_fts) ASC`
+        }
         LIMIT ${limit}
       `;
       const entries = yield* decodeAll(rows);
@@ -1165,21 +1187,46 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => Option.none<PersonalBotId>()),
     );
 
-  const recordUsage = (threadId: ThreadId, memoryIds: ReadonlyArray<PersonalMemoryId>) =>
+  /** When old traces were last cleared (in memory): once an hour is plenty. */
+  let tracesPrunedAtMs = Number.NEGATIVE_INFINITY;
+
+  const recordUsage = (
+    threadId: ThreadId,
+    memoryIds: ReadonlyArray<PersonalMemoryId>,
+    messageId: string | undefined,
+    trace: MemoryTurnTrace,
+  ) =>
     Effect.gen(function* () {
       const active = yield* sql<{ readonly taskId: string; readonly attempt: number }>`
         SELECT task_id AS "taskId", attempt AS "attempt" FROM personal_task_attempts
         WHERE provider_thread_id = ${threadId} AND ended_at IS NULL
         ORDER BY started_at DESC LIMIT 1
       `;
-      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      const traceJson = yield* encodeTraceJson(trace);
       yield* sql`
-        INSERT INTO personal_memory_usage (thread_id, task_id, attempt, memory_ids_json, created_at)
+        INSERT INTO personal_memory_usage (
+          thread_id, task_id, attempt, memory_ids_json, created_at, message_id, trace_json
+        )
         VALUES (
           ${threadId}, ${active[0]?.taskId ?? null}, ${active[0]?.attempt ?? null},
-          ${encodeMemoryIds(memoryIds)}, ${nowIso}
+          ${encodeMemoryIds(memoryIds)}, ${nowIso}, ${messageId ?? null}, ${traceJson}
         )
       `;
+      // A trace is kept for TRACE_KEEP_DAYS; the usage row itself stays.
+      const nowMs = DateTime.toEpochMillis(now);
+      if (nowMs - tracesPrunedAtMs > 3_600_000) {
+        tracesPrunedAtMs = nowMs;
+        const cutoff = DateTime.formatIso(DateTime.subtract(now, { days: TRACE_KEEP_DAYS }));
+        yield* sql`
+          UPDATE personal_memory_usage SET trace_json = NULL
+          WHERE usage_id IN (
+            SELECT usage_id FROM personal_memory_usage
+            WHERE trace_json IS NOT NULL AND created_at < ${cutoff} LIMIT 500
+          )
+        `;
+      }
     });
 
   /**
@@ -1267,6 +1314,8 @@ export const make = Effect.gen(function* () {
 
   /** Most candidates fetched per kind before they are scored, weighed and capped. */
   const CANDIDATES_PER_KIND = 30;
+  /** Newest keyword matches added to those, per kind. */
+  const NEWEST_PER_KIND = 15;
 
   /**
    * The notes and task summaries a turn is given. Contextual (default): the
@@ -1317,6 +1366,7 @@ export const make = Effect.gen(function* () {
             kind: entry.kind,
             score: 0,
             why: ["keyword match (legacy retrieval)"],
+            snippet: snippetOf(entry.content, TRACE_PICKED_SNIPPET_CHARS),
           })),
         };
       }
@@ -1337,6 +1387,32 @@ export const make = Effect.gen(function* () {
       if (match === null) return { ...empty, query };
       const activeSet = new Set(input.activeApps.map((app) => app.slug));
       const knownApps = [...new Set([...MEMORY_APPS.map((app) => app.slug), ...input.ruleApps])];
+      // The candidates: the best keyword matches, plus the newest matches, so
+      // that ageing can lift a recent entry the best-30 would have missed.
+      const poolFor = (kind: "note" | "task_summary") =>
+        Effect.gen(function* () {
+          const filter = { ...input.scope, onlyKind: kind } as const;
+          const best = yield* searchScored(match, filter, CANDIDATES_PER_KIND);
+          const newest = yield* searchScored(match, filter, NEWEST_PER_KIND, "newest");
+          const seen = new Set(best.map((row) => row.entry.memoryId));
+          return [...best, ...newest.filter((row) => !seen.has(row.entry.memoryId))];
+        });
+      const notePool = yield* poolFor("note");
+      const summaryPool = input.excludeTaskSummaries ? [] : yield* poolFor("task_summary");
+      // What the owner marked outdated or not relevant ranks lower.
+      const poolIds = [...notePool, ...summaryPool].map((row) => row.entry.memoryId);
+      const demoted = new Map<string, DemotionSignal>();
+      if (poolIds.length > 0) {
+        const marks = yield* sql<{ readonly memoryId: string; readonly signal: string }>`
+          SELECT memory_id AS "memoryId", signal FROM personal_memory_feedback
+          WHERE ${sql.in("memory_id", poolIds)}
+        `;
+        for (const mark of marks) {
+          if (mark.signal === "outdated" || mark.signal === "not_relevant") {
+            demoted.set(mark.memoryId, mark.signal);
+          }
+        }
+      }
       const rank =
         (limit: number) =>
         (
@@ -1357,22 +1433,15 @@ export const make = Effect.gen(function* () {
               activeApps: activeSet,
               mentionsApp,
               knownApps,
+              demoted,
               floor: chosen.followUp ? FOLLOW_UP_FLOOR : PERSONAL_MEMORY_SCORE_FLOOR,
               limit,
             },
           );
-      const notes = rank(PERSONAL_MEMORY_CONTEXT_NOTE_LIMIT)(
-        yield* searchScored(match, { ...input.scope, onlyKind: "note" }, CANDIDATES_PER_KIND),
-      );
+      const notes = rank(PERSONAL_MEMORY_CONTEXT_NOTE_LIMIT)(notePool);
       const summaries = input.excludeTaskSummaries
         ? { picked: [], leftOut: [] }
-        : rank(PERSONAL_MEMORY_CONTEXT_SUMMARY_LIMIT)(
-            yield* searchScored(
-              match,
-              { ...input.scope, onlyKind: "task_summary" },
-              CANDIDATES_PER_KIND,
-            ),
-          );
+        : rank(PERSONAL_MEMORY_CONTEXT_SUMMARY_LIMIT)(summaryPool);
       // Notes first: when the characters run out, task summaries go first.
       const capped = capByChars(
         [...notes.picked, ...summaries.picked],
@@ -1385,13 +1454,15 @@ export const make = Effect.gen(function* () {
           memoryId: row.entry.memoryId,
           kind: row.entry.kind,
           reason: "over the per-turn character limit",
+          snippet: snippetOf(row.entry.content, TRACE_LEFT_OUT_SNIPPET_CHARS),
         })),
         ...[...notes.leftOut, ...summaries.leftOut].map((row) => ({
           memoryId: row.entry.memoryId,
           kind: row.entry.kind,
           reason: row.why.length > 0 ? row.why.join(", ") : "matched less than the best entries",
+          snippet: snippetOf(row.entry.content, TRACE_LEFT_OUT_SNIPPET_CHARS),
         })),
-      ];
+      ].slice(0, TRACE_LEFT_OUT_MAX);
       return {
         entries: capped.kept.map((row): PersonalMemoryEntry => {
           const { updatedAtMs: _ignored, ...entry } = row.entry;
@@ -1402,6 +1473,7 @@ export const make = Effect.gen(function* () {
           kind: row.entry.kind,
           score: Number(row.score.toFixed(3)),
           why: row.why,
+          snippet: snippetOf(row.entry.content, TRACE_PICKED_SNIPPET_CHARS),
         })),
         leftOut,
         query,
@@ -1583,9 +1655,6 @@ export const make = Effect.gen(function* () {
       const memoryIds = [...sentPreferenceEntries, ...(delta ? addedRules : []), ...relevant].map(
         (entry) => entry.memoryId,
       );
-      if (input.record && memoryIds.length > 0) {
-        yield* recordUsage(input.threadId, memoryIds);
-      }
       const blockInput = {
         preferences: sentPreferenceEntries,
         droppedPreferences,
@@ -1603,17 +1672,26 @@ export const make = Effect.gen(function* () {
           ? formatMemoryBlock({ ...blockInput, relevant: [] })
           : null;
       const trace: MemoryTurnTrace = {
-        activeApps,
+        activeApps: activeApps.map((app) => ({ slug: app.slug, via: [...app.via] })),
         rules: {
           global: listed.filter((entry) => !scoping || (entry.apps ?? null) === null).length,
           scoped: listed.filter((entry) => scoping && (entry.apps ?? null) !== null).length,
         },
         appIndex: appIndexGroups,
+        appIndexLine: appIndex,
         rulesLeftOut: leftOutRules.map((entry) => entry.memoryId),
-        query: picks.query,
-        picked: picks.picked,
+        rulesListed: listed.map((entry) => entry.memoryId),
+        rulesSent: !repeat,
+        rulesAdded: delta ? addedRules.map((entry) => entry.memoryId) : [],
+        query: { terms: [...picks.query.terms], followUp: picks.query.followUp },
+        picked: picks.picked.map((row) => ({ ...row, why: [...row.why] })),
         leftOut: picks.leftOut,
       };
+      // Every recorded turn leaves a row (a reminder turn used the rules sent
+      // earlier), with the trace the "Context used" view reads.
+      if (input.record) {
+        yield* recordUsage(input.threadId, memoryIds, input.messageId, trace);
+      }
       return {
         block,
         ...(preferencesBlock === null ? {} : { preferencesBlock }),
@@ -1631,6 +1709,113 @@ export const make = Effect.gen(function* () {
             }).pipe(Effect.as({ block: null, memoryIds: [] })),
       ),
     );
+
+  const turnContext: PersonalMemoryService["Service"]["turnContext"] = (input) =>
+    Effect.gen(function* () {
+      const rows = yield* sql<{ readonly createdAt: string; readonly traceJson: string | null }>`
+        SELECT created_at AS "createdAt", trace_json AS "traceJson" FROM personal_memory_usage
+        WHERE thread_id = ${input.threadId} AND message_id = ${input.messageId}
+          AND trace_json IS NOT NULL
+        ORDER BY usage_id DESC LIMIT 1
+      `;
+      const row = rows[0];
+      if (row?.traceJson == null) return null;
+      const trace = Option.getOrNull(decodeTraceJson(row.traceJson));
+      if (trace === null) return null;
+      const ids = [
+        ...new Set([
+          ...trace.rulesListed,
+          ...trace.rulesLeftOut,
+          ...trace.picked.map((entry) => entry.memoryId),
+        ]),
+      ];
+      const live =
+        ids.length === 0
+          ? []
+          : yield* sql`
+              SELECT ${sql.literal(MEMORY_COLUMNS)}, m.deleted_at AS "deletedAt"
+              FROM personal_memory m WHERE ${sql.in("m.memory_id", ids)}
+            `.pipe(
+              Effect.flatMap((found) =>
+                decodeAll(found).pipe(
+                  Effect.map((entries) =>
+                    entries.map((entry, index) => ({
+                      entry,
+                      deleted:
+                        (found[index] as { readonly deletedAt?: string | null }).deletedAt != null,
+                    })),
+                  ),
+                ),
+              ),
+            );
+      const byId = new Map(live.map((item) => [item.entry.memoryId as string, item] as const));
+      const isCurrent = (id: string) => {
+        const item = byId.get(id);
+        return item !== undefined && !item.deleted && item.entry.supersededAt == null;
+      };
+      const rule = (id: string) => {
+        const item = byId.get(id);
+        return {
+          memoryId: PersonalMemoryId.make(id),
+          content: item === undefined || item.deleted ? "" : item.entry.content,
+          apps: item?.entry.apps ?? null,
+          current: isCurrent(id),
+        };
+      };
+      return {
+        messageId: input.messageId,
+        createdAt: row.createdAt,
+        apps: trace.activeApps.map((app) => ({
+          slug: app.slug,
+          label: appLabel(app.slug),
+          via: [...app.via],
+        })),
+        rules: {
+          sent: trace.rulesSent,
+          items: trace.rulesListed.map(rule),
+          added: trace.rulesAdded.map((id) => PersonalMemoryId.make(id)),
+          index: trace.appIndexLine,
+          leftOut: trace.rulesLeftOut.map(rule),
+        },
+        notes: trace.picked.map((entry) => ({
+          memoryId: PersonalMemoryId.make(entry.memoryId),
+          kind: entry.kind as PersonalMemoryKind,
+          snippet: entry.snippet,
+          why: [...entry.why],
+          score: entry.score,
+          feedback: byId.get(entry.memoryId)?.entry.demoted ?? null,
+          current: isCurrent(entry.memoryId),
+        })),
+        leftOut: trace.leftOut.map((entry) => ({
+          memoryId: PersonalMemoryId.make(entry.memoryId),
+          kind: entry.kind as PersonalMemoryKind,
+          snippet: entry.snippet,
+          reason: entry.reason,
+        })),
+        query: { terms: [...trace.query.terms], followUp: trace.query.followUp },
+      } satisfies PersonalMemoryTurnContext;
+    }).pipe(storageFailure("turn context"));
+
+  const setFeedback: PersonalMemoryService["Service"]["setFeedback"] = (input) =>
+    Effect.gen(function* () {
+      const entry = yield* readEntry(input.memoryId);
+      if (entry.kind === "preference") {
+        return yield* fail(
+          "A rule cannot be marked: rules change only when you approve a card on the Memory screen.",
+        );
+      }
+      if (input.signal === "clear") {
+        yield* sql`DELETE FROM personal_memory_feedback WHERE memory_id = ${input.memoryId}`;
+        return { memoryId: input.memoryId, signal: null };
+      }
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      yield* sql`
+        INSERT INTO personal_memory_feedback (memory_id, signal, created_at)
+        VALUES (${input.memoryId}, ${input.signal}, ${nowIso})
+        ON CONFLICT (memory_id) DO UPDATE SET signal = excluded.signal, created_at = excluded.created_at
+      `;
+      return { memoryId: input.memoryId, signal: input.signal };
+    }).pipe(storageFailure("feedback"));
 
   const rulesForApps: PersonalMemoryService["Service"]["rulesForApps"] = (input) =>
     Effect.gen(function* () {
@@ -1812,6 +1997,8 @@ export const make = Effect.gen(function* () {
     similar,
     botForThread,
     contextForThread,
+    turnContext,
+    setFeedback,
     rulesForApps,
     rulesUsage,
     confirmPreferencesSent,

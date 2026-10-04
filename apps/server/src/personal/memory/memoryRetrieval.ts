@@ -215,8 +215,8 @@ export interface RankOptions {
   readonly mentionsApp?: ((text: string, slug: string) => boolean) | undefined;
   /** Every app slug the text could be about (to spot another app's entries). */
   readonly knownApps?: ReadonlyArray<string> | undefined;
-  /** Entries the owner marked outdated or not relevant: ranked far lower. */
-  readonly demoted?: ReadonlySet<string> | undefined;
+  /** Entries the owner marked outdated or not relevant: ranked lower. */
+  readonly demoted?: ReadonlyMap<string, DemotionSignal> | undefined;
   /** Ageing on (default) or off (legacy). */
   readonly ageing?: boolean | undefined;
   /** An entry must reach this share of the best adjusted score. */
@@ -237,8 +237,13 @@ export interface Ranked<T extends RankEntry> {
 export const OTHER_APP_WEIGHT = 0.6;
 /** Weight of an entry that names an active app. */
 export const ACTIVE_APP_WEIGHT = 1.25;
-/** Weight of an entry the owner marked outdated or not relevant. */
-export const DEMOTED_WEIGHT = 0.1;
+/** What the owner said about an entry in the "Context used" view. */
+export type DemotionSignal = "outdated" | "not_relevant";
+/** Weight of an entry marked outdated (no longer true) or not relevant (off topic). */
+export const DEMOTION_WEIGHT: Record<DemotionSignal, number> = {
+  outdated: 0.1,
+  not_relevant: 0.35,
+};
 
 /**
  * Scores candidates: bm25 relevance times an age weight for status entries, a
@@ -272,9 +277,10 @@ export function rankCandidates<T extends RankEntry>(
         why.push("about another app");
       }
     }
-    if (options.demoted?.has(entry.memoryId) === true) {
-      weight *= DEMOTED_WEIGHT;
-      why.push("marked outdated or not relevant");
+    const mark = options.demoted?.get(entry.memoryId);
+    if (mark !== undefined) {
+      weight *= DEMOTION_WEIGHT[mark];
+      why.push(mark === "outdated" ? "you marked it outdated" : "you marked it not relevant");
     }
     return { entry, bm25, weight, score: -bm25 * weight, why };
   });

@@ -239,9 +239,20 @@ describe("ranking and caps", () => {
         { entry: entry("old", "outdated"), bm25: -10 },
         { entry: entry("fresh", "fresh"), bm25: -6 },
       ],
-      { ...options, demoted: new Set(["old"]) },
+      { ...options, demoted: new Map([["old", "outdated" as const]]) },
     );
     expect(picked.map((row) => row.entry.memoryId)).toEqual(["fresh"]);
+    // Not relevant is a lighter mark: the entry still comes, ranked below a weaker match.
+    const lighter = rankCandidates(
+      [
+        { entry: entry("off", "off topic"), bm25: -10 },
+        { entry: entry("fresh", "fresh"), bm25: -6 },
+      ],
+      { ...options, demoted: new Map([["off", "not_relevant" as const]]) },
+    );
+    expect(lighter.picked.map((row) => row.entry.memoryId)).toEqual(["fresh", "off"]);
+    expect(lighter.picked[1]!.why).toContain("you marked it not relevant");
+    expect(lighter.picked[1]!.score).toBeCloseTo(3.5, 5);
   });
 
   it("caps the picked entries by characters, lowest ranked first to go", () => {

@@ -14,6 +14,14 @@ export type PersonalMemoryId = typeof PersonalMemoryId.Type;
 export const PersonalMemoryScope = Schema.Literals(["shared", "team", "bot", "project"]);
 export type PersonalMemoryScope = typeof PersonalMemoryScope.Type;
 
+/**
+ * What the owner said about a note or task summary in the "Context used" view:
+ * outdated (no longer true) or not relevant (does not belong to what it was
+ * given for). Either ranks it lower in future turns; nothing is deleted.
+ */
+export const PersonalMemoryFeedbackSignal = Schema.Literals(["outdated", "not_relevant"]);
+export type PersonalMemoryFeedbackSignal = typeof PersonalMemoryFeedbackSignal.Type;
+
 /** task_summary entries are derived from finished tasks and never treated as preferences. */
 export const PersonalMemoryKind = Schema.Literals(["note", "preference", "task_summary"]);
 export type PersonalMemoryKind = typeof PersonalMemoryKind.Type;
@@ -48,6 +56,8 @@ export const PersonalMemoryEntry = Schema.Struct({
    * full only on a turn about one of its apps.
    */
   apps: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  /** The owner's mark on a note or task summary: it is ranked lower while set. */
+  demoted: Schema.optional(Schema.NullOr(PersonalMemoryFeedbackSignal)),
 });
 export type PersonalMemoryEntry = typeof PersonalMemoryEntry.Type;
 
@@ -391,6 +401,92 @@ export const PersonalMemoryTidyRunInput = Schema.Struct({
   dryRun: Schema.optional(Schema.Boolean),
 });
 export type PersonalMemoryTidyRunInput = typeof PersonalMemoryTidyRunInput.Type;
+
+/** Marks a note or task summary outdated or not relevant, or clears the mark. */
+export const PersonalMemoryFeedbackInput = Schema.Struct({
+  memoryId: PersonalMemoryId,
+  signal: Schema.Literals(["outdated", "not_relevant", "clear"]),
+});
+export type PersonalMemoryFeedbackInput = typeof PersonalMemoryFeedbackInput.Type;
+
+export const PersonalMemoryFeedbackResult = Schema.Struct({
+  memoryId: PersonalMemoryId,
+  /** The mark now, null when cleared. */
+  signal: Schema.NullOr(PersonalMemoryFeedbackSignal),
+});
+export type PersonalMemoryFeedbackResult = typeof PersonalMemoryFeedbackResult.Type;
+
+/** Which memory one assistant turn was given: the turn is named by the message that started it. */
+export const PersonalMemoryTurnContextInput = Schema.Struct({
+  threadId: TrimmedNonEmptyString,
+  messageId: TrimmedNonEmptyString,
+});
+export type PersonalMemoryTurnContextInput = typeof PersonalMemoryTurnContextInput.Type;
+
+const TurnContextRule = Schema.Struct({
+  memoryId: PersonalMemoryId,
+  /** The rule as it reads now ("" when it is no longer current). */
+  content: Schema.String,
+  apps: Schema.NullOr(Schema.Array(Schema.String)),
+  /** False when the rule has been replaced or forgotten since the turn. */
+  current: Schema.Boolean,
+});
+
+/**
+ * What a turn's memory block held and why, as recorded when the turn started:
+ * the "Context used" view. Rules are looked up as they read now; notes and
+ * summaries carry the snippet they had.
+ */
+export const PersonalMemoryTurnContext = Schema.Struct({
+  messageId: Schema.String,
+  createdAt: Schema.String,
+  /** The apps the turn was about, and where each was found (title, message, recent, role, earlier). */
+  apps: Schema.Array(
+    Schema.Struct({
+      slug: Schema.String,
+      label: Schema.String,
+      via: Schema.Array(Schema.String),
+    }),
+  ),
+  rules: Schema.Struct({
+    /** False on a reminder turn: the rules listed earlier in this chat still applied. */
+    sent: Schema.Boolean,
+    items: Schema.Array(TurnContextRule),
+    /** Rules sent on top of the earlier list (a chat that started covering another app). */
+    added: Schema.Array(PersonalMemoryId),
+    /** "Matchday: 5 rules, CalTrack: 1 rule": the groups not listed. */
+    index: Schema.NullOr(Schema.String),
+    /** Rules of the turn's apps that did not fit the caps. */
+    leftOut: Schema.Array(TurnContextRule),
+  }),
+  notes: Schema.Array(
+    Schema.Struct({
+      memoryId: PersonalMemoryId,
+      kind: PersonalMemoryKind,
+      snippet: Schema.String,
+      /** Why it was picked: matched words, ageing, an app it names. */
+      why: Schema.Array(Schema.String),
+      score: Schema.Number,
+      feedback: Schema.NullOr(PersonalMemoryFeedbackSignal),
+      /** False when it has been replaced, forgotten or deleted since. */
+      current: Schema.Boolean,
+    }),
+  ),
+  leftOut: Schema.Array(
+    Schema.Struct({
+      memoryId: PersonalMemoryId,
+      kind: PersonalMemoryKind,
+      snippet: Schema.String,
+      reason: Schema.String,
+    }),
+  ),
+  query: Schema.Struct({
+    terms: Schema.Array(Schema.String),
+    /** The message alone said too little, so the chat's topic led the search. */
+    followUp: Schema.Boolean,
+  }),
+});
+export type PersonalMemoryTurnContext = typeof PersonalMemoryTurnContext.Type;
 
 /** Share of a per-turn rule cap at which the Memory screen warns. */
 export const PERSONAL_MEMORY_RULES_WARN_SHARE = 0.8;

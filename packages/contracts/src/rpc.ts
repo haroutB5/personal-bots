@@ -416,7 +416,11 @@ import {
   PersonalMemoryUndoNoteInput,
   PersonalMemoryGetInput,
   PersonalMemorySearchInput,
+  PersonalMemoryFeedbackInput,
+  PersonalMemoryFeedbackResult,
   PersonalMemoryRulesUsage,
+  PersonalMemoryTurnContext,
+  PersonalMemoryTurnContextInput,
   PersonalMemoryTidyLogInput,
   PersonalMemoryTidyLogResult,
   PersonalMemoryTidyRun,
@@ -717,6 +721,8 @@ export const WS_METHODS = {
   personalMemoryUndoNote: "personalMemory.undoNote",
   personalMemoryGet: "personalMemory.get",
   personalMemoryRulesUsage: "personalMemory.rulesUsage",
+  personalMemoryTurnContext: "personalMemory.turnContext",
+  personalMemoryFeedback: "personalMemory.feedback",
   personalMemoryTidyLog: "personalMemory.tidyLog",
   personalMemoryTidySetMode: "personalMemory.tidySetMode",
   personalMemoryTidyRun: "personalMemory.tidyRun",
@@ -1883,6 +1889,18 @@ const WsPersonalMemoryGetRpc = Rpc.make(WS_METHODS.personalMemoryGet, {
   error: PersonalMemoryRpcError,
 });
 
+const WsPersonalMemoryTurnContextRpc = Rpc.make(WS_METHODS.personalMemoryTurnContext, {
+  payload: PersonalMemoryTurnContextInput,
+  success: Schema.NullOr(PersonalMemoryTurnContext),
+  error: PersonalMemoryRpcError,
+});
+
+const WsPersonalMemoryFeedbackRpc = Rpc.make(WS_METHODS.personalMemoryFeedback, {
+  payload: PersonalMemoryFeedbackInput,
+  success: PersonalMemoryFeedbackResult,
+  error: PersonalMemoryRpcError,
+});
+
 const WsPersonalMemoryRulesUsageRpc = Rpc.make(WS_METHODS.personalMemoryRulesUsage, {
   payload: Schema.Struct({}),
   success: PersonalMemoryRulesUsage,
@@ -2661,6 +2679,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalMemoryUndoNoteRpc,
   WsPersonalMemoryGetRpc,
   WsPersonalMemoryRulesUsageRpc,
+  WsPersonalMemoryTurnContextRpc,
+  WsPersonalMemoryFeedbackRpc,
   WsPersonalMemoryTidyLogRpc,
   WsPersonalMemoryTidySetModeRpc,
   WsPersonalMemoryTidyRunRpc,

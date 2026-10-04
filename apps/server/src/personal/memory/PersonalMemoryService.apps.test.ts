@@ -519,3 +519,209 @@ describe("rules cap warning", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 });
+
+describe("Context used: what a turn was given, and the owner's marks (1.60.41)", () => {
+  const recorded = (
+    query: string,
+    messageId: string,
+    session?: { readonly key: string; readonly fresh: boolean },
+  ) =>
+    Effect.gen(function* () {
+      const memory = yield* PersonalMemoryService;
+      return yield* memory.contextForThread({
+        threadId: THREAD_A,
+        query,
+        record: true,
+        messageId,
+        ...(session === undefined ? {} : { session }),
+      });
+    });
+
+  it.effect(
+    "a recorded turn can be read back: apps, rules, notes with why, and what was left out",
+    () =>
+      Effect.gen(function* () {
+        yield* linkThread("matchday");
+        const memory = yield* PersonalMemoryService;
+        yield* saveRule("Always answer in plain words.");
+        const dots = yield* saveRule("Matchday dots show the name only.", ["matchday"]);
+        yield* saveRule("hbots Back goes to the Bots page.", ["personal-bots"]);
+        const note = yield* saveNote("Matchday dots were redesigned on 2026-10-01.");
+        yield* recorded("What about the dots?", "msg-1");
+
+        const view = yield* memory.turnContext({ threadId: THREAD_A, messageId: "msg-1" });
+        expect(view).not.toBeNull();
+        expect(view!.apps).toEqual([{ slug: "matchday", label: "Matchday", via: ["title"] }]);
+        expect(view!.rules.sent).toBe(true);
+        expect(view!.rules.items.map((rule) => rule.content).toSorted()).toEqual([
+          "Always answer in plain words.",
+          "Matchday dots show the name only.",
+        ]);
+        expect(view!.rules.items.find((rule) => rule.memoryId === dots.memoryId)?.apps).toEqual([
+          "matchday",
+        ]);
+        expect(view!.rules.index).toBe("hbots: 1 rule");
+        expect(view!.notes.map((entry) => entry.memoryId)).toEqual([note.memoryId]);
+        expect(view!.notes[0]).toMatchObject({ kind: "note", feedback: null, current: true });
+        expect(view!.notes[0]!.snippet).toContain("Matchday dots were redesigned");
+        expect(view!.query.terms.length).toBeGreaterThan(0);
+        // A message that started no recorded turn has nothing.
+        expect(yield* memory.turnContext({ threadId: THREAD_A, messageId: "msg-none" })).toBeNull();
+      }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect(
+    "a reminder turn says the rules listed earlier still applied, and a newly covered app's rules are 'added'",
+    () =>
+      Effect.gen(function* () {
+        yield* linkThread("Chat");
+        const memory = yield* PersonalMemoryService;
+        yield* saveRule("Always answer in plain words.");
+        const matchday = yield* saveRule("Matchday dots show the name only.", ["matchday"]);
+        const session = { key: "claude:1", fresh: true };
+        yield* recorded("Look at the Matchday page", "t1", session);
+        yield* memory.confirmPreferencesSent(THREAD_A);
+        const second = yield* recorded("and again", "t2", { ...session, fresh: false });
+        yield* memory.confirmPreferencesSent(THREAD_A);
+        const view = yield* memory.turnContext({ threadId: THREAD_A, messageId: "t2" });
+        // Nothing was sent again, yet the rules are still shown as what applied.
+        expect(second.memoryIds).toEqual([]);
+        expect(view!.rules.sent).toBe(false);
+        expect(view!.rules.items.map((rule) => rule.memoryId)).toContain(matchday.memoryId);
+
+        const caltrack = yield* saveRule("CalTrack keeps the weight form value.", ["caltrack"]);
+        yield* recorded("Now the CalTrack form", "t3", { ...session, fresh: false });
+        const third = yield* memory.turnContext({ threadId: THREAD_A, messageId: "t3" });
+        expect(third!.rules.added).toEqual([caltrack.memoryId]);
+        expect(third!.apps.map((app) => app.slug).toSorted()).toEqual(["caltrack", "matchday"]);
+        expect(third!.apps.find((app) => app.slug === "matchday")?.via).toEqual(["earlier"]);
+      }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("a rule replaced since the turn is shown as no longer current", () =>
+    Effect.gen(function* () {
+      yield* linkThread("Chat");
+      const memory = yield* PersonalMemoryService;
+      const old = yield* saveRule("Quote prices in USD.");
+      yield* recorded("hello", "m-rule");
+      yield* memory.forget({ memoryId: old.memoryId, actorBotId: BOT_A });
+      const view = yield* memory.turnContext({ threadId: THREAD_A, messageId: "m-rule" });
+      expect(view!.rules.items).toEqual([
+        { memoryId: old.memoryId, content: "Quote prices in USD.", apps: null, current: false },
+      ]);
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect(
+    "outdated and not relevant rank an entry lower in later turns, never delete it, and can be cleared",
+    () =>
+      Effect.gen(function* () {
+        yield* linkThread("Chat");
+        const memory = yield* PersonalMemoryService;
+        const stale = yield* saveNote("The garden shed key is under the blue pot.");
+        yield* saveNote("The garden shed was repainted green in spring.");
+        yield* saveNote("The garden shed roof leaks near the north corner.");
+
+        const before = yield* context("Where is the garden shed key?");
+        expect(before.block).toContain("under the blue pot");
+        const firstScore = before.trace!.picked.find(
+          (row) => row.memoryId === stale.memoryId,
+        )!.score;
+
+        const marked = yield* memory.setFeedback({ memoryId: stale.memoryId, signal: "outdated" });
+        expect(marked).toEqual({ memoryId: stale.memoryId, signal: "outdated" });
+        expect((yield* memory.get(stale.memoryId)).demoted).toBe("outdated");
+        const after = yield* context("Where is the garden shed key?");
+        const row = after.trace!.picked.find((entry) => entry.memoryId === stale.memoryId);
+        // Ranked far lower (and named as marked), but still searchable and not deleted.
+        expect(row === undefined || row.score < firstScore * 0.2).toBe(true);
+        if (row !== undefined) expect(row.why).toContain("you marked it outdated");
+        expect((yield* memory.list({})).map((entry) => entry.memoryId)).toContain(stale.memoryId);
+        expect(
+          (yield* memory.search({ query: "garden shed key", botId: BOT_A })).map(
+            (entry) => entry.memoryId,
+          ),
+        ).toContain(stale.memoryId);
+
+        // Not relevant is lighter; marking again replaces the mark.
+        yield* memory.setFeedback({ memoryId: stale.memoryId, signal: "not_relevant" });
+        expect((yield* memory.get(stale.memoryId)).demoted).toBe("not_relevant");
+        // Cleared: it ranks as before.
+        yield* memory.setFeedback({ memoryId: stale.memoryId, signal: "clear" });
+        expect((yield* memory.get(stale.memoryId)).demoted).toBeNull();
+        const restored = yield* context("Where is the garden shed key?");
+        expect(
+          restored.trace!.picked.find((entry) => entry.memoryId === stale.memoryId)!.score,
+        ).toBe(firstScore);
+      }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("a rule cannot be marked: rules change only through an approval", () =>
+    Effect.gen(function* () {
+      yield* linkThread("Chat");
+      const memory = yield* PersonalMemoryService;
+      const rule = yield* saveRule("Quote prices in USD.");
+      const refused = yield* Effect.flip(
+        memory.setFeedback({ memoryId: rule.memoryId, signal: "outdated" }),
+      );
+      expect(refused.message).toContain("approve a card");
+      expect((yield* memory.get(rule.memoryId)).demoted).toBeNull();
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("traces older than 14 days are cleared, the usage rows stay", () =>
+    Effect.gen(function* () {
+      yield* linkThread("Chat");
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const old = DateTime.formatIso(DateTime.subtract(now, { days: 20 }));
+      yield* sql`
+        INSERT INTO personal_memory_usage
+          (thread_id, task_id, attempt, memory_ids_json, created_at, message_id, trace_json)
+        VALUES (${THREAD_A}, NULL, NULL, '[]', ${old}, 'm-old', '{"x":1}')
+      `;
+      yield* saveRule("A rule.");
+      yield* recorded("hello", "m-new");
+      const rows = yield* sql<{ readonly messageId: string; readonly kept: number }>`
+        SELECT message_id AS "messageId", trace_json IS NOT NULL AS "kept"
+        FROM personal_memory_usage ORDER BY usage_id
+      `;
+      expect(rows).toEqual([
+        { messageId: "m-old", kept: 0 },
+        { messageId: "m-new", kept: 1 },
+      ]);
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect(
+    "the newest matches join the candidates, so a recent summary is not lost behind forty old ones",
+    () =>
+      Effect.gen(function* () {
+        yield* linkThread("Chat");
+        const sql = yield* SqlClient.SqlClient;
+        const now = yield* DateTime.now;
+        const insert = (id: string, title: string, body: string, daysOld: number) => {
+          const at = DateTime.formatIso(DateTime.subtract(now, { days: daysOld }));
+          return sql`
+          INSERT INTO personal_memory (
+            memory_id, scope, scope_id, kind, content, source, sensitivity,
+            created_at, updated_at, deleted_at, version
+          ) VALUES (${id}, 'bot', ${BOT_A}, 'task_summary', ${`Task "${title}": ${body}`},
+            ${`task:${id}`}, 'normal', ${at}, ${at}, NULL, 1)
+        `;
+        };
+        // Forty old summaries repeat the question's words, so they match best.
+        for (let index = 0; index < 40; index++) {
+          yield* insert(
+            `old-${index}`,
+            `Old job ${index}`,
+            "rollout status rollout status rollout status",
+            40,
+          );
+        }
+        yield* insert("recent", "Fresh job", "rollout finished today", 0);
+        const turn = yield* context("what is the rollout status");
+        expect(turn.block).toContain("rollout finished today");
+      }).pipe(Effect.provide(TestLayer)),
+  );
+});

@@ -39,4 +39,9 @@ export default Effect.gen(function* () {
     CREATE INDEX IF NOT EXISTS idx_personal_memory_usage_message
     ON personal_memory_usage(thread_id, message_id)
   `;
+  // Old traces are cleared in small batches by age.
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS idx_personal_memory_usage_created
+    ON personal_memory_usage(created_at)
+  `;
 });
