@@ -288,6 +288,26 @@ describe("1.60.40 refinements", () => {
     ]);
   });
 
+  it("keeps the newest summaries of a title when told how new they are, in keyword order", () => {
+    const summary = (n: number, writtenAt: number) => ({
+      kind: "task_summary",
+      content: `Task "Hourly monitor": run ${n}.`,
+      writtenAt,
+    });
+    // Listed by keyword rank: run 1 (oldest) matched best, run 5 (newest) worst.
+    const listed = [
+      summary(1, 100),
+      summary(2, 200),
+      summary(3, 300),
+      summary(4, 400),
+      summary(5, 500),
+    ];
+    const kept = limitSummariesPerTitle(listed, 2, (entry) => entry.writtenAt);
+    expect(kept.map((row) => row.writtenAt)).toEqual([400, 500]);
+    // Without recency the best keyword matches stay, as before.
+    expect(limitSummariesPerTitle(listed, 2).map((row) => row.writtenAt)).toEqual([100, 200]);
+  });
+
   it("uses fewer words on a follow-up", () => {
     const frequency = new Map(Array.from({ length: 30 }, (_, i) => [`topic${i}`, 3] as const));
     const picked = selectQueryTerms(

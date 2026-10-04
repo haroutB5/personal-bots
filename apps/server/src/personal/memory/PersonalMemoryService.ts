@@ -1383,7 +1383,11 @@ export const make = Effect.gen(function* () {
         ) =>
           rankCandidates(
             // An hourly routine writes dozens of summaries that read alike: keep two per title.
-            limitSummariesPerTitle(candidates.map((row) => row.entry)).map((entry) => ({
+            limitSummariesPerTitle(
+              candidates.map((row) => row.entry),
+              undefined,
+              (entry) => DateTime.toEpochMillis(entry.updatedAt),
+            ).map((entry) => ({
               entry: entryWithTime(entry),
               bm25: candidates.find((row) => row.entry === entry)!.bm25,
             })),

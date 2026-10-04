@@ -499,9 +499,6 @@ export function rulesUsageCardModel(usage: PersonalMemoryRulesUsage): RulesUsage
   if (usage.level === "ok" || usage.rows.length === 0) return null;
   const worst = usage.rows[0]!;
   const percent = Math.round(worst.share * 100);
-  const unscoped = usage.scoping
-    ? ""
-    : " App scoping is off, so every rule goes to every chat and the oldest are dropped first.";
   const rows = usage.rows.map((row) => ({
     key: row.botId,
     label: row.botName,
@@ -512,7 +509,11 @@ export function rulesUsageCardModel(usage: PersonalMemoryRulesUsage): RulesUsage
     return {
       tone: "over",
       headline: `${worst.leftOut.length} ${worst.leftOut.length === 1 ? "rule does" : "rules do"} not fit`,
-      detail: `${worst.botName} would be given ${worst.entries} rules (${compactChars(worst.chars)} characters) in a chat that covers every app, over the limit of ${usage.maxEntries} rules or ${compactChars(usage.maxChars)} characters. These are left out of such a chat, and the bot is told which, so none is lost silently. Rules for one app only count in chats about that app.${unscoped}`,
+      detail: `${worst.botName} would be given ${worst.entries} rules (${compactChars(worst.chars)} characters) in a chat that covers every app, over the limit of ${usage.maxEntries} rules or ${compactChars(usage.maxChars)} characters. ${
+        usage.scoping
+          ? "These are left out of such a chat, and the bot is told which, so none is lost silently. Rules for one app only count in chats about that app."
+          : "App scoping is off, so every rule goes to every chat and the oldest are dropped first: these are the ones left out."
+      }`,
       rows,
       leftOut: worst.leftOut,
     };
@@ -520,7 +521,11 @@ export function rulesUsageCardModel(usage: PersonalMemoryRulesUsage): RulesUsage
   return {
     tone: "near",
     headline: `Rules are ${percent}% of the limit`,
-    detail: `${worst.botName} can be given up to ${worst.entries} of ${usage.maxEntries} rules at once (${compactChars(worst.chars)} of ${compactChars(usage.maxChars)} characters), counting every app. Rules for one app are only listed in chats about it. Past the limit some app rules would be left out of a chat, and the bot told which.${unscoped}`,
+    detail: `${worst.botName} can be given up to ${worst.entries} of ${usage.maxEntries} rules at once (${compactChars(worst.chars)} of ${compactChars(usage.maxChars)} characters), ${
+      usage.scoping
+        ? "counting every app. Rules for one app are only listed in chats about it. Past the limit some app rules would be left out of a chat, and the bot told which."
+        : "App scoping is off, so every rule goes to every chat, and past the limit the oldest are dropped first."
+    }`,
     rows,
     leftOut: [],
   };

@@ -326,20 +326,36 @@ export const MAX_SUMMARIES_PER_TITLE = 2;
 const SUMMARY_TITLE = /^Task "([^"]*)"/;
 
 /**
- * Keeps the first (best-ranked) few task summaries of each task title and
- * passes every other entry through, so a routine that runs hourly cannot fill
+ * Keeps the newest few task summaries of each task title (the first listed
+ * when no recency is given) and passes every other entry through, so a routine that runs hourly cannot fill
  * the turn with near-identical summaries.
  */
 export function limitSummariesPerTitle<
   T extends { readonly content: string; readonly kind: string },
->(candidates: ReadonlyArray<T>, perTitle: number = MAX_SUMMARIES_PER_TITLE): ReadonlyArray<T> {
-  const seen = new Map<string, number>();
-  return candidates.filter((entry) => {
-    if (entry.kind !== "task_summary") return true;
-    const title = SUMMARY_TITLE.exec(entry.content)?.[1];
-    if (title === undefined) return true;
-    const count = seen.get(title) ?? 0;
-    seen.set(title, count + 1);
-    return count < perTitle;
-  });
+>(
+  candidates: ReadonlyArray<T>,
+  perTitle: number = MAX_SUMMARIES_PER_TITLE,
+  /** When an entry was written: of one title, the newest are kept, not the best keyword matches. */
+  recency?: (entry: T) => number,
+): ReadonlyArray<T> {
+  const titleOf = (entry: T) =>
+    entry.kind === "task_summary" ? SUMMARY_TITLE.exec(entry.content)?.[1] : undefined;
+  // Which of each title to keep: the newest (when told how new they are), else the first listed.
+  const keep = new Set<T>();
+  const groups = new Map<string, Array<T>>();
+  for (const entry of candidates) {
+    const title = titleOf(entry);
+    if (title === undefined) {
+      keep.add(entry);
+      continue;
+    }
+    groups.set(title, [...(groups.get(title) ?? []), entry]);
+  }
+  for (const group of groups.values()) {
+    const ordered =
+      recency === undefined ? group : group.toSorted((a, b) => recency(b) - recency(a));
+    for (const entry of ordered.slice(0, perTitle)) keep.add(entry);
+  }
+  // Kept entries stay in the order they came in (their keyword rank).
+  return candidates.filter((entry) => keep.has(entry));
 }

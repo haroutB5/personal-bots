@@ -422,6 +422,35 @@ describe("conversation-aware retrieval", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.effect("of one task title the newest summaries are given, not the best keyword matches", () =>
+    Effect.gen(function* () {
+      yield* linkThread("Chat");
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      // Older runs repeat the question's words more, so they match best; the newest match least.
+      for (let run = 1; run <= 5; run++) {
+        const at = DateTime.formatIso(DateTime.subtract(now, { hours: 6 - run }));
+        const words = "monitor results ".repeat(6 - run);
+        yield* sql`
+          INSERT INTO personal_memory (
+            memory_id, scope, scope_id, kind, content, source, sensitivity,
+            created_at, updated_at, deleted_at, version
+          ) VALUES (
+            ${`summary-run-${run}`}, 'bot', ${BOT_A}, 'task_summary',
+            ${`Task "Racket monitor": run ${run} ${words}`}, ${`task:t${run}`}, 'normal',
+            ${at}, ${at}, NULL, 1
+          )
+        `;
+      }
+      const turn = yield* context("show the monitor results from the racket monitor");
+      const block = turn.block ?? "";
+      expect(block).toContain("run 5 ");
+      expect(block).toContain("run 4 ");
+      expect(block).not.toContain("run 1 ");
+      expect(block).not.toContain("run 2 ");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("caps the notes by count and by characters", () =>
     Effect.gen(function* () {
       yield* linkThread("Chat");

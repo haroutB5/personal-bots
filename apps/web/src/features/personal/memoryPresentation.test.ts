@@ -549,6 +549,26 @@ describe("1.60.40: the rules limit warning", () => {
 
   it("says when app scoping is switched off", () => {
     const model = rulesUsageCardModel(usage("near", [row()], false))!;
-    expect(model.detail).toContain("App scoping is off");
+    expect(model.detail).toContain("App scoping is off, so every rule goes to every chat");
+    // Only the true sentence: with scoping off, a rule for one app counts everywhere.
+    expect(model.detail).not.toContain("only listed in chats about it");
+    expect(model.detail).not.toContain("only count in chats about that app");
+    const over = rulesUsageCardModel(
+      usage(
+        "over",
+        [
+          row({
+            entries: 64,
+            share: 64 / 60,
+            leftOut: [{ memoryId: "m1" as never, content: "R." }],
+          }),
+        ],
+        false,
+      ),
+    )!;
+    expect(over.detail).toContain("App scoping is off");
+    expect(over.detail).not.toContain("only count in chats about that app");
+    // With scoping on it never says scoping is off.
+    expect(rulesUsageCardModel(usage("near", [row()]))!.detail).not.toContain("scoping is off");
   });
 });
