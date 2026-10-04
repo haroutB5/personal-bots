@@ -11,8 +11,10 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
   CommandId,
@@ -22,6 +24,7 @@ import {
   PERSONAL_TASK_RETRYABLE_STATUSES,
   PERSONAL_TASK_TERMINAL_STATUSES,
   PersonalTaskId,
+  PersonalTaskWorkRecord,
   PersonalTasksError,
   ThreadId,
   type OrchestrationEvent,
@@ -66,6 +69,22 @@ import {
 } from "../personalThreadTitles.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import { serverPerfOptimizationOn } from "../perfFlags.ts";
+import {
+  makeSensitiveExposureStore,
+  rootExposureKey,
+  threadExposureKey,
+} from "../browser/sensitiveExposureStore.ts";
+import {
+  applyWorkRecordPatch,
+  emptyWorkRecord,
+  estimateTokens,
+  recordAttemptEnd,
+  recordSteer,
+  renderWorkRecord,
+  reopenFreshTokens,
+  workRecordHasContent,
+  type WorkRecordPatch,
+} from "./workRecord.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
 
 /** Global cap on active provider turns started by the dispatcher. */
@@ -241,6 +260,47 @@ export class PersonalTaskService extends Context.Service<
     readonly get: (input: {
       readonly taskId: PersonalTaskId;
     }) => Effect.Effect<PersonalTaskDetail, PersonalTasksError>;
+    /** The task's work record, or null when it has none yet. */
+    readonly workRecord: (input: {
+      readonly taskId: PersonalTaskId;
+    }) => Effect.Effect<PersonalTaskWorkRecord | null, PersonalTasksError>;
+    /**
+     * A bot's update to its task's work record (decisions and evidence are
+     * added, outstanding work and the next step replaced). Refused for a task
+     * whose tree had a site the user marked sensitive open: nothing from it is
+     * kept.
+     */
+    readonly updateWorkRecord: (input: {
+      readonly taskId: PersonalTaskId;
+      readonly patch: WorkRecordPatch;
+    }) => Effect.Effect<PersonalTaskWorkRecord, PersonalTasksError>;
+    /** The task whose active attempt runs in `threadId`, if any. */
+    readonly taskForThread: (input: {
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<Option.Option<PersonalTask>, PersonalTasksError>;
+    /**
+     * The chat's earlier messages, newest first, for a bot that started a
+     * fresh session and needs an exact detail: `query` keeps messages that
+     * contain it, `beforeMessageId` pages further back. Each text is clipped.
+     */
+    readonly chatHistory: (input: {
+      readonly threadId: ThreadId;
+      readonly query?: string | undefined;
+      readonly beforeMessageId?: string | undefined;
+      readonly limit: number;
+    }) => Effect.Effect<
+      {
+        readonly messages: ReadonlyArray<{
+          readonly messageId: string;
+          readonly role: string;
+          readonly at: string;
+          readonly text: string;
+          readonly clipped: boolean;
+        }>;
+        readonly hasMore: boolean;
+      },
+      PersonalTasksError
+    >;
     readonly list: (
       filter: PersonalTaskListInput,
     ) => Effect.Effect<PersonalTaskListResult, PersonalTasksError>;
@@ -443,6 +503,10 @@ const isTerminal = (status: PersonalTaskStatus) => PERSONAL_TASK_TERMINAL_STATUS
 /** Id prefix of the note that tells a reopened task it is continuing. */
 const PERSONAL_TASK_REOPEN_NOTE_PREFIX = "reopen:";
 
+/** Tells a bot that a reopened task started a fresh session, and where its state is. */
+export const FRESH_SESSION_NOTE =
+  "This task was reopened after a long chat, so you start a fresh session and the earlier conversation is not in your context. The work record below is your state. When you need an exact detail (a command, a message, a result), call read_chat_history: it reads this chat's earlier messages, newest first, and can search them.";
+
 /** Ends a reopened task's continuation turn text, after the steer that reopened it. */
 export const reopenNote = (status: PersonalTaskStatus) =>
   `This task had ${status === "completed" ? "finished" : `ended (${status})`} and has been reopened in this same chat. Continue where you stopped.`;
@@ -542,6 +606,17 @@ export const make = Effect.gen(function* () {
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const messages = yield* ProjectionThreadMessageRepository;
   const liveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
+  // Work records live beside the task tables. Optional so a layer that has no
+  // SQL client (a unit test of the dispatcher alone) simply keeps none.
+  const sqlOption = yield* Effect.serviceOption(SqlClient.SqlClient);
+  const workStore = Option.map(sqlOption, (sql) => ({
+    sql,
+    exposures: makeSensitiveExposureStore(sql),
+  }));
+  const decodeWorkRecord = Schema.decodeUnknownOption(
+    Schema.fromJsonString(PersonalTaskWorkRecord),
+  );
+  const encodeWorkRecord = Schema.encodeEffect(Schema.fromJsonString(PersonalTaskWorkRecord));
 
   // One owner per server process: a lease held by anyone else and past its
   // expiry belongs to a process that died mid-turn.
@@ -599,14 +674,136 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  const readWorkRecord = (taskId: PersonalTaskId) =>
+    Option.match(workStore, {
+      onNone: () => Effect.succeed(null as PersonalTaskWorkRecord | null),
+      onSome: ({ sql }) =>
+        sql<{ readonly recordJson: string }>`
+          SELECT record_json AS "recordJson" FROM personal_task_work_records
+          WHERE task_id = ${taskId}
+        `.pipe(
+          Effect.map((rows) =>
+            rows[0] === undefined ? null : Option.getOrNull(decodeWorkRecord(rows[0].recordJson)),
+          ),
+          Effect.mapError((cause) => fail("Personal tasks could not read a work record.", cause)),
+        ),
+    });
+
+  const writeWorkRecord = (taskId: PersonalTaskId, record: PersonalTaskWorkRecord) =>
+    Option.match(workStore, {
+      onNone: () => Effect.void,
+      onSome: ({ sql }) =>
+        encodeWorkRecord(record).pipe(
+          Effect.flatMap(
+            (json) => sql`
+              INSERT INTO personal_task_work_records (task_id, record_json, updated_at)
+              VALUES (${taskId}, ${json}, ${record.updatedAt})
+              ON CONFLICT (task_id) DO UPDATE SET
+                record_json = excluded.record_json, updated_at = excluded.updated_at
+            `,
+          ),
+          Effect.asVoid,
+          Effect.mapError((cause) => fail("Personal tasks could not save a work record.", cause)),
+        ),
+    });
+
+  /** Whether the task's tree (or its chat) had a site the user marked sensitive open. */
+  const workRecordTainted = (task: PersonalTask) =>
+    Option.match(workStore, {
+      onNone: () => Effect.succeed(false),
+      onSome: ({ exposures }) =>
+        exposures
+          .read([
+            rootExposureKey(task.rootTaskId),
+            ...(task.threadId === null ? [] : [threadExposureKey(task.threadId)]),
+          ])
+          .pipe(
+            Effect.map((exposure) => exposure.sources.size > 0),
+            // A record that cannot be read counts as tainted.
+            Effect.orElseSucceed(() => true),
+          ),
+    });
+
+  /** The latest context size the thread's provider reported, in tokens. */
+  const latestContextTokens = (threadId: ThreadId) =>
+    Option.match(workStore, {
+      onNone: () => Effect.succeed(null as number | null),
+      onSome: ({ sql }) =>
+        sql<{ readonly used: number | null }>`
+          SELECT json_extract(payload_json, '$.usedTokens') AS "used"
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId} AND kind = 'context-window.updated'
+          ORDER BY created_at DESC LIMIT 1
+        `.pipe(
+          Effect.map((rows) => (typeof rows[0]?.used === "number" ? rows[0].used : null)),
+          Effect.orElseSucceed(() => null),
+        ),
+    });
+
+  /**
+   * Best effort, never fails the caller: a task that ended adds its status,
+   * clipped result and the evidence it names to its record. Nothing is kept
+   * from a tree that had a sensitive site open (the same rule as task
+   * summaries in memory).
+   */
+  const recordWorkEnd = (task: PersonalTask) =>
+    Effect.gen(function* () {
+      if (Option.isNone(workStore) || !isTerminal(task.status)) return;
+      if (yield* workRecordTainted(task)) return;
+      const now = DateTime.formatIso(yield* DateTime.now);
+      const current = (yield* readWorkRecord(task.taskId)) ?? emptyWorkRecord(task.objective, now);
+      const next = recordAttemptEnd(
+        current,
+        {
+          status: task.status,
+          summary: task.result?.summary ?? null,
+          message: task.errorMessage,
+        },
+        now,
+      );
+      if (next.lastStatus === current.lastStatus && next.lastResult === current.lastResult) return;
+      yield* writeWorkRecord(task.taskId, next);
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal task work record could not be updated", {
+              taskId: task.taskId,
+              cause: Cause.pretty(cause).slice(0, 1_000),
+            }),
+      ),
+    );
+
+  const recordWorkSteer = (task: PersonalTask, text: string) =>
+    Effect.gen(function* () {
+      if (Option.isNone(workStore) || (yield* workRecordTainted(task))) return;
+      const now = DateTime.formatIso(yield* DateTime.now);
+      const current = (yield* readWorkRecord(task.taskId)) ?? emptyWorkRecord(task.objective, now);
+      yield* writeWorkRecord(task.taskId, recordSteer(current, text, now));
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("personal task work record could not take a steer", {
+              taskId: task.taskId,
+              cause: Cause.pretty(cause).slice(0, 1_000),
+            }),
+      ),
+    );
+
   const publish = (changed: Changed) => {
     const latest = new Map<string, PersonalTask>();
     for (const task of changed) {
       latest.set(task.taskId, task);
     }
-    return Effect.forEach(latest.values(), (task) => PubSub.publish(upserts, task), {
-      discard: true,
-    });
+    return Effect.forEach(
+      latest.values(),
+      (task) =>
+        PubSub.publish(upserts, task).pipe(
+          Effect.andThen(isTerminal(task.status) ? recordWorkEnd(task) : Effect.void),
+        ),
+      { discard: true },
+    );
   };
 
   const refreshActiveThreads = Effect.fn("PersonalTaskService.refreshActiveThreads")(function* () {
@@ -837,12 +1034,14 @@ export const make = Effect.gen(function* () {
     delivered: ReadonlyArray<PersonalHandoff>,
     notes: ReadonlyArray<string>,
     stillRunning: ReadonlyArray<PersonalHandoff>,
+    freshRecord: string | null = null,
   ) {
     const marker = (
       turn: PersonalTaskMessageMarker["turn"],
       delegatorBotId: PersonalBotId | null,
       children: PersonalTaskMessageMarker["children"],
     ): PersonalTaskMessageMarker => ({
+      ...(freshRecord === null ? {} : { fresh: true }),
       taskId: task.taskId,
       attempt: attemptNumber,
       turn,
@@ -899,6 +1098,7 @@ export const make = Effect.gen(function* () {
         text: [
           "[Task continuation]",
           ...notes,
+          ...(freshRecord === null ? [] : [FRESH_SESSION_NOTE, freshRecord]),
           "Continue the task below.",
           ...taskSections(task, null),
         ].join("\n\n"),
@@ -937,19 +1137,53 @@ export const make = Effect.gen(function* () {
   // Creates the bot thread on first use and starts the turn. Deterministic
   // command and message ids make a repeated start of one attempt dedupe on
   // the orchestration command receipt.
+  /**
+   * The work record to seed a fresh session with, or null when the turn
+   * resumes the session as before: only a reopened task with something in its
+   * record whose chat the provider last reported at or above
+   * `reopenFreshTokens()` (default 60,000; 0 or "off" never).
+   */
+  const freshStartRecord = Effect.fn("PersonalTaskService.freshStartRecord")(function* (
+    task: PersonalTask,
+    attempt: PersonalTaskAttempt,
+    delivered: ReadonlyArray<PersonalHandoff>,
+    reopened: boolean,
+  ) {
+    const threshold = reopenFreshTokens();
+    if (!reopened || threshold <= 0 || delivered.length > 0) return null;
+    const record = yield* readWorkRecord(task.taskId).pipe(Effect.orElseSucceed(() => null));
+    if (record === null || !workRecordHasContent(record)) return null;
+    const used = yield* latestContextTokens(attempt.providerThreadId);
+    if (used === null || used < threshold) return null;
+    const text = renderWorkRecord(record);
+    yield* Effect.logInfo("personal task reopened on a fresh session", {
+      taskId: task.taskId,
+      threadId: attempt.providerThreadId,
+      contextTokens: used,
+      seedTokens: estimateTokens(text),
+    });
+    return text;
+  });
+
   const startTurn = Effect.fn("PersonalTaskService.startTurn")(function* (
     task: PersonalTask,
     attempt: PersonalTaskAttempt,
     delivered: ReadonlyArray<PersonalHandoff>,
     notes: ReadonlyArray<string>,
     stillRunning: ReadonlyArray<PersonalHandoff>,
+    reopened = false,
   ) {
+    // A reopened task whose chat has grown long starts a fresh provider
+    // session seeded with its work record: every step of a long session
+    // re-reads all of it. The bot reads older chat on demand (read_chat_history).
+    const freshRecord = yield* freshStartRecord(task, attempt, delivered, reopened);
     const { text, marker } = yield* buildTurnText(
       task,
       attempt.attempt,
       delivered,
       notes,
       stillRunning,
+      freshRecord,
     );
     // A chat made for this task (or routine run) is named after it. A task
     // bound to an existing chat (a routine posting into the chat it was made
@@ -1040,6 +1274,8 @@ export const make = Effect.gen(function* () {
           delivered,
           notes: notes.map((note) => note.text),
           stillRunning,
+          // The attempt continues a task that had finished and was steered.
+          reopened: notes.some((note) => note.noteId.startsWith(PERSONAL_TASK_REOPEN_NOTE_PREFIX)),
         };
       }),
     );
@@ -1118,6 +1354,7 @@ export const make = Effect.gen(function* () {
         claimed.delivered,
         claimed.notes,
         claimed.stillRunning,
+        claimed.reopened,
       ).pipe(
         Effect.catchCause((cause) => {
           if (Cause.hasInterruptsOnly(cause)) {
@@ -2184,6 +2421,7 @@ export const make = Effect.gen(function* () {
           const text = steerText(input.fromName, input.message);
           if (isTerminal(task.status)) {
             const reopened = yield* reopen(task, noteId, steerId, text);
+            yield* recordWorkSteer(task, text);
             return { outcome: "reopened" as const, task: reopened, text };
           }
           if (task.status !== "running") {
@@ -2196,6 +2434,7 @@ export const make = Effect.gen(function* () {
               restartSession: false,
               createdAt: now,
             });
+            yield* recordWorkSteer(task, text);
             return { outcome: "queued" as const, task, text };
           }
           const attempt = (yield* repository.listActiveAttempts()).find(
@@ -2263,6 +2502,7 @@ export const make = Effect.gen(function* () {
             createdAt: now,
             deliveredAt: now,
           });
+          yield* recordWorkSteer(task, text);
           return { outcome: "steered" as const, task, text };
         }),
       )
@@ -2288,13 +2528,97 @@ export const make = Effect.gen(function* () {
         repository.listHandoffsByParent(task.taskId),
         repository.getHandoffByChild(task.taskId),
       ]);
+      const workRecord = yield* readWorkRecord(task.taskId).pipe(Effect.orElseSucceed(() => null));
       return {
         task,
         attempts: [...attempts],
         children: [...children],
         handoff: Option.getOrNull(handoff),
+        workRecord,
       } satisfies PersonalTaskDetail;
     }).pipe(toPublic("get"));
+
+  const workRecord: PersonalTaskService["Service"]["workRecord"] = (input) =>
+    Effect.gen(function* () {
+      const task = yield* requireTask(input.taskId);
+      return yield* readWorkRecord(task.taskId);
+    }).pipe(toPublic("workRecord"));
+
+  const updateWorkRecord: PersonalTaskService["Service"]["updateWorkRecord"] = (input) =>
+    lock
+      .withPermit(
+        Effect.gen(function* () {
+          const task = yield* requireTask(input.taskId);
+          if (yield* workRecordTainted(task)) {
+            return yield* fail(
+              "This task's chat had a site the user marked sensitive open, so nothing from it is kept in a work record. Put it in your result instead.",
+            );
+          }
+          const now = DateTime.formatIso(yield* DateTime.now);
+          const current =
+            (yield* readWorkRecord(task.taskId)) ?? emptyWorkRecord(task.objective, now);
+          const next = applyWorkRecordPatch(current, input.patch, now);
+          yield* writeWorkRecord(task.taskId, next);
+          return next;
+        }),
+      )
+      .pipe(toPublic("updateWorkRecord"));
+
+  const taskForThread: PersonalTaskService["Service"]["taskForThread"] = (input) =>
+    Effect.gen(function* () {
+      const attempt = yield* activeAttemptForThread(input.threadId);
+      return attempt === null
+        ? Option.none<PersonalTask>()
+        : yield* repository.getTask(attempt.taskId);
+    }).pipe(toPublic("taskForThread"));
+
+  const CHAT_HISTORY_TEXT_CHARS = 1_200;
+  const chatHistory: PersonalTaskService["Service"]["chatHistory"] = (input) =>
+    Effect.gen(function* () {
+      if (Option.isNone(workStore)) return { messages: [], hasMore: false };
+      const { sql } = workStore.value;
+      const limit = Math.min(20, Math.max(1, Math.floor(input.limit)));
+      const before =
+        input.beforeMessageId === undefined
+          ? []
+          : yield* sql<{ readonly at: string }>`
+              SELECT created_at AS "at" FROM projection_thread_messages
+              WHERE message_id = ${input.beforeMessageId} AND thread_id = ${input.threadId}
+            `;
+      const beforeAt = before[0]?.at ?? null;
+      const needle = input.query?.trim() ?? "";
+      const rows = yield* sql<{
+        readonly messageId: string;
+        readonly role: string;
+        readonly at: string;
+        readonly text: string;
+      }>`
+        SELECT message_id AS "messageId", role, created_at AS "at", text
+        FROM projection_thread_messages
+        WHERE thread_id = ${input.threadId} AND role IN ('user', 'assistant')
+          AND is_streaming = 0
+          AND ${beforeAt === null ? sql`1 = 1` : sql`created_at < ${beforeAt}`}
+          AND ${needle.length === 0 ? sql`1 = 1` : sql`instr(lower(text), lower(${needle})) > 0`}
+        ORDER BY created_at DESC
+        LIMIT ${limit + 1}
+      `;
+      return {
+        messages: rows.slice(0, limit).map((row) => ({
+          messageId: row.messageId,
+          role: row.role,
+          at: row.at,
+          text:
+            row.text.length <= CHAT_HISTORY_TEXT_CHARS
+              ? row.text
+              : `${row.text.slice(0, CHAT_HISTORY_TEXT_CHARS)} [...]`,
+          clipped: row.text.length > CHAT_HISTORY_TEXT_CHARS,
+        })),
+        hasMore: rows.length > limit,
+      };
+    }).pipe(
+      Effect.mapError((cause) => fail("Personal tasks could not read the chat.", cause)),
+      toPublic("chatHistory"),
+    );
 
   const list: PersonalTaskService["Service"]["list"] = (filter) =>
     repository.listTasks(filter).pipe(
@@ -2641,6 +2965,10 @@ export const make = Effect.gen(function* () {
     steer,
     steers,
     get,
+    workRecord,
+    updateWorkRecord,
+    taskForThread,
+    chatHistory,
     list,
     subscribe,
     history,

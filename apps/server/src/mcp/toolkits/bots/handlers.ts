@@ -29,6 +29,7 @@ import * as PersonalSecretService from "../../../personal/secrets/PersonalSecret
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
 import * as PersonalLoginRequestService from "../../../personal/secrets/PersonalLoginRequestService.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
+import { renderWorkRecord } from "../../../personal/tasks/workRecord.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import {
   BotsToolError,
@@ -492,8 +493,12 @@ const make = Effect.gen(function* () {
         const { task, tree } = yield* reachableTask(caller, input.taskId);
         const names = yield* botNames;
         const steers = yield* tasks.steers({ taskId: task.taskId }).pipe(Effect.mapError(readable));
+        const workRecord = yield* tasks
+          .workRecord({ taskId: task.taskId })
+          .pipe(Effect.orElseSucceed(() => null));
         return {
           task: summarize(task, names),
+          workRecord,
           children: tree
             .filter((entry) => entry.parentTaskId === task.taskId)
             .map((entry) => summarize(entry, names)),
@@ -503,6 +508,42 @@ const make = Effect.gen(function* () {
             delivered: steer.deliveredAt !== null,
           })),
         };
+      }),
+    update_work_record: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* callerBot();
+        const task = yield* tasks
+          .taskForThread({ threadId: caller.threadId })
+          .pipe(Effect.mapError(readable));
+        if (Option.isNone(task)) {
+          return yield* toolError(
+            "This chat is not running a task, so there is no work record to update. Work records belong to a delegated task, a routine run or a reopened task.",
+          );
+        }
+        const record = yield* tasks
+          .updateWorkRecord({
+            taskId: task.value.taskId,
+            patch: {
+              ...(input.decisions === undefined ? {} : { decisions: input.decisions }),
+              ...(input.evidence === undefined ? {} : { evidence: input.evidence }),
+              ...(input.outstanding === undefined ? {} : { outstanding: input.outstanding }),
+              ...(input.nextStep === undefined ? {} : { nextStep: input.nextStep }),
+            },
+          })
+          .pipe(Effect.mapError(readable));
+        return { record: renderWorkRecord(record) };
+      }),
+    read_chat_history: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* callerBot();
+        return yield* tasks
+          .chatHistory({
+            threadId: caller.threadId,
+            query: input.query,
+            beforeMessageId: input.beforeMessageId,
+            limit: input.limit ?? 10,
+          })
+          .pipe(Effect.mapError(readable));
       }),
     list_tasks: (input) =>
       Effect.gen(function* () {

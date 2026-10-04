@@ -193,6 +193,29 @@ export const PersonalTaskRelatedInput = Schema.Struct({
 });
 export type PersonalTaskRelatedInput = typeof PersonalTaskRelatedInput.Type;
 
+/**
+ * A task's durable work record: what it is for, what was decided, where the
+ * evidence is, what is left and the next step, kept apart from the chat
+ * transcript. A reopened task starts from it instead of re-reading the chat.
+ * The bot keeps it up to date with `update_work_record`; the server adds the
+ * last result and each update the task was steered with.
+ */
+export const PersonalTaskWorkRecord = Schema.Struct({
+  objective: Schema.String,
+  decisions: Schema.Array(Schema.String),
+  evidence: Schema.Array(Schema.Struct({ label: Schema.String, ref: Schema.String })),
+  outstanding: Schema.Array(Schema.String),
+  nextStep: Schema.String,
+  /** How the last attempt ended (completed, failed, interrupted ...), null while none has. */
+  lastStatus: Schema.NullOr(Schema.String),
+  /** The last attempt's result, clipped. */
+  lastResult: Schema.String,
+  /** The updates the task was steered with, newest last. */
+  updates: Schema.Array(Schema.Struct({ at: Schema.String, text: Schema.String })),
+  updatedAt: Schema.String,
+});
+export type PersonalTaskWorkRecord = typeof PersonalTaskWorkRecord.Type;
+
 export const PersonalTaskDetail = Schema.Struct({
   task: PersonalTask,
   attempts: Schema.Array(PersonalTaskAttempt),
@@ -200,6 +223,8 @@ export const PersonalTaskDetail = Schema.Struct({
   children: Schema.Array(PersonalHandoff),
   /** The handoff that created this task, when it was delegated. */
   handoff: Schema.NullOr(PersonalHandoff),
+  /** Its work record, when it has one (from 1.60.41). */
+  workRecord: Schema.optional(Schema.NullOr(PersonalTaskWorkRecord)),
 });
 export type PersonalTaskDetail = typeof PersonalTaskDetail.Type;
 
@@ -237,6 +262,12 @@ export const PersonalTaskMessageMarker = Schema.Struct({
   title: Schema.String,
   /** The delegating bot, for a delegated task's first turns. */
   delegatorBotId: Schema.NullOr(PersonalBotId),
+  /**
+   * True when this continuation starts a fresh provider session: a reopened
+   * task whose chat had grown long. Its text carries the work record and the
+   * bot reads older chat on demand (read_chat_history).
+   */
+  fresh: Schema.optional(Schema.Boolean),
   /** Children whose results this continuation delivers, as they were then. */
   children: Schema.Array(
     Schema.Struct({

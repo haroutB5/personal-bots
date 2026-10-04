@@ -1,3 +1,4 @@
+// @effect-diagnostics preferSchemaOverJson:off - builds provider activity rows
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -17,7 +18,7 @@ import {
   type PersonalTask,
   ThreadId,
 } from "@t3tools/contracts";
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -47,6 +48,7 @@ import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
+import { makeSensitiveExposureStore, rootExposureKey } from "../browser/sensitiveExposureStore.ts";
 import * as PersonalTaskService from "./PersonalTaskService.ts";
 
 /**
@@ -2646,3 +2648,300 @@ it.effect(
     );
   },
 );
+
+/** Runs an effect with an environment variable set, then puts it back. */
+const withEnv = <A, E, R>(
+  name: string,
+  value: string | undefined,
+  effect: Effect.Effect<A, E, R>,
+) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const previous = process.env[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+      return previous;
+    }),
+    () => effect,
+    (previous) =>
+      Effect.sync(() => {
+        if (previous === undefined) delete process.env[name];
+        else process.env[name] = previous;
+      }),
+  );
+
+/** The provider's last context-size report for a thread, as the ingestion records it. */
+const reportContextTokens = (threadId: ThreadId, usedTokens: number) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const at = DateTime.formatIso(yield* DateTime.now);
+    yield* sql`
+      INSERT INTO projection_thread_activities
+        (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
+      VALUES (${`ctx-${threadId}-${usedTokens}`}, ${threadId}, NULL, 'info', 'context-window.updated',
+        'Context window updated', ${JSON.stringify({ usedTokens })}, ${at})
+    `;
+  });
+
+/** The task marker a turn message carries. */
+const markerOf = (command: { readonly message: { readonly context?: unknown } }) =>
+  (
+    command.message.context as unknown as {
+      readonly records: ReadonlyArray<{ readonly payload: { readonly fresh?: boolean } }>;
+    }
+  ).records[0]!.payload;
+
+const finishedRoot = (harness: Harness, key: string, reply: string) =>
+  Effect.gen(function* () {
+    const root = yield* createRoot(key);
+    const thread = threadOf(root);
+    yield* runTurn(harness, thread, reply);
+    return { root, thread };
+  });
+
+describe("work record (1.60.41)", () => {
+  it.effect(
+    "a finished task keeps its result and the evidence it names; a steer is kept too",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const { root } = yield* finishedRoot(
+          harness,
+          "wr-end",
+          "Shipped. QA report: C:/qa/report.md and the live check https://example.com/status.",
+        );
+        const record = yield* service.workRecord({ taskId: root.taskId });
+        expect(record).toMatchObject({
+          objective: "Do the wr-end thing.",
+          lastStatus: "completed",
+        });
+        expect(record?.lastResult).toContain("Shipped. QA report");
+        expect(record?.evidence.map((item) => item.ref)).toEqual([
+          "https://example.com/status",
+          "C:/qa/report.md",
+        ]);
+        yield* service.steer({
+          taskId: root.taskId,
+          fromName: "CTO",
+          message: "Update from CTO: also check the dark theme.",
+        });
+        const after = yield* service.workRecord({ taskId: root.taskId });
+        expect(after?.updates.map((update) => update.text)).toEqual(["also check the dark theme."]);
+        // Visible on the task detail too.
+        expect((yield* service.get({ taskId: root.taskId })).workRecord?.lastStatus).toBe(
+          "completed",
+        );
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect("a bot's update adds decisions and evidence and replaces outstanding work", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("wr-update");
+      const first = yield* service.updateWorkRecord({
+        taskId: root.taskId,
+        patch: {
+          decisions: ["Use the new index."],
+          evidence: [{ label: "commit", ref: "abc1234" }],
+          outstanding: ["Write tests", "Ship"],
+          nextStep: "Write tests",
+        },
+      });
+      expect(first.outstanding).toEqual(["Write tests", "Ship"]);
+      const second = yield* service.updateWorkRecord({
+        taskId: root.taskId,
+        patch: { decisions: ["Skip the old index."], outstanding: ["Ship"], nextStep: "Ship" },
+      });
+      expect(second.decisions).toEqual(["Use the new index.", "Skip the old index."]);
+      expect(second.outstanding).toEqual(["Ship"]);
+      expect(second.nextStep).toBe("Ship");
+      expect(second.evidence).toEqual([{ label: "commit", ref: "abc1234" }]);
+      // The task is found from its chat.
+      const found = yield* service.taskForThread({ threadId: threadOf(root) });
+      expect(Option.map(found, (task) => task.taskId)).toEqual(Option.some(root.taskId));
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("never keeps a secret", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("wr-secret");
+      const record = yield* service.updateWorkRecord({
+        taskId: root.taskId,
+        patch: { decisions: ["Login uses password: hunter2hunter2 on the box."], nextStep: "go" },
+      });
+      expect(JSON.stringify(record)).not.toContain("hunter2");
+      expect(record.decisions[0]).toContain("[redacted]");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("keeps nothing from a task tree that had a sensitive site open", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const sql = yield* SqlClient.SqlClient;
+      const root = yield* createRoot("wr-taint");
+      yield* makeSensitiveExposureStore(sql).record(
+        [rootExposureKey(root.rootTaskId)],
+        "source",
+        "https://bank.example",
+      );
+      const refused = yield* Effect.flip(
+        service.updateWorkRecord({ taskId: root.taskId, patch: { nextStep: "x" } }),
+      );
+      expect(refused.message).toContain("sensitive");
+      yield* runTurn(harness, threadOf(root), "Balance is 1,234.");
+      yield* service.steer({ taskId: root.taskId, fromName: "CTO", message: "Again." });
+      expect(yield* service.workRecord({ taskId: root.taskId })).toBeNull();
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect(
+    "a reopened task with a long chat starts a fresh session seeded with its record",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const { root, thread } = yield* finishedRoot(
+          harness,
+          "wr-fresh",
+          "Half done: see https://example.com/pr/9.",
+        );
+        yield* service.updateWorkRecord({
+          taskId: root.taskId,
+          patch: {
+            decisions: ["Keep the cache."],
+            outstanding: ["Second half"],
+            nextStep: "Do the second half",
+          },
+        });
+        yield* reportContextTokens(thread, 90_000);
+        yield* service.steer({
+          taskId: root.taskId,
+          fromName: "CTO",
+          message: "Do the second half.",
+        });
+        yield* service.drain;
+        const continuation = startsOn(harness, thread).at(-1)!;
+        const text = continuation.message.text;
+        expect(text).toContain(PersonalTaskService.FRESH_SESSION_NOTE);
+        expect(text).toContain("Work record (kept by the app, not from this chat):");
+        expect(text).toContain("- Keep the cache.");
+        expect(text).toContain("Next step: Do the second half");
+        expect(text).toContain("Last result (completed): Half done");
+        expect(text).toContain("https://example.com/pr/9");
+        expect(text).toContain("Update from CTO: Do the second half.");
+        expect(markerOf(continuation).fresh).toBe(true);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect("a short chat, a task with no record, or the kill switch resumes as before", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const continuationFor = (key: string, tokens: number | null, record: boolean) =>
+        Effect.gen(function* () {
+          const { root, thread } = yield* finishedRoot(harness, key, "Half done.");
+          if (record) {
+            yield* service.updateWorkRecord({ taskId: root.taskId, patch: { nextStep: "go on" } });
+          }
+          if (tokens !== null) yield* reportContextTokens(thread, tokens);
+          yield* service.steer({ taskId: root.taskId, fromName: "CTO", message: "Go on." });
+          yield* service.drain;
+          return startsOn(harness, thread).at(-1)!;
+        });
+      const short = yield* continuationFor("wr-short", 20_000, true);
+      expect(short.message.text).not.toContain("Work record");
+      expect(markerOf(short).fresh).toBeUndefined();
+      // The auto-recorded result alone counts: a long chat with no bot update still has one.
+      const unreported = yield* continuationFor("wr-unknown", null, true);
+      expect(unreported.message.text).not.toContain("Work record");
+      const off = yield* withEnv(
+        "T3CODE_PERSONAL_TASK_REOPEN_FRESH_TOKENS",
+        "off",
+        continuationFor("wr-off", 150_000, true),
+      );
+      expect(off.message.text).not.toContain("Work record");
+      const raised = yield* withEnv(
+        "T3CODE_PERSONAL_TASK_REOPEN_FRESH_TOKENS",
+        "200000",
+        continuationFor("wr-raised", 150_000, true),
+      );
+      expect(raised.message.text).not.toContain("Work record");
+      // The threshold is the owner's to set: lowered, the same chat starts fresh.
+      const lowered = yield* withEnv(
+        "T3CODE_PERSONAL_TASK_REOPEN_FRESH_TOKENS",
+        "10000",
+        continuationFor("wr-lowered", 20_000, true),
+      );
+      expect(lowered.message.text).toContain("Work record");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect(
+    "the chat history a fresh session reads is this chat's, newest first, searchable and paged",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const sql = yield* SqlClient.SqlClient;
+        const thread = ThreadId.make("history-thread");
+        const other = ThreadId.make("other-thread");
+        const insert = (id: string, threadId: ThreadId, role: string, text: string, at: string) =>
+          sql`INSERT INTO projection_thread_messages
+          (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
+          VALUES (${id}, ${threadId}, NULL, ${role}, ${text}, 0, ${at}, ${at})`;
+        yield* insert(
+          "m1",
+          thread,
+          "user",
+          "Run the build with --prod",
+          "2026-10-04T10:00:00.000Z",
+        );
+        yield* insert("m2", thread, "assistant", "Build ran: exit 0", "2026-10-04T10:01:00.000Z");
+        yield* insert(
+          "m3",
+          thread,
+          "user",
+          "Now the long one " + "x".repeat(2_000),
+          "2026-10-04T10:02:00.000Z",
+        );
+        yield* insert("m4", thread, "assistant", "Done.", "2026-10-04T10:03:00.000Z");
+        yield* insert("x1", other, "user", "Secret of another chat", "2026-10-04T10:04:00.000Z");
+        yield* insert("sys", thread, "system", "app note", "2026-10-04T10:05:00.000Z");
+
+        const newest = yield* service.chatHistory({ threadId: thread, limit: 2 });
+        expect(newest.messages.map((m) => m.messageId)).toEqual(["m4", "m3"]);
+        expect(newest.hasMore).toBe(true);
+        expect(newest.messages[1]!.clipped).toBe(true);
+        expect(newest.messages[1]!.text.length).toBeLessThan(1_300);
+        const older = yield* service.chatHistory({
+          threadId: thread,
+          limit: 5,
+          beforeMessageId: "m3",
+        });
+        expect(older.messages.map((m) => m.messageId)).toEqual(["m2", "m1"]);
+        expect(older.hasMore).toBe(false);
+        const found = yield* service.chatHistory({ threadId: thread, limit: 5, query: "BUILD" });
+        expect(found.messages.map((m) => m.messageId)).toEqual(["m2", "m1"]);
+        // Another chat is never read, and a query that matches nothing is empty.
+        expect(
+          (yield* service.chatHistory({ threadId: thread, limit: 20, query: "another chat" }))
+            .messages,
+        ).toEqual([]);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+});

@@ -11,6 +11,7 @@ import {
   type ProjectId,
   type OrchestrationSession,
   type OrchestrationSessionProviderRetry,
+  PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ThreadId,
   type ProviderSession,
@@ -232,6 +233,27 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 
   const safeFragment = branchFragment.length > 0 ? branchFragment : "update";
   return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
+}
+
+/** How much of a chat a fresh task session is given; the work record carries the rest. */
+const TASK_FRESH_HANDOFF_CHARS = 6_000;
+
+/** Whether a turn message is a task continuation that asks for a fresh provider session. */
+export function isFreshTaskTurn(
+  context:
+    | { readonly records: ReadonlyArray<{ readonly kind: string; readonly payload?: unknown }> }
+    | undefined,
+): boolean {
+  const record = context?.records.find(
+    (entry) => entry.kind === PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
+  );
+  const payload = record?.payload;
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    "fresh" in payload &&
+    (payload as { readonly fresh?: unknown }).fresh === true
+  );
 }
 
 const make = Effect.gen(function* () {
@@ -1180,6 +1202,8 @@ const make = Effect.gen(function* () {
     readonly titleSeed?: string;
     /** Start a fresh provider session and carry the chat over to it. */
     readonly freshSession?: boolean;
+    /** At most this much of the earlier chat is carried over (a task's work record carries the rest). */
+    readonly handoffMaxChars?: number;
     readonly providerRetry?: OrchestrationSessionProviderRetry;
   }) {
     const thread = yield* resolveThreadShell(input.threadId);
@@ -1217,11 +1241,13 @@ const make = Effect.gen(function* () {
         ? yield* chatHandoffForTurn({
             threadId: input.threadId,
             messageId: input.messageId,
-            maxChars:
+            maxChars: Math.min(
+              input.handoffMaxChars ?? Number.POSITIVE_INFINITY,
               PROVIDER_SEND_TURN_MAX_INPUT_CHARS -
-              input.messageText.length -
-              (memoryContext?.length ?? 0) -
-              HANDOFF_INPUT_MARGIN_CHARS,
+                input.messageText.length -
+                (memoryContext?.length ?? 0) -
+                HANDOFF_INPUT_MARGIN_CHARS,
+            ),
           })
         : undefined;
     const withHandoff = (memoryText: string | undefined) =>
@@ -1958,6 +1984,9 @@ const make = Effect.gen(function* () {
     };
     const sendTurnRequest = yield* Effect.gen(function* () {
       // A bot chat follows its bot to another provider on its next turn.
+      // A reopened long task asks for a fresh session itself (its turn text
+      // carries the work record): only the tail of the chat is carried over.
+      const taskFresh = isFreshTaskTurn(message.context);
       const providerSwitch = yield* botProviderSwitch(thread);
       if (providerSwitch?.freshSession === true) {
         yield* Effect.logInfo("provider command reactor moving a bot chat to its bot's provider", {
@@ -1977,9 +2006,14 @@ const make = Effect.gen(function* () {
       const request = yield* buildSendTurnRequestForThread({
         ...turnInput,
         ...(modelSelection !== undefined ? { modelSelection } : {}),
-        ...(providerSwitch?.freshSession === true ? { freshSession: true } : {}),
+        ...(providerSwitch?.freshSession === true || taskFresh ? { freshSession: true } : {}),
+        ...(taskFresh ? { handoffMaxChars: TASK_FRESH_HANDOFF_CHARS } : {}),
       });
-      return { request, modelSelection, fresh: providerSwitch?.freshSession === true } as const;
+      return {
+        request,
+        modelSelection,
+        fresh: providerSwitch?.freshSession === true || taskFresh,
+      } as const;
     }).pipe(
       Effect.asSome,
       Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),

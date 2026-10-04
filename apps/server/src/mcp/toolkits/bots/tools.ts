@@ -10,6 +10,7 @@ import {
   PersonalSecretName,
   PersonalTaskId,
   PersonalTaskStatus,
+  PersonalTaskWorkRecord,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -116,8 +117,81 @@ export const GetTaskResult = Schema.Struct({
   children: Schema.Array(TaskSummary),
   /** Updates sent into the task with steer_task, oldest first. */
   steers: Schema.Array(TaskSteer),
+  /** The task's work record (decisions, evidence, outstanding work, next step), when it has one. */
+  workRecord: Schema.optional(Schema.NullOr(PersonalTaskWorkRecord)),
 });
 export type GetTaskResult = typeof GetTaskResult.Type;
+
+export const UpdateWorkRecordInput = Schema.Struct({
+  decisions: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(6)).annotate({
+      description:
+        "Decisions made since your last update, each one short and self-contained. They are added to the record.",
+    }),
+  ),
+  evidence: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        label: TrimmedNonEmptyString.annotate({ description: "What it is, e.g. 'QA report'." }),
+        ref: TrimmedNonEmptyString.annotate({
+          description: "A link, file path, release id or commit that proves or holds it.",
+        }),
+      }),
+    )
+      .check(Schema.isMaxLength(6))
+      .annotate({ description: "Where the proof is. Added to the record, once per ref." }),
+  ),
+  outstanding: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(10)).annotate({
+      description:
+        "Everything still left to do. This REPLACES the list, so send the whole current list (an empty list says nothing is left).",
+    }),
+  ),
+  nextStep: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description: "The very next thing to do. Replaces the previous one.",
+    }),
+  ),
+});
+export type UpdateWorkRecordInput = typeof UpdateWorkRecordInput.Type;
+
+export const UpdateWorkRecordResult = Schema.Struct({
+  /** The record as it now reads. */
+  record: Schema.String,
+});
+
+export const ReadChatHistoryInput = Schema.Struct({
+  query: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description: "Only messages containing this text (case-insensitive).",
+    }),
+  ),
+  beforeMessageId: Schema.optional(
+    Schema.String.annotate({
+      description: "Page further back: the messageId of the oldest message you already have.",
+    }),
+  ),
+  limit: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })).annotate({
+      description: "How many messages, 1 to 20. Defaults to 10.",
+    }),
+  ),
+});
+
+export const ReadChatHistoryResult = Schema.Struct({
+  /** Newest first. */
+  messages: Schema.Array(
+    Schema.Struct({
+      messageId: Schema.String,
+      role: Schema.String,
+      at: Schema.String,
+      text: Schema.String,
+      /** True when the text was cut at 1,200 characters. */
+      clipped: Schema.Boolean,
+    }),
+  ),
+  hasMore: Schema.Boolean,
+});
 
 export const StopTaskInput = Schema.Struct({
   taskId: PersonalTaskId.annotate({ description: "A task id from delegate_task or list_tasks." }),
@@ -439,6 +513,34 @@ const GetTaskTool = Tool.make("get_task", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const UpdateWorkRecordTool = Tool.make("update_work_record", {
+  description:
+    "Keep this task's work record up to date: the short, durable state of the work that survives a long chat, a compaction or a restart. Call it when you decide something, find proof, or the list of what is left changes; a few lines each time, not a report. Decisions and evidence are added; outstanding work and the next step are replaced by what you send. If this task is reopened later after a long chat, you start from this record instead of the whole conversation, so write what a colleague would need to carry on. Only for a task you are running (a delegated task, a routine run or a reopened task); never put passwords, tokens or keys in it, and it keeps nothing from a chat that had a site the user marked sensitive open.",
+  parameters: UpdateWorkRecordInput,
+  success: UpdateWorkRecordResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Update work record")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
+
+const ReadChatHistoryTool = Tool.make("read_chat_history", {
+  description:
+    "Read earlier messages of THIS chat, newest first, when you need an exact detail (a command, a message, a number, a result) that is not in your context. A reopened task can start a fresh session with only its work record and the end of the chat, and this is how you reach the rest: search with query, or page back with beforeMessageId (use the messageId of the oldest message you have). Each text is cut at 1,200 characters. It reads only this chat, never another.",
+  parameters: ReadChatHistoryInput,
+  success: ReadChatHistoryResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Read chat history")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 const ListTasksTool = Tool.make("list_tasks", {
   description:
     "List the tasks in your current request's task tree (the root request and everything delegated from it), newest first, optionally only those in one status. Empty when you are not working on a task. A team lead also gets teamTasks: every unfinished task of a bot on its own team from outside that tree, such as work a routine or another chat started. Useful before steer_task or stop_task, to see what is still running; results of delegated tasks arrive on their own, so there is no need to poll.",
@@ -631,6 +733,8 @@ export const BotsToolkit = Toolkit.make(
   ListBotsTool,
   DelegateTaskTool,
   GetTaskTool,
+  UpdateWorkRecordTool,
+  ReadChatHistoryTool,
   ListTasksTool,
   StopTaskTool,
   SteerTaskTool,

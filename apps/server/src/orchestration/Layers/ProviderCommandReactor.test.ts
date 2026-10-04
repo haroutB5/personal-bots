@@ -65,6 +65,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQu
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import {
+  isFreshTaskTurn,
   providerErrorLabelFromInstanceHint,
   ProviderCommandReactorLive,
 } from "./ProviderCommandReactor.ts";
@@ -5222,6 +5223,78 @@ describe("ProviderCommandReactor", () => {
       expect(harness.stopSession).toHaveBeenCalledWith({ threadId });
       expect(peekReplacedSession("thread-1")).toMatchObject({ provider: "claudeAgent" });
       clearReplacedSessions();
+    });
+
+    it("a reopened task's continuation starts a fresh session with only the tail of the chat", async () => {
+      const harness = await createHarness({
+        threadModelSelection: CLAUDE,
+        personalBotThread: true,
+        botModelSelection: CLAUDE,
+      });
+      await sendMessage(harness, "msg-long-before", `Plan the work. ${"detail ".repeat(3_000)}`, {
+        modelSelection: CLAUDE,
+      });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-task-fresh"),
+          threadId,
+          message: {
+            messageId: asMessageId("personal-task-fresh-1"),
+            role: "user",
+            text: "[Task continuation]\n\nWork record (kept by the app, not from this chat):\nNext step: finish",
+            attachments: [],
+            context: {
+              version: 1,
+              records: [
+                {
+                  version: 1,
+                  contextId: "personal-task",
+                  label: "Task turn",
+                  kind: "personal-task",
+                  payload: { taskId: "t1", attempt: 2, turn: "continuation", fresh: true },
+                },
+              ],
+            },
+          } as never,
+          modelSelection: CLAUDE,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+      await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+      await harness.drain();
+
+      // A fresh session on the same provider, resumed from nothing, with the chat's tail only.
+      const fresh = startedSession(harness, 1);
+      expect(fresh?.freshSession).toBe(true);
+      expect(fresh?.resumeCursor).toBeUndefined();
+      expect(harness.stopSession).toHaveBeenCalledWith({ threadId });
+      const context = sentTurn(harness, 1)?.turnContext ?? "";
+      expect(context).toContain("Earlier in this chat");
+      expect(context.length).toBeLessThan(7_000);
+      // The work record is in the turn's own text.
+      expect(sentTurn(harness, 1)?.input).toContain("Work record (kept by the app");
+      // An ordinary task turn, with no fresh marker, resumes as before.
+      await sendMessage(harness, "msg-plain-after", "Carry on.", { modelSelection: CLAUDE });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 3);
+      await harness.drain();
+      expect(startedSession(harness, 2)?.freshSession).toBeUndefined();
+    });
+
+    it("recognises a fresh task turn by its marker only", () => {
+      const record = (payload: unknown) => ({
+        records: [{ kind: "personal-task", payload }],
+      });
+      expect(isFreshTaskTurn(record({ fresh: true }))).toBe(true);
+      expect(isFreshTaskTurn(record({ fresh: false }))).toBe(false);
+      expect(isFreshTaskTurn(record({}))).toBe(false);
+      expect(isFreshTaskTurn({ records: [{ kind: "image" }] })).toBe(false);
+      expect(isFreshTaskTurn(undefined)).toBe(false);
     });
 
     it("a renewal that fails too leaves the chat in error with the real reason", async () => {
