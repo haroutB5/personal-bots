@@ -47,6 +47,12 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("lets a read-only session see the per-bot token totals", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.personalBotsTokenUsage)).toBe(
+      AuthOrchestrationReadScope,
+    );
+  });
+
   it("requires operate scope to permanently delete a personal file", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.personalFilesDelete)).toBe(
       AuthOrchestrationOperateScope,

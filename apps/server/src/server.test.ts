@@ -125,6 +125,7 @@ import * as PersonalMemoryService from "./personal/memory/PersonalMemoryService.
 import * as PersonalMemoryTidy from "./personal/memory/PersonalMemoryTidyService.ts";
 import * as PersonalPushService from "./personal/push/PersonalPushService.ts";
 import * as PersonalLeadBots from "./personal/leadBots/PersonalLeadBotService.ts";
+import * as PersonalBotTokenUsage from "./personal/PersonalBotTokenUsageService.ts";
 import * as PersonalProviderUpdates from "./personal/providerUpdates/PersonalProviderUpdates.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import {
@@ -824,6 +825,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(PersonalPushService.PersonalPushService)({}),
           Layer.mock(PersonalLeadBots.PersonalLeadBotService)({}),
           Layer.mock(PersonalProviderUpdates.PersonalProviderUpdates)({}),
+          Layer.mock(PersonalBotTokenUsage.PersonalBotTokenUsage)({}),
           Layer.mock(PersonalBotRepository.PersonalBotRepository)({}),
           // The chat-open session prewarm the WS route builds once.
           Layer.mock(ProviderCommandReactor)({}),

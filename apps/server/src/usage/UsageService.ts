@@ -54,6 +54,8 @@ import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { readAntigravityUsage } from "./antigravityUsageReader.ts";
 import { readCursorAccountUsage } from "./cursorUsageReader.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
+import { UsageBotAggregator, type BotUsageCell } from "./botUsage.ts";
+import { makeSliceYield } from "./sliceYield.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -119,8 +121,37 @@ export class UsageService extends Context.Service<
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
     /** Refetches the rate table ahead of its TTL. See `ensureRates`. */
     readonly refreshRates: Effect.Effect<UsagePricing>;
+    /**
+     * Tokens per `(day, session, provider, model)` over a day window, from the
+     * same transcripts and per-file cache as `readSummary`, for attributing
+     * sessions to bots. Claude, Codex and OpenCode only; never touches
+     * Cursor's network or Antigravity. Time sliced, so a cold scan does not
+     * hold the event loop.
+     */
+    readonly readSessionUsage: (
+      input: SessionUsageInput,
+    ) => Effect.Effect<SessionUsageResult, UsageReadError>;
   }
 >()("t3/usage/UsageService") {}
+
+export interface SessionUsageInput {
+  readonly timeZone: string;
+  readonly sinceDay: string;
+  readonly untilDay: string;
+}
+
+export interface SessionUsageResult {
+  readonly cells: readonly BotUsageCell[];
+  readonly scannedFiles: number;
+  readonly scanDurationMs: number;
+}
+
+/** Providers whose chats a personal bot runs; the rest are not attributable. */
+const SESSION_USAGE_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set([
+  "claude",
+  "codex",
+  "opencode",
+]);
 
 const EMPTY_PRICING: UsagePricing = {
   status: "unavailable",
@@ -146,6 +177,7 @@ export const layerTest = Layer.succeed(
         scanDurationMs: 0,
       }),
     refreshRates: Effect.succeed(EMPTY_PRICING),
+    readSessionUsage: () => Effect.succeed({ cells: [], scannedFiles: 0, scanDurationMs: 0 }),
   }),
 );
 
@@ -464,10 +496,28 @@ export const make = Effect.gen(function* () {
       | null;
   }
 
-  const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
+  /** A comma list from the environment, else the defaults, as canonical paths. */
+  const envRoots = Effect.fnUntraced(function* (key: string, defaults: readonly string[]) {
+    const roots = hostEnvironment[key]
+      ?.split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const canonical = new Set<string>();
+    for (const root of roots?.length ? roots : defaults) {
+      const resolved = path.resolve(expandHomePath(root));
+      canonical.add(
+        yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved)),
+      );
+    }
+    return [...canonical];
+  });
+
+  /** The Claude, Codex and Grok transcript directories, parsed (or served from the file cache). */
+  const collectTranscriptDirs = Effect.fn("UsageService.collectTranscriptDirs")(function* (
     windowStartMs: number,
     settings: ServerSettingsValue,
     retentionCutoffMs: number,
+    providers?: ReadonlySet<UsageProviderKind>,
   ) {
     // The home resolvers ask for `Path` themselves; satisfy them from the
     // instance we already hold so the scan stays context-free.
@@ -476,6 +526,7 @@ export const make = Effect.gen(function* () {
     );
     const scanned: ScannedDir[] = [];
     for (const { provider, dir, volumeId, fileName } of dirs) {
+      if (providers !== undefined && !providers.has(provider)) continue;
       const exists = yield* fileSystem
         .exists(dir)
         .pipe(Effect.catchCause(() => Effect.succeed(false)));
@@ -493,22 +544,14 @@ export const make = Effect.gen(function* () {
       }
       scanned.push({ provider, dir, volumeId, files: parsedFiles });
     }
+    return scanned;
+  });
 
+  const collectOpenCodeDirs = Effect.fn("UsageService.collectOpenCodeDirs")(function* (
+    windowStartMs: number,
+  ) {
+    const scanned: ScannedDir[] = [];
     const home = NodeOS.homedir();
-    const envRoots = Effect.fnUntraced(function* (key: string, defaults: readonly string[]) {
-      const roots = hostEnvironment[key]
-        ?.split(",")
-        .map((value) => value.trim())
-        .filter(Boolean);
-      const canonical = new Set<string>();
-      for (const root of roots?.length ? roots : defaults) {
-        const resolved = path.resolve(expandHomePath(root));
-        canonical.add(
-          yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved)),
-        );
-      }
-      return [...canonical];
-    });
     const dataHome = hostEnvironment["XDG_DATA_HOME"]?.trim();
     for (const dir of yield* envRoots("OPENCODE_DATA_DIR", [
       path.join(
@@ -526,6 +569,19 @@ export const make = Effect.gen(function* () {
         ...(result.error ? { message: "Some OpenCode history could not be read." } : {}),
       });
     }
+    return scanned;
+  });
+
+  const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
+    windowStartMs: number,
+    settings: ServerSettingsValue,
+    retentionCutoffMs: number,
+  ) {
+    const scanned: ScannedDir[] = [
+      ...(yield* collectTranscriptDirs(windowStartMs, settings, retentionCutoffMs)),
+      ...(yield* collectOpenCodeDirs(windowStartMs)),
+    ];
+    const home = NodeOS.homedir();
     const antigravityRoots = yield* envRoots("ANTIGRAVITY_DATA_DIR", [
       ...["antigravity", "antigravity-cli", "antigravity-ide", "antigravity-backup"].map((name) =>
         path.join(home, ".gemini", name),
@@ -661,6 +717,33 @@ export const make = Effect.gen(function* () {
     return scanned;
   });
 
+  /**
+   * A directory's live files plus the saved records of transcripts since
+   * cleaned up. Cleanup may remove transcripts, but the usage we already saved
+   * still contributes to this source, so it keeps the normal aggregation and
+   * dedupe path.
+   */
+  const withRetainedFiles = (
+    provider: UsageProviderKind,
+    dir: string,
+    files: ScannedDir["files"],
+    retentionCutoffMs: number,
+  ) => {
+    const retainedFiles = [...(files ?? [])];
+    const livePaths = new Set(retainedFiles.map((file) => file.path));
+    for (const [filePath, entry] of fileCache) {
+      if (
+        entry.provider !== provider ||
+        entry.mtimeMs < retentionCutoffMs ||
+        livePaths.has(filePath) ||
+        !isWithinDirectory(filePath, dir)
+      )
+        continue;
+      retainedFiles.push({ path: filePath, records: [...entry.records, ...entry.tailRecords] });
+    }
+    return retainedFiles;
+  };
+
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
@@ -742,20 +825,7 @@ export const make = Effect.gen(function* () {
       action,
       hostId: sourceHostId,
     } of scannedDirs) {
-      const retainedFiles = [...(files ?? [])];
-      const livePaths = new Set(retainedFiles.map((file) => file.path));
-      // Cleanup may remove transcripts, but the usage we already saved still
-      // contributes to this source. Keep the normal aggregation and dedupe path.
-      for (const [filePath, entry] of fileCache) {
-        if (
-          entry.provider !== provider ||
-          entry.mtimeMs < retentionCutoffMs ||
-          livePaths.has(filePath) ||
-          !isWithinDirectory(filePath, dir)
-        )
-          continue;
-        retainedFiles.push({ path: filePath, records: [...entry.records, ...entry.tailRecords] });
-      }
+      const retainedFiles = withRetainedFiles(provider, dir, files, retentionCutoffMs);
       let scannedFiles = 0;
       let skippedFiles = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
@@ -881,7 +951,73 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary, refreshRates } as const;
+  const toSessionUsageDayMs = (day: string): number | null => {
+    const parsed = DateTime.make(`${day}T00:00:00Z`);
+    return Option.isNone(parsed) ? null : DateTime.toEpochMillis(parsed.value);
+  };
+
+  const scanSessionUsage = Effect.fn("UsageService.scanSessionUsage")(function* (
+    input: SessionUsageInput,
+  ) {
+    const sinceMs = toSessionUsageDayMs(input.sinceDay);
+    const untilMs = toSessionUsageDayMs(input.untilDay);
+    if (sinceMs === null || untilMs === null || sinceMs > untilMs) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: `Session usage window '${input.sinceDay}'..'${input.untilDay}' is not valid`,
+      });
+    }
+    const settings = yield* readSettings;
+    const startedAtMs = yield* Clock.currentTimeMillis;
+    yield* ensureScanCacheLoaded;
+
+    const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const scannedDirs = [
+      ...(yield* collectTranscriptDirs(
+        sinceMs - MTIME_SLACK_MS,
+        settings,
+        retentionCutoffMs,
+        SESSION_USAGE_PROVIDERS,
+      )),
+      ...(yield* collectOpenCodeDirs(sinceMs - MTIME_SLACK_MS)),
+    ];
+
+    const aggregator = new UsageBotAggregator({
+      timeZone: input.timeZone,
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+    });
+    const slice = makeSliceYield();
+    let scannedFiles = 0;
+    let fed = 0;
+    for (const { provider, dir, files } of scannedDirs) {
+      for (const file of withRetainedFiles(provider, dir, files, retentionCutoffMs)) {
+        if (file.records.length === 0) continue;
+        scannedFiles += 1;
+        const scope = aggregator.beginFile();
+        for (const record of file.records) {
+          scope.add(record);
+          fed += 1;
+          if (fed % 64 === 0 && slice.due()) yield* Effect.promise(slice.yieldNow);
+        }
+      }
+    }
+
+    const pruned = pruneScanCache(fileCache, retentionCutoffMs);
+    if (pruned > 0) cacheDirty = true;
+    yield* persistScanCache();
+
+    const finishedAtMs = yield* Clock.currentTimeMillis;
+    return {
+      cells: aggregator.finish(),
+      scannedFiles,
+      scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
+    } satisfies SessionUsageResult;
+  });
+
+  const readSessionUsage = scanSessionUsage;
+
+  return { readSummary, refreshRates, readSessionUsage } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

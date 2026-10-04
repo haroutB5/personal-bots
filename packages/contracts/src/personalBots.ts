@@ -392,6 +392,95 @@ export const PersonalBotWorkingProgressResult = Schema.Struct({
 export type PersonalBotWorkingProgressResult = typeof PersonalBotWorkingProgressResult.Type;
 
 /**
+ * Tokens each bot has used, for the Token usage table on the Team screen. One
+ * read carries the Today, 7 days and 30 days windows (days in the caller's
+ * time zone), counted from the provider transcripts the usage page reads and
+ * attributed to a bot through the chat's provider session.
+ *
+ * The server answers from a snapshot it keeps in memory (at most one refresh
+ * every ten minutes, and only while somebody asks), so the first read after a
+ * restart can say `warming` with no rows yet. Numbers only: no chat text, no
+ * session ids.
+ */
+export const PersonalBotTokenUsageInput = Schema.Struct({
+  /** IANA zone the "today" and the window edges are cut in. */
+  timeZone: TrimmedNonEmptyString,
+});
+export type PersonalBotTokenUsageInput = typeof PersonalBotTokenUsageInput.Type;
+
+export const PERSONAL_TOKEN_USAGE_WINDOW_IDS = ["today", "week", "month"] as const;
+export const PersonalBotTokenUsageWindowId = Schema.Literals(PERSONAL_TOKEN_USAGE_WINDOW_IDS);
+export type PersonalBotTokenUsageWindowId = typeof PersonalBotTokenUsageWindowId.Type;
+
+/** `ready` is a fresh snapshot; `refreshing` a stale one with a refresh running; `warming` has no snapshot yet; `unavailable` the first scan failed. */
+export const PersonalBotTokenUsageStatus = Schema.Literals([
+  "ready",
+  "refreshing",
+  "warming",
+  "unavailable",
+]);
+export type PersonalBotTokenUsageStatus = typeof PersonalBotTokenUsageStatus.Type;
+
+/**
+ * The same four buckets the usage page uses. Input is `uncachedInputTokens +
+ * cachedInputTokens + cacheCreationTokens`; the headline total adds the
+ * output.
+ */
+export const PersonalBotTokenUsageTotals = Schema.Struct({
+  uncachedInputTokens: NonNegativeInt,
+  cachedInputTokens: NonNegativeInt,
+  cacheCreationTokens: NonNegativeInt,
+  outputTokens: NonNegativeInt,
+});
+export type PersonalBotTokenUsageTotals = typeof PersonalBotTokenUsageTotals.Type;
+
+export const PersonalBotTokenUsageModel = Schema.Struct({
+  model: TrimmedNonEmptyString,
+  totalTokens: NonNegativeInt,
+});
+export type PersonalBotTokenUsageModel = typeof PersonalBotTokenUsageModel.Type;
+
+export const PersonalBotTokenUsageRow = Schema.Struct({
+  botId: PersonalBotId,
+  totals: PersonalBotTokenUsageTotals,
+  /** Models the bot's chats ran on in the window, most tokens first (at most five). */
+  models: Schema.Array(PersonalBotTokenUsageModel),
+  /** Distinct provider sessions that used tokens in the window. */
+  sessions: NonNegativeInt,
+});
+export type PersonalBotTokenUsageRow = typeof PersonalBotTokenUsageRow.Type;
+
+/** A sum with no bot behind it: tokens of sessions no live chat points to. */
+export const PersonalBotTokenUsageSum = Schema.Struct({
+  totals: PersonalBotTokenUsageTotals,
+  sessions: NonNegativeInt,
+});
+export type PersonalBotTokenUsageSum = typeof PersonalBotTokenUsageSum.Type;
+
+export const PersonalBotTokenUsageWindow = Schema.Struct({
+  id: PersonalBotTokenUsageWindowId,
+  /** First and last day of the window, `YYYY-MM-DD` in the requested zone. */
+  sinceDay: TrimmedNonEmptyString,
+  untilDay: TrimmedNonEmptyString,
+  /** Bots that used tokens in the window, no particular order. Bots with none have no row. */
+  rows: Schema.Array(PersonalBotTokenUsageRow),
+  /** Sessions that map to no bot (deleted chats, work outside the app). */
+  other: PersonalBotTokenUsageSum,
+  /** Everything counted: the bots' rows plus `other`. */
+  total: PersonalBotTokenUsageSum,
+});
+export type PersonalBotTokenUsageWindow = typeof PersonalBotTokenUsageWindow.Type;
+
+export const PersonalBotTokenUsageResult = Schema.Struct({
+  status: PersonalBotTokenUsageStatus,
+  /** When the snapshot was read (ISO), or null while there is none. */
+  readAt: Schema.NullOr(TrimmedNonEmptyString),
+  /** Empty while `warming` or `unavailable`. */
+  windows: Schema.Array(PersonalBotTokenUsageWindow),
+});
+export type PersonalBotTokenUsageResult = typeof PersonalBotTokenUsageResult.Type;
+
+/**
  * The user opened this chat: start its provider session in the background so
  * the next message does not wait for it. Fire and forget; no turn starts.
  */

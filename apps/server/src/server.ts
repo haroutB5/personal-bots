@@ -126,6 +126,7 @@ import * as PersonalClaudeCodeReview from "./personal/claudeCodeReview/PersonalC
 import * as PersonalTaskTitleBackfill from "./personal/taskTitleBackfill.ts";
 import * as PersonalTurnRetry from "./personal/PersonalTurnRetryService.ts";
 import * as PersonalChatResume from "./personal/PersonalChatResumeService.ts";
+import * as PersonalBotTokenUsage from "./personal/PersonalBotTokenUsageService.ts";
 import * as PersonalTaskChatArchive from "./personal/PersonalTaskChatArchiveService.ts";
 import * as PersonalReleaseNotices from "./personal/releaseNotices/PersonalReleaseNoticeService.ts";
 import * as PersonalLeadBots from "./personal/leadBots/PersonalLeadBotService.ts";
@@ -601,6 +602,8 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   Layer.provideMerge(PersonalTurnRetry.layer),
   Layer.provideMerge(PersonalChatResume.layer),
   Layer.provideMerge(PersonalTaskChatArchive.layer),
+  // Per-bot token totals for the Team screen; reads the usage scan and the chat tables.
+  Layer.provideMerge(PersonalBotTokenUsage.layer),
   Layer.provideMerge(PersonalReleaseNotices.layer),
   // Team leads create, edit and remove bots on their own team; consumes the
   // bot, task and routine services below and the push service just below.
