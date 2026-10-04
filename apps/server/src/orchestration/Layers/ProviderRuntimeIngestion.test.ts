@@ -38,6 +38,7 @@ import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
+import { clearReplacedSessions, markSessionReplaced } from "../replacedSessions.ts";
 import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
@@ -5345,6 +5346,57 @@ describe("ProviderRuntimeIngestion", () => {
     // The current session's own exit still stops the thread.
     await exited("evt-current-exit", "claudeAgent", "claude_work", "2026-01-01T00:00:05.000Z");
     expect((await session())?.status).toBe("stopped");
+  });
+
+  it("the exit a same-instance fresh restart causes is not the new session's stop", async () => {
+    // The reactor stops the old session for a fresh one on the same instance. Its
+    // exit looks like the new session's own, so the stop is marked and the first
+    // exit after it is ignored; the next exit is a real stop.
+    clearReplacedSessions();
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const instance = ProviderInstanceId.make("claudeAgent");
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-ready-fresh-restart"),
+      threadId,
+      session: {
+        threadId,
+        status: "ready",
+        providerName: "claudeAgent",
+        providerInstanceId: instance,
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-01-01T00:00:01.000Z",
+      },
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    markSessionReplaced({
+      threadId,
+      provider: "claudeAgent",
+      instanceId: instance,
+      nowMs: Date.parse("2026-01-01T00:00:02.000Z"),
+    });
+    const exited = (id: string, at: string) =>
+      harness.emitAndDrain([
+        {
+          type: "session.exited",
+          eventId: asEventId(id),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: instance,
+          createdAt: at,
+          threadId,
+          payload: {},
+        },
+      ]);
+    const status = async () =>
+      (await harness.readModel()).threads.find((entry) => entry.id === threadId)?.session?.status;
+    await exited("evt-old-session-exit", "2026-01-01T00:00:03.000Z");
+    expect(await status()).toBe("ready");
+    await exited("evt-new-session-exit", "2026-01-01T00:00:04.000Z");
+    expect(await status()).toBe("stopped");
+    clearReplacedSessions();
   });
 
   it("projects structured user input request and resolution as thread activities", async () => {

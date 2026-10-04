@@ -34,6 +34,7 @@ import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 
+import { consumeReplacedSessionExit } from "../replacedSessions.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
@@ -1899,12 +1900,21 @@ const make = Effect.gen(function* () {
       // new session, and as a "stopped" state it ended the task, routine or
       // group turn that caused the move. An event that names no instance is
       // compared by driver.
+      // On the same instance the two cannot be told apart by name: the reactor
+      // marks the stop it makes for a fresh session, and the first exit that
+      // follows is that session's (see replacedSessions.ts).
       const replacedSessionExit =
         event.type === "session.exited" &&
         thread.session != null &&
-        (event.providerInstanceId !== undefined && thread.session.providerInstanceId != null
+        ((event.providerInstanceId !== undefined && thread.session.providerInstanceId != null
           ? event.providerInstanceId !== thread.session.providerInstanceId
-          : event.provider !== thread.session.providerName);
+          : event.provider !== thread.session.providerName) ||
+          consumeReplacedSessionExit({
+            threadId: thread.id,
+            provider: event.provider,
+            instanceId: event.providerInstanceId,
+            eventAtMs: Date.parse(event.createdAt),
+          }));
 
       const shouldApplyThreadLifecycle = (() => {
         if (replacedSessionExit) {

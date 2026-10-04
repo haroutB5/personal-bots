@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { markSessionReplaced } from "../replacedSessions.ts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -995,6 +996,16 @@ const make = Effect.gen(function* () {
 
     if (freshSession) {
       if (activeSession !== undefined) {
+        // The old session's exit arrives after this stop. On the same provider
+        // instance it looks like the new session's own, so the stop is marked:
+        // the ingestion ignores that one exit instead of reading it as the end
+        // of the turn that caused the restart.
+        markSessionReplaced({
+          threadId,
+          provider: activeSession.provider,
+          instanceId: activeSession.providerInstanceId,
+          nowMs: DateTime.toEpochMillis(yield* DateTime.now),
+        });
         yield* providerService.stopSession({ threadId }).pipe(
           Effect.catchCause((cause) =>
             Cause.hasInterruptsOnly(cause)

@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import { clearReplacedSessions, peekReplacedSession } from "../replacedSessions.ts";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -5196,6 +5197,31 @@ describe("ProviderCommandReactor", () => {
       expect(
         thread?.activities.filter((activity) => activity.kind === "provider.turn.start.failed"),
       ).toEqual([]);
+    });
+
+    it("a fresh session on the same provider marks the stop of the old one", async () => {
+      // The old session's exit would look like the new session's own: the ingestion
+      // ignores the first exit after this mark (replacedSessions.ts).
+      clearReplacedSessions();
+      const harness = await createHarness({
+        threadModelSelection: CLAUDE,
+        personalBotThread: true,
+        botModelSelection: CLAUDE,
+        sendTurnEffect: (call) => (call === 2 ? Effect.fail(missingConversation()) : undefined),
+      });
+      await sendMessage(harness, "msg-first-mark", "Remember the number 42.", {
+        modelSelection: CLAUDE,
+      });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      await harness.drain();
+      expect(peekReplacedSession("thread-1")).toBeUndefined();
+
+      await sendMessage(harness, "msg-lost-mark", "And again?", { modelSelection: CLAUDE });
+      await waitFor(() => harness.sendTurn.mock.calls.length === 3);
+      await harness.drain();
+      expect(harness.stopSession).toHaveBeenCalledWith({ threadId });
+      expect(peekReplacedSession("thread-1")).toMatchObject({ provider: "claudeAgent" });
+      clearReplacedSessions();
     });
 
     it("a renewal that fails too leaves the chat in error with the real reason", async () => {
