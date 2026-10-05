@@ -257,7 +257,7 @@ function Invoke-Pipeline {
 
     # 2. Gates.
     $gates = Get-UpdatesGateList -Root $workDir
-    $red = Invoke-UpdatesGates -Gates $gates -Root $workDir -LogDir $runDir -Log $log
+    $red = Invoke-UpdatesGates -Gates $gates -Root $workDir -LogDir $runDir -Log $log -ChangedPaths $changed
     if ($red.Count -gt 0) {
         Add-Step ("gates red: " + ($red -join ' | '))
         Undo-Run ("gates red: " + (($red | ForEach-Object { ($_ -split ' ')[0] }) -join ', '))

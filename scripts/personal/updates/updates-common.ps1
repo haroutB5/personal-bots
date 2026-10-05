@@ -446,6 +446,14 @@ function Get-UpdatesKnownFailures {
             Where-Object { $_.Length -gt 0 -and -not $_.StartsWith('#') })
 }
 
+# Files with a lint ERROR (warnings do not count) in `vp lint` output, forward slashes.
+function Get-UpdatesLintErrorFiles([string]$Output) {
+    $clean = $Output -replace "\x1b\[[0-9;]*m", ''
+    return @($clean -split "`r?`n" | ForEach-Object {
+            if ($_ -match '^\s*(\S.*?):\d+:\d+: error\b') { ($Matches[1] -replace '\\', '/').Trim() }
+        } | Sort-Object -Unique)
+}
+
 function Get-UpdatesVitestFailures([string]$Output) {
     $clean = $Output -replace "\x1b\[[0-9;]*m", ''
     return @($clean -split "`r?`n" | Where-Object { $_ -match '^\s*FAIL\s+\S+' } |
@@ -480,18 +488,21 @@ function Get-UpdatesGateList([string]$Root) {
         @{ Name = 'typecheck-client-runtime'; Dir = 'packages\client-runtime'; File = $tsc; Args = @('--noEmit'); Kind = 'tsc' },
         @{ Name = 'typecheck-server'; Dir = 'apps\server'; File = $tsc; Args = @('--noEmit'); Kind = 'tsc' },
         @{ Name = 'typecheck-web'; Dir = 'apps\web'; File = $tsc; Args = @('--noEmit'); Kind = 'tsc' },
-        @{ Name = 'lint'; Dir = '.'; File = $vp; Args = @('lint', '--report-unused-disable-directives'); Kind = 'exit' }
+        @{ Name = 'lint'; Dir = '.'; File = $vp; Args = @('lint', '--report-unused-disable-directives'); Kind = 'lint' }
     )
 }
 
 <#
 .SYNOPSIS
-Runs every gate; returns the red ones. A vitest FAIL listed in
+Runs every gate; returns the red ones. The lint gate is red only for an error in
+a file the run changed (-ChangedPaths): `main` itself carries pre-existing lint
+errors in files the nightly never touches (14 in 7 files on 5 Oct, from upstream
+merges), and gating on the whole repo reverted every run. A vitest FAIL listed in
 sync\known-test-failures.txt is ignored; other failing files get one isolated
 re-run (timing flakes on this laptop) and count only if a test fails twice.
 #>
 function Invoke-UpdatesGates {
-    param([object[]]$Gates, [string]$Root, [string]$LogDir, [scriptblock]$Log)
+    param([object[]]$Gates, [string]$Root, [string]$LogDir, [scriptblock]$Log, [string[]]$ChangedPaths = @())
     $known = Get-UpdatesKnownFailures
     $red = New-Object System.Collections.Generic.List[string]
     foreach ($gate in $Gates) {
@@ -508,6 +519,18 @@ function Invoke-UpdatesGates {
         }
         if ($gate.Kind -eq 'exit') {
             if ($res.Code -ne 0) { $red.Add("$($gate.Name) exited $($res.Code) (log $gateLog)") | Out-Null }
+            continue
+        }
+        if ($gate.Kind -eq 'lint') {
+            $errorFiles = @(Get-UpdatesLintErrorFiles -Output ($res.Out + "`n" + $res.Err))
+            $mine = @($errorFiles | Where-Object { $file = $_; @($ChangedPaths | Where-Object { ($_ -replace '\\', '/') -eq $file }).Count -gt 0 })
+            if ($mine.Count -gt 0) {
+                $red.Add("$($gate.Name): lint error(s) in a file this run changed: $($mine -join ', ') (log $gateLog)") | Out-Null
+            } elseif ($res.Code -ne 0 -and $errorFiles.Count -eq 0) {
+                $red.Add("$($gate.Name) exited $($res.Code) with no lint errors listed (crash or timeout; log $gateLog)") | Out-Null
+            } elseif ($errorFiles.Count -gt 0) {
+                & $Log "gate $($gate.Name): $($errorFiles.Count) file(s) with pre-existing lint errors, none changed by this run"
+            }
             continue
         }
         if ($gate.Kind -eq 'tsc') {

@@ -147,6 +147,11 @@ Assert-Equal 'tsc errors are' 'src/b.ts(3,4): error TS2322: Type string is not n
 Assert-Equal 'the typecheck gates judge by error lines' 'tsc,tsc,tsc,tsc,tsc' ($gates | Where-Object { $_.Name -like 'typecheck-*' } | ForEach-Object { $_.Kind })
 # Regression (dry run 2026-09-24): a relative tsc.cmd could not be started.
 Assert-Equal 'every gate program is an absolute path' 0 @($gates | Where-Object { -not [System.IO.Path]::IsPathRooted($_.File) }).Count
+# 5 Oct: `main` carries 14 lint errors in 7 files nobody touches, so a whole-repo lint gate reverted every run.
+$lintOut = "apps/server/src/provider/processTree.ts:23:1: error t3code(namespace-node-imports): Import node:child_process as a namespace.`napps\web\src\x.tsx:9:3: warning react(refs): Cannot access refs.`n$esc[31mscripts/personal/adblock/crawl.mjs:4:1: error$esc[0m t3code(namespace-node-imports): Import.`nsomething else"
+Assert-Equal 'lint: files with an ERROR (not a warning), colours stripped, forward slashes' 'apps/server/src/provider/processTree.ts,scripts/personal/adblock/crawl.mjs' (Get-UpdatesLintErrorFiles -Output $lintOut)
+Assert-Equal 'lint: a warning-only output has none' 0 @(Get-UpdatesLintErrorFiles -Output "apps/web/src/x.tsx:9:3: warning react(refs): x").Count
+Assert-Equal 'the lint gate judges by changed files' 'lint' (($gates | Where-Object { $_.Name -eq 'lint' }).Kind)
 
 Write-Host 'Gate runner (real processes)'
 $gateDir = Join-Path $tempRoot 'gates'
@@ -163,6 +168,22 @@ $fakeGates = @(
 $gateRed = Invoke-UpdatesGates -Gates $fakeGates -Root $tempRoot -LogDir $gateDir -Log $callerLog
 Assert-Equal 'red and unstartable gates are red, green is not' 'red,missing' (@($gateRed | ForEach-Object { ($_ -split ' ')[0] }))
 Assert-Equal 'progress reaches the caller''s log' 'gate green ...,gate red ...,gate missing ...' (Get-Content -LiteralPath $logFile)
+
+# The lint gate: a lint program that always exits 1 with errors in two files.
+$lintScript = Join-Path $gateDir 'fake-lint.cmd'
+Set-Content -LiteralPath $lintScript -Encoding ASCII -Value @(
+    '@echo off',
+    'echo apps/server/src/provider/processTree.ts:23:1: error t3code(namespace-node-imports): x',
+    'echo apps/web/src/features/personal/BotRow.tsx:9:3: error t3code(some-rule): y',
+    'echo apps/web/src/other.tsx:1:1: warning react(refs): z',
+    'exit /b 1')
+$lintGate = @(@{ Name = 'lint'; Dir = '.'; File = $lintScript; Args = @(); Kind = 'lint' })
+$lintRedElsewhere = Invoke-UpdatesGates -Gates $lintGate -Root $tempRoot -LogDir $gateDir -Log $callerLog -ChangedPaths @('apps/server/src/other.ts', 'README.md')
+Assert-Equal 'lint: errors only in files the run did not change are not red' 0 $lintRedElsewhere.Count
+$lintRedMine = Invoke-UpdatesGates -Gates $lintGate -Root $tempRoot -LogDir $gateDir -Log $callerLog -ChangedPaths @('apps/web/src/features/personal/BotRow.tsx')
+Assert-Equal 'lint: an error in a file the run changed is red, and names it' $true (($lintRedMine.Count -eq 1) -and ($lintRedMine[0] -like 'lint: lint error(s) in a file this run changed: apps/web/src/features/personal/BotRow.tsx*'))
+$lintCrash = @(@{ Name = 'lint'; Dir = '.'; File = $env:ComSpec; Args = @('/c', 'exit', '1'); Kind = 'lint' })
+Assert-Equal 'lint: exit 1 with nothing listed (a crash) is red' 1 (Invoke-UpdatesGates -Gates $lintCrash -Root $tempRoot -LogDir $gateDir -Log $callerLog -ChangedPaths @()).Count
 
 Write-Host 'The urgent marker matches the push service'
 $ledgerSource = Get-Content -LiteralPath (Join-Path $PbRepoRoot 'apps\server\src\personal\claudeCodeReview\proposalLedger.ts') -Raw

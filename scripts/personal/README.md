@@ -219,7 +219,8 @@ range since the last review, and the proposals carried over from the ledger
 3. It runs `nightly.ps1 -Step ship`, which starts `updates\nightly-pipeline.ps1`
    detached through WMI (outside the server's process tree, so the restart
    cannot kill it). The pipeline gates (server `src/personal`, web personal,
-   typecheck, lint), reverts the run's commits on red (new revert commits,
+   typecheck, lint: red only for an error in a file the run changed, since
+   `main` carries lint errors in files the nightly never touches), reverts the run's commits on red (new revert commits,
    pushed; never reset or force), bumps the patch version, pushes, builds with
    `-NoActivate -CopyExternals`, waits until every bot and task is idle (the
    hbots idle waiter's check: 3 looks 20 s apart; after 120 minutes it gives
