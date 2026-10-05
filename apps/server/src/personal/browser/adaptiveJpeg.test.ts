@@ -310,24 +310,28 @@ describe("adaptive JPEG motion controller", () => {
   });
 });
 
-describe("adaptive JPEG kill switch", () => {
+describe("adaptive JPEG opt-in", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it("is on by default", () => {
+  it("is off by default", () => {
     vi.stubEnv("T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG", "");
-    expect(optionsFromEnvironment().adaptiveJpeg).toBe(true);
-  });
-
-  it("is off with T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=off, spaces and all", () => {
-    vi.stubEnv("T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG", " off ");
     expect(optionsFromEnvironment().adaptiveJpeg).toBe(false);
   });
 
-  it("stays on for any other value", () => {
-    vi.stubEnv("T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG", "on");
-    expect(optionsFromEnvironment().adaptiveJpeg).toBe(true);
+  it("is on with T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=on, spaces and case aside", () => {
+    for (const value of ["on", " ON ", "1", "true", "yes"]) {
+      vi.stubEnv("T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG", value);
+      expect(optionsFromEnvironment().adaptiveJpeg).toBe(true);
+    }
+  });
+
+  it("stays off for off and for anything else", () => {
+    for (const value of ["off", "0", "false", "maybe"]) {
+      vi.stubEnv("T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG", value);
+      expect(optionsFromEnvironment().adaptiveJpeg).toBe(false);
+    }
   });
 });
 

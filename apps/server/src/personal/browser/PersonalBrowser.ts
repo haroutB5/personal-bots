@@ -262,7 +262,11 @@ export interface PersonalBrowserOptions {
   readonly adaptiveAckWindow?: boolean;
   /** Frames per second one viewer is sent at most (default 30). */
   readonly streamMaxFps?: number | undefined;
-  /** A rougher, smaller picture while the page scrolls, a sharp one when it stops (default on). */
+  /**
+   * A rougher, smaller picture while the page scrolls, a sharp one when it stops. Off from the
+   * environment unless T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=on (see HANDOFF-16044); on when
+   * the option is left out, which is how the tests build it.
+   */
   readonly adaptiveJpeg?: boolean;
   /** Quiet time after the last scroll step before the sharp picture comes back (ms; default 150). */
   readonly adaptiveSettleMs?: number | undefined;
@@ -301,8 +305,10 @@ export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   // Kill switch: T3CODE_PERSONAL_BROWSER_ADAPTIVE_ACK_WINDOW=off keeps the window at two frames.
   adaptiveAckWindow: process.env.T3CODE_PERSONAL_BROWSER_ADAPTIVE_ACK_WINDOW?.trim() !== "off",
   streamMaxFps: streamMaxFpsFromEnvironment(process.env.T3CODE_PERSONAL_BROWSER_STREAM_MAX_FPS),
-  // Kill switch: T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=off streams one picture quality, as in 1.60.41.
-  adaptiveJpeg: process.env.T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG?.trim() !== "off",
+  // Opt-in: T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=on. Without it one picture quality is streamed, as in 1.60.42.
+  adaptiveJpeg: /^(on|1|true|yes)$/i.test(
+    process.env.T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG?.trim() ?? "",
+  ),
   adaptiveSettleMs: adaptiveSettleMsFromEnvironment(
     process.env.T3CODE_PERSONAL_BROWSER_ADAPTIVE_SETTLE_MS,
   ),
