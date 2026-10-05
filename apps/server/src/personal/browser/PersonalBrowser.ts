@@ -97,6 +97,7 @@ import {
   type ViewportOverride,
   type ViewportSize,
 } from "./driver.ts";
+import { createMotionController } from "./adaptiveJpeg.ts";
 import {
   captureSnapshot,
   classifyPageError,
@@ -256,6 +257,8 @@ export interface PersonalBrowserOptions {
   readonly adaptiveAckWindow?: boolean;
   /** Frames per second one viewer is sent at most (default 30). */
   readonly streamMaxFps?: number | undefined;
+  /** A rougher, smaller picture while the page scrolls, a sharp one when it stops (default on). */
+  readonly adaptiveJpeg?: boolean;
 }
 
 /**
@@ -285,6 +288,8 @@ export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   // Kill switch: T3CODE_PERSONAL_BROWSER_ADAPTIVE_ACK_WINDOW=off keeps the window at two frames.
   adaptiveAckWindow: process.env.T3CODE_PERSONAL_BROWSER_ADAPTIVE_ACK_WINDOW?.trim() !== "off",
   streamMaxFps: streamMaxFpsFromEnvironment(process.env.T3CODE_PERSONAL_BROWSER_STREAM_MAX_FPS),
+  // Kill switch: T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=off streams one picture quality, as in 1.60.41.
+  adaptiveJpeg: process.env.T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG?.trim() !== "off",
 });
 
 type Phase = "offline" | "starting" | "connected" | "crashed" | "locked";
@@ -638,6 +643,20 @@ export const make = (options: PersonalBrowserOptions) =>
     let framesHidden = false;
     let screencast: { readonly page: BrowserPage; readonly stop: () => Promise<void> } | null =
       null;
+    // While the person scrolls, the screencast is rougher and smaller; a sharp frame follows the
+    // scroll. It always begins sharp: a new screencast resets it.
+    const motion =
+      options.adaptiveJpeg === false
+        ? null
+        : createMotionController({
+            apply: (profile) => {
+              const current = screencast;
+              return current?.page.setScreencastProfile?.(profile) ?? Promise.resolve();
+            },
+            onChange: (profile) => {
+              for (const viewer of viewers.values()) viewer.telemetry?.motion(profile === "moving");
+            },
+          });
     let lastPageInfoRefresh = 0;
     // The agent's own preview_resize per page, so a human's phone viewport is
     // undone back to exactly what the agent chose rather than to the window.
@@ -1053,6 +1072,7 @@ export const make = (options: PersonalBrowserOptions) =>
         if (screencast !== null && (target === null || screencast.page !== target)) {
           const { stop } = screencast;
           screencast = null;
+          motion?.reset();
           yield* Effect.promise(() => stop().catch(() => undefined));
         }
         if (target !== null) watchDialogs(target);
@@ -1061,6 +1081,7 @@ export const make = (options: PersonalBrowserOptions) =>
             target.startScreencast((jpeg, meta) => onFrame(target, jpeg, meta)),
           ).pipe(Effect.option);
           if (Option.isSome(stop)) screencast = { page: target, stop: stop.value };
+          motion?.reset();
         }
       }),
     );
@@ -1077,6 +1098,7 @@ export const make = (options: PersonalBrowserOptions) =>
             if (screencast === null || screencast.page !== page) return;
             const { stop } = screencast;
             screencast = null;
+            motion?.reset();
             yield* Effect.promise(() => stop().catch(() => undefined));
           }),
         )
@@ -1149,6 +1171,7 @@ export const make = (options: PersonalBrowserOptions) =>
         screencast = null;
         // Its page died with Chrome; a relaunch re-applies it if still wanted.
         appliedViewport = null;
+        motion?.reset();
         runtime.phase = runtime.closing ? "offline" : "crashed";
         runtime.detail = runtime.closing
           ? null
@@ -2317,6 +2340,7 @@ export const make = (options: PersonalBrowserOptions) =>
           if (screencast !== null) {
             const { stop } = screencast;
             screencast = null;
+            motion?.reset();
             yield* Effect.promise(() => stop().catch(() => undefined));
           }
           if (context !== null) {
@@ -2675,6 +2699,8 @@ export const make = (options: PersonalBrowserOptions) =>
           if (message.action === "up") await page.mouseUp();
           return;
         case "Wheel": {
+          // A run of scroll steps is motion: the picture goes rough until it stops.
+          motion?.wheel();
           if (options.wheelFold !== false) {
             const foldedAt = performance.now();
             const folded = await page

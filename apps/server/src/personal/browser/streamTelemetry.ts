@@ -131,6 +131,9 @@ export class ViewerTelemetry implements ViewerFlowObserver {
   private windowActive = new Set<number>();
   private readonly totalActive = new Set<number>();
   private lastSentAt: number | null = null;
+  /** Whether the live view is in its rougher "moving" picture (adaptive JPEG), and since when. */
+  private moving = false;
+  private movingSince: number | null = null;
   private readonly options: ViewerTelemetryOptions;
 
   constructor(options: ViewerTelemetryOptions) {
@@ -158,6 +161,23 @@ export class ViewerTelemetry implements ViewerFlowObserver {
     this.total.sample(name, value);
     this.window.count(`n:${name}`);
     this.total.count(`n:${name}`);
+  }
+
+  /** Adds the time spent in the moving picture up to `at` to the counters. */
+  private accrueMoving(at: number): void {
+    if (this.movingSince === null) return;
+    this.count("movingMs", Math.max(0, at - this.movingSince));
+    this.movingSince = at;
+  }
+
+  /** The live view went to its rougher picture (`moving`) or back to the sharp one. */
+  motion(moving: boolean): void {
+    if (moving === this.moving) return;
+    const at = this.now();
+    this.accrueMoving(at);
+    this.moving = moving;
+    this.movingSince = moving ? at : null;
+    if (moving) this.count("motionSwitches");
   }
 
   /** Chrome produced a frame (whether or not it could be shown). */
@@ -208,6 +228,9 @@ export class ViewerTelemetry implements ViewerFlowObserver {
     }
     this.lastSentAt = info.sentAt;
     this.count("bytes", info.bytes);
+    // Which picture this frame was: the sizes of the two, and the rate while moving.
+    this.count(this.moving ? "sentMoving" : "sentStill");
+    this.count(this.moving ? "bytesMoving" : "bytesStill", info.bytes);
     this.sample("queuedMs", info.queuedMs);
     // Inputs whose effect this frame can show: it arrived after they were dispatched.
     const shown = this.awaitingFrame.filter((entry) => entry.dispatchedAt <= info.offeredAt);
@@ -292,6 +315,9 @@ export class ViewerTelemetry implements ViewerFlowObserver {
     );
     const activeRate = (name: string) => round(tally.get(name) / activeSeconds, 2);
     const sent = tally.get("sent");
+    const movingSeconds = tally.get("movingMs") / 1_000;
+    const average = (count: string, bytes: string) =>
+      tally.get(count) === 0 ? 0 : Math.round(tally.get(bytes) / tally.get(count));
     return {
       seconds: round(seconds),
       activeSeconds: round(activeSeconds, 2),
@@ -305,6 +331,17 @@ export class ViewerTelemetry implements ViewerFlowObserver {
             : round((100 * tally.get("chromeHeld")) / tally.get("chromeFrames"), 0),
         holdMs: summarise(tally, "chromeHoldMs"),
         holdCapped: tally.get("chromeHoldCapped"),
+      },
+      // Adaptive JPEG: how long the picture was rough, how big each kind of frame was, and the
+      // send rate while it was rough.
+      adaptive: {
+        movingS: round(movingSeconds),
+        switches: tally.get("motionSwitches"),
+        sentMoving: tally.get("sentMoving"),
+        sentPerMovingS: movingSeconds > 0 ? round(tally.get("sentMoving") / movingSeconds, 2) : 0,
+        avgBytesMoving: average("sentMoving", "bytesMoving"),
+        sentStill: tally.get("sentStill"),
+        avgBytesStill: average("sentStill", "bytesStill"),
       },
       frames: {
         offeredPerS: rate("offered"),
@@ -375,6 +412,7 @@ export class ViewerTelemetry implements ViewerFlowObserver {
   /** The window's line, then a fresh window. Null when the window was entirely quiet. */
   flush(extra: StreamTelemetryLine = {}): StreamTelemetryLine | null {
     const at = this.now();
+    this.accrueMoving(at);
     const seconds = Math.max(0.001, (at - this.windowStartedAt) / 1_000);
     const quiet = this.quiet;
     const line = quiet
@@ -395,6 +433,7 @@ export class ViewerTelemetry implements ViewerFlowObserver {
 
   /** Totals for the whole stay, written when the viewer detaches. */
   summary(extra: StreamTelemetryLine = {}): StreamTelemetryLine {
+    this.accrueMoving(this.now());
     const seconds = Math.max(0.001, (this.now() - this.startedAt) / 1_000);
     return {
       viewer: this.options.viewerId,

@@ -28,6 +28,23 @@ export interface ScreencastMeta extends ViewportSize {
   readonly deviceScaleFactor: number;
 }
 
+/**
+ * How a screencast is encoded. `sharp` is the resting picture; `moving` is a smaller, rougher
+ * one for while the page scrolls (it is replaced by a sharp frame once the page settles).
+ */
+export type ScreencastProfile = "sharp" | "moving";
+
+export const SCREENCAST_PROFILES = {
+  sharp: { quality: 60, maxWidth: 780, maxHeight: 1_690 },
+  moving: { quality: 38, maxWidth: 520, maxHeight: 1_130 },
+} as const satisfies Record<
+  ScreencastProfile,
+  { readonly quality: number; readonly maxWidth: number; readonly maxHeight: number }
+>;
+
+/** The longest a final sharp screenshot may take before the sharp screencast resumes without it. */
+const FINAL_FRAME_CAP_MS = 1_500;
+
 export interface ConsoleRecord {
   readonly level: string;
   readonly text: string;
@@ -134,6 +151,14 @@ export interface BrowserPage {
   startScreencast(
     onFrame: (jpeg: Uint8Array, meta: ScreencastMeta) => void | Promise<void>,
   ): Promise<() => Promise<void>>;
+  /**
+   * Re-encodes the running screencast: `moving` is smaller and rougher, `sharp` the resting
+   * picture. Going back to `sharp` also sends one sharp frame of what is on screen now (a page
+   * that has stopped changing sends no frame of its own, so it would stay rough). A no-op while
+   * no screencast runs or the profile is the one it has; calls are applied in order. Optional:
+   * a page that lacks it streams one profile.
+   */
+  setScreencastProfile?(profile: ScreencastProfile): Promise<void>;
   onClose(listener: () => void): void;
   /** Main-frame origin changes, including an away-and-back navigation. */
   onOriginChange?(listener: () => void): void;
@@ -173,13 +198,8 @@ export interface BrowserDriver {
 
 const RING_LIMIT = 50;
 const MAX_AX_NODES = 1_500;
-const SCREENCAST_OPTIONS = {
-  format: "jpeg",
-  quality: 60,
-  maxWidth: 780,
-  maxHeight: 1_690,
-  everyNthFrame: 1,
-} as const;
+const screencastOptions = (profile: ScreencastProfile) =>
+  ({ format: "jpeg", ...SCREENCAST_PROFILES[profile], everyNthFrame: 1 }) as const;
 
 const TIMED_OUT = Symbol("timed-out");
 
@@ -309,6 +329,66 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
       ),
       ms,
     ).then((result) => result === true);
+
+  // The running screencast, if any, for `setScreencastProfile`. Switching profiles is a stop and a
+  // start (Chrome has no way to change the quality of a running one): two quick calls, applied in
+  // order, one at a time.
+  interface ActiveScreencast {
+    readonly session: Playwright.CDPSession;
+    profile: ScreencastProfile;
+    readonly deviceScaleFactor: number;
+    readonly deliver: (jpeg: Uint8Array, meta: ScreencastMeta) => void;
+  }
+  let activeScreencast: ActiveScreencast | null = null;
+  let screencastChain: Promise<void> = Promise.resolve();
+
+  /** One sharp frame of what is on screen now, in the size a sharp screencast frame would have. */
+  const sendFinalFrame = async (state: ActiveScreencast) => {
+    const { session } = state;
+    const { cssVisualViewport: view } = await session.send("Page.getLayoutMetrics");
+    if (view.clientWidth <= 0 || view.clientHeight <= 0) return;
+    const sharp = SCREENCAST_PROFILES.sharp;
+    // Chrome never scales a screencast frame up past the screen's own pixels.
+    const scale = Math.min(
+      state.deviceScaleFactor,
+      sharp.maxWidth / view.clientWidth,
+      sharp.maxHeight / view.clientHeight,
+    );
+    const shot = await withTimeout(
+      session.send("Page.captureScreenshot", {
+        format: "jpeg",
+        quality: sharp.quality,
+        optimizeForSpeed: true,
+        // In document coordinates: the part of the page the screen shows.
+        clip: {
+          x: view.pageX,
+          y: view.pageY,
+          width: view.clientWidth,
+          height: view.clientHeight,
+          scale,
+        },
+      }),
+      FINAL_FRAME_CAP_MS,
+    );
+    // A stopped screencast, or a profile asked for since, makes the picture stale.
+    if (shot === TIMED_OUT || activeScreencast !== state || state.profile !== "sharp") return;
+    state.deliver(Buffer.from(shot.data, "base64"), {
+      width: view.clientWidth,
+      height: view.clientHeight,
+      deviceScaleFactor: state.deviceScaleFactor,
+    });
+  };
+
+  const switchScreencastProfile = async (profile: ScreencastProfile) => {
+    const state = activeScreencast;
+    if (state === null || state.profile === profile) return;
+    state.profile = profile;
+    await state.session.send("Page.stopScreencast").catch(() => {});
+    if (profile === "sharp") await sendFinalFrame(state).catch(() => {});
+    // Stopped for good, or switched again while this one ran: nothing to start.
+    if (activeScreencast !== state || state.profile !== profile) return;
+    await state.session.send("Page.startScreencast", screencastOptions(profile)).catch(() => {});
+  };
 
   return {
     url: () => page.url(),
@@ -442,31 +522,12 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
     startScreencast: async (onFrame) => {
       const session = await cdp();
       const deviceScaleFactor = Number(await page.evaluate("window.devicePixelRatio")) || 1;
-      const listener = (event: {
-        readonly data: string;
-        readonly sessionId: number;
-        readonly metadata: {
-          readonly deviceWidth: number;
-          readonly deviceHeight: number;
-          readonly pageScaleFactor?: number;
-        };
-      }) => {
-        const ack = () => {
-          void session
-            .send("Page.screencastFrameAck", { sessionId: event.sessionId })
-            .catch(() => {});
-        };
-        // A desktop-width page without a mobile viewport shrinks into the
-        // device. CDP mouse coordinates still use its layout CSS pixels.
-        const scale = event.metadata.pageScaleFactor ?? 1;
-        const pageScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+      // One frame to the consumer. `ack` tells Chrome it may send the next; a frame that did not
+      // come from Chrome's screencast has nothing to ack.
+      const deliver = (jpeg: Uint8Array, meta: ScreencastMeta, ack: () => void) => {
         let handedOff: void | Promise<void>;
         try {
-          handedOff = onFrame(Buffer.from(event.data, "base64"), {
-            width: event.metadata.deviceWidth / pageScale,
-            height: event.metadata.deviceHeight / pageScale,
-            deviceScaleFactor,
-          });
+          handedOff = onFrame(jpeg, meta);
         } catch {
           handedOff = undefined;
         }
@@ -476,12 +537,52 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
         if (handedOff === undefined) ack();
         else void handedOff.then(ack, ack);
       };
+      const listener = (event: {
+        readonly data: string;
+        readonly sessionId: number;
+        readonly metadata: {
+          readonly deviceWidth: number;
+          readonly deviceHeight: number;
+          readonly pageScaleFactor?: number;
+        };
+      }) => {
+        // A desktop-width page without a mobile viewport shrinks into the
+        // device. CDP mouse coordinates still use its layout CSS pixels.
+        const scale = event.metadata.pageScaleFactor ?? 1;
+        const pageScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+        deliver(
+          Buffer.from(event.data, "base64"),
+          {
+            width: event.metadata.deviceWidth / pageScale,
+            height: event.metadata.deviceHeight / pageScale,
+            deviceScaleFactor,
+          },
+          () => {
+            void session
+              .send("Page.screencastFrameAck", { sessionId: event.sessionId })
+              .catch(() => {});
+          },
+        );
+      };
+      const state: ActiveScreencast = {
+        session,
+        profile: "sharp",
+        deviceScaleFactor,
+        deliver: (jpeg, meta) => deliver(jpeg, meta, () => {}),
+      };
+      activeScreencast = state;
       session.on("Page.screencastFrame", listener);
-      await session.send("Page.startScreencast", SCREENCAST_OPTIONS);
+      await session.send("Page.startScreencast", screencastOptions("sharp"));
       return async () => {
+        if (activeScreencast === state) activeScreencast = null;
         session.off("Page.screencastFrame", listener);
         await session.send("Page.stopScreencast").catch(() => {});
       };
+    },
+    setScreencastProfile: (profile) => {
+      const run = screencastChain.then(() => switchScreencastProfile(profile));
+      screencastChain = run.catch(() => undefined);
+      return run;
     },
     onClose: (listener) => {
       page.once("close", listener);

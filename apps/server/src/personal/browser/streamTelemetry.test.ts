@@ -265,6 +265,7 @@ describe("stream telemetry", () => {
     expect(Object.keys(line as object).sort()).toEqual(
       [
         "activeSeconds",
+        "adaptive",
         "chrome",
         "control",
         "frames",
