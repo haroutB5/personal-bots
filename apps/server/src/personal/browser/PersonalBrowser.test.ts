@@ -2030,6 +2030,98 @@ describe("PersonalBrowser", () => {
         );
       }).pipe(Effect.provide(makeLayer(fake.driver)));
     });
+
+    // The sharp picture that follows a scroll is a screenshot the driver pushes through the same
+    // frame callback as every screencast frame, so it meets the same mask. It must not slip past
+    // it: it is the one frame taken after the page has stopped, with the form as filled.
+    describe("the sharp final frame after a scroll", () => {
+      const wheel = '{"_tag":"Wheel","x":12,"y":34,"deltaX":0,"deltaY":56}';
+      const sharpJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x53]);
+      const settle = Effect.promise(
+        () =>
+          // @effect-diagnostics-next-line globalTimers:off
+          new Promise<void>((resolve) => setTimeout(resolve, 450)),
+      );
+      const isFrame = (item: Uint8Array | string) => item instanceof Uint8Array;
+
+      /** Like the real driver: going sharp pushes one frame of the resting page. */
+      const pushesFinalFrame = (page: ReturnType<typeof makeFakeDriver>["state"]["page"]) => {
+        page.setScreencastProfile = async (profile) => {
+          page.profiles.push(profile);
+          if (profile === "sharp") {
+            page.frameSink?.(sharpJpeg, { width: 390, height: 844, deviceScaleFactor: 2 });
+          }
+        };
+      };
+
+      /** A bot fills the credential form, then the person scrolls a run of steps. */
+      const scrollOnFilledForm = (
+        fake: ReturnType<typeof makeFakeDriver>,
+        afterScroll: (browser: PersonalBrowser.PersonalBrowser["Service"]) => Effect.Effect<void>,
+      ) =>
+        Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(
+            request("navigate", { url: "https://example.com/sign-in" }),
+          );
+          return yield* Effect.scoped(
+            Effect.gen(function* () {
+              const viewer = yield* browser.attachViewer({
+                sessionId: "session-1",
+                canOperate: true,
+              });
+              yield* browser.fillLogin({
+                threadId,
+                label: "Example",
+                expectedOrigin: "https://example.com",
+                username: "person@example.com",
+                password: "password-value",
+              });
+              const fillPage = fake.state.pages.at(-1)!;
+              pushesFinalFrame(fillPage);
+              yield* browser.takeControl("session-1");
+              yield* drain(viewer);
+              for (let step = 0; step < 4; step += 1) {
+                yield* browser.handleViewerMessage(viewer, wheel);
+                yield* Effect.promise(
+                  () =>
+                    // @effect-diagnostics-next-line globalTimers:off
+                    new Promise<void>((resolve) => setTimeout(resolve, 20)),
+                );
+              }
+              yield* afterScroll(browser);
+              yield* settle;
+              return { items: yield* drain(viewer), profiles: [...fillPage.profiles] };
+            }),
+          );
+        });
+
+      it.effect("is withheld, with the notice, once the bot holds the browser again", () => {
+        const fake = makeFakeDriver();
+        asLoginBrowser(fake);
+        return Effect.gen(function* () {
+          const { items, profiles } = yield* scrollOnFilledForm(fake, (browser) =>
+            browser.returnToAgent("session-1").pipe(Effect.asVoid, Effect.orDie),
+          );
+          // The scroll did settle to sharp, so a final frame was pushed ...
+          expect(profiles).toEqual(["moving", "sharp"]);
+          // ... and none of it, and no frame at all, reached the phone.
+          expect(items.some(isFrame)).toBe(false);
+          expect(items.filter((item) => String(item).includes("FramesHidden"))).toHaveLength(1);
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      });
+
+      it.effect("is shown to the person who is scrolling their own screen", () => {
+        const fake = makeFakeDriver();
+        asLoginBrowser(fake);
+        return Effect.gen(function* () {
+          const { items, profiles } = yield* scrollOnFilledForm(fake, () => Effect.void);
+          expect(profiles).toEqual(["moving", "sharp"]);
+          expect(items.some(isFrame)).toBe(true);
+          expect(items.some((item) => String(item).includes("FramesHidden"))).toBe(false);
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      });
+    });
   });
 
   // The live view fell behind on a slow relay because nothing slowed the frames
