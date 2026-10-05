@@ -34,6 +34,7 @@ import {
   legacyUpdatesBotInstructions,
   UPDATES_NIGHTLY_ROUTINE_ID,
   UPDATES_REPORT_ROUTINE_ID,
+  staleUpdatesBotInstructions,
   updatesBotInstructions,
 } from "./reviewPrompts.ts";
 
@@ -293,6 +294,37 @@ it.effect("from 1.33.0: instructions the user edited are kept", () =>
     yield* service.setup;
     assert.deepStrictEqual(state.botUpdates, []);
     assert.ok(state.routines.has(UPDATES_NIGHTLY_ROUTINE_ID));
+  }),
+);
+
+it.effect("1.64.0: the stale fix/inline-cards branch in untouched instructions is corrected", () =>
+  Effect.gen(function* () {
+    const { state, deps } = makeHarness();
+    state.meta.set(CLAUDE_CODE_REVIEW_SETUP_KEY, "2");
+    state.bot = { instructions: staleUpdatesBotInstructions(PATHS) };
+    assert.ok(state.bot.instructions.includes("fix/inline-cards"));
+    const service = yield* makeWith(deps);
+    yield* service.setup;
+    assert.deepStrictEqual(state.botUpdates, [updatesBotInstructions(PATHS)]);
+    assert.ok(updatesBotInstructions(PATHS).includes("live release branch personal-bots/main"));
+    assert.ok(!updatesBotInstructions(PATHS).includes("fix/inline-cards"));
+    // Once corrected, later starts leave it alone.
+    yield* service.setup;
+    assert.strictEqual(state.botUpdates.length, 1);
+  }),
+);
+
+it.effect("1.64.0: instructions the user edited keep their words", () =>
+  Effect.gen(function* () {
+    const { state, deps } = makeHarness();
+    state.meta.set(CLAUDE_CODE_REVIEW_SETUP_KEY, "2");
+    state.bot = {
+      instructions: `${staleUpdatesBotInstructions(PATHS)}
+My extra rule.`,
+    };
+    const service = yield* makeWith(deps);
+    yield* service.setup;
+    assert.deepStrictEqual(state.botUpdates, []);
   }),
 );
 

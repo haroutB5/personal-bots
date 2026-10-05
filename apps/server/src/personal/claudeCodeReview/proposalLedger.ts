@@ -387,6 +387,8 @@ export type RunResult =
   | "gates-red"
   | "build-failed"
   | "push-rejected"
+  /** Built, but bots or tasks stayed busy so nothing was restarted; the run was reverted. */
+  | "busy"
   | "shipped"
   /** The new release failed its checks; the previous one is live again. */
   | "rolled-back"
@@ -422,6 +424,7 @@ const HEADLINE: Record<RunResult, string> = {
   "gates-red": "changes reverted (gates red)",
   "build-failed": "changes reverted (build failed)",
   "push-rejected": "not shipped (push rejected)",
+  busy: "changes reverted (Bots was busy)",
   shipped: "shipped",
   "rolled-back": "rolled back",
   down: "Bots may be down",

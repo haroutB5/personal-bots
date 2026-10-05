@@ -87,6 +87,7 @@ import {
   UPDATES_NIGHTLY_ROUTINE_ID,
   UPDATES_REPORT_ROUTINE_ID,
   updatesBotCreateInput,
+  staleUpdatesBotInstructions,
   updatesBotInstructions,
   updatesNightlyRoutineCreateInput,
   updatesReportRoutineCreateInput,
@@ -507,6 +508,18 @@ export const makeWith = (deps: PersonalClaudeCodeReviewDeps) =>
           from: version,
           botExists,
         });
+      }
+      // 1.64.0: the instructions named the 1.42 trunk (fix/inline-cards) as the live release
+      // branch. An untouched copy of that text is brought up to date; an edited one is left alone.
+      const staleBot = yield* deps.getBot();
+      if (
+        Option.isSome(staleBot) &&
+        staleBot.value.instructions === staleUpdatesBotInstructions(deps.paths)
+      ) {
+        yield* deps.updateBotInstructions(
+          updatesBotInstructions(deps.paths),
+          UPDATES_BOT_DESCRIPTION,
+        );
       }
       const report = yield* deps.getRoutine(UPDATES_REPORT_ROUTINE_ID);
       if (Option.isSome(report) && report.value.hookToken !== null) {

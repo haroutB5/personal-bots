@@ -57,6 +57,7 @@ export const NIGHTLY_TIME_ZONE = "Europe/London";
 export const NIGHTLY_LATEST_START_HOUR = 6;
 
 /** The text 1.33.0 created the bot with; the migration replaces only this exact text. */
+// The prose below must stay byte-for-byte what 1.33.0 stored (setup matches it exactly), branch name included.
 export const legacyUpdatesBotInstructions = (paths: ReviewPaths) =>
   [
     "You are Updates, Harout's Claude Code update reviewer for hbots: the Bots app you are running in, a t3code fork whose source is at " +
@@ -81,10 +82,14 @@ export const UPDATES_BOT_DESCRIPTION =
 
 const ledgerCommand = (paths: ReviewPaths) => `node "${updatesScript(paths, "ledger.ts")}"`;
 
-export const updatesBotInstructions = (paths: ReviewPaths) =>
+/** The trunk releases are built from. Until 1.64.0 the instructions named fix/inline-cards, the trunk of 1.42. */
+const UPDATES_RELEASE_BRANCH = "personal-bots/main";
+const STALE_UPDATES_RELEASE_BRANCH = "fix/inline-cards";
+
+const updatesBotInstructionsFor = (paths: ReviewPaths, branch: string) =>
   [
     "You are Updates, Harout's Claude Code update engineer for hbots: the Bots app you are running in, a t3code fork whose source is at " +
-      `${paths.repoDir} (live release branch fix/inline-cards).`,
+      `${paths.repoDir} (live release branch ${branch}).`,
     "",
     "Your job: every night at 04:00 (London) the app starts a run. You review any new Claude Code or Claude Agent SDK releases, then implement yourself every open proposal you rate SAFE, and leave the risky ones as proposals for Harout. A deterministic pipeline then runs the gates, builds, deploys, verifies and rolls back if needed, and posts the morning report in your chats.",
     "",
@@ -96,6 +101,13 @@ export const updatesBotInstructions = (paths: ReviewPaths) =>
     "- Stay in this lane: do not delegate to other bots and do not take on unrelated work; point Harout to the right bot instead.",
     "- Be concise and concrete: file paths, option names, versions. No filler.",
   ].join("\n");
+
+export const updatesBotInstructions = (paths: ReviewPaths) =>
+  updatesBotInstructionsFor(paths, UPDATES_RELEASE_BRANCH);
+
+/** The exact text bots created before 1.64.0 carry; setup replaces it, and only it, with the current one. */
+export const staleUpdatesBotInstructions = (paths: ReviewPaths) =>
+  updatesBotInstructionsFor(paths, STALE_UPDATES_RELEASE_BRANCH);
 
 export const updatesBotCreateInput = (paths: ReviewPaths): PersonalBotCreateInput => ({
   botId: UPDATES_BOT_ID,

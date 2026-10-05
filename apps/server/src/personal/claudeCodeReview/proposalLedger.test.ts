@@ -212,6 +212,19 @@ describe("morning report", () => {
     );
   });
 
+  it("a busy run says nothing was restarted and lists what was reverted", () => {
+    const ledger = markRunReverted(
+      ledgerAfterRun(),
+      RUN,
+      "bots were still working after 120 minutes, so nothing was restarted",
+      AT,
+    );
+    const text = renderMorningReport(ledger, outcome({ result: "busy", version: null }));
+    assert.ok(text.startsWith("Nightly update 2026-09-25: changes reverted (Bots was busy)"));
+    assert.ok(text.includes("Reverted (reply 'approve P<n>' to retry tonight)"));
+    assert.strictEqual(isUrgentReport(text), false);
+  });
+
   it("an urgent report starts with the marker the push service reads", () => {
     const text = renderMorningReport(ledgerAfterRun(), outcome({ result: "down", urgent: true }));
     assert.ok(
