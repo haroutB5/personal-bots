@@ -204,3 +204,22 @@ describe("RoutineDetailScreen webhook panel", () => {
     expect(JSON.stringify(tree.toJSON())).toContain("Next run");
   });
 });
+
+describe("RoutineDetailScreen notify row", () => {
+  it("reads an older routine with no notifyMode as Every run", async () => {
+    const text = JSON.stringify((await renderScreen(scheduledRoutine)).toJSON());
+    expect(text).toContain("Notify me");
+    expect(text).toContain("Every run");
+  });
+
+  it("shows the stored mode", async () => {
+    const bot = JSON.stringify(
+      (await renderScreen({ ...scheduledRoutine, notifyMode: "bot_decides" })).toJSON(),
+    );
+    expect(bot).toContain("When the bot decides");
+    const never = JSON.stringify(
+      (await renderScreen({ ...eventRoutine, notifyMode: "never" })).toJSON(),
+    );
+    expect(never).toContain("Never");
+  });
+});

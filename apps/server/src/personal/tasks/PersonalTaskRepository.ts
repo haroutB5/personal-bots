@@ -11,6 +11,7 @@ import {
   PersonalBotId,
   PersonalDelegationBrief,
   PersonalHandoffStatus,
+  PersonalRoutineNotifyMode,
   PersonalTaskId,
   PersonalTaskResult,
   PersonalTaskSource,
@@ -79,6 +80,22 @@ const HandoffDbRow = Schema.Struct({
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
 });
+
+/** What a run knows about whether it should notify: see migration 098. */
+export interface PersonalTaskNotifyState {
+  /** The mode the run started with; null for a run that has none (every task but a routine's). */
+  readonly mode: PersonalRoutineNotifyMode | null;
+  /** The bot's last notify_user call: true = notify, false = stay silent, null = never called. */
+  readonly decision: boolean | null;
+  readonly message: string | null;
+}
+
+const NotifyStateDbRow = Schema.Struct({
+  mode: Schema.NullOr(PersonalRoutineNotifyMode),
+  decision: Schema.NullOr(Schema.Number),
+  message: Schema.NullOr(Schema.String),
+});
+const decodeNotifyStateRow = Schema.decodeUnknownEffect(NotifyStateDbRow);
 
 const isSqlError = Schema.is(SqlError.SqlError);
 const decodeTaskRow = Schema.decodeUnknownEffect(TaskDbRow);
@@ -202,6 +219,20 @@ export class PersonalTaskRepository extends Context.Service<
     readonly listClaimable: (
       now: DateTime.Utc,
     ) => Effect.Effect<ReadonlyArray<PersonalTask>, PersonalTaskRepositoryError>;
+    /** Records the notify mode a run starts with (copied from its routine). */
+    readonly setNotifyMode: (
+      taskId: PersonalTaskId,
+      mode: PersonalRoutineNotifyMode,
+    ) => Effect.Effect<void, PersonalTaskRepositoryError>;
+    /** The bot's notify_user call; the last one wins. */
+    readonly recordNotifyDecision: (input: {
+      readonly taskId: PersonalTaskId;
+      readonly notify: boolean;
+      readonly message: string | null;
+    }) => Effect.Effect<void, PersonalTaskRepositoryError>;
+    readonly getNotifyState: (
+      taskId: PersonalTaskId,
+    ) => Effect.Effect<PersonalTaskNotifyState, PersonalTaskRepositoryError>;
     readonly insertAttempt: (
       attempt: PersonalTaskAttempt,
     ) => Effect.Effect<void, PersonalTaskRepositoryError>;
@@ -499,12 +530,61 @@ export const make = Effect.gen(function* () {
             available_at = ${isoOrNull(task.availableAt)},
             updated_at = ${iso(task.updatedAt)},
             started_at = ${isoOrNull(task.startedAt)},
-            completed_at = ${isoOrNull(task.completedAt)}
+            completed_at = ${isoOrNull(task.completedAt)},
+            -- A finished task queued again (retry, reopen) starts a new run: the
+            -- bot's notify_user call from the last one does not carry over.
+            notify_decision = CASE
+              WHEN ${task.status} = 'queued'
+                AND status IN ('completed', 'failed', 'interrupted', 'cancelled')
+              THEN NULL ELSE notify_decision END,
+            notify_message = CASE
+              WHEN ${task.status} = 'queued'
+                AND status IN ('completed', 'failed', 'interrupted', 'cancelled')
+              THEN NULL ELSE notify_message END
         WHERE task_id = ${task.taskId}
           AND status = ${expectedStatus}
         RETURNING task_id AS "taskId"
       `,
     ).pipe(Effect.map((rows) => rows.length > 0));
+
+  const setNotifyMode: PersonalTaskRepository["Service"]["setNotifyMode"] = (taskId, mode) =>
+    query(
+      "setNotifyMode",
+      sql`UPDATE personal_tasks SET notify_mode = ${mode} WHERE task_id = ${taskId} RETURNING task_id AS "taskId"`,
+    ).pipe(Effect.asVoid);
+
+  const recordNotifyDecision: PersonalTaskRepository["Service"]["recordNotifyDecision"] = (input) =>
+    query(
+      "recordNotifyDecision",
+      sql`
+        UPDATE personal_tasks
+        SET notify_decision = ${input.notify ? 1 : 0}, notify_message = ${input.message}
+        WHERE task_id = ${input.taskId}
+        RETURNING task_id AS "taskId"
+      `,
+    ).pipe(Effect.asVoid);
+
+  const getNotifyState: PersonalTaskRepository["Service"]["getNotifyState"] = (taskId) =>
+    query(
+      "getNotifyState",
+      sql`
+        SELECT notify_mode AS "mode", notify_decision AS "decision", notify_message AS "message"
+        FROM personal_tasks WHERE task_id = ${taskId}
+      `,
+    ).pipe(
+      Effect.flatMap((rows) =>
+        rows[0] === undefined
+          ? Effect.succeed({ mode: null, decision: null, message: null })
+          : decodeNotifyStateRow(rows[0]).pipe(
+              Effect.mapError(decodeError("getNotifyState")),
+              Effect.map((row) => ({
+                mode: row.mode,
+                decision: row.decision === null ? null : row.decision === 1,
+                message: row.message,
+              })),
+            ),
+      ),
+    );
 
   const listClaimable: PersonalTaskRepository["Service"]["listClaimable"] = (now) =>
     query(
@@ -768,6 +848,9 @@ export const make = Effect.gen(function* () {
     writeAttempt,
     listAttempts,
     listActiveAttempts,
+    setNotifyMode,
+    recordNotifyDecision,
+    getNotifyState,
     heartbeat,
     insertHandoff,
     writeHandoff,

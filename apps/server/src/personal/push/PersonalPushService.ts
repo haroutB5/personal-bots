@@ -53,6 +53,7 @@ import {
   type WebPushRequest,
 } from "./webPushCrypto.ts";
 import { TASK_CHAT_VIEWED_WRITE_INTERVAL_MS } from "../taskChatAutoArchivePolicy.ts";
+import { taskNotifyVerdict, type TaskNotifyState } from "./notifyDecision.ts";
 import { ForegroundPresence, ViewingPresence } from "./viewingPresence.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
 
@@ -208,11 +209,16 @@ const botIdentity = (bot: Option.Option<PersonalBot>): PushBotIdentity =>
       }
     : UNKNOWN_BOT;
 
-/** Minimal payload: bot name, task title, deep link. Never message text. */
+/**
+ * Minimal payload: bot name, task title, deep link. Never the reply text; the
+ * one exception is `body`, the short line the bot itself chose with
+ * notify_user (already cleaned and capped, see notifyDecision.ts).
+ */
 export function pushPayloadForTask(
   kind: PersonalPushEventKind,
   task: PersonalTask,
   bot: PushBotIdentity,
+  body?: string,
 ): PersonalPushPayload {
   const botName = bot.name;
   const title =
@@ -223,13 +229,14 @@ export function pushPayloadForTask(
       : kind === "task_failed"
         ? `${botName} hit a problem`
         : `${botName} finished`;
-  const body = task.title.length > 120 ? `${task.title.slice(0, 117)}...` : task.title;
+  const shownBody =
+    body ?? (task.title.length > 120 ? `${task.title.slice(0, 117)}...` : task.title);
   // Take control lives in the bot's chat, so browser help opens the chat.
   const url =
     task.status === "waiting_for_browser" && task.threadId !== null
       ? `/bots/${encodeURIComponent(task.botId)}/${encodeURIComponent(task.threadId)}`
       : `/tasks/${task.taskId}`;
-  return { title, body, url, tag: `task-${task.taskId}`, ...avatarFields(bot) };
+  return { title, body: shownBody, url, tag: `task-${task.taskId}`, ...avatarFields(bot) };
 }
 
 /**
@@ -1070,15 +1077,51 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => undefined),
     );
 
+  /** The run's notify mode and the bot's notify_user call; all null for a task that has neither. */
+  const readTaskNotifyState = (taskId: string): Effect.Effect<TaskNotifyState> =>
+    sql<{
+      readonly mode: string | null;
+      readonly decision: number | null;
+      readonly message: string | null;
+    }>`
+      SELECT notify_mode AS "mode", notify_decision AS "decision", notify_message AS "message"
+      FROM personal_tasks WHERE task_id = ${taskId}
+    `.pipe(
+      Effect.map((rows): TaskNotifyState =>
+        rows[0] === undefined
+          ? { mode: null, decision: null, message: null }
+          : {
+              mode:
+                rows[0].mode === "always" ||
+                rows[0].mode === "bot_decides" ||
+                rows[0].mode === "never"
+                  ? rows[0].mode
+                  : null,
+              decision: rows[0].decision === null ? null : rows[0].decision === 1,
+              message: rows[0].message,
+            },
+      ),
+      // A state we cannot read must not swallow a notification: behave as today.
+      Effect.orElseSucceed((): TaskNotifyState => ({ mode: null, decision: null, message: null })),
+    );
+
   const notifyTask: PersonalPushService["Service"]["notifyTask"] = (task) =>
     Effect.gen(function* () {
       const kind = pushEventForTask(task);
       if (kind === null) return;
       const preferences = yield* readPreferences;
       if (!preferences[PREFERENCE_FOR[kind]]) return;
-      const bot = yield* botRepository.getBotById({ botId: task.botId });
       // One event per transition: a replayed or re-published upsert dedupes.
       const eventId = `task:${task.taskId}:${task.status}:${DateTime.formatIso(task.updatedAt)}`;
+      // A routine run's notify mode and what its bot said with notify_user
+      // (migration 098) can silence a COMPLETED run; failures and "needs you"
+      // always go on to mute and quiet hours below.
+      const verdict = taskNotifyVerdict(task.status, yield* readTaskNotifyState(task.taskId));
+      if (verdict._tag === "Skip") {
+        yield* Effect.logInfo("personal notification path", { eventId, path: verdict.path });
+        return;
+      }
+      const bot = yield* botRepository.getBotById({ botId: task.botId });
       const quiet = updatesQuietHoursVerdict(
         task,
         kind === "chat_reply" ? "task_completed" : kind,
@@ -1091,7 +1134,7 @@ export const make = Effect.gen(function* () {
       // Someone reading the task's own chat sees it happen: their page
       // confirms that quietly instead of showing a banner (see deliver).
       // Tasks with no chat of their own (and provider alerts) always notify.
-      yield* deliver(eventId, pushPayloadForTask(kind, task, botIdentity(bot)), {
+      yield* deliver(eventId, pushPayloadForTask(kind, task, botIdentity(bot), verdict.body), {
         bot,
         deferPushUntilMs: quiet._tag === "DeferUntil" ? quiet.atMs : undefined,
         viewing:

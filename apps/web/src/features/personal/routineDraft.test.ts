@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import type { PersonalRoutine } from "@t3tools/contracts";
+
 import {
   defaultRoutineBotId,
   draftFromRoutine,
+  notifyModeAllowed,
+  notifyModeFromDraft,
   sameSchedule,
   scheduleFromDraft,
   todayInZone,
@@ -54,6 +58,53 @@ describe("routine drafts", () => {
   it("reads today's date in the routine's zone", () => {
     // 23:30 UTC on the 14th is already the 15th in London (BST).
     expect(todayInZone(Date.parse("2026-09-14T23:30:00Z"), "Europe/London")).toBe("2026-09-15");
+  });
+});
+
+describe("routine notify mode", () => {
+  const stored = (extra: Record<string, unknown>) =>
+    ({
+      botId: "bot-1",
+      title: "T",
+      prompt: "P",
+      trigger: "schedule",
+      eventLabel: null,
+      timeZone: "Europe/London",
+      missedPolicy: "coalesce",
+      schedule: { kind: "daily", time: "08:30" },
+      ...extra,
+    }) as unknown as PersonalRoutine;
+
+  it("defaults to always for a new routine", () => {
+    expect(blank.notifyMode).toBe("always");
+    expect(blank.delivery).toBe("model");
+  });
+
+  it("reads an older routine with no notifyMode as always", () => {
+    expect(draftFromRoutine(stored({}), "", "2026-09-14").notifyMode).toBe("always");
+  });
+
+  it("round-trips a stored mode into the edit draft", () => {
+    expect(draftFromRoutine(stored({ notifyMode: "never" }), "", "2026-09-14").notifyMode).toBe(
+      "never",
+    );
+    expect(
+      draftFromRoutine(stored({ notifyMode: "bot_decides" }), "", "2026-09-14").notifyMode,
+    ).toBe("bot_decides");
+  });
+
+  it("coerces bot_decides to always for a relay routine, which has no model", () => {
+    expect(notifyModeAllowed("bot_decides", "relay")).toBe(false);
+    expect(notifyModeAllowed("bot_decides", "model")).toBe(true);
+    expect(notifyModeAllowed("never", "relay")).toBe(true);
+    expect(notifyModeFromDraft({ notifyMode: "bot_decides", delivery: "relay" })).toBe("always");
+    expect(notifyModeFromDraft({ notifyMode: "never", delivery: "relay" })).toBe("never");
+    const relay = draftFromRoutine(
+      stored({ delivery: "relay", notifyMode: "bot_decides" }),
+      "",
+      "2026-09-14",
+    );
+    expect(relay).toMatchObject({ delivery: "relay", notifyMode: "always" });
   });
 });
 

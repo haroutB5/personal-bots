@@ -147,6 +147,14 @@ export const routineRunsIn = (routine: PersonalRoutine, callerThreadId: string) 
       ? "Each run is posted in this chat."
       : "Each run is posted in the chat it was created in.";
 
+/** What a non-default notify mode means, appended to the confirmation; empty for `always`. */
+export const notifyModeNote = (routine: PersonalRoutine) =>
+  routine.notifyMode === "bot_decides"
+    ? " Notifications: the bot decides each run (it calls notify_user)."
+    : routine.notifyMode === "never"
+      ? " Notifications: finished runs are silent."
+      : "";
+
 /** The confirmation update_routine and set_routine_enabled hand back. */
 export function routineChangeResult(routine: PersonalRoutine, callerThreadId?: string) {
   const nextRunUtc =
@@ -157,7 +165,7 @@ export function routineChangeResult(routine: PersonalRoutine, callerThreadId?: s
     routineId: routine.routineId,
     summary: `${routine.title}: ${describePersonalRoutineTrigger(routine)}. ${state}.${
       callerThreadId === undefined ? "" : ` ${routineRunsIn(routine, callerThreadId)}`
-    }`,
+    }${notifyModeNote(routine)}`,
     enabled: routine.enabled,
     timeZone: routine.timeZone,
     nextRunLocal,
@@ -525,6 +533,7 @@ const make = Effect.gen(function* () {
             // The chat that asked for it: each run comes back here unless opted out.
             threadId: scope.threadId,
             newChatEachRun: input.newChatEachRun === true,
+            ...(input.notifyMode === undefined ? {} : { notifyMode: input.notifyMode }),
           })
           .pipe(Effect.mapError((error) => refuse(error.message)));
         const nextRunUtc =
@@ -532,7 +541,7 @@ const make = Effect.gen(function* () {
         const nextRunLocal = formatNextRun(nextRunUtc, routine.timeZone);
         return {
           routineId: routine.routineId,
-          summary: `${routine.title}: ${describePersonalRoutineTrigger(routine)}. Next run: ${nextRunLocal ?? "none"}. ${routineRunsIn(routine, scope.threadId)}`,
+          summary: `${routine.title}: ${describePersonalRoutineTrigger(routine)}. Next run: ${nextRunLocal ?? "none"}. ${routineRunsIn(routine, scope.threadId)}${notifyModeNote(routine)}`,
           timeZone: routine.timeZone,
           nextRunLocal,
           nextRunUtc,
@@ -554,6 +563,7 @@ const make = Effect.gen(function* () {
             schedule: describePersonalRoutineTrigger(routine),
             enabled: routine.enabled,
             newChatEachRun: opensNewChat(routine),
+            notifyMode: routine.notifyMode ?? "always",
             runsInThisChat: !opensNewChat(routine) && routine.threadId === scope.threadId,
             prompt: routine.prompt,
             nextRunLocal: routine.enabled
@@ -600,6 +610,7 @@ const make = Effect.gen(function* () {
               }),
           ...(botId === undefined ? {} : { botId }),
           ...(input.newChatEachRun === undefined ? {} : { newChatEachRun: input.newChatEachRun }),
+          ...(input.notifyMode === undefined ? {} : { notifyMode: input.notifyMode }),
         };
         if (input.newChatEachRun === false && (current.threadId ?? null) === null) {
           return yield* refuse(

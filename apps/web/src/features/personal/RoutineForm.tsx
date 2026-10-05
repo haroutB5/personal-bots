@@ -6,6 +6,7 @@ import {
   PersonalRoutineId,
   type PersonalRoutine,
   type PersonalRoutineMissedPolicy,
+  type PersonalRoutineNotifyMode,
   type PersonalRoutineSchedule,
   type PersonalRoutineTrigger,
 } from "@t3tools/contracts";
@@ -19,6 +20,10 @@ import { commandFailureMessage } from "./commandFeedback";
 import {
   defaultRoutineBotId,
   draftFromRoutine,
+  notifyModeAllowed,
+  notifyModeFromDraft,
+  NOTIFY_MODES,
+  routineNotifyMode,
   type RoutineDraft,
   type RoutineScheduleKind,
   sameSchedule,
@@ -168,6 +173,11 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
       timeZone: draft.timeZone.trim() || "Europe/London",
       missedPolicy: draft.missedPolicy,
     };
+    // Like the schedule anchor: a create omits the default ("always"), an edit
+    // sends the mode only when the owner changed it.
+    const notifyMode: PersonalRoutineNotifyMode = notifyModeFromDraft(draft);
+    const notifyOnCreate = notifyMode === "always" ? {} : { notifyMode };
+    const notifyOnUpdate = notifyMode === routineNotifyMode(routine) ? {} : { notifyMode };
     const result =
       routine === null
         ? await create({
@@ -179,17 +189,19 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
                     trigger: "event" as const,
                     eventLabel: draft.eventLabel.trim(),
                     ...common,
+                    ...notifyOnCreate,
                   }
-                : { routineId, schedule, ...common },
+                : { routineId, schedule, ...common, ...notifyOnCreate },
           })
         : await update({
             environmentId,
             input:
               schedule === null
-                ? { routineId, ...common, eventLabel: draft.eventLabel.trim() }
+                ? { routineId, ...common, ...notifyOnUpdate, eventLabel: draft.eventLabel.trim() }
                 : {
                     routineId,
                     ...common,
+                    ...notifyOnUpdate,
                     // Unchanged interval schedules keep their anchor (and cadence).
                     ...(routine.schedule !== null && sameSchedule(schedule, routine.schedule)
                       ? {}
@@ -494,6 +506,33 @@ export function RoutineForm({ routine }: { routine: PersonalRoutine | null }): J
             ))}
           </fieldset>
         )}
+
+        <fieldset aria-describedby="routine-notify-hint">
+          <legend className={LABEL}>Notify me</legend>
+          {NOTIFY_MODES.filter((option) => notifyModeAllowed(option.mode, draft.delivery)).map(
+            (option) => (
+              <label
+                key={option.mode}
+                className="flex min-h-11 items-center gap-3 text-[15px] text-[var(--personal-text)]"
+              >
+                <input
+                  type="radio"
+                  name="routine-notify"
+                  className="size-5 shrink-0 accent-[var(--personal-primary)]"
+                  checked={draft.notifyMode === option.mode}
+                  onChange={() => set("notifyMode", option.mode)}
+                />
+                {option.label}
+              </label>
+            ),
+          )}
+          <p
+            id="routine-notify-hint"
+            className="mt-1.5 text-[13px] text-[var(--personal-text-secondary)]"
+          >
+            {NOTIFY_MODES.find((option) => option.mode === draft.notifyMode)?.hint}
+          </p>
+        </fieldset>
 
         {error !== null ? (
           <p role="alert" className="text-[14px] text-[var(--personal-error)]">

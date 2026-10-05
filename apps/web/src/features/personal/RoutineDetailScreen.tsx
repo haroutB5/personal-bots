@@ -12,6 +12,7 @@ import { randomUUID } from "~/lib/utils";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
+import { NOTIFY_MODES, routineNotifyMode } from "./routineDraft";
 import { currentOrigin, isEventRoutine, isLocalOnlyOrigin, routineHookUrl } from "./routineHook";
 import { formatLocalDateTime } from "./taskPresentation";
 import { DETAIL_CARD, DetailRow, PRIMARY_BUTTON, SECONDARY_BUTTON } from "./TaskDetailScreen";
@@ -207,6 +208,9 @@ export function RoutineDetailScreen({ routineId }: { routineId: PersonalRoutineI
               </DetailRow>
             </>
           )}
+          <DetailRow label="Notify me">
+            {NOTIFY_MODES.find((option) => option.mode === routineNotifyMode(routine))?.label}
+          </DetailRow>
           <DetailRow label="Created">
             {formatLocalDateTime(DateTime.toEpochMillis(routine.createdAt))}
           </DetailRow>

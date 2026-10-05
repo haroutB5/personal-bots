@@ -1304,3 +1304,179 @@ it.effect("a retried slot or Run now posts into the chat once, one run at a time
     ]);
   }).pipe(Effect.provide(makeLayer(undefined, dispatched, shells)));
 });
+
+// A routine's notify mode: what a run is told, and the mode the run keeps.
+const taskNotifyMode = (taskId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly mode: string | null }>`
+      SELECT notify_mode AS "mode" FROM personal_tasks WHERE task_id = ${taskId}
+    `;
+    return rows[0]?.mode;
+  });
+
+it.effect(
+  "a routine made without a notify mode is 'always', and its run says nothing about notifying",
+  () =>
+    Effect.gen(function* () {
+      yield* setNow("2026-10-05T09:00:00Z");
+      yield* seedBot;
+      const routines = yield* PersonalRoutineService.PersonalRoutineService;
+      const routineId = PersonalRoutineId.make("notify-default");
+      const created = yield* routines.create({
+        routineId,
+        botId: BOT,
+        title: "Daily",
+        prompt: "Do the daily thing.",
+        schedule: { kind: "daily", time: "10:00" },
+      });
+      expect(created.notifyMode).toBe("always");
+
+      yield* routines.runNow({ routineId, requestId: "r1" });
+      const [task] = yield* routineTasks("notify-default");
+      expect(task?.objective).toBe("Do the daily thing.");
+      expect(yield* taskNotifyMode(task!.taskId)).toBe("always");
+      // The push for a run in 'always' mode is the one every task earns.
+      expect(pushEventForTask({ ...task!, status: "completed" })).toBe("routine_result");
+    }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect(
+  "bot_decides tells the bot how to notify; never and always add nothing to the prompt",
+  () =>
+    Effect.gen(function* () {
+      yield* setNow("2026-10-05T09:00:00Z");
+      yield* seedBot;
+      const routines = yield* PersonalRoutineService.PersonalRoutineService;
+      const make = (id: string, notifyMode: "always" | "bot_decides" | "never") =>
+        routines.create({
+          routineId: PersonalRoutineId.make(id),
+          botId: BOT,
+          title: id,
+          prompt: "Check the price.",
+          schedule: { kind: "daily", time: "10:00" },
+          notifyMode,
+        });
+      expect((yield* make("n-decides", "bot_decides")).notifyMode).toBe("bot_decides");
+      yield* make("n-never", "never");
+      yield* make("n-always", "always");
+      for (const id of ["n-decides", "n-never", "n-always"]) {
+        yield* routines.runNow({ routineId: PersonalRoutineId.make(id), requestId: "go" });
+      }
+
+      const [decides] = yield* routineTasks("n-decides");
+      expect(decides?.objective).toBe(
+        `Check the price.\n\n${PersonalRoutineService.BOT_DECIDES_NOTIFY_LINE}`,
+      );
+      expect(PersonalRoutineService.BOT_DECIDES_NOTIFY_LINE).toContain("notify_user");
+      expect(yield* taskNotifyMode(decides!.taskId)).toBe("bot_decides");
+      const [never] = yield* routineTasks("n-never");
+      expect(never?.objective).toBe("Check the price.");
+      expect(yield* taskNotifyMode(never!.taskId)).toBe("never");
+      const [always] = yield* routineTasks("n-always");
+      expect(always?.objective).toBe("Check the price.");
+    }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("a run keeps the mode it started with when the routine is edited or removed", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-10-05T09:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const routineId = PersonalRoutineId.make("n-edit");
+    yield* routines.create({
+      routineId,
+      botId: BOT,
+      title: "Edit me",
+      prompt: "Go.",
+      schedule: { kind: "daily", time: "10:00" },
+      notifyMode: "never",
+    });
+    yield* routines.runNow({ routineId, requestId: "first" });
+    const edited = yield* routines.update({ routineId, notifyMode: "bot_decides" });
+    expect(edited.notifyMode).toBe("bot_decides");
+    // An edit that does not mention it leaves it alone.
+    expect((yield* routines.update({ routineId, title: "Renamed" })).notifyMode).toBe(
+      "bot_decides",
+    );
+    yield* routines.runNow({ routineId, requestId: "second" });
+    yield* routines.remove({ routineId });
+
+    const modes = yield* Effect.forEach(yield* routineTasks("n-edit"), (task) =>
+      taskNotifyMode(task.taskId).pipe(Effect.map((mode) => [task.idempotencyKey, mode])),
+    );
+    expect(modes.map(([, mode]) => mode).toSorted()).toEqual(["bot_decides", "never"]);
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect("an event routine carries its mode into each delivery", () =>
+  Effect.gen(function* () {
+    yield* setNow("2026-10-05T09:00:00Z");
+    yield* seedBot;
+    const routines = yield* PersonalRoutineService.PersonalRoutineService;
+    const routineId = PersonalRoutineId.make("n-event");
+    const created = yield* routines.create({
+      routineId,
+      botId: BOT,
+      title: "On event",
+      prompt: "React.",
+      trigger: "event",
+      eventLabel: "Deploy done",
+      notifyMode: "bot_decides",
+    });
+    const fired = yield* routines.fireEvent({
+      hookToken: created.hookToken!,
+      contentType: "application/json",
+      body: `{"status":"ok"}`,
+    });
+    expect(fired._tag).toBe("Fired");
+    const [task] = yield* routineTasks("n-event");
+    expect(task?.objective).toContain(PersonalRoutineService.BOT_DECIDES_NOTIFY_LINE);
+    expect(yield* taskNotifyMode(task!.taskId)).toBe("bot_decides");
+  }).pipe(Effect.provide(makeLayer())),
+);
+
+it.effect(
+  "a relay routine can be 'never' or 'always' but not 'bot_decides' (no bot turn to decide)",
+  () =>
+    Effect.gen(function* () {
+      yield* setNow("2026-10-05T09:00:00Z");
+      yield* seedBot;
+      const routines = yield* PersonalRoutineService.PersonalRoutineService;
+      const refused = yield* Effect.flip(
+        routines.create({
+          routineId: PersonalRoutineId.make("n-relay-bad"),
+          botId: BOT,
+          title: "Relay",
+          prompt: "Hello.",
+          schedule: { kind: "daily", time: "10:00" },
+          delivery: "relay",
+          notifyMode: "bot_decides",
+        }),
+      );
+      expect(refused.message).toContain("relay");
+
+      const routineId = PersonalRoutineId.make("n-relay");
+      yield* routines.create({
+        routineId,
+        botId: BOT,
+        title: "Relay",
+        prompt: "Hello.",
+        schedule: { kind: "daily", time: "10:00" },
+        delivery: "relay",
+        notifyMode: "never",
+      });
+      const editRefused = yield* Effect.flip(
+        routines.update({ routineId, notifyMode: "bot_decides" }),
+      );
+      expect(editRefused.message).toContain("relay");
+      yield* routines.runNow({ routineId, requestId: "go" });
+      const [task] = yield* routineTasks("n-relay");
+      expect(task?.status).toBe("completed");
+      expect(yield* taskNotifyMode(task!.taskId)).toBe("never");
+
+      // The list carries the mode too.
+      const listed = (yield* routines.list()).routines.find((r) => r.routineId === routineId);
+      expect(listed?.notifyMode).toBe("never");
+    }).pipe(Effect.provide(makeLayer())),
+);

@@ -56,6 +56,7 @@ import {
   BotsToolkitHandlersLive,
   DELEGATE_NOTE,
   messageNamesBot,
+  NOTIFY_USER_NO_TASK,
   shortenBrowserHelpReason,
   STEER_REOPENED_NOTE,
 } from "./handlers.ts";
@@ -1469,6 +1470,116 @@ describe("bots toolkit voting", () => {
         ).pipe(Effect.flip);
 
         expect(error.message).toContain("at least 2 different options");
+      }),
+    ),
+  );
+});
+
+describe("notify_user", () => {
+  /** A routine-style run in the caller's chat: queued, started once the chat is idle. */
+  const startRun = (harness: Harness, notifyMode: "always" | "bot_decides" | "never" | undefined) =>
+    Effect.gen(function* () {
+      const tasks = yield* PersonalTaskService.PersonalTaskService;
+      const run = yield* tasks.createTask({
+        idempotencyKey: `routine:r1:${notifyMode ?? "none"}`,
+        botId: botId("assistant"),
+        title: "Hourly check",
+        objective: "Check it.",
+        source: "routine",
+        threadId: CALLER_THREAD,
+        ...(notifyMode === undefined ? {} : { notifyMode }),
+      });
+      harness.sessions.set(CALLER_THREAD, { ...runningSession(CALLER_THREAD), status: "ready" });
+      yield* tasks.sweep;
+      yield* tasks.drain;
+      harness.sessions.set(CALLER_THREAD, runningSession(CALLER_THREAD));
+      return run.taskId;
+    });
+
+  const stateOf = (taskId: string) =>
+    Effect.gen(function* () {
+      const repository = yield* PersonalTaskRepository.PersonalTaskRepository;
+      return yield* repository.getNotifyState(taskId as never);
+    });
+
+  it.effect("does nothing in a plain chat: refused, nothing recorded", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const error = yield* call("notify_user", { notify: true, message: "Hi" }).pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "BotsToolError", reason: NOTIFY_USER_NO_TASK });
+        expect(NOTIFY_USER_NO_TASK).toContain("already notified");
+      }),
+    ),
+  );
+
+  it.effect("a bot_decides run records the decision and the last call wins", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const taskId = yield* startRun(harness, "bot_decides");
+        expect(yield* stateOf(taskId)).toEqual({
+          mode: "bot_decides",
+          decision: null,
+          message: null,
+        });
+
+        const yes = yield* call("notify_user", {
+          notify: true,
+          message: "  Price dropped to 120  ",
+        });
+        expect(yes.recorded).toBe(true);
+        expect(yes.note).toContain("will be notified");
+        expect(yield* stateOf(taskId)).toEqual({
+          mode: "bot_decides",
+          decision: true,
+          message: "Price dropped to 120",
+        });
+
+        const no = yield* call("notify_user", { notify: false, message: "ignored when silent" });
+        expect(no.note).toContain("no notification will be sent");
+        expect(yield* stateOf(taskId)).toEqual({
+          mode: "bot_decides",
+          decision: false,
+          message: null,
+        });
+      }),
+    ),
+  );
+
+  it.effect("cuts a long message and hides anything key-shaped", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const taskId = yield* startRun(harness, "bot_decides");
+        yield* call("notify_user", { notify: true, message: `sk-abcdef123456 ${"x".repeat(400)}` });
+        const state = yield* stateOf(taskId);
+        expect(Array.from(state.message ?? "").length).toBe(200);
+        expect(state.message).toContain("[hidden]");
+        expect(state.message).not.toContain("sk-abcdef");
+      }),
+    ),
+  );
+
+  it.effect("tells the bot when the routine's own mode makes the call moot", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        yield* startRun(harness, "never");
+        const never = yield* call("notify_user", { notify: true, message: "x" });
+        expect(never.note).toContain("never notify");
+      }),
+    ),
+  );
+
+  it.effect("a routine that notifies every run uses the message as its text", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup(harness);
+        const taskId = yield* startRun(harness, "always");
+        const result = yield* call("notify_user", { notify: true, message: "Done early" });
+        expect(result.note).toContain("notification text");
+        expect(yield* stateOf(taskId)).toMatchObject({ decision: true, message: "Done early" });
       }),
     ),
   );

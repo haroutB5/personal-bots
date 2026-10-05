@@ -21,6 +21,7 @@ import {
   PersonalRoutineDelivery,
   PersonalRoutineId,
   PersonalRoutineMissedPolicy,
+  PersonalRoutineNotifyMode,
   PersonalRoutineOccurrenceStatus,
   PersonalRoutineSchedule,
   PersonalRoutinesError,
@@ -68,6 +69,7 @@ const RoutineDbRow = Schema.Struct({
   enabled: Schema.Number,
   missedPolicy: PersonalRoutineMissedPolicy,
   delivery: PersonalRoutineDelivery,
+  notifyMode: PersonalRoutineNotifyMode,
   threadId: Schema.NullOr(ThreadId),
   newChatEachRun: Schema.Number,
   nextDueAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -103,6 +105,7 @@ const ROUTINE_COLUMNS = `
   enabled AS "enabled",
   missed_policy AS "missedPolicy",
   delivery AS "delivery",
+  notify_mode AS "notifyMode",
   thread_id AS "threadId",
   new_chat_each_run AS "newChatEachRun",
   next_due_utc AS "nextDueAt",
@@ -135,6 +138,13 @@ const makeHookToken = () =>
 
 // @effect-diagnostics-next-line globalDate:off - slot instants are epoch millis from wall-clock arithmetic.
 const isoOfMs = (ms: number) => new Date(ms).toISOString();
+
+/**
+ * The one line a bot_decides run adds to its prompt: the run notifies the user
+ * only if the bot calls notify_user with notify true.
+ */
+export const BOT_DECIDES_NOTIFY_LINE =
+  "Notifications: this routine only notifies the user if you call notify_user with notify true. Call it when the result is worth their attention, with a one-line message saying what changed. If there is nothing worth telling them, do not call it and the run ends silently; your reply still lands in the chat.";
 
 /** Idempotency key of the task an occurrence starts: one task per slot, ever. */
 export const routineTaskIdempotencyKey = (routineId: string, localOccurrence: string) =>
@@ -322,6 +332,22 @@ export const make = Effect.gen(function* () {
     }
   };
 
+  /**
+   * A relay run starts no model turn, so no bot is there to decide: a relay
+   * routine cannot be bot_decides. `always` and `never` both make sense.
+   */
+  const checkNotifyMode = (
+    notifyMode: PersonalRoutineNotifyMode,
+    delivery: PersonalRoutineDelivery | undefined,
+  ) =>
+    notifyMode === "bot_decides" && delivery === "relay"
+      ? Effect.fail(
+          fail(
+            "A relay routine has no bot turn to decide anything. Use 'always' or 'never' for notifications.",
+          ),
+        )
+      : Effect.succeed(notifyMode);
+
   const requireTimeZone = (timeZone: string) =>
     isValidTimeZone(timeZone)
       ? Effect.succeed(timeZone)
@@ -438,6 +464,9 @@ export const make = Effect.gen(function* () {
       objective = prepared.objective;
       onStarted = prepared.onStarted;
     }
+    if (!relay && routine.notifyMode === "bot_decides") {
+      objective = `${objective}\n\n${BOT_DECIDES_NOTIFY_LINE}`;
+    }
     // Relays keep their own new chat per run: only model runs go into the
     // source chat, and create_routine (the only way to get one) never relays.
     const runThread = relay ? undefined : yield* runThreadFor(routine);
@@ -448,6 +477,7 @@ export const make = Effect.gen(function* () {
           title: routine.title,
           objective,
           source: "routine",
+          notifyMode: routine.notifyMode ?? "always",
           ...(runThread === undefined ? {} : { threadId: runThread }),
         })
       : text === null
@@ -462,6 +492,7 @@ export const make = Effect.gen(function* () {
             title: routine.title,
             text,
             source: "routine",
+            notifyMode: routine.notifyMode ?? "always",
           });
     const created = yield* Effect.result(start);
     if (created._tag === "Failure") {
@@ -649,6 +680,7 @@ export const make = Effect.gen(function* () {
             );
           }
           yield* requireLiveBot(input.botId);
+          const notifyMode = yield* checkNotifyMode(input.notifyMode ?? "always", input.delivery);
           const timeZone = yield* requireTimeZone(
             input.timeZone ?? PERSONAL_ROUTINE_DEFAULT_TIME_ZONE,
           );
@@ -663,15 +695,15 @@ export const make = Effect.gen(function* () {
               INSERT INTO personal_routines (
                 routine_id, bot_id, title, prompt, trigger_kind, schedule_json, event_label,
                 hook_token, last_fired_utc, time_zone, enabled, missed_policy, delivery,
-                thread_id, new_chat_each_run, next_due_utc, last_occurrence_local, created_at,
-                updated_at
+                notify_mode, thread_id, new_chat_each_run, next_due_utc, last_occurrence_local,
+                created_at, updated_at
               )
               VALUES (
                 ${input.routineId}, ${input.botId}, ${input.title}, ${input.prompt}, 'event',
                 ${encodeSchedule(null)}, ${eventLabel}, ${makeHookToken()}, NULL, ${timeZone},
                 1, ${input.missedPolicy ?? "coalesce"}, ${input.delivery ?? "model"},
-                ${input.threadId ?? null}, ${input.newChatEachRun === true ? 1 : 0}, NULL, NULL,
-                ${nowIso}, ${nowIso}
+                ${notifyMode}, ${input.threadId ?? null}, ${input.newChatEachRun === true ? 1 : 0},
+                NULL, NULL, ${nowIso}, ${nowIso}
               )
               ON CONFLICT (routine_id) DO NOTHING
             `;
@@ -688,13 +720,13 @@ export const make = Effect.gen(function* () {
           yield* sql`
             INSERT INTO personal_routines (
               routine_id, bot_id, title, prompt, trigger_kind, schedule_json, time_zone, enabled,
-              missed_policy, delivery, thread_id, new_chat_each_run, next_due_utc,
+              missed_policy, delivery, notify_mode, thread_id, new_chat_each_run, next_due_utc,
               last_occurrence_local, created_at, updated_at
             )
             VALUES (
               ${input.routineId}, ${input.botId}, ${input.title}, ${input.prompt}, 'schedule',
               ${encodeSchedule(schedule)}, ${timeZone}, 1, ${input.missedPolicy ?? "coalesce"},
-              ${input.delivery ?? "model"}, ${input.threadId ?? null},
+              ${input.delivery ?? "model"}, ${notifyMode}, ${input.threadId ?? null},
               ${input.newChatEachRun === true ? 1 : 0}, ${isoOfMs(next.dueMs)}, NULL, ${nowIso},
               ${nowIso}
             )
@@ -713,6 +745,10 @@ export const make = Effect.gen(function* () {
           if (input.botId !== undefined) yield* requireLiveBot(input.botId);
           const timeZone = yield* requireTimeZone(input.timeZone ?? current.timeZone);
           const newChatEachRun = (input.newChatEachRun ?? current.newChatEachRun) === true ? 1 : 0;
+          const notifyMode = yield* checkNotifyMode(
+            input.notifyMode ?? current.notifyMode ?? "always",
+            input.delivery ?? current.delivery,
+          );
           const now = yield* DateTime.now;
           const nowMs = DateTime.toEpochMillis(now);
           // The trigger is fixed at creation, so an edit only ever touches the
@@ -730,6 +766,7 @@ export const make = Effect.gen(function* () {
                   event_label = ${eventLabel},
                   time_zone = ${timeZone},
                   delivery = ${input.delivery ?? current.delivery ?? "model"},
+                  notify_mode = ${notifyMode},
                   new_chat_each_run = ${newChatEachRun},
                   updated_at = ${DateTime.formatIso(now)}
               WHERE routine_id = ${input.routineId}
@@ -761,6 +798,7 @@ export const make = Effect.gen(function* () {
                 time_zone = ${timeZone},
                 missed_policy = ${input.missedPolicy ?? current.missedPolicy},
                 delivery = ${input.delivery ?? current.delivery ?? "model"},
+                notify_mode = ${notifyMode},
                 new_chat_each_run = ${newChatEachRun},
                 next_due_utc = ${nextDueAt},
                 updated_at = ${DateTime.formatIso(now)}

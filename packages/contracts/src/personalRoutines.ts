@@ -60,6 +60,19 @@ export type PersonalRoutineTrigger = typeof PersonalRoutineTrigger.Type;
 export const PersonalRoutineDelivery = Schema.Literals(["model", "relay"]);
 export type PersonalRoutineDelivery = typeof PersonalRoutineDelivery.Type;
 
+/**
+ * Whether a finished run of the routine pushes a notification. `always` is
+ * today's behaviour: every run buzzes. `bot_decides`: a completed run buzzes
+ * only when the bot called notify_user with notify true. `never`: a completed
+ * run is silent. In every mode a failed run and a run that needs the user
+ * still notify; mute, notification preferences and quiet hours apply on top.
+ */
+export const PersonalRoutineNotifyMode = Schema.Literals(["always", "bot_decides", "never"]);
+export type PersonalRoutineNotifyMode = typeof PersonalRoutineNotifyMode.Type;
+
+/** The longest push body a bot's notify_user message can carry. */
+export const PERSONAL_NOTIFY_MESSAGE_MAX_CHARS = 200;
+
 const decodeRelayJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 /** A relayed message longer than this is cut, with a note saying so. */
@@ -131,6 +144,8 @@ export const PersonalRoutine = Schema.Struct({
    * decodes an older list; the server always sends it. Absent means `model`.
    */
   delivery: Schema.optionalKey(PersonalRoutineDelivery),
+  /** Optional on the wire like `delivery`; absent means `always`. */
+  notifyMode: Schema.optionalKey(PersonalRoutineNotifyMode),
   /**
    * The chat the routine was created from (a bot's create_routine call). Each
    * model run is posted into it as a new turn, waiting for the chat to be idle,
@@ -180,6 +195,8 @@ export const PersonalRoutineCreateInput = Schema.Struct({
   missedPolicy: Schema.optional(PersonalRoutineMissedPolicy),
   /** Omitted means `model`. */
   delivery: Schema.optional(PersonalRoutineDelivery),
+  /** Omitted means `always`. */
+  notifyMode: Schema.optional(PersonalRoutineNotifyMode),
   /** The chat to run in; see `PersonalRoutine.threadId`. Omitted: a new chat per run. */
   threadId: Schema.optional(ThreadId),
   /** Omitted means false. */
@@ -199,6 +216,7 @@ export const PersonalRoutineUpdateInput = Schema.Struct({
   timeZone: Schema.optional(TrimmedNonEmptyString),
   missedPolicy: Schema.optional(PersonalRoutineMissedPolicy),
   delivery: Schema.optional(PersonalRoutineDelivery),
+  notifyMode: Schema.optional(PersonalRoutineNotifyMode),
   newChatEachRun: Schema.optional(Schema.Boolean),
 });
 export type PersonalRoutineUpdateInput = typeof PersonalRoutineUpdateInput.Type;

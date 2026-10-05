@@ -160,6 +160,26 @@ export const UpdateWorkRecordResult = Schema.Struct({
   record: Schema.String,
 });
 
+export const NotifyUserInput = Schema.Struct({
+  notify: Schema.Boolean.annotate({
+    description:
+      "true: the user should be notified (push) when this run finishes. false: stay silent for this run.",
+  }),
+  message: Schema.optional(
+    Schema.String.annotate({
+      description:
+        "With notify true: one short line for the notification itself, saying what is worth their attention (for example 'Price dropped to 120'). Plain text, at most about 200 characters; longer is cut. Never put secrets in it. Left out, the notification shows the task title.",
+    }),
+  ),
+});
+export type NotifyUserInput = typeof NotifyUserInput.Type;
+
+export const NotifyUserResult = Schema.Struct({
+  recorded: Schema.Boolean,
+  /** What will happen, in a sentence: whether and how the user is notified when the run ends. */
+  note: Schema.String,
+});
+
 export const ReadChatHistoryInput = Schema.Struct({
   query: Schema.optional(
     TrimmedNonEmptyString.annotate({
@@ -527,6 +547,20 @@ const UpdateWorkRecordTool = Tool.make("update_work_record", {
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, false);
 
+const NotifyUserTool = Tool.make("notify_user", {
+  description:
+    "Decide whether the user gets a push notification when THIS routine run or task finishes. Call it once, near the end of the run, with notify true and a one-line message when the result is worth the user's attention (something changed, something needs a decision), or notify false when there is nothing to tell them. A routine set to 'bot decides' notifies only if you called it with notify true; a routine that notifies every run uses your message as the notification text. The last call wins. A run that fails, or that needs the user (a secret, browser help), always notifies whatever you say. Your reply still lands in the chat either way. Only works inside a task or routine run; in a normal chat the user is already notified when you reply, so it does nothing there.",
+  parameters: NotifyUserInput,
+  success: NotifyUserResult,
+  failure: BotsToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Decide whether to notify the user")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 const ReadChatHistoryTool = Tool.make("read_chat_history", {
   description:
     "Read earlier messages of THIS chat, newest first, when you need an exact detail (a command, a message, a number, a result) that is not in your context. A reopened task can start a fresh session with only its work record and the end of the chat, and this is how you reach the rest: search with query, or page back with beforeMessageId (use the messageId of the oldest message you have). Each text is cut at 1,200 characters. It reads messages only: it cannot show tool output (files you read, command results), so run the command or read the file again if you need it. It reads only this chat, never another.",
@@ -734,6 +768,7 @@ export const BotsToolkit = Toolkit.make(
   DelegateTaskTool,
   GetTaskTool,
   UpdateWorkRecordTool,
+  NotifyUserTool,
   ReadChatHistoryTool,
   ListTasksTool,
   StopTaskTool,

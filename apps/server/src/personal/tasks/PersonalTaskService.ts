@@ -33,6 +33,7 @@ import {
   type PersonalBotId,
   type PersonalDelegationBrief,
   type PersonalHandoff,
+  type PersonalRoutineNotifyMode,
   type PersonalTask,
   type PersonalTaskAttempt,
   type PersonalTaskCreateInput,
@@ -175,6 +176,11 @@ export interface PersonalTaskCreateOptions extends PersonalTaskCreateInput {
   readonly threadId?: ThreadId;
   readonly maxDepth?: number;
   readonly maxChildren?: number;
+  /**
+   * A routine run's notify mode, recorded with the task so the run keeps it
+   * even if the routine is edited or removed meanwhile (see notifyDecision.ts).
+   */
+  readonly notifyMode?: PersonalRoutineNotifyMode;
 }
 
 /** A message to post into a new chat of the bot, verbatim, with no model turn. */
@@ -187,6 +193,8 @@ export interface PersonalTaskRelayInput {
   /** Posted as the bot's message, exactly as given. */
   readonly text: string;
   readonly source?: PersonalTaskSource;
+  /** See PersonalTaskCreateOptions.notifyMode. */
+  readonly notifyMode?: PersonalRoutineNotifyMode;
 }
 
 export interface PersonalTaskDelegateInput {
@@ -288,6 +296,16 @@ export class PersonalTaskService extends Context.Service<
       readonly taskId: PersonalTaskId;
       readonly patch: WorkRecordPatch;
     }) => Effect.Effect<PersonalTaskWorkRecord, PersonalTasksError>;
+    /**
+     * The bot's notify_user call for a running task: whether the finished run
+     * should notify the user, with an optional one-line message for the push.
+     * The last call wins. The caller has already cleaned the message.
+     */
+    readonly recordNotifyDecision: (input: {
+      readonly taskId: PersonalTaskId;
+      readonly notify: boolean;
+      readonly message: string | null;
+    }) => Effect.Effect<PersonalTaskRepository.PersonalTaskNotifyState, PersonalTasksError>;
     /** The task whose active attempt runs in `threadId`, if any. */
     readonly taskForThread: (input: {
       readonly threadId: ThreadId;
@@ -2010,7 +2028,11 @@ export const make = Effect.gen(function* () {
           const inserted = yield* repository.transaction(
             Effect.gen(function* () {
               yield* requireLiveBotInTransaction(input.botId);
-              return yield* repository.insertTask(task);
+              const wasInserted = yield* repository.insertTask(task);
+              if (wasInserted && input.notifyMode !== undefined) {
+                yield* repository.setNotifyMode(taskId, input.notifyMode);
+              }
+              return wasInserted;
             }),
           );
           // A concurrent create with the same key may have won the insert.
@@ -2114,7 +2136,11 @@ export const make = Effect.gen(function* () {
           const inserted = yield* repository.transaction(
             Effect.gen(function* () {
               yield* requireLiveBotInTransaction(input.botId);
-              return yield* repository.insertTask(task);
+              const wasInserted = yield* repository.insertTask(task);
+              if (wasInserted && input.notifyMode !== undefined) {
+                yield* repository.setNotifyMode(taskId, input.notifyMode);
+              }
+              return wasInserted;
             }),
           );
           const stored = yield* repository.getTaskByIdempotencyKey(input.idempotencyKey);
@@ -2676,6 +2702,14 @@ export const make = Effect.gen(function* () {
         : yield* repository.getTask(attempt.taskId);
     }).pipe(toPublic("taskForThread"));
 
+  const recordNotifyDecision: PersonalTaskService["Service"]["recordNotifyDecision"] = (input) =>
+    repository
+      .recordNotifyDecision(input)
+      .pipe(
+        Effect.andThen(repository.getNotifyState(input.taskId)),
+        toPublic("recordNotifyDecision"),
+      );
+
   const CHAT_HISTORY_TEXT_CHARS = 1_200;
   const chatHistory: PersonalTaskService["Service"]["chatHistory"] = (input) =>
     Effect.gen(function* () {
@@ -3072,6 +3106,7 @@ export const make = Effect.gen(function* () {
     workRecord,
     updateWorkRecord,
     taskForThread,
+    recordNotifyDecision,
     chatHistory,
     list,
     subscribe,

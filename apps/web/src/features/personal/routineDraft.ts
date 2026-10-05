@@ -1,7 +1,9 @@
 import {
   PERSONAL_ROUTINE_DEFAULT_TIME_ZONE,
   type PersonalRoutine,
+  type PersonalRoutineDelivery,
   type PersonalRoutineMissedPolicy,
+  type PersonalRoutineNotifyMode,
   type PersonalRoutineSchedule,
   type PersonalRoutineTrigger,
 } from "@t3tools/contracts";
@@ -24,6 +26,54 @@ export interface RoutineDraft {
   readonly date: string;
   readonly timeZone: string;
   readonly missedPolicy: PersonalRoutineMissedPolicy;
+  /** Whether a finished run notifies; see `PersonalRoutineNotifyMode`. */
+  readonly notifyMode: PersonalRoutineNotifyMode;
+  /**
+   * Read-only context, never sent: a relay routine has no model, so it cannot
+   * offer "When the bot decides". The form has no control for it.
+   */
+  readonly delivery: PersonalRoutineDelivery;
+}
+
+/** The notify choices in the order the form lists them. */
+export const NOTIFY_MODES: ReadonlyArray<{
+  readonly mode: PersonalRoutineNotifyMode;
+  readonly label: string;
+  readonly hint: string;
+}> = [
+  { mode: "always", label: "Every run", hint: "You get a notification each time it finishes." },
+  {
+    mode: "bot_decides",
+    label: "When the bot decides",
+    hint: "The bot only notifies you when the result is worth your attention.",
+  },
+  {
+    mode: "never",
+    label: "Never",
+    hint: "Runs finish silently. Problems and anything that needs you still notify.",
+  },
+];
+
+/** Older servers omit it; absent means every run notifies. */
+export function routineNotifyMode(
+  routine: Pick<PersonalRoutine, "notifyMode"> | null,
+): PersonalRoutineNotifyMode {
+  return routine?.notifyMode ?? "always";
+}
+
+/** A relay routine runs no model, so there is nobody to decide: that mode is not offered. */
+export function notifyModeAllowed(
+  mode: PersonalRoutineNotifyMode,
+  delivery: PersonalRoutineDelivery,
+): boolean {
+  return !(mode === "bot_decides" && delivery === "relay");
+}
+
+/** The mode to send: a relay routine's "bot decides" becomes "always". */
+export function notifyModeFromDraft(
+  draft: Pick<RoutineDraft, "notifyMode" | "delivery">,
+): PersonalRoutineNotifyMode {
+  return notifyModeAllowed(draft.notifyMode, draft.delivery) ? draft.notifyMode : "always";
 }
 
 export const WEEKDAYS: ReadonlyArray<{ readonly day: number; readonly short: string }> = [
@@ -58,6 +108,7 @@ export function draftFromRoutine(
   fallbackBotId: string,
   today: string,
 ): RoutineDraft {
+  const delivery = routine?.delivery ?? "model";
   const base: RoutineDraft = {
     botId: routine?.botId ?? fallbackBotId,
     title: routine?.title ?? "",
@@ -71,6 +122,8 @@ export function draftFromRoutine(
     date: today,
     timeZone: routine?.timeZone ?? PERSONAL_ROUTINE_DEFAULT_TIME_ZONE,
     missedPolicy: routine?.missedPolicy ?? "coalesce",
+    delivery,
+    notifyMode: notifyModeFromDraft({ notifyMode: routineNotifyMode(routine), delivery }),
   };
   if (routine === null) return base;
   const schedule = routine.schedule;

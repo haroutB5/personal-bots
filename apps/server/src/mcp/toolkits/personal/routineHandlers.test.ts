@@ -94,6 +94,7 @@ function fakeRoutines(initial: ReadonlyArray<PersonalRoutine>) {
               prompt: input.prompt,
               threadId: input.threadId ?? null,
               newChatEachRun: input.newChatEachRun === true,
+              ...(input.notifyMode === undefined ? {} : { notifyMode: input.notifyMode }),
             }),
           ),
         ),
@@ -111,6 +112,7 @@ function fakeRoutines(initial: ReadonlyArray<PersonalRoutine>) {
               ...(input.newChatEachRun === undefined
                 ? {}
                 : { newChatEachRun: input.newChatEachRun }),
+              ...(input.notifyMode === undefined ? {} : { notifyMode: input.notifyMode }),
             }),
           ),
         ),
@@ -339,6 +341,73 @@ describe("routines run in the chat they were created from", () => {
         newChatEachRun: false,
       });
       expect(refused).toContain("was not created from a chat");
+    }),
+  );
+});
+
+describe("routine notification mode tools", () => {
+  it.effect("create_routine passes notifyMode on and says so; without it nothing changes", () =>
+    Effect.gen(function* () {
+      const routines = fakeRoutines([]);
+      const decides = yield* call(routines, "create_routine", {
+        title: "Price watch",
+        prompt: "Check the price.",
+        frequency: "every_n_hours",
+        everyHours: 1,
+        notifyMode: "bot_decides",
+      });
+      const plain = yield* call(routines, "create_routine", {
+        title: "Briefing",
+        prompt: "Brief me.",
+        frequency: "daily",
+        time: "07:00",
+      });
+      const [first, second] = [...routines.store.values()];
+      expect(first?.notifyMode).toBe("bot_decides");
+      expect(second?.notifyMode).toBeUndefined();
+      expect(decides).toContain("the bot decides each run");
+      expect(plain).not.toContain("Notifications:");
+    }),
+  );
+
+  it.effect(
+    "update_routine sets the mode alone, and a never routine says its runs are silent",
+    () =>
+      Effect.gen(function* () {
+        const routines = fakeRoutines([routine({ routineId: "r1" })]);
+        const out = yield* call(routines, "update_routine", {
+          routineId: "r1",
+          notifyMode: "never",
+        });
+        expect(routines.store.get("r1")?.notifyMode).toBe("never");
+        expect(routines.store.get("r1")?.prompt).toBe("Brief me.");
+        expect(out).toContain("finished runs are silent");
+        const back = yield* call(routines, "update_routine", {
+          routineId: "r1",
+          notifyMode: "always",
+        });
+        expect(routines.store.get("r1")?.notifyMode).toBe("always");
+        expect(back).not.toContain("Notifications:");
+      }),
+  );
+
+  it.effect("list_routines shows each routine's notifyMode, 'always' when it has none", () =>
+    Effect.gen(function* () {
+      const routines = fakeRoutines([
+        routine({ routineId: "old" }),
+        routine({ routineId: "watch", notifyMode: "bot_decides" }),
+      ]);
+      const rows = yield* call(routines, "list_routines", {});
+      expect(rows).toMatch(/"routineId":"old"[^}]*"notifyMode":"always"/);
+      expect(rows).toMatch(/"routineId":"watch"[^}]*"notifyMode":"bot_decides"/);
+    }),
+  );
+
+  it.effect("a notifyMode outside the three is refused", () =>
+    Effect.gen(function* () {
+      const routines = fakeRoutines([routine({ routineId: "r1" })]);
+      yield* call(routines, "update_routine", { routineId: "r1", notifyMode: "sometimes" });
+      expect(routines.store.get("r1")?.notifyMode).toBeUndefined();
     }),
   );
 });

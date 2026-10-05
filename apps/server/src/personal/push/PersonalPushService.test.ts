@@ -1402,3 +1402,186 @@ it.effect(
     }).pipe(Effect.provide(makeLayer(harness)));
   },
 );
+
+/**
+ * A routine run's notify mode and the bot's notify_user call live on the task
+ * row (migration 098); the push service reads them when the run ends.
+ */
+const seedNotifyRow = (input: {
+  readonly taskId: string;
+  readonly mode: "always" | "bot_decides" | "never" | null;
+  readonly decision?: boolean | null;
+  readonly message?: string | null;
+}) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const at = "2026-10-05T09:00:00.000Z";
+    yield* sql`
+      INSERT INTO personal_tasks (
+        task_id, root_task_id, bot_id, title, objective, status, source, idempotency_key,
+        depth, max_depth, max_children, created_at, updated_at,
+        notify_mode, notify_decision, notify_message
+      )
+      VALUES (
+        ${input.taskId}, ${input.taskId}, ${BOT}, 'Hourly check', 'Check.', 'completed',
+        'routine', ${`routine:r1:${input.taskId}`}, 0, 2, 4, ${at}, ${at},
+        ${input.mode},
+        ${input.decision === undefined || input.decision === null ? null : input.decision ? 1 : 0},
+        ${input.message ?? null}
+      )
+    `;
+  });
+
+const notifyRun = (
+  taskId: string,
+  status: PersonalTask["status"] = "completed",
+  patch: Partial<PersonalTask> = {},
+) => makeTask({ taskId: PersonalTaskId.make(taskId), source: "routine", status, ...patch });
+
+const oneDevice = Effect.gen(function* () {
+  yield* TestClock.setTime(Date.parse("2026-10-05T09:00:00Z"));
+  yield* seedBot;
+  const push = yield* PersonalPushService.PersonalPushService;
+  yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+  return push;
+});
+
+const queuedPayloads = outbox.pipe(
+  Effect.map((rows) => rows.map((row) => JSON.parse(row.payload) as Record<string, unknown>)),
+);
+
+it.effect(
+  "always (and a task with no mode) notifies as before; the bot's message becomes the body",
+  () => {
+    const harness: Harness = { sent: [], status: 201 };
+    return Effect.gen(function* () {
+      const push = yield* oneDevice;
+      yield* seedNotifyRow({ taskId: "run-always", mode: "always" });
+      yield* seedNotifyRow({
+        taskId: "run-always-msg",
+        mode: "always",
+        decision: true,
+        message: "Price dropped to 120",
+      });
+      yield* seedNotifyRow({ taskId: "run-always-false", mode: "always", decision: false });
+      yield* seedNotifyRow({ taskId: "run-none", mode: null });
+      for (const id of ["run-always", "run-always-msg", "run-always-false", "run-none"]) {
+        yield* push.notifyTask(yield* notifyRun(id));
+      }
+      // A task with no row at all (a plain user task) is the oldest path.
+      yield* push.notifyTask(yield* makeTask({ taskId: PersonalTaskId.make("plain") }));
+      yield* push.drain;
+
+      const payloads = yield* queuedPayloads;
+      expect(payloads.map((payload) => payload.title)).toEqual([
+        "Assistant finished",
+        "Assistant finished",
+        "Assistant finished",
+        "Assistant finished",
+        "Assistant finished",
+      ]);
+      expect(payloads.map((payload) => payload.body)).toEqual([
+        "Book the dentist",
+        "Price dropped to 120",
+        "Book the dentist",
+        "Book the dentist",
+        "Book the dentist",
+      ]);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
+
+it.effect("bot_decides: pushes once with the bot's message only when it said notify", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    const push = yield* oneDevice;
+    yield* seedNotifyRow({
+      taskId: "run-yes",
+      mode: "bot_decides",
+      decision: true,
+      message: "Two new listings",
+    });
+    yield* seedNotifyRow({ taskId: "run-no", mode: "bot_decides", decision: false });
+    yield* seedNotifyRow({ taskId: "run-silent", mode: "bot_decides" });
+    yield* seedNotifyRow({
+      taskId: "run-no-message",
+      mode: "bot_decides",
+      decision: true,
+      message: null,
+    });
+    for (const id of ["run-yes", "run-yes", "run-no", "run-silent", "run-no-message"]) {
+      yield* push.notifyTask(yield* notifyRun(id));
+    }
+    yield* push.drain;
+
+    const rows = yield* outbox;
+    expect(rows.map((row) => row.eventId.split(":")[1])).toEqual(["run-yes", "run-no-message"]);
+    const payloads = yield* queuedPayloads;
+    expect(payloads[0]).toMatchObject({
+      title: "Assistant finished",
+      body: "Two new listings",
+      url: "/tasks/run-yes",
+    });
+    // Said notify without a line of its own: the task title, as always.
+    expect(payloads[1]).toMatchObject({ body: "Book the dentist" });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("never: a completed run is silent", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    const push = yield* oneDevice;
+    yield* seedNotifyRow({ taskId: "run-never", mode: "never" });
+    yield* seedNotifyRow({
+      taskId: "run-never-yes",
+      mode: "never",
+      decision: true,
+      message: "ignored",
+    });
+    yield* push.notifyTask(yield* notifyRun("run-never"));
+    yield* push.notifyTask(yield* notifyRun("run-never-yes"));
+    yield* push.drain;
+    expect(yield* outbox).toEqual([]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a failed run and a run that needs the user notify in every mode", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    const push = yield* oneDevice;
+    for (const mode of ["always", "bot_decides", "never"] as const) {
+      yield* seedNotifyRow({ taskId: `fail-${mode}`, mode, decision: false });
+      yield* seedNotifyRow({ taskId: `ask-${mode}`, mode, decision: false });
+      yield* seedNotifyRow({ taskId: `browser-${mode}`, mode, decision: false });
+      yield* push.notifyTask(yield* notifyRun(`fail-${mode}`, "failed"));
+      yield* push.notifyTask(yield* notifyRun(`ask-${mode}`, "waiting_for_user"));
+      yield* push.notifyTask(yield* notifyRun(`browser-${mode}`, "waiting_for_browser"));
+    }
+    yield* push.drain;
+    const titles = (yield* queuedPayloads).map((payload) => payload.title);
+    expect(titles.filter((title) => title === "Assistant hit a problem")).toHaveLength(3);
+    expect(titles.filter((title) => title === "Assistant needs you")).toHaveLength(3);
+    expect(
+      titles.filter((title) => title === "Assistant needs your help in the browser"),
+    ).toHaveLength(3);
+    expect(titles).toHaveLength(9);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a bot_decides run that said notify still obeys the bot's mute", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    const push = yield* oneDevice;
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE personal_bots SET notifications_muted_until = '2099-01-01T00:00:00.000Z'`;
+    yield* seedNotifyRow({
+      taskId: "run-muted",
+      mode: "bot_decides",
+      decision: true,
+      message: "Worth it",
+    });
+    yield* push.notifyTask(yield* notifyRun("run-muted"));
+    yield* push.drain;
+    expect(yield* outbox).toEqual([]);
+  }).pipe(Effect.provide(makeLayer(harness)));
+});

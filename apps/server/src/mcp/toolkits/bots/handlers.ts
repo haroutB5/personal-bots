@@ -28,6 +28,7 @@ import * as PersonalLeadBotService from "../../../personal/leadBots/PersonalLead
 import * as PersonalSecretService from "../../../personal/secrets/PersonalSecretService.ts";
 import * as PersonalLoginService from "../../../personal/secrets/PersonalLoginService.ts";
 import * as PersonalLoginRequestService from "../../../personal/secrets/PersonalLoginRequestService.ts";
+import { cleanNotifyMessage } from "../../../personal/push/notifyDecision.ts";
 import * as PersonalTaskService from "../../../personal/tasks/PersonalTaskService.ts";
 import { renderWorkRecord } from "../../../personal/tasks/workRecord.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -86,6 +87,27 @@ export const shortenBrowserHelpReason = (reason: string): string => {
 };
 
 const toolError = (reason: string) => new BotsToolError({ reason });
+
+export const NOTIFY_USER_NO_TASK =
+  "This chat is not running a task or a routine, so notify_user does nothing here: the user is already notified when you reply in a chat. Nothing was recorded.";
+
+/** What a notify_user call will do, given the routine's mode (null: not a routine run). */
+export const notifyUserNote = (
+  mode: "always" | "bot_decides" | "never" | null,
+  notify: boolean,
+): string => {
+  if (mode === "bot_decides") {
+    return notify
+      ? "Recorded: the user will be notified when this run finishes, with your message. Calling it again replaces this."
+      : "Recorded: no notification will be sent for this run. Calling it again replaces this.";
+  }
+  if (mode === "never") {
+    return "Recorded, but this routine is set to never notify, so completed runs stay silent whatever you say. A failed run still notifies.";
+  }
+  return notify
+    ? "Recorded: this run notifies the user when it finishes, and your message is the notification text."
+    : "Recorded, but this run notifies the user whatever you say; notify false only changes anything on a routine set to 'bot decides'.";
+};
 
 const PERSONAL_TASK_STATUSES_OPEN = PersonalTaskStatus.literals.filter(
   (status) => !PERSONAL_TASK_TERMINAL_STATUSES.includes(status),
@@ -547,6 +569,21 @@ const make = Effect.gen(function* () {
           })
           .pipe(Effect.mapError(readable));
         return { record: renderWorkRecord(record) };
+      }),
+    notify_user: (input) =>
+      Effect.gen(function* () {
+        const caller = yield* callerBot();
+        const task = yield* tasks
+          .taskForThread({ threadId: caller.threadId })
+          .pipe(Effect.mapError(readable));
+        if (Option.isNone(task)) {
+          return yield* toolError(NOTIFY_USER_NO_TASK);
+        }
+        const message = input.notify ? cleanNotifyMessage(input.message) : null;
+        const state = yield* tasks
+          .recordNotifyDecision({ taskId: task.value.taskId, notify: input.notify, message })
+          .pipe(Effect.mapError(readable));
+        return { recorded: true, note: notifyUserNote(state.mode, input.notify) };
       }),
     read_chat_history: (input) =>
       Effect.gen(function* () {
