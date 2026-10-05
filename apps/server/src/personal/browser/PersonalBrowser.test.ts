@@ -2258,6 +2258,123 @@ describe("PersonalBrowser", () => {
         );
       }).pipe(Effect.provide(makeLayer(fake.driver)));
     });
+
+    describe("a navigation another navigation replaced", () => {
+      const asked = "https://www.google.com/search?q=private+thing&token=abc123";
+      const replacedBy = (fake: ReturnType<typeof makeFakeDriver>, landed: string) => {
+        fake.state.page.goto = async () => {
+          fake.state.page.currentUrl = landed;
+          throw new Error(
+            `page.goto: Navigation to "${asked}" is interrupted by another navigation to "${landed}"\nCall log:\n  - navigating to "${asked}", waiting until "load"\n`,
+          );
+        };
+      };
+      const failureText = (exit: Exit.Exit<unknown, unknown>) => {
+        const failure = Exit.isFailure(exit) ? Cause.squash(exit.cause) : null;
+        return failure instanceof Error ? failure.message : "";
+      };
+
+      it.effect("shows a bot nothing when the page did land (a redirect to /sorry)", () => {
+        const fake = makeFakeDriver();
+        replacedBy(fake, "https://www.google.com/sorry/index?continue=x");
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          const status = (yield* browser.handleAutomationRequest(
+            request("navigate", { url: asked }),
+          )) as PreviewAutomationStatus;
+          expect(status.url).toBe("https://www.google.com/sorry/index?continue=x");
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      });
+
+      it.effect(
+        "tells a bot the page could not be opened when it ended on a chrome-error page",
+        () => {
+          const fake = makeFakeDriver();
+          replacedBy(fake, "chrome-error://chromewebdata/");
+          return Effect.gen(function* () {
+            const browser = yield* PersonalBrowser.PersonalBrowser;
+            const exit = yield* Effect.exit(
+              browser.handleAutomationRequest(request("navigate", { url: asked })),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+            expect(failureText(exit)).toBe("The page could not be opened.");
+          }).pipe(Effect.provide(makeLayer(fake.driver)));
+        },
+      );
+
+      it.effect("still fails when nothing new loaded", () => {
+        const fake = makeFakeDriver();
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(
+            request("navigate", { url: "https://example.com/" }),
+          );
+          fake.state.page.goto = async () => {
+            throw new Error(
+              `page.goto: Navigation to "${asked}" is interrupted by another navigation to "${asked}"`,
+            );
+          };
+          fake.state.page.currentUrl = "https://example.com/";
+          const exit = yield* Effect.exit(
+            browser.handleAutomationRequest(request("navigate", { url: asked })),
+          );
+          expect(failureText(exit)).toBe("The page could not be opened.");
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      });
+
+      const typeAddress = (fake: ReturnType<typeof makeFakeDriver>) =>
+        Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          return yield* Effect.scoped(
+            Effect.gen(function* () {
+              const viewer = yield* browser.attachViewer({
+                sessionId: "session-1",
+                canOperate: true,
+              });
+              yield* browser.handleViewerMessage(
+                viewer,
+                JSON.stringify({ _tag: "Navigate", url: asked }),
+              );
+              const items: unknown[] = [];
+              for (;;) {
+                const next = yield* Queue.poll(viewer.outbox);
+                if (Option.isNone(next)) break;
+                items.push(next.value);
+              }
+              return items.map(String).find((item) => item.includes("InputRejected"));
+            }),
+          );
+        });
+
+      it.effect("shows the phone nothing when the typed address redirected and landed", () => {
+        const fake = makeFakeDriver();
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+          yield* browser.takeControl("session-1");
+          replacedBy(fake, "https://www.google.com/sorry/index?continue=x");
+          const rejected = yield* typeAddress(fake);
+          expect(rejected).toBeUndefined();
+          expect(fake.state.page.currentUrl).toBe("https://www.google.com/sorry/index?continue=x");
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      });
+
+      it.effect(
+        "tells the phone in plain words when the typed address ended on an error page",
+        () => {
+          const fake = makeFakeDriver();
+          return Effect.gen(function* () {
+            const browser = yield* PersonalBrowser.PersonalBrowser;
+            yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+            yield* browser.takeControl("session-1");
+            replacedBy(fake, "chrome-error://chromewebdata/");
+            const rejected = yield* typeAddress(fake);
+            expect(rejected).toContain("The page could not be opened.");
+            expect(rejected).not.toMatch(/google|token=abc123|page\.goto|chrome-error/);
+          }).pipe(Effect.provide(makeLayer(fake.driver)));
+        },
+      );
+    });
   });
 
   // While the phone scrolls, the live view is a rougher, smaller picture; a sharp one follows the

@@ -104,6 +104,7 @@ import {
   classifyBotCheck,
   classifyPageError,
   HostOperationError,
+  isReplacedNavigation,
   performClick,
   performEvaluate,
   performFillLogin,
@@ -1561,9 +1562,36 @@ export const make = (options: PersonalBrowserOptions) =>
         );
       });
 
+    /**
+     * Runs a navigation. One that Chrome replaced with another that did land somewhere new (a
+     * site's redirect to a /sorry or challenge page) is not a failure: the tab is on a page and
+     * the caller sees where. Anything else, including a replacement that left the tab on an
+     * error page or where it was, is still an error.
+     */
+    const gotoReplacing = async (
+      page: BrowserPage,
+      url: string,
+      options: Parameters<BrowserPage["goto"]>[1],
+    ) => {
+      const before = page.url();
+      try {
+        await page.goto(url, options);
+      } catch (cause) {
+        if (
+          isReplacedNavigation(cause) &&
+          openPage(page) &&
+          webOrigin(page.url()) !== null &&
+          page.url() !== before
+        ) {
+          return;
+        }
+        throw cause;
+      }
+    };
+
     const navigateTab = (tab: TabEntry, url: string, readiness: string, timeoutMs: number) =>
       attempt({}, () =>
-        tab.page.goto(url, {
+        gotoReplacing(tab.page, url, {
           waitUntil:
             readiness === "none"
               ? "commit"
@@ -2762,7 +2790,7 @@ export const make = (options: PersonalBrowserOptions) =>
           const resolved = resolveBrowserUrl(message.url);
           if (!resolved.ok)
             throw new HostOperationError("PreviewAutomationExecutionError", resolved.reason);
-          return page.goto(resolved.url, { waitUntil: "commit", timeoutMs: 15_000 });
+          return gotoReplacing(page, resolved.url, { waitUntil: "commit", timeoutMs: 15_000 });
         }
         case "Back":
           return page.goBack();

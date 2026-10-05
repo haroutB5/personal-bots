@@ -138,11 +138,13 @@ const NETWORK_ERROR_WORDS: ReadonlyArray<readonly [RegExp, string]> = [
 
 const NAVIGATION_CALL = /^(?:page|frame)\.(?:goto|reload|goBack|goForward|waitForURL)\b/;
 
+const PAGE_NOT_OPENED = "The page could not be opened.";
+
 export function friendlyNavigationMessage(message: string): string | null {
   const code = /net::(ERR_[A-Z0-9_]+)/.exec(message)?.[1];
   if (code !== undefined) {
     const words = NETWORK_ERROR_WORDS.find(([pattern]) => pattern.test(code))?.[1];
-    return `${words ?? "The page could not be opened."} (${code})`;
+    return `${words ?? PAGE_NOT_OPENED} (${code})`;
   }
   if (NAVIGATION_CALL.test(message)) {
     const limit = /Timeout (\d+)ms exceeded/.exec(message)?.[1];
@@ -150,8 +152,25 @@ export function friendlyNavigationMessage(message: string): string | null {
       const seconds = Math.max(1, Math.round(Number(limit) / 1_000));
       return `The page took longer than ${seconds} s to load. It may still be loading; try again or open something lighter.`;
     }
+    // No network code and no timeout ("interrupted by another navigation", "page was closed"):
+    // Playwright's text carries the address, which can hold a token, and means nothing to a person.
+    return PAGE_NOT_OPENED;
   }
   return null;
+}
+
+/**
+ * A navigation Chrome replaced with another one ("interrupted by another navigation to ..."), as
+ * when a site redirects to a /sorry or challenge page. That is not a failure to load: the other
+ * navigation may have landed.
+ */
+export function isReplacedNavigation(cause: unknown): boolean {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return (
+    NAVIGATION_CALL.test(message) &&
+    !/net::ERR_/.test(message) &&
+    /interrupted by another navigation/i.test(message)
+  );
 }
 
 /**
@@ -217,6 +236,13 @@ export function classifyPageError(cause: unknown, input: SelectorInput = {}): Ho
   if (name === "TimeoutError" || /Timeout \d+ms exceeded/.test(message)) {
     return new HostOperationError("PreviewAutomationTimeoutError", friendly ?? firstLine(message));
   }
+  // The tab going away stays its own tag, with the plain wording when it was a navigation.
+  if (/has been closed|Target closed|Target page/i.test(message)) {
+    return new HostOperationError(
+      "PreviewAutomationTabNotFoundError",
+      friendly ?? firstLine(message),
+    );
+  }
   if (friendly !== null) return new HostOperationError("PreviewAutomationExecutionError", friendly);
   if (
     /while parsing (css )?selector|Unexpected token|Unknown engine|is not a valid selector/i.test(
@@ -235,9 +261,6 @@ export function classifyPageError(cause: unknown, input: SelectorInput = {}): Ho
       firstLine(message),
       selectorDetail(input) ?? { selectorKind: "focused-element" },
     );
-  }
-  if (/has been closed|Target closed|Target page/i.test(message)) {
-    return new HostOperationError("PreviewAutomationTabNotFoundError", firstLine(message));
   }
   return new HostOperationError("PreviewAutomationExecutionError", firstLine(message));
 }

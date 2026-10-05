@@ -5,6 +5,7 @@ import {
   classifyPageError,
   friendlyNavigationMessage,
   HostOperationError,
+  isReplacedNavigation,
 } from "./pageOperations.ts";
 
 const raw = (code: string, url = "https://example.invalid/path?token=abc123") =>
@@ -43,6 +44,51 @@ describe("friendly navigation errors", () => {
   it("names a code it has no sentence for without Playwright's text", () => {
     const message = friendlyNavigationMessage(raw("ERR_SOMETHING_NEW").message);
     expect(message).toBe("The page could not be opened. (ERR_SOMETHING_NEW)");
+  });
+
+  describe("a navigation failure with no network code", () => {
+    const google = "https://www.google.com/search?q=private+thing&token=abc123";
+    const replaced = (to: string) =>
+      new Error(
+        `page.goto: Navigation to "${google}" is interrupted by another navigation to "${to}"\nCall log:\n  - navigating to "${google}", waiting until "load"\n`,
+      );
+
+    it("says the page could not be opened, without the address, when Google lands on a chrome-error page", () => {
+      const error = classifyPageError(replaced("chrome-error://chromewebdata/"));
+      expect(error.tag).toBe("PreviewAutomationExecutionError");
+      expect(error.message).toBe("The page could not be opened.");
+      expect(error.message).not.toMatch(/google|token=abc123|chrome-error|page\.goto|Call log/);
+    });
+
+    it("does the same for a navigation replaced by a bot-check page address", () => {
+      const error = classifyPageError(replaced("https://www.google.com/sorry/index?continue=x"));
+      expect(error.message).toBe("The page could not be opened.");
+    });
+
+    it("keeps the tab-gone tag but with plain words when the page was closed", () => {
+      const error = classifyPageError(
+        new Error(
+          `page.goto: Target page, context or browser has been closed\nCall log:\n  - navigating to "${google}"`,
+        ),
+      );
+      expect(error.tag).toBe("PreviewAutomationTabNotFoundError");
+      expect(error.message).toBe("The page could not be opened.");
+    });
+
+    it("leaves a closed page outside a navigation call as it was", () => {
+      const error = classifyPageError(new Error("locator.click: Target closed"));
+      expect(error.tag).toBe("PreviewAutomationTabNotFoundError");
+      expect(error.message).toBe("locator.click: Target closed");
+    });
+
+    it("recognises a replaced navigation and nothing broader", () => {
+      expect(isReplacedNavigation(replaced("chrome-error://chromewebdata/"))).toBe(true);
+      expect(isReplacedNavigation(raw("ERR_ABORTED"))).toBe(false);
+      expect(isReplacedNavigation(new Error("page.goto: Timeout 30000ms exceeded."))).toBe(false);
+      expect(
+        isReplacedNavigation(new Error("locator.click: interrupted by another navigation")),
+      ).toBe(false);
+    });
   });
 
   it("explains a slow page load in seconds and keeps the timeout tag bot tools key on", () => {
