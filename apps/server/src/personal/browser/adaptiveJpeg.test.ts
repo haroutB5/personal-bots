@@ -139,7 +139,7 @@ describe("adaptive JPEG motion controller", () => {
     expect(f.controller.profile()).toBe("sharp");
   });
 
-  it("applies profiles one at a time and in order while the browser is slow", async () => {
+  it("announces each change at once and in order, without waiting for the switch before it", async () => {
     const f = fixture();
     f.holdApplies();
     f.controller.wheel();
@@ -147,11 +147,9 @@ describe("adaptive JPEG motion controller", () => {
     f.controller.wheel();
     await f.settle();
     expect(f.applied).toEqual(["moving"]);
-    // The page settles while the switch to rough is still running: sharp waits its turn.
+    // The page settles while the switch to rough is still running: sharp is asked for now. The
+    // browser keeps the two in order; holding the second back here is what let a stale frame out.
     f.advance(ADAPTIVE_JPEG_TIMING.settleMs + 10);
-    await f.settle();
-    expect(f.applied).toEqual(["moving"]);
-    f.releaseApplies();
     await f.settle();
     expect(f.applied).toEqual(["moving", "sharp"]);
     f.releaseApplies();
@@ -159,28 +157,30 @@ describe("adaptive JPEG motion controller", () => {
     expect(f.applied).toEqual(["moving", "sharp"]);
   });
 
-  it("skips a switch that was asked for and withdrawn before the browser got to it", async () => {
+  it("a scroll that resumes while the sharp switch is still running reaches the browser at once", async () => {
     const f = fixture();
+    f.controller.wheel();
+    f.advance(40);
+    f.controller.wheel();
+    await f.settle();
+    // The sharp switch (a screenshot is being taken) is held open...
     f.holdApplies();
-    // A first run of motion is being applied...
-    f.controller.wheel();
-    f.advance(40);
-    f.controller.wheel();
-    await f.settle();
-    // ...it ends and a second one begins before the first apply returns.
     f.advance(ADAPTIVE_JPEG_TIMING.settleMs + 10);
+    await f.settle();
+    expect(f.applied).toEqual(["moving", "sharp"]);
+    // ...and the person scrolls again before it returns.
     f.controller.wheel();
     f.advance(40);
     f.controller.wheel();
     await f.settle();
-    f.releaseApplies();
-    await f.settle();
-    // The browser is already rough, so the sharp-then-rough pair in between is never sent.
-    expect(f.applied).toEqual(["moving"]);
+    expect(f.applied).toEqual(["moving", "sharp", "moving"]);
     expect(f.controller.profile()).toBe("moving");
+    f.releaseApplies();
+    await f.settle();
+    expect(f.applied).toEqual(["moving", "sharp", "moving"]);
   });
 
-  it("reset puts both sides back to sharp, cancels the timer and ignores an apply that finishes later", async () => {
+  it("reset puts the controller back to sharp and cancels the timer; the next motion asks for rough again", async () => {
     const f = fixture();
     f.holdApplies();
     f.controller.wheel();
@@ -192,7 +192,6 @@ describe("adaptive JPEG motion controller", () => {
     expect(f.timers.size).toBe(0);
     expect(f.controller.profile()).toBe("sharp");
     expect(f.changes).toEqual(["moving", "sharp"]);
-    // The old screencast's switch finishes now: it must not mark the new screencast as rough.
     f.releaseApplies();
     await f.settle();
     // A fresh run of motion on the new screencast asks for rough again.

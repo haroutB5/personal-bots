@@ -120,6 +120,12 @@ class FakePage implements BrowserPage {
   async waitForLocator() {}
   async waitForText() {}
   async waitForUrlIncludes() {}
+  readonly loadStateWaits: Array<{ readonly state: string; readonly timeoutMs: number }> = [];
+  waitForLoadStateImpl: ((state: string, timeoutMs: number) => Promise<void>) | null = null;
+  async waitForLoadState(state: "load" | "domcontentloaded", timeoutMs: number) {
+    this.loadStateWaits.push({ state, timeoutMs });
+    await this.waitForLoadStateImpl?.(state, timeoutMs);
+  }
   evaluateImpl: ((expression: string) => Promise<unknown>) | null = null;
   async evaluate(expression: string) {
     if (this.evaluateImpl !== null) return this.evaluateImpl(expression);
@@ -2300,6 +2306,67 @@ describe("PersonalBrowser", () => {
       return run.pipe(Effect.provide(withLogs(makeLayer(fake.driver))));
     });
 
+    it.effect("drops the look when the page moved to another site while it was being read", () => {
+      const fake = makeFakeDriver();
+      let looked = false;
+      const { logs, run, withLogs } = captureLogs(() =>
+        Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          fake.state.page.evaluateImpl = async (expression) => {
+            if (!expression.includes("challenge-form")) return null;
+            // The tab goes on to another site while the first one's page is being read.
+            fake.state.page.currentUrl = "https://elsewhere.example/home";
+            looked = true;
+            return challenge;
+          };
+          yield* browser.handleAutomationRequest(
+            request("navigate", { url: "https://shop.example/cart" }),
+          );
+          yield* until(() => looked);
+          // A line that was going to be written would be written within this wait.
+          yield* Effect.promise(async () => {
+            // @effect-diagnostics-next-line globalTimers:off
+            await new Promise<void>((resolve) => setTimeout(resolve, 60));
+          });
+        }),
+      );
+      return run.pipe(
+        Effect.provide(withLogs(makeLayer(fake.driver))),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            expect(looked).toBe(true);
+            // Neither site is named: the sample was of a page the log line would not describe.
+            expect(logs.some((entry) => entry.includes("bot check"))).toBe(false);
+          }),
+        ),
+      );
+    });
+
+    it.effect("still logs when the page stays on its site while it is being read", () => {
+      const fake = makeFakeDriver();
+      const { logs, run, withLogs } = captureLogs((seen) =>
+        Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          fake.state.page.evaluateImpl = async (expression) => {
+            if (!expression.includes("challenge-form")) return null;
+            // Same site, another path: not a different origin.
+            fake.state.page.currentUrl = "https://shop.example/checking";
+            return challenge;
+          };
+          yield* browser.handleAutomationRequest(
+            request("navigate", { url: "https://shop.example/cart" }),
+          );
+          yield* until(() => seen.some((entry) => entry.includes("bot check")));
+        }),
+      );
+      return run.pipe(
+        Effect.provide(withLogs(makeLayer(fake.driver))),
+        Effect.tap(() =>
+          Effect.sync(() => expect(logs.some((entry) => entry.includes("bot check"))).toBe(true)),
+        ),
+      );
+    });
+
     it.effect("logs nothing for an ordinary page", () => {
       const fake = makeFakeDriver();
       let looked = false;
@@ -2420,6 +2487,51 @@ describe("PersonalBrowser", () => {
         }).pipe(Effect.provide(makeLayer(fake.driver)));
       });
 
+      it.effect("waits for the landed page to load, but only for a few seconds", () => {
+        const fake = makeFakeDriver();
+        replacedBy(fake, "https://www.google.com/sorry/index?continue=x");
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(request("navigate", { url: asked }));
+          expect(fake.state.page.loadStateWaits).toEqual([{ state: "load", timeoutMs: 3_000 }]);
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      });
+
+      it.effect("asks for the readiness the bot asked for, and none when it asked for none", () => {
+        const fake = makeFakeDriver();
+        replacedBy(fake, "https://www.google.com/sorry/index?continue=x");
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(
+            request("navigate", { url: asked, readiness: "domContentLoaded" }),
+          );
+          expect(fake.state.page.loadStateWaits).toEqual([
+            { state: "domcontentloaded", timeoutMs: 3_000 },
+          ]);
+          fake.state.page.loadStateWaits.length = 0;
+          fake.state.page.currentUrl = "https://example.com/";
+          yield* browser.handleAutomationRequest(
+            request("navigate", { url: asked, readiness: "none" }),
+          );
+          expect(fake.state.page.loadStateWaits).toEqual([]);
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      });
+
+      it.effect("still answers with the landed page when it never finishes loading", () => {
+        const fake = makeFakeDriver();
+        replacedBy(fake, "https://www.google.com/sorry/index?continue=x");
+        fake.state.page.waitForLoadStateImpl = async () => {
+          throw new Error("page.waitForLoadState: Timeout 3000ms exceeded.");
+        };
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          const status = (yield* browser.handleAutomationRequest(
+            request("navigate", { url: asked }),
+          )) as PreviewAutomationStatus;
+          expect(status.url).toBe("https://www.google.com/sorry/index?continue=x");
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      });
+
       it.effect(
         "tells a bot the page could not be opened when it ended on a chrome-error page",
         () => {
@@ -2432,6 +2544,8 @@ describe("PersonalBrowser", () => {
             );
             expect(Exit.isFailure(exit)).toBe(true);
             expect(failureText(exit)).toBe("The page could not be opened.");
+            // A page that did not land is not waited on.
+            expect(fake.state.page.loadStateWaits).toEqual([]);
           }).pipe(Effect.provide(makeLayer(fake.driver)));
         },
       );

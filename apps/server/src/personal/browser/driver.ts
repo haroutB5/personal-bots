@@ -12,6 +12,7 @@ import * as NodePath from "node:path";
 import type * as Playwright from "playwright-core";
 
 import { keepBrowserPriorityNormal } from "./browserPriority.ts";
+import { jpegSize } from "./jpegSize.ts";
 
 export interface ViewportSize {
   readonly width: number;
@@ -99,6 +100,8 @@ export interface BrowserPage {
     url: string,
     options: { readonly waitUntil: WaitUntil; readonly timeoutMs: number },
   ): Promise<void>;
+  /** Waits until the page has reached `state`; rejects after `timeoutMs`. */
+  waitForLoadState?(state: "load" | "domcontentloaded", timeoutMs: number): Promise<void>;
   goBack(): Promise<void>;
   goForward(): Promise<void>;
   reload(): Promise<void>;
@@ -339,23 +342,68 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
     profile: ScreencastProfile | "stopped";
     readonly deviceScaleFactor: number;
     readonly deliver: (jpeg: Uint8Array, meta: ScreencastMeta) => void;
+    /**
+     * Pixels Chrome gives one css pixel in a screenshot at `clip.scale` 1, measured once when the
+     * screencast starts. It is the device scale (2 for the phone's override) or 1: Chrome multiplies
+     * a clip's scale by the override's device scale, and not by the one a context starts with.
+     * Null when it could not be read.
+     */
+    pixelsPerClipScale: Promise<number | null>;
   }
   let activeScreencast: ActiveScreencast | null = null;
   let screencastChain: Promise<void> = Promise.resolve();
   // The profile most recently asked for, set the moment it is asked (not when its turn in the chain
-  // comes). A switch that resumes after an await checks it, so a scroll that arrived while a sharp
-  // frame was being taken does not get that stale frame and a restart first.
+  // comes), with a count of how often it changed. A switch that resumes after an await, or that is
+  // waiting on a screenshot, checks them, so a scroll that arrived while a sharp frame was being
+  // taken does not get that stale frame and a restart first, and does not wait for it either.
   let requestedProfile: ScreencastProfile = "sharp";
+  let requestCount = 0;
+  const newSignal = () => {
+    let resolve: () => void = () => {};
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  };
+  let requestSignal = newSignal();
+  /** A different profile was asked for, or the screencast started or stopped. */
+  const noteRequestChange = () => {
+    requestCount += 1;
+    const settled = requestSignal;
+    requestSignal = newSignal();
+    settled.resolve();
+  };
+
+  /** What `pixelsPerClipScale` is: a 16 px clip at scale 1 comes back that many times wider. */
+  const measurePixelsPerClipScale = async (session: Playwright.CDPSession) => {
+    const { cssVisualViewport: view } = await session.send("Page.getLayoutMetrics");
+    const width = Math.min(16, Math.floor(view.clientWidth));
+    const height = Math.min(16, Math.floor(view.clientHeight));
+    if (!(width > 0 && height > 0)) return null;
+    const probe = await session.send("Page.captureScreenshot", {
+      format: "jpeg",
+      quality: 20,
+      clip: { x: view.pageX, y: view.pageY, width, height, scale: 1 },
+    });
+    const size = jpegSize(Buffer.from(probe.data, "base64"));
+    return size === null ? null : size.width / width;
+  };
 
   /** One sharp frame of what is on screen now, in the size a sharp screencast frame would have. */
-  const sendFinalFrame = async (state: ActiveScreencast) => {
+  const sendFinalFrame = async (state: ActiveScreencast, request: number) => {
     const { session } = state;
+    // A stopped screencast, or a profile asked for since, makes the picture stale.
+    const stale = () => activeScreencast !== state || requestCount !== request;
     const { cssVisualViewport: view } = await session.send("Page.getLayoutMetrics");
-    if (view.clientWidth <= 0 || view.clientHeight <= 0) return;
-    if (activeScreencast !== state || requestedProfile !== "sharp") return;
+    if (view.clientWidth <= 0 || view.clientHeight <= 0 || stale()) return;
+    const measured = await withTimeout(state.pixelsPerClipScale, FINAL_FRAME_CAP_MS);
+    if (stale()) return;
+    const pixelsPerClipScale =
+      measured === TIMED_OUT || measured === null ? state.deviceScaleFactor : measured;
     const sharp = SCREENCAST_PROFILES.sharp;
-    // Chrome never scales a screencast frame up past the screen's own pixels.
-    const scale = Math.min(
+    // Output pixels per css pixel: Chrome never scales a screencast frame up past the screen's own
+    // pixels, and a sharp frame stays within its caps.
+    const wanted = Math.min(
       state.deviceScaleFactor,
       sharp.maxWidth / view.clientWidth,
       sharp.maxHeight / view.clientHeight,
@@ -371,13 +419,12 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
           y: view.pageY,
           width: view.clientWidth,
           height: view.clientHeight,
-          scale,
+          scale: wanted / pixelsPerClipScale,
         },
       }),
       FINAL_FRAME_CAP_MS,
     );
-    // A stopped screencast, or a profile asked for since, makes the picture stale.
-    if (shot === TIMED_OUT || activeScreencast !== state || requestedProfile !== "sharp") return;
+    if (shot === TIMED_OUT || stale()) return;
     state.deliver(Buffer.from(shot.data, "base64"), {
       width: view.clientWidth,
       height: view.clientHeight,
@@ -390,19 +437,23 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
     if (state === null || state.profile === profile) return;
     // A newer call asked for something else while this one waited its turn: that call does the work.
     if (requestedProfile !== profile) return;
+    const request = requestCount;
+    const newer = requestSignal.promise;
     const wasStopped = state.profile === "stopped";
     state.profile = profile;
     // Gives up when the screencast was stopped for good, or another profile was asked for while an
     // await ran. Chrome is then stopped, and the newer call (queued behind this one) starts it.
     const superseded = () => {
-      if (activeScreencast === state && requestedProfile === profile) return false;
+      if (activeScreencast === state && requestCount === request) return false;
       if (activeScreencast === state) state.profile = "stopped";
       return true;
     };
     if (!wasStopped) await state.session.send("Page.stopScreencast").catch(() => {});
     if (superseded()) return;
     if (profile === "sharp") {
-      await sendFinalFrame(state).catch(() => {});
+      // Not waited on once a newer profile is asked for: the screenshot finishes in Chrome on its
+      // own and is dropped, and the rough screencast starts at once.
+      await Promise.race([sendFinalFrame(state, request).catch(() => {}), newer]);
       if (superseded()) return;
     }
     await state.session.send("Page.startScreencast", screencastOptions(profile)).catch(() => {});
@@ -415,6 +466,9 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
     goto: async (url, options) => {
       await cdp();
       await page.goto(url, { waitUntil: options.waitUntil, timeout: options.timeoutMs });
+    },
+    waitForLoadState: async (state, timeoutMs) => {
+      await page.waitForLoadState(state, { timeout: timeoutMs });
     },
     goBack: async () => {
       await page.goBack({ waitUntil: "commit" });
@@ -587,19 +641,29 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
         profile: "sharp",
         deviceScaleFactor,
         deliver: (jpeg, meta) => deliver(jpeg, meta, () => {}),
+        pixelsPerClipScale: Promise.resolve(null),
       };
       activeScreencast = state;
       requestedProfile = "sharp";
+      noteRequestChange();
       session.on("Page.screencastFrame", listener);
       await session.send("Page.startScreencast", screencastOptions("sharp"));
+      // Off the path of any frame: read now, used by the first sharp frame that follows a scroll.
+      state.pixelsPerClipScale = measurePixelsPerClipScale(session).catch(() => null);
       return async () => {
-        if (activeScreencast === state) activeScreencast = null;
+        if (activeScreencast === state) {
+          activeScreencast = null;
+          noteRequestChange();
+        }
         session.off("Page.screencastFrame", listener);
         await session.send("Page.stopScreencast").catch(() => {});
       };
     },
     setScreencastProfile: (profile) => {
-      requestedProfile = profile;
+      if (profile !== requestedProfile) {
+        requestedProfile = profile;
+        noteRequestChange();
+      }
       const run = screencastChain.then(() => switchScreencastProfile(profile));
       screencastChain = run.catch(() => undefined);
       return run;

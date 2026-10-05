@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { makePlaywrightDriver, SCREENCAST_PROFILES } from "./driver.ts";
+import { jpegSize } from "./jpegSize.ts";
 
 const fake = vi.hoisted(() => {
   const listeners = new Map<string, (event: unknown) => void>();
@@ -38,6 +39,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   fake.listeners.clear();
   fake.send.mockImplementation(async () => ({}));
+  fake.page.evaluate.mockImplementation(async () => 2);
 });
 
 const launch = () =>
@@ -54,25 +56,98 @@ const calls = (method: string) =>
   fake.send.mock.calls.filter(([name]) => name === method).map(([, params]) => params);
 const order = () => fake.send.mock.calls.map(([name]) => name);
 
-/** Chrome answers the two calls a final frame needs; the rest return {} as before. */
+/** The smallest JPEG header that carries a size: start of image, one start-of-frame, end of image. */
+const jpegOf = (width: number, height: number) =>
+  Buffer.from([
+    0xff,
+    0xd8,
+    0xff,
+    0xc0,
+    0x00,
+    0x11,
+    0x08,
+    height >> 8,
+    height & 0xff,
+    width >> 8,
+    width & 0xff,
+    0x03,
+    0x01,
+    0x11,
+    0x00,
+    0x02,
+    0x11,
+    0x00,
+    0x03,
+    0x11,
+    0x00,
+    0xff,
+    0xd9,
+  ]);
+interface ShotParams {
+  readonly quality: number;
+  readonly clip: { width: number; height: number; scale: number };
+}
+/**
+ * Chrome as the final frame meets it: the layout it reports, and a screenshot whose pixels are the
+ * clip's css size times its scale times `pixelsPerClipScale`: 2 for the phone's device-metrics
+ * override, which multiplies a clip's scale by the device scale, 1 for a window that has none.
+ * `shot` replaces the answer for the full-size screenshot; the 16 px measurement is always answered.
+ */
 const answerChrome = (
-  shot: () => Promise<unknown> = async () => ({ data: "eA==" }),
+  shot?: (params: ShotParams) => Promise<unknown>,
   layout: unknown = view,
+  pixelsPerClipScale = 2,
 ) => {
-  fake.send.mockImplementation(async (method: string) => {
+  const simulated = async (params: ShotParams) => ({
+    data: jpegOf(
+      Math.round(params.clip.width * params.clip.scale * pixelsPerClipScale),
+      Math.round(params.clip.height * params.clip.scale * pixelsPerClipScale),
+    ).toString("base64"),
+  });
+  fake.send.mockImplementation(async (method: string, params?: unknown) => {
     if (method === "Page.getLayoutMetrics") return { cssVisualViewport: layout };
-    if (method === "Page.captureScreenshot") return shot();
+    if (method === "Page.captureScreenshot") {
+      const request = params as ShotParams;
+      return request.quality === 20 || shot === undefined ? simulated(request) : shot(request);
+    }
     return {};
   });
+};
+/** Screenshots that stay open until the test answers them, oldest first. */
+const heldShots = () => {
+  const open: Array<() => void> = [];
+  const answer = (index: number) => open[index]?.();
+  return {
+    shot: (params: ShotParams) =>
+      new Promise((resolve) => {
+        open.push(() =>
+          resolve({
+            data: jpegOf(
+              Math.round(params.clip.width * params.clip.scale * 2),
+              Math.round(params.clip.height * params.clip.scale * 2),
+            ).toString("base64"),
+          }),
+        );
+      }),
+    count: () => open.length,
+    answer,
+  };
+};
+const flush = async () => {
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
 };
 
 const started = async (onFrame = vi.fn()) => {
   const context = await launch();
   const page = context.pages()[0]!;
   const stop = await page.startScreencast(onFrame);
+  // The size measurement that follows a start runs off to the side; let it finish first.
+  await flush();
   fake.send.mockClear();
   return { page, onFrame, stop };
 };
+const frameSize = (onFrame: ReturnType<typeof vi.fn>) =>
+  jpegSize(onFrame.mock.calls[0]![0] as Uint8Array);
 
 describe("screencast profiles (adaptive JPEG)", () => {
   it("starts sharp: quality 60, 780 px wide", async () => {
@@ -132,18 +207,18 @@ describe("screencast profiles (adaptive JPEG)", () => {
       "Page.captureScreenshot",
       "Page.startScreencast",
     ]);
-    // The part of the document the screen shows, at the size a sharp screencast frame has:
-    // 390 x 760 css px at 2x is 780 x 1520, inside both caps.
+    // The part of the document the screen shows. 390 x 760 css px at 2x is 780 x 1520 pixels, inside
+    // both caps; Chrome doubles a clip's scale under the phone's override, so the scale asked for is 1.
     expect(calls("Page.captureScreenshot")).toEqual([
       {
         format: "jpeg",
         quality: 60,
         optimizeForSpeed: true,
-        clip: { x: 0, y: 4_000, width: 390, height: 760, scale: 2 },
+        clip: { x: 0, y: 4_000, width: 390, height: 760, scale: 1 },
       },
     ]);
     expect(onFrame).toHaveBeenCalledTimes(1);
-    expect(onFrame.mock.calls[0]![0]).toEqual(Buffer.from("eA==", "base64"));
+    expect(frameSize(onFrame)).toEqual({ width: 780, height: 1_520 });
     // Tap mapping: the frame carries the page's css size and device scale, as a screencast frame does.
     expect(onFrame.mock.calls[0]![1]).toEqual({ width: 390, height: 760, deviceScaleFactor: 2 });
     expect(calls("Page.startScreencast")).toEqual([
@@ -151,19 +226,69 @@ describe("screencast profiles (adaptive JPEG)", () => {
     ]);
   });
 
-  it("scales the final frame down to the sharp caps, like Chrome does for a wide screen", async () => {
-    answerChrome(async () => ({ data: "eA==" }), {
-      pageX: 0,
-      pageY: 0,
-      clientWidth: 1_280,
-      clientHeight: 720,
+  it("measures how Chrome scales a clip once, when the screencast starts, not at the sharp frame", async () => {
+    answerChrome();
+    const context = await launch();
+    await context.pages()[0]!.startScreencast(vi.fn());
+    await flush();
+    expect(calls("Page.captureScreenshot")).toEqual([
+      {
+        format: "jpeg",
+        quality: 20,
+        clip: { x: 0, y: 4_000, width: 16, height: 16, scale: 1 },
+      },
+    ]);
+  });
+
+  describe("the final frame never goes past the sharp caps, wherever the device scale comes from", () => {
+    // [device scale, pixels per clip scale at 1, css width, css height, expected width x height]
+    it.each([
+      ["the phone's override at 2x", 2, 2, 390, 760, 780, 1_520],
+      ["the phone's override at 3x", 3, 3, 390, 844, 780, 1_688],
+      ["a context's own 2x, which a clip does not multiply", 2, 1, 390, 760, 780, 1_520],
+      ["a 1x screen", 1, 1, 390, 760, 390, 760],
+      ["a wide desktop window at 1.25x", 1.25, 1.25, 1_280, 720, 780, 439],
+      ["a wide desktop window at 1.25x, nothing multiplying", 1.25, 1, 1_280, 720, 780, 439],
+      ["a tall narrow window at 2x", 2, 2, 300, 1_400, 362, 1_690],
+    ])("%s", async (_name, dpr, perScale, width, height, expectedWidth, expectedHeight) => {
+      fake.page.evaluate.mockImplementation(async () => dpr);
+      answerChrome(
+        undefined,
+        { pageX: 0, pageY: 0, clientWidth: width, clientHeight: height },
+        perScale,
+      );
+      const { page, onFrame } = await started();
+      await page.setScreencastProfile!("moving");
+      await page.setScreencastProfile!("sharp");
+      const size = frameSize(onFrame)!;
+      expect(size.width).toBeLessThanOrEqual(SCREENCAST_PROFILES.sharp.maxWidth);
+      expect(size.height).toBeLessThanOrEqual(SCREENCAST_PROFILES.sharp.maxHeight);
+      expect(Math.abs(size.width - expectedWidth)).toBeLessThanOrEqual(1);
+      expect(Math.abs(size.height - expectedHeight)).toBeLessThanOrEqual(1);
     });
-    const { page } = await started();
+  });
+
+  it("assumes the device scale when the measurement fails", async () => {
+    let probes = 0;
+    fake.send.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "Page.getLayoutMetrics") return { cssVisualViewport: view };
+      if (method === "Page.captureScreenshot") {
+        if ((params as ShotParams).quality === 20) {
+          probes += 1;
+          throw new Error("Not attached to an active page");
+        }
+        return { data: jpegOf(780, 1_520).toString("base64") };
+      }
+      return {};
+    });
+    const { page, onFrame } = await started();
+    expect(probes).toBe(1);
     await page.setScreencastProfile!("moving");
     fake.send.mockClear();
     await page.setScreencastProfile!("sharp");
-    const [shot] = calls("Page.captureScreenshot") as Array<{ clip: { scale: number } }>;
-    expect(shot!.clip.scale).toBeCloseTo(780 / 1_280, 5);
+    const [shot] = calls("Page.captureScreenshot") as ShotParams[];
+    expect(shot!.clip.scale).toBe(1);
+    expect(onFrame).toHaveBeenCalledTimes(1);
   });
 
   it("resumes the sharp screencast even if the screenshot fails", async () => {
@@ -198,15 +323,15 @@ describe("screencast profiles (adaptive JPEG)", () => {
   });
 
   it("drops the final frame and the restart when the screencast was stopped meanwhile", async () => {
-    let finish: (value: unknown) => void = () => {};
-    answerChrome(() => new Promise((resolve) => (finish = resolve)));
+    const held = heldShots();
+    answerChrome(held.shot);
     const { page, onFrame, stop } = await started();
     await page.setScreencastProfile!("moving");
     fake.send.mockClear();
     const switching = page.setScreencastProfile!("sharp");
-    await vi.waitFor(() => expect(order()).toContain("Page.captureScreenshot"));
+    await vi.waitFor(() => expect(held.count()).toBe(1));
     await stop();
-    finish({ data: "eA==" });
+    held.answer(0);
     await switching;
     expect(onFrame).not.toHaveBeenCalled();
     expect(calls("Page.startScreencast")).toEqual([]);
@@ -246,22 +371,44 @@ describe("screencast profiles (adaptive JPEG)", () => {
   });
 
   describe("a scroll that resumes while the sharp frame is being taken", () => {
-    it("skips the stale screenshot frame and the sharp restart, and only starts rough", async () => {
-      let finish: (value: unknown) => void = () => {};
-      answerChrome(() => new Promise((resolve) => (finish = resolve)));
+    it("starts rough at once, without waiting for the screenshot, and never delivers it", async () => {
+      const held = heldShots();
+      answerChrome(held.shot);
       const { page, onFrame } = await started();
       await page.setScreencastProfile!("moving");
       fake.send.mockClear();
       const sharp = page.setScreencastProfile!("sharp");
-      await vi.waitFor(() => expect(order()).toContain("Page.captureScreenshot"));
-      // The finger is back on the screen while Chrome is still rendering the sharp frame.
+      await vi.waitFor(() => expect(held.count()).toBe(1));
+      // The finger is back on the screen while Chrome is still rendering the sharp frame: the
+      // screenshot is never answered here, and the rough screencast starts all the same.
       const rough = page.setScreencastProfile!("moving");
-      finish({ data: "eA==" });
+      await Promise.all([sharp, rough]);
+      expect(
+        (calls("Page.startScreencast") as Array<{ quality: number }>).map((c) => c.quality),
+      ).toEqual([38]);
+      expect(order().at(-1)).toBe("Page.startScreencast");
+      // One stop for the whole round trip: the rough start does not stop what is already stopped.
+      expect(order().filter((name) => name === "Page.stopScreencast")).toHaveLength(1);
+      // Chrome answers the old screenshot much later: the picture is from the old position.
+      held.answer(0);
+      await flush();
+      expect(onFrame).not.toHaveBeenCalled();
+    });
+
+    it("skips the stale screenshot frame and the sharp restart when it is answered first", async () => {
+      const held = heldShots();
+      answerChrome(held.shot);
+      const { page, onFrame } = await started();
+      await page.setScreencastProfile!("moving");
+      fake.send.mockClear();
+      const sharp = page.setScreencastProfile!("sharp");
+      await vi.waitFor(() => expect(held.count()).toBe(1));
+      const rough = page.setScreencastProfile!("moving");
+      held.answer(0);
       await Promise.all([sharp, rough]);
       expect(onFrame).not.toHaveBeenCalled();
       const starts = calls("Page.startScreencast") as Array<{ quality: number }>;
       expect(starts.map((start) => start.quality)).toEqual([38]);
-      // One stop for the whole round trip: the rough start does not stop what is already stopped.
       expect(order().filter((name) => name === "Page.stopScreencast")).toHaveLength(1);
       expect(order().at(-1)).toBe("Page.startScreencast");
     });
@@ -289,17 +436,20 @@ describe("screencast profiles (adaptive JPEG)", () => {
       ).toEqual([38]);
     });
 
-    it("still goes sharp when the scroll that interrupted it has already ended", async () => {
-      let finish: (value: unknown) => void = () => {};
-      answerChrome(() => new Promise((resolve) => (finish = resolve)));
+    it("goes sharp again with a fresh screenshot when the scroll that interrupted it has ended", async () => {
+      const held = heldShots();
+      answerChrome(held.shot);
       const { page, onFrame } = await started();
       await page.setScreencastProfile!("moving");
       fake.send.mockClear();
       const first = page.setScreencastProfile!("sharp");
-      await vi.waitFor(() => expect(order()).toContain("Page.captureScreenshot"));
+      await vi.waitFor(() => expect(held.count()).toBe(1));
       const rough = page.setScreencastProfile!("moving");
       const last = page.setScreencastProfile!("sharp");
-      finish({ data: "eA==" });
+      // The first screenshot is of where the page was before the short scroll: it must not be shown.
+      held.answer(0);
+      await vi.waitFor(() => expect(held.count()).toBe(2));
+      held.answer(1);
       await Promise.all([first, rough, last]);
       expect(onFrame).toHaveBeenCalledTimes(1);
       expect(

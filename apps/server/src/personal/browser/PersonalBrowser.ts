@@ -726,6 +726,8 @@ export const make = (options: PersonalBrowserOptions) =>
      * slow look is just skipped: this never changes what the navigation returns.
      */
     const BOT_CHECK_PROBE_MS = 1_000;
+    /** How long a replaced navigation that landed gets to finish loading before the bot is answered. */
+    const REPLACED_NAVIGATION_LOAD_CAP_MS = 3_000;
     const logBotCheckLanding = (tab: TabEntry) =>
       Effect.gen(function* () {
         if (!openPage(tab.page)) return;
@@ -739,6 +741,9 @@ export const make = (options: PersonalBrowserOptions) =>
           Effect.map((result) => (Option.isSome(result) ? result.value : null)),
           Effect.orElseSucceed(() => null),
         );
+        // The page may have moved on while it was being looked at (up to a second): the sample then
+        // describes another site than the one named, so it is dropped rather than logged under it.
+        if (!openPage(tab.page) || webOrigin(tab.page.url()) !== origin) return;
         const kind = classifyBotCheck(sample);
         if (kind !== null) yield* Effect.logInfo("browser landed on a bot check", { origin, kind });
       });
@@ -1584,6 +1589,17 @@ export const make = (options: PersonalBrowserOptions) =>
           webOrigin(page.url()) !== null &&
           page.url() !== before
         ) {
+          // The replacement has committed, not necessarily finished: give it the readiness the
+          // caller asked for, for a short while, so the bot's next step sees a page and not a
+          // half-loaded one. A page that is slow past the cap is still a page.
+          if (options.waitUntil !== "commit") {
+            await page
+              .waitForLoadState?.(
+                options.waitUntil,
+                Math.min(REPLACED_NAVIGATION_LOAD_CAP_MS, options.timeoutMs),
+              )
+              .catch(() => undefined);
+          }
           return;
         }
         throw cause;

@@ -6,9 +6,11 @@
  * A phone drag arrives as a run of wheel messages, many a second. One or two single notches
  * (a person nudging the page) are not motion and change nothing: motion starts at a wheel
  * that follows another within `enterWithinMs`, and ends `settleMs` after the last one. The
- * controller only tracks that and asks `apply` for a profile in order, one at a time (the
- * browser answers with a stop and a start, and, going back to sharp, one sharp frame of the
- * resting page). Kill switch: `T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=off`.
+ * controller only tracks that and tells `apply` each change of profile at the moment it happens
+ * (the browser answers with a stop and a start, and, going back to sharp, one sharp frame of the
+ * resting page). It does not wait for one switch before announcing the next: the browser keeps
+ * them in order itself, and a scroll that resumes while the sharp frame is still being taken must
+ * reach it at once so it can drop that frame. Kill switch: `T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=off`.
  */
 import type { ScreencastProfile } from "./driver.ts";
 
@@ -20,7 +22,10 @@ export const ADAPTIVE_JPEG_TIMING = {
 } as const;
 
 export interface MotionControllerOptions {
-  /** Asks for a profile; settles when the browser has switched. Never called twice at once. */
+  /**
+   * Asks for a profile; settles when the browser has switched. Called at every change, in order,
+   * without waiting for the one before: the browser applies them one at a time.
+   */
   readonly apply: (profile: ScreencastProfile) => Promise<void>;
   /** The profile wanted changed (not yet applied): for the telemetry. */
   readonly onChange?: (profile: ScreencastProfile) => void;
@@ -49,34 +54,15 @@ export function createMotionController(options: MotionControllerOptions): Motion
   const settleMs = options.settleMs ?? ADAPTIVE_JPEG_TIMING.settleMs;
 
   let wanted: ScreencastProfile = "sharp";
-  let applied: ScreencastProfile = "sharp";
-  let pumping = false;
   let lastWheelAt: number | null = null;
   let timer: unknown = null;
-  // Bumped by reset(): an apply that finishes after it describes a screencast that is gone.
-  let generation = 0;
-
-  const pump = async () => {
-    if (pumping) return;
-    pumping = true;
-    try {
-      while (applied !== wanted) {
-        const target = wanted;
-        const started = generation;
-        await options.apply(target).catch(() => undefined);
-        // After a reset both sides start over at sharp; do not overwrite that.
-        if (started === generation) applied = target;
-      }
-    } finally {
-      pumping = false;
-    }
-  };
 
   const want = (profile: ScreencastProfile) => {
     if (wanted === profile) return;
     wanted = profile;
     options.onChange?.(profile);
-    void pump();
+    // A switch that fails leaves the screencast as it was; the next change asks again.
+    void Promise.resolve(options.apply(profile)).catch(() => undefined);
   };
 
   const armSettle = (afterMs: number) => {
@@ -99,13 +85,11 @@ export function createMotionController(options: MotionControllerOptions): Motion
       if (wanted === "moving" && timer === null) armSettle(settleMs);
     },
     reset: () => {
-      generation += 1;
       if (timer !== null) clearTimer(timer);
       timer = null;
       lastWheelAt = null;
       const changed = wanted !== "sharp";
       wanted = "sharp";
-      applied = "sharp";
       if (changed) options.onChange?.("sharp");
     },
     profile: () => wanted,
