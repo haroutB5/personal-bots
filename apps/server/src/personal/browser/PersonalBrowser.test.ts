@@ -263,6 +263,8 @@ const makeFakeDriver = () => {
     adblock: null as { enabled: boolean; rules: number; requests: number; blocked: number } | null,
     /** Chrome exiting on its own: fires the context's close listener. */
     crash: () => {},
+    /** Like the real driver, `close()` then fires the close listener too. */
+    closeFiresListener: false,
   };
   const driver: BrowserDriver = {
     launch: async () => {
@@ -279,7 +281,9 @@ const makeFakeDriver = () => {
           state.crash = listener;
         },
         ...(state.adblock === null ? {} : { adblockStats: () => state.adblock! }),
-        close: async () => {},
+        close: async () => {
+          if (state.closeFiresListener) state.crash();
+        },
       };
     },
   };
@@ -2425,6 +2429,127 @@ describe("PersonalBrowser", () => {
         ),
       );
     });
+
+    const summaryLines = (logs: ReadonlyArray<string>) =>
+      logs.filter((entry) => entry.includes("ad blocking summary"));
+
+    it.effect("writes the ad blocking summary once when the browser is closed on purpose", () => {
+      const fake = makeFakeDriver();
+      fake.state.adblock = { enabled: true, rules: 255, requests: 40, blocked: 7 };
+      fake.state.closeFiresListener = true;
+      const { logs, run, withLogs } = captureLogs(() =>
+        Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(
+            request("navigate", { url: "https://shop.example/cart/secret-path?token=abc123" }),
+          );
+          yield* browser.closeBrowser({ sessionId: "session-1", byThreadId: null });
+          // The context's own close callback runs after the teardown: it must add nothing.
+          yield* until(() => false);
+          expect((yield* browser.status("session-1")).state).toBe("offline");
+        }),
+      );
+      return run.pipe(
+        Effect.provide(withLogs(makeLayer(fake.driver))),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const lines = summaryLines(logs);
+            expect(lines).toHaveLength(1);
+            expect(lines[0]).toMatch(/"rules":255/);
+            expect(lines[0]).toMatch(/"requests":40/);
+            expect(lines[0]).toMatch(/"blocked":7/);
+            expect(lines[0]).not.toMatch(/shop\.example|secret-path|token=/);
+          }),
+        ),
+      );
+    });
+
+    it.effect("writes the ad blocking summary when the browser closes itself after idling", () => {
+      const fake = makeFakeDriver();
+      fake.state.adblock = { enabled: true, rules: 255, requests: 40, blocked: 7 };
+      fake.state.closeFiresListener = true;
+      const { logs, run, withLogs } = captureLogs(() =>
+        Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(
+            request("navigate", { url: "https://shop.example/" }),
+          );
+          yield* TestClock.adjust("11 minutes");
+          expect((yield* browser.status("session-1")).state).toBe("offline");
+          yield* until(() => false);
+        }),
+      );
+      return run.pipe(
+        Effect.provide(withLogs(makeLayer(fake.driver))),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const lines = summaryLines(logs);
+            expect(lines).toHaveLength(1);
+            expect(lines[0]).toMatch(/"requests":40/);
+            expect(lines[0]).toMatch(/"blocked":7/);
+            expect(lines[0]).not.toMatch(/shop\.example/);
+          }),
+        ),
+      );
+    });
+
+    it.effect("writes one ad blocking summary per launch across a crash and a later close", () => {
+      const fake = makeFakeDriver();
+      fake.state.adblock = { enabled: true, rules: 255, requests: 40, blocked: 7 };
+      const { logs, run, withLogs } = captureLogs((seen) =>
+        Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(
+            request("navigate", { url: "https://shop.example/" }),
+          );
+          fake.state.crash();
+          yield* until(() => seen.some((entry) => entry.includes("ad blocking summary")));
+          // The next action relaunches; closing that one on purpose is its own summary.
+          yield* browser.handleAutomationRequest(
+            request("navigate", { url: "https://shop.example/two" }),
+          );
+          expect(fake.state.launches).toBe(2);
+          yield* browser.closeBrowser({ sessionId: "session-1", byThreadId: null });
+        }),
+      );
+      return run.pipe(
+        Effect.provide(withLogs(makeLayer(fake.driver))),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            expect(logs.filter((entry) => entry.includes("ad blocking is on"))).toHaveLength(2);
+            expect(summaryLines(logs)).toHaveLength(2);
+          }),
+        ),
+      );
+    });
+
+    it.effect(
+      "writes no ad blocking summary on a deliberate close when the kill switch is on",
+      () => {
+        const fake = makeFakeDriver();
+        fake.state.adblock = { enabled: false, rules: 0, requests: 12, blocked: 0 };
+        fake.state.closeFiresListener = true;
+        const { logs, run, withLogs } = captureLogs(() =>
+          Effect.gen(function* () {
+            const browser = yield* PersonalBrowser.PersonalBrowser;
+            yield* browser.handleAutomationRequest(
+              request("navigate", { url: "https://shop.example/" }),
+            );
+            yield* browser.closeBrowser({ sessionId: "session-1", byThreadId: null });
+            yield* until(() => false);
+          }),
+        );
+        return run.pipe(
+          Effect.provide(withLogs(makeLayer(fake.driver))),
+          Effect.tap(() =>
+            Effect.sync(() => {
+              expect(summaryLines(logs)).toHaveLength(0);
+              expect(logs.filter((entry) => entry.includes("ad blocking is off"))).toHaveLength(1);
+            }),
+          ),
+        );
+      },
+    );
 
     it.effect("says ad blocking is off, and writes no summary, when the kill switch is on", () => {
       const fake = makeFakeDriver();

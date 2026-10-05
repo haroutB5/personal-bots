@@ -1245,19 +1245,28 @@ export const make = (options: PersonalBrowserOptions) =>
       }),
     );
 
+    // Every way a context ends (Chrome exiting, the deliberate teardown, the
+    // server shutting down) reports it; the set keeps that to one line each.
+    const summarisedContexts = new WeakSet<BrowserContextHandle>();
+    /** One line per launch: counts only, never a URL. */
+    const logAdblockSummary = (context: BrowserContextHandle | null) =>
+      Effect.gen(function* () {
+        if (context === null || summarisedContexts.has(context)) return;
+        const adblock = context.adblockStats?.();
+        if (adblock?.enabled !== true) return;
+        summarisedContexts.add(context);
+        yield* Effect.logInfo("browser ad blocking summary", {
+          rules: adblock.rules,
+          requests: adblock.requests,
+          blocked: adblock.blocked,
+        });
+      });
+
     const onContextClosed = (serial: number) =>
       Effect.gen(function* () {
         if (serial !== runtime.contextSerial) return;
         const tabs = [...runtime.tabs.values()];
-        // One line per launch: counts only, never a URL.
-        const adblock = runtime.context?.adblockStats?.();
-        if (adblock?.enabled === true) {
-          yield* Effect.logInfo("browser ad blocking summary", {
-            rules: adblock.rules,
-            requests: adblock.requests,
-            blocked: adblock.blocked,
-          });
-        }
+        yield* logAdblockSummary(runtime.context);
         runtime.context = null;
         runtime.tabs.clear();
         runtime.activeTabId = null;
@@ -1351,9 +1360,13 @@ export const make = (options: PersonalBrowserOptions) =>
     );
 
     yield* Effect.addFinalizer(() =>
-      Effect.promise(async () => {
+      Effect.gen(function* () {
         runtime.closing = true;
-        await runtime.context?.close().catch(() => undefined);
+        const context = runtime.context;
+        yield* logAdblockSummary(context);
+        yield* Effect.promise(async () => {
+          await context?.close().catch(() => undefined);
+        });
       }),
     );
 
@@ -2540,6 +2553,9 @@ export const make = (options: PersonalBrowserOptions) =>
             yield* Effect.promise(() => stop().catch(() => undefined));
           }
           if (context !== null) {
+            // The serial bump above silences the context's own close callback,
+            // so this is the one place a deliberate close reports its counts.
+            yield* logAdblockSummary(context);
             yield* Effect.promise(() => context.close().catch(() => undefined));
           }
           runtime.context = null;
