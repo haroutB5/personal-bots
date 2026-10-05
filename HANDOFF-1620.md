@@ -41,4 +41,8 @@ Set `T3CODE_PERSONAL_BROWSER_ADBLOCK=off` and idle-restart, or run the previous 
 
 ## Release
 
-Staged release `0c70b57618e9` (built from commit `0c70b57618`, `-NoActivate -CopyExternals`; `current.txt` still `e4bd87aef95a`). The follow-up commit after it only adds the two log tests and this note.
+Staged release `8967e49e39db` (built from commit `8967e49e39`, `-NoActivate -CopyExternals`, with the repo `.env` copied into the worktree so the T3 Connect public config is baked in; `current.txt` still `e4bd87aef95a`). It supersedes `0c70b57618e9`, which had no summary on a normal close and was built without `.env` (do not ship that one).
+
+**1.62.0 fix (QA NO-SHIP):** the `browser ad blocking summary` line is now written exactly once per context on every close path: Chrome exiting, `teardownBrowser` (Computer > Close, a bot's close, the 10-minute idle close) before `context.close()`, and the server-shutdown finalizer. A WeakSet of summarised contexts prevents a second line. Tests (PersonalBrowser.test.ts): explicit close, idle close, crash then a later close (one summary per launch), kill switch on (no summary); the first three fail on the old code.
+
+**Verified on the staged release, throwaway root, fake Claude CLI:** explicit close = 1 summary `{ rules: 255, requests: 3, blocked: 2 }`; relaunch then idle close after 11 min = 2nd summary; relaunch then Chrome killed = 3rd, no doubles; kill switch off = "is off" once, no summary; no URL in any line, 0 ERROR, no Chrome left. Evidence: `C:/Users/Ht/.personal-bots/qa/backend-adblock/verify1620b/` (verify.mjs, run-on.out, run-off.out, server-on.log, server-off.log, results-*.json).
