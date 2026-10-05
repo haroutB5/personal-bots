@@ -227,6 +227,43 @@ describe("ContextUsedView", () => {
     expect(text).toContain("A rule is not marked here");
   });
 
+  it("shows no raw ** markdown in left-out rows, notes or rules", () => {
+    const base = context();
+    const text = flat(
+      render({
+        ...base,
+        rules: {
+          ...base.rules,
+          items: [
+            { memoryId: "r1" as never, content: "Use **plain words**.", apps: null, current: true },
+          ],
+          leftOut: [
+            {
+              memoryId: "r9" as never,
+              content: "An **old** Matchday rule.",
+              apps: ["matchday"],
+              current: true,
+            },
+          ],
+        },
+        notes: [{ ...base.notes[0]!, snippet: "Dots were **redesigned** today." }],
+        leftOut: [
+          {
+            memoryId: "n3" as never,
+            kind: "task_summary",
+            snippet: 'Task "Ship": **Rules: use the new one and\n- **Ru...',
+            reason: "matched less than the best entries",
+          },
+        ],
+      } as never).toJSON(),
+    );
+    expect(text).not.toContain("**");
+    expect(text).toContain("Use plain words.");
+    expect(text).toContain("An old Matchday rule.");
+    expect(text).toContain("Dots were redesigned today.");
+    expect(text).toContain("Rules: use the new one and");
+  });
+
   it("a note picked on its words alone says so", () => {
     const base = context();
     const text = flat(

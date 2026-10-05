@@ -92,7 +92,9 @@ export function ContextUsedView({
                   key={rule.memoryId}
                   className="border-l-2 border-[var(--personal-border)] pl-2 text-[13px] leading-snug break-words text-[var(--personal-text)]"
                 >
-                  {rule.current ? rule.content : "(replaced or forgotten since this turn)"}
+                  {rule.current
+                    ? plainMemoryText(rule.content)
+                    : "(replaced or forgotten since this turn)"}
                   {rule.apps !== null && rule.apps.length > 0 ? (
                     <span className="mt-0.5 block text-[12px] text-[var(--personal-text-tertiary)]">
                       Only: {appsLabel(rule.apps)}
@@ -120,7 +122,7 @@ export function ContextUsedView({
                   key={rule.memoryId}
                   className="border-l-2 border-[var(--personal-border)] pl-2 text-[13px] leading-snug break-words text-[var(--personal-text-secondary)]"
                 >
-                  {rule.content}
+                  {plainMemoryText(rule.content)}
                 </li>
               ))}
             </ul>
@@ -208,7 +210,9 @@ export function ContextUsedView({
                 key={entry.memoryId}
                 className="text-[13px] leading-snug break-words text-[var(--personal-text-secondary)]"
               >
-                <span className="text-[var(--personal-text)]">{entry.snippet}</span>
+                <span className="text-[var(--personal-text)]">
+                  {plainMemoryText(entry.snippet)}
+                </span>
                 <span className="block text-[12px] text-[var(--personal-text-tertiary)]">
                   {noteKindLabel(entry.kind)} · {entry.reason}
                 </span>
