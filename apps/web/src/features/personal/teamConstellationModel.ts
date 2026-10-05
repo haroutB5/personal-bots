@@ -362,6 +362,12 @@ export function layoutCollisions(layout: ConstellationLayout): number {
   return clashes;
 }
 
+/** A spoke never starts farther from the hub's centre than this. */
+const HUB_SPOKE_MAX_START = 130;
+
+const containsPoint = (entry: Box, x: number, y: number, gap: number): boolean =>
+  x > entry.x0 - gap && x < entry.x1 + gap && y > entry.y0 - gap && y < entry.y1 + gap;
+
 /** Where a spoke runs: from just outside the hub to just short of the node's avatar. */
 export function spokeLine(
   hub: { readonly x: number; readonly y: number },
@@ -373,8 +379,20 @@ export function spokeLine(
   if (distance < 90) return null;
   const ux = dx / distance;
   const uy = dy / distance;
-  // Downwards the line has to clear the name pill under the disc as well.
-  const start = 42 + 14 * Math.max(0, uy);
+  // Leaves the hub at its ring, but a line heading down or diagonally down would start behind the
+  // name pill and the model label under the disc ("CTO Lead", "Sonnet 5.5"), so it starts only
+  // where it is clear of every one of them.
+  const around = hubBoxes(hub.x, hub.y);
+  // A ray can leave the disc and then run through the pill, so the start is after the last
+  // point of the ray that is inside any of them, not the first point outside.
+  let start = 42;
+  for (let travelled = 42; travelled <= HUB_SPOKE_MAX_START; travelled += 1) {
+    const x = hub.x + ux * travelled;
+    const y = hub.y + uy * travelled;
+    if (around.some((entry) => containsPoint(entry, x, y, 3))) start = travelled + 1;
+  }
+  // Nothing left between the hub's own labels and the avatar: no line, the count shows on the node.
+  if (distance - 25 - start < 12) return null;
   return {
     x1: hub.x + ux * start,
     y1: hub.y + uy * start,

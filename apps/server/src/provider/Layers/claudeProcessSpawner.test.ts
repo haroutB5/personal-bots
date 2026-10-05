@@ -85,3 +85,54 @@ describe.skipIf(NodeOS.platform() !== "win32")("makeRecordingClaudeSpawner real 
     assert.strictEqual(await runAndRead("normal"), expected);
   });
 });
+
+describe("makeRecordingClaudeSpawner exits", () => {
+  const exitsLater = (signal: AbortSignal, code: number) => ({
+    ...spawnOptions(signal),
+    args: ["-e", `setTimeout(() => process.exit(${code}), 150)`],
+  });
+
+  it("reports an exit nobody asked for as not requested", async () => {
+    const handle = makeClaudeProcessHandle();
+    const details: Array<{ requested: boolean; code: number | null }> = [];
+    const spawned = makeRecordingClaudeSpawner(
+      handle,
+      (detail) => details.push({ requested: detail.requested, code: detail.code }),
+      () => undefined,
+    )(exitsLater(new AbortController().signal, 3));
+    await waitForExit(spawned);
+    assert.deepEqual(details, [{ requested: false, code: 3 }]);
+  });
+
+  it("reports the exit that follows a stop the session asked for as requested", async () => {
+    // An archived chat ends its CLI through the SDK, which is not an abort of the spawn signal.
+    const handle = makeClaudeProcessHandle();
+    const details: Array<{ requested: boolean; code: number | null }> = [];
+    const spawned = makeRecordingClaudeSpawner(
+      handle,
+      (detail) => details.push({ requested: detail.requested, code: detail.code }),
+      () => undefined,
+    )(exitsLater(new AbortController().signal, 1));
+    handle.stopRequested = true;
+    await waitForExit(spawned);
+    assert.deepEqual(details, [{ requested: true, code: 1 }]);
+  });
+
+  it("a clean exit and an abort say nothing; a resumed session starts unrequested again", async () => {
+    const handle = makeClaudeProcessHandle();
+    const details: Array<boolean> = [];
+    const spawn = makeRecordingClaudeSpawner(
+      handle,
+      (detail) => details.push(detail.requested),
+      () => undefined,
+    );
+    const clean = spawn(exitsLater(new AbortController().signal, 0));
+    handle.stopRequested = true;
+    await waitForExit(clean);
+    assert.deepEqual(details, []);
+    const next = spawn(exitsLater(new AbortController().signal, 2));
+    assert.isFalse(handle.stopRequested);
+    await waitForExit(next);
+    assert.deepEqual(details, [false]);
+  });
+});

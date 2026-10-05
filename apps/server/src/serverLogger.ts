@@ -7,6 +7,7 @@ import * as OtlpExporter from "effect/unstable/observability/OtlpExporter";
 import * as OtlpLogger from "effect/unstable/observability/OtlpLogger";
 
 import { otlpResource, ServerConfig } from "./config.ts";
+import { downgradeExpectedRefusals } from "./expectedToolRefusals.ts";
 
 export const ServerLoggerLive = Effect.gen(function* () {
   const config = yield* ServerConfig;
@@ -36,9 +37,10 @@ export const ServerLoggerLive = Effect.gen(function* () {
   // in favor of the log-based events this logger emits:
   // https://opentelemetry.io/blog/2026/deprecating-span-events/
   const loggerLayer = Logger.layer(
+    // A bot tool's refusal is an answer, not a fault: it is logged at INFO (expectedToolRefusals.ts).
     otlpLogger === undefined
-      ? [Logger.consolePretty(), Logger.tracerLogger]
-      : [Logger.consolePretty(), otlpLogger],
+      ? [downgradeExpectedRefusals(Logger.consolePretty()), Logger.tracerLogger]
+      : [downgradeExpectedRefusals(Logger.consolePretty()), otlpLogger],
     { mergeWithExisting: false },
   ).pipe(
     Layer.provide(OtlpExporter.layerFlusher),

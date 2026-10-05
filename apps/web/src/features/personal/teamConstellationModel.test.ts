@@ -19,6 +19,7 @@ import {
   planDrop,
   replacedLead,
   spokeIsClear,
+  hubBoxes,
   spokeLine,
   spokeWidth,
   teamMoveTargets,
@@ -135,6 +136,49 @@ describe("spokes", () => {
     // Every spoke leaves the same centre, so two only ever meet at the hub.
     const angles = lines.map((line) => Math.atan2(line!.y2 - line!.y1, line!.x2 - line!.x1));
     expect(new Set(angles.map((angle) => angle.toFixed(3))).size).toBe(4);
+  });
+
+  it("never starts behind the lead's name pill or model label, whichever way it points", () => {
+    const hub = { x: 195, y: 150 };
+    let drawn = 0;
+    for (const radius of [110, 140, 170]) {
+      for (let degrees = 0; degrees < 360; degrees += 5) {
+        const radians = (degrees * Math.PI) / 180;
+        const slot = {
+          x: hub.x + Math.cos(radians) * radius,
+          y: hub.y + Math.sin(radians) * radius,
+        };
+        const line = spokeLine(hub, slot);
+        if (line === null) continue;
+        drawn += 1;
+        // Every point along the first stretch of the line stays out of the disc, pill and label boxes.
+        for (let offset = 0; offset <= 10; offset += 1) {
+          const length = Math.hypot(line.x2 - line.x1, line.y2 - line.y1);
+          const x = line.x1 + ((line.x2 - line.x1) * offset) / length;
+          const y = line.y1 + ((line.y2 - line.y1) * offset) / length;
+          for (const entry of hubBoxes(hub.x, hub.y)) {
+            const inside =
+              x > entry.x0 - 2 && x < entry.x1 + 2 && y > entry.y0 - 2 && y < entry.y1 + 2;
+            expect(inside, `${degrees}° at ${radius}: (${x.toFixed(0)}, ${y.toFixed(0)})`).toBe(
+              false,
+            );
+          }
+        }
+        // And it still ends short of the avatar, after it started.
+        expect(Math.hypot(line.x2 - hub.x, line.y2 - hub.y)).toBeGreaterThan(
+          Math.hypot(line.x1 - hub.x, line.y1 - hub.y),
+        );
+      }
+    }
+    expect(drawn).toBeGreaterThan(100);
+  });
+
+  it("starts at the ring when it points sideways or up, where nothing is in the way", () => {
+    const hub = { x: 195, y: 150 };
+    const sideways = spokeLine(hub, { x: 335, y: 150 });
+    expect(sideways!.x1 - hub.x).toBeCloseTo(42, 0);
+    const up = spokeLine(hub, { x: 195, y: 10 });
+    expect(hub.y - up!.y1).toBeCloseTo(42, 0);
   });
 
   it("draws every spoke on a small team, and only the clear ones on a crowded card", () => {

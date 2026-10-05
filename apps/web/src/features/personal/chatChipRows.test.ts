@@ -3,6 +3,7 @@ import type { PersonalBotThread, PersonalTask } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
+import { botThreadRows } from "./botThreadRows";
 import {
   buildChatChips,
   chatChipState,
@@ -104,7 +105,8 @@ describe("chat chip list: which chats get a chip", () => {
       current: "owner",
     });
     expect(model.chips.map((chip) => chip.threadId)).toEqual(["owner", "owner-2"]);
-    expect(model.openCount).toBe(2);
+    // No chip for the task chat, but "All N" counts it: it is a row in the list the chip opens.
+    expect(model.openCount).toBe(3);
   });
 
   it("still counts a task chat made in the same instant (within the 5 s slack)", () => {
@@ -209,8 +211,8 @@ describe("chat chip list: the temporary chip", () => {
       label: "Task: Weight chart fix, current chat",
     });
     expect(model.chips.slice(1).map((chip) => chip.threadId)).toEqual(["old", "a", "b"]);
-    // "All N" counts the owner's chats, not the temporary chip.
-    expect(model.openCount).toBe(3);
+    // "All N" counts every open chat with the bot (the task chat too), like the menu and the list.
+    expect(model.openCount).toBe(4);
     expect(model.visible).toBe(true);
   });
 
@@ -412,5 +414,26 @@ describe("chat chip turn key", () => {
     });
     expect(otherDone.turnsKey).not.toBe(first.turnsKey);
     expect(ownDone.turnsKey).toBe(first.turnsKey);
+  });
+});
+
+describe('the "All N" chip and the chat options menu (1.60.45)', () => {
+  it('counts the same open chats as the menu\'s "All chats N open" and the chat list', () => {
+    // Scout-like: some chats the owner made, delegated task chats and routine runs.
+    const owner = Array.from({ length: 4 }, (_, index) => link(`own-${index}`, 10 + index));
+    const taskChats = Array.from({ length: 6 }, (_, index) => link(`task-${index}`, 30 + index));
+    const archived = [link("old", 5, { archivedAt: at(50) })];
+    const links = [...owner, ...taskChats, ...archived];
+    const tasks = taskChats.map((entry, index) =>
+      task(`t${index}`, entry.threadId as string, 29 + index),
+    );
+    const shells = links.map((entry) => shell(entry.threadId as string));
+    const model = build({ links, shells, tasks, current: "own-0" });
+    // What AllChatsCount shows beside "All chats" is the length of this list.
+    const menuOpen = botThreadRows(BOT, links, shells, new Set()).active.length;
+    expect(menuOpen).toBe(10);
+    expect(model.openCount).toBe(menuOpen);
+    // The strip lists only the owner's chats; the number is of everything the chip opens.
+    expect(model.chips).toHaveLength(4);
   });
 });

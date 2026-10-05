@@ -146,7 +146,9 @@ export function ChatChips({
     <nav
       aria-label={`Chats with ${botName}`}
       data-testid="chat-chips"
-      className="relative z-[1] -mb-[3px] h-11 min-w-0 shrink-0"
+      // On a phone the strip runs on under the "..." button (which only fills the first row), so
+      // the 56 px of that column are chip room and "All" is not cut off at the end.
+      className="relative z-[1] -mr-14 -mb-[3px] h-11 min-w-0 shrink-0 md:mr-0"
     >
       <div
         ref={rowRef}

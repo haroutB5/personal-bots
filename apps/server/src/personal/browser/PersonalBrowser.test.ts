@@ -1513,10 +1513,10 @@ describe("PersonalBrowser", () => {
         yield* TestClock.adjust("50 seconds");
         expect((yield* lease.view).ownerType).toBe("human");
         // ...and the bot is refused until then.
-        const refused = yield* Effect.flip(
-          browser.handleAutomationRequest(request("navigate", { url: "example.org" })),
-        );
-        expect(String(refused.message)).toContain("taken control");
+        const refused = yield* browser
+          .handleAutomationRequest(request("navigate", { url: "example.org" }))
+          .pipe(Effect.asVoid, Effect.flip);
+        expect(refused.message).toContain("taken control");
 
         yield* TestClock.adjust("20 seconds");
         const view = yield* lease.view;

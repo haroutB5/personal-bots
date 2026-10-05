@@ -31,16 +31,26 @@ describe("ConversationSubtitle", () => {
     expect(text.indexOf("Working")).toBeLessThan(text.indexOf("Opus 5.5 · H"));
   });
 
-  it("keeps the status from shrinking and lets only the model label truncate", () => {
+  it("clips the model label whole instead of cutting it, and ellipsises a status that is too long (1.60.45)", () => {
     const renderer = render({
       state: "delegating",
       status: "Waiting on Planner",
       modelLabel: "Sonnet 5.5 · H",
     });
-    expect(classOf(renderer, "Waiting on Planner")).toContain("shrink-0");
+    // One row tall, wrapping: a model label that does not fit beside the status drops to a
+    // second row and is clipped away, so no "Sonnet 5.…" is ever drawn.
+    const line = renderer.root.find((node) => node.props["data-testid"] === "chat-status-line");
+    const lineClass = String(line.props.className);
+    expect(lineClass).toContain("flex-wrap");
+    expect(lineClass).toContain("overflow-hidden");
+    expect(lineClass).toContain("h-[18px]");
     const label = renderer.root.find((node) => node.props["data-testid"] === "chat-model-label");
-    expect(String(label.props.className)).toContain("truncate");
-    expect(String(label.props.className)).toContain("min-w-0");
+    expect(String(label.props.className)).toContain("shrink-0");
+    expect(String(label.props.className)).toContain("whitespace-nowrap");
+    expect(String(label.props.className)).not.toContain("truncate");
+    // A status wider than the line ends in an ellipsis rather than being cut off.
+    expect(classOf(renderer, "Waiting on Planner")).toContain("truncate");
+    expect(classOf(renderer, "Waiting on Planner")).toContain("max-w-full");
   });
 
   it("omits the separator when the bot has no model", () => {

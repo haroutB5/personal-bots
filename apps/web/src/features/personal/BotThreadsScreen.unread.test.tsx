@@ -149,7 +149,7 @@ function dottedThreads(): string[] {
     .map((link) => JSON.parse(link.props["data-params"] as string).threadId as string);
 }
 
-it("a team lead's unread chats carry a dot; read and archived ones do not", async () => {
+it("an unread chat carries a dot; read and archived ones do not", async () => {
   await act(async () => {
     renderer = create(<BotThreadsScreen botId="bot-a" />);
   });
@@ -158,12 +158,13 @@ it("a team lead's unread chats carry a dot; read and archived ones do not", asyn
   expect(JSON.stringify(renderer!.toJSON())).toContain(", unread");
 });
 
-it("a bot that is not a lead shows no dots", async () => {
+it("a bot that is not a lead shows the same dots the chat chips mark unread (1.60.45)", async () => {
   state.lead = false;
   await act(async () => {
     renderer = create(<BotThreadsScreen botId="bot-a" />);
   });
-  expect(dottedThreads()).toEqual([]);
+  expect(dottedThreads()).toEqual(["thread-open"]);
+  expect(JSON.stringify(renderer!.toJSON())).toContain(", unread");
 });
 
 it("the dot clears once the chat has been opened on this device, without a refetch", async () => {

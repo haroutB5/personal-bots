@@ -210,7 +210,10 @@ export function buildChatChips(input: {
     .join("|");
   return {
     chips,
-    openCount: owner.length,
+    // The same number as "All chats N open" in the chat options menu and the rows of the bot's chat
+    // list: every open chat with this bot, task and routine chats included (the strip itself only
+    // lists the owner's chats). One definition, so the chip never disagrees with the list it opens.
+    openCount: active.length,
     visible: chips.length >= MIN_CHIPS_FOR_STRIP,
     turnsKey,
   };

@@ -43,12 +43,7 @@ import {
 } from "./chatSelection";
 import { useBulkChatActions } from "./useBulkChatActions";
 import { useLongPress } from "./useLongPress";
-import {
-  isChatUnread,
-  showsUnreadChats,
-  useChatSeenState,
-  useRefetchOnTurnsSettled,
-} from "./unreadChats";
+import { isChatUnread, useChatSeenState, useRefetchOnTurnsSettled } from "./unreadChats";
 import { UnreadDot } from "./UnreadChatsBadge";
 import { usePersonalBackTarget } from "./usePersonalBackTarget";
 import {
@@ -303,10 +298,11 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
           ),
     [bot, environmentId, list.data, relayThreadIds, shells],
   );
-  // Unread dots for a bot that shows them (team leads), from the same list.
-  // Archived rows never get one.
+  // Unread dots for every bot's chats, from the same list; archived rows never get one. The chat
+  // chips mark a chat unread for any bot, so the list must too (only the Bots home list keeps its
+  // count badges for team leads, `showsUnreadChats`).
   const chatSeen = useChatSeenState();
-  const showsUnread = bot !== null && showsUnreadChats(bot);
+  const showsUnread = bot !== null;
   const unreadThreadIds = useMemo(
     () =>
       new Set(

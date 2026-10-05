@@ -4546,6 +4546,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     // Schedule process termination before any cleanup that can wait on the
     // provider. The SDK closes stdin, then escalates from SIGTERM to SIGKILL.
+    // The exit that follows is on purpose: the process handle says so, so the log does not warn.
+    if (context.process !== undefined) context.process.stopRequested = true;
     yield* Effect.try({
       try: () => context.query.close(),
       catch: (cause) =>
@@ -5244,12 +5246,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                   exitedContext.missingConversation ??= missing;
                 }
                 runFork(
-                  Effect.logWarning("claude.process.exited-abnormally", {
-                    threadId,
-                    code: detail.code,
-                    signal: detail.signal,
-                    stderrTail: detail.stderrTail.slice(-2_000),
-                  }),
+                  detail.requested
+                    ? Effect.logInfo("claude.process.stopped", {
+                        threadId,
+                        code: detail.code,
+                        signal: detail.signal,
+                      })
+                    : Effect.logWarning("claude.process.exited-abnormally", {
+                        threadId,
+                        code: detail.code,
+                        signal: detail.signal,
+                        stderrTail: detail.stderrTail.slice(-2_000),
+                      }),
                 );
               }),
             }

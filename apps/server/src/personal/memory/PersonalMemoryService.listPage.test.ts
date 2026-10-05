@@ -1,4 +1,5 @@
 import { it, describe, expect } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -31,7 +32,8 @@ const insert = (input: {
     `;
   });
 
-const day = (n: number) => new Date(Date.UTC(2026, 0, 1) + n * 60_000).toISOString();
+const day = (n: number) =>
+  DateTime.formatIso(DateTime.makeUnsafe(Date.UTC(2026, 0, 1) + n * 60_000));
 
 /** Old rules and notes, then a long run of newer task summaries (the shape of the live data). */
 const longHistory = Effect.gen(function* () {

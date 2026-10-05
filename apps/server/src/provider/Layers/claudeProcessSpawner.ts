@@ -16,7 +16,7 @@
  *
  * @module provider/Layers/claudeProcessSpawner
  */
-import { type ChildProcess, spawn } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 
 import type { SpawnedProcess, SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
 
@@ -26,13 +26,16 @@ const STDERR_TAIL_CHARS = 8_192;
 
 export interface ClaudeProcessHandle {
   /** The CLI process, once spawned. A session that resumes spawns again. */
-  child: ChildProcess | undefined;
+  child: NodeChildProcess.ChildProcess | undefined;
   stderrTail: string;
+  /** The session asked for this stop (an archive, a delete, a restart): the exit that follows is not a fault. */
+  stopRequested: boolean;
 }
 
 export const makeClaudeProcessHandle = (): ClaudeProcessHandle => ({
   child: undefined,
   stderrTail: "",
+  stopRequested: false,
 });
 
 /** The CLI's PID while it is still running, else undefined (a PID may be reused after exit). */
@@ -53,11 +56,13 @@ export function makeRecordingClaudeSpawner(
     readonly code: number | null;
     readonly signal: NodeJS.Signals | null;
     readonly stderrTail: string;
+    /** The session stopped the CLI on purpose, so this is an ordinary end, not a crash. */
+    readonly requested: boolean;
   }) => void,
   lowerPriority: (pid: number | undefined) => void = (pid) => void lowerBotProcessPriority(pid),
 ): (options: SpawnOptions) => SpawnedProcess {
   return (options) => {
-    const child = spawn(options.command, options.args, {
+    const child = NodeChildProcess.spawn(options.command, options.args, {
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
       env: options.env,
       signal: options.signal,
@@ -68,6 +73,8 @@ export function makeRecordingClaudeSpawner(
     lowerPriority(child.pid);
     handle.child = child;
     handle.stderrTail = "";
+    // A resumed session spawns again: that process has not been asked to stop.
+    handle.stopRequested = false;
     // Unread, a full stderr pipe would stall the CLI.
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
@@ -77,10 +84,16 @@ export function makeRecordingClaudeSpawner(
     });
     child.stderr.on("error", () => undefined);
     child.once("exit", (code, signal) => {
-      // An abort (session stop) ends the CLI on purpose; only an exit nobody
-      // asked for is worth a log line.
+      // An abort (session stop) ends the CLI on purpose and says nothing; a stop the session
+      // asked for through the SDK (SIGTERM, then SIGKILL) is reported as such, and only an exit
+      // nobody asked for is a fault.
       if (options.signal.aborted || code === 0) return;
-      onAbnormalExit?.({ code, signal, stderrTail: handle.stderrTail });
+      onAbnormalExit?.({
+        code,
+        signal,
+        stderrTail: handle.stderrTail,
+        requested: handle.stopRequested,
+      });
     });
     return child as unknown as SpawnedProcess;
   };
