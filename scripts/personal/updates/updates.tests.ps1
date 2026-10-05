@@ -267,6 +267,65 @@ Remove-Item -LiteralPath (Join-Path $depsDir 'node_modules') -Recurse -Force
 Assert-Equal 'no node_modules at all: stale' $false (Test-UpdatesDependenciesCurrent -Root $depsDir)
 Assert-Equal 'a repo with no lockfile has nothing to install' $true (Test-UpdatesDependenciesCurrent -Root (Join-Path $tempRoot 'gates'))
 
+Write-Host 'Waiting for every bot and task to be idle before a restart (a real SQLite file, the real node check)'
+$idleDb = Join-Path $tempRoot 'idle-state.sqlite'
+$idleNode = Resolve-NodeExe
+$setDb = {
+    param([string[]]$Statements)
+    $env:PB_TEST_DB = $idleDb
+    $env:PB_TEST_SQL = ($Statements -join ';')
+    $r = Invoke-UpdatesProc -FilePath $idleNode -ArgList @('--disable-warning=ExperimentalWarning', '-e', 'const{DatabaseSync}=require("node:sqlite");const d=new DatabaseSync(process.env.PB_TEST_DB);d.exec(process.env.PB_TEST_SQL);d.close()') -WorkingDirectory $tempRoot -TimeoutSeconds 60
+    if ($r.Code -ne 0) { throw "test db write failed: $($r.Err)" }
+}
+& $setDb @(
+    'create table projection_threads (thread_id text, deleted_at text)',
+    'create table projection_thread_sessions (thread_id text, status text)',
+    'create table personal_tasks (task_id text, bot_id text, status text)',
+    "insert into projection_threads values ('live', null), ('gone', '2026-10-01')"
+)
+Assert-Equal 'nothing running: idle' 'idle' (Get-PbBusyState -StateDb $idleDb)
+& $setDb @("insert into projection_thread_sessions values ('gone', 'running')")
+Assert-Equal 'a running session of a deleted chat does not count' 'idle' (Get-PbBusyState -StateDb $idleDb)
+& $setDb @("insert into projection_thread_sessions values ('live', 'ready')")
+Assert-Equal 'a ready session does not count' 'idle' (Get-PbBusyState -StateDb $idleDb)
+& $setDb @("update projection_thread_sessions set status = 'running' where thread_id = 'live'")
+Assert-Equal 'any bot''s running chat session is busy' 'busy sessions=1 tasks=0' (Get-PbBusyState -StateDb $idleDb)
+& $setDb @("update projection_thread_sessions set status = 'ready'", "insert into personal_tasks values ('t1', 'personal-frontend', 'running')")
+Assert-Equal 'another bot''s running task (not the Updates bot) is busy' 'busy sessions=0 tasks=1' (Get-PbBusyState -StateDb $idleDb)
+foreach ($status in @('queued', 'waiting_for_agent', 'waiting_for_user', 'waiting_for_browser', 'rate_limited')) {
+    & $setDb @("update personal_tasks set status = '$status'")
+    Assert-Equal "a $status task is busy (same set as the idle waiter)" 'busy sessions=0 tasks=1' (Get-PbBusyState -StateDb $idleDb)
+}
+& $setDb @("update personal_tasks set status = 'completed'")
+Assert-Equal 'a finished task is not' 'idle' (Get-PbBusyState -StateDb $idleDb)
+Assert-Equal 'an unreadable database counts as busy, never idle' $true ((Get-PbBusyState -StateDb (Join-Path $tempRoot 'no-such.sqlite')) -like 'unreadable:*')
+
+& $setDb @("update personal_tasks set status = 'running'")
+$waitLog = New-Object System.Collections.Generic.List[string]
+$waitSw = [System.Diagnostics.Stopwatch]::StartNew()
+$timedOut = Wait-PbAllIdle -TimeoutMinutes 0.05 -PollSeconds 1 -StateDb $idleDb -Log { param($t) $waitLog.Add($t) | Out-Null }
+Assert-Equal 'still busy at the timeout: not idle' $false $timedOut
+Assert-Equal 'the busy state was logged once' 'idle check: busy sessions=0 tasks=1' $waitLog.ToArray()
+Assert-Equal 'it really waited for the timeout (3 s)' $true ($waitSw.Elapsed.TotalSeconds -ge 2.5)
+
+# Busy, then the other bot's task ends (callback on the first busy look), then a task
+# starts again after the first idle look: the streak restarts. Idle only after 3 in a row.
+$phase = [pscustomobject]@{ n = 0 }
+$seq = New-Object System.Collections.Generic.List[string]
+$onLog = {
+    param($t)
+    $seq.Add($t) | Out-Null
+    $phase.n++
+    if ($phase.n -eq 1) { & $setDb @("update personal_tasks set status = 'completed'") }
+    elseif ($phase.n -eq 2) { & $setDb @("update personal_tasks set status = 'running'") }
+    elseif ($phase.n -eq 3) { & $setDb @("update personal_tasks set status = 'completed'") }
+}
+$waitSw.Restart()
+$became = Wait-PbAllIdle -TimeoutMinutes 2 -PollSeconds 1 -StateDb $idleDb -Log $onLog
+Assert-Equal 'waits while the other bot works, restarts the count when work resumes, then proceeds' $true $became
+Assert-Equal 'the states it saw, in order' 'idle check: busy sessions=0 tasks=1|idle check: idle|idle check: busy sessions=0 tasks=1|idle check: idle' ($seq -join '|')
+Assert-Equal 'three idle looks after the last busy one (about 2 s apart at 1 s polls)' $true ($waitSw.Elapsed.TotalSeconds -ge 4)
+
 Write-Host 'Detached launch survives the caller''s process tree being killed'
 try {
     $marker = Join-Path $tempRoot 'detached-finished.txt'

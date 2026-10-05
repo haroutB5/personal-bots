@@ -19,8 +19,10 @@ Live:
   3. Patch version bump, push, build.ps1 -NoActivate -CopyExternals (every
      nightly release carries its own externals, so a rollback onto it stays
      valid after a later `vp i`). A failed build is reverted like red gates.
-  4. Waits until the Updates bot's task has ended, so the restart never cuts
-     its turn off.
+  4. Waits until EVERY bot and task is idle (3 looks in a row, 20 s apart, the
+     same check as the hbots idle waiter), so the restart never cuts any bot's
+     turn off. Still busy after -WaitMinutes (120): nothing is restarted, the
+     run's commits are reverted and pushed, and the report says Bots was busy.
   5. restart.ps1 -Release <new>, smoke.ps1 (process, local and relay health,
      60 s stability, log scan), /version.txt local and through the relay, and
      perf:check (bots list and one chat open, within budget; one retry).
@@ -46,8 +48,11 @@ param(
     [string]$ReviewLabel,
     [string]$ReviewReport,
     [string]$ToolPath,
-    [int]$WaitMinutes = 20,
-    [int]$StableSeconds = 60
+    [int]$WaitMinutes = 120,
+    [int]$StableSeconds = 60,
+    # Rehearsals and tests: another state.sqlite for the idle check, and its poll interval.
+    [string]$IdleDb,
+    [int]$IdlePollSeconds = 20
 )
 
 . (Join-Path $PSScriptRoot 'updates-common.ps1')
@@ -294,11 +299,19 @@ function Invoke-Pipeline {
     }
     Add-Step "built release $($script:release) with its own externals (not active yet)"
 
-    # 4. Let the bot finish its turn before anything restarts.
-    if (Wait-UpdatesBotIdle -TimeoutMinutes $WaitMinutes -Log $log) {
-        Add-Step 'the Updates bot had finished its turn'
+    # 4. Never restart while any bot or task is working (Harout's rule): wait
+    # for all of them, not just the Updates bot. If they stay busy, do not
+    # restart; put the checkout back to what is live, like a failed build.
+    Add-Step 'waiting for every bot and task to be idle before the restart'
+    if (Wait-PbAllIdle -TimeoutMinutes $WaitMinutes -PollSeconds $IdlePollSeconds -StateDb $IdleDb -Log $log) {
+        Add-Step 'every bot and task is idle (3 checks in a row)'
     } else {
-        Add-Step "the Updates bot was still working after $WaitMinutes min; continuing"
+        $busy = Get-PbBusyState -StateDb $IdleDb
+        Add-Step "still busy after $WaitMinutes min ($busy); not restarting"
+        Undo-Run "bots were still working after $WaitMinutes minutes, so nothing was restarted"
+        $script:result = 'busy'
+        $script:summary = "Gates were green and the release was built, but bots or tasks were still working after $WaitMinutes minutes ($busy), so nothing was restarted. The run's changes were reverted (new revert commits, pushed) and the proposals are waiting for approval again."
+        return
     }
     $state = Read-PbServerState -Paths $paths
     $running = $null

@@ -547,35 +547,56 @@ function Invoke-UpdatesGates {
     return , $red.ToArray()
 }
 
-# ---------------------------------------------------------------- the bot's task
+# ---------------------------------------------------------------- is anything working
+
+# The same read-only check the hbots idle waiter uses (restart-<version>.ps1 runs
+# its own idle-check.mjs; keep the two in step): a chat session of a live thread
+# that is running, or a task that is not finished (queued, running, waiting for
+# an agent, the user or the browser, rate limited). A thread deleted mid-turn
+# keeps a 'running' session row, so only live threads count. Prints "idle" or
+# "busy sessions=<n> tasks=<n>".
+$UpdatesIdleQuery = 'const{DatabaseSync}=require("node:sqlite");const db=new DatabaseSync(process.env.PB_UPDATES_IDLE_DB,{readOnly:true});db.exec("PRAGMA busy_timeout=5000");const s=db.prepare("select count(*) n from projection_thread_sessions s join projection_threads t on t.thread_id=s.thread_id where s.status=''running'' and t.deleted_at is null").get().n;const t=db.prepare("select count(*) n from personal_tasks where status in (''queued'',''running'',''waiting_for_agent'',''waiting_for_user'',''waiting_for_browser'',''rate_limited'')").get().n;db.close();console.log(s===0&&t===0?"idle":"busy sessions="+s+" tasks="+t)'
 
 <#
 .SYNOPSIS
-Waits until the Updates bot has no task still working (read-only SQLite), so
-the restart never cuts its turn off. Tasks waiting on the user are not waited
-for: nobody answers at 04:00. Returns $true when idle, $false on timeout.
+One look at whether any bot or task is working. Returns "idle", "busy sessions=<n>
+tasks=<n>", or "unreadable: <why>" (which counts as busy: when in doubt, no restart).
+PB_UPDATES_IDLE_DB points the check at another state.sqlite (the tests do).
 #>
-function Wait-UpdatesBotIdle {
-    param([int]$TimeoutMinutes = 20, [int]$GraceSeconds = 30, [scriptblock]$Log)
-    $paths = Get-PbPaths -Root dev
-    $nodeExe = Resolve-NodeExe
-    $env:PB_UPDATES_DB = Join-Path $paths.StateDir 'state.sqlite'
-    $env:PB_UPDATES_BOT = $UpdatesBotId
-    $query = 'const{DatabaseSync}=require("node:sqlite");const db=new DatabaseSync(process.env.PB_UPDATES_DB,{readOnly:true});db.exec("PRAGMA busy_timeout=5000");const r=db.prepare("SELECT count(*) AS n FROM personal_tasks WHERE bot_id=? AND status IN (''queued'',''running'',''waiting_for_agent'',''rate_limited'')").get(process.env.PB_UPDATES_BOT);console.log(r.n)'
+function Get-PbBusyState {
+    param([string]$StateDb)
+    if (-not $StateDb) { $StateDb = $env:PB_UPDATES_IDLE_DB }
+    if (-not $StateDb) { $StateDb = Join-Path (Get-PbPaths -Root dev).StateDir 'state.sqlite' }
+    $env:PB_UPDATES_IDLE_DB = $StateDb
+    $res = Invoke-UpdatesProc -FilePath (Resolve-NodeExe) -ArgList @('--disable-warning=ExperimentalWarning', '-e', $UpdatesIdleQuery) -WorkingDirectory $UpdatesHome -TimeoutSeconds 60
+    $text = $res.Out.Trim()
+    if ($res.Code -eq 0 -and ($text -eq 'idle' -or $text -match '^busy sessions=\d+ tasks=\d+$')) { return $text }
+    $why = $res.Err.Trim()
+    if ($why.Length -gt 160) { $why = $why.Substring(0, 160) }
+    return "unreadable: exit $($res.Code) $why"
+}
+
+<#
+.SYNOPSIS
+Waits until EVERY bot and task is idle (Harout's rule: never restart while any bot
+or task is still working), like the idle waiter: $Streak idle looks in a row,
+$PollSeconds apart (that also covers a bot's last memory save). Tasks waiting on
+the user count as working, as in the waiter; the timeout is what ends a wait that
+nobody will answer. Returns $true when idle, $false on timeout.
+#>
+function Wait-PbAllIdle {
+    param([double]$TimeoutMinutes = 120, [int]$PollSeconds = 20, [int]$Streak = 3, [string]$StateDb, [scriptblock]$Log)
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
-    while ((Get-Date) -lt $deadline) {
-        $res = Invoke-UpdatesProc -FilePath $nodeExe -ArgList @('--disable-warning=ExperimentalWarning', '-e', $query) -WorkingDirectory $UpdatesHome -TimeoutSeconds 60
-        $count = -1
-        if ($res.Code -eq 0) { [void][int]::TryParse($res.Out.Trim(), [ref]$count) }
-        if ($count -eq 0) {
-            & $Log "the Updates bot has no working task; waiting $GraceSeconds s for its memory save"
-            Start-Sleep -Seconds $GraceSeconds
-            return $true
-        }
-        & $Log "the Updates bot still has $count working task(s); waiting"
-        Start-Sleep -Seconds 15
+    $idleCount = 0
+    $last = ''
+    while ($true) {
+        $state = Get-PbBusyState -StateDb $StateDb
+        if ($state -eq 'idle') { $idleCount++ } else { $idleCount = 0 }
+        if ($state -ne $last) { & $Log "idle check: $state"; $last = $state }
+        if ($idleCount -ge $Streak) { return $true }
+        if ((Get-Date) -ge $deadline) { return $false }
+        Start-Sleep -Seconds $PollSeconds
     }
-    return $false
 }
 
 # ---------------------------------------------------------------- outcome and report

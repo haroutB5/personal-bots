@@ -221,9 +221,12 @@ range since the last review, and the proposals carried over from the ledger
    cannot kill it). The pipeline gates (server `src/personal`, web personal,
    typecheck, lint), reverts the run's commits on red (new revert commits,
    pushed; never reset or force), bumps the patch version, pushes, builds with
-   `-NoActivate -CopyExternals`, waits for the bot's turn to end, restarts,
-   checks (smoke, `/version.txt` local and relay, perf:check) and rolls back
-   to the previous release on any failure.
+   `-NoActivate -CopyExternals`, waits until every bot and task is idle (the
+   hbots idle waiter's check: 3 looks 20 s apart; after 120 minutes it gives
+   up, reverts the run like a failed build and reports "Bots was busy"; it
+   never restarts over a working bot), restarts, checks (smoke,
+   `/version.txt` local and relay, perf:check) and rolls back to the previous
+   release on any failure.
 4. The outcome goes to `%USERPROFILE%\.personal-bots\claude-code-updates\runs\<id>\`
    (`outcome.json`, `report.md`, logs) and `last-outcome.json`, and the report
    is posted by the "Morning report" relay routine. Between 00:00 and 07:00 the
