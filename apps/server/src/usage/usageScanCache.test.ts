@@ -268,6 +268,7 @@ describe("scan cache line format", () => {
       position: position({
         codexState: {
           model: "gpt-6-astra",
+          speed: "standard",
           sessionId: "rollout-1",
           lastUsageSignature: "{}",
           sawSessionMeta: true,
@@ -297,14 +298,26 @@ describe("scan cache line format", () => {
     const text = await encodeScanCacheLines(sample(), {}, everyFile());
     const lines = text.trimEnd().split("\n");
     expect(lines).toHaveLength(1 + 3);
-    expect(JSON.parse(lines[0]!)).toMatchObject({ version: 5 });
+    expect(JSON.parse(lines[0]!)).toMatchObject({ version: 6 });
   });
 
-  it("still reads a v4 single-document file", async () => {
+  it("still reads a single-document file", async () => {
     const original = sample();
     const legacy = JSON.stringify({ ...encodeScanCache(original), sources: {} });
     const decoded = await decodeScanCacheText(legacy, everyFile());
     expect(decoded?.cache).toEqual(original);
+  });
+
+  it("reads the v5 line format, keeping Codex usage but re-parsing its rollouts", async () => {
+    const text = await encodeScanCacheLines(sample(), {}, everyFile());
+    const [header, ...rows] = text.trimEnd().split("\n");
+    const v5 = [JSON.stringify({ ...JSON.parse(header!), version: 5 }), ...rows].join("\n");
+    const decoded = await decodeScanCacheText(v5, everyFile());
+    const codex = decoded?.cache.get("/codex.jsonl");
+    expect(codex?.records).toHaveLength(1);
+    expect(codex?.size).toBe(-1);
+    expect(codex?.position.resumeOffset).toBe(0);
+    expect(decoded?.cache.get("/a.jsonl")?.size).not.toBe(-1);
   });
 
   it("loses only the damaged or truncated file, never the whole cache", async () => {

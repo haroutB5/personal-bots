@@ -31,6 +31,8 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
+import { makeSliceYield } from "./sliceYield.ts";
+import { decodeScanCacheText, encodeScanCache } from "./usageScanCache.ts";
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -711,7 +713,15 @@ describe("UsageService", () => {
           // Rewrite the cache as a v4 server left it: every Codex record at
           // speed 0 (standard), and no tier in the reducer state.
           const legacy = yield* Effect.promise(async () => {
-            const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            // This server writes the line format; a v4 server wrote one document.
+            const decoded = await decodeScanCacheText(
+              await NodeFSP.readFile(cachePath, "utf8"),
+              makeSliceYield(0),
+            );
+            const document = {
+              ...encodeScanCache(decoded?.cache ?? new Map()),
+              sources: (decoded?.document as { sources?: unknown } | undefined)?.sources,
+            } as unknown as {
               files: Record<string, { r: unknown[][]; cs: { speed?: unknown } }>;
             };
             for (const file of Object.values(document.files)) {
