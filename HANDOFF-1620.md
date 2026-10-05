@@ -32,9 +32,13 @@ Works with blocking on (identical to off): reCAPTCHA demo and hCaptcha demo widg
 
 ## Tests and checks
 
-- Server `vp test run src/personal` exit 0 (135 files, 1679 tests, 3 skipped); `npx tsc --noEmit` exit 0; lint and fmt clean on the touched files. Web not touched.
-- `adblock.test.ts` (11 tests): kill switch variants, exactly one switch on and none off, switch fits 24,000 characters, plain host globs only, no protected host blocked, counter counts only NAME_NOT_RESOLVED on listed hosts, snapshot holds numbers only.
+- Server `vp test run src/personal` exit 0 (135 files, 1681 tests, 3 skipped); `npx tsc --noEmit` exit 0; lint and fmt clean on the touched files. Web not touched.
+- `PersonalBrowser.test.ts` (2 new): the launch line says on (with the rule count) or off, and the close writes one summary with counts only; `adblock.test.ts` (11 tests): kill switch variants, exactly one switch on and none off, switch fits 24,000 characters, plain host globs only, no protected host blocked, counter counts only NAME_NOT_RESOLVED on listed hosts, snapshot holds numbers only.
 
 ## Rollback
 
 Set `T3CODE_PERSONAL_BROWSER_ADBLOCK=off` and idle-restart, or run the previous release (no migration).
+
+## Release
+
+Staged release `0c70b57618e9` (built from commit `0c70b57618`, `-NoActivate -CopyExternals`; `current.txt` still `e4bd87aef95a`). The follow-up commit after it only adds the two log tests and this note.

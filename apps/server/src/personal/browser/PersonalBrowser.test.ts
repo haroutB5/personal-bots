@@ -259,6 +259,8 @@ const makeFakeDriver = () => {
     page,
     pages,
     onNewPage: null as ((page: FakePage) => void) | null,
+    /** What the context reports about ad blocking; null leaves the method off like an old driver. */
+    adblock: null as { enabled: boolean; rules: number; requests: number; blocked: number } | null,
     /** Chrome exiting on its own: fires the context's close listener. */
     crash: () => {},
   };
@@ -276,6 +278,7 @@ const makeFakeDriver = () => {
         onClose: (listener) => {
           state.crash = listener;
         },
+        ...(state.adblock === null ? {} : { adblockStats: () => state.adblock! }),
         close: async () => {},
       };
     },
@@ -2388,6 +2391,63 @@ describe("PersonalBrowser", () => {
             expect(line).toContain("https://shop.example");
             expect(line).toContain("challenge");
             expect(line).not.toMatch(/secret-path|token=abc123|checking your browser/);
+          }),
+        ),
+      );
+    });
+
+    it.effect("logs ad blocking once per launch with counts only", () => {
+      const fake = makeFakeDriver();
+      fake.state.adblock = { enabled: true, rules: 255, requests: 40, blocked: 7 };
+      const { logs, run, withLogs } = captureLogs((seen) =>
+        Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(
+            request("navigate", { url: "https://shop.example/cart/secret-path?token=abc123" }),
+          );
+          fake.state.crash();
+          yield* until(() => seen.some((entry) => entry.includes("ad blocking summary")));
+        }),
+      );
+      return run.pipe(
+        Effect.provide(withLogs(makeLayer(fake.driver))),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const adblockLines = logs.filter((entry) => entry.includes("ad blocking"));
+            expect(adblockLines).toHaveLength(2);
+            expect(adblockLines[0]).toContain("ad blocking is on");
+            expect(adblockLines[0]).toContain("255");
+            expect(adblockLines[1]).toContain("ad blocking summary");
+            expect(adblockLines[1]).toMatch(/"requests":40/);
+            expect(adblockLines[1]).toMatch(/"blocked":7/);
+            expect(adblockLines.join("")).not.toMatch(/shop\.example|secret-path|token=/);
+          }),
+        ),
+      );
+    });
+
+    it.effect("says ad blocking is off, and writes no summary, when the kill switch is on", () => {
+      const fake = makeFakeDriver();
+      fake.state.adblock = { enabled: false, rules: 0, requests: 12, blocked: 0 };
+      const { logs, run, withLogs } = captureLogs((seen) =>
+        Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(
+            request("navigate", { url: "https://shop.example/" }),
+          );
+          fake.state.crash();
+          yield* until(() => seen.length < 0);
+        }),
+      );
+      return run.pipe(
+        Effect.provide(withLogs(makeLayer(fake.driver))),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const adblockLines = logs.filter((entry) => entry.includes("ad blocking"));
+            // A launch after the crash says it again: one line per launch.
+            expect(adblockLines.length).toBeGreaterThan(0);
+            for (const line of adblockLines) expect(line).toContain("ad blocking is off");
+            expect(adblockLines.join("")).not.toContain("summary");
           }),
         ),
       );
