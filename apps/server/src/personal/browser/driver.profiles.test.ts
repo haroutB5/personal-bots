@@ -212,18 +212,100 @@ describe("screencast profiles (adaptive JPEG)", () => {
     expect(calls("Page.startScreencast")).toEqual([]);
   });
 
-  it("applies calls in the order they came, one at a time", async () => {
+  it("applies calls one at a time and ends on the last one asked for", async () => {
     answerChrome();
     const { page, onFrame } = await started();
     const first = page.setScreencastProfile!("moving");
     const second = page.setScreencastProfile!("sharp");
     const third = page.setScreencastProfile!("moving");
     await Promise.all([first, second, third]);
+    // The sharp call in the middle was already out of date when its turn came: no restart, no frame.
     const starts = calls("Page.startScreencast") as Array<{ quality: number }>;
-    expect(starts.map((start) => start.quality)).toEqual([38, 60, 38]);
-    // The sharp one in the middle got its final frame; the last is rough, so none follows it.
+    expect(starts.map((start) => start.quality)).toEqual([38]);
+    expect(onFrame).not.toHaveBeenCalled();
+    expect(order()).toEqual(["Page.stopScreencast", "Page.startScreencast"]);
+  });
+
+  it("a call that is still the latest when its turn comes is applied in full", async () => {
+    answerChrome();
+    const { page, onFrame } = await started();
+    await page.setScreencastProfile!("moving");
+    fake.send.mockClear();
+    const first = page.setScreencastProfile!("sharp");
+    const second = page.setScreencastProfile!("moving");
+    const third = page.setScreencastProfile!("sharp");
+    await Promise.all([first, second, third]);
+    expect(order()).toEqual([
+      "Page.stopScreencast",
+      "Page.getLayoutMetrics",
+      "Page.captureScreenshot",
+      "Page.startScreencast",
+    ]);
     expect(onFrame).toHaveBeenCalledTimes(1);
-    expect(order().at(-1)).toBe("Page.startScreencast");
+    expect((calls("Page.startScreencast") as Array<{ quality: number }>)[0]!.quality).toBe(60);
+  });
+
+  describe("a scroll that resumes while the sharp frame is being taken", () => {
+    it("skips the stale screenshot frame and the sharp restart, and only starts rough", async () => {
+      let finish: (value: unknown) => void = () => {};
+      answerChrome(() => new Promise((resolve) => (finish = resolve)));
+      const { page, onFrame } = await started();
+      await page.setScreencastProfile!("moving");
+      fake.send.mockClear();
+      const sharp = page.setScreencastProfile!("sharp");
+      await vi.waitFor(() => expect(order()).toContain("Page.captureScreenshot"));
+      // The finger is back on the screen while Chrome is still rendering the sharp frame.
+      const rough = page.setScreencastProfile!("moving");
+      finish({ data: "eA==" });
+      await Promise.all([sharp, rough]);
+      expect(onFrame).not.toHaveBeenCalled();
+      const starts = calls("Page.startScreencast") as Array<{ quality: number }>;
+      expect(starts.map((start) => start.quality)).toEqual([38]);
+      // One stop for the whole round trip: the rough start does not stop what is already stopped.
+      expect(order().filter((name) => name === "Page.stopScreencast")).toHaveLength(1);
+      expect(order().at(-1)).toBe("Page.startScreencast");
+    });
+
+    it("takes no screenshot at all when the scroll resumes while the layout is read", async () => {
+      let layout: (value: unknown) => void = () => {};
+      fake.send.mockImplementation(async (method: string) => {
+        if (method === "Page.getLayoutMetrics") {
+          return new Promise((resolve) => (layout = resolve));
+        }
+        return {};
+      });
+      const { page, onFrame } = await started();
+      await page.setScreencastProfile!("moving");
+      fake.send.mockClear();
+      const sharp = page.setScreencastProfile!("sharp");
+      await vi.waitFor(() => expect(order()).toContain("Page.getLayoutMetrics"));
+      const rough = page.setScreencastProfile!("moving");
+      layout({ cssVisualViewport: view });
+      await Promise.all([sharp, rough]);
+      expect(order()).not.toContain("Page.captureScreenshot");
+      expect(onFrame).not.toHaveBeenCalled();
+      expect(
+        (calls("Page.startScreencast") as Array<{ quality: number }>).map((c) => c.quality),
+      ).toEqual([38]);
+    });
+
+    it("still goes sharp when the scroll that interrupted it has already ended", async () => {
+      let finish: (value: unknown) => void = () => {};
+      answerChrome(() => new Promise((resolve) => (finish = resolve)));
+      const { page, onFrame } = await started();
+      await page.setScreencastProfile!("moving");
+      fake.send.mockClear();
+      const first = page.setScreencastProfile!("sharp");
+      await vi.waitFor(() => expect(order()).toContain("Page.captureScreenshot"));
+      const rough = page.setScreencastProfile!("moving");
+      const last = page.setScreencastProfile!("sharp");
+      finish({ data: "eA==" });
+      await Promise.all([first, rough, last]);
+      expect(onFrame).toHaveBeenCalledTimes(1);
+      expect(
+        (calls("Page.startScreencast") as Array<{ quality: number }>).map((c) => c.quality),
+      ).toEqual([60]);
+    });
   });
 
   it("frames of a rough screencast map taps exactly like sharp ones", async () => {
