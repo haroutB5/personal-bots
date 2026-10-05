@@ -35,9 +35,17 @@ const NEGATION_WORD =
 const REMEMBER_PHRASE =
   /\b(?:please\s+)?(?:remember(?:\s+(?:that|to))?|(?:don'?t|do not)\s+forget(?:\s+(?:that|to))?|keep in mind(?:\s+that)?|memori[sz]e(?:\s+that)?|note\s+(?:this|that|it)\s+down|save\s+(?:this|that|it)|for future reference)\b/giu;
 
-/** The date a bot stamps on a rule it writes: "Harout's rule (2026-10-05): ...". */
+/**
+ * The date a bot stamps on a rule it writes: "Harout's rule (2026-10-05): ...". One or two
+ * name words, "rule(s)", and a bracket holding a date, at most one of restated / updated /
+ * clarified / confirmed and one more date. Nothing else in the bracket is exempt, so a link
+ * or a number tucked in there is checked like the rest of the rule.
+ */
 const RULE_DATE_PREFIX =
-  /^\s*[\p{L}][\p{L}'’ -]{0,40}\brule\b\s*\(\s*\d{4}-\d{2}-\d{2}[^)]*\)\s*[:\-–—]?\s*/iu;
+  /^\s*[\p{L}'’]+(?:\s+[\p{L}'’]+)?\s+rules?\s*\(\s*\d{4}-\d{2}-\d{2}(?:[,;\s]+(?:restated|updated|clarified|confirmed)(?:\s+\d{4}-\d{2}-\d{2})?)?\s*\)\s*[:\-–—]?\s*/iu;
+
+/** Whose rules these are: a request to drop "the Harout rule" names no rule. */
+const OWNER_NAME_WORDS = new Set(["harout"]);
 
 /** Share of the rule's significant words that must be in the message. */
 export const RULE_WORDS_IN_MESSAGE = 0.6;
@@ -84,10 +92,28 @@ function sameStem(a: string, b: string): boolean {
   return shared >= Math.max(4, Math.min(a.length, b.length) - 1);
 }
 
-const significantStems = (text: string): ReadonlyArray<string> =>
-  [...lower(text).matchAll(WORD)]
-    .map((match) => match[0])
-    .filter((word) => word.length >= 3 && !STOP.has(word) && !NEGATION_WORD.test(word))
+/**
+ * The words that carry a text's meaning, stemmed. Two-letter words are kept when written in
+ * capitals (QA, UI, US: a rule about "QA" is not one about "Backend"). With `pool`, every
+ * two-letter word is kept, for the owner's side of a comparison: "qa" in their message meets
+ * "QA" in the rule.
+ */
+const significantStems = (text: string, pool = false): ReadonlyArray<string> =>
+  [
+    ...text
+      .normalize("NFKC")
+      .replace(/[‘’]/g, "'")
+      .matchAll(WORD),
+  ]
+    .flatMap((match) => {
+      const raw = match[0].replace(/'s?$/i, "");
+      const word = match[0].toLowerCase();
+      const twoLetter = raw.length === 2;
+      const capitals = twoLetter && raw === raw.toUpperCase() && raw !== raw.toLowerCase();
+      if (NEGATION_WORD.test(word)) return [];
+      if (word.length >= 3 && !STOP.has(word)) return [word];
+      return capitals || (pool && twoLetter) ? [word] : [];
+    })
     .map(stem);
 
 const LOCAL_DAY = new Intl.DateTimeFormat("en-CA", {
@@ -192,7 +218,7 @@ export function ruleGrounding(
   const wanted = options.strict === true ? RULE_WORDS_IN_MESSAGE_AFTER_WEB : RULE_WORDS_IN_MESSAGE;
   const body = ruleBody(content, options.nowMs);
   const flatMessage = lower(message);
-  const messageStems = significantStems(message);
+  const messageStems = significantStems(message, true);
   const ownerDigits = new Set([...flatMessage.matchAll(NUMBER)].map((m) => `#${digitsOnly(m[0])}`));
   const missing: Array<string> = [];
 
@@ -241,7 +267,7 @@ export function ruleGrounding(
 /** Whether a rule on `subject` is about the same thing as `other`: they share a significant word. */
 export function sharesSubject(subject: string, other: string): boolean {
   const left = significantStems(subject);
-  const right = significantStems(other);
+  const right = significantStems(other, true);
   return left.some((word) => right.some((owned) => sameStem(word, owned)));
 }
 
@@ -292,11 +318,15 @@ const FORGET_FILLER = new Set([
  * "forget the USD rule" names "usd", and the rule is about USD. "Forget that rule" names
  * nothing, and a quote that names words the rule does not have is about something else.
  */
-export function forgetGrounding(ruleContent: string, quote: string): boolean {
-  if (ruleGrounding(ruleContent, quote, { quote }).ok) return true;
-  const named = [...new Set(significantStems(quote))].filter((word) => !FORGET_FILLER.has(word));
+export function forgetGrounding(ruleContent: string, quote: string, nowMs?: number): boolean {
+  if (ruleGrounding(ruleContent, quote, nowMs === undefined ? { quote } : { quote, nowMs }).ok)
+    return true;
+  const named = [...new Set(significantStems(quote))].filter(
+    (word) => !FORGET_FILLER.has(word) && !OWNER_NAME_WORDS.has(word),
+  );
   if (named.length === 0) return false;
-  const rule = significantStems(ruleContent);
+  // The rule as its words are, not the "Harout's rule (date):" a bot stamped on it.
+  const rule = significantStems(ruleBody(ruleContent, nowMs), true);
   const found = named.filter((word) => rule.some((owned) => sameStem(word, owned)));
   return found.length / named.length >= RULE_WORDS_IN_MESSAGE;
 }
