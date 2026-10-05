@@ -35,7 +35,7 @@ import { makeSliceYield } from "./sliceYield.ts";
 import { decodeScanCacheText, encodeScanCache } from "./usageScanCache.ts";
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
-const decodeUnknownJsonString = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
+const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
   return `${JSON.stringify({
