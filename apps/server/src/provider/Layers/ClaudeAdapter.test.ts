@@ -57,6 +57,7 @@ import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
 import {
   makeClaudeAdapter,
   PERSONAL_BOT_CLAUDE_SETTINGS,
+  pluginLoadWarning,
   type ClaudeAdapterLiveOptions,
 } from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
@@ -529,8 +530,84 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
-      assert.equal(createInput?.options.permissionMode, undefined);
+      // Explicit "default": with no mode the CLI would start the thread in auto mode.
+      assert.equal(createInput?.options.permissionMode, "default");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it("pluginLoadWarning names each plugin that did not load and stays quiet otherwise", () => {
+    assert.equal(pluginLoadWarning(undefined), null);
+    assert.equal(pluginLoadWarning([]), null);
+    assert.equal(pluginLoadWarning("nope"), null);
+    const one = pluginLoadWarning([
+      { plugin: "inline[0]", type: "path-not-found", message: "no plugin.json", path: "C:/p" },
+    ]);
+    assert.equal(one?.text, "A plugin did not load: inline[0] (path-not-found): no plugin.json");
+    assert.deepEqual(one?.plugins, ["inline[0] (path-not-found)"]);
+    const many = pluginLoadWarning(
+      Array.from({ length: 6 }, (_, i) => ({
+        plugin: `p${i}`,
+        type: "generic-error",
+        message: "",
+      })),
+    );
+    assert.ok(many?.text.endsWith("and 2 more"));
+    assert.equal(many?.plugins.length, 6);
+  });
+
+  it.effect("system/init plugin_errors surface as a warning row, a clean init does not", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: session.threadId, input: "hello", attachments: [] });
+      harness.query.emit({
+        type: "system",
+        subtype: "init",
+        session_id: "sdk-session-plugins",
+        uuid: "init-plugins",
+        plugin_errors: [
+          {
+            plugin: "frontend-bot@inline",
+            type: "dependency-unsatisfied",
+            message: "needs node 99",
+          },
+        ],
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "init",
+        session_id: "sdk-session-plugins",
+        uuid: "init-clean",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-plugins",
+        uuid: "result-plugins",
+      } as unknown as SDKMessage);
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const warnings = events.flatMap((event) =>
+        event.type === "runtime.warning" ? [event.payload.message] : [],
+      );
+      assert.deepEqual(warnings, [
+        "A plugin did not load: frontend-bot@inline (dependency-unsatisfied): needs node 99",
+      ]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

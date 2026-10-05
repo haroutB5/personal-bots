@@ -2094,6 +2094,38 @@ function sdkAdvertisesMessageLifecycle(message: unknown): boolean {
   return Array.isArray(capabilities) && capabilities.includes("msg_lifecycle_v1");
 }
 
+const MAX_PLUGIN_ERRORS_SHOWN = 4;
+
+/**
+ * The warning row for system/init `plugin_errors` (SDK 0.3.283), or null when
+ * every plugin loaded. `plugins` is the compact form for the server log.
+ */
+export function pluginLoadWarning(
+  pluginErrors: unknown,
+): { readonly text: string; readonly plugins: ReadonlyArray<string> } | null {
+  if (!Array.isArray(pluginErrors) || pluginErrors.length === 0) return null;
+  const rows = pluginErrors.flatMap((entry) => {
+    const row = entry as { plugin?: unknown; type?: unknown; message?: unknown } | null;
+    if (row === null || typeof row !== "object") return [];
+    const plugin = typeof row.plugin === "string" && row.plugin.length > 0 ? row.plugin : "plugin";
+    const type = typeof row.type === "string" && row.type.length > 0 ? row.type : "generic-error";
+    const message = typeof row.message === "string" ? row.message.trim().slice(0, 200) : "";
+    return [{ plugin, type, message }];
+  });
+  if (rows.length === 0) return null;
+  const shown = rows
+    .slice(0, MAX_PLUGIN_ERRORS_SHOWN)
+    .map((row) => `${row.plugin} (${row.type})${row.message.length > 0 ? `: ${row.message}` : ""}`);
+  const more =
+    rows.length > MAX_PLUGIN_ERRORS_SHOWN
+      ? ` and ${rows.length - MAX_PLUGIN_ERRORS_SHOWN} more`
+      : "";
+  return {
+    text: `A plugin did not load: ${shown.join("; ")}${more}`,
+    plugins: rows.map((row) => `${row.plugin} (${row.type})`),
+  };
+}
+
 /** The state a command_lifecycle frame reports for the prompt `uuid`, or null for another command. */
 function commandLifecycleState(message: unknown, uuid: string): string | null {
   const frame = message as { command_uuid?: unknown; state?: unknown };
@@ -3825,7 +3857,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     switch (message.subtype) {
-      case "init":
+      case "init": {
         if (sdkAdvertisesMessageLifecycle(message)) context.messageLifecycle = true;
         yield* offerRuntimeEvent({
           ...base,
@@ -3834,7 +3866,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             config: message as Record<string, unknown>,
           },
         });
+        // SDK 0.3.283: a plugin that failed to load (or loaded without one of its
+        // components) is listed here. A bot whose plugin silently did not load
+        // would otherwise just lack its skills; show it as a warning row.
+        const pluginNotice = pluginLoadWarning(message.plugin_errors);
+        if (pluginNotice !== null) {
+          yield* Effect.logWarning("claude.plugin.load-errors", {
+            threadId: context.session.threadId,
+            plugins: pluginNotice.plugins,
+          });
+          yield* emitRuntimeWarning(context, pluginNotice.text, message.plugin_errors);
+        }
         return;
+      }
       case "status":
         yield* offerRuntimeEvent({
           ...base,
@@ -5207,7 +5251,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         effort,
         modelSelection?.model,
       );
+      // An approval-required thread asks for "default" explicitly: with no mode
+      // sent, the CLI (2.1.2xx) starts a session in auto mode.
       const runtimeModeToPermission: Record<string, PermissionMode> = {
+        "approval-required": "default",
         "auto-accept-edits": "acceptEdits",
         auto: "auto",
         "full-access": "bypassPermissions",
