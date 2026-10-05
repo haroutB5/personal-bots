@@ -1,6 +1,6 @@
 # hbots 1.60.44: startup token out of the log, navigation errors with no network code, probe off the critical path, screencast switch race
 
-Branch `feat/adaptive-jpeg`, on top of `8527d9930e` (the 1.60.43 HANDOFF commit; 1.60.43 itself is `455ed0b942c2`), no force. No migration. `PERSONAL_TASKS_CONCURRENCY` stays 5. Staged with `build.ps1 -NoActivate -CopyExternals`: release `9b81f2811492`, `current.txt` untouched (`823db90b6421`, the live 1.60.42). Five small changes from the CTO's list (Fable's 1.60.43 review items #1 to #4 and the startup-token follow-up).
+Branch `feat/adaptive-jpeg`, on top of `8527d9930e` (the 1.60.43 HANDOFF commit; 1.60.43 itself is `455ed0b942c2`), no force. No migration. `PERSONAL_TASKS_CONCURRENCY` stays 5. Staged with `build.ps1 -NoActivate -CopyExternals`: first release `9b81f2811492` (QA NO-SHIP, superseded by the Round 2 section below), `current.txt` untouched (`823db90b6421`, the live 1.60.42). Five small changes from the CTO's list (Fable's 1.60.43 review items #1 to #4 and the startup-token follow-up).
 
 ## 1. The startup token no longer goes to a log file
 
@@ -55,3 +55,53 @@ Test only. `PersonalBrowser.test.ts`, "screencast mask > the sharp final frame a
 ## Rollback
 
 Previous live release; no migration. `T3CODE_STARTUP_PRINT_TOKEN=on` restores the old startup output; `T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=off` is unchanged. The error wording, the forked probe and the switch ordering have no switch.
+
+## Round 2 (after QA's NO-SHIP on 9b81f2811492): adaptive JPEG ships OFF
+
+Release `875e5a893649` (code commit `875e5a8936`, same branch, no force). Not activated.
+
+**Result in one line.** Both QA blockers are fixed in the code, but adaptive JPEG still does not meet the DPR2 acceptance (end to sharp within +30 ms of 1.60.42) on a fast link, and with it on the live view was not reliable in my harness. So it is now **opt-in**: `T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=on` (idle restart). Default behaviour is 1.60.42's streaming; the rest of 1.60.44 is unchanged.
+
+### What was fixed
+
+1. **Oversized final frame (QA blocker 1).** Reproduced in real Chrome: under the phone's `Emulation.setDeviceMetricsOverride` (DPR 2) a clip's `scale` is multiplied by the device scale (780 x 1520 at scale 1, 1560 x 3040 at scale 2); under a context's own DPR it is not. `driver.ts` now measures that once when the screencast starts (a 16 px clip at scale 1, off the frame path) and asks for `wanted / measured`. `wanted` is css pixels, not device pixels, because a screencast frame is css-sized (390 x 760 at 2x, not 780 x 1520): the final frame is now 386 x 752, about 34 kB, the same as a resting frame (it was 84 kB at 780 wide and 203 kB at 1560). It is asked for 1 % under the screen's own scale on purpose: a clip at exactly scale 1 left Chrome's screencast with no frame for the next page that loads (7 of 7 runs). `jpegSize.ts` reads the size from a JPEG header. Tests cover the clip scale at 1x, 2x, 3x, a context-level DPR, a wide desktop window and a tall narrow one, and that the scale is never exactly 1.
+2. **Stale sharp frame in renewed motion (QA blocker 2).** QA's reading was right: `adaptiveJpeg.ts` awaited each `apply` before announcing the next profile, so the driver never saw a scroll that resumed during the screenshot. The controller now announces every change at once (the driver already keeps them in order), and the driver's `requestCount` plus a signal race the screenshot: a newer request starts the rough screencast immediately without waiting for the capture, and the stale frame is dropped. Tests: the resumed scroll starts rough with the screenshot still open and never delivers it; a sharp request after a short scroll takes a fresh screenshot.
+3. **Fable #2.** `logBotCheckLanding` re-reads the origin after the probe and logs nothing if the tab moved to another origin. **Fable #3.** After a replaced navigation that landed, `gotoReplacing` waits for the readiness the caller asked for (`page.waitForLoadState`, a new optional driver method), capped at 3 s; `none` waits for nothing; a page slow past the cap is still returned.
+4. **Gesture-end hint (new, only active with adaptive on).** The settle time (150 ms) is most of the extra delay, so the server asks a phone for a `ScrollEnd` message (`ScrollEndWanted`, sent only when adaptive is on; contracts, `routes.ts`, `viewportClient.ts`, `ComputerScreen.tsx` pointer up and cancel). On it the picture goes sharp 40 ms after the last scroll step instead of 150 ms after the last wheel. Silent when control has moved away; older servers never ask, older clients ignore the request. `T3CODE_PERSONAL_BROWSER_ADAPTIVE_SETTLE_MS` (30 to 400) tunes the fallback settle time.
+
+### Numbers, QA's realistic DPR2 harness
+
+390 x 760 at 2x, copy in `qa/backend-adaptive16044/run44.mjs`, five 8-gesture drags per link, same machine and hour. Values are 600 kB/s / 600 kB/s + 85 ms RTT / unthrottled + 85 ms RTT.
+
+| Build                                                                | Sent fps           | Max client gap ms                           | End to sharp ms (median of 5) |
+| -------------------------------------------------------------------- | ------------------ | ------------------------------------------- | ----------------------------- |
+| 1.60.42 baseline                                                     | 18.1 / 18.3 / 22.1 | 188 / 279 / 251                             | 225 / 259 / 195               |
+| 1.60.44 default (adaptive off), `875e5a893649`                       | 19.0 / 18.5 / 22.5 | 190 / 281 / 280                             | 219 / 228 / 196               |
+| adaptive on, no hint (`e6c3cd59310f`)                                | 21.3 / 22.1 / 22.5 | 619 (one first-capture outlier) / 187 / 100 | 259 / 358 / 351               |
+| adaptive on, with hint (`357a00a1e73a`, same code as 875e's on mode) | 22.3 / 21.9 / 22.1 | 835 (same outlier) / 189 / 157              | 239 / 290 / 295               |
+
+Default is indistinguishable from 1.60.42. With adaptive on, the sent-fps gain holds (about +20 %) and the gaps are shorter than baseline on the two RTT links, but end to sharp is +14 / +31 / +100 ms, so the acceptance is not met on the fast link. The remaining delay is what a screenshot costs after the scroll has landed: the page is still catching up with queued wheel steps about 190 ms after the finger lifts (baseline too), and the sharp frame follows 80 to 100 ms after that. The first final capture after a viewer attaches is slow (200 to 430 ms) and shows as the one gap outlier.
+
+### Why it is off: the live view was not reliable with it on
+
+- Full harness runs with adaptive on, same machine: the no-hint build passed 1 of 1 at the default settle time; the hint build `357a00a1e73a` passed once, then failed once; the final build in on mode failed 3 of 3. Failure shapes: the first drag collapsed to 3 to 12 fps (Chrome offered about 10 frames a second in the rough profile) and ended 15 to 40 px short; or, after a navigation, Chrome's screencast sent no frame for the new page until the next scroll. In the same hour the default (off) run passed with 0 failures.
+- A clip screenshot at exactly the screen's own scale reproduced the no-frame-after-navigation case every time; at 1 % under it the case is rarer but not gone, and it also appears with no screenshot at all when the profile flips often (settle 80 or 50 ms). In plain Chrome it reproduces when the screencast's frame acks are late (random 1 to 3 s), with or without restarts. I could not make it reproduce with prompt acks outside the server. Cause not found; treat stop and start per scroll as a risk until it is.
+- Not tried: warming the screenshot path at start, forcing a frame after a navigation, or a minimum dwell between profile switches. Next release if wanted.
+
+### Tests and gates (round 2)
+
+- apps/server `vp test run src/personal`: 131 files pass, 3 skipped, 1640 tests, exit 0. apps/web `src/features/personal`: 172 files, 1720 tests pass. packages/contracts `personalBrowser.test.ts`: 8 pass. `tsc --noEmit` in apps/server, apps/web and packages/contracts: 0 errors. `vp lint` on the touched folders: exit 0, warnings only, none new. `vp fmt --check` clean.
+- No component test for the phone's pointer-up sending `ScrollEnd` (the pane test setup cannot connect a viewport client without much more mocking); the real client path is exercised by the harness drags.
+
+### Notes for QA
+
+- Default: re-run the realistic harness with nothing set; expect 1.60.42 numbers and one picture quality.
+- Opt-in: `T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=on` (also 1, true, yes). Your delta44 bootstrap delays "the first `Page.captureScreenshot` reply": the first one is now the 16 px size measurement at screencast start (quality 20); delay the quality-60 capture instead.
+
+### Notes for Fable
+
+- `driver.ts` `sendFinalFrame`, `measurePixelsPerClipScale`, `switchScreencastProfile` (request count, signal, race); `adaptiveJpeg.ts` (no pump any more, `end()` with `endGuardMs`); `PersonalBrowser.ts` handles `ScrollEnd` before the page lookup and is silent on refusal.
+
+### Rollback
+
+Nothing changes by default. `ScrollEnd` and `ScrollEndWanted` are additive messages. The switch is the presence of `T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=on`.
