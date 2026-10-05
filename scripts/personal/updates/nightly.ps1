@@ -8,8 +8,12 @@ pipeline: -Step preflight before it changes anything, -Step ship when it is done
   1. the nightly lock (one run at a time; a dead run's lock goes stale), and
      nothing else building or deploying (upstream sync, its probe, build.ps1,
      restart.ps1);
-  2. the main checkout is on fix/inline-cards, has no uncommitted tracked
-     changes, matches origin, and its tree is exactly what is live;
+  2. the main checkout is on personal-bots/main, has no uncommitted tracked
+     changes, matches origin (a checkout that is only behind is fast-forwarded
+     with merge --ff-only; ahead or diverged is refused), and holds no code the
+     live release lacks (HANDOFF-*.md, other notes and the release tooling
+     under scripts\personal\ may differ: they are not part of a release);
+     in a live run its node_modules are brought in line with the lockfile;
   3. a database backup (backup.ps1);
   4. -Mode DryRun: a throwaway worktree at HEAD (vp i, .env copied) and a copy
      of the ledger, so a rehearsal changes nothing real.
@@ -106,14 +110,32 @@ function Invoke-Preflight {
     if ($head -ne $origin) {
         $ahead = [int](Get-UpdatesGitText -Repo $repo -GitArgs @('rev-list', '--count', "origin/$UpdatesBranch..HEAD"))
         $behind = [int](Get-UpdatesGitText -Repo $repo -GitArgs @('rev-list', '--count', "HEAD..origin/$UpdatesBranch"))
-        throw "the checkout is $ahead commit(s) ahead of and $behind behind origin/$UpdatesBranch; push or pull first"
+        if ((Get-UpdatesSyncState -Ahead $ahead -Behind $behind) -ne 'behind') {
+            throw "the checkout is $ahead commit(s) ahead of and $behind behind origin/$UpdatesBranch; push or pull first"
+        }
+        # Releases land from other worktrees and are pushed to origin, so a checkout
+        # nobody pulls in is always a little behind. Nothing local is at risk: the
+        # tree is clean and every commit here is already on origin.
+        & $log "the checkout is $behind commit(s) behind origin/$UpdatesBranch; fast-forwarding (merge --ff-only)"
+        [void](Invoke-UpdatesGit -Repo $repo -GitArgs @('merge', '--ff-only', '--quiet', "origin/$UpdatesBranch"))
+        $head = Get-UpdatesGitText -Repo $repo -GitArgs @('rev-parse', 'HEAD')
+        if ($head -ne $origin) { throw "the fast-forward onto origin/$UpdatesBranch did not land (HEAD $head, origin $origin)" }
     }
     $state = Read-PbServerState -Paths $paths
     if (-not $state -or -not $state.release) { throw 'Bots is not running (no run\server.json); nothing to update' }
     $liveRelease = [string]$state.release
     if ($liveRelease -match '-dirty-') { throw "the live release $liveRelease was built from uncommitted changes" }
-    $sameTree = Invoke-UpdatesGit -Repo $repo -GitArgs @('diff', '--quiet', $liveRelease, 'HEAD', '--') -AllowFail
-    if ($sameTree.Code -ne 0) { throw "HEAD has changes that are not live (live release $liveRelease); ship or revert them first" }
+    $liveCommit = Invoke-UpdatesGit -Repo $repo -GitArgs @('rev-parse', '--verify', '--quiet', "$liveRelease^{commit}") -AllowFail
+    if ($liveCommit.Code -ne 0) { throw "the live release $liveRelease is not a commit in this checkout's history; nothing to compare HEAD with" }
+    # Whole-tree equality is the wrong test: the team puts a HANDOFF-<n>.md notes
+    # commit on top of every release, so HEAD never equals the release. Only paths a
+    # release is built from count (see Test-UpdatesNotInRelease).
+    $changed = @(Get-UpdatesGitLines -Repo $repo -GitArgs @('-c', 'core.quotepath=false', 'diff', '--name-only', '--no-renames', $liveRelease, 'HEAD', '--'))
+    $codeChanges = @(Get-UpdatesCodePaths -ChangedPaths $changed)
+    if ($codeChanges.Count -gt 0) {
+        throw "HEAD has code changes that are not live (live release $liveRelease; $($codeChanges.Count) path(s), first: $(($codeChanges | Select-Object -First 5) -join ', ')); ship or revert them first"
+    }
+    & $log "HEAD $($head.Substring(0, 10)) holds no code the live release $liveRelease lacks ($($changed.Count) notes/tooling path(s) differ)"
     $drive = Get-PSDrive -Name ($repo.Substring(0, 1))
     if ($drive.Free -lt 5GB) { throw "less than 5 GB free on $($drive.Name):" }
 
@@ -127,6 +149,21 @@ function Invoke-Preflight {
     $workDir = $repo
     $ledger = $UpdatesLedger
     $dependencyChangesAllowed = ($liveExternals -eq 'copied')
+    # A live run gates and builds in this checkout with its own node_modules, which
+    # nothing else refreshes: they stay as of the last install while main moves on
+    # (the 25 Sep install was still there on 5 Oct, 5000+ lockfile lines behind).
+    # Installing is safe when the live release carries its own externals. A dry run
+    # installs into its own worktree below and leaves this one alone.
+    if ($Mode -eq 'Live' -and -not (Test-UpdatesDependenciesCurrent -Root $repo)) {
+        if (-not $dependencyChangesAllowed) { throw "node_modules in $repo do not match pnpm-lock.yaml, and the live release $liveRelease links to them (externals=$liveExternals); not reinstalling under a running server" }
+        & $log 'node_modules do not match pnpm-lock.yaml; vp i in the checkout ...'
+        $depsInstall = Invoke-UpdatesProc -FilePath (Join-Path $repo 'node_modules\.bin\vp.cmd') -ArgList @('i') -WorkingDirectory $repo -TimeoutSeconds 1800 -LogPath (Join-Path $runDir 'checkout-install.log')
+        if ($depsInstall.Code -ne 0) { throw "vp i failed in the checkout (exit $($depsInstall.Code)); log $runDir\checkout-install.log" }
+        $afterInstall = @(Get-UpdatesGitLines -Repo $repo -GitArgs @('status', '--porcelain', '--untracked-files=no'))
+        if ($afterInstall.Count -gt 0) { throw "vp i changed tracked files in the checkout ($(($afterInstall | Select-Object -First 5) -join ', ')); left for a look" }
+        Set-UpdatesDependenciesMarker -Root $repo
+        & $log 'vp i done; the checkout matches the lockfile'
+    }
     if ($Mode -eq 'DryRun') {
         Remove-UpdatesDryWorktree
         & $log "creating the dry-run worktree at $UpdatesDryWorktree"

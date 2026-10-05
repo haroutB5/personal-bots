@@ -201,7 +201,16 @@ range since the last review, and the proposals carried over from the ledger
 
 1. The bot runs `updates\nightly.ps1 -Step preflight`: the nightly lock, nothing
    else building (upstream sync, its probe, build.ps1, restart.ps1), a clean
-   `fix/inline-cards` equal to origin and to the live release, `backup.ps1`.
+   `personal-bots/main` checkout equal to origin (one that is only behind is
+   fast-forwarded with `merge --ff-only`; ahead or diverged is refused) that
+   holds no code the live release lacks, `backup.ps1`. "No code" means no
+   difference outside the notes and tooling a release is not built from:
+   top-level `*.md` (the `HANDOFF-<n>.md` commit the team adds on top of every
+   release), `docs/`, and `scripts/personal/` except `app-version.txt`
+   (`updates-common.ps1`, `Test-UpdatesNotInRelease`). In a live run the
+   checkout's `node_modules` are reinstalled when they no longer match
+   `pnpm-lock.yaml`. Setting `PB_UPDATES_NO_REPORT=1` keeps a refusal's report
+   out of the Updates chats (rehearsing the refusal paths).
 2. It reviews new releases (report in `claude-code-updates\<version>.md`), rates
    every open proposal safe or risky, and implements the safe (and approved)
    ones, one commit per proposal, recording each in the ledger with

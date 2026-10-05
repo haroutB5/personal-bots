@@ -20,7 +20,10 @@ $UpdatesLockFile = Join-Path $UpdatesHome 'lock.json'
 $UpdatesTokenFile = Join-Path $UpdatesHome 'report-hook-token'
 $UpdatesLastOutcomeFile = Join-Path $UpdatesHome 'last-outcome.json'
 $UpdatesDryWorktree = Join-Path $UpdatesHome 'dry-worktree'
-$UpdatesBranch = 'fix/inline-cards'
+# The release trunk: builders fast-forward it with every release, and the
+# nightly run pushes its own release commit to it. (Until 2026-10-05 this read
+# fix/inline-cards, the trunk of 1.42; every preflight since 26 Sep refused.)
+$UpdatesBranch = 'personal-bots/main'
 $UpdatesBotId = 'personal-claude-code-updates'
 $UpdatesLedgerCli = Join-Path $PSScriptRoot 'ledger.ts'
 $UpdatesNotesDir = 'C:\Claude\AI\personal-bots-notes'
@@ -361,6 +364,64 @@ function Invoke-UpdatesRevert {
     return , $created
 }
 
+# What a checkout can differ in from the live release without holding unshipped
+# code. Pure. Three kinds of path are not part of a release: notes (top-level
+# *.md such as HANDOFF-<n>.md, and docs/), and the release tooling under
+# scripts/personal/, which runs from the checkout and is never bundled into
+# releases\<sha>\dist (build.ps1 copies only apps\server\dist). The one file in
+# that folder a release does carry is app-version.txt (the number in VERSION
+# and /version.txt), so a change to it is not ignorable. Everything else
+# (apps, packages, lockfile, root config, other scripts) is code.
+function Test-UpdatesNotInRelease([string]$Path) {
+    $p = ($Path -replace '\\', '/').Trim()
+    if ($p -eq 'scripts/personal/app-version.txt') { return $false }
+    if ($p -match '^[^/]+\.md$') { return $true }
+    if ($p -like 'docs/*') { return $true }
+    if ($p -like 'scripts/personal/*') { return $true }
+    return $false
+}
+
+# The paths of a diff that would change a release (see above), in order.
+function Get-UpdatesCodePaths([string[]]$ChangedPaths) {
+    return , @($ChangedPaths | Where-Object { $_ -and -not (Test-UpdatesNotInRelease $_) })
+}
+
+<#
+.SYNOPSIS
+How the checkout relates to origin. Pure. 'same'; 'behind' (origin only has
+newer commits, so a fast-forward loses nothing); 'ahead' (unpushed commits);
+'diverged'. Only 'behind' is healed, and only by merge --ff-only.
+#>
+function Get-UpdatesSyncState([int]$Ahead, [int]$Behind) {
+    if ($Ahead -eq 0 -and $Behind -eq 0) { return 'same' }
+    if ($Ahead -eq 0) { return 'behind' }
+    if ($Behind -eq 0) { return 'ahead' }
+    return 'diverged'
+}
+
+# Whether node_modules was installed from the lockfile now in the checkout:
+# the marker this script writes after its own install, or pnpm's own copy of
+# the lockfile (node_modules\.pnpm\lock.yaml) being the same file.
+function Test-UpdatesDependenciesCurrent([string]$Root) {
+    $lock = Join-Path $Root 'pnpm-lock.yaml'
+    if (-not (Test-Path -LiteralPath $lock -PathType Leaf)) { return $true }
+    $modules = Join-Path $Root 'node_modules'
+    if (-not (Test-Path -LiteralPath $modules -PathType Container)) { return $false }
+    $want = (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash
+    $marker = Join-Path $modules '.pb-installed-lock.sha256'
+    if ((Test-Path -LiteralPath $marker -PathType Leaf) -and ((Get-Content -LiteralPath $marker -Raw).Trim() -eq $want)) { return $true }
+    $installed = Join-Path $modules '.pnpm\lock.yaml'
+    if ((Test-Path -LiteralPath $installed -PathType Leaf) -and ((Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -eq $want)) { return $true }
+    return $false
+}
+
+function Set-UpdatesDependenciesMarker([string]$Root) {
+    $lock = Join-Path $Root 'pnpm-lock.yaml'
+    $modules = Join-Path $Root 'node_modules'
+    if (-not (Test-Path -LiteralPath $lock -PathType Leaf) -or -not (Test-Path -LiteralPath $modules -PathType Container)) { return }
+    Set-Content -LiteralPath (Join-Path $modules '.pb-installed-lock.sha256') -Value (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash -Encoding ASCII
+}
+
 # ---------------------------------------------------------------- gates
 
 function Get-UpdatesKnownFailures {
@@ -551,6 +612,10 @@ function Save-UpdatesOutcome([string]$RunDir, $Outcome) {
 # down server (right after a restart) for up to $WaitMinutes.
 function Send-UpdatesReport {
     param([string]$Text, [int]$WaitMinutes = 10, [scriptblock]$Log)
+    if ($env:PB_UPDATES_NO_REPORT) {
+        & $Log 'report not posted: PB_UPDATES_NO_REPORT is set (a test of the refusal paths)'
+        return $false
+    }
     if (-not (Test-Path -LiteralPath $UpdatesTokenFile -PathType Leaf)) {
         & $Log "no report hook token at $UpdatesTokenFile"
         return $false
@@ -608,6 +673,8 @@ function Publish-UpdatesReport {
         $outcome = Get-Content -LiteralPath $outcomeFile -Raw | ConvertFrom-Json
         $outcome.reported = $true
         Save-UpdatesOutcome -RunDir $RunDir -Outcome $outcome
+    } elseif ($env:PB_UPDATES_NO_REPORT) {
+        & $Log 'morning report kept in report.md only (PB_UPDATES_NO_REPORT)'
     } else {
         & $Log 'morning report NOT posted; written to the urgot alerts file'
         Write-UpdatesAlert -Text $text -RunDir $RunDir

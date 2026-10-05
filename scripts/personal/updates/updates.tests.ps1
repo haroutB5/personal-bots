@@ -99,6 +99,24 @@ Assert-Equal 'forbidden paths' '.env,apps/server/.env.local,secrets/key,scripts/
     (Get-UpdatesForbiddenPaths -ChangedPaths @('.env', 'apps/server/.env.local', 'secrets/key', 'scripts/personal/app-version.txt', 'apps/server/src/x.ts', 'docs/environment.md'))
 Assert-Equal 'normal changes pass' 0 (Get-UpdatesForbiddenPaths -ChangedPaths @('apps/server/package.json', 'pnpm-lock.yaml')).Count
 
+Write-Host 'What counts as unshipped code (the preflight tree comparison)'
+Assert-Equal 'the trunk is personal-bots/main' 'personal-bots/main' $UpdatesBranch
+Assert-Equal 'a HANDOFF notes commit is not code' 0 (Get-UpdatesCodePaths -ChangedPaths @('HANDOFF-1630.md')).Count
+Assert-Equal 'other top-level notes, docs/ and the release tooling are not code' 0 `
+    (Get-UpdatesCodePaths -ChangedPaths @('FEATURES.md', 'CLAUDE.md', 'README.md', 'docs/internals/x.md', 'docs/img/a.png', 'scripts/personal/updates/nightly.ps1', 'scripts/personal/README.md', 'scripts/personal/perf/budget.json', 'scripts\personal\upstream-sync.ps1')).Count
+Assert-Equal 'server, web and package code is' 'apps/server/src/x.ts,apps/web/src/y.tsx,packages/shared/z.ts' `
+    (Get-UpdatesCodePaths -ChangedPaths @('HANDOFF-1.md', 'apps/server/src/x.ts', 'apps/web/src/y.tsx', 'packages/shared/z.ts'))
+Assert-Equal 'the lockfile, root config and CI scripts are' 'pnpm-lock.yaml,package.json,scripts/cli.ts,.github/workflows/ci.yml' `
+    (Get-UpdatesCodePaths -ChangedPaths @('pnpm-lock.yaml', 'package.json', 'scripts/cli.ts', '.github/workflows/ci.yml'))
+Assert-Equal 'app-version.txt is carried by a release, so it is code' 'scripts/personal/app-version.txt' (Get-UpdatesCodePaths -ChangedPaths @('scripts/personal/app-version.txt'))
+Assert-Equal 'a markdown file inside apps/ is code (it can be imported)' 'apps/server/src/prompt.md' (Get-UpdatesCodePaths -ChangedPaths @('apps/server/src/prompt.md'))
+Assert-Equal 'a look-alike folder is code' 'docsx/a.md,scripts/personalx/a.ps1' (Get-UpdatesCodePaths -ChangedPaths @('docsx/a.md', 'scripts/personalx/a.ps1'))
+Assert-Equal 'no changes, no code' 0 (Get-UpdatesCodePaths -ChangedPaths @()).Count
+Assert-Equal 'in sync' 'same' (Get-UpdatesSyncState -Ahead 0 -Behind 0)
+Assert-Equal 'only behind is healed' 'behind' (Get-UpdatesSyncState -Ahead 0 -Behind 3)
+Assert-Equal 'unpushed commits are refused' 'ahead' (Get-UpdatesSyncState -Ahead 2 -Behind 0)
+Assert-Equal 'diverged is refused' 'diverged' (Get-UpdatesSyncState -Ahead 1 -Behind 1)
+
 Write-Host 'Only the run''s own commits'
 $range = @('8b0c8b587a11111111111111111111111111111a', 'ff6be2c33c22222222222222222222222222222b', '1f3435bf2833333333333333333333333333333c')
 Assert-Equal 'a commit no proposal recorded is foreign' '1f3435bf2833333333333333333333333333333c' (Get-UpdatesForeignCommits -RangeCommits $range -RecordedCommits @('8b0c8b587a', 'FF6BE2C33C'))
@@ -181,6 +199,63 @@ try {
     Write-Host "  FAIL revert path threw: $($_.Exception.Message)"
     $script:failures++
 }
+
+Write-Host 'Release, then HANDOFF on top (real git, scratch repository)'
+$relDir = Join-Path $tempRoot 'release-repo'
+New-Item -ItemType Directory -Force -Path (Join-Path $relDir 'apps\server\src') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $relDir 'scripts\personal\updates') | Out-Null
+try {
+    [void](Invoke-UpdatesGit -Repo $relDir -GitArgs @('init', '--quiet', '-b', 'personal-bots/main'))
+    Set-Content -LiteralPath (Join-Path $relDir 'apps\server\src\a.ts') -Value 'export const a = 1;' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $relDir 'scripts\personal\app-version.txt') -Value '1.63.0' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $relDir 'scripts\personal\updates\nightly.ps1') -Value '# one' -Encoding ASCII
+    [void](Invoke-UpdatesGit -Repo $relDir -GitArgs @('add', '.'))
+    [void](Invoke-UpdatesGit -Repo $relDir -GitArgs ($UpdatesGitIdentity + @('commit', '--quiet', '-m', 'hbots 1.63.0')))
+    $liveSha = Get-UpdatesGitText -Repo $relDir -GitArgs @('rev-parse', '--short=12', 'HEAD')
+    $diffNames = { @(Get-UpdatesGitLines -Repo $relDir -GitArgs @('-c', 'core.quotepath=false', 'diff', '--name-only', '--no-renames', $liveSha, 'HEAD', '--')) }
+    Set-Content -LiteralPath (Join-Path $relDir 'HANDOFF-1630.md') -Value 'notes' -Encoding ASCII
+    [void](Invoke-UpdatesGit -Repo $relDir -GitArgs @('add', '.'))
+    [void](Invoke-UpdatesGit -Repo $relDir -GitArgs ($UpdatesGitIdentity + @('commit', '--quiet', '-m', 'HANDOFF-1630')))
+    $wholeTree = Invoke-UpdatesGit -Repo $relDir -GitArgs @('diff', '--quiet', $liveSha, 'HEAD', '--') -AllowFail
+    Assert-Equal 'the old whole-tree test refused this (the 26 Sep to 4 Oct bug)' 1 $wholeTree.Code
+    Assert-Equal 'HANDOFF on top of the release: no code differs' 0 (Get-UpdatesCodePaths -ChangedPaths (& $diffNames)).Count
+    Set-Content -LiteralPath (Join-Path $relDir 'scripts\personal\updates\nightly.ps1') -Value '# two' -Encoding ASCII
+    [void](Invoke-UpdatesGit -Repo $relDir -GitArgs @('add', '.'))
+    [void](Invoke-UpdatesGit -Repo $relDir -GitArgs ($UpdatesGitIdentity + @('commit', '--quiet', '-m', 'fix tooling')))
+    Assert-Equal 'a tooling-only commit on top is not code either' 0 (Get-UpdatesCodePaths -ChangedPaths (& $diffNames)).Count
+    Set-Content -LiteralPath (Join-Path $relDir 'apps\server\src\a.ts') -Value 'export const a = 2;' -Encoding ASCII
+    [void](Invoke-UpdatesGit -Repo $relDir -GitArgs @('add', '.'))
+    [void](Invoke-UpdatesGit -Repo $relDir -GitArgs ($UpdatesGitIdentity + @('commit', '--quiet', '-m', 'staged, not live')))
+    Assert-Equal 'a staged server change on top is refused, and named' 'apps/server/src/a.ts' (Get-UpdatesCodePaths -ChangedPaths (& $diffNames))
+    # A move out of a code path lists both sides (--no-renames), so code cannot hide as a note.
+    [void](Invoke-UpdatesGit -Repo $relDir -GitArgs @('mv', 'apps/server/src/a.ts', 'HANDOFF-moved.md'))
+    [void](Invoke-UpdatesGit -Repo $relDir -GitArgs ($UpdatesGitIdentity + @('commit', '--quiet', '-m', 'move code into a note')))
+    Assert-Equal 'code moved into a .md file still shows the code path' 'apps/server/src/a.ts' (Get-UpdatesCodePaths -ChangedPaths (& $diffNames))
+    $missing = Invoke-UpdatesGit -Repo $relDir -GitArgs @('rev-parse', '--verify', '--quiet', 'ffffffffffff^{commit}') -AllowFail
+    Assert-Equal 'an unknown live release is detected' $true ($missing.Code -ne 0)
+} catch {
+    Write-Host "  FAIL release/HANDOFF scenario threw: $($_.Exception.Message)"
+    $script:failures++
+}
+
+Write-Host 'node_modules against the lockfile'
+$depsDir = Join-Path $tempRoot 'deps'
+New-Item -ItemType Directory -Force -Path (Join-Path $depsDir 'node_modules\.pnpm') | Out-Null
+Set-Content -LiteralPath (Join-Path $depsDir 'pnpm-lock.yaml') -Value 'lockfileVersion: 9' -Encoding ASCII
+Assert-Equal 'no pnpm copy of the lockfile, no marker: stale' $false (Test-UpdatesDependenciesCurrent -Root $depsDir)
+Set-Content -LiteralPath (Join-Path $depsDir 'node_modules\.pnpm\lock.yaml') -Value 'lockfileVersion: 8' -Encoding ASCII
+Assert-Equal 'pnpm installed from an older lockfile: stale (the main checkout on 5 Oct)' $false (Test-UpdatesDependenciesCurrent -Root $depsDir)
+Set-Content -LiteralPath (Join-Path $depsDir 'node_modules\.pnpm\lock.yaml') -Value 'lockfileVersion: 9' -Encoding ASCII
+Assert-Equal 'pnpm installed from this lockfile: current' $true (Test-UpdatesDependenciesCurrent -Root $depsDir)
+Set-Content -LiteralPath (Join-Path $depsDir 'pnpm-lock.yaml') -Value 'lockfileVersion: 10' -Encoding ASCII
+Assert-Equal 'lockfile moved on: stale again' $false (Test-UpdatesDependenciesCurrent -Root $depsDir)
+Set-UpdatesDependenciesMarker -Root $depsDir
+Assert-Equal 'our own install marker makes it current' $true (Test-UpdatesDependenciesCurrent -Root $depsDir)
+Set-Content -LiteralPath (Join-Path $depsDir 'pnpm-lock.yaml') -Value 'lockfileVersion: 11' -Encoding ASCII
+Assert-Equal 'the marker goes stale with the lockfile' $false (Test-UpdatesDependenciesCurrent -Root $depsDir)
+Remove-Item -LiteralPath (Join-Path $depsDir 'node_modules') -Recurse -Force
+Assert-Equal 'no node_modules at all: stale' $false (Test-UpdatesDependenciesCurrent -Root $depsDir)
+Assert-Equal 'a repo with no lockfile has nothing to install' $true (Test-UpdatesDependenciesCurrent -Root (Join-Path $tempRoot 'gates'))
 
 Write-Host 'Detached launch survives the caller''s process tree being killed'
 try {
