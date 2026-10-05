@@ -2129,10 +2129,12 @@ describe("PersonalBrowser", () => {
           }),
         );
       });
-      return {
-        logs,
-        run: use.pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false }))),
-      };
+      // The browser forks the look at the page onto the runtime it was built with, so the logger
+      // has to be there when the layer is built, not only around the test.
+      const loggerLayer = Logger.layer([logger], { mergeWithExisting: false });
+      const withLogs = <ROut, E2, RIn>(layer: Layer.Layer<ROut, E2, RIn>) =>
+        layer.pipe(Layer.provide(loggerLayer));
+      return { logs, withLogs, run: use.pipe(Effect.provide(loggerLayer)) };
     };
 
     const challenge = {
@@ -2142,9 +2144,18 @@ describe("PersonalBrowser", () => {
       marked: false,
     };
 
+    /** The look runs after the navigation returns, so a log line is waited for, not assumed. */
+    const until = (check: () => boolean) =>
+      Effect.promise(async () => {
+        for (let turn = 0; turn < 100 && !check(); turn++) {
+          // @effect-diagnostics-next-line globalTimers:off
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        }
+      });
+
     it.effect("logs a landing on a bot check by origin only", () => {
       const fake = makeFakeDriver();
-      const { logs, run } = captureLogs(
+      const { logs, run, withLogs } = captureLogs(
         Effect.gen(function* () {
           const browser = yield* PersonalBrowser.PersonalBrowser;
           fake.state.page.evaluateImpl = async (expression) =>
@@ -2152,10 +2163,11 @@ describe("PersonalBrowser", () => {
           yield* browser.handleAutomationRequest(
             request("navigate", { url: "https://shop.example/cart/secret-path?token=abc123" }),
           );
+          yield* until(() => logs.some((entry) => entry.includes("bot check")));
         }),
       );
       return run.pipe(
-        Effect.provide(makeLayer(fake.driver)),
+        Effect.provide(withLogs(makeLayer(fake.driver))),
         Effect.tap(() =>
           Effect.sync(() => {
             const line = logs.find((entry) => entry.includes("bot check"));
@@ -2168,24 +2180,54 @@ describe("PersonalBrowser", () => {
       );
     });
 
-    it.effect("logs nothing for an ordinary page", () => {
+    it.effect("returns to the bot before a slow look at the page has finished", () => {
       const fake = makeFakeDriver();
-      const { logs, run } = captureLogs(
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const { logs, run, withLogs } = captureLogs(
         Effect.gen(function* () {
           const browser = yield* PersonalBrowser.PersonalBrowser;
-          fake.state.page.evaluateImpl = async () => ({
-            title: "weather today",
-            text: "sunny",
-            frames: 0,
-            marked: false,
-          });
+          fake.state.page.evaluateImpl = async (expression) => {
+            if (!expression.includes("challenge-form")) return null;
+            await gate;
+            return challenge;
+          };
+          const status = (yield* browser.handleAutomationRequest(
+            request("navigate", { url: "https://shop.example/" }),
+          )) as PreviewAutomationStatus;
+          // The navigation has answered while the look is still waiting on the page.
+          expect(status.url).toBe("https://shop.example/");
+          expect(logs.some((entry) => entry.includes("bot check"))).toBe(false);
+          release();
+          yield* until(() => logs.some((entry) => entry.includes("bot check")));
+          expect(logs.some((entry) => entry.includes("bot check"))).toBe(true);
+        }),
+      );
+      return run.pipe(Effect.provide(withLogs(makeLayer(fake.driver))));
+    });
+
+    it.effect("logs nothing for an ordinary page", () => {
+      const fake = makeFakeDriver();
+      let looked = false;
+      const { logs, run, withLogs } = captureLogs(
+        Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          fake.state.page.evaluateImpl = async () => {
+            looked = true;
+            return { title: "weather today", text: "sunny", frames: 0, marked: false };
+          };
           yield* browser.handleAutomationRequest(
             request("navigate", { url: "https://example.com/" }),
           );
+          // Wait for the look itself, or the empty log below would prove nothing.
+          yield* until(() => looked);
+          yield* Effect.yieldNow;
         }),
       );
       return run.pipe(
-        Effect.provide(makeLayer(fake.driver)),
+        Effect.provide(withLogs(makeLayer(fake.driver))),
         Effect.tap(() =>
           Effect.sync(() => expect(logs.some((entry) => entry.includes("bot check"))).toBe(false)),
         ),

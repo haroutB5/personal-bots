@@ -721,8 +721,9 @@ export const make = (options: PersonalBrowserOptions) =>
 
     /**
      * A bot's navigation that lands on a human-check page is logged by origin (info, no path, no
-     * page text), so it is easy to see which sites stop the browser. A failed or slow look is
-     * just skipped: this never changes what the navigation returns.
+     * page text), so it is easy to see which sites stop the browser. It runs after the navigation
+     * has returned (up to a second of looking must not hold the bot's next step), and a failed or
+     * slow look is just skipped: this never changes what the navigation returns.
      */
     const BOT_CHECK_PROBE_MS = 1_000;
     const logBotCheckLanding = (tab: TabEntry) =>
@@ -1705,7 +1706,7 @@ export const make = (options: PersonalBrowserOptions) =>
             const tab = reused ?? (yield* createTab(request.threadId, url));
             if (url !== undefined) {
               yield* navigateTab(tab, url, "load", timeoutMs);
-              yield* logBotCheckLanding(tab);
+              runFork(logBotCheckLanding(tab));
             }
             yield* setActive(tab);
             yield* syncPreviewStatus(tab);
@@ -1733,7 +1734,7 @@ export const make = (options: PersonalBrowserOptions) =>
               input.readiness ?? "load",
               driverTimeoutFor(request.timeoutMs, input.timeoutMs),
             );
-            yield* logBotCheckLanding(tab);
+            runFork(logBotCheckLanding(tab));
             yield* setActive(tab);
             yield* syncPreviewStatus(tab);
             return { tab, result: statusOf(tab) };
