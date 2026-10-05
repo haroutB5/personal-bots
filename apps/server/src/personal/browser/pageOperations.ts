@@ -97,14 +97,127 @@ const selectorDetail = (input: SelectorInput) =>
       ? { selectorKind: "selector" as const, selectorLength: input.selector.length }
       : undefined;
 
+/**
+ * What a failed page load says, in plain words: Chrome's network error codes and Playwright's
+ * "page.goto: ..." prefix mean nothing to a person (or to a model deciding what to do next).
+ * The code stays at the end in brackets for diagnosis; the address (which can carry a token in
+ * its query) and Playwright's call log are dropped. Null when the message is not a navigation
+ * failure, so every other operation keeps its own wording.
+ */
+const NETWORK_ERROR_WORDS: ReadonlyArray<readonly [RegExp, string]> = [
+  [
+    /NAME_NOT_RESOLVED|NAME_RESOLUTION|DNS_/,
+    "That site's address could not be found. Check how the web address is spelled.",
+  ],
+  [
+    /INTERNET_DISCONNECTED|NETWORK_CHANGED|NETWORK_ACCESS_DENIED/,
+    "The computer running the browser has no internet connection right now.",
+  ],
+  [/CONNECTION_REFUSED/, "The site refused the connection: nothing is answering at that address."],
+  [
+    /ADDRESS_UNREACHABLE|ADDRESS_INVALID/,
+    "That site's address can't be reached from this computer.",
+  ],
+  [/CONNECTION_TIMED_OUT|TIMED_OUT/, "The site took too long to answer."],
+  [
+    /CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_ABORTED|EMPTY_RESPONSE|HTTP2_|QUIC_|SOCKET_NOT_CONNECTED/,
+    "The connection to the site dropped before it answered. Trying again often works.",
+  ],
+  [
+    /CERT_|SSL_|BAD_SSL/,
+    "The site's security certificate could not be trusted, so the page was not opened.",
+  ],
+  [/TOO_MANY_REDIRECTS/, "The site keeps redirecting in a loop."],
+  [
+    /ABORTED/,
+    "The page load was interrupted: a newer navigation replaced it, or the link is a download.",
+  ],
+  [/BLOCKED_BY|ACCESS_DENIED/, "The site refused to be opened in this browser."],
+  [/INVALID_URL|UNSAFE_PORT/, "That web address is not valid or uses a port the browser blocks."],
+];
+
+const NAVIGATION_CALL = /^(?:page|frame)\.(?:goto|reload|goBack|goForward|waitForURL)\b/;
+
+export function friendlyNavigationMessage(message: string): string | null {
+  const code = /net::(ERR_[A-Z0-9_]+)/.exec(message)?.[1];
+  if (code !== undefined) {
+    const words = NETWORK_ERROR_WORDS.find(([pattern]) => pattern.test(code))?.[1];
+    return `${words ?? "The page could not be opened."} (${code})`;
+  }
+  if (NAVIGATION_CALL.test(message)) {
+    const limit = /Timeout (\d+)ms exceeded/.exec(message)?.[1];
+    if (limit !== undefined) {
+      const seconds = Math.max(1, Math.round(Number(limit) / 1_000));
+      return `The page took longer than ${seconds} s to load. It may still be loading; try again or open something lighter.`;
+    }
+  }
+  return null;
+}
+
+/**
+ * A page that stops a bot and asks for proof of a human (a challenge, a captcha, a block page).
+ * Landing on one is the most common reason a browsing task stalls, so the server logs which
+ * origins do it. The probe runs in the page and hands back only a short lower-cased sample of the
+ * title and the top of the visible text plus the kinds of challenge frames present; the host
+ * classifies it, and nothing from the sample is logged.
+ */
+export const BOT_CHECK_PROBE = `(() => {
+  const frames = Array.from(document.querySelectorAll("iframe[src]"))
+    .map((frame) => frame.getAttribute("src") || "")
+    .filter((src) => /recaptcha|hcaptcha|challenges\\.cloudflare\\.com|captcha-delivery|px-cdn|arkoselabs|funcaptcha/i.test(src));
+  const marked = Boolean(document.querySelector("#challenge-form, #cf-challenge-running, .g-recaptcha, .h-captcha, #px-captcha, [data-sitekey]"));
+  return {
+    title: (document.title || "").slice(0, 120).toLowerCase(),
+    text: (document.body?.innerText || "").slice(0, 500).toLowerCase(),
+    frames: frames.length,
+    marked,
+  };
+})()`;
+
+export type BotCheckKind = "challenge" | "captcha" | "blocked";
+
+export function classifyBotCheck(sample: unknown): BotCheckKind | null {
+  if (typeof sample !== "object" || sample === null) return null;
+  const { title, text, frames, marked } = sample as Record<string, unknown>;
+  const heading = typeof title === "string" ? title : "";
+  const body = typeof text === "string" ? text : "";
+  const both = `${heading}\n${body}`;
+  if (
+    /^just a moment|^attention required|checking your browser|checking if the site connection is secure|verifying you are human|performing security verification/.test(
+      both,
+    )
+  ) {
+    return "challenge";
+  }
+  if (
+    (typeof frames === "number" && frames > 0) ||
+    marked === true ||
+    /captcha|verify (?:that )?you are (?:a )?human|are you a robot|i'm not a robot|confirm you are human|press (?:&|and) hold/.test(
+      both,
+    )
+  ) {
+    return "captcha";
+  }
+  if (
+    /unusual traffic|access denied|request blocked|you have been blocked|automated (?:access|requests)|bot detected|pardon our interruption/.test(
+      both,
+    )
+  ) {
+    return "blocked";
+  }
+  return null;
+}
+
 /** Maps Playwright failures onto the error tags the broker classifies. */
 export function classifyPageError(cause: unknown, input: SelectorInput = {}): HostOperationError {
   if (cause instanceof HostOperationError) return cause;
   const message = cause instanceof Error ? cause.message : String(cause);
   const name = cause instanceof Error ? cause.name : "";
+  const friendly = friendlyNavigationMessage(message);
   if (name === "TimeoutError" || /Timeout \d+ms exceeded/.test(message)) {
-    return new HostOperationError("PreviewAutomationTimeoutError", firstLine(message));
+    return new HostOperationError("PreviewAutomationTimeoutError", friendly ?? firstLine(message));
   }
+  if (friendly !== null) return new HostOperationError("PreviewAutomationExecutionError", friendly);
   if (
     /while parsing (css )?selector|Unexpected token|Unknown engine|is not a valid selector/i.test(
       message,

@@ -100,6 +100,8 @@ import {
 import { createMotionController } from "./adaptiveJpeg.ts";
 import {
   captureSnapshot,
+  BOT_CHECK_PROBE,
+  classifyBotCheck,
   classifyPageError,
   HostOperationError,
   performClick,
@@ -715,6 +717,29 @@ export const make = (options: PersonalBrowserOptions) =>
         return null;
       }
     };
+
+    /**
+     * A bot's navigation that lands on a human-check page is logged by origin (info, no path, no
+     * page text), so it is easy to see which sites stop the browser. A failed or slow look is
+     * just skipped: this never changes what the navigation returns.
+     */
+    const BOT_CHECK_PROBE_MS = 1_000;
+    const logBotCheckLanding = (tab: TabEntry) =>
+      Effect.gen(function* () {
+        if (!openPage(tab.page)) return;
+        const origin = webOrigin(tab.page.url());
+        if (origin === null) return;
+        const sample = yield* Effect.tryPromise({
+          try: () => tab.page.evaluate(BOT_CHECK_PROBE),
+          catch: () => undefined,
+        }).pipe(
+          Effect.timeoutOption(BOT_CHECK_PROBE_MS),
+          Effect.map((result) => (Option.isSome(result) ? result.value : null)),
+          Effect.orElseSucceed(() => null),
+        );
+        const kind = classifyBotCheck(sample);
+        if (kind !== null) yield* Effect.logInfo("browser landed on a bot check", { origin, kind });
+      });
 
     /** A thread's own key, plus its delegation tree's when it works in one. */
     const exposureKeys = (threadId: string) =>
@@ -1650,7 +1675,10 @@ export const make = (options: PersonalBrowserOptions) =>
               return yield* Effect.fail(dialogOpenError(reusedDialog));
             }
             const tab = reused ?? (yield* createTab(request.threadId, url));
-            if (url !== undefined) yield* navigateTab(tab, url, "load", timeoutMs);
+            if (url !== undefined) {
+              yield* navigateTab(tab, url, "load", timeoutMs);
+              yield* logBotCheckLanding(tab);
+            }
             yield* setActive(tab);
             yield* syncPreviewStatus(tab);
             return { tab, result: statusOf(tab) };
@@ -1677,6 +1705,7 @@ export const make = (options: PersonalBrowserOptions) =>
               input.readiness ?? "load",
               driverTimeoutFor(request.timeoutMs, input.timeoutMs),
             );
+            yield* logBotCheckLanding(tab);
             yield* setActive(tab);
             yield* syncPreviewStatus(tab);
             return { tab, result: statusOf(tab) };

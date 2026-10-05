@@ -190,6 +190,57 @@ describe("stream telemetry", () => {
     expect(line.chrome.fpsActive).toBeGreaterThanOrEqual(24);
   });
 
+  it("reports how big and how fast the rough picture is against the sharp one", () => {
+    const { clock, flow, telemetry } = fixture();
+    flow.setBacklogProbe(() => 0);
+    const send = (bytes: number) => {
+      telemetry.chromeFrame();
+      flow.offerFrame(frame(bytes));
+      flow.poll();
+      flow.acknowledge();
+    };
+    // One sharp frame, then one second of rough frames at the 20 a second this clock allows, then a sharp one.
+    send(60_000);
+    clock.now += 100;
+    telemetry.motion(true);
+    for (let i = 0; i < 20; i += 1) {
+      clock.now += 50;
+      send(25_000);
+    }
+    clock.now += 10;
+    telemetry.motion(false);
+    clock.now += 40;
+    send(70_000);
+    clock.now += 4_000;
+    const line = telemetry.flush() as Record<string, any>;
+    expect(line.adaptive.switches).toBe(1);
+    expect(line.adaptive.sentMoving).toBe(20);
+    expect(line.adaptive.avgBytesMoving).toBe(25_000);
+    expect(line.adaptive.sentStill).toBe(2);
+    expect(line.adaptive.avgBytesStill).toBe(65_000);
+    expect(line.adaptive.movingS).toBeCloseTo(1, 0);
+    expect(line.adaptive.sentPerMovingS).toBeGreaterThan(17);
+    expect(line.adaptive.sentPerMovingS).toBeLessThanOrEqual(21);
+  });
+
+  it("keeps counting rough time across a window line and into the summary", () => {
+    const { clock, telemetry } = fixture();
+    telemetry.motion(true);
+    clock.now += 3_000;
+    telemetry.chromeFrame();
+    const first = telemetry.flush() as Record<string, any>;
+    expect(first.adaptive.movingS).toBeCloseTo(3, 0);
+    clock.now += 2_000;
+    telemetry.motion(false);
+    telemetry.chromeFrame();
+    const second = telemetry.flush() as Record<string, any>;
+    expect(second.adaptive.movingS).toBeCloseTo(2, 0);
+    // Saying the same thing twice is not a second switch.
+    telemetry.motion(false);
+    expect((telemetry.summary() as Record<string, any>).adaptive.switches).toBe(1);
+    expect((telemetry.summary() as Record<string, any>).adaptive.movingS).toBeCloseTo(5, 0);
+  });
+
   it("counts wheels merged into the one before them", () => {
     const { clock, telemetry } = fixture();
     telemetry.wheelMerged();

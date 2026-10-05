@@ -22,8 +22,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -44,6 +46,7 @@ import type {
   ConsoleRecord,
   NetworkRecord,
   ScreencastMeta,
+  ScreencastProfile,
   ViewportOverride,
   PageDialog,
   UnstickOutcome,
@@ -156,6 +159,11 @@ class FakePage implements BrowserPage {
   }
   /** The live screencast's frame callback, so a test can paint a frame. */
   frameSink: ((jpeg: Uint8Array, meta: ScreencastMeta) => void | Promise<void>) | null = null;
+  /** The profiles the adaptive JPEG controller asked for, in order. */
+  readonly profiles: ScreencastProfile[] = [];
+  async setScreencastProfile(profile: ScreencastProfile) {
+    this.profiles.push(profile);
+  }
   async startScreencast(onFrame: (jpeg: Uint8Array, meta: ScreencastMeta) => void | Promise<void>) {
     this.screencasts++;
     this.frameSink = onFrame;
@@ -351,6 +359,7 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
     readonly scrollSettle?: boolean;
     readonly frameAckEarly?: boolean;
     readonly streamMaxFps?: number;
+    readonly adaptiveJpeg?: boolean;
   } = {},
 ) =>
   PersonalBrowser.makeLayer({
@@ -382,6 +391,7 @@ const makeLayer = (
     readonly scrollSettle?: boolean;
     readonly frameAckEarly?: boolean;
     readonly streamMaxFps?: number;
+    readonly adaptiveJpeg?: boolean;
   },
 ) =>
   baseLayer(
@@ -2102,6 +2112,207 @@ describe("PersonalBrowser", () => {
           }),
         );
       }).pipe(Effect.provide(makeLayer(fake.driver, undefined, { wheelFold: false })));
+    });
+  });
+
+  describe("navigation by a bot", () => {
+    /** Runs `use` with the info logs the browser writes captured. */
+    const captureLogs = <A, E, R>(use: Effect.Effect<A, E, R>) => {
+      const logs: string[] = [];
+      const logger = Logger.make<unknown, void>(({ fiber, message }) => {
+        logs.push(
+          JSON.stringify({
+            message,
+            annotations: { ...fiber.getRef(References.CurrentLogAnnotations) },
+          }),
+        );
+      });
+      return {
+        logs,
+        run: use.pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false }))),
+      };
+    };
+
+    const challenge = {
+      title: "just a moment...",
+      text: "checking your browser before accessing the site",
+      frames: 0,
+      marked: false,
+    };
+
+    it.effect("logs a landing on a bot check by origin only", () => {
+      const fake = makeFakeDriver();
+      const { logs, run } = captureLogs(
+        Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          fake.state.page.evaluateImpl = async (expression) =>
+            expression.includes("challenge-form") ? challenge : null;
+          yield* browser.handleAutomationRequest(
+            request("navigate", { url: "https://shop.example/cart/secret-path?token=abc123" }),
+          );
+        }),
+      );
+      return run.pipe(
+        Effect.provide(makeLayer(fake.driver)),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const line = logs.find((entry) => entry.includes("bot check"));
+            expect(line).toBeDefined();
+            expect(line).toContain("https://shop.example");
+            expect(line).toContain("challenge");
+            expect(line).not.toMatch(/secret-path|token=abc123|checking your browser/);
+          }),
+        ),
+      );
+    });
+
+    it.effect("logs nothing for an ordinary page", () => {
+      const fake = makeFakeDriver();
+      const { logs, run } = captureLogs(
+        Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          fake.state.page.evaluateImpl = async () => ({
+            title: "weather today",
+            text: "sunny",
+            frames: 0,
+            marked: false,
+          });
+          yield* browser.handleAutomationRequest(
+            request("navigate", { url: "https://example.com/" }),
+          );
+        }),
+      );
+      return run.pipe(
+        Effect.provide(makeLayer(fake.driver)),
+        Effect.tap(() =>
+          Effect.sync(() => expect(logs.some((entry) => entry.includes("bot check"))).toBe(false)),
+        ),
+      );
+    });
+
+    it.effect("still navigates when the page cannot be looked at", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        fake.state.page.evaluateImpl = async () => {
+          throw new Error("Execution context was destroyed");
+        };
+        const result = yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://example.com/next" }),
+        );
+        expect(JSON.stringify(result)).toContain("example.com");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("tells a bot why a page did not open in plain words", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        fake.state.page.goto = async () => {
+          throw new Error(
+            'page.goto: net::ERR_NAME_NOT_RESOLVED at https://nope.invalid/\nCall log:\n  - navigating to "https://nope.invalid/"',
+          );
+        };
+        const failure = yield* browser
+          .handleAutomationRequest(request("navigate", { url: "https://nope.invalid/" }))
+          .pipe(Effect.flip);
+        expect(String(failure.message)).toBe(
+          "That site's address could not be found. Check how the web address is spelled. (ERR_NAME_NOT_RESOLVED)",
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("tells the phone why a typed address did not open in plain words", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.takeControl("session-1");
+        fake.state.page.goto = async () => {
+          throw new Error("page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:1/");
+        };
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const viewer = yield* browser.attachViewer({
+              sessionId: "session-1",
+              canOperate: true,
+            });
+            yield* browser.handleViewerMessage(
+              viewer,
+              '{"_tag":"Navigate","url":"http://localhost:1/"}',
+            );
+            const items: unknown[] = [];
+            for (;;) {
+              const next = yield* Queue.poll(viewer.outbox);
+              if (Option.isNone(next)) break;
+              items.push(next.value);
+            }
+            const rejected = items.map(String).find((item) => item.includes("InputRejected"));
+            expect(rejected).toContain("refused the connection");
+            expect(rejected).not.toMatch(/page\.goto|net::/);
+          }),
+        );
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+  });
+
+  // While the phone scrolls, the live view is a rougher, smaller picture; a sharp one follows the
+  // scroll. Kill switch: T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=off.
+  describe("adaptive JPEG while the phone scrolls", () => {
+    const wheel = '{"_tag":"Wheel","x":12,"y":34,"deltaX":0,"deltaY":56}';
+    const pause = (ms: number) =>
+      // @effect-diagnostics-next-line globalTimers:off
+      Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+
+    const scroll = (steps: number, extra?: { readonly adaptiveJpeg?: boolean }) => {
+      const fake = makeFakeDriver();
+      return {
+        fake,
+        run: Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+          yield* browser.takeControl("session-1");
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const viewer = yield* browser.attachViewer({
+                sessionId: "session-1",
+                canOperate: true,
+              });
+              for (let step = 0; step < steps; step += 1) {
+                yield* browser.handleViewerMessage(viewer, wheel);
+                yield* pause(20);
+              }
+              expect(fake.state.page.profiles).toEqual(
+                steps >= 2 && extra?.adaptiveJpeg !== false ? ["moving"] : [],
+              );
+              yield* pause(400);
+            }),
+          );
+        }).pipe(Effect.provide(makeLayer(fake.driver, undefined, extra))),
+      };
+    };
+
+    it.effect("goes rough during a run of scroll steps and sharp once they stop", () => {
+      const { fake, run } = scroll(6);
+      return run.pipe(
+        Effect.tap(() =>
+          Effect.sync(() => expect(fake.state.page.profiles).toEqual(["moving", "sharp"])),
+        ),
+      );
+    });
+
+    it.effect("leaves one nudge of the page sharp", () => {
+      const { fake, run } = scroll(1);
+      return run.pipe(
+        Effect.tap(() => Effect.sync(() => expect(fake.state.page.profiles).toEqual([]))),
+      );
+    });
+
+    it.effect("changes nothing with the kill switch", () => {
+      const { fake, run } = scroll(6, { adaptiveJpeg: false });
+      return run.pipe(
+        Effect.tap(() => Effect.sync(() => expect(fake.state.page.profiles).toEqual([]))),
+      );
     });
   });
 
