@@ -101,17 +101,17 @@ Assert-Equal 'normal changes pass' 0 (Get-UpdatesForbiddenPaths -ChangedPaths @(
 
 Write-Host 'What counts as unshipped code (the preflight tree comparison)'
 Assert-Equal 'the trunk is personal-bots/main' 'personal-bots/main' $UpdatesBranch
-Assert-Equal 'a HANDOFF notes commit is not code' 0 (Get-UpdatesCodePaths -ChangedPaths @('HANDOFF-1630.md')).Count
+Assert-Equal 'a HANDOFF notes commit is not code' 0 @(Get-UpdatesCodePaths -ChangedPaths @('HANDOFF-1630.md')).Count
 Assert-Equal 'other top-level notes, docs/ and the release tooling are not code' 0 `
-    (Get-UpdatesCodePaths -ChangedPaths @('FEATURES.md', 'CLAUDE.md', 'README.md', 'docs/internals/x.md', 'docs/img/a.png', 'scripts/personal/updates/nightly.ps1', 'scripts/personal/README.md', 'scripts/personal/perf/budget.json', 'scripts\personal\upstream-sync.ps1')).Count
+    @(Get-UpdatesCodePaths -ChangedPaths @('FEATURES.md', 'CLAUDE.md', 'README.md', 'docs/internals/x.md', 'docs/img/a.png', 'scripts/personal/updates/nightly.ps1', 'scripts/personal/README.md', 'scripts/personal/perf/budget.json', 'scripts\personal\upstream-sync.ps1')).Count
 Assert-Equal 'server, web and package code is' 'apps/server/src/x.ts,apps/web/src/y.tsx,packages/shared/z.ts' `
-    (Get-UpdatesCodePaths -ChangedPaths @('HANDOFF-1.md', 'apps/server/src/x.ts', 'apps/web/src/y.tsx', 'packages/shared/z.ts'))
+    @(Get-UpdatesCodePaths -ChangedPaths @('HANDOFF-1.md', 'apps/server/src/x.ts', 'apps/web/src/y.tsx', 'packages/shared/z.ts'))
 Assert-Equal 'the lockfile, root config and CI scripts are' 'pnpm-lock.yaml,package.json,scripts/cli.ts,.github/workflows/ci.yml' `
-    (Get-UpdatesCodePaths -ChangedPaths @('pnpm-lock.yaml', 'package.json', 'scripts/cli.ts', '.github/workflows/ci.yml'))
-Assert-Equal 'app-version.txt is carried by a release, so it is code' 'scripts/personal/app-version.txt' (Get-UpdatesCodePaths -ChangedPaths @('scripts/personal/app-version.txt'))
-Assert-Equal 'a markdown file inside apps/ is code (it can be imported)' 'apps/server/src/prompt.md' (Get-UpdatesCodePaths -ChangedPaths @('apps/server/src/prompt.md'))
-Assert-Equal 'a look-alike folder is code' 'docsx/a.md,scripts/personalx/a.ps1' (Get-UpdatesCodePaths -ChangedPaths @('docsx/a.md', 'scripts/personalx/a.ps1'))
-Assert-Equal 'no changes, no code' 0 (Get-UpdatesCodePaths -ChangedPaths @()).Count
+    @(Get-UpdatesCodePaths -ChangedPaths @('pnpm-lock.yaml', 'package.json', 'scripts/cli.ts', '.github/workflows/ci.yml'))
+Assert-Equal 'app-version.txt is carried by a release, so it is code' 'scripts/personal/app-version.txt' @(Get-UpdatesCodePaths -ChangedPaths @('scripts/personal/app-version.txt'))
+Assert-Equal 'a markdown file inside apps/ is code (it can be imported)' 'apps/server/src/prompt.md' @(Get-UpdatesCodePaths -ChangedPaths @('apps/server/src/prompt.md'))
+Assert-Equal 'a look-alike folder is code' 'docsx/a.md,scripts/personalx/a.ps1' @(Get-UpdatesCodePaths -ChangedPaths @('docsx/a.md', 'scripts/personalx/a.ps1'))
+Assert-Equal 'no changes, no code' 0 @(Get-UpdatesCodePaths -ChangedPaths @()).Count
 Assert-Equal 'in sync' 'same' (Get-UpdatesSyncState -Ahead 0 -Behind 0)
 Assert-Equal 'only behind is healed' 'behind' (Get-UpdatesSyncState -Ahead 0 -Behind 3)
 Assert-Equal 'unpushed commits are refused' 'ahead' (Get-UpdatesSyncState -Ahead 2 -Behind 0)
@@ -228,19 +228,19 @@ try {
     [void](Invoke-UpdatesGit -Repo $relDir -GitArgs ($UpdatesGitIdentity + @('commit', '--quiet', '-m', 'HANDOFF-1630')))
     $wholeTree = Invoke-UpdatesGit -Repo $relDir -GitArgs @('diff', '--quiet', $liveSha, 'HEAD', '--') -AllowFail
     Assert-Equal 'the old whole-tree test refused this (the 26 Sep to 4 Oct bug)' 1 $wholeTree.Code
-    Assert-Equal 'HANDOFF on top of the release: no code differs' 0 (Get-UpdatesCodePaths -ChangedPaths (& $diffNames)).Count
+    Assert-Equal 'HANDOFF on top of the release: no code differs' 0 @(Get-UpdatesCodePaths -ChangedPaths (& $diffNames)).Count
     Set-Content -LiteralPath (Join-Path $relDir 'scripts\personal\updates\nightly.ps1') -Value '# two' -Encoding ASCII
     [void](Invoke-UpdatesGit -Repo $relDir -GitArgs @('add', '.'))
     [void](Invoke-UpdatesGit -Repo $relDir -GitArgs ($UpdatesGitIdentity + @('commit', '--quiet', '-m', 'fix tooling')))
-    Assert-Equal 'a tooling-only commit on top is not code either' 0 (Get-UpdatesCodePaths -ChangedPaths (& $diffNames)).Count
+    Assert-Equal 'a tooling-only commit on top is not code either' 0 @(Get-UpdatesCodePaths -ChangedPaths (& $diffNames)).Count
     Set-Content -LiteralPath (Join-Path $relDir 'apps\server\src\a.ts') -Value 'export const a = 2;' -Encoding ASCII
     [void](Invoke-UpdatesGit -Repo $relDir -GitArgs @('add', '.'))
     [void](Invoke-UpdatesGit -Repo $relDir -GitArgs ($UpdatesGitIdentity + @('commit', '--quiet', '-m', 'staged, not live')))
-    Assert-Equal 'a staged server change on top is refused, and named' 'apps/server/src/a.ts' (Get-UpdatesCodePaths -ChangedPaths (& $diffNames))
+    Assert-Equal 'a staged server change on top is refused, and named' 'apps/server/src/a.ts' @(Get-UpdatesCodePaths -ChangedPaths (& $diffNames))
     # A move out of a code path lists both sides (--no-renames), so code cannot hide as a note.
     [void](Invoke-UpdatesGit -Repo $relDir -GitArgs @('mv', 'apps/server/src/a.ts', 'HANDOFF-moved.md'))
     [void](Invoke-UpdatesGit -Repo $relDir -GitArgs ($UpdatesGitIdentity + @('commit', '--quiet', '-m', 'move code into a note')))
-    Assert-Equal 'code moved into a .md file still shows the code path' 'apps/server/src/a.ts' (Get-UpdatesCodePaths -ChangedPaths (& $diffNames))
+    Assert-Equal 'code moved into a .md file still shows the code path' 'apps/server/src/a.ts' @(Get-UpdatesCodePaths -ChangedPaths (& $diffNames))
     $missing = Invoke-UpdatesGit -Repo $relDir -GitArgs @('rev-parse', '--verify', '--quiet', 'ffffffffffff^{commit}') -AllowFail
     Assert-Equal 'an unknown live release is detected' $true ($missing.Code -ne 0)
 } catch {

@@ -396,7 +396,9 @@ function Test-UpdatesNotInRelease([string]$Path) {
 
 # The paths of a diff that would change a release (see above), in order.
 function Get-UpdatesCodePaths([string[]]$ChangedPaths) {
-    return , @($ChangedPaths | Where-Object { $_ -and -not (Test-UpdatesNotInRelease $_) })
+    # No leading comma: callers wrap the call in @(...). `return , @()` would reach them
+    # as ONE element (an empty array) and read "1 path" for no change at all.
+    return @($ChangedPaths | Where-Object { $_ -and -not (Test-UpdatesNotInRelease $_) })
 }
 
 <#
