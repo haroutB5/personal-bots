@@ -59,6 +59,9 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
   let decoding = false;
   // Set once the server asks for them; an older server would reject the message.
   let acknowledgeFrames = false;
+  // Set once the server asks: it brings the sharp picture back as soon as a scrolling finger
+  // lifts. An older server would reject the message.
+  let reportScrollEnd = false;
   const focusGuard = createFocusReplyGuard();
   const meter = createPhoneMeter();
   let statsTimer: ReturnType<typeof setInterval> | undefined;
@@ -112,6 +115,9 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
       switch (message.value._tag) {
         case "FrameAcks":
           acknowledgeFrames = true;
+          return;
+        case "ScrollEndWanted":
+          reportScrollEnd = true;
           return;
         case "StreamStatsWanted":
           // Timings only, every few seconds; off with bots:perf-off=stream-telemetry.
@@ -177,6 +183,7 @@ export function connectViewport(url: string, callbacks: ViewportClientCallbacks)
 
   return {
     send: (message) => {
+      if (message._tag === "ScrollEnd" && !reportScrollEnd) return;
       if (batchWheels && message._tag === "Wheel") {
         wheels.push(message);
         return;

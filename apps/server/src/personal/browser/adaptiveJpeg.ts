@@ -19,6 +19,11 @@ export const ADAPTIVE_JPEG_TIMING = {
   enterWithinMs: 120,
   /** Quiet this long after the last wheel: the page has settled. */
   settleMs: 150,
+  /**
+   * After the finger lifted (`end`): this long after the last wheel step, so the page has applied
+   * it before the sharp picture is taken. Shorter than `settleMs` because nothing more is coming.
+   */
+  endGuardMs: 40,
 } as const;
 
 export interface MotionControllerOptions {
@@ -34,11 +39,18 @@ export interface MotionControllerOptions {
   readonly clearTimer?: (timer: unknown) => void;
   readonly enterWithinMs?: number;
   readonly settleMs?: number;
+  readonly endGuardMs?: number;
 }
 
 export interface MotionController {
   /** A wheel step from the person arrived. */
   readonly wheel: () => void;
+  /**
+   * The finger that was scrolling lifted: no more steps follow from it. The picture goes sharp
+   * after a short guard instead of the full quiet time. Steps that do arrive meanwhile (a new
+   * gesture) keep it rough as usual.
+   */
+  readonly end: () => void;
   /** The screencast was (re)started or stopped: it begins sharp, and nothing is moving. */
   readonly reset: () => void;
   /** The profile the controller wants now. */
@@ -52,9 +64,12 @@ export function createMotionController(options: MotionControllerOptions): Motion
     options.clearTimer ?? ((timer) => clearTimeout(timer as ReturnType<typeof setTimeout>));
   const enterWithinMs = options.enterWithinMs ?? ADAPTIVE_JPEG_TIMING.enterWithinMs;
   const settleMs = options.settleMs ?? ADAPTIVE_JPEG_TIMING.settleMs;
+  const endGuardMs = options.endGuardMs ?? ADAPTIVE_JPEG_TIMING.endGuardMs;
 
   let wanted: ScreencastProfile = "sharp";
   let lastWheelAt: number | null = null;
+  // When the finger last lifted; counts only while no step has come after it.
+  let endedAt: number | null = null;
   let timer: unknown = null;
 
   const want = (profile: ScreencastProfile) => {
@@ -65,13 +80,18 @@ export function createMotionController(options: MotionControllerOptions): Motion
     void Promise.resolve(options.apply(profile)).catch(() => undefined);
   };
 
+  /** How long the page must have been quiet: short once the finger is known to have lifted. */
+  const quietNeeded = () =>
+    endedAt !== null && lastWheelAt !== null && endedAt >= lastWheelAt ? endGuardMs : settleMs;
+
   const armSettle = (afterMs: number) => {
     timer = setTimer(() => {
       timer = null;
       if (wanted !== "moving" || lastWheelAt === null) return;
       const quietFor = now() - lastWheelAt;
-      if (quietFor >= settleMs) want("sharp");
-      else armSettle(settleMs - quietFor);
+      const needed = quietNeeded();
+      if (quietFor >= needed) want("sharp");
+      else armSettle(needed - quietFor);
     }, afterMs);
   };
 
@@ -84,10 +104,18 @@ export function createMotionController(options: MotionControllerOptions): Motion
       // One timer, checked against the last wheel when it fires, instead of one per wheel.
       if (wanted === "moving" && timer === null) armSettle(settleMs);
     },
+    end: () => {
+      // Nothing is moving, or it is a single notch that never counted as motion: nothing to end.
+      if (wanted !== "moving" || lastWheelAt === null) return;
+      endedAt = now();
+      if (timer !== null) clearTimer(timer);
+      armSettle(Math.max(0, endGuardMs - (endedAt - lastWheelAt)));
+    },
     reset: () => {
       if (timer !== null) clearTimer(timer);
       timer = null;
       lastWheelAt = null;
+      endedAt = null;
       const changed = wanted !== "sharp";
       wanted = "sharp";
       if (changed) options.onChange?.("sharp");

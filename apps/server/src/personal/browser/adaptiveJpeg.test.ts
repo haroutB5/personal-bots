@@ -180,6 +180,93 @@ describe("adaptive JPEG motion controller", () => {
     expect(f.applied).toEqual(["moving", "sharp", "moving"]);
   });
 
+  describe("a finger that lifts (end)", () => {
+    const moving = async (f: ReturnType<typeof fixture>) => {
+      f.controller.wheel();
+      f.advance(16);
+      f.controller.wheel();
+      f.advance(16);
+      f.controller.wheel();
+      await f.settle();
+      expect(f.controller.profile()).toBe("moving");
+    };
+
+    it("goes sharp after the short guard instead of the full quiet time", async () => {
+      const f = fixture();
+      await moving(f);
+      f.controller.end();
+      f.advance(ADAPTIVE_JPEG_TIMING.endGuardMs - 10);
+      await f.settle();
+      expect(f.controller.profile()).toBe("moving");
+      f.advance(20);
+      await f.settle();
+      expect(f.controller.profile()).toBe("sharp");
+      expect(f.applied).toEqual(["moving", "sharp"]);
+      expect(ADAPTIVE_JPEG_TIMING.endGuardMs).toBeLessThan(ADAPTIVE_JPEG_TIMING.settleMs);
+    });
+
+    it("counts the guard from the last scroll step, not from when the hint arrived", async () => {
+      const f = fixture();
+      await moving(f);
+      // The hint is behind a queue: it arrives 30 ms after the last step was handled.
+      f.advance(30);
+      f.controller.end();
+      f.advance(ADAPTIVE_JPEG_TIMING.endGuardMs - 30 + 1);
+      await f.settle();
+      expect(f.controller.profile()).toBe("sharp");
+    });
+
+    it("a new step inside the guard keeps it rough, and the ordinary quiet time applies again", async () => {
+      const f = fixture();
+      await moving(f);
+      f.controller.end();
+      f.advance(20);
+      f.controller.wheel();
+      f.advance(ADAPTIVE_JPEG_TIMING.endGuardMs + 20);
+      await f.settle();
+      expect(f.controller.profile()).toBe("moving");
+      f.advance(ADAPTIVE_JPEG_TIMING.settleMs);
+      await f.settle();
+      expect(f.controller.profile()).toBe("sharp");
+      expect(f.applied).toEqual(["moving", "sharp"]);
+    });
+
+    it("is nothing while the picture is sharp, and after a single nudge", async () => {
+      const f = fixture();
+      f.controller.end();
+      f.controller.wheel();
+      f.controller.end();
+      f.advance(1_000);
+      await f.settle();
+      expect(f.applied).toEqual([]);
+      expect(f.timers.size).toBe(0);
+    });
+
+    it("asking twice changes nothing more", async () => {
+      const f = fixture();
+      await moving(f);
+      f.controller.end();
+      f.controller.end();
+      f.advance(ADAPTIVE_JPEG_TIMING.endGuardMs + 5);
+      await f.settle();
+      expect(f.applied).toEqual(["moving", "sharp"]);
+      expect(f.timers.size).toBe(0);
+    });
+
+    it("is forgotten by reset", async () => {
+      const f = fixture();
+      await moving(f);
+      f.controller.end();
+      f.controller.reset();
+      expect(f.timers.size).toBe(0);
+      // Motion on the new screencast waits the full quiet time again.
+      await moving(f);
+      f.advance(ADAPTIVE_JPEG_TIMING.endGuardMs + 5);
+      await f.settle();
+      expect(f.controller.profile()).toBe("moving");
+    });
+  });
+
   it("reset puts the controller back to sharp and cancels the timer; the next motion asks for rough again", async () => {
     const f = fixture();
     f.holdApplies();

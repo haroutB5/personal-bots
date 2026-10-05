@@ -240,6 +240,13 @@ export const PersonalBrowserInputMessage = Schema.Union([
   Schema.TaggedStruct("Navigate", {
     url: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(2048)),
   }),
+  /**
+   * The finger that was scrolling has lifted: no scroll step of that gesture follows. Sent right
+   * after its last `Wheel`, and only once the server said it wants it (`ScrollEndWanted`), so the
+   * server can bring the sharp picture back at once instead of waiting to be sure the scrolling
+   * has stopped. Never needed: without it the server settles on its own after a short quiet.
+   */
+  Schema.TaggedStruct("ScrollEnd", {}),
   Schema.TaggedStruct("Back", {}),
   Schema.TaggedStruct("Forward", {}),
   Schema.TaggedStruct("Reload", {}),
@@ -319,6 +326,8 @@ export const PersonalBrowserViewerMessage = Schema.Union([
   Schema.TaggedStruct("FrameAcks", {}),
   /** Asks the client to report what it measures (`StreamStats`). Older clients ignore it. */
   Schema.TaggedStruct("StreamStatsWanted", {}),
+  /** Asks the client to send `ScrollEnd` when a scrolling finger lifts. Older clients ignore it. */
+  Schema.TaggedStruct("ScrollEndWanted", {}),
   /**
    * Sent after a human tap: whether that tap left a typable element focused on
    * the remote page.

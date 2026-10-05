@@ -1128,6 +1128,8 @@ function LiveViewport(props: {
     gestureRef.current = null;
     if (!interactive || gesture === null || gesture.pointerId !== event.pointerId) return;
     const tapped = event.pointerType !== "mouse" && !gesture.scrolling;
+    // A scrolling finger lifting: the server brings the sharp picture back now, not after a wait.
+    if (event.pointerType !== "mouse" && gesture.scrolling) send({ _tag: "ScrollEnd" });
     // Raise the keyboard first: iOS only honours `focus()` while this handler
     // is still running, so it must not sit behind a mapping that can bail out.
     if (tapped) {
@@ -1201,6 +1203,8 @@ function LiveViewport(props: {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={() => {
+          // The system took the touch away mid-scroll: the finger is as good as lifted.
+          if (gestureRef.current?.scrolling === true) send({ _tag: "ScrollEnd" });
           gestureRef.current = null;
         }}
         onWheel={onWheel}

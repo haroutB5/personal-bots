@@ -2674,6 +2674,92 @@ describe("PersonalBrowser", () => {
       );
     });
 
+    describe("a finger that lifts", () => {
+      const scrollEnd = '{"_tag":"ScrollEnd"}';
+      const drain = (viewer: { readonly outbox: Queue.Queue<string> }) =>
+        Effect.gen(function* () {
+          const items: string[] = [];
+          for (;;) {
+            const next = yield* Queue.poll(viewer.outbox);
+            if (Option.isNone(next)) return items;
+            items.push(next.value);
+          }
+        });
+
+      it.effect("brings the sharp picture back long before the quiet time would", () => {
+        const fake = makeFakeDriver();
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+          yield* browser.takeControl("session-1");
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const viewer = yield* browser.attachViewer({
+                sessionId: "session-1",
+                canOperate: true,
+              });
+              for (let step = 0; step < 6; step += 1) {
+                yield* browser.handleViewerMessage(viewer, wheel);
+                yield* pause(10);
+              }
+              expect(fake.state.page.profiles).toEqual(["moving"]);
+              yield* browser.handleViewerMessage(viewer, scrollEnd);
+              // Well inside the 150 ms the page would otherwise be left to settle.
+              yield* pause(90);
+              expect(fake.state.page.profiles).toEqual(["moving", "sharp"]);
+              expect(yield* drain(viewer)).toEqual([]);
+            }),
+          );
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      });
+
+      it.effect("is not an error for a session that does not hold control", () => {
+        const fake = makeFakeDriver();
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const viewer = yield* browser.attachViewer({
+                sessionId: "session-1",
+                canOperate: true,
+              });
+              yield* browser.handleViewerMessage(viewer, scrollEnd);
+              const reader = yield* browser.attachViewer({
+                sessionId: "session-2",
+                canOperate: false,
+              });
+              yield* browser.handleViewerMessage(reader, scrollEnd);
+              expect(yield* drain(viewer)).toEqual([]);
+              expect(yield* drain(reader)).toEqual([]);
+            }),
+          );
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      });
+
+      it.effect("is asked for from a client only while adaptive JPEG is on", () => {
+        const attach = (extra?: { readonly adaptiveJpeg?: boolean }) => {
+          const fake = makeFakeDriver();
+          return Effect.gen(function* () {
+            const browser = yield* PersonalBrowser.PersonalBrowser;
+            return yield* Effect.scoped(
+              Effect.gen(function* () {
+                const viewer = yield* browser.attachViewer({
+                  sessionId: "session-1",
+                  canOperate: true,
+                });
+                return viewer.scrollEndHint;
+              }),
+            );
+          }).pipe(Effect.provide(makeLayer(fake.driver, undefined, extra)));
+        };
+        return Effect.gen(function* () {
+          expect(yield* attach()).toBe(true);
+          expect(yield* attach({ adaptiveJpeg: false })).toBe(false);
+        });
+      });
+    });
+
     it.effect("changes nothing with the kill switch", () => {
       const { fake, run } = scroll(6, { adaptiveJpeg: false });
       return run.pipe(

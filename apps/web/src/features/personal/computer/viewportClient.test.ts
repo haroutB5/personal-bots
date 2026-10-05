@@ -166,6 +166,25 @@ describe("viewport client messages", () => {
     });
   });
 
+  describe("scroll end", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("reports a lifted finger only once the server asks, after the pending scroll step", () => {
+      vi.useFakeTimers();
+      const { client, socket } = connect();
+
+      client.send({ _tag: "ScrollEnd" });
+      expect(socket.sent).toEqual([]);
+
+      socket.receive('{"_tag":"ScrollEndWanted"}');
+      client.send({ _tag: "Wheel", x: 1, y: 1, deltaX: 0, deltaY: 4 });
+      client.send({ _tag: "ScrollEnd" });
+      expect(socket.sent.map((text) => JSON.parse(text)._tag)).toEqual(["Wheel", "ScrollEnd"]);
+    });
+  });
+
   describe("stream stats", () => {
     const frame = () =>
       encodePersonalBrowserFrame(new Uint8Array([1, 2, 3]), {

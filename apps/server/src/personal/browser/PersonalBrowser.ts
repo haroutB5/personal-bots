@@ -156,6 +156,8 @@ export interface ViewerHandle {
   readonly flow: ViewerFlow;
   /** What this viewer's stream measures about itself; null when the telemetry is switched off. */
   readonly telemetry: ViewerTelemetry | null;
+  /** The sharp picture follows a lifted finger at once, so the client is asked to say when it lifts. */
+  readonly scrollEndHint?: boolean;
 }
 
 export interface ResolvedBrowserFile {
@@ -2612,6 +2614,7 @@ export const make = (options: PersonalBrowserOptions) =>
               options.streamTelemetry === false
                 ? null
                 : new ViewerTelemetry({ viewerId: viewerSequence, canOperate: input.canOperate }),
+            scrollEndHint: motion !== null,
           };
           if (viewer.telemetry !== null) viewer.flow.setObserver(viewer.telemetry);
           viewers.set(viewer.id, viewer);
@@ -2832,6 +2835,9 @@ export const make = (options: PersonalBrowserOptions) =>
         case "Viewport":
           // Handled by syncHumanViewport before dispatch; never a page action.
           return;
+        case "ScrollEnd":
+          // Handled before dispatch too: it only tells the picture quality controller.
+          return;
         case "AnswerDialog":
           // Handled before dispatch too: it is the one input a dialog allows.
           return;
@@ -2892,8 +2898,11 @@ export const make = (options: PersonalBrowserOptions) =>
         noteKind(streamInputKind(message));
         // A viewport request is the client's own housekeeping, not something
         // the user did, so refusing it (a race with Return to bot) is silent.
+        // The same goes for a finger lifting after control moved away.
         const refuse = (reason: string) =>
-          message._tag === "Viewport" ? Effect.void : rejectInput(viewer, reason);
+          message._tag === "Viewport" || message._tag === "ScrollEnd"
+            ? Effect.void
+            : rejectInput(viewer, reason);
         if (!viewer.canOperate) {
           return yield* refuse("This session is read-only and cannot control the browser.");
         }
@@ -2907,6 +2916,11 @@ export const make = (options: PersonalBrowserOptions) =>
             size: clampPersonalBrowserViewport(message),
           };
           return yield* syncHumanViewport;
+        }
+        if (message._tag === "ScrollEnd") {
+          // Hint only: no page is touched. The picture goes sharp once the last step has landed.
+          motion?.end();
+          return;
         }
         const page = runtime.phase === "connected" ? viewportPage() : null;
         if (page === null) return yield* rejectInput(viewer, "The browser has no open page yet.");

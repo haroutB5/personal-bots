@@ -41,6 +41,8 @@ interface Scenario {
   /** What the relay holds before it stops reading from the server. */
   readonly relayBufferBytes: number;
   readonly durationMs: number;
+  /** Whether the viewer is one the server wants a lifted-finger message from. */
+  readonly scrollEndHint?: boolean;
 }
 
 interface Stats {
@@ -161,6 +163,7 @@ const runScenario = (scenario: Scenario) =>
       outbox,
       flow,
       telemetry: null,
+      ...(scenario.scrollEndHint === undefined ? {} : { scrollEndHint: scenario.scrollEndHint }),
     };
 
     const port = yield* serveViewerRoute(viewer, (raw) =>
@@ -246,6 +249,26 @@ const SLOW_LINK = {
   relayBufferBytes: 256_000,
   durationMs: 3_000,
 } as const;
+
+describe("what the socket asks the phone for", () => {
+  const brief = { ...SLOW_LINK, durationMs: 300, paced: true, clientAcks: true } as const;
+
+  it.live("asks for a lifted-finger message when the viewer wants one", () =>
+    Effect.gen(function* () {
+      const stats = yield* runScenario({ ...brief, scrollEndHint: true });
+      expect(stats.control.filter((text) => text.includes("ScrollEndWanted"))).toHaveLength(1);
+      // After the frame acknowledgements notice, which stays the first message.
+      expect(stats.control[0]).toContain("FrameAcks");
+    }),
+  );
+
+  it.live("does not for a viewer that does not", () =>
+    Effect.gen(function* () {
+      const stats = yield* runScenario({ ...brief });
+      expect(stats.control.some((text) => text.includes("ScrollEndWanted"))).toBe(false);
+    }),
+  );
+});
 
 describe("live viewport socket on a slow link", () => {
   it.live("keeps frame delay bounded for a phone that acknowledges frames", () =>

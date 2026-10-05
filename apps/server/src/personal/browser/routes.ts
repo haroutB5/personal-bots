@@ -43,6 +43,10 @@ const STREAM_STATS_WANTED_NOTICE = Schema.encodeSync(
   Schema.fromJsonString(PersonalBrowserViewerMessage),
 )({ _tag: "StreamStatsWanted" });
 
+const SCROLL_END_WANTED_NOTICE = Schema.encodeSync(
+  Schema.fromJsonString(PersonalBrowserViewerMessage),
+)({ _tag: "ScrollEndWanted" });
+
 /** What the phone sends for every frame, exactly as its client encodes it. */
 const FRAME_ACK_TEXT = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserInputMessage))({
   _tag: "FrameAck",
@@ -135,6 +139,9 @@ export const personalBrowserStreamRouteLayer = HttpRouter.add(
           write(FRAME_ACKS_NOTICE).pipe(
             Effect.andThen(
               viewer.telemetry === null ? Effect.void : write(STREAM_STATS_WANTED_NOTICE),
+            ),
+            Effect.andThen(
+              viewer.scrollEndHint === true ? write(SCROLL_END_WANTED_NOTICE) : Effect.void,
             ),
           ),
           runViewerFrames(viewer.flow, write),

@@ -74,6 +74,13 @@ describe("personal browser frame pacing messages", () => {
   });
 });
 
+describe("personal browser scroll-end hint", () => {
+  it("decodes the lifted-finger message and the server's request for it", () => {
+    expect(decodeInput({ _tag: "ScrollEnd" })).toEqual({ _tag: "ScrollEnd" });
+    expect(decodeViewerMessage({ _tag: "ScrollEndWanted" })).toEqual({ _tag: "ScrollEndWanted" });
+  });
+});
+
 describe("personal browser viewport frames", () => {
   it("round-trips the viewport size and device scale with the JPEG bytes", () => {
     const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
