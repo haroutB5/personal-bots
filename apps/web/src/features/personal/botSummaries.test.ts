@@ -366,6 +366,114 @@ describe("buildBotSummaries", () => {
       expect(row.rateLimitedThread?.id).toBe("t-fresh");
     });
 
+    describe("after the bot switched provider", () => {
+      // QA, 5 Oct: chat 4e0bfa17 errored on a Codex limit that resets on 9 Oct;
+      // QA now runs on Claude, and the Bots list kept saying "Rate limited".
+      const codexLimit = {
+        kind: "rate_limited",
+        provider: "codex",
+        observedAt: "2026-10-05T05:26:55.000Z",
+        retryAt: "2026-10-09T21:10:43.000Z",
+      };
+      const qaChat = (overrides: Partial<Record<string, unknown>> = {}) =>
+        shell("t-qa", "2026-10-05T05:26:55.000Z", {
+          latestTurn: { state: "error", completedAt: "2026-10-05T05:26:55.000Z" },
+          session: {
+            status: "error",
+            providerName: "codex",
+            providerInstanceId: "codex",
+            providerRetry: codexLimit,
+            updatedAt: "2026-10-05T05:26:56.000Z",
+          },
+          ...overrides,
+        });
+      const claudeReply = (id: string, completedAt: string) =>
+        shell(id, completedAt, {
+          latestTurn: { state: "completed", completedAt },
+          session: {
+            status: "ready",
+            providerName: "claudeAgent",
+            providerInstanceId: "claudeAgent",
+            updatedAt: completedAt,
+          },
+        });
+      const qaRow = (
+        instanceId: string,
+        shells: EnvironmentThreadShell[],
+        endedTaskThreadIds?: ReadonlySet<string>,
+      ) =>
+        buildBotSummaries({
+          bots: [bot("qa", "QA", instanceId, 0)],
+          links: shells.map((entry) => link("qa", entry.id)),
+          shells,
+          providers: [provider("codex"), provider("claudeAgent")],
+          ...(endedTaskThreadIds === undefined ? {} : { endedTaskThreadIds }),
+        })[0]!;
+      const now = Date.parse("2026-10-05T12:00:00.000Z");
+
+      it("shows no limit when the bot now runs on Claude, with a later Claude turn", () => {
+        const row = qaRow("claudeAgent", [
+          qaChat(),
+          claudeReply("t-claude", "2026-10-05T10:00:00.000Z"),
+        ]);
+        expect([row.rateLimited, row.rateLimitedThread]).toEqual([false, null]);
+        expect(botStatusLine(row, now)).toBe("Ready");
+        expect(motionForSummary(row)).toBe("idle");
+      });
+
+      it("shows no limit when the bot now runs on Claude, with no later turn at all", () => {
+        const row = qaRow("claudeAgent", [qaChat()]);
+        expect([row.rateLimited, row.rateLimitedThread]).toEqual([false, null]);
+        expect(botStatusLine(row, now)).toBe("Ready");
+        // The chat itself still says what happened in it.
+        expect(isThreadRateLimited(qaChat())).toBe(true);
+      });
+
+      it("keeps the limit of a bot still on the provider that was limited", () => {
+        const row = qaRow("codex", [qaChat()]);
+        expect(row.rateLimitedThread?.id).toBe("t-qa");
+        expect(botStatusLine(row, now)).toMatch(/^Rate limited · retry ~/);
+        expect(motionForSummary(row)).toBe("blocked");
+        // A Claude reply in another chat does not clear a bot that is still on Codex.
+        const replied = qaRow("codex", [
+          qaChat(),
+          claudeReply("t-claude", "2026-10-05T10:00:00.000Z"),
+        ]);
+        expect(replied.rateLimited).toBe(true);
+      });
+
+      it("matches a custom instance on the limited chat's driver, and an unnamed chat", () => {
+        const custom = bot("qa", "QA", "codex_work", 0);
+        const [row] = buildBotSummaries({
+          bots: [custom],
+          links: [link("qa", "t-qa")],
+          shells: [qaChat()],
+          providers: [provider("codex_work", { driver: "codex" } as Partial<ServerProvider>)],
+        });
+        expect(row!.rateLimited).toBe(true);
+        // A chat that never named its provider says nothing against the limit.
+        const unnamed = qaChat({
+          session: { status: "error", providerRetry: { kind: "rate_limited" } },
+        });
+        expect(isRateLimitStale(unnamed, [unnamed], undefined, new Set(["claudeAgent"]))).toBe(
+          false,
+        );
+      });
+
+      it("only an errored chat can go stale this way: a turn still waiting keeps its limit", () => {
+        const waiting = qaChat({
+          latestTurn: { state: "running" },
+          session: {
+            status: "running",
+            providerName: "codex",
+            providerInstanceId: "codex",
+            providerRetry: codexLimit,
+          },
+        });
+        expect(qaRow("claudeAgent", [waiting]).rateLimited).toBe(true);
+      });
+    });
+
     it("falls back to the session time and tolerates missing fields", () => {
       const noObserved = limitedChat({
         session: {

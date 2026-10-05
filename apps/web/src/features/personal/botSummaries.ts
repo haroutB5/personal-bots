@@ -180,6 +180,16 @@ function sessionProviderNames(shell: EnvironmentThreadShell): ReadonlySet<string
   return new Set(names);
 }
 
+/** The names the bot's current provider goes by: its instance id and that instance's driver. */
+export function botProviderNames(
+  bot: Pick<PersonalBot, "modelSelection">,
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlySet<string> {
+  const instanceId = bot.modelSelection.instanceId;
+  const driver = providers.find((candidate) => candidate.instanceId === instanceId)?.driver;
+  return new Set([instanceId, ...(typeof driver === "string" ? [driver] : [])]);
+}
+
 function sameProvider(left: EnvironmentThreadShell, right: EnvironmentThreadShell): boolean {
   const leftNames = sessionProviderNames(left);
   const rightNames = sessionProviderNames(right);
@@ -198,6 +208,9 @@ function sameProvider(left: EnvironmentThreadShell, right: EnvironmentThreadShel
  * running is waiting on the provider's clock and keeps its limit. Stale when
  *  - the chat's task has ended (`endedTaskThreadIds`, every task of the chat
  *    failed, was cancelled or interrupted, or completed), or
+ *  - the bot no longer runs on the provider the chat was limited on
+ *    (`botProviderNames`, from {@link botProviderNames}): a limit is the old
+ *    provider's account, so it says nothing about the one the bot switched to, or
  *  - a chat of the same bot on the same provider completed a turn after the
  *    limit was seen (`observedAt`, else the session's `updatedAt`).
  * `botShells` is every linked chat, archived ones too: a 48-hour auto-archive
@@ -207,9 +220,17 @@ export function isRateLimitStale(
   shell: EnvironmentThreadShell,
   botShells: ReadonlyArray<EnvironmentThreadShell>,
   endedTaskThreadIds?: ReadonlySet<string>,
+  botProviderNames?: ReadonlySet<string>,
 ): boolean {
   if (shell.session?.status !== "error") return false;
   if (endedTaskThreadIds?.has(shell.id) === true) return true;
+  if (botProviderNames !== undefined && botProviderNames.size > 0) {
+    const limitedOn = sessionProviderNames(shell);
+    // A chat that never named its provider says nothing against it.
+    if (limitedOn.size > 0 && ![...limitedOn].some((name) => botProviderNames.has(name))) {
+      return true;
+    }
+  }
   const limitAt = Date.parse(shell.session.providerRetry?.observedAt ?? shell.session.updatedAt);
   if (!Number.isFinite(limitAt)) return false;
   return botShells.some((other) => {
@@ -374,13 +395,15 @@ export function buildBotSummaries(input: {
       (left, right) => activityMs(right) - activityMs(left),
     );
     const newestThread = shells[0] ?? null;
-    // A limit that has passed (a later reply, or a task that ended on it) must
-    // not pin the row: the chat itself keeps saying what happened to it.
+    // A limit that has passed (a later reply, a task that ended on it, or a
+    // bot moved to another provider) must not pin the row: the chat itself
+    // keeps saying what happened to it.
+    const providerNames = botProviderNames(bot, input.providers);
     const rateLimitedThread =
       shells.find(
         (shell) =>
           isThreadRateLimited(shell) &&
-          !isRateLimitStale(shell, busyShells, input.endedTaskThreadIds),
+          !isRateLimitStale(shell, busyShells, input.endedTaskThreadIds, providerNames),
       ) ?? null;
     // Only the newest chat: an old chat whose last reply failed must not pin
     // the bot at "Couldn't reply" after the owner moved on.
