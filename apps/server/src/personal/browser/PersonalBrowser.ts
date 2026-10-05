@@ -262,6 +262,8 @@ export interface PersonalBrowserOptions {
   readonly streamMaxFps?: number | undefined;
   /** A rougher, smaller picture while the page scrolls, a sharp one when it stops (default on). */
   readonly adaptiveJpeg?: boolean;
+  /** Quiet time after the last scroll step before the sharp picture comes back (ms; default 150). */
+  readonly adaptiveSettleMs?: number | undefined;
 }
 
 /**
@@ -273,6 +275,12 @@ export interface PersonalBrowserOptions {
 const streamMaxFpsFromEnvironment = (value: string | undefined): number | undefined => {
   const parsed = Number(value?.trim());
   return Number.isFinite(parsed) && parsed >= 5 && parsed <= 60 ? parsed : undefined;
+};
+
+/** A settle time in milliseconds from the environment, or undefined for the default. */
+const adaptiveSettleMsFromEnvironment = (value: string | undefined): number | undefined => {
+  const parsed = Number(value?.trim());
+  return Number.isFinite(parsed) && parsed >= 30 && parsed <= 400 ? parsed : undefined;
 };
 
 export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
@@ -293,6 +301,9 @@ export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   streamMaxFps: streamMaxFpsFromEnvironment(process.env.T3CODE_PERSONAL_BROWSER_STREAM_MAX_FPS),
   // Kill switch: T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=off streams one picture quality, as in 1.60.41.
   adaptiveJpeg: process.env.T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG?.trim() !== "off",
+  adaptiveSettleMs: adaptiveSettleMsFromEnvironment(
+    process.env.T3CODE_PERSONAL_BROWSER_ADAPTIVE_SETTLE_MS,
+  ),
 });
 
 type Phase = "offline" | "starting" | "connected" | "crashed" | "locked";
@@ -652,6 +663,9 @@ export const make = (options: PersonalBrowserOptions) =>
       options.adaptiveJpeg === false
         ? null
         : createMotionController({
+            ...(options.adaptiveSettleMs === undefined
+              ? {}
+              : { settleMs: options.adaptiveSettleMs }),
             apply: (profile) => {
               const current = screencast;
               return current?.page.setScreencastProfile?.(profile) ?? Promise.resolve();

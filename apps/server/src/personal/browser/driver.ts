@@ -401,10 +401,11 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
     const pixelsPerClipScale =
       measured === TIMED_OUT || measured === null ? state.deviceScaleFactor : measured;
     const sharp = SCREENCAST_PROFILES.sharp;
-    // Output pixels per css pixel: Chrome never scales a screencast frame up past the screen's own
-    // pixels, and a sharp frame stays within its caps.
+    // Output pixels per css pixel. A screencast frame is in css pixels, whatever the device scale
+    // (a phone at 2x gets 390 x 760, not 780 x 1520), and only ever scaled down to its caps; the
+    // final frame is the same picture and the same size, a third of the bytes of a device-pixel one.
     const wanted = Math.min(
-      state.deviceScaleFactor,
+      1,
       sharp.maxWidth / view.clientWidth,
       sharp.maxHeight / view.clientHeight,
     );

@@ -243,3 +243,26 @@ describe("adaptive JPEG kill switch", () => {
     expect(optionsFromEnvironment().adaptiveJpeg).toBe(true);
   });
 });
+
+describe("adaptive JPEG settle time from the environment", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("is the controller's own default when unset", () => {
+    vi.stubEnv("T3CODE_PERSONAL_BROWSER_ADAPTIVE_SETTLE_MS", "");
+    expect(optionsFromEnvironment().adaptiveSettleMs).toBeUndefined();
+  });
+
+  it("takes a value from 30 to 400 ms", () => {
+    vi.stubEnv("T3CODE_PERSONAL_BROWSER_ADAPTIVE_SETTLE_MS", " 80 ");
+    expect(optionsFromEnvironment().adaptiveSettleMs).toBe(80);
+  });
+
+  it("ignores anything outside that range or not a number", () => {
+    for (const value of ["10", "900", "soon", "-5"]) {
+      vi.stubEnv("T3CODE_PERSONAL_BROWSER_ADAPTIVE_SETTLE_MS", value);
+      expect(optionsFromEnvironment().adaptiveSettleMs).toBeUndefined();
+    }
+  });
+});

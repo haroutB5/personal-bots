@@ -207,18 +207,19 @@ describe("screencast profiles (adaptive JPEG)", () => {
       "Page.captureScreenshot",
       "Page.startScreencast",
     ]);
-    // The part of the document the screen shows. 390 x 760 css px at 2x is 780 x 1520 pixels, inside
-    // both caps; Chrome doubles a clip's scale under the phone's override, so the scale asked for is 1.
+    // The part of the document the screen shows, at the size of a screencast frame: css pixels, so
+    // 390 x 760 at 2x stays 390 x 760. Chrome doubles a clip's scale under the phone's override, so
+    // the scale asked for is a half.
     expect(calls("Page.captureScreenshot")).toEqual([
       {
         format: "jpeg",
         quality: 60,
         optimizeForSpeed: true,
-        clip: { x: 0, y: 4_000, width: 390, height: 760, scale: 1 },
+        clip: { x: 0, y: 4_000, width: 390, height: 760, scale: 0.5 },
       },
     ]);
     expect(onFrame).toHaveBeenCalledTimes(1);
-    expect(frameSize(onFrame)).toEqual({ width: 780, height: 1_520 });
+    expect(frameSize(onFrame)).toEqual({ width: 390, height: 760 });
     // Tap mapping: the frame carries the page's css size and device scale, as a screencast frame does.
     expect(onFrame.mock.calls[0]![1]).toEqual({ width: 390, height: 760, deviceScaleFactor: 2 });
     expect(calls("Page.startScreencast")).toEqual([
@@ -243,13 +244,13 @@ describe("screencast profiles (adaptive JPEG)", () => {
   describe("the final frame never goes past the sharp caps, wherever the device scale comes from", () => {
     // [device scale, pixels per clip scale at 1, css width, css height, expected width x height]
     it.each([
-      ["the phone's override at 2x", 2, 2, 390, 760, 780, 1_520],
-      ["the phone's override at 3x", 3, 3, 390, 844, 780, 1_688],
-      ["a context's own 2x, which a clip does not multiply", 2, 1, 390, 760, 780, 1_520],
+      ["the phone's override at 2x", 2, 2, 390, 760, 390, 760],
+      ["the phone's override at 3x", 3, 3, 390, 844, 390, 844],
+      ["a context's own 2x, which a clip does not multiply", 2, 1, 390, 760, 390, 760],
       ["a 1x screen", 1, 1, 390, 760, 390, 760],
       ["a wide desktop window at 1.25x", 1.25, 1.25, 1_280, 720, 780, 439],
       ["a wide desktop window at 1.25x, nothing multiplying", 1.25, 1, 1_280, 720, 780, 439],
-      ["a tall narrow window at 2x", 2, 2, 300, 1_400, 362, 1_690],
+      ["a tall narrow window at 2x", 2, 2, 300, 2_000, 254, 1_690],
     ])("%s", async (_name, dpr, perScale, width, height, expectedWidth, expectedHeight) => {
       fake.page.evaluate.mockImplementation(async () => dpr);
       answerChrome(
@@ -287,7 +288,8 @@ describe("screencast profiles (adaptive JPEG)", () => {
     fake.send.mockClear();
     await page.setScreencastProfile!("sharp");
     const [shot] = calls("Page.captureScreenshot") as ShotParams[];
-    expect(shot!.clip.scale).toBe(1);
+    // Not knowing, it takes Chrome to double the scale (the phone's case): 1 / 2.
+    expect(shot!.clip.scale).toBe(0.5);
     expect(onFrame).toHaveBeenCalledTimes(1);
   });
 
