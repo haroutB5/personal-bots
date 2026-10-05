@@ -117,6 +117,16 @@ Assert-Equal 'only behind is healed' 'behind' (Get-UpdatesSyncState -Ahead 0 -Be
 Assert-Equal 'unpushed commits are refused' 'ahead' (Get-UpdatesSyncState -Ahead 2 -Behind 0)
 Assert-Equal 'diverged is refused' 'diverged' (Get-UpdatesSyncState -Ahead 1 -Behind 1)
 
+Write-Host 'What counts as a build in progress'
+$psExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+Assert-Equal 'powershell -File build.ps1 is a build' $true (Test-UpdatesBuildProcess -Name 'powershell.exe' -CommandLine "$psExe -NoProfile -ExecutionPolicy Bypass -File C:\Claude\AI\_wt\x\scripts\personal\build.ps1 -NoActivate")
+Assert-Equal 'quoted -File path too' $true (Test-UpdatesBuildProcess -Name 'powershell.exe' -CommandLine "$psExe -File ""C:\Claude\AI\personal-bots\scripts\personal\restart.ps1"" -Release abc")
+Assert-Equal 'the upstream sync is' $true (Test-UpdatesBuildProcess -Name 'powershell.exe' -CommandLine "$psExe -NoProfile -File C:\Claude\AI\personal-bots-sync\scripts\personal\upstream-sync.ps1 -Mode Auto")
+Assert-Equal 'the vp build chain is' $true (Test-UpdatesBuildProcess -Name 'node.exe' -CommandLine '"C:\Program Files\nodejs\node.exe" node_modules/.bin/../vite-plus/bin/vp run --filter t3 build')
+Assert-Equal 'an agent shell that only names the script is not (30 Sep false positive)' $false (Test-UpdatesBuildProcess -Name 'bash.exe' -CommandLine '"C:\Program Files\Git\bin\bash.exe" -c "grep -n x scripts/personal/build.ps1; powershell -File C:\a\scripts\personal\build.ps1"')
+Assert-Equal 'a powershell command that merely mentions it is not' $false (Test-UpdatesBuildProcess -Name 'powershell.exe' -CommandLine "$psExe -NoProfile -Command Get-Content scripts\personal\build.ps1")
+Assert-Equal 'an unrelated process is not' $false (Test-UpdatesBuildProcess -Name 'node.exe' -CommandLine 'node apps/server/dist/bin.mjs serve')
+
 Write-Host 'Only the run''s own commits'
 $range = @('8b0c8b587a11111111111111111111111111111a', 'ff6be2c33c22222222222222222222222222222b', '1f3435bf2833333333333333333333333333333c')
 Assert-Equal 'a commit no proposal recorded is foreign' '1f3435bf2833333333333333333333333333333c' (Get-UpdatesForeignCommits -RangeCommits $range -RecordedCommits @('8b0c8b587a', 'FF6BE2C33C'))

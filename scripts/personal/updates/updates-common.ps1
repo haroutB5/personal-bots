@@ -240,19 +240,32 @@ function Get-UpdatesBlockers {
             }
         }
     }
-    $patterns = @('scripts[\\/]personal[\\/](build|restart)\.ps1', 'upstream-sync\.ps1', 'run --filter t3 build')
-    $procs = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, CommandLine -ErrorAction SilentlyContinue)
+    $procs = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, Name, CommandLine -ErrorAction SilentlyContinue)
     foreach ($proc in $procs) {
         $line = [string]$proc.CommandLine
         if (-not $line -or [int]$proc.ProcessId -eq $PID) { continue }
-        foreach ($pattern in $patterns) {
-            if ($line -match $pattern) {
-                $blockers += "a build or deploy is running (pid $($proc.ProcessId): $($line.Substring(0, [math]::Min(160, $line.Length))))"
-                break
-            }
+        if (Test-UpdatesBuildProcess -Name ([string]$proc.Name) -CommandLine $line) {
+            $blockers += "a build or deploy is running (pid $($proc.ProcessId): $($line.Substring(0, [math]::Min(160, $line.Length))))"
         }
     }
     return , $blockers
+}
+
+<#
+.SYNOPSIS
+Whether a process is itself a build, restart or upstream sync. Pure. A shell
+that merely carries the script name in its command text is not one: an agent's
+`bash.exe -c "... build.ps1 ..."` made the 30 Sep preflight refuse next to a
+real build, and any bot that greps or edits these scripts at 04:00 would do
+the same. The real thing runs `powershell -File <script>` (or the vp build
+chain), which this still matches.
+#>
+function Test-UpdatesBuildProcess([string]$Name, [string]$CommandLine) {
+    if ($Name -match '^(bash|zsh)(\.exe)?$') { return $false }
+    if ($CommandLine -match '(?i)-File\s+"?[^\s"]*scripts[\\/]personal[\\/](build|restart)\.ps1') { return $true }
+    if ($CommandLine -match '(?i)-File\s+"?[^\s"]*upstream-sync\.ps1') { return $true }
+    if ($CommandLine -match 'run --filter t3 build') { return $true }
+    return $false
 }
 
 # ---------------------------------------------------------------- versions and releases
