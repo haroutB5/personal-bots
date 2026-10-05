@@ -23,6 +23,7 @@ import { quoteInMessage } from "../../../personal/memory/memoryQuote.ts";
 import { memoryAutoApplyEnabled } from "../../../personal/memory/memoryAutoApply.ts";
 import {
   FORGET_REQUEST,
+  forgetGrounding,
   ruleGrounding,
   sharesSubject,
 } from "../../../personal/memory/memoryRule.ts";
@@ -783,14 +784,28 @@ const make = Effect.gen(function* () {
             );
           }
           const origin = yield* memory.noteOrigin(invocation.threadId);
-          const grounding = ruleGrounding(input.content, source, { strict: origin.readWeb });
+          // A page read at any point in this chat can steer what a bot writes later, so once the
+          // chat has had web or browser activity the rule is held to the message that started this
+          // turn, and held closely; an older message of the owner's no longer counts.
+          const webSeen = origin.readWeb || origin.threadReadWeb;
+          const groundedIn = webSeen ? owner.current!.text : source;
+          if (webSeen && !quoteInMessage(userRequest, groundedIn)) {
+            return yield* refuse(
+              "Not saved: this chat has used web or browser tools, so a rule is saved only from the message the user just sent, and userRequest is not in it. Ask the user to say it again in a new message.",
+            );
+          }
+          const grounding = ruleGrounding(input.content, groundedIn, {
+            strict: webSeen,
+            quote: userRequest,
+            nowMs: DateTime.toEpochMillis(yield* DateTime.now),
+          });
           if (!grounding.ok) {
             return yield* refuse(
               `Not saved: the rule's wording must come from the user's own message, and ${
                 grounding.missing.length === 0
                   ? "it has nothing of theirs in it"
                   : `these are not in it: ${grounding.missing.join(", ")}`
-              }${origin.readWeb ? " (this turn read web pages, so the wording is held to the user's message more closely)" : ""}. State the rule in the user's own words, or ask them to say it again.`,
+              }${webSeen ? " (this chat used web pages or the browser, so the wording is held to the user's message more closely)" : ""}. State the rule in the user's own words, keeping every "not", "never", "no", "don't" and "without" they said (and no others), or ask them to say it again.`,
             );
           }
           const unrelated = targets.find((target) => !sharesSubject(input.content, target.content));
@@ -805,7 +820,7 @@ const make = Effect.gen(function* () {
               scopeId: scope === "team" ? team : scope === "bot" ? botId : null,
               kind: "preference",
               content: input.content,
-              source: botRuleSource(botId, origin.readWeb),
+              source: botRuleSource(botId, webSeen),
               apps: input.apps ?? null,
               replaces: replaceIds,
               actorBotId: botId,
@@ -905,9 +920,22 @@ const make = Effect.gen(function* () {
               "Not forgotten: a rule is forgotten only at the word of a message the user typed in this chat, and this turn was not started by one (a task, a routine or another bot).",
             );
           }
-          if (!FORGET_REQUEST.test(source) || !sharesSubject(source, target.content)) {
+          // The quote itself must ask to drop a rule and name this one (a message can say
+          // "forget it" about one thing and be about another), and after web or browser use it must
+          // come from the message that started this turn.
+          const quote = userRequest ?? "";
+          const origin = yield* memory.noteOrigin(invocation.threadId);
+          if (
+            (origin.readWeb || origin.threadReadWeb) &&
+            !quoteInMessage(quote, owner.current!.text)
+          ) {
             return yield* refuse(
-              "Not forgotten: the user's message must ask to drop this rule and be about it. Quote the words in which they asked, and check the rule is the one they mean.",
+              "Not forgotten: this chat has used web or browser tools, so a rule is forgotten only at the word of the message the user just sent, and userRequest is not in it. Ask the user to say it again in a new message.",
+            );
+          }
+          if (!FORGET_REQUEST.test(quote) || !forgetGrounding(target.content, quote)) {
+            return yield* refuse(
+              "Not forgotten: the quoted words must ask to drop a rule and name this one (its own words or what it is about). Quote the words in which they asked, and check the rule is the one they mean.",
             );
           }
           const entry = yield* memory

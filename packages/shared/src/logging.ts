@@ -113,6 +113,36 @@ export class RotatingFileSink {
     }
   }
 
+  /**
+   * The same write without holding the event loop for the append: a trace line written while the
+   * disk is slow (an antivirus scan, a busy drive) must not freeze every request behind it (QA saw
+   * 1 to 9 s). The size is reserved first and a rotation, rare and only renames, stays synchronous.
+   * Callers keep one write in flight at a time, so the file is never rotated under an append.
+   */
+  async writeAsync(chunk: string | Buffer): Promise<void> {
+    const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    if (buffer.length === 0) return;
+    try {
+      if (this.currentSize > 0 && this.currentSize + buffer.length > this.maxBytes) {
+        this.rotate();
+      }
+      this.currentSize += buffer.length;
+      await NodeFS.promises.appendFile(this.filePath, buffer);
+    } catch (cause) {
+      if (isRotatingFileSinkError(cause)) {
+        throw cause;
+      }
+      if (this.throwOnError) {
+        throw new RotatingFileSinkError({
+          operation: "write",
+          filePath: this.filePath,
+          cause,
+        });
+      }
+      this.currentSize = this.readCurrentSize();
+    }
+  }
+
   private rotate(): void {
     try {
       const oldest = this.withSuffix(this.maxFiles);

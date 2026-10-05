@@ -8,7 +8,12 @@ const calls = vi.hoisted(() => ({
   undoNote: [] as unknown[],
   restore: [] as unknown[],
   result: { _tag: "Success", value: {} } as { readonly _tag: string; readonly cause?: unknown },
-  entry: null as null | { kind?: string; supersededAt: unknown; supersededReason: string | null },
+  entry: null as null | {
+    kind?: string;
+    source?: string;
+    supersededAt: unknown;
+    supersededReason: string | null;
+  },
 }));
 
 vi.mock("./usePersonalAutomation", () => ({
@@ -32,13 +37,17 @@ afterEach(() => {
   calls.entry = null;
 });
 
-const render = (undo: "archive" | "restore", readOnly = false) => {
+const render = (
+  undo: "archive" | "restore",
+  readOnly = false,
+  label = "Saved a note: Likes tea.",
+) => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   act(() => {
     renderer = create(
       <NoteNoticeRow
         environmentId={"env-1" as EnvironmentId}
-        label="Saved a note: Likes tea."
+        label={label}
         memoryId="m-1"
         undo={undo}
         readOnly={readOnly}
@@ -145,5 +154,137 @@ describe("Security (1.60.22): Undo only while the entry is still a note", () => 
         supersededReason: "Replaced by a newer save.",
       }),
     ).toBe("Archived");
+  });
+});
+
+describe("1.60.42: the lines for a rule", () => {
+  const SAVED = "Saved a rule: Quote coin prices in USD.";
+  const FORGOT = "Forgot a rule: Quote coin prices in USD.";
+  const FORGOT_REASON = "Forgotten by a bot at the user's word.";
+
+  it("a saved rule shows Undo (not 'No longer a note') and archives it", async () => {
+    calls.entry = {
+      kind: "preference",
+      source: "bot:personal-seed-assistant;from=chat;rule",
+      supersededAt: null,
+      supersededReason: null,
+    };
+    const root = render("archive", false, SAVED);
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("No longer");
+    expect(undoButton(root)!.props["aria-label"]).toBe("Undo: archive this rule");
+    await act(async () => undoButton(root)!.props.onClick());
+    expect(calls.undoNote).toEqual([
+      { environmentId: "env-1", input: { memoryId: "m-1", undo: "archive" } },
+    ]);
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Undone");
+  });
+
+  it("a forgotten rule shows Undo whatever its source, and restores it", async () => {
+    for (const source of [
+      "bot:personal-seed-assistant",
+      "bot:cto;from=chat",
+      "tidy-approved:run-7",
+      "user",
+    ]) {
+      calls.undoNote = [];
+      calls.entry = {
+        kind: "preference",
+        source,
+        supersededAt: "2026-10-05T01:00:00.000Z",
+        supersededReason: FORGOT_REASON,
+      };
+      const root = render("restore", false, FORGOT);
+      expect(undoButton(root), source).toBeDefined();
+      expect(undoButton(root)!.props["aria-label"]).toBe("Undo: restore this rule");
+      await act(async () => undoButton(root)!.props.onClick());
+      expect(calls.undoNote).toEqual([
+        { environmentId: "env-1", input: { memoryId: "m-1", undo: "restore" } },
+      ]);
+      act(() => renderer?.unmount());
+      renderer = null;
+    }
+  });
+
+  it("after a reload the used Undo reads as done, and a rule archived another way as Archived", () => {
+    expect(
+      noteUndoSettled(
+        "restore",
+        { kind: "preference", source: "user", supersededAt: null, supersededReason: null },
+        "rule",
+      ),
+    ).toBe("Restored");
+    expect(
+      noteUndoSettled(
+        "archive",
+        {
+          kind: "preference",
+          source: "bot:cfo;from=chat;rule",
+          supersededAt: "x" as never,
+          supersededReason: "Undone from the chat.",
+        },
+        "rule",
+      ),
+    ).toBe("Undone");
+    expect(
+      noteUndoSettled(
+        "restore",
+        {
+          kind: "preference",
+          source: "user",
+          supersededAt: "x" as never,
+          supersededReason: "Forgotten at the user's request.",
+        },
+        "rule",
+      ),
+    ).toBe("Archived");
+  });
+
+  it("a rule line is not an Undo for an entry that is not a saved rule", () => {
+    // Saved another way (no rule source): the server would refuse, so no button.
+    expect(
+      noteUndoSettled(
+        "archive",
+        { kind: "preference", source: "user", supersededAt: null, supersededReason: null },
+        "rule",
+      ),
+    ).toBe("No longer a saved rule");
+    // Became a note since.
+    expect(
+      noteUndoSettled(
+        "archive",
+        {
+          kind: "note",
+          source: "bot:cfo;from=chat;rule",
+          supersededAt: null,
+          supersededReason: null,
+        },
+        "rule",
+      ),
+    ).toBe("No longer a rule");
+    // And a note line still never reads a rule (the 1.60.22 protection).
+    expect(
+      noteUndoSettled(
+        "archive",
+        {
+          kind: "preference",
+          source: "bot:cfo;from=chat;rule",
+          supersededAt: null,
+          supersededReason: null,
+        },
+        "note",
+      ),
+    ).toBe("No longer a note");
+  });
+
+  it("a read-only rule line has no Undo", () => {
+    calls.entry = {
+      kind: "preference",
+      source: "bot:cfo;from=chat;rule",
+      supersededAt: null,
+      supersededReason: null,
+    };
+    const root = render("archive", true, SAVED);
+    expect(undoButton(root)).toBeUndefined();
+    expect(JSON.stringify(renderer!.toJSON())).toContain(SAVED);
   });
 });

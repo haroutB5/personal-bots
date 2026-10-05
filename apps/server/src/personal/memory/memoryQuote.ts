@@ -3,7 +3,7 @@
  * messages. It only gates whether a bot may ask to change memory at all; it
  * never authorizes a change other bots see (that takes the owner's tap).
  */
-const normalise = (text: string) =>
+export const normalise = (text: string) =>
   text
     .toLowerCase()
     .replace(/[\u2018\u2019\u201C\u201D]/g, "'")

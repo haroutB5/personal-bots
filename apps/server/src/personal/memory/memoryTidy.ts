@@ -16,6 +16,8 @@ import * as Schema from "effect/Schema";
 
 import { PERSONAL_MEMORY_MAX_LENGTH } from "@t3tools/contracts";
 
+import { negationCount, ruleGrounding } from "./memoryRule.ts";
+
 const SIMILARITY_STOP_WORDS = new Set(
   "about after again all also and any are because been before being both but can could did does doing done for from had has have her here him his how into its just more most not now off once only other our out over own same she should some such than that the their them then there these they this those through too under until very was were what when where which while who why will with would you your harout harout's user user's".split(
     " ",
@@ -243,6 +245,24 @@ export function validateDecisions(
       continue;
     }
     const isAuto = options.autoAll === true || isAutoChange(decision, byId);
+    // A merge of rules is new wording that takes effect with no one reading it: it has to be the
+    // rules' own words (strictly, as after web reading), saying "no/not/never" no less often than
+    // the most negated of them and no more often than all of them together.
+    if (isAuto && decision.action === "merge" && byId.get(ids[0]!)!.kind === "preference") {
+      const originals = ids.map((id) => byId.get(id)!.content);
+      const counts = originals.map(negationCount);
+      const grounding = ruleGrounding(decision.content, originals.join(" "), {
+        strict: true,
+        negations: { min: Math.max(...counts), max: counts.reduce((sum, n) => sum + n, 0) },
+      });
+      if (!grounding.ok) {
+        leave(
+          decision,
+          `The merged rule is not in the rules' own words (${grounding.missing.slice(0, 4).join(", ") || "too little of theirs"}); left as it is`,
+        );
+        continue;
+      }
+    }
     if (
       isAuto &&
       auto.reduce((sum, item) => sum + item.memoryIds.length, 0) + ids.length > MAX_AUTO_PER_NIGHT

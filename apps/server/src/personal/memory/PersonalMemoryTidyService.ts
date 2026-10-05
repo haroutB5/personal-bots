@@ -1511,8 +1511,10 @@ export const make = Effect.gen(function* () {
   /**
    * Makes the changes the automatic mode owns: each is applied and marked
    * "applied". A change whose entries moved since it was proposed is left as it
-   * is (with the reason); a bot's change with no chat of the owner's behind it
-   * has no proof its wording is the owner's, so it is taken off the list.
+   * is (with the reason). Every bot's save or forget is taken off the list, not
+   * made: a card was the owner's tap on the exact text, and with no tap there
+   * is no proof the wording is the owner's (a rule they state in a chat is saved
+   * at once by the tool itself, through the wording guard, never through here).
    */
   const settlePending = (rows: ReadonlyArray<ChangeRow>) =>
     Effect.gen(function* () {
@@ -1521,7 +1523,11 @@ export const make = Effect.gen(function* () {
       let withdrawn = 0;
       for (const change of rows) {
         const nowIso = DateTime.formatIso(yield* DateTime.now);
-        if ((change.proposedBy ?? "").startsWith("bot:") && (change.threadId ?? null) === null) {
+        if (
+          (change.proposedBy ?? "").startsWith("bot:") ||
+          change.action === "save" ||
+          change.action === "forget"
+        ) {
           yield* sql`
             UPDATE personal_memory_tidy_changes SET status = 'withdrawn', decided_at = ${nowIso}
             WHERE change_id = ${change.changeId} AND status = 'pending'
@@ -2039,7 +2045,17 @@ export const make = Effect.gen(function* () {
       : forkParked(
           closeInterrupted.pipe(
             Effect.andThen(snapshotPendingTexts.pipe(Effect.ignore)),
-            Effect.andThen(applyWaiting.pipe(Effect.ignore)),
+            Effect.andThen(
+              applyWaiting.pipe(
+                Effect.catchCause((cause) =>
+                  Cause.hasInterruptsOnly(cause)
+                    ? Effect.interrupt
+                    : Effect.logWarning("personal memory startup settle failed", {
+                        cause: safeText(Cause.pretty(cause)).slice(0, 2_000),
+                      }),
+                ),
+              ),
+            ),
             Effect.andThen(
               readAppVersion.pipe(
                 Effect.flatMap((appVersion) =>

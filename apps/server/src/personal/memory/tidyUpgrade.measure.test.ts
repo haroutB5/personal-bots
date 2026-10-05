@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - a measurement script, off unless a backup is named.
 // What the 1.60.42 startup does to the changes that were waiting on the live database: measured on
 // a read-only backup, replayed into an in-memory database, counts only (no memory text is printed).
 // Off unless HBOTS_TIDY_UPGRADE_DB names a backup's state.sqlite.

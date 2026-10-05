@@ -36,6 +36,8 @@ export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
 };
 
 const FLUSH_BUFFER_THRESHOLD = 256;
+/** Trace bytes waiting for a slow disk before the oldest are dropped. */
+const MAX_QUEUED_TRACE_BYTES = 16 * 1024 * 1024;
 const textEncoder = new TextEncoder();
 
 export type TraceAttributes = Readonly<Record<string, unknown>>;
@@ -376,6 +378,39 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     count: 0,
     durationMs: 0,
   };
+  // Chunks waiting for the one write in flight. Only the append is asynchronous: a slow disk holds
+  // this queue, not the event loop. Past the cap the oldest lines are dropped (tracing is
+  // best-effort; a server stuck behind a trace file is worse than a gap in it).
+  const queue: Array<{ readonly records: ReadonlyArray<string>; readonly bytes: number }> = [];
+  let queuedBytes = 0;
+  let inFlight: Promise<void> | null = null;
+
+  const startNextWrite = () => {
+    if (inFlight !== null) return;
+    const next = queue.shift();
+    if (next === undefined) return;
+    queuedBytes -= next.bytes;
+    const startedAt = performance.now();
+    inFlight = sink
+      .writeAsync(next.records.join(""))
+      .then(
+        () => {
+          pendingFlushStats = {
+            logicalWriteBytes: pendingFlushStats.logicalWriteBytes + next.bytes,
+            count: pendingFlushStats.count + next.records.length,
+            durationMs: pendingFlushStats.durationMs + Math.max(0, performance.now() - startedAt),
+          };
+        },
+        () => {
+          // Tried again with the next batch, as a failed write always was.
+          buffer.unshift(...next.records);
+        },
+      )
+      .then(() => {
+        inFlight = null;
+        startNextWrite();
+      });
+  };
 
   const flushUnsafe = () => {
     if (buffer.length === 0) {
@@ -402,25 +437,24 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
         nextIndex += 1;
       }
 
-      const chunk = records.slice(persistedCount, nextIndex).join("");
-      const startedAt = performance.now();
-      try {
-        sink.write(chunk);
-      } catch {
-        buffer.unshift(...records.slice(persistedCount));
-        return;
-      }
-      pendingFlushStats = {
-        logicalWriteBytes: pendingFlushStats.logicalWriteBytes + chunkBytes,
-        count: pendingFlushStats.count + nextIndex - persistedCount,
-        durationMs: pendingFlushStats.durationMs + Math.max(0, performance.now() - startedAt),
-      };
+      queue.push({ records: records.slice(persistedCount, nextIndex), bytes: chunkBytes });
+      queuedBytes += chunkBytes;
       persistedCount = nextIndex;
     }
+    while (queuedBytes > MAX_QUEUED_TRACE_BYTES && queue.length > 1) {
+      queuedBytes -= queue.shift()!.bytes;
+    }
+    startNextWrite();
   };
 
-  const flush = Effect.sync(() => {
+  /** Submits what is buffered and waits until every queued write has landed. */
+  const drain = async () => {
     flushUnsafe();
+    for (let pending = inFlight; pending !== null; pending = inFlight) await pending;
+  };
+
+  const flush = Effect.promise(async () => {
+    await drain();
     const stats = pendingFlushStats;
     pendingFlushStats = {
       logicalWriteBytes: 0,

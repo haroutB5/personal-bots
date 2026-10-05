@@ -344,6 +344,20 @@ export const RULE_FORGOTTEN_REASON = "Forgotten by a bot at the user's word.";
 /** Tools that bring web or browser content into a turn (app tools and provider built-ins). */
 const WEB_TOOL_PATTERN =
   /(search_web|read_pages|search_google|search_products|preview_[a-z_]+|computer_[a-z_]+|use_login|WebFetch|WebSearch|web_fetch|web_search)/i;
+/** The same tools as WEB_TOOL_PATTERN, lowercase, for a SQL `instr` over a whole thread. */
+const WEB_TOOL_NEEDLES = [
+  "search_web",
+  "read_pages",
+  "search_google",
+  "search_products",
+  "preview_",
+  "computer_",
+  "use_login",
+  "webfetch",
+  "websearch",
+  "web_fetch",
+  "web_search",
+] as const;
 
 /** Why a save's replace archived an entry; only these does a note's Undo bring back. */
 const REPLACED_REASON = "Replaced by a newer save.";
@@ -504,6 +518,8 @@ export class PersonalMemoryService extends Context.Service<
     readonly noteOrigin: (threadId: ThreadId) => Effect.Effect<{
       readonly origin: PersonalMemoryNoteOrigin;
       readonly readWeb: boolean;
+      /** The same for any turn of the thread: a page read earlier can still steer what a bot writes now. */
+      readonly threadReadWeb: boolean;
     }>;
     /** One entry, current or archived (not deleted). */
     readonly get: (
@@ -821,6 +837,8 @@ export const make = Effect.gen(function* () {
 
   const noteOrigin: PersonalMemoryService["Service"]["noteOrigin"] = (threadId) =>
     Effect.gen(function* () {
+      // Web search, page reads, the shared browser, fetch tools: anywhere in the thread.
+      const threadReadWeb = yield* threadUsedWeb(threadId);
       const turn = yield* sql<{
         readonly messageId: string;
         readonly requestedAt: string;
@@ -836,7 +854,9 @@ export const make = Effect.gen(function* () {
         LIMIT 1
       `;
       const current = turn[0];
-      if (current === undefined) return { origin: "app" as const, readWeb: false };
+      if (current === undefined) {
+        return { origin: "app" as const, readWeb: false, threadReadWeb };
+      }
       const id = current.messageId;
       const origin: PersonalMemoryNoteOrigin = !id.startsWith("personal-")
         ? "chat"
@@ -849,7 +869,7 @@ export const make = Effect.gen(function* () {
               id.startsWith("personal-lead-answer-")
             ? "bot"
             : "app";
-      // Web search, page reads, the shared browser, fetch tools, in this turn.
+      // In this turn.
       const tools = yield* sql<{ readonly itemType: string | null; readonly text: string }>`
         SELECT json_extract(a.payload_json, '$.itemType') AS "itemType",
           a.summary || ' ' || COALESCE(json_extract(a.payload_json, '$.title'), '') || ' '
@@ -862,8 +882,36 @@ export const make = Effect.gen(function* () {
       const readWeb = tools.some(
         (tool) => tool.itemType === "web_search" || WEB_TOOL_PATTERN.test(tool.text),
       );
-      return { origin, readWeb };
-    }).pipe(Effect.orElseSucceed(() => ({ origin: "app" as const, readWeb: false })));
+      return { origin, readWeb, threadReadWeb: threadReadWeb || readWeb };
+    }).pipe(
+      Effect.orElseSucceed(() => ({
+        origin: "app" as const,
+        readWeb: false,
+        // Not knowing is not "no web": the strict reading applies.
+        threadReadWeb: true,
+      })),
+    );
+
+  /** Whether any turn of the thread used a web or browser tool (the same tools as `readWeb`). */
+  const threadUsedWeb = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const rows = yield* sql<{ readonly found: number }>`
+        SELECT 1 AS "found"
+        FROM projection_thread_activities a
+        WHERE a.thread_id = ${threadId} AND a.kind LIKE 'tool.%'
+          AND (
+            json_extract(a.payload_json, '$.itemType') = 'web_search'
+            OR ${sql.or(
+              WEB_TOOL_NEEDLES.map(
+                (needle) =>
+                  sql`instr(lower(a.summary || ' ' || COALESCE(json_extract(a.payload_json, '$.title'), '') || ' ' || substr(COALESCE(json_extract(a.payload_json, '$.detail'), ''), 1, 80)), ${needle}) > 0`,
+              ),
+            )}
+          )
+        LIMIT 1
+      `;
+      return rows.length > 0;
+    });
 
   const get: PersonalMemoryService["Service"]["get"] = (memoryId) =>
     readEntry(memoryId).pipe(storageFailure("read"));
@@ -1083,8 +1131,14 @@ export const make = Effect.gen(function* () {
   const undoNote: PersonalMemoryService["Service"]["undoNote"] = (input) =>
     Effect.gen(function* () {
       const current = yield* readEntry(input.memoryId);
-      // A rule a bot saved at the owner's word (1.60.42) has its own Undo; no other rule has one.
-      if (current.kind === "preference" && isBotRuleSource(current.source)) {
+      // Two rule Undos (1.60.42): a rule a bot saved at the owner's word (`;rule` source) can be
+      // archived again, and a rule a bot forgot at the owner's word comes back whatever its source
+      // is (most live rules were saved as `bot:<id>` or by a tidy-up, long before `;rule`).
+      if (
+        current.kind === "preference" &&
+        (isBotRuleSource(current.source) ||
+          (input.undo === "restore" && current.supersededReason === RULE_FORGOTTEN_REASON))
+      ) {
         return yield* undoRule(input, current);
       }
       if (current.kind !== "note") {
@@ -1138,9 +1192,10 @@ export const make = Effect.gen(function* () {
     }).pipe(storageFailure("undo"));
 
   /**
-   * The Undo of a "Saved a rule" / "Forgot a rule" chat line. The kind, the source and the reason
-   * are part of each update itself, so a rule that changed since (or was archived some other way)
-   * is never touched, and a note that became a rule has no such Undo.
+   * The Undo of a "Saved a rule" / "Forgot a rule" chat line. The kind and the reason are part of
+   * each update itself, so a rule that changed since (or was archived some other way) is never
+   * touched, and a note that became a rule has no such Undo. A restore is gated by the forget
+   * reason alone: the source of a rule that was forgotten says nothing about how it was saved.
    */
   const undoRule = (
     input: {
@@ -1157,8 +1212,7 @@ export const make = Effect.gen(function* () {
           SET superseded_at = NULL, superseded_by = NULL, superseded_reason = NULL,
               version = version + 1
           WHERE memory_id = ${input.memoryId} AND kind = 'preference' AND deleted_at IS NULL
-            AND superseded_at IS NOT NULL AND source = ${current.source}
-            AND superseded_reason = ${RULE_FORGOTTEN_REASON}
+            AND superseded_at IS NOT NULL AND superseded_reason = ${RULE_FORGOTTEN_REASON}
         `;
         return yield* readEntry(input.memoryId);
       }

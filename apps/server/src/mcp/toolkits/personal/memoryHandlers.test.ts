@@ -111,6 +111,8 @@ function saveMemory(input: {
   readonly origin?: {
     readonly origin: "chat" | "task" | "routine" | "bot" | "app";
     readonly readWeb: boolean;
+    /** Any turn of the thread used web or browser tools; defaults to `readWeb`. */
+    readonly threadReadWeb?: boolean;
   };
   /** The store refuses the save with this message. */
   readonly saveFails?: string;
@@ -143,7 +145,11 @@ function saveMemory(input: {
             rulesForApps(query.apps);
             return input.appRules ?? [];
           }),
-        noteOrigin: () => Effect.succeed(input.origin ?? { origin: "chat", readWeb: false }),
+        noteOrigin: () =>
+          Effect.succeed({
+            threadReadWeb: input.origin?.readWeb ?? false,
+            ...(input.origin ?? { origin: "chat" as const, readWeb: false }),
+          }),
         save: (entry) =>
           input.saveFails !== undefined
             ? Effect.fail(new PersonalMemoryError({ message: input.saveFails }))
@@ -1171,7 +1177,7 @@ describe("1.60.42: a rule the user states is saved at once, from their own words
   });
 
   const message = "Please remember to quote all coin prices in USD, not in pounds.";
-  const rule = "Quote coin prices in USD.";
+  const rule = "Quote coin prices in USD, not in pounds.";
 
   it.effect(
     "an explicit ask is saved with no card, and the chat gets 'Saved a rule' with Undo",
@@ -1394,6 +1400,178 @@ describe("1.60.42: a rule the user states is saved at once, from their own words
           expect(proposed).not.toHaveBeenCalled();
           expect(encoded).toContain("Not forgotten");
         }
+      }),
+  );
+
+  it.effect(
+    "after web or browser use anywhere in the chat, a rule is held to the message that started this turn",
+    () =>
+      Effect.gen(function* () {
+        const older = "remember that coin prices go in USD";
+        const webEarlier = { origin: "chat" as const, readWeb: false, threadReadWeb: true };
+        // Clean chat: an older message of the owner's still counts.
+        const clean = yield* saveMemory({
+          memoryAutoSave: false,
+          exposure: [],
+          userRequest: older,
+          ownerTexts: ["thanks", older],
+          current: { text: "thanks", byOwner: true },
+          kind: "preference",
+          content: "Coin prices go in USD.",
+        });
+        expect(clean.saved).toHaveBeenCalledTimes(1);
+        // The same after a web read in an earlier turn: it does not.
+        const old = yield* saveMemory({
+          memoryAutoSave: false,
+          exposure: [],
+          userRequest: older,
+          ownerTexts: ["thanks", older],
+          current: { text: "thanks", byOwner: true },
+          kind: "preference",
+          content: "Coin prices go in USD.",
+          origin: webEarlier,
+        });
+        expect(old.saved).not.toHaveBeenCalled();
+        expect(old.encoded).toContain("web or browser tools");
+        // Said in the message that started the turn: saved, but only in close wording.
+        const now = yield* saveMemory({
+          memoryAutoSave: false,
+          exposure: [],
+          userRequest: older,
+          kind: "preference",
+          content: "Coin prices go in USD.",
+          origin: webEarlier,
+        });
+        expect(now.saved).toHaveBeenCalledTimes(1);
+        expect(now.saved.mock.calls[0]?.[0]).toMatchObject({
+          source: "bot:cfo;from=chat+web;rule",
+        });
+        const loose = yield* saveMemory({
+          memoryAutoSave: false,
+          exposure: [],
+          userRequest: older,
+          kind: "preference",
+          content: "Report coin prices in USD with hourly charts.",
+          origin: webEarlier,
+        });
+        expect(loose.saved).not.toHaveBeenCalled();
+        expect(loose.encoded).toContain("held to the user's message more closely");
+      }),
+  );
+
+  it.effect("a rule with the opposite meaning is refused, and the refusal names the negation", () =>
+    Effect.gen(function* () {
+      const inverted = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: [],
+        userRequest: "Remember: don't use Codex for QA",
+        kind: "preference",
+        content: "Use Codex for QA.",
+      });
+      expect(inverted.saved).not.toHaveBeenCalled();
+      expect(inverted.encoded).toContain("no/not/never/don't/without");
+      // Quoting only the part after the "don't" does not get round it.
+      const cut = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: [],
+        userRequest: "use Codex for QA",
+        ownerTexts: ["Remember: don't use Codex for QA"],
+        kind: "preference",
+        content: "Use Codex for QA.",
+      });
+      expect(cut.saved).not.toHaveBeenCalled();
+      const faithful = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: [],
+        userRequest: "Remember: don't use Codex for QA",
+        kind: "preference",
+        content: "Never use Codex for QA.",
+      });
+      expect(faithful.saved).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("a rule dated by the bot with today's date is not refused for the date", () =>
+    Effect.gen(function* () {
+      const today = DateTime.formatIso(yield* DateTime.now).slice(0, 10);
+      const { saved } = yield* saveMemory({
+        memoryAutoSave: false,
+        exposure: [],
+        userRequest: "remember that coin prices go in USD",
+        kind: "preference",
+        content: `Harout's rule (${today}): coin prices go in USD.`,
+      });
+      expect(saved).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect(
+    "a forget is judged on the quote: 'ignore' and 'cancel' are not a request, and the quote must name the rule",
+    () =>
+      Effect.gen(function* () {
+        const target = {
+          scope: "shared" as const,
+          kind: "preference" as const,
+          content: "Quote coin prices in USD.",
+        };
+        for (const userRequest of [
+          "ignore the USD coin prices noise",
+          "cancel the USD coin prices order",
+          "forget that rule",
+          "remove the Codex rule",
+        ]) {
+          const { forgotten, encoded } = yield* saveMemory({
+            memoryAutoSave: false,
+            exposure: [],
+            tool: "forget_memory",
+            userRequest,
+            target,
+          });
+          expect(forgotten, userRequest).not.toHaveBeenCalled();
+          expect(encoded).toContain("Not forgotten");
+        }
+        // The message asks to forget something, but the quoted part is the USD rule praised.
+        const split = yield* saveMemory({
+          memoryAutoSave: false,
+          exposure: [],
+          tool: "forget_memory",
+          userRequest: "the USD coin prices rule is great",
+          ownerTexts: ["forget the milk, the USD coin prices rule is great"],
+          target,
+        });
+        expect(split.forgotten).not.toHaveBeenCalled();
+        const named = yield* saveMemory({
+          memoryAutoSave: false,
+          exposure: [],
+          tool: "forget_memory",
+          userRequest: "stop using the USD rule",
+          target,
+        });
+        expect(named.forgotten).toHaveBeenCalledTimes(1);
+      }),
+  );
+
+  it.effect(
+    "after web or browser use, a rule is forgotten only at the word of this turn's message",
+    () =>
+      Effect.gen(function* () {
+        const target = {
+          scope: "shared" as const,
+          kind: "preference" as const,
+          content: "Quote coin prices in USD.",
+        };
+        const { forgotten, encoded } = yield* saveMemory({
+          memoryAutoSave: false,
+          exposure: [],
+          tool: "forget_memory",
+          userRequest: "forget the USD coin prices rule",
+          ownerTexts: ["thanks", "forget the USD coin prices rule"],
+          current: { text: "thanks", byOwner: true },
+          origin: { origin: "chat", readWeb: false, threadReadWeb: true },
+          target,
+        });
+        expect(forgotten).not.toHaveBeenCalled();
+        expect(encoded).toContain("web or browser tools");
       }),
   );
 

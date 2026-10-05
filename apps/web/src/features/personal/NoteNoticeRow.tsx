@@ -1,7 +1,12 @@
 import type { JSX } from "react";
 import { useState } from "react";
 
-import { type EnvironmentId, type PersonalMemoryEntry, PersonalMemoryId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  isBotRuleSource,
+  type PersonalMemoryEntry,
+  PersonalMemoryId,
+} from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -19,16 +24,39 @@ const FORGOTTEN_REASONS: ReadonlySet<string> = new Set([
   "Forgotten by a bot (a note it found out of date).",
 ]);
 
+/** The server's reason for a rule a bot forgot at the owner's word (1.60.42): only this brings a rule back. */
+const RULE_FORGOTTEN_REASON = "Forgotten by a bot at the user's word.";
+
 /**
  * What the line says instead of Undo once there is nothing to undo, from the
  * entry as it is now (so a reload still shows a used Undo as done), or null
- * while Undo still applies or the entry is not loaded.
+ * while Undo still applies or the entry is not loaded. A "Saved a rule" line
+ * (1.60.42) is for a preference the server saved with a rule source; a "Forgot
+ * a rule" line is for a preference archived with the rule-forgotten reason,
+ * whatever its source (most live rules predate rule sources). A note that
+ * became a rule since, or a rule saved another way, has no such Undo.
  */
 export function noteUndoSettled(
   undo: "archive" | "restore",
-  entry: Pick<PersonalMemoryEntry, "kind" | "supersededAt" | "supersededReason"> | null,
+  entry:
+    | (Pick<PersonalMemoryEntry, "kind" | "supersededAt" | "supersededReason"> & {
+        readonly source?: string;
+      })
+    | null,
+  line: "note" | "rule" = "note",
 ): string | null {
   if (entry === null) return null;
+  if (line === "rule") {
+    if (entry.kind !== "preference") return "No longer a rule";
+    const archived = entry.supersededAt != null;
+    if (undo === "restore") {
+      if (!archived) return "Restored";
+      return entry.supersededReason === RULE_FORGOTTEN_REASON ? null : "Archived";
+    }
+    if (!isBotRuleSource(entry.source ?? "")) return "No longer a saved rule";
+    if (!archived) return null;
+    return entry.supersededReason === UNDONE_REASON ? "Undone" : "Archived";
+  }
   // Made a rule since: a note's Undo never touches it.
   if (entry.kind !== "note") return "No longer a note";
   const archived = entry.supersededAt != null;
@@ -63,7 +91,9 @@ export function NoteNoticeRow({
   const [state, setState] = useState<UndoState>("idle");
   const [error, setError] = useState<string | null>(null);
   const current = usePersonalMemoryEntry(environmentId, memoryId);
-  const settled = noteUndoSettled(undo, current.data ?? null);
+  // "Saved a rule: ..." / "Forgot a rule: ..." (1.60.42) read the entry as a rule; a note line never does.
+  const what = /^(?:Saved|Forgot) a rule\b/.test(label) ? "rule" : "note";
+  const settled = noteUndoSettled(undo, current.data ?? null, what);
 
   const onUndo = async () => {
     if (state !== "idle" || readOnly) return;
@@ -94,7 +124,7 @@ export function NoteNoticeRow({
           type="button"
           disabled={state === "busy"}
           aria-busy={state === "busy"}
-          aria-label={undo === "archive" ? "Undo: archive this note" : "Undo: restore this note"}
+          aria-label={`${undo === "archive" ? "Undo: archive" : "Undo: restore"} this ${what}`}
           onClick={() => void onUndo()}
           className={cn(
             "-my-3 inline-flex min-h-11 items-center rounded-[var(--personal-radius-button)] px-1.5 font-semibold text-[var(--personal-text)] underline underline-offset-2 disabled:opacity-60",

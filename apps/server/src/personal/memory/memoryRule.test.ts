@@ -13,7 +13,7 @@ describe("a rule's words must be the owner's", () => {
     const cases: ReadonlyArray<readonly [string, string]> = [
       [
         "Please remember to quote all coin prices in USD, not in pounds.",
-        "Quote coin prices in USD.",
+        "Quote coin prices in USD, not in pounds.",
       ],
       ["remember: no emojis please", "Do not use emojis."],
       ["Keep in mind I always want the answers in plain English.", "Answer in plain English."],

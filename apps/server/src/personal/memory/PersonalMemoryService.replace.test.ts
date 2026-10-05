@@ -657,6 +657,64 @@ it.effect(
     }).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect(
+  "1.60.42 rebuild: Undo of 'Forgot a rule' works for rules saved any way (live sources are bot:<id>, tidy-approved:..., user)",
+  () =>
+    Effect.gen(function* () {
+      yield* linkThreads;
+      const memory = yield* PersonalMemoryService;
+      const sources = [
+        `bot:${BOT_A}`,
+        `bot:${BOT_A};from=chat`,
+        "tidy-approved:run-7:change-12",
+        "user",
+        "seed",
+      ];
+      for (const source of sources) {
+        const rule = yield* memory.save({
+          scope: "shared",
+          scopeId: null,
+          kind: "preference",
+          content: `Rule saved as ${source}, quote coin prices in USD.`,
+          source,
+        });
+        yield* memory.forget({
+          memoryId: rule.memoryId,
+          actorBotId: BOT_A,
+          reason: RULE_FORGOTTEN_REASON,
+        });
+        expect(
+          (yield* memory.list({})).map((entry) => entry.memoryId),
+          source,
+        ).not.toContain(rule.memoryId);
+        const restored = yield* memory.undoNote({ memoryId: rule.memoryId, undo: "restore" });
+        expect(restored.supersededAt ?? null, source).toBeNull();
+        expect(restored.source).toBe(source);
+        expect(
+          (yield* memory.list({})).map((entry) => entry.memoryId),
+          source,
+        ).toContain(rule.memoryId);
+        // The same line cannot archive it again: only a `;rule` save has that Undo.
+        const archive = yield* memory.undoNote({ memoryId: rule.memoryId }).pipe(Effect.flip);
+        expect(archive.message, source).toContain("Only a note");
+      }
+      // A rule archived some other way (generic forget, a user archive) is still not brought back.
+      const other = yield* memory.save({
+        scope: "shared",
+        scopeId: null,
+        kind: "preference",
+        content: "A rule the owner archived on the Memory screen.",
+        source: `bot:${BOT_A}`,
+      });
+      yield* memory.forget({ memoryId: other.memoryId, actorBotId: BOT_A });
+      const stays = yield* memory
+        .undoNote({ memoryId: other.memoryId, undo: "restore" })
+        .pipe(Effect.flip);
+      expect(stays.message).toContain("Only a note");
+      expect((yield* memory.list({})).map((entry) => entry.memoryId)).not.toContain(other.memoryId);
+    }).pipe(Effect.provide(TestLayer)),
+);
+
 /** A running turn on THREAD_A started by `messageId`, optionally after some tool calls. */
 const runningTurn = (
   messageId: string,
@@ -701,11 +759,19 @@ it.effect("1.60.22 Security: a turn's origin and web reading, for a note's sourc
     const memory = yield* PersonalMemoryService;
     const sql = yield* SqlClient.SqlClient;
     yield* runningTurn("4b1c-owner-message");
-    expect(yield* memory.noteOrigin(THREAD_A)).toEqual({ origin: "chat", readWeb: false });
+    expect(yield* memory.noteOrigin(THREAD_A)).toEqual({
+      origin: "chat",
+      readWeb: false,
+      threadReadWeb: false,
+    });
     yield* runningTurn("personal-task-t1-1", [
       { type: "command_execution", summary: "Ran command" },
     ]);
-    expect(yield* memory.noteOrigin(THREAD_A)).toEqual({ origin: "task", readWeb: false });
+    expect(yield* memory.noteOrigin(THREAD_A)).toEqual({
+      origin: "task",
+      readWeb: false,
+      threadReadWeb: false,
+    });
     yield* sql`
       INSERT INTO personal_tasks (task_id, root_task_id, bot_id, thread_id, title, objective, status,
         source, idempotency_key, depth, max_depth, max_children, created_at, updated_at)
@@ -715,9 +781,17 @@ it.effect("1.60.22 Security: a turn's origin and web reading, for a note's sourc
     yield* runningTurn("personal-task-t2-1", [
       { type: "mcp_tool_call", summary: "t3-code · read_pages" },
     ]);
-    expect(yield* memory.noteOrigin(THREAD_A)).toEqual({ origin: "routine", readWeb: true });
+    expect(yield* memory.noteOrigin(THREAD_A)).toEqual({
+      origin: "routine",
+      readWeb: true,
+      threadReadWeb: true,
+    });
     yield* runningTurn("personal-relay-abc", [{ type: "web_search", summary: "Web search" }]);
-    expect(yield* memory.noteOrigin(THREAD_A)).toEqual({ origin: "bot", readWeb: true });
+    expect(yield* memory.noteOrigin(THREAD_A)).toEqual({
+      origin: "bot",
+      readWeb: true,
+      threadReadWeb: true,
+    });
   }).pipe(Effect.provide(TestLayer)),
 );
 
