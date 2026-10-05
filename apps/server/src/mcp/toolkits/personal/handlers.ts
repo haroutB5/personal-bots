@@ -933,7 +933,8 @@ const make = Effect.gen(function* () {
               "Not forgotten: this chat has used web or browser tools, so a rule is forgotten only at the word of the message the user just sent, and userRequest is not in it. Ask the user to say it again in a new message.",
             );
           }
-          if (!FORGET_REQUEST.test(quote) || !forgetGrounding(target.content, quote)) {
+          const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+          if (!FORGET_REQUEST.test(quote) || !forgetGrounding(target.content, quote, nowMs)) {
             return yield* refuse(
               "Not forgotten: the quoted words must ask to drop a rule and name this one (its own words or what it is about). Quote the words in which they asked, and check the rule is the one they mean.",
             );
