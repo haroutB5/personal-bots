@@ -50,13 +50,13 @@ const task = (overrides: Partial<Record<string, unknown>> = {}) =>
 
 let renderer: ReactTestRenderer | undefined;
 
-const render = async (value: PersonalTask) => {
+const render = async (value: PersonalTask, cardBot: PersonalBot = bot) => {
   await act(async () => {
     renderer = create(
       <DelegationCard
         environmentId={"env-1" as EnvironmentId}
         task={value}
-        bot={bot}
+        bot={cardBot}
         modelLabel="Sonnet 5.5 · H"
         waitingFor={null}
       />,
@@ -103,6 +103,44 @@ describe("DelegationCard", () => {
       .map((node) => node.children.join(""));
     expect(texts).toContain("Sonnet 5.5 · H");
     expect(texts).not.toContain("Claude Code");
+  });
+
+  it("shows the result of a finished task, unless its bot's previews are hidden", async () => {
+    const done = task({
+      status: "completed",
+      result: { summary: "Portfolio £27,636 at 21:06 (Kraken)" },
+    });
+    await render(done);
+    const shown = renderer!.root
+      .findAll((node) => node.type === "p")
+      .map((node) => node.children.join(""));
+    expect(shown).toContain("Portfolio £27,636 at 21:06 (Kraken)");
+
+    await act(async () => renderer?.unmount());
+    await render(done, { ...bot, hidePreviews: true } as PersonalBot);
+    const hidden = renderer!.root
+      .findAll((node) => node.type === "p")
+      .map((node) => node.children.join(""));
+    expect(hidden).toContain("Result hidden. Open the task to read it.");
+    expect(hidden.join(" ")).not.toContain("Portfolio");
+    // The task title is the lead's own line and the status words stay.
+    expect(hidden).toContain("matchday: deploy 0.167.11");
+    expect(
+      renderer!.root.findAll((node) => node.type === "span").map((node) => node.children.join("")),
+    ).toContain("Done");
+
+    // A failure's error text is the bot's text too.
+    await act(async () => renderer?.unmount());
+    await render(task({ status: "failed", errorMessage: "Kraken key rejected for account 4412" }), {
+      ...bot,
+      hidePreviews: true,
+    } as PersonalBot);
+    expect(
+      renderer!.root
+        .findAll((node) => node.type === "p")
+        .map((node) => node.children.join(""))
+        .join(" "),
+    ).not.toContain("Kraken");
   });
 
   it("is not tappable when the task has no chat yet", async () => {

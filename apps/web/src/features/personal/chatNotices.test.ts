@@ -192,6 +192,7 @@ describe("chat notices", () => {
   it("previews the notice, not the prompt, on the Bots list", () => {
     const summary = (text: string, payload: unknown, id: string) =>
       ({
+        bot: { botId: "bot-a" },
         newestThread: { title: "Release" },
         newestMessage: { id, role: "user", text, context: context(payload) },
       }) as unknown as BotSummary;

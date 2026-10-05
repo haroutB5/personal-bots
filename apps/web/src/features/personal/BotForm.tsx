@@ -17,6 +17,7 @@ import {
   type PersonalBotTeam,
   PersonalGroupId,
   savesMemoryWithoutAsking,
+  hidesBotPreviews,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -197,6 +198,7 @@ interface BotDraft {
   lead: boolean;
   pinned: boolean;
   memoryAutoSave: boolean;
+  hidePreviews: boolean;
   notifications: BotNotificationsChoice;
 }
 
@@ -219,6 +221,7 @@ function draftFromBot(bot: PersonalBot): BotDraft {
     lead: isTeamLead(bot),
     pinned: isBotPinned(bot),
     memoryAutoSave: savesMemoryWithoutAsking(bot),
+    hidePreviews: hidesBotPreviews(bot),
     notifications: initialNotificationsChoice(bot, Date.now()),
     effort:
       EFFORT_OPTION_IDS.map((id) =>
@@ -343,6 +346,7 @@ function BotForm({
       lead: false,
       pinned: false,
       memoryAutoSave: true,
+      hidePreviews: false,
       notifications: "on",
     };
   });
@@ -502,12 +506,25 @@ function BotForm({
             input: {
               botId,
               ...fields,
+              hidePreviews: draft.hidePreviews,
               ...(notificationsMute === undefined ? {} : { notificationsMute }),
             },
           });
-    // Create takes no mute: a new bot muted from the start gets it right after.
-    if (bot === null && notificationsMute !== undefined && result._tag === "Success") {
-      result = await updateBot({ environmentId, input: { botId, notificationsMute } });
+    // Create takes no mute and no privacy switch: a new bot muted (or with
+    // previews hidden) from the start gets them right after.
+    if (
+      bot === null &&
+      (notificationsMute !== undefined || draft.hidePreviews) &&
+      result._tag === "Success"
+    ) {
+      result = await updateBot({
+        environmentId,
+        input: {
+          botId,
+          ...(notificationsMute === undefined ? {} : { notificationsMute }),
+          ...(draft.hidePreviews ? { hidePreviews: true } : {}),
+        },
+      });
     }
     // Created from a group's settings: it goes straight into that group. A
     // failed add keeps the form open; submitting again retries both steps
@@ -826,6 +843,22 @@ function BotForm({
           <span className="block text-sm text-[var(--personal-text-secondary)]">
             Keeps what you tell this bot for later chats without you saying "remember", except in a
             chat that had a sensitive site open.
+          </span>
+        </span>
+      </label>
+
+      <label className="flex min-h-11 items-center gap-3 text-[15px] text-[var(--personal-text)]">
+        <input
+          type="checkbox"
+          checked={draft.hidePreviews}
+          onChange={(event) => update({ hidePreviews: event.target.checked })}
+          className="size-5 shrink-0"
+        />
+        <span className="min-w-0">
+          Hide message previews
+          <span className="block text-sm text-[var(--personal-text-secondary)]">
+            Keeps this bot's message text out of lists, cards, notifications and banners. It only
+            shows inside the chat.
           </span>
         </span>
       </label>

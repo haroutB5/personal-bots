@@ -50,6 +50,7 @@ import {
   usePersonalTasks,
   usePersonalTasksByIds,
 } from "./usePersonalAutomation";
+import { maskHiddenTaskSummary } from "./previewPrivacy";
 import { usePersonalBotsList, usePersonalEnvironmentId } from "./usePersonalBots";
 import { useMinuteNow } from "./useMinuteNow";
 import {
@@ -449,7 +450,7 @@ export function MemoryScreen(): JSX.Element {
         selection !== null ? (
           <SelectableMemoryRow
             key={entry.memoryId}
-            entry={entry}
+            entry={maskHiddenTaskSummary(entry, botById)}
             scope={scopeLabel(entry, botById)}
             source={sourceOf(entry)}
             now={now}
@@ -460,7 +461,7 @@ export function MemoryScreen(): JSX.Element {
         ) : (
           <MemoryRow
             key={entry.memoryId}
-            entry={entry}
+            entry={maskHiddenTaskSummary(entry, botById)}
             scope={scopeLabel(entry, botById)}
             source={sourceOf(entry)}
             now={now}

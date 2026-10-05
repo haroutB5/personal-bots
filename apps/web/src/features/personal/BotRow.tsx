@@ -13,6 +13,7 @@ import { botMuteState } from "./botMuteModel";
 import { botStatus, type BotSummary } from "./botSummaries";
 import { chatNoticeLabel, readChatNotice } from "./chatNotices";
 import { readServerTurn, type ServerTurn } from "./delegationModel";
+import { HIDDEN_PREVIEW_LABEL, HIDDEN_WORKING_LABEL, hidesBotPreviews } from "./previewPrivacy";
 import { formatRelativeTime } from "./relativeTime";
 import { useStartBotChat } from "./startBotChat";
 import { UnreadChatsBadge } from "./UnreadChatsBadge";
@@ -66,6 +67,12 @@ export function selectedChatProps(
  * subscription per row; the list refreshes when a thread's shell updates.
  */
 export function previewOf(summary: BotSummary, describeTurn: (turn: ServerTurn) => string): string {
+  // The owner hid this bot's previews: no message words, progress note, notice
+  // or turn label (they carry task titles). The server already sent no text.
+  if (hidesBotPreviews(summary.bot) || summary.newestMessage?.hidden === true) {
+    if (summary.live) return HIDDEN_WORKING_LABEL;
+    return summary.newestThread === null ? "No chats yet" : HIDDEN_PREVIEW_LABEL;
+  }
   // A working bot shows what it is doing now, not the last thing it said.
   if (summary.live && summary.progressNote != null && summary.progressNote.length > 0) {
     return summary.progressNote;
@@ -119,7 +126,11 @@ export function snapshotPreviewLabel(
   summary: BotSummary,
   describeTurn: (turn: ServerTurn) => string,
 ): string | null {
-  if (summary.newestThread === null || summary.newestMessage === null) return null;
+  if (summary.newestThread === null) return null;
+  if (hidesBotPreviews(summary.bot) || summary.newestMessage?.hidden === true) {
+    return HIDDEN_PREVIEW_LABEL;
+  }
+  if (summary.newestMessage === null) return null;
   const notice = readChatNotice(summary.newestMessage);
   if (notice !== null) return chatNoticeLabel(notice, summary.newestMessage.text, Date.now());
   const turn = readServerTurn(summary.newestMessage);

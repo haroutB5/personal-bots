@@ -213,8 +213,9 @@ export function NotificationsScreen(): JSX.Element {
         ) : endpoint === null ? (
           <>
             <p className="mt-1 text-[14px] leading-snug text-[var(--personal-text-secondary)]">
-              Get a notification when a bot finishes, fails, or needs you. It only says which bot
-              and which task, never message text.
+              Get a notification when a bot finishes, fails, or needs you. It says which bot and
+              which task, plus the short line a bot chooses to send. Turn on Hide message previews
+              in a bot's settings to keep even that out.
             </p>
             {permission === "denied" ? (
               <p className="mt-2 text-[14px] text-[var(--personal-error)]">

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import {
+  hidesBotPreviews,
   isBotPinned,
   type EnvironmentId,
   type PersonalBot,
@@ -510,7 +511,8 @@ export function ChatsScreen({
   const progressTargets = useMemo(
     () =>
       summaries.flatMap((summary) =>
-        summary.live && summary.liveThread != null
+        // A hidden bot's progress notes are never even requested for the list.
+        summary.live && summary.liveThread != null && !hidesBotPreviews(summary.bot)
           ? [{ threadId: summary.liveThread.id as string, updatedAt: summary.liveThread.updatedAt }]
           : [],
       ),
@@ -693,7 +695,11 @@ export function ChatsScreen({
       previewLabel: snapshotPreviewLabel(summary, describeTurn),
       previewAtMs: summary.lastActivityMs,
       threadId: summary.newestThread === null ? null : (summary.newestThread.id as string),
-      threadTitle: summary.newestThread === null ? null : summary.newestThread.title,
+      // A thread title can be made from message words: not stored for a hidden bot.
+      threadTitle:
+        summary.newestThread === null || hidesBotPreviews(summary.bot)
+          ? null
+          : summary.newestThread.title,
       pinned: isBotPinned(summary.bot),
     }));
   }, [environmentId, list.data, listed, describeTurn]);

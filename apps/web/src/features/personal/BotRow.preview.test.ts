@@ -10,6 +10,7 @@ function summary(
   message: { readonly id: string; readonly role: string; readonly text: string } | null,
 ): BotSummary {
   return {
+    bot: { botId: "bot-a" },
     newestThread: { id: "thread-a", title: "Weekly plan" },
     newestMessage: message,
   } as unknown as BotSummary;
@@ -48,6 +49,7 @@ describe("chats list preview", () => {
 describe("working bot preview", () => {
   const working = (progressNote: string | null | undefined, live = true): BotSummary =>
     ({
+      bot: { botId: "bot-a" },
       newestThread: { id: "thread-a", title: "Weekly plan" },
       newestMessage: { id: "m", role: "assistant", text: "The last thing it said" },
       live,
@@ -98,5 +100,61 @@ describe("plainPreviewLine", () => {
     expect(plainPreviewLine("---")).toBe("");
     const row = summary({ id: "m", role: "assistant", text: "## \n---\n**Result:** it works" });
     expect(previewOf(row, describeTurn)).toBe("Result: it works");
+  });
+});
+
+describe("hidden previews (the owner's privacy switch)", () => {
+  const secret = "No alerts. Portfolio £27,636 at 21:06 (Kraken)";
+  const hiddenSummary = (patch: Record<string, unknown> = {}): BotSummary =>
+    ({
+      bot: { botId: "cfo", hidePreviews: true },
+      newestThread: { id: "thread-a", title: "Portfolio check" },
+      newestMessage: { id: "m", role: "assistant", text: secret },
+      live: false,
+      progressNote: "Checking Kraken balance",
+      ...patch,
+    }) as unknown as BotSummary;
+
+  it("shows a neutral line, never the message, the note, the title or a turn label", () => {
+    expect(previewOf(hiddenSummary(), describeTurn)).toBe("Preview hidden");
+    // Working: the status word stays, the note does not.
+    expect(previewOf(hiddenSummary({ live: true }), describeTurn)).toBe("Working");
+    // A turn the task service wrote carries task titles: hidden too.
+    const turn = hiddenSummary({
+      newestMessage: {
+        id: "personal-task-task-1-1",
+        role: "user",
+        text:
+          "[Task from you]" +
+          String.fromCharCode(10, 10) +
+          "Task id: task-1" +
+          String.fromCharCode(10) +
+          "Title: Book the flights",
+      },
+    });
+    expect(previewOf(turn, describeTurn)).toBe("Preview hidden");
+    expect(snapshotPreviewLabel(turn, describeTurn)).toBe("Preview hidden");
+    // No chat yet is a status, not a message.
+    expect(
+      previewOf(hiddenSummary({ newestThread: null, newestMessage: null }), describeTurn),
+    ).toBe("No chats yet");
+  });
+
+  it("follows the server's hidden mark even if the bot row is stale", () => {
+    const stale = hiddenSummary({
+      bot: { botId: "cfo" },
+      newestMessage: { id: "m", role: "assistant", text: "", hidden: true },
+    });
+    expect(previewOf(stale, describeTurn)).toBe("Preview hidden");
+    expect(snapshotPreviewLabel(stale, describeTurn)).toBe("Preview hidden");
+  });
+
+  it("is off by default: a bot without the switch previews as before", () => {
+    const shown = hiddenSummary({
+      bot: { botId: "cfo", hidePreviews: false },
+      progressNote: undefined,
+    });
+    expect(previewOf(shown, describeTurn)).toBe(secret);
+    expect(snapshotPreviewLabel(shown, describeTurn)).toBeNull();
   });
 });

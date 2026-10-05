@@ -224,6 +224,13 @@ describe("group activity and rounds", () => {
     expect(groupPreviewLine(spoken)).toBe("Morning all");
   });
 
+  it("a group whose newest message is a hidden bot's previews as a neutral line", () => {
+    const hidden = group({
+      newestMessage: { id: "m-2", role: "assistant", text: "", hidden: true },
+    });
+    expect(groupPreviewLine(hidden)).toBe("Preview hidden");
+  });
+
   it("finds a group's round and knows which statuses still own the group", () => {
     const rounds = [round({ roundId: "r-other", groupId: "group-9" }), round()];
     expect(roundForGroup(rounds, "group-1")?.roundId).toBe("round-1");

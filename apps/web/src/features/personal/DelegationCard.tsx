@@ -15,6 +15,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { BotAvatar } from "./BotAvatar";
 import { commandFailureMessage } from "./commandFeedback";
 import { type DelegationStep, type DelegationTone, deriveDelegationCard } from "./delegationModel";
+import { HIDDEN_RESULT_LABEL, hidesBotPreviews } from "./previewPrivacy";
 import { personalTaskCancel } from "./usePersonalAutomation";
 
 const NO_ACTIVITIES: ReadonlyArray<never> = [];
@@ -81,23 +82,34 @@ export const DelegationCard = memo(function DelegationCard({
   const [cancelling, setCancelling] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // The child's owner hid its previews: its steps and its result or error
+  // text stay off this card, which sits in another bot's chat (the task title
+  // is the lead's own line and stays). Its thread is not even read.
+  const hidden = bot !== null && hidesBotPreviews(bot);
   // Steps only show while the child runs, so only then is its thread read.
   const childRef = useMemo(
     () =>
-      task.status === "running" && task.threadId !== null
+      task.status === "running" && task.threadId !== null && !hidden
         ? { environmentId, threadId: task.threadId }
         : null,
-    [environmentId, task.status, task.threadId],
+    [environmentId, hidden, task.status, task.threadId],
   );
   const childThread = useThreadDetail(childRef);
   const activities = childThread?.activities ?? NO_ACTIVITIES;
   const entries = useMemo(() => deriveWorkLogEntries(activities), [activities]);
-  const card = deriveDelegationCard({
+  const derived = deriveDelegationCard({
     task,
     entries,
     labelOf: (entry: WorkLogEntry) => workEntryDisplayLabel(entry, undefined),
     waitingFor,
   });
+  const card = hidden
+    ? {
+        ...derived,
+        steps: [],
+        detail: derived.detail === null ? null : HIDDEN_RESULT_LABEL,
+      }
+    : derived;
 
   const name = bot?.name ?? "Deleted bot";
   const threadId = task.threadId;

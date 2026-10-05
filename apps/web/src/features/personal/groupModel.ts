@@ -18,6 +18,8 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { HIDDEN_PREVIEW_LABEL } from "./previewPrivacy";
+
 const decodeMarker = Schema.decodeUnknownOption(PersonalGroupMessageMarker);
 
 /**
@@ -137,6 +139,8 @@ export function groupLastActivityMs(group: PersonalGroup): number {
 
 /** One line of the newest message, for the group row's preview. */
 export function groupPreviewLine(group: PersonalGroup): string {
+  // The server sends no text for a group whose newest message is a hidden bot's.
+  if (group.newestMessage?.hidden === true) return HIDDEN_PREVIEW_LABEL;
   const text = group.newestMessage?.text ?? "";
   const line = text
     .split("\n")
