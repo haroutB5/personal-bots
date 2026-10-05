@@ -2211,7 +2211,7 @@ describe("PersonalBrowser", () => {
 
   describe("navigation by a bot", () => {
     /** Runs `use` with the info logs the browser writes captured. */
-    const captureLogs = <A, E, R>(use: Effect.Effect<A, E, R>) => {
+    const captureLogs = <A, E, R>(use: (seen: ReadonlyArray<string>) => Effect.Effect<A, E, R>) => {
       const logs: string[] = [];
       const logger = Logger.make<unknown, void>(({ fiber, message }) => {
         logs.push(
@@ -2226,7 +2226,7 @@ describe("PersonalBrowser", () => {
       const loggerLayer = Logger.layer([logger], { mergeWithExisting: false });
       const withLogs = <ROut, E2, RIn>(layer: Layer.Layer<ROut, E2, RIn>) =>
         layer.pipe(Layer.provide(loggerLayer));
-      return { logs, withLogs, run: use.pipe(Effect.provide(loggerLayer)) };
+      return { logs, withLogs, run: use(logs).pipe(Effect.provide(loggerLayer)) };
     };
 
     const challenge = {
@@ -2247,7 +2247,7 @@ describe("PersonalBrowser", () => {
 
     it.effect("logs a landing on a bot check by origin only", () => {
       const fake = makeFakeDriver();
-      const { logs, run, withLogs } = captureLogs(
+      const { logs, run, withLogs } = captureLogs((seen) =>
         Effect.gen(function* () {
           const browser = yield* PersonalBrowser.PersonalBrowser;
           fake.state.page.evaluateImpl = async (expression) =>
@@ -2255,7 +2255,7 @@ describe("PersonalBrowser", () => {
           yield* browser.handleAutomationRequest(
             request("navigate", { url: "https://shop.example/cart/secret-path?token=abc123" }),
           );
-          yield* until(() => logs.some((entry) => entry.includes("bot check")));
+          yield* until(() => seen.some((entry) => entry.includes("bot check")));
         }),
       );
       return run.pipe(
@@ -2278,7 +2278,7 @@ describe("PersonalBrowser", () => {
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
-      const { logs, run, withLogs } = captureLogs(
+      const { run, withLogs } = captureLogs((seen) =>
         Effect.gen(function* () {
           const browser = yield* PersonalBrowser.PersonalBrowser;
           fake.state.page.evaluateImpl = async (expression) => {
@@ -2291,10 +2291,10 @@ describe("PersonalBrowser", () => {
           )) as PreviewAutomationStatus;
           // The navigation has answered while the look is still waiting on the page.
           expect(status.url).toBe("https://shop.example/");
-          expect(logs.some((entry) => entry.includes("bot check"))).toBe(false);
+          expect(seen.some((entry) => entry.includes("bot check"))).toBe(false);
           release();
-          yield* until(() => logs.some((entry) => entry.includes("bot check")));
-          expect(logs.some((entry) => entry.includes("bot check"))).toBe(true);
+          yield* until(() => seen.some((entry) => entry.includes("bot check")));
+          expect(seen.some((entry) => entry.includes("bot check"))).toBe(true);
         }),
       );
       return run.pipe(Effect.provide(withLogs(makeLayer(fake.driver))));
@@ -2303,7 +2303,7 @@ describe("PersonalBrowser", () => {
     it.effect("logs nothing for an ordinary page", () => {
       const fake = makeFakeDriver();
       let looked = false;
-      const { logs, run, withLogs } = captureLogs(
+      const { logs, run, withLogs } = captureLogs(() =>
         Effect.gen(function* () {
           const browser = yield* PersonalBrowser.PersonalBrowser;
           fake.state.page.evaluateImpl = async () => {
@@ -2456,7 +2456,7 @@ describe("PersonalBrowser", () => {
         }).pipe(Effect.provide(makeLayer(fake.driver)));
       });
 
-      const typeAddress = (fake: ReturnType<typeof makeFakeDriver>) =>
+      const typeAddress = () =>
         Effect.gen(function* () {
           const browser = yield* PersonalBrowser.PersonalBrowser;
           return yield* Effect.scoped(
@@ -2465,10 +2465,7 @@ describe("PersonalBrowser", () => {
                 sessionId: "session-1",
                 canOperate: true,
               });
-              yield* browser.handleViewerMessage(
-                viewer,
-                JSON.stringify({ _tag: "Navigate", url: asked }),
-              );
+              yield* browser.handleViewerMessage(viewer, `{"_tag":"Navigate","url":"${asked}"}`);
               const items: unknown[] = [];
               for (;;) {
                 const next = yield* Queue.poll(viewer.outbox);
@@ -2487,7 +2484,7 @@ describe("PersonalBrowser", () => {
           yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
           yield* browser.takeControl("session-1");
           replacedBy(fake, "https://www.google.com/sorry/index?continue=x");
-          const rejected = yield* typeAddress(fake);
+          const rejected = yield* typeAddress();
           expect(rejected).toBeUndefined();
           expect(fake.state.page.currentUrl).toBe("https://www.google.com/sorry/index?continue=x");
         }).pipe(Effect.provide(makeLayer(fake.driver)));
@@ -2502,7 +2499,7 @@ describe("PersonalBrowser", () => {
             yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
             yield* browser.takeControl("session-1");
             replacedBy(fake, "chrome-error://chromewebdata/");
-            const rejected = yield* typeAddress(fake);
+            const rejected = yield* typeAddress();
             expect(rejected).toContain("The page could not be opened.");
             expect(rejected).not.toMatch(/google|token=abc123|page\.goto|chrome-error/);
           }).pipe(Effect.provide(makeLayer(fake.driver)));
