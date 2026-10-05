@@ -207,19 +207,19 @@ describe("screencast profiles (adaptive JPEG)", () => {
       "Page.captureScreenshot",
       "Page.startScreencast",
     ]);
-    // The part of the document the screen shows, at the size of a screencast frame: css pixels, so
-    // 390 x 760 at 2x stays 390 x 760. Chrome doubles a clip's scale under the phone's override, so
-    // the scale asked for is a half.
+    // The part of the document the screen shows, at about the size of a screencast frame: css
+    // pixels, so 390 x 760 at 2x is 386 x 752 (1 % under). Chrome doubles a clip's scale under the
+    // phone's override, so the scale asked for is just under a half.
     expect(calls("Page.captureScreenshot")).toEqual([
       {
         format: "jpeg",
         quality: 60,
         optimizeForSpeed: true,
-        clip: { x: 0, y: 4_000, width: 390, height: 760, scale: 0.5 },
+        clip: { x: 0, y: 4_000, width: 390, height: 760, scale: 0.495 },
       },
     ]);
     expect(onFrame).toHaveBeenCalledTimes(1);
-    expect(frameSize(onFrame)).toEqual({ width: 390, height: 760 });
+    expect(frameSize(onFrame)).toEqual({ width: 386, height: 752 });
     // Tap mapping: the frame carries the page's css size and device scale, as a screencast frame does.
     expect(onFrame.mock.calls[0]![1]).toEqual({ width: 390, height: 760, deviceScaleFactor: 2 });
     expect(calls("Page.startScreencast")).toEqual([
@@ -244,13 +244,13 @@ describe("screencast profiles (adaptive JPEG)", () => {
   describe("the final frame never goes past the sharp caps, wherever the device scale comes from", () => {
     // [device scale, pixels per clip scale at 1, css width, css height, expected width x height]
     it.each([
-      ["the phone's override at 2x", 2, 2, 390, 760, 390, 760],
-      ["the phone's override at 3x", 3, 3, 390, 844, 390, 844],
-      ["a context's own 2x, which a clip does not multiply", 2, 1, 390, 760, 390, 760],
-      ["a 1x screen", 1, 1, 390, 760, 390, 760],
+      ["the phone's override at 2x", 2, 2, 390, 760, 386, 752],
+      ["the phone's override at 3x", 3, 3, 390, 844, 386, 836],
+      ["a context's own 2x, which a clip does not multiply", 2, 1, 390, 760, 386, 752],
+      ["a 1x screen", 1, 1, 390, 760, 386, 752],
       ["a wide desktop window at 1.25x", 1.25, 1.25, 1_280, 720, 780, 439],
       ["a wide desktop window at 1.25x, nothing multiplying", 1.25, 1, 1_280, 720, 780, 439],
-      ["a tall narrow window at 2x", 2, 2, 300, 2_000, 254, 1_690],
+      ["a tall narrow window at 2x", 2, 2, 300, 2_000, 253, 1_690],
     ])("%s", async (_name, dpr, perScale, width, height, expectedWidth, expectedHeight) => {
       fake.page.evaluate.mockImplementation(async () => dpr);
       answerChrome(
@@ -268,6 +268,23 @@ describe("screencast profiles (adaptive JPEG)", () => {
       expect(Math.abs(size.height - expectedHeight)).toBeLessThanOrEqual(1);
     });
   });
+
+  it.each([1, 2, 3])(
+    "never takes the final frame at exactly the screen's own scale (device scale %s): Chrome's screencast then sends nothing for the next page",
+    async (dpr) => {
+      fake.page.evaluate.mockImplementation(async () => dpr);
+      answerChrome(undefined, view, dpr);
+      const { page } = await started();
+      await page.setScreencastProfile!("moving");
+      fake.send.mockClear();
+      await page.setScreencastProfile!("sharp");
+      const [shot] = calls("Page.captureScreenshot") as ShotParams[];
+      // Pixels out per css pixel in: 1 would be the case, however the two scales are split.
+      const outputPerCssPixel = shot!.clip.scale * dpr;
+      expect(outputPerCssPixel).toBeLessThan(1);
+      expect(outputPerCssPixel).toBeGreaterThan(0.95);
+    },
+  );
 
   it("assumes the device scale when the measurement fails", async () => {
     let probes = 0;
@@ -288,8 +305,8 @@ describe("screencast profiles (adaptive JPEG)", () => {
     fake.send.mockClear();
     await page.setScreencastProfile!("sharp");
     const [shot] = calls("Page.captureScreenshot") as ShotParams[];
-    // Not knowing, it takes Chrome to double the scale (the phone's case): 1 / 2.
-    expect(shot!.clip.scale).toBe(0.5);
+    // Not knowing, it takes Chrome to double the scale (the phone's case): just under 1 / 2.
+    expect(shot!.clip.scale).toBeCloseTo(0.495, 5);
     expect(onFrame).toHaveBeenCalledTimes(1);
   });
 

@@ -45,6 +45,8 @@ export const SCREENCAST_PROFILES = {
 
 /** The longest a final sharp screenshot may take before the sharp screencast resumes without it. */
 const FINAL_FRAME_CAP_MS = 1_500;
+/** Output pixels per css pixel of the final frame at most; see `sendFinalFrame` for why not 1. */
+const FINAL_FRAME_SCALE = 0.99;
 
 export interface ConsoleRecord {
   readonly level: string;
@@ -403,9 +405,11 @@ function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
     const sharp = SCREENCAST_PROFILES.sharp;
     // Output pixels per css pixel. A screencast frame is in css pixels, whatever the device scale
     // (a phone at 2x gets 390 x 760, not 780 x 1520), and only ever scaled down to its caps; the
-    // final frame is the same picture and the same size, a third of the bytes of a device-pixel one.
+    // final frame is the same picture at about the same size, a third of the bytes of a device-pixel
+    // one. "About": a clip taken at exactly the screen's own scale leaves Chrome's screencast
+    // sending nothing for the next page that loads, so the frame is asked for 1 % smaller.
     const wanted = Math.min(
-      1,
+      FINAL_FRAME_SCALE,
       sharp.maxWidth / view.clientWidth,
       sharp.maxHeight / view.clientHeight,
     );
