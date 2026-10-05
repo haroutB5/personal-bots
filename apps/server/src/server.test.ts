@@ -732,6 +732,11 @@ const buildAppUnderTest = (options?: {
       ...options?.layers?.gitVcsDriver,
     });
     const gitManagerLayer = Layer.mock(GitManager.GitManager)({
+      // Worktree creation goes through GitManager, which adds the project's
+      // submodule setting and then calls the git driver, so the driver mock serves it.
+      ...(options?.layers?.gitVcsDriver?.createWorktree === undefined
+        ? {}
+        : { createWorktree: options.layers.gitVcsDriver.createWorktree }),
       ...options?.layers?.gitManager,
     });
     const workspaceEntriesLayer = WorkspaceEntries.layer.pipe(
