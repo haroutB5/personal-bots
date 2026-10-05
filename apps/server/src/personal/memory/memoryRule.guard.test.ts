@@ -7,6 +7,7 @@ import {
   FORGET_REQUEST,
   forgetGrounding,
   negationCount,
+  negationsOf,
   ruleGrounding,
   sentencesOfQuote,
 } from "./memoryRule.ts";
@@ -40,11 +41,76 @@ describe("a rule may not say the opposite of what the owner said", () => {
       ["Never use emojis.", "No emojis."],
       ["Don't use emojis", "Never use emojis."],
       ["remember: no emojis in replies", "Don't use emojis in replies."],
-      ["Reply without headings", "Do not use headings in replies."],
+      ["Reply without headings", "Reply without headings."],
+      ["Never deploy before QA passes", "Never deploy before QA passes."],
+      ["don't use Codex for QA", "Don't use Codex for QA."],
+      ["Never delete my real chats during tests.", "Do not delete real chats during tests."],
     ] as const) {
       const result = ruleGrounding(rule, message);
       expect(result.ok, `${message} -> ${rule}: ${result.missing.join(",")}`).toBe(true);
     }
+  });
+
+  it("a negation moved to another word is another rule, with the same count", () => {
+    for (const [message, rule] of [
+      // QA's repros on 897baa0da88f.
+      [
+        "Never delete my real chats during tests.",
+        "Delete real chats during tests without asking.",
+      ],
+      ["Never deploy before QA passes.", "Deploy before QA never passes."],
+      // "without" is not "not": the owner's word stays.
+      ["Reply without headings.", "Do not use headings in replies."],
+      ["Never use emojis.", "Use emojis without asking."],
+      // The same words with the "never" on the other action.
+      ["Never ask before deploying.", "Ask before never deploying."],
+      ["Use Codex for QA, but not for Backend.", "Use Codex for Backend, but not for QA."],
+    ] as const) {
+      const result = ruleGrounding(rule, message);
+      expect(result.ok, `${message} -> ${rule}`).toBe(false);
+      expect(result.missing.join(" "), `${message} -> ${rule}`).toMatch(/did not say|does not say/);
+    }
+  });
+
+  it("each negation is read with the word after it", () => {
+    expect(negationsOf("Never delete my real chats during tests.")).toEqual([
+      { word: "never", kind: "not", scope: "delete" },
+    ]);
+    expect(negationsOf("Delete real chats during tests without asking.")).toEqual([
+      { word: "without", kind: "without", scope: "asking" },
+    ]);
+    // The scope stops at the end of the sentence; a remember phrase says nothing.
+    expect(negationsOf("Don't forget the report. Never email it. Do not.")).toEqual([
+      { word: "never", kind: "not", scope: "email" },
+      { word: "not", kind: "not", scope: null },
+    ]);
+    expect(negationsOf("No emojis, and don't add headings")).toEqual([
+      { word: "no", kind: "not", scope: "emoji" },
+      { word: "don't", kind: "not", scope: "add" },
+    ]);
+    expect(negationCount("Never use emojis and don't add headings")).toBe(2);
+  });
+
+  it("no, not, never and don't are one group about the same word; all the owner's must be there", () => {
+    expect(ruleGrounding("Do not use emojis.", "Never use emojis.").ok).toBe(true);
+    expect(ruleGrounding("No emojis in replies.", "Never use emojis in replies.").ok).toBe(true);
+    // Two things the owner forbade: the rule must forbid both, each as the owner did.
+    const two = "Never use emojis. Don't add headings.";
+    expect(ruleGrounding("Never use emojis. Do not add headings.", two).ok).toBe(true);
+    expect(ruleGrounding("Never use emojis and headings.", two).ok).toBe(false);
+    expect(ruleGrounding("Never use headings. Do not add emojis.", two).ok).toBe(false);
+  });
+
+  it("a merge may carry only negations about what the rules said no to", () => {
+    const originals = "Never delete my real chats.\nDo not deploy before QA passes.";
+    const bounds = { min: 1, max: 2 };
+    const merged = (content: string) =>
+      ruleGrounding(content, originals, { strict: true, negations: bounds }).ok;
+    expect(merged("Never delete my real chats, and do not deploy before QA passes.")).toBe(true);
+    expect(merged("Never delete my real chats.")).toBe(true);
+    // The "never" is moved onto an action the rules did not forbid.
+    expect(merged("Delete my real chats without asking, never deploy.")).toBe(false);
+    expect(merged("Delete my real chats and deploy before QA never passes.")).toBe(false);
   });
 
   it("a 'don't forget' that asks to remember is not a negation", () => {

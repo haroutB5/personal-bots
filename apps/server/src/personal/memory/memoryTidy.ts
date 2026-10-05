@@ -251,7 +251,7 @@ export function validateDecisions(
     if (isAuto && decision.action === "merge" && byId.get(ids[0]!)!.kind === "preference") {
       const originals = ids.map((id) => byId.get(id)!.content);
       const counts = originals.map(negationCount);
-      const grounding = ruleGrounding(decision.content, originals.join(" "), {
+      const grounding = ruleGrounding(decision.content, originals.join("\n"), {
         strict: true,
         negations: { min: Math.max(...counts), max: counts.reduce((sum, n) => sum + n, 0) },
       });

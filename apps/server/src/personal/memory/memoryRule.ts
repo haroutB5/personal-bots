@@ -9,8 +9,9 @@
  * (no model, so a web page cannot talk it round): the rule's significant words
  * must be mostly the message's, every address, link, number and path in the
  * rule must be in the message word for word, and the rule must say "no", "not",
- * "never", "don't" and "without" as many times as the owner's words do (a rule
- * with the same words and the opposite meaning is the cheapest forgery).
+ * "never", "don't" and "without" as many times as the owner's words do, each one
+ * about the same thing (a rule with the same words and the opposite meaning is the cheapest
+ * forgery, and moving a "never" from "delete" to "asking" keeps the count).
  */
 import * as DateTime from "effect/DateTime";
 
@@ -26,8 +27,6 @@ const STOP = new Set(
  * Words that turn a rule round. They are not compared as words (a rule may say
  * "do not" where the owner said "no"); they are counted instead.
  */
-const NEGATION =
-  /\b(?:no|not|never|without|nothing|none|neither|nor|nobody|cannot|dont|doesnt|didnt|wont|cant|shouldnt|isnt|arent|wasnt|werent)\b|\b[\p{L}]+n't\b/gu;
 const NEGATION_WORD =
   /^(?:no|not|never|without|nothing|none|neither|nor|nobody|cannot|dont|doesnt|didnt|wont|cant|shouldnt|isnt|arent|wasnt|werent|[\p{L}]+n't)$/u;
 
@@ -93,28 +92,28 @@ function sameStem(a: string, b: string): boolean {
 }
 
 /**
- * The words that carry a text's meaning, stemmed. Two-letter words are kept when written in
- * capitals (QA, UI, US: a rule about "QA" is not one about "Backend"). With `pool`, every
- * two-letter word is kept, for the owner's side of a comparison: "qa" in their message meets
+ * The lower-case word if it carries meaning, else null. Two-letter words count when written
+ * in capitals (QA, UI, US: a rule about "QA" is not one about "Backend"). With `pool`, every
+ * two-letter word counts, for the owner's side of a comparison: "qa" in their message meets
  * "QA" in the rule.
  */
+function significantWord(match: string, pool: boolean): string | null {
+  const raw = match.replace(/'s?$/i, "");
+  const word = match.toLowerCase();
+  if (NEGATION_WORD.test(word)) return null;
+  if (word.length >= 3 && !STOP.has(word)) return word;
+  const twoLetter = raw.length === 2;
+  const capitals = twoLetter && raw === raw.toUpperCase() && raw !== raw.toLowerCase();
+  return capitals || (pool && twoLetter) ? word : null;
+}
+
+const plainWords = (text: string) => text.normalize("NFKC").replace(/[‘’]/g, "'");
+
 const significantStems = (text: string, pool = false): ReadonlyArray<string> =>
-  [
-    ...text
-      .normalize("NFKC")
-      .replace(/[‘’]/g, "'")
-      .matchAll(WORD),
-  ]
-    .flatMap((match) => {
-      const raw = match[0].replace(/'s?$/i, "");
-      const word = match[0].toLowerCase();
-      const twoLetter = raw.length === 2;
-      const capitals = twoLetter && raw === raw.toUpperCase() && raw !== raw.toLowerCase();
-      if (NEGATION_WORD.test(word)) return [];
-      if (word.length >= 3 && !STOP.has(word)) return [word];
-      return capitals || (pool && twoLetter) ? [word] : [];
-    })
-    .map(stem);
+  [...plainWords(text).matchAll(WORD)].flatMap((match) => {
+    const word = significantWord(match[0], pool);
+    return word === null ? [] : [stem(word)];
+  });
 
 const LOCAL_DAY = new Intl.DateTimeFormat("en-CA", {
   year: "numeric",
@@ -156,9 +155,71 @@ function exactTokens(text: string): ReadonlyArray<string> {
 }
 
 /** How many times a text says no, not, never, don't, without (a remember phrase aside). */
-export function negationCount(text: string): number {
-  const flat = lower(text).replace(REMEMBER_PHRASE, " ");
-  return [...flat.matchAll(NEGATION)].length;
+export const negationCount = (text: string): number => negationsOf(text).length;
+
+/** One "no", "not", "never", "don't" or "without", and the first meaningful word after it. */
+export interface Negation {
+  /** The word as written, lower case. */
+  readonly word: string;
+  /** "without" only matches "without"; no, not, never, don't and the rest are one group. */
+  readonly kind: "without" | "not";
+  /** The stem of the next significant word in the same sentence; null when there is none. */
+  readonly scope: string | null;
+}
+
+const NEGATION_TOKENS = /[\p{L}][\p{L}'-]*|[.;!?\n]/gu;
+
+/**
+ * Every negation in a text with what it is about: the next significant word, up to the end
+ * of the sentence. "Never delete my real chats" is `never` about `delete`; "Delete real chats
+ * without asking" is `without` about `ask`. A remember phrase aside, as in `negationCount`.
+ */
+export function negationsOf(text: string): ReadonlyArray<Negation> {
+  const tokens = [...plainWords(text.replace(REMEMBER_PHRASE, " ")).matchAll(NEGATION_TOKENS)].map(
+    (match) => match[0],
+  );
+  const found: Array<Negation> = [];
+  tokens.forEach((token, index) => {
+    const word = token.toLowerCase();
+    if (!NEGATION_WORD.test(word)) return;
+    let scope: string | null = null;
+    for (let next = index + 1; next < tokens.length; next++) {
+      const candidate = tokens[next]!;
+      if (/^[.;!?\n]$/.test(candidate)) break;
+      const meaningful = significantWord(candidate, false);
+      if (meaningful !== null) {
+        scope = stem(meaningful);
+        break;
+      }
+    }
+    found.push({ word, kind: word === "without" ? "without" : "not", scope });
+  });
+  return found;
+}
+
+const sameNegation = (a: Negation, b: Negation) =>
+  a.kind === b.kind &&
+  (a.scope === null || b.scope === null ? a.scope === b.scope : sameStem(a.scope, b.scope));
+
+const showNegation = (negation: Negation) =>
+  negation.scope === null ? `"${negation.word}"` : `"${negation.word} ... ${negation.scope}"`;
+
+/**
+ * Pairs each of `left` with a different one of `right` that says the same (the same kind of
+ * negation about the same thing). The ones of `left` left over have no pair in `right`.
+ */
+function unpaired(
+  left: ReadonlyArray<Negation>,
+  right: ReadonlyArray<Negation>,
+): ReadonlyArray<Negation> {
+  const free = [...right];
+  const rest: Array<Negation> = [];
+  for (const negation of left) {
+    const at = free.findIndex((candidate) => sameNegation(negation, candidate));
+    if (at === -1) rest.push(negation);
+    else free.splice(at, 1);
+  }
+  return rest;
 }
 
 /**
@@ -242,20 +303,35 @@ export function ruleGrounding(
   const coverage = unique.length === 0 ? 0 : inMessage.length / unique.length;
   const hasTokenGap = missing.some((word) => !unique.includes(word));
 
-  // The meaning must not turn round: as many "no/not/never/don't/without" as the owner said.
-  const ruleNegations = negationCount(body);
-  const ownerNegations =
-    options.quote === undefined
-      ? negationCount(message)
-      : negationCount(sentencesOfQuote(options.quote, message));
-  const bounds = options.negations ?? { min: ownerNegations, max: ownerNegations };
-  const negationsOk = ruleNegations >= bounds.min && ruleNegations <= bounds.max;
-  if (!negationsOk) {
+  // The meaning must not turn round: the same "no/not/never/don't/without" the owner said, each
+  // about the same thing, and no others. Moving a "never" from one action to another keeps the
+  // count and makes the opposite rule, so each is paired with the owner's by what it is about.
+  const ruleNegations = negationsOf(body);
+  const ownerNegations = negationsOf(
+    options.quote === undefined ? message : sentencesOfQuote(options.quote, message),
+  );
+  const bounds = options.negations ?? {
+    min: ownerNegations.length,
+    max: ownerNegations.length,
+  };
+  // The rule's that the owner did not say, and (unless the rule is a merge of several rules,
+  // which may say each thing once) the owner's that the rule left out.
+  const invented = unpaired(ruleNegations, ownerNegations);
+  const dropped = options.negations === undefined ? unpaired(ownerNegations, ruleNegations) : [];
+  const countOk = ruleNegations.length >= bounds.min && ruleNegations.length <= bounds.max;
+  const negationsOk = countOk && invented.length === 0 && dropped.length === 0;
+  if (!countOk) {
     missing.push(
-      ruleNegations < bounds.min
+      ruleNegations.length < bounds.min
         ? `the user's "no/not/never/don't/without" (${bounds.min}), which the rule leaves out`
-        : `a "no/not/never/don't/without" the user did not say (the rule has ${ruleNegations}, they said ${bounds.max})`,
+        : `a "no/not/never/don't/without" the user did not say (the rule has ${ruleNegations.length}, they said ${bounds.max})`,
     );
+  }
+  for (const negation of invented) {
+    missing.push(`${showNegation(negation)} in the rule, which the user did not say about that`);
+  }
+  for (const negation of dropped) {
+    missing.push(`the user's ${showNegation(negation)}, which the rule does not say about that`);
   }
   return {
     ok: unique.length > 0 && coverage >= wanted && !hasTokenGap && negationsOk,
