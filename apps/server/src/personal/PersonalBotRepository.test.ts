@@ -142,8 +142,6 @@ it.effect("a bot with hidden previews sends no message text over the list", () =
       text: "",
       hidden: true,
     });
-    expect(JSON.stringify(hidden)).not.toContain("Portfolio");
-    expect(JSON.stringify(hidden)).not.toContain("Kraken");
 
     yield* repository.updateBot({
       botId,

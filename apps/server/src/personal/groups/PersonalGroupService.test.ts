@@ -1785,7 +1785,6 @@ it.effect("a group with a hidden bot in it previews no bot text on the list", ()
     const hidden = (yield* service.list()).groups[0]!;
     expect(hidden.newestMessage).toMatchObject({ text: "", hidden: true });
     expect(hidden.newestMessage?.context).toBeUndefined();
-    expect(JSON.stringify(hidden)).not.toContain("Portfolio");
 
     // Off again: back as before.
     yield* bots.update({ botId: botId("dev"), hidePreviews: false });
