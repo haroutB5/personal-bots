@@ -18,8 +18,10 @@ import {
   type PreviewAutomationRequest,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -2197,10 +2199,10 @@ describe("PersonalBrowser", () => {
         fake.state.page.evaluateImpl = async () => {
           throw new Error("Execution context was destroyed");
         };
-        const result = yield* browser.handleAutomationRequest(
+        yield* browser.handleAutomationRequest(
           request("navigate", { url: "https://example.com/next" }),
         );
-        expect(JSON.stringify(result)).toContain("example.com");
+        expect(fake.state.page.currentUrl).toBe("https://example.com/next");
       }).pipe(Effect.provide(makeLayer(fake.driver)));
     });
 
@@ -2213,10 +2215,12 @@ describe("PersonalBrowser", () => {
             'page.goto: net::ERR_NAME_NOT_RESOLVED at https://nope.invalid/\nCall log:\n  - navigating to "https://nope.invalid/"',
           );
         };
-        const failure = yield* browser
-          .handleAutomationRequest(request("navigate", { url: "https://nope.invalid/" }))
-          .pipe(Effect.flip);
-        expect(String(failure.message)).toBe(
+        const exit = yield* Effect.exit(
+          browser.handleAutomationRequest(request("navigate", { url: "https://nope.invalid/" })),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        const failure = Exit.isFailure(exit) ? Cause.squash(exit.cause) : null;
+        expect(failure instanceof Error ? failure.message : "").toBe(
           "That site's address could not be found. Check how the web address is spelled. (ERR_NAME_NOT_RESOLVED)",
         );
       }).pipe(Effect.provide(makeLayer(fake.driver)));
