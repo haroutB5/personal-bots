@@ -604,6 +604,12 @@ describe("plainMemoryText", () => {
     expect(plainMemoryText("A rule in plain words.")).toBe("A rule in plain words.");
   });
 
+  it("drops a ** left open where a long summary was clipped", () => {
+    expect(plainMemoryText("Done:\n- **Rules: use the new one and\n- **Ru...")).toBe(
+      "Done:\n• Rules: use the new one and\n• Ru...",
+    );
+  });
+
   it("removes single-star emphasis but not a snake_case word", () => {
     expect(plainMemoryText("this is *important* for my_var_name")).toBe(
       "this is important for my_var_name",

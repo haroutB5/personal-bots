@@ -418,13 +418,17 @@ export const UNLISTED_MEMORY_TEXT = "an entry no longer listed";
  * turned into plain words (a bullet becomes a dot), and links keep their address.
  */
 export function plainMemoryText(text: string): string {
-  return text
-    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
-    .replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "$2")
-    .replace(/(?<![*\w])\*(?=\S)([^*\n]*?\S)\*(?![*\w])/g, "$1")
-    .replace(/`([^`\n]+)`/g, "$1")
-    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1 ($2)")
-    .replace(/^([ \t]*)[-*][ \t]+/gm, "$1\u2022 ");
+  return (
+    text
+      .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+      .replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "$2")
+      // A summary clipped mid-phrase leaves an opening ** with no closing one.
+      .replace(/\*\*/g, "")
+      .replace(/(?<![*\w])\*(?=\S)([^*\n]*?\S)\*(?![*\w])/g, "$1")
+      .replace(/`([^`\n]+)`/g, "$1")
+      .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1 ($2)")
+      .replace(/^([ \t]*)[-*][ \t]+/gm, "$1\u2022 ")
+  );
 }
 
 /** memoryId to text, across the current and replaced lists (current wins). */
