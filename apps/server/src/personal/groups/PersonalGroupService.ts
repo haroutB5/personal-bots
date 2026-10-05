@@ -428,6 +428,18 @@ export const make = Effect.gen(function* () {
     const row = yield* messages
       .getByMessageId({ messageId: newest.messageId })
       .pipe(Effect.orElseSucceed(() => Option.none()));
+    // The list preview of a group never carries a hidden bot's words (the
+    // owner's "Hide message previews" switch): not the bot's own message, and
+    // not any bot message of a group it is a member of, since a bot's reply or
+    // the verdict can quote another member. The user's own messages and system
+    // rows are not bot text and keep showing.
+    const hiddenIds = new Set(
+      (yield* liveBots()).filter((bot) => bot.hidePreviews === true).map((bot) => bot.botId),
+    );
+    const hideText =
+      newest.speakerKind === "bot" &&
+      ((newest.speakerBotId !== null && hiddenIds.has(newest.speakerBotId)) ||
+        members.some((member) => member.leftAt === null && hiddenIds.has(member.botId)));
     return {
       ...base,
       newestMessage: Option.isNone(row)
@@ -435,8 +447,9 @@ export const make = Effect.gen(function* () {
         : {
             id: row.value.messageId,
             role: row.value.role,
-            text: row.value.text,
-            ...(row.value.context === undefined ? {} : { context: row.value.context }),
+            text: hideText ? "" : row.value.text,
+            ...(row.value.context === undefined || hideText ? {} : { context: row.value.context }),
+            ...(hideText ? { hidden: true } : {}),
           },
     } satisfies PersonalGroup;
   });

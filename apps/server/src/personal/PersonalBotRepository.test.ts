@@ -86,6 +86,75 @@ it.effect("previews the newest message the chat shows, skipping traces", () =>
   }).pipe(Effect.provide(testLayer)),
 );
 
+// The owner's "Hide message previews" switch: the list sends no text and no
+// context marker for that bot, only that a message exists and is hidden.
+it.effect("a bot with hidden previews sends no message text over the list", () =>
+  Effect.gen(function* () {
+    const repository = yield* PersonalBotRepository.PersonalBotRepository;
+    const botId = PersonalBotId.make("bot-hidden");
+    yield* repository.createBot(
+      decodeCreateBot({
+        botId,
+        name: "CFO scheduler",
+        title: "Finance",
+        description: "Watches money.",
+        instructions: "Be careful.",
+        avatarShape: "blob",
+        avatarColor: "#1A73E8",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-astra" },
+        team: "assistant",
+        lead: false,
+        pinned: false,
+        sortOrder: 0,
+        createdAt: "2026-10-05T20:38:00.000Z",
+        updatedAt: "2026-10-05T20:38:00.000Z",
+      }),
+    );
+    yield* repository.insertThreadLink(
+      decodeInsertThreadLink({ botId, threadId, createdAt: "2026-10-05T20:38:00.000Z" }),
+    );
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO projection_thread_messages (
+        message_id, thread_id, role, text, context_json, is_streaming, created_at, updated_at
+      ) VALUES ('m-secret', ${threadId}, 'assistant',
+        'No alerts. Portfolio £27,636 at 21:06 (Kraken)',
+        '{"version":1,"records":[{"kind":"personal-task-turn","title":"Kraken check"}]}', 0,
+        '2026-10-05T20:38:02.000Z', '2026-10-05T20:38:02.000Z')
+    `;
+
+    const shown = yield* repository.listThreadLinks();
+    expect(shown[0]?.newestMessage).toMatchObject({
+      id: "m-secret",
+      text: "No alerts. Portfolio £27,636 at 21:06 (Kraken)",
+    });
+    expect(shown[0]?.newestMessage?.hidden).toBeUndefined();
+
+    yield* repository.updateBot({
+      botId,
+      hidePreviews: true,
+      updatedAt: DateTime.makeUnsafe("2026-10-05T20:40:00.000Z"),
+    });
+    const hidden = yield* repository.listThreadLinks();
+    expect(hidden[0]?.newestMessage).toEqual({
+      id: "m-secret",
+      role: "assistant",
+      text: "",
+      hidden: true,
+    });
+    expect(JSON.stringify(hidden)).not.toContain("Portfolio");
+    expect(JSON.stringify(hidden)).not.toContain("Kraken");
+
+    yield* repository.updateBot({
+      botId,
+      hidePreviews: false,
+      updatedAt: DateTime.makeUnsafe("2026-10-05T20:41:00.000Z"),
+    });
+    const back = yield* repository.listThreadLinks();
+    expect(back[0]?.newestMessage?.text).toContain("Portfolio");
+  }).pipe(Effect.provide(testLayer)),
+);
+
 // The Chats screen shows one preview per bot: its newest thread that is not
 // archived, not deleted and not a group relay. Only the newest two such
 // threads carry text (one of slack for a client a shell update behind); every

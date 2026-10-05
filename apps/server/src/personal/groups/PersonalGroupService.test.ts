@@ -1766,6 +1766,33 @@ it.effect("purging a bot leaves the group readable, and empties are archived", (
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
+it.effect("a group with a hidden bot in it previews no bot text on the list", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    yield* makeGroup(["assistant", "dev"], 6);
+    yield* send("@Assistant hello", "msg-hidden-preview");
+    yield* speak(harness, "Portfolio £27,636 at 21:06 (Kraken)");
+
+    const shown = (yield* service.list()).groups[0]!;
+    expect(shown.newestMessage?.text).toBe("Portfolio £27,636 at 21:06 (Kraken)");
+    expect(shown.newestMessage?.hidden).toBeUndefined();
+
+    // The owner hides previews for one member (here the one that did not speak).
+    const bots = yield* PersonalBotService.PersonalBotService;
+    yield* bots.update({ botId: botId("dev"), hidePreviews: true });
+    const hidden = (yield* service.list()).groups[0]!;
+    expect(hidden.newestMessage).toMatchObject({ text: "", hidden: true });
+    expect(hidden.newestMessage?.context).toBeUndefined();
+    expect(JSON.stringify(hidden)).not.toContain("Portfolio");
+
+    // Off again: back as before.
+    yield* bots.update({ botId: botId("dev"), hidePreviews: false });
+    expect((yield* service.list()).groups[0]!.newestMessage?.text).toContain("Portfolio");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 it.effect("deleting a bot mid-reply moves the round on instead of holding the slot", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {

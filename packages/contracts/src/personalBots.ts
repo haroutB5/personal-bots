@@ -121,6 +121,13 @@ export const PersonalBot = Schema.Struct({
    */
   memoryAutoSave: Schema.optionalKey(Schema.Boolean),
   /**
+   * The owner's privacy switch: this bot's message text is not previewed
+   * anywhere outside its own chat (Bots list, pinned strip, chat list, Team,
+   * task cards, push and banners show a neutral line instead). Optional on the
+   * wire like the fields above; read it through {@link hidesBotPreviews}.
+   */
+  hidePreviews: Schema.optionalKey(Schema.Boolean),
+  /**
    * Notifications from this bot are silenced until this time: no web push and
    * no in-app banner. Null (or absent, from an older server) means on; a time
    * in the year 9999 means "until I turn it back on". Read it through
@@ -177,6 +184,9 @@ export const isBotPinned = (bot: { readonly pinned?: boolean }): boolean => bot.
 export const savesMemoryWithoutAsking = (bot: { readonly memoryAutoSave?: boolean }): boolean =>
   bot.memoryAutoSave === true;
 
+export const hidesBotPreviews = (bot: { readonly hidePreviews?: boolean }): boolean =>
+  bot.hidePreviews === true;
+
 /** What "until I turn it back on" is stored as: a time no timed mute reaches. */
 export const PERSONAL_BOT_MUTED_INDEFINITELY_ISO = "9999-12-31T23:59:59.000Z";
 /** Any mute ending at or after this is shown as indefinite. */
@@ -230,6 +240,11 @@ export const PersonalBotThreadNewestMessage = Schema.Struct({
   role: OrchestrationMessageRole,
   text: Schema.String,
   context: Schema.optional(OrchestrationMessageContext),
+  /**
+   * True when the owner hid this bot's previews: `text` is then empty and
+   * `context` is left out on the server, and the list shows a neutral line.
+   */
+  hidden: Schema.optional(Schema.Boolean),
 });
 export type PersonalBotThreadNewestMessage = typeof PersonalBotThreadNewestMessage.Type;
 
@@ -298,6 +313,8 @@ export const PersonalBotUpdateInput = Schema.Struct({
   lead: Schema.optional(Schema.Boolean),
   pinned: Schema.optional(Schema.Boolean),
   memoryAutoSave: Schema.optional(Schema.Boolean),
+  /** Absent leaves it alone. */
+  hidePreviews: Schema.optional(Schema.Boolean),
   notificationsMute: Schema.optional(PersonalBotNotificationMute),
 });
 export type PersonalBotUpdateInput = typeof PersonalBotUpdateInput.Type;

@@ -222,6 +222,26 @@ it.effect("stores the save-memories-without-asking setting per bot", () => {
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
 
+// Previews are shown for every bot until the owner hides one's message text;
+// an edit that does not mention it leaves it as it was.
+it.effect("stores a per-bot hide-previews switch: off by default, kept across edits", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+    const bot = yield* service.create(botInput("bot-hide"));
+    expect(bot.hidePreviews).toBe(false);
+
+    const hidden = yield* service.update({ botId: bot.botId, hidePreviews: true });
+    expect(hidden.hidePreviews).toBe(true);
+    const renamed = yield* service.update({ botId: bot.botId, name: "Private" });
+    expect(renamed.hidePreviews).toBe(true);
+    expect((yield* service.list()).bots[0]?.hidePreviews).toBe(true);
+
+    const shown = yield* service.update({ botId: bot.botId, hidePreviews: false });
+    expect(shown.hidePreviews).toBe(false);
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});
+
 // Notifications are on for every bot until the owner mutes one. The server
 // turns the request into a time from its own clock, and an edit that does not
 // mention the mute leaves it as it was.

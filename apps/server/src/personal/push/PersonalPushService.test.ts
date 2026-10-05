@@ -1100,6 +1100,109 @@ const muteBotUntil = (until: string | null) =>
     expect(Option.isSome(updated)).toBe(true);
   });
 
+/** The owner's "Hide message previews" switch, stored the way PersonalBotService.update does. */
+const hideBotPreviews = (hidden: boolean) =>
+  Effect.gen(function* () {
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    const updated = yield* bots.updateBot({
+      botId: BOT,
+      hidePreviews: hidden,
+      updatedAt: yield* DateTime.now,
+    });
+    expect(Option.isSome(updated)).toBe(true);
+  });
+
+it.effect("a bot with hidden previews: no reply text in the outbox, push body or banner", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  const SECRET = "Portfolio £27,636 at 21:06 (Kraken)";
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-10-05T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    yield* hideBotPreviews(true);
+
+    // A routine run whose bot said notify with a line of its own, a plain
+    // completed task (its title is the body otherwise), and a failed one.
+    yield* seedNotifyRow({
+      taskId: "run-hidden",
+      mode: "bot_decides",
+      decision: true,
+      message: SECRET,
+    });
+    yield* push.notifyTask(yield* notifyRun("run-hidden"));
+    yield* push.notifyTask(yield* makeTask({ taskId: PersonalTaskId.make("plain-hidden") }));
+    yield* push.notifyTask(
+      yield* makeTask({
+        taskId: PersonalTaskId.make("failed-hidden"),
+        status: "failed",
+        errorMessage: SECRET,
+      }),
+    );
+    // A chat turn that fails: the reason line is provider text too.
+    yield* push.ingestDomainEvent(sessionSet(CHAT, "starting", "2026-10-05T09:00:00.000Z"));
+    yield* push.ingestDomainEvent(failedSession(CHAT, "2026-10-05T09:00:01.000Z"));
+    yield* TestClock.adjust(`${PersonalPushService.CHAT_FAILURE_SETTLE_MS + 10} millis`);
+    yield* push.drain;
+
+    const payloads = yield* queuedPayloads;
+    expect(payloads.length).toBe(4);
+    for (const payload of payloads) {
+      expect(payload.body).toBe(PersonalPushService.HIDDEN_PREVIEW_PUSH_BODY);
+    }
+    // Who it is from and where to tap survive.
+    expect(payloads.map((payload) => payload.title)).toEqual([
+      "Assistant finished",
+      "Assistant finished",
+      "Assistant hit a problem",
+      "Assistant couldn't reply",
+    ]);
+    expect(payloads[0]!.url).toBe("/tasks/run-hidden");
+    const raw = (yield* outbox).map((row) => row.payload).join(" ");
+    expect(raw).not.toContain("Portfolio");
+    expect(raw).not.toContain("Book the dentist");
+    expect(raw).not.toContain("No conversation found");
+
+    // Off again: back to today's bodies.
+    yield* hideBotPreviews(false);
+    yield* push.notifyTask(
+      yield* makeTask({
+        taskId: PersonalTaskId.make("plain-shown"),
+        updatedAt: yield* DateTime.now,
+      }),
+    );
+    yield* push.drain;
+    const after = yield* queuedPayloads;
+    expect(after.at(-1)!.body).toBe("Book the dentist");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a bot with hidden previews: the in-app banner carries no preview of the reply", () => {
+  const harness: Harness = { sent: [], status: 201 };
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-10-05T09:00:00Z"));
+    yield* seedBot;
+    yield* linkThread(CHAT);
+    const push = yield* PersonalPushService.PersonalPushService;
+    yield* push.subscribe(subscription("https://web.push.apple.com/device-1"));
+    const received = yield* listenInApp("phone");
+    yield* push.reportForeground({ connectionId: "phone", foreground: true });
+    yield* seedReply(CHAT, "Portfolio £27,636 at 21:06 (Kraken)", "2026-10-05T09:00:00.000Z");
+    yield* hideBotPreviews(true);
+
+    yield* runTurn(CHAT, "2026-10-05T09:00:00.000Z");
+    yield* TestClock.adjust("1 millis");
+    expect(received.length).toBe(1);
+    expect(received[0]).toMatchObject({
+      title: "Assistant replied",
+      body: PersonalPushService.HIDDEN_PREVIEW_PUSH_BODY,
+    });
+    expect(received[0]).not.toHaveProperty("preview");
+    expect(JSON.stringify(received)).not.toContain("Portfolio");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
 it("the mute decision: on, timed, indefinite, expired, and a bot that is gone", () => {
   const now = Date.parse("2026-09-24T12:00:00Z");
   const bot = (until: string | null) =>

@@ -17,6 +17,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
   botNotificationsMutedUntil,
+  hidesBotPreviews,
   PERSONAL_PUSH_DEFAULT_PREFERENCES,
   PersonalPushError,
   PersonalPushPreferences,
@@ -197,6 +198,18 @@ const avatarFields = (
 export function isBotNotificationMuted(bot: Option.Option<PersonalBot>, nowMs: number): boolean {
   return Option.isSome(bot) && botNotificationsMutedUntil(bot.value, nowMs) !== null;
 }
+
+/**
+ * What a notification says instead of its text when the bot's owner hid its
+ * previews: only who it is from (the title) and where to tap, never a line of
+ * what the bot wrote. Applies to every body that can carry bot text: the
+ * notify_user line, a task title, a failure reason, a team change line.
+ */
+export const HIDDEN_PREVIEW_PUSH_BODY = "Open to read it.";
+
+/** The bot's owner turned on "Hide message previews". A bot that is gone hides nothing. */
+export const botHidesPreviews = (bot: Option.Option<PersonalBot>): boolean =>
+  Option.isSome(bot) && hidesBotPreviews(bot.value);
 
 /** The bot as the notification names it when the row has gone. */
 const UNKNOWN_BOT: PushBotIdentity = { name: "Your bot", avatar: null };
@@ -972,7 +985,7 @@ export const make = Effect.gen(function* () {
    */
   const deliver = (
     eventId: string,
-    payload: PersonalPushPayload,
+    requested: PersonalPushPayload,
     options: {
       readonly preview?: string | undefined;
       readonly viewing?: { readonly threadId: string; readonly quietPath: string } | undefined;
@@ -983,6 +996,12 @@ export const make = Effect.gen(function* () {
     } = {},
   ) =>
     Effect.gen(function* () {
+      // A bot with hidden previews keeps its text out of every path below: the
+      // outbox row, the web push and the in-app banner all carry the neutral line.
+      const hideText = options.bot !== undefined && botHidesPreviews(options.bot);
+      const payload: PersonalPushPayload = hideText
+        ? { ...requested, body: HIDDEN_PREVIEW_PUSH_BODY }
+        : requested;
       const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
       if (options.bot !== undefined && isBotNotificationMuted(options.bot, nowMs)) {
         const bot = Option.getOrThrow(options.bot);
@@ -1035,7 +1054,7 @@ export const make = Effect.gen(function* () {
         notification: {
           id: eventId,
           ...shown,
-          ...(options.preview === undefined ? {} : { preview: options.preview }),
+          ...(options.preview === undefined || hideText ? {} : { preview: options.preview }),
           ...(options.viewing === undefined ? {} : { quietPath: options.viewing.quietPath }),
         },
       });
@@ -1215,7 +1234,8 @@ export const make = Effect.gen(function* () {
         }),
         {
           bot,
-          preview: yield* latestReplyPreview(input.threadId),
+          // A hidden bot's reply text is not even read for the banner.
+          preview: botHidesPreviews(bot) ? undefined : yield* latestReplyPreview(input.threadId),
           viewing: {
             threadId: input.threadId,
             quietPath: chatPath(link.value.botId, input.threadId),
@@ -1417,7 +1437,11 @@ export const make = Effect.gen(function* () {
       });
       yield* deliver(`team-bot:${input.actionId}`, {
         title: input.title,
-        body: input.body.length > 160 ? `${input.body.slice(0, 157)}...` : input.body,
+        body: botHidesPreviews(lead)
+          ? HIDDEN_PREVIEW_PUSH_BODY
+          : input.body.length > 160
+            ? `${input.body.slice(0, 157)}...`
+            : input.body,
         url: input.url ?? "/bots/team",
         tag: `team-bot-${input.actionId}`,
         ...avatarFields(botIdentity(lead)),

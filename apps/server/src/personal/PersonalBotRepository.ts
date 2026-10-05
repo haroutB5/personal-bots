@@ -66,6 +66,7 @@ export const UpdatePersonalBotInput = Schema.Struct({
   lead: Schema.optional(Schema.Boolean),
   pinned: Schema.optional(Schema.Boolean),
   memoryAutoSave: Schema.optional(Schema.Boolean),
+  hidePreviews: Schema.optional(Schema.Boolean),
   /** Absent leaves the mute alone; null turns notifications back on. */
   notificationsMutedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   updatedAt: Schema.DateTimeUtcFromString,
@@ -217,6 +218,7 @@ const PersonalBotDbRow = Schema.Struct({
   lead: Schema.Number,
   pinned: Schema.Number,
   memoryAutoSave: Schema.Number,
+  hidePreviews: Schema.Number,
   notificationsMutedUntil: Schema.NullOr(Schema.DateTimeUtcFromString),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
@@ -238,6 +240,7 @@ const PersonalBotRawDbRow = Schema.Struct({
   lead: Schema.Unknown,
   pinned: Schema.Unknown,
   memoryAutoSave: Schema.Unknown,
+  hidePreviews: Schema.Unknown,
   notificationsMutedUntil: Schema.Unknown,
   createdAt: Schema.Unknown,
   updatedAt: Schema.Unknown,
@@ -267,6 +270,7 @@ const PersonalBotThreadListDbRow = Schema.Struct({
   newestRole: Schema.NullOr(OrchestrationMessageRole),
   newestText: Schema.NullOr(Schema.String),
   newestContext: Schema.NullOr(Schema.fromJsonString(OrchestrationMessageContext)),
+  newestHidden: Schema.Number,
   groupRelay: Schema.Number,
   lastReplyAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   lastViewedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -279,6 +283,7 @@ const PersonalBotThreadListRawDbRow = Schema.Struct({
   newestRole: Schema.Unknown,
   newestText: Schema.Unknown,
   newestContext: Schema.Unknown,
+  newestHidden: Schema.Unknown,
   groupRelay: Schema.Unknown,
   lastReplyAt: Schema.Unknown,
   lastViewedAt: Schema.Unknown,
@@ -365,6 +370,7 @@ function toPersonalBot(row: typeof PersonalBotDbRow.Type): PersonalBot {
     lead: row.lead === 1,
     pinned: row.pinned === 1,
     memoryAutoSave: row.memoryAutoSave === 1,
+    hidePreviews: row.hidePreviews === 1,
     notificationsMutedUntil: row.notificationsMutedUntil,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -391,6 +397,7 @@ function toPersonalBotThreadWithPreview(
           role: row.newestRole,
           text: row.newestText,
           ...(row.newestContext !== null ? { context: row.newestContext } : {}),
+          ...(row.newestHidden === 1 ? { hidden: true } : {}),
         };
   return {
     ...toPersonalBotThread(row),
@@ -507,6 +514,7 @@ export const make = Effect.gen(function* () {
           is_lead AS "lead",
           pinned AS "pinned",
           memory_auto_save AS "memoryAutoSave",
+          hide_previews AS "hidePreviews",
           notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -536,6 +544,7 @@ export const make = Effect.gen(function* () {
           is_lead AS "lead",
           pinned AS "pinned",
           memory_auto_save AS "memoryAutoSave",
+          hide_previews AS "hidePreviews",
           notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -571,6 +580,10 @@ export const make = Effect.gen(function* () {
               ${input.memoryAutoSave === undefined ? null : input.memoryAutoSave ? 1 : 0},
               memory_auto_save
             ),
+            hide_previews = COALESCE(
+              ${input.hidePreviews === undefined ? null : input.hidePreviews ? 1 : 0},
+              hide_previews
+            ),
             notifications_muted_until = CASE
               WHEN ${input.notificationsMutedUntil === undefined ? 0 : 1} = 1
                 THEN ${input.notificationsMutedUntil ?? null}
@@ -593,6 +606,7 @@ export const make = Effect.gen(function* () {
           is_lead AS "lead",
           pinned AS "pinned",
           memory_auto_save AS "memoryAutoSave",
+          hide_previews AS "hidePreviews",
           notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -746,8 +760,12 @@ export const make = Effect.gen(function* () {
           r.activity_at AS "lastActivityAt",
           m.message_id AS "newestMessageId",
           m.role AS "newestRole",
-          substr(m.text, 1, 400) AS "newestText",
-          m.context_json AS "newestContext",
+          -- A bot whose owner hid its previews (migration 099) sends no message
+          -- text and no context marker over this list at all: the client could
+          -- neither show nor cache what it never receives.
+          CASE WHEN COALESCE(hb.hide_previews, 0) = 1 THEN '' ELSE substr(m.text, 1, 400) END AS "newestText",
+          CASE WHEN COALESCE(hb.hide_previews, 0) = 1 THEN NULL ELSE m.context_json END AS "newestContext",
+          COALESCE(hb.hide_previews, 0) AS "newestHidden",
           -- A group member's relay, past or present (listGroupPresence reads
           -- relays the same way): no bot chat list shows one.
           EXISTS (
@@ -768,6 +786,7 @@ export const make = Effect.gen(function* () {
             (SELECT value FROM personal_meta WHERE key = ${PERSONAL_CHAT_UNREAD_SINCE_META_KEY})
           ) AS "lastViewedAt"
         FROM ranked r
+        LEFT JOIN personal_bots hb ON hb.bot_id = r.bot_id
         LEFT JOIN projection_thread_messages m
           ON r.eligible = 1
           AND r.preview_rank <= 2
