@@ -52,3 +52,20 @@ After a bot's `preview_open` or `preview_navigate` loads, a one-second probe rea
 ## Rollback
 
 Previous live release; no migration. Kill switch `T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=off`. The friendly errors and the bot-check log have no switch (wording and one info line).
+
+## Follow-up for the release after 1.60.43: startup token in the server log (CTO, 5 Oct; not started, waiting for QA and Fable on 1.60.43)
+
+**Finding (read-only, no token value printed anywhere).** `start.ps1` runs `bin.mjs serve`, which is headless startup. `serverRuntimeStartup.ts` (the `headless.output` phase) does `Console.log(formatHeadlessServeOutput(accessInfo))`, and `startupAccess.ts` prints `Token: <credential>`, `Pairing URL: ...#token=<credential>` and a QR code of that same URL, all into `logs/server-YYYYMMDD.log` (the launcher redirects stdout there). Each startup issues an administrative-scope pairing credential (`issueStartupPairingCredential`, subject `administrative-bootstrap`).
+
+**How bad.** Limited. The credential is single-use and expires after 5 minutes (`DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES`; the 24 h variant only applies with a dev URL, which the launcher never sets). In `state.sqlite` (dev root, read-only count) there are 236 such credentials, 0 consumed, 1 still valid (the 02:13 BST startup, expiring at 02:18). So every token in an old log is dead and nothing in the logs can sign anyone in; the exposure is only the five minutes after each startup, to anything that can read `logs/`.
+
+**Where the printed values sit now (counts only).** 7 `logs/server-2026*.log` files (0929 to 1005; 4 to 22 hits each; the launcher keeps 7), 7 `logs/restore-test-*.log` (throwaway roots), and 6 `dev/userdata/logs/provider/events.*.log` files (bot tool output that read the log).
+
+**Proposed fix (small, next release).**
+
+- `formatHeadlessServeOutput` (or its caller): print the token, the pairing URL and the QR only when `process.stdout.isTTY`. When stdout is a file or pipe, print `Connection string: ...` and one line, "Pairing token not printed (output is not an interactive console). Run scripts/personal/pair.ps1 for a phone pairing link.", and skip the QR (it encodes the token). Optionally a kill switch to restore the old output.
+- Tests in `startupAccess.test.ts`: TTY prints the three lines and the QR; non-TTY prints none of the token, URL or QR, and the credential string never appears in the output.
+- Do not touch `pair.ts` / `cliAuthFormat.ts` (`t3 pair`, `t3 auth` are deliberate interactive prints), and `pair.ps1` keeps working.
+- Separate, not in this fix: `auth_pairing_links.credential` stores the credentials in plain text in `state.sqlite`, and 236 expired unused startup rows have piled up (one per start). A later clean-up could delete expired unconsumed rows with a `WHERE`, after a backup; needs Harout's OK as a data change.
+
+**Old logs.** No security need to scrub (all dead), and the 7-log rotation drops `server-20260929.log` and the rest within days. For tidiness: after the fix lands, replace `Token:` / `#token=` values and the QR block with `<redacted>` in the closed server logs and the 7 restore-test logs; leave today's server log (the server holds it open) and the provider event logs (bot transcripts) alone unless Harout asks. I have not edited any log.
