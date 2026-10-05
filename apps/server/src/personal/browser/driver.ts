@@ -11,6 +11,12 @@ import * as NodePath from "node:path";
 
 import type * as Playwright from "playwright-core";
 
+import {
+  adblockLaunchArgs,
+  makeAdblockCounter,
+  type AdblockCounter,
+  type AdblockStats,
+} from "./adblock.ts";
 import { keepBrowserPriorityNormal } from "./browserPriority.ts";
 import { jpegSize } from "./jpegSize.ts";
 
@@ -186,6 +192,8 @@ export interface BrowserContextHandle {
   newPage(): Promise<BrowserPage>;
   /** Fires once when Chrome exits for any reason (crash, window closed, close()). */
   onClose(listener: () => void): void;
+  /** Request and ad-blocking counts since launch. Absent on drivers without it. */
+  adblockStats?(): AdblockStats;
   close(): Promise<void>;
 }
 
@@ -220,9 +228,13 @@ const safeDownloadName = (suggested: string): string => {
   return `${Date.now()}-${base.length > 0 ? base : "download"}`;
 };
 
-function wrapPlaywrightPage(page: Playwright.Page): BrowserPage {
+function wrapPlaywrightPage(page: Playwright.Page, counter: AdblockCounter): BrowserPage {
   const consoleRing: ConsoleRecord[] = [];
   const networkRing: NetworkRecord[] = [];
+  page.on("request", () => counter.request());
+  page.on("requestfailed", (request) =>
+    counter.failed(request.url(), request.failure()?.errorText ?? ""),
+  );
   page.on("console", (message) =>
     pushRing(consoleRing, {
       level: message.type(),
@@ -735,6 +747,8 @@ export const makePlaywrightDriver = (): BrowserDriver => ({
     const { chromium } = await import("playwright-core");
     await NodeFSP.mkdir(options.userDataDir, { recursive: true });
     await NodeFSP.mkdir(options.downloadsDir, { recursive: true });
+    const adblockArgs = adblockLaunchArgs();
+    const counter = makeAdblockCounter(undefined, adblockArgs.length > 0);
     const context = await chromium.launchPersistentContext(options.userDataDir, {
       ...(options.executablePath === undefined
         ? { channel: "chrome" }
@@ -748,6 +762,8 @@ export const makePlaywrightDriver = (): BrowserDriver => ({
         "--no-default-browser-check",
         // Covers the brief CDP attach window of a script-opened popup too.
         "--disable-features=WebAuthenticationUseNativeWinApi",
+        // Ad and tracker hosts fail to resolve; T3CODE_PERSONAL_BROWSER_ADBLOCK=off drops this.
+        ...adblockArgs,
       ],
     });
     // Off the launch path: the process list takes a second or two to read.
@@ -756,7 +772,7 @@ export const makePlaywrightDriver = (): BrowserDriver => ({
     const wrap = (page: Playwright.Page) => {
       let wrapped = wrappers.get(page);
       if (wrapped === undefined) {
-        wrapped = wrapPlaywrightPage(page);
+        wrapped = wrapPlaywrightPage(page, counter);
         wrappers.set(page, wrapped);
       }
       return wrapped;
@@ -793,6 +809,7 @@ export const makePlaywrightDriver = (): BrowserDriver => ({
       onClose: (listener) => {
         context.once("close", listener);
       },
+      adblockStats: () => counter.snapshot(),
       close: () => context.close(),
     };
   },

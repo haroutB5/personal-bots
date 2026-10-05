@@ -1249,6 +1249,15 @@ export const make = (options: PersonalBrowserOptions) =>
       Effect.gen(function* () {
         if (serial !== runtime.contextSerial) return;
         const tabs = [...runtime.tabs.values()];
+        // One line per launch: counts only, never a URL.
+        const adblock = runtime.context?.adblockStats?.();
+        if (adblock?.enabled === true) {
+          yield* Effect.logInfo("browser ad blocking summary", {
+            rules: adblock.rules,
+            requests: adblock.requests,
+            blocked: adblock.blocked,
+          });
+        }
         runtime.context = null;
         runtime.tabs.clear();
         runtime.activeTabId = null;
@@ -1328,6 +1337,11 @@ export const make = (options: PersonalBrowserOptions) =>
         const serial = ++runtime.contextSerial;
         runtime.context = context;
         context.onClose(() => runFork(onContextClosed(serial)));
+        const adblock = context.adblockStats?.();
+        yield* Effect.logInfo(
+          adblock?.enabled === true ? "browser ad blocking is on" : "browser ad blocking is off",
+          adblock?.enabled === true ? { rules: adblock.rules } : {},
+        );
         runtime.phase = "connected";
         yield* notify;
         yield* syncScreencast;
