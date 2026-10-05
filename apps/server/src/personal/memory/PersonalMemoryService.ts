@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
+  PERSONAL_MEMORY_LIST_DEFAULT_LIMIT,
   PERSONAL_MEMORY_MAX_LENGTH,
   PersonalMemoryError,
   PersonalMemoryId,
@@ -458,6 +459,9 @@ export function capPreferences(entries: ReadonlyArray<PersonalMemoryEntry>): {
   return { kept: kept.toReversed(), dropped };
 }
 
+/** A LIKE pattern for text that may hold % or _: `!` is the escape character. */
+const escapeLike = (text: string): string => text.replace(/[!%_]/g, (char) => `!${char}`);
+
 export type { MemoryTurnTrace };
 
 export class PersonalMemoryService extends Context.Service<
@@ -466,6 +470,14 @@ export class PersonalMemoryService extends Context.Service<
     readonly list: (
       input: PersonalMemoryListInput,
     ) => Effect.Effect<ReadonlyArray<PersonalMemoryEntry>, PersonalMemoryError>;
+    /** `list` plus how many entries match in all, for a screen that shows a page at a time. */
+    readonly listPage: (input: PersonalMemoryListInput) => Effect.Effect<
+      {
+        readonly entries: ReadonlyArray<PersonalMemoryEntry>;
+        readonly total: number;
+      },
+      PersonalMemoryError
+    >;
     readonly search: (
       input: PersonalMemorySearchInput & PersonalMemoryScopeFilter,
     ) => Effect.Effect<ReadonlyArray<PersonalMemoryEntry>, PersonalMemoryError>;
@@ -719,8 +731,9 @@ export const make = Effect.gen(function* () {
     return sql.or(allowed);
   };
 
-  const list: PersonalMemoryService["Service"]["list"] = (input) => {
-    const conditions = [
+  const listConditions = (input: PersonalMemoryListInput) => {
+    const needle = input.query?.trim() ?? "";
+    return [
       sql`m.deleted_at IS NULL`,
       input.status === "superseded"
         ? sql`m.superseded_at IS NOT NULL`
@@ -728,14 +741,26 @@ export const make = Effect.gen(function* () {
       input.scope === undefined ? undefined : sql`m.scope = ${input.scope}`,
       input.scopeId === undefined ? undefined : sql`m.scope_id = ${input.scopeId}`,
       input.kind === undefined ? undefined : sql`m.kind = ${input.kind}`,
+      needle.length === 0 ? undefined : sql`m.content LIKE ${`%${escapeLike(needle)}%`} ESCAPE '!'`,
     ].filter((condition) => condition !== undefined);
-    return sql`
-      SELECT ${sql.literal(MEMORY_COLUMNS)} FROM personal_memory m
-      WHERE ${sql.and(conditions)}
-      ORDER BY m.updated_at DESC, m.seq DESC
-      LIMIT 500
-    `.pipe(Effect.flatMap(decodeAll), storageFailure("list"));
   };
+
+  const list: PersonalMemoryService["Service"]["list"] = (input) =>
+    sql`
+      SELECT ${sql.literal(MEMORY_COLUMNS)} FROM personal_memory m
+      WHERE ${sql.and(listConditions(input))}
+      ORDER BY m.updated_at DESC, m.seq DESC
+      LIMIT ${input.limit ?? PERSONAL_MEMORY_LIST_DEFAULT_LIMIT}
+    `.pipe(Effect.flatMap(decodeAll), storageFailure("list"));
+
+  const listPage: PersonalMemoryService["Service"]["listPage"] = (input) =>
+    Effect.gen(function* () {
+      const entries = yield* list(input);
+      const counted = yield* sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS "n" FROM personal_memory m WHERE ${sql.and(listConditions(input))}
+      `.pipe(storageFailure("list"));
+      return { entries, total: counted[0]?.n ?? entries.length };
+    });
 
   /** How many entries hold each term (or a word it starts), from the FTS vocabulary. */
   const documentFrequency = (terms: ReadonlyArray<string>) =>
@@ -2093,6 +2118,7 @@ export const make = Effect.gen(function* () {
 
   return {
     list,
+    listPage,
     search,
     save,
     update,

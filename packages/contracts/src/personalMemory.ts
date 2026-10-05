@@ -141,17 +141,29 @@ export function noteSourceTag(source: string): string | null {
   return `${ORIGIN_TAG[parsed.origin]}${parsed.readWeb ? ", after web reading" : ""}`;
 }
 
+/** What a list returns without a limit (it was a fixed cap of 500 before 1.60.45). */
+export const PERSONAL_MEMORY_LIST_DEFAULT_LIMIT = 500;
+export const PERSONAL_MEMORY_LIST_MAX_LIMIT = 5_000;
+
 export const PersonalMemoryListInput = Schema.Struct({
   scope: Schema.optional(PersonalMemoryScope),
   scopeId: Schema.optional(Schema.String),
   kind: Schema.optional(PersonalMemoryKind),
   /** current (default): what bots receive. superseded: replaced entries, for Restore. */
   status: Schema.optional(Schema.Literals(["current", "superseded"])),
+  /** Only entries whose text contains this (case-insensitive), over every entry, not just a page. */
+  query: Schema.optional(Schema.String),
+  /** Newest first; default PERSONAL_MEMORY_LIST_DEFAULT_LIMIT. The screen asks for more as the owner scrolls. */
+  limit: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: PERSONAL_MEMORY_LIST_MAX_LIMIT })),
+  ),
 });
 export type PersonalMemoryListInput = typeof PersonalMemoryListInput.Type;
 
 export const PersonalMemoryListResult = Schema.Struct({
   entries: Schema.Array(PersonalMemoryEntry),
+  /** How many entries match the filters in all (more than `entries` when a limit cut the list). */
+  total: Schema.optional(Schema.Number),
 });
 export type PersonalMemoryListResult = typeof PersonalMemoryListResult.Type;
 

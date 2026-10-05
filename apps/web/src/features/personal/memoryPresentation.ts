@@ -411,6 +411,22 @@ export function isNewBotPreference(
 /** What the changelog says for an id that is in neither list any more. */
 export const UNLISTED_MEMORY_TEXT = "an entry no longer listed";
 
+/**
+ * A memory's text without markdown marks. Task summaries are written as
+ * markdown by the bot that finished the task; the Memory list and "Context
+ * used" show plain text, so ** and ` marks, # headings and "- " bullets are
+ * turned into plain words (a bullet becomes a dot), and links keep their address.
+ */
+export function plainMemoryText(text: string): string {
+  return text
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+    .replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "$2")
+    .replace(/(?<![*\w])\*(?=\S)([^*\n]*?\S)\*(?![*\w])/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1 ($2)")
+    .replace(/^([ \t]*)[-*][ \t]+/gm, "$1\u2022 ");
+}
+
 /** memoryId to text, across the current and replaced lists (current wins). */
 export function memoryTextLookup(
   ...lists: ReadonlyArray<

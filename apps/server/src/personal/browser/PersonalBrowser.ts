@@ -50,6 +50,7 @@ import {
 } from "@t3tools/contracts";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -270,6 +271,11 @@ export interface PersonalBrowserOptions {
   readonly adaptiveJpeg?: boolean;
   /** Quiet time after the last scroll step before the sharp picture comes back (ms; default 150). */
   readonly adaptiveSettleMs?: number | undefined;
+  /**
+   * How long a device that took control may stay disconnected before control goes back to the
+   * agent (ms; default 60 000). 0 turns it off: control then stays until it is handed back.
+   */
+  readonly controlGraceMs?: number | undefined;
 }
 
 /**
@@ -287,6 +293,16 @@ const streamMaxFpsFromEnvironment = (value: string | undefined): number | undefi
 const adaptiveSettleMsFromEnvironment = (value: string | undefined): number | undefined => {
   const parsed = Number(value?.trim());
   return Number.isFinite(parsed) && parsed >= 30 && parsed <= 400 ? parsed : undefined;
+};
+
+/** A control grace period in milliseconds (0: never), or undefined for the default. */
+const controlGraceMsFromEnvironment = (value: string | undefined): number | undefined => {
+  const text = value?.trim().toLowerCase() ?? "";
+  if (text === "off") return 0;
+  const parsed = Number(text);
+  return text !== "" && Number.isFinite(parsed) && parsed >= 5_000 && parsed <= 3_600_000
+    ? parsed
+    : undefined;
 };
 
 export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
@@ -308,6 +324,10 @@ export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   // Opt-in: T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=on. Without it one picture quality is streamed, as in 1.60.42.
   adaptiveJpeg: /^(on|1|true|yes)$/i.test(
     process.env.T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG?.trim() ?? "",
+  ),
+  // T3CODE_PERSONAL_BROWSER_CONTROL_GRACE_MS=off keeps control with a disconnected device until it is handed back (1.60.44 behaviour).
+  controlGraceMs: controlGraceMsFromEnvironment(
+    process.env.T3CODE_PERSONAL_BROWSER_CONTROL_GRACE_MS,
   ),
   adaptiveSettleMs: adaptiveSettleMsFromEnvironment(
     process.env.T3CODE_PERSONAL_BROWSER_ADAPTIVE_SETTLE_MS,
@@ -348,6 +368,10 @@ const RECENT_ACTIVITY_LIMIT = 30;
  * browser has to be idle for the whole stretch, not merely at the moment the
  * sweep happens to look.
  */
+/** A device that took control and then disconnected keeps it this long (see PersonalBrowserOptions.controlGraceMs). */
+export const CONTROL_GRACE_MS = 60_000;
+/** How often the disconnected-controller check runs. */
+const CONTROL_CHECK_INTERVAL_MS = 5_000;
 const IDLE_CLOSE_AFTER_TICKS = 10;
 const IDLE_CHECK_INTERVAL_MS = 60_000;
 const IDLE_CLOSE_SUMMARY = "Browser closed after 10 minutes with nobody using it";
@@ -661,6 +685,12 @@ export const make = (options: PersonalBrowserOptions) =>
     // it; takeControl and returnToAgent also refresh it directly so the first
     // frame after either already sees the new owner.
     let humanInControl = (yield* lease.view).ownerType === "human";
+    // Whether the device that holds control has had a viewer attached since it took it (a lease
+    // restored at boot counts: the restart cut its viewer). A person who took control and never
+    // opened a live view may be typing into the laptop's Chrome window, so only a device that was
+    // watching and then went away loses control.
+    let controlViewerSeen = humanInControl;
+    let controlAbsentSince: number | null = null;
     // One FramesHidden notice per hidden stretch; a forwarded frame ends it.
     let framesHidden = false;
     let screencast: { readonly page: BrowserPage; readonly stop: () => Promise<void> } | null =
@@ -2279,6 +2309,8 @@ export const make = (options: PersonalBrowserOptions) =>
         const before = yield* lease.view;
         yield* lease.takeControl(sessionId);
         humanInControl = true;
+        controlViewerSeen = [...viewers.values()].some((viewer) => viewer.sessionId === sessionId);
+        controlAbsentSince = null;
         // Another device taking over drops the previous controller's phone viewport.
         yield* syncHumanViewport;
         if (!(before.ownerType === "human" && before.ownerId === sessionId)) {
@@ -2347,11 +2379,14 @@ export const make = (options: PersonalBrowserOptions) =>
         }),
       );
 
-    const returnToAgent: PersonalBrowser["Service"]["returnToAgent"] = (sessionId) =>
+    /** Gives control back to the agent; `summary` words the activity line when nobody asked for it by hand. */
+    const returnControl = (sessionId: string, summary: string | null) =>
       Effect.gen(function* () {
         const before = yield* lease.view;
         yield* lease.returnToAgent;
         humanInControl = (yield* lease.view).ownerType === "human";
+        controlViewerSeen = false;
+        controlAbsentSince = null;
         // The agent gets its own viewport back before it can run another op.
         yield* syncHumanViewport;
         if (before.ownerType === "human") {
@@ -2360,7 +2395,9 @@ export const make = (options: PersonalBrowserOptions) =>
           yield* recordActivity({
             kind: "control",
             summary:
-              finishedHelp === null ? "Returned control to the agent" : "You finished helping",
+              finishedHelp === null
+                ? (summary ?? "Returned control to the agent")
+                : "You finished helping",
             status: "succeeded",
             threadId: finishedHelp?.request.threadId ?? null,
             botName: finishedHelp?.request.botName ?? null,
@@ -2394,6 +2431,55 @@ export const make = (options: PersonalBrowserOptions) =>
         yield* notify;
         return yield* status(sessionId);
       });
+
+    const returnToAgent: PersonalBrowser["Service"]["returnToAgent"] = (sessionId) =>
+      returnControl(sessionId, null);
+
+    const controlGraceMs = options.controlGraceMs ?? CONTROL_GRACE_MS;
+
+    /**
+     * Control goes back to the agent when the device that took it has been gone for the grace
+     * period (a phone that locked or lost signal mid-control used to keep bots out for good).
+     * Not while a bot's help request is open: that task waits for this person, who may finish on
+     * the laptop itself.
+     */
+    const controlWatchdog = Effect.gen(function* () {
+      const view = yield* lease.view;
+      if (controlGraceMs <= 0 || view.ownerType !== "human" || view.ownerId === null) {
+        controlAbsentSince = null;
+        return;
+      }
+      const owner = view.ownerId;
+      if ([...viewers.values()].some((viewer) => viewer.sessionId === owner)) {
+        controlViewerSeen = true;
+        controlAbsentSince = null;
+        return;
+      }
+      if (!controlViewerSeen || activeHelp !== null) {
+        controlAbsentSince = null;
+        return;
+      }
+      const now = yield* Clock.currentTimeMillis;
+      controlAbsentSince ??= now;
+      if (now - controlAbsentSince < controlGraceMs) return;
+      yield* Effect.logInfo(
+        "returning browser control to the agent: the device that had it disconnected",
+        {
+          seconds: Math.round((now - controlAbsentSince) / 1_000),
+        },
+      );
+      yield* returnControl(
+        owner,
+        "Control went back to the agent: the device that had it disconnected",
+      );
+    });
+
+    yield* Effect.forever(
+      Effect.sleep(CONTROL_CHECK_INTERVAL_MS).pipe(
+        Effect.andThen(controlWatchdog),
+        Effect.ignoreCause({ log: true }),
+      ),
+    ).pipe(Effect.forkScoped);
 
     /**
      * Gives up everything the browser holds and leaves it `offline`: every tab

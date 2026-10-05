@@ -20,7 +20,7 @@ import {
   noteKindLabel,
   rulesHeadline,
 } from "./contextUsed";
-import { appsLabel } from "./memoryPresentation";
+import { appsLabel, plainMemoryText } from "./memoryPresentation";
 import { personalMemoryFeedback, usePersonalMemoryTurnContext } from "./usePersonalAutomation";
 
 const SECTION_LABEL =
@@ -157,7 +157,7 @@ export function ContextUsedView({
                     {!note.current ? <span>replaced or forgotten since</span> : null}
                   </p>
                   <p className="mt-1 text-[14px] leading-snug break-words text-[var(--personal-text)]">
-                    {note.snippet}
+                    {plainMemoryText(note.snippet)}
                   </p>
                   <ul className="mt-1.5 flex flex-wrap gap-1.5">
                     {/* Traces kept from before the server named it: a note with no other reason matched on words. */}

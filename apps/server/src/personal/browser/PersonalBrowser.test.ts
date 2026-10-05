@@ -368,6 +368,7 @@ const baseLayer = <RepositoryError, RepositoryContext, ProtectionContext>(
     readonly frameAckEarly?: boolean;
     readonly streamMaxFps?: number;
     readonly adaptiveJpeg?: boolean;
+    readonly controlGraceMs?: number;
   } = {},
 ) =>
   PersonalBrowser.makeLayer({
@@ -400,6 +401,7 @@ const makeLayer = (
     readonly frameAckEarly?: boolean;
     readonly streamMaxFps?: number;
     readonly adaptiveJpeg?: boolean;
+    readonly controlGraceMs?: number;
   },
 ) =>
   baseLayer(
@@ -1489,6 +1491,119 @@ describe("PersonalBrowser", () => {
       expect((yield* browser.status("session-1")).state).toBe("connected");
       expect(fake.state.page.closed).toBe(false);
     }).pipe(Effect.provide(makeLayer(fake.driver)));
+  });
+
+  describe("a controlling device that disconnects (1.60.45)", () => {
+    it.effect("loses control after the grace period and the bot can work again", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const lease = yield* BrowserLease.BrowserLease;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+            yield* browser.takeControl("session-1");
+            yield* TestClock.adjust("2 minutes");
+            // Still watching: control stays however long that is.
+            expect((yield* lease.view).ownerType).toBe("human");
+          }),
+        );
+        // The device is gone. Nothing happens before the grace period is over...
+        yield* TestClock.adjust("50 seconds");
+        expect((yield* lease.view).ownerType).toBe("human");
+        // ...and the bot is refused until then.
+        const refused = yield* Effect.flip(
+          browser.handleAutomationRequest(request("navigate", { url: "example.org" })),
+        );
+        expect(String(refused.message)).toContain("taken control");
+
+        yield* TestClock.adjust("20 seconds");
+        const view = yield* lease.view;
+        expect(view.ownerType).toBe("agent");
+        expect((yield* browser.status("session-1")).controller).toEqual({ _tag: "None" });
+        expect(yield* recentSummaries(browser)).toContain(
+          "Control went back to the agent: the device that had it disconnected",
+        );
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.org" }));
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("keeps control when the device comes back in time", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const lease = yield* BrowserLease.BrowserLease;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+            yield* browser.takeControl("session-1");
+            yield* TestClock.adjust("10 seconds");
+          }),
+        );
+        yield* TestClock.adjust("40 seconds");
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+            yield* TestClock.adjust("5 minutes");
+            expect((yield* lease.view).ownerType).toBe("human");
+          }),
+        );
+        // A second disconnect starts a fresh grace period.
+        yield* TestClock.adjust("40 seconds");
+        expect((yield* lease.view).ownerType).toBe("human");
+        yield* TestClock.adjust("30 seconds");
+        expect((yield* lease.view).ownerType).toBe("agent");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("keeps control while a bot's help request waits for this person", () => {
+      const fake = makeFakeDriver();
+      const harness: TaskHarness = { waits: [], resumes: [] };
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const lease = yield* BrowserLease.BrowserLease;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.requestHelp({
+          threadId,
+          taskId: PersonalTaskId.make("task-1"),
+          botId: PersonalBotId.make("bot-1"),
+          botName: "Developer",
+          reason: "Sign in",
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+            yield* browser.takeControl("session-1");
+          }),
+        );
+        // The phone is gone but the person may be finishing on the laptop itself.
+        yield* TestClock.adjust("30 minutes");
+        expect((yield* lease.view).ownerType).toBe("human");
+        // Handing it back by hand still finishes the help request and wakes the task.
+        yield* browser.returnToAgent("session-1");
+        expect(harness.resumes).toHaveLength(1);
+        expect((yield* lease.view).ownerType).toBe("agent");
+      }).pipe(Effect.provide(makeLayer(fake.driver, harness)));
+    });
+
+    it.effect("is off with a zero grace period", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const lease = yield* BrowserLease.BrowserLease;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* browser.attachViewer({ sessionId: "session-1", canOperate: true });
+            yield* browser.takeControl("session-1");
+          }),
+        );
+        yield* TestClock.adjust("30 minutes");
+        expect((yield* lease.view).ownerType).toBe("human");
+      }).pipe(Effect.provide(makeLayer(fake.driver, undefined, { controlGraceMs: 0 })));
+    });
   });
 
   it.effect("a browser closed before the restart is not reopened at boot", () => {

@@ -87,6 +87,7 @@ import {
 } from "./computerState";
 import { DesktopPane } from "./DesktopPane";
 import { useDesktopStatus } from "./desktopState";
+import { createTimedNotice } from "./timedNotice";
 import { connectViewport, type RemoteField, type ViewportClient } from "./viewportClient";
 
 export interface ComputerScreenProps {
@@ -380,6 +381,8 @@ export function ComputerBrowserPane(props: {
   const [closeError, setCloseError] = useState<string | null>(null);
   const sendRef = useRef<((message: PersonalBrowserInputMessage) => void) | null>(null);
   const [inputReady, setInputReady] = useState(false);
+  // Counts the addresses and reloads sent from the toolbar: a refusal shown for the last one is dropped.
+  const [navigationAttempts, setNavigationAttempts] = useState(0);
   const pageVisible = usePageVisible();
 
   const controller = status?.controller;
@@ -409,11 +412,12 @@ export function ComputerBrowserPane(props: {
     [],
   );
 
-  const toggleControl = async () => {
+  /** `returnOnly`: hand control back to the agent even when another device holds it. */
+  const toggleControl = async (returnOnly = false) => {
     if (environmentId === null || pending) return;
     setPending(true);
     try {
-      await (inControl ? returnToAgent : takeControl)({ environmentId, input: {} });
+      await (inControl || returnOnly ? returnToAgent : takeControl)({ environmentId, input: {} });
     } finally {
       setPending(false);
     }
@@ -468,12 +472,14 @@ export function ComputerBrowserPane(props: {
         {...(props.onBackToChat === undefined ? {} : { onBackToChat: props.onBackToChat })}
         editable={inControl && inputReady}
         onNavigate={(url) => {
+          setNavigationAttempts((count) => count + 1);
           send({ _tag: "Navigate", url });
         }}
         canReload={inputReady && page !== null}
         canClose={canClose}
         closeDisabled={environmentId === null || !props.reachable || pending}
         onReload={() => {
+          setNavigationAttempts((count) => count + 1);
           send({ _tag: "Reload" });
         }}
         onClose={() => {
@@ -502,6 +508,7 @@ export function ComputerBrowserPane(props: {
             interactive={!compact && inControl}
             fit={fullScreen === true}
             syncViewport={fullScreen && inControl}
+            attemptKey={navigationAttempts}
             onClient={onClient}
           />
         ) : (
@@ -561,7 +568,7 @@ export function ComputerBrowserPane(props: {
             <StatusDot tone="pending" />
             {controller.connected
               ? "You are controlling the browser from another device"
-              : "Controlled from another device (disconnected). Take control here or return it to the agent."}
+              : "Controlled from another device (disconnected). It goes back to the agent by itself after a minute, or return it now."}
           </p>
         ) : null}
       </div>
@@ -580,6 +587,17 @@ export function ComputerBrowserPane(props: {
           )}
           {inControl ? "Return to bot" : "Take control"}
         </button>
+        {otherDeviceInControl ? (
+          <button
+            type="button"
+            disabled={controlDisabled}
+            onClick={() => void toggleControl(true)}
+            className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-[10px] border border-[var(--personal-border)] px-4 text-[15px] font-semibold text-[var(--personal-text)] disabled:opacity-50"
+          >
+            <Bot className="size-[18px]" strokeWidth={ICON_STROKE} />
+            Return to agent
+          </button>
+        ) : null}
       </div>
 
       {closeError !== null ? (
@@ -864,9 +882,11 @@ function LiveViewport(props: {
   readonly fit?: boolean;
   /** Full screen and in control: the page is laid out for this box. */
   readonly syncViewport?: boolean;
+  /** Changes when the owner sends a new address or reload: the last refusal stops showing. */
+  readonly attemptKey?: number;
   readonly onClient: (client: ViewportClient | null) => void;
 }) {
-  const { environmentId, active, interactive, onClient } = props;
+  const { environmentId, active, interactive, onClient, attemptKey } = props;
   const fit = props.fit === true;
   const syncViewport = props.syncViewport === true;
   const access = useComputerAccess(environmentId);
@@ -905,9 +925,17 @@ function LiveViewport(props: {
   const [gaveUp, setGaveUp] = useState(false);
   const failuresRef = useRef(0);
 
+  // A new address or reload starts over: an old "site refused the connection" must not sit over
+  // the page that loads next. (A failure of the new one arrives after this and shows again.)
+  useEffect(() => {
+    setNotice(null);
+  }, [attemptKey]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!active || access === null || canvas === null || gaveUp) return;
+    // Refusals fade by themselves; the hidden-frames notice below stays until a frame comes.
+    const rejections = createTimedNotice(setNotice);
     const context = canvas.getContext("2d");
     let client: ViewportClient | null = null;
     // The FramesHidden notice currently shown, so the next frame clears only it.
@@ -938,7 +966,7 @@ function LiveViewport(props: {
             setNotice((current) => (current === shown ? null : current));
           }
         },
-        onRejected: setNotice,
+        onRejected: rejections.show,
         onHidden: (reason) => {
           hiddenNotice = reason;
           setNotice(reason);
@@ -969,6 +997,7 @@ function LiveViewport(props: {
     const timer = window.setTimeout(connect, attempt === 0 ? 0 : 2_000);
     return () => {
       window.clearTimeout(timer);
+      rejections.cancel();
       client?.close();
       clientRef.current = null;
       onClient(null);

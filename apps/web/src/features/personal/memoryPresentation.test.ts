@@ -17,6 +17,7 @@ import {
   memoryMetaLine,
   memoryTextLookup,
   newestTidyRunsFirst,
+  plainMemoryText,
   pendingTidyChanges,
   pendingTidyGroups,
   proposerBotName,
@@ -573,5 +574,39 @@ describe("1.60.40: the rules limit warning", () => {
     expect(over.detail).not.toContain("only count in chats about that app");
     // With scoping on it never says scoping is off.
     expect(rulesUsageCardModel(usage("near", [row()]))!.detail).not.toContain("scoping is off");
+  });
+});
+
+describe("plainMemoryText", () => {
+  it("drops bold marks, headings and backticks and turns bullets into dots", () => {
+    const summary = [
+      "**Pure Aero check, 5 Oct: nothing new.**",
+      "",
+      "- **eBay UK (partial):**",
+      "  - **Coverage:** ran `babolat pure aero` three times",
+      "## Next",
+    ].join("\n");
+    expect(plainMemoryText(summary)).toBe(
+      [
+        "Pure Aero check, 5 Oct: nothing new.",
+        "",
+        "\u2022 eBay UK (partial):",
+        "  \u2022 Coverage: ran babolat pure aero three times",
+        "Next",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps links readable, leaves lone stars and plain text alone", () => {
+    expect(plainMemoryText("see [the page](https://example.com/a) 2 * 3 = 6")).toBe(
+      "see the page (https://example.com/a) 2 * 3 = 6",
+    );
+    expect(plainMemoryText("A rule in plain words.")).toBe("A rule in plain words.");
+  });
+
+  it("removes single-star emphasis but not a snake_case word", () => {
+    expect(plainMemoryText("this is *important* for my_var_name")).toBe(
+      "this is important for my_var_name",
+    );
   });
 });

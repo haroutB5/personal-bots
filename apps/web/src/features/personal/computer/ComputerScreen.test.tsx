@@ -626,3 +626,56 @@ describe("ComputerScreen Desktop segment", () => {
     expect(tabs()).toEqual(["Browser", "Files"]);
   });
 });
+
+describe("control held by another device (1.60.45)", () => {
+  const OTHER_DEVICE: PersonalBrowserStatus = {
+    ...STATUS,
+    controller: { _tag: "Human", self: false, connected: false },
+  };
+
+  const render = async (status: PersonalBrowserStatus) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("document", {
+      visibilityState: "visible",
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    await act(async () => {
+      renderer = create(
+        <ComputerBrowserPane
+          environmentId={EnvironmentId.make("env-1")}
+          status={status}
+          events={[]}
+          reachable
+        />,
+      );
+    });
+    return renderer!;
+  };
+  const button = (label: string) =>
+    renderer!.root.findAllByType("button").find((node) => node.children.includes(label));
+
+  it("offers Return to agent in one tap, next to Take control", async () => {
+    await render(OTHER_DEVICE);
+    expect(button("Take control")).toBeDefined();
+    const giveBack = button("Return to agent");
+    expect(giveBack).toBeDefined();
+    await act(async () => {
+      giveBack!.props.onClick();
+    });
+    expect(state.returnToAgent).toHaveBeenCalledWith({
+      environmentId: EnvironmentId.make("env-1"),
+      input: {},
+    });
+    expect(state.takeControl).not.toHaveBeenCalled();
+  });
+
+  it("does not show it when the agent has the browser or this device holds control", async () => {
+    await render(STATUS);
+    expect(button("Return to agent")).toBeUndefined();
+    await act(async () => renderer?.unmount());
+    await render(IN_CONTROL);
+    expect(button("Return to agent")).toBeUndefined();
+    expect(button("Return to bot")).toBeDefined();
+  });
+});

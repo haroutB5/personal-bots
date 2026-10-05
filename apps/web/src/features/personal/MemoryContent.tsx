@@ -1,6 +1,8 @@
 import type { JSX } from "react";
 import { useState } from "react";
 
+import { plainMemoryText } from "./memoryPresentation";
+
 /** Past this many characters an entry is folded to five lines. */
 const MEMORY_FOLD_CHARS = 280;
 
@@ -19,7 +21,7 @@ export function MemoryContent({ content }: { readonly content: string }): JSX.El
           long && !open ? "line-clamp-5" : ""
         }`}
       >
-        {content}
+        {plainMemoryText(content)}
       </p>
       {long ? (
         <button

@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  PersonalMemoryKind,
   PersonalPushInAppNotification,
   PersonalTask,
   PersonalTaskId,
@@ -16,7 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { useEnvironmentQuery } from "../../state/query";
@@ -78,14 +79,19 @@ export const personalRoutinesList = createEnvironmentRpcQueryAtomFamily(connecti
   refreshIntervalMs: 30_000,
 });
 
+/**
+ * Bumped whenever a command changes memory: every memory list on screen, each
+ * with its own kind, search and size, reloads. (The lists differ in input, so
+ * refreshing one fixed input, as the other families do, would miss them.)
+ */
+export const memoryListEpoch = Atom.make(0).pipe(Atom.withLabel("personal-memory:list-epoch"));
+
 export const personalMemoryList = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "personal-memory:list",
   tag: WS_METHODS.personalMemoryList,
   staleTimeMs: 5_000,
+  refreshTrigger: () => memoryListEpoch,
 });
-
-/** Replaced entries (kept for Restore, never given to a bot): the Memory screen's "Replaced" list. */
-export const SUPERSEDED_MEMORY_INPUT = { status: "superseded" } as const;
 
 /** How full the most rules any bot can receive at once are, for the Memory screen's warning card. */
 export const personalMemoryRulesUsage = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
@@ -146,25 +152,21 @@ const refreshing =
     );
 
 const refreshRoutines = refreshing(personalRoutinesList);
-const refreshMemory = refreshing(personalMemoryList);
+
+type EpochRegistry = {
+  get: (atom: typeof memoryListEpoch) => number;
+  set: (atom: typeof memoryListEpoch, value: number) => void;
+};
+
+/** Every memory list on screen reloads (current and Replaced alike). */
+const refreshMemory = (
+  _target: { readonly environmentId: EnvironmentId },
+  registry: EpochRegistry,
+) => Effect.sync(() => registry.set(memoryListEpoch, registry.get(memoryListEpoch) + 1));
 const refreshPush = refreshing(personalPushSettings);
 
 /** Restore moves an entry from the replaced list back to the current one: both lists change. */
-const refreshMemoryAndReplaced = (
-  target: { readonly environmentId: EnvironmentId },
-  registry: Registry,
-) =>
-  Effect.sync(() => {
-    registry.refresh(
-      personalMemoryList({ environmentId: target.environmentId, input: {} }) as never,
-    );
-    registry.refresh(
-      personalMemoryList({
-        environmentId: target.environmentId,
-        input: SUPERSEDED_MEMORY_INPUT,
-      }) as never,
-    );
-  });
+const refreshMemoryAndReplaced = refreshMemory;
 
 const refreshTidyLog = (target: { readonly environmentId: EnvironmentId }, registry: Registry) =>
   Effect.sync(() =>
@@ -465,24 +467,44 @@ export function usePersonalRoutines(environmentId: EnvironmentId | null) {
   return useEnvironmentQuery(atom);
 }
 
-export function usePersonalMemory(environmentId: EnvironmentId | null) {
-  const atom = useMemo(
-    () => (environmentId === null ? null : personalMemoryList({ environmentId, input: {} })),
-    [environmentId],
-  );
-  return useEnvironmentQuery(atom);
+/** What the Memory screen asks for: one kind, or the Replaced entries, optionally searched and sized. */
+export interface MemoryListFilter {
+  readonly kind?: PersonalMemoryKind;
+  /** The Replaced list (kept for Restore) instead of the current entries. */
+  readonly replaced?: boolean;
+  readonly query?: string;
+  readonly limit?: number;
 }
 
-/** Entries a newer save or the tidy-up replaced, for the "Replaced" list and Restore. */
-export function usePersonalReplacedMemory(environmentId: EnvironmentId | null) {
+/**
+ * One list of the Memory screen. The search runs on the server over every
+ * entry, and the list keeps showing the last answer while a new one loads, so
+ * typing or "Show more" never blanks the screen.
+ */
+export function usePersonalMemoryList(
+  environmentId: EnvironmentId | null,
+  filter: MemoryListFilter,
+) {
+  const { kind, replaced, query, limit } = filter;
   const atom = useMemo(
     () =>
       environmentId === null
         ? null
-        : personalMemoryList({ environmentId, input: SUPERSEDED_MEMORY_INPUT }),
-    [environmentId],
+        : personalMemoryList({
+            environmentId,
+            input: {
+              ...(kind === undefined ? {} : { kind }),
+              ...(replaced === true ? { status: "superseded" as const } : {}),
+              ...(query === undefined || query === "" ? {} : { query }),
+              ...(limit === undefined ? {} : { limit }),
+            },
+          }),
+    [environmentId, kind, replaced, query, limit],
   );
-  return useEnvironmentQuery(atom);
+  const view = useEnvironmentQuery(atom);
+  const last = useRef<typeof view.data>(null);
+  if (view.data !== null) last.current = view.data;
+  return { ...view, data: view.data ?? last.current };
 }
 
 /** One turn's memory, fetched only while `turn` is given (the panel is open). */

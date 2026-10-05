@@ -3733,7 +3733,9 @@ const makeWsRpcLayer = (
         [WS_METHODS.personalMemoryList]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalMemoryList,
-            personalMemory.list(input).pipe(Effect.map((entries) => ({ entries: [...entries] }))),
+            personalMemory
+              .listPage(input)
+              .pipe(Effect.map((page) => ({ entries: [...page.entries], total: page.total }))),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.personalMemorySearch]: (input) =>

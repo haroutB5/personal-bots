@@ -100,6 +100,35 @@ function Disclosure({
   );
 }
 
+/** "Showing 100 of 733" with a button for the next page of a long list. */
+export function ShowMoreButton({
+  shown,
+  total,
+  onClick,
+}: {
+  shown: number;
+  total: number;
+  onClick: () => void;
+}): JSX.Element {
+  return (
+    <div className="mt-2 flex flex-col items-start gap-1">
+      <p className="text-[13px] text-[var(--personal-text-secondary)]">
+        Showing {shown} of {total}
+      </p>
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn(
+          "h-11 rounded-[var(--personal-radius-button)] bg-[var(--personal-fill-muted)] px-5 text-[15px] font-semibold text-[var(--personal-text)]",
+          FOCUS_RING,
+        )}
+      >
+        Show more
+      </button>
+    </div>
+  );
+}
+
 /** One archived entry: what it said, why it was archived, and Restore. */
 function ArchivedRow({
   entry,
@@ -153,15 +182,21 @@ function ArchivedRow({
 export function ArchivedMemorySection({
   environmentId,
   entries,
-  totalCount,
+  total,
+  searching,
+  onShowMore,
   loadError,
   scopeOf,
   now,
 }: {
   environmentId: EnvironmentId | null;
-  /** Already narrowed by the screen's search. */
+  /** The newest archived entries that match the screen's search (the server searches all of them). */
   entries: ReadonlyArray<PersonalMemoryEntry> | null;
-  totalCount: number;
+  /** How many archived entries match in all; more than `entries` until "Show more" has loaded them. */
+  total: number;
+  /** A search is narrowing the list. */
+  searching: boolean;
+  onShowMore: () => void;
   loadError: string | null;
   scopeOf: (entry: PersonalMemoryEntry) => string;
   now: number;
@@ -185,7 +220,7 @@ export function ArchivedMemorySection({
   return (
     <section className="mt-6 border-t border-[var(--personal-border)] pt-2">
       <Disclosure
-        title={`Archived (${entries === null ? "…" : shown.length})`}
+        title={`Archived (${entries === null ? "…" : total})`}
         open={open}
         onToggle={() => setOpen((value) => !value)}
         controls={panelId}
@@ -202,9 +237,9 @@ export function ArchivedMemorySection({
           </p>
         ) : shown.length === 0 ? (
           <p className="mt-2 text-[14px] text-[var(--personal-text-secondary)]">
-            {totalCount === 0
-              ? "Nothing archived. When a fact changes, or a bot is asked to forget something, the older entry moves here."
-              : "No archived memory matches that search."}
+            {searching
+              ? "No archived memory matches that search."
+              : "Nothing archived. When a fact changes, or a bot is asked to forget something, the older entry moves here."}
           </p>
         ) : (
           <ul className="divide-y divide-[var(--personal-border)]">
@@ -220,6 +255,9 @@ export function ArchivedMemorySection({
             ))}
           </ul>
         )}
+        {entries !== null && shown.length < total ? (
+          <ShowMoreButton shown={shown.length} total={total} onClick={onShowMore} />
+        ) : null}
       </div>
     </section>
   );
