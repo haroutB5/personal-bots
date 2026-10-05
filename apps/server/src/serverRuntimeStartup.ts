@@ -54,10 +54,10 @@ import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import {
-  formatHeadlessServeOutput,
   formatHostForUrl,
   isWildcardHost,
-  issueHeadlessServeAccessInfo,
+  prepareHeadlessServeOutput,
+  shouldPrintStartupToken,
 } from "./startupAccess.ts";
 
 export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeStartupError>()(
@@ -1042,11 +1042,8 @@ export const make = (options?: StartupOptions) =>
             Effect.ignoreCause({ log: true }),
           );
           if (serverConfig.startupPresentation === "headless") {
-            const accessInfo = yield* issueHeadlessServeAccessInfo();
-            yield* runStartupPhase(
-              "headless.output",
-              Console.log(formatHeadlessServeOutput(accessInfo)),
-            );
+            const output = yield* prepareHeadlessServeOutput(shouldPrintStartupToken());
+            yield* runStartupPhase("headless.output", Console.log(output));
           } else {
             const startupBrowserTarget = yield* resolveStartupBrowserTarget;
             if (serverConfig.mode !== "desktop") {

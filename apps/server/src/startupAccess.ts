@@ -130,14 +130,40 @@ export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): 
     "",
   ].join("\n");
 
-export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
+/**
+ * What `serve` prints when stdout is not an interactive console (a log file, a
+ * pipe): the pairing token, URL and QR are credentials, so they stay out of it.
+ */
+export const formatHeadlessServeLogOutput = (connectionString: string): string =>
+  [
+    "T3 Code server is ready.",
+    `Connection string: ${connectionString}`,
+    "Pairing token not printed: output is not an interactive console.",
+    "For a pairing link run scripts\\personal\\pair.ps1 (or `t3 pair`).",
+    "",
+  ].join("\n");
+
+/**
+ * Credentials are printed only to an interactive console. T3CODE_STARTUP_PRINT_TOKEN=on
+ * restores the upstream behaviour for a headless host that reads its token from a log.
+ */
+export const shouldPrintStartupToken = (
+  stdout: { readonly isTTY?: boolean | undefined } = process.stdout,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean => stdout.isTTY === true || env.T3CODE_STARTUP_PRINT_TOKEN === "on";
+
+const resolveServeConnectionString = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const httpServer = yield* HttpServer.HttpServer;
-  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  const connectionString = resolveHeadlessConnectionString(
+  return resolveHeadlessConnectionString(
     serverConfig.host,
     resolveListeningPort(httpServer.address, serverConfig.port),
   );
+});
+
+export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const connectionString = yield* resolveServeConnectionString;
   const issued = yield* serverAuth.issueStartupPairingCredential();
 
   return {
@@ -145,4 +171,18 @@ export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessI
     token: issued.credential,
     pairingUrl: buildPairingUrl(connectionString, issued.credential),
   } satisfies HeadlessServeAccessInfo;
+});
+
+/**
+ * The text `serve` prints once it is ready. The startup credential is issued only
+ * when it is going to be shown: a non-interactive start mints nothing, so no
+ * unused admin credential is left in the pairing table either.
+ */
+export const prepareHeadlessServeOutput = Effect.fn("prepareHeadlessServeOutput")(function* (
+  printToken: boolean,
+) {
+  if (printToken) {
+    return formatHeadlessServeOutput(yield* issueHeadlessServeAccessInfo());
+  }
+  return formatHeadlessServeLogOutput(yield* resolveServeConnectionString);
 });
