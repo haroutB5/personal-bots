@@ -1,4 +1,7 @@
 import {
+  type ModelSelection,
+  PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
+  type PersonalBotFallback,
   ProviderDriverKind,
   type ServerProvider,
   type ServerProviderModel,
@@ -10,10 +13,18 @@ import {
   botContextWindowDescriptor,
   botEffortDescriptor,
   botInstructionSupportWarning,
+  buildModelSelection,
   defaultModelFor,
+  fallbackDraftFromBot,
+  fallbackInput,
   isBotProviderSelectable,
+  isFallbackDraftValid,
+  modelDraftFromSelection,
   modelOptionLabel,
+  modelSelectionsEqual,
   noBotProviderMessage,
+  SAME_FAMILY_FALLBACK_HINT,
+  sameFamilyFallbackHint,
   searchModels,
   usesModelSearch,
 } from "./botFormModel";
@@ -229,5 +240,171 @@ describe("bot provider instruction support", () => {
       "don't pass bot instructions to the model",
     );
     expect(noBotProviderMessage([])).toContain("No provider is ready");
+  });
+});
+
+describe("usage-limit fallback in the bot form", () => {
+  const claude = {
+    ...provider("claudeAgent", [
+      model({
+        slug: "claude-sonnet-5-5",
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            select("effort", ["low", "medium", "high"]),
+            select("contextWindow", ["200k", "1m"]),
+          ],
+        }),
+      }),
+      model({
+        slug: "claude-opus-5-5",
+        capabilities: createModelCapabilities({
+          optionDescriptors: [select("effort", ["low", "high"])],
+        }),
+      }),
+    ]),
+    instanceId: "claudeAgent",
+  } as unknown as ServerProvider;
+  const providers = [claude];
+
+  it("starts a bot on the default fallback: on, Sonnet 5.5, high, 1M", () => {
+    expect(fallbackDraftFromBot(null)).toEqual({
+      enabled: true,
+      instanceId: "claudeAgent",
+      model: "claude-sonnet-5-5",
+      effort: "high",
+      contextWindow: "1m",
+    });
+    expect(
+      buildModelSelection(
+        modelDraftFromSelection(PERSONAL_BOT_DEFAULT_FALLBACK_MODEL),
+        claude,
+        null,
+      ),
+    ).toEqual(PERSONAL_BOT_DEFAULT_FALLBACK_MODEL);
+  });
+
+  it("sends the whole fallback on create", () => {
+    expect(fallbackInput(null, fallbackDraftFromBot(null), providers)).toEqual({
+      enabled: true,
+      modelSelection: PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
+    });
+  });
+
+  it("round trips a saved fallback and sends nothing for an unchanged edit", () => {
+    const saved: PersonalBotFallback = {
+      enabled: false,
+      modelSelection: {
+        instanceId: "claudeAgent",
+        model: "claude-opus-5-5",
+        options: [{ id: "effort", value: "low" }],
+      } as unknown as ModelSelection,
+    };
+    const draft = fallbackDraftFromBot({ fallback: saved });
+    expect(draft).toEqual({
+      enabled: false,
+      instanceId: "claudeAgent",
+      model: "claude-opus-5-5",
+      effort: "low",
+      contextWindow: "",
+    });
+    expect(fallbackInput(saved, draft, providers)).toBeUndefined();
+    // An older server sends no fallback: the default, and still nothing to send.
+    expect(fallbackInput(botFallbackOf(undefined), fallbackDraftFromBot({}), providers)).toBe(
+      undefined,
+    );
+  });
+
+  const botFallbackOf = (fallback: PersonalBotFallback | undefined): PersonalBotFallback =>
+    fallback ?? { enabled: true, modelSelection: PERSONAL_BOT_DEFAULT_FALLBACK_MODEL };
+
+  it("sends only what changed on edit", () => {
+    const saved = botFallbackOf(undefined);
+    const base = fallbackDraftFromBot({ fallback: saved });
+    expect(fallbackInput(saved, { ...base, enabled: false }, providers)).toEqual({
+      enabled: false,
+    });
+    expect(fallbackInput(saved, { ...base, effort: "medium" }, providers)).toEqual({
+      modelSelection: {
+        instanceId: "claudeAgent",
+        model: "claude-sonnet-5-5",
+        options: [
+          { id: "effort", value: "medium" },
+          { id: "contextWindow", value: "1m" },
+        ],
+      },
+    });
+    const opus = fallbackInput(
+      saved,
+      { ...base, model: "claude-opus-5-5", effort: "high", contextWindow: "1m" },
+      providers,
+    );
+    // Opus has no context window choice: it is dropped, not carried over.
+    expect(opus).toEqual({
+      modelSelection: {
+        instanceId: "claudeAgent",
+        model: "claude-opus-5-5",
+        options: [{ id: "effort", value: "high" }],
+      },
+    });
+  });
+
+  it("keeps an untouched choice whole when its provider is not loaded", () => {
+    const saved = botFallbackOf(undefined);
+    expect(fallbackInput(saved, fallbackDraftFromBot({ fallback: saved }), [])).toBeUndefined();
+  });
+
+  it("a fallback that is off needs no model; one that is on does", () => {
+    const off = { ...fallbackDraftFromBot(null), enabled: false, instanceId: "", model: "" };
+    expect(isFallbackDraftValid(off)).toBe(true);
+    expect(fallbackInput(null, off, providers)).toEqual({ enabled: false });
+    expect(isFallbackDraftValid({ ...off, enabled: true })).toBe(false);
+    expect(isFallbackDraftValid(fallbackDraftFromBot(null))).toBe(true);
+  });
+
+  it("compares selections by content, in any option order", () => {
+    const left = {
+      instanceId: "claudeAgent",
+      model: "m",
+      options: [
+        { id: "effort", value: "high" },
+        { id: "contextWindow", value: "1m" },
+      ],
+    } as unknown as ModelSelection;
+    const right = {
+      instanceId: "claudeAgent",
+      model: "m",
+      options: [
+        { id: "contextWindow", value: "1m" },
+        { id: "effort", value: "high" },
+      ],
+    } as unknown as ModelSelection;
+    expect(modelSelectionsEqual(left, right)).toBe(true);
+    expect(modelSelectionsEqual(left, { ...right, model: "n" } as ModelSelection)).toBe(false);
+  });
+
+  it("hints when the fallback is on the main model's provider and model family", () => {
+    const main = { instanceId: "claudeAgent", model: "claude-sonnet-5" };
+    expect(
+      sameFamilyFallbackHint(main, { instanceId: "claudeAgent", model: "claude-sonnet-5-5" }),
+    ).toBe(SAME_FAMILY_FALLBACK_HINT);
+    expect(
+      sameFamilyFallbackHint(main, { instanceId: "claudeAgent", model: "claude-opus-5-5" }),
+    ).toBeNull();
+    expect(
+      sameFamilyFallbackHint(main, { instanceId: "codex", model: "claude-sonnet-5" }),
+    ).toBeNull();
+    expect(
+      sameFamilyFallbackHint(
+        { instanceId: "codex", model: "gpt-5.5-codex" },
+        { instanceId: "codex", model: "gpt-5.3-codex" },
+      ),
+    ).toBe(SAME_FAMILY_FALLBACK_HINT);
+    expect(
+      sameFamilyFallbackHint(
+        { instanceId: "codex", model: "gpt-5.5-codex" },
+        { instanceId: "codex", model: "gpt-5.3-codex-spark" },
+      ),
+    ).toBeNull();
+    expect(sameFamilyFallbackHint(main, { instanceId: "claudeAgent", model: "" })).toBeNull();
   });
 });

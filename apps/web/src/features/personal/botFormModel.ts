@@ -1,10 +1,16 @@
 import type {
+  ModelSelection,
+  PersonalBotFallback,
+  PersonalBotFallbackInput,
   SelectProviderOptionDescriptor,
   ServerProvider,
   ServerProviderModel,
 } from "@t3tools/contracts";
-import { driverCarriesBotInstructions } from "@t3tools/contracts";
-import { getProviderOptionDescriptors } from "@t3tools/shared/model";
+import { botFallback, driverCarriesBotInstructions } from "@t3tools/contracts";
+import {
+  getModelSelectionStringOptionValue,
+  getProviderOptionDescriptors,
+} from "@t3tools/shared/model";
 
 import { getProviderModelCapabilities } from "~/providerModels";
 
@@ -133,4 +139,162 @@ export function botContextWindowDescriptor(
 ): SelectProviderOptionDescriptor | null {
   const descriptor = botSelectDescriptor(provider, model, [CONTEXT_WINDOW_OPTION_ID]);
   return descriptor !== null && descriptor.options.length > 1 ? descriptor : null;
+}
+
+/** A model choice as the form holds it: provider instance, model, effort and context window. */
+export interface ModelDraft {
+  readonly instanceId: string;
+  readonly model: string;
+  /** Effort option id; "" keeps the model's default. */
+  readonly effort: string;
+  /** Context window option id (e.g. "1m"); "" keeps the model's default. */
+  readonly contextWindow: string;
+}
+
+/** The choice a saved selection stands for. */
+export function modelDraftFromSelection(selection: ModelSelection): ModelDraft {
+  return {
+    instanceId: selection.instanceId,
+    model: selection.model,
+    effort:
+      EFFORT_OPTION_IDS.map((id) => getModelSelectionStringOptionValue(selection, id)).find(
+        (value) => value !== undefined,
+      ) ?? "",
+    contextWindow: getModelSelectionStringOptionValue(selection, CONTEXT_WINDOW_OPTION_ID) ?? "",
+  };
+}
+
+/**
+ * The selection a model choice saves as. An effort or context window the
+ * model does not offer is dropped (the form shows the model's default then).
+ * Options the form has no control for survive from `base` while the provider
+ * instance and the model are the ones `base` already has. A provider this
+ * client cannot see (not loaded, or gone) says nothing about the options, so
+ * an untouched choice keeps `base` whole.
+ */
+export function buildModelSelection(
+  draft: ModelDraft,
+  provider: ServerProvider | undefined,
+  base: ModelSelection | null,
+): ModelSelection {
+  const unchanged =
+    base !== null && base.instanceId === draft.instanceId && base.model === draft.model;
+  if (unchanged && provider === undefined) return base;
+  const start = unchanged
+    ? base
+    : ({ instanceId: draft.instanceId, model: draft.model } as ModelSelection);
+  const effortDescriptor = botEffortDescriptor(provider, draft.model);
+  const effortValue =
+    effortDescriptor?.options.some((option) => option.id === draft.effort) === true
+      ? draft.effort
+      : "";
+  const contextWindowDescriptor = botContextWindowDescriptor(provider, draft.model);
+  const contextWindowValue =
+    contextWindowDescriptor?.options.some((option) => option.id === draft.contextWindow) === true
+      ? draft.contextWindow
+      : "";
+  const others = (start.options ?? []).filter(
+    (option) => !EFFORT_OPTION_IDS.includes(option.id) && option.id !== CONTEXT_WINDOW_OPTION_ID,
+  );
+  const options = [
+    ...others,
+    ...(effortDescriptor !== null && effortValue !== ""
+      ? [{ id: effortDescriptor.id, value: effortValue }]
+      : []),
+    ...(contextWindowDescriptor !== null && contextWindowValue !== ""
+      ? [{ id: contextWindowDescriptor.id, value: contextWindowValue }]
+      : []),
+  ];
+  const { options: _previous, ...rest } = start;
+  return (options.length > 0 ? { ...rest, options } : rest) as ModelSelection;
+}
+
+/** Same provider instance, model and options (in any order). */
+export function modelSelectionsEqual(left: ModelSelection, right: ModelSelection): boolean {
+  if (left.instanceId !== right.instanceId || left.model !== right.model) return false;
+  const key = (selection: ModelSelection) =>
+    JSON.stringify(
+      (selection.options ?? [])
+        .map((option) => [option.id, option.value] as const)
+        .toSorted(([a], [b]) => a.localeCompare(b)),
+    );
+  return key(left) === key(right);
+}
+
+/** What the fallback section of the bot form holds. */
+export interface FallbackDraft extends ModelDraft {
+  readonly enabled: boolean;
+}
+
+/** The fallback a bot has now (the default one for a bot or server that never set it). */
+export function fallbackDraftFromBot(
+  bot: { readonly fallback?: PersonalBotFallback } | null,
+): FallbackDraft {
+  const { enabled, modelSelection } = botFallback(bot ?? {});
+  return { enabled, ...modelDraftFromSelection(modelSelection) };
+}
+
+/** A fallback that is on needs a provider and a model to switch to. */
+export function isFallbackDraftValid(draft: FallbackDraft): boolean {
+  return !draft.enabled || (draft.instanceId !== "" && draft.model !== "");
+}
+
+/**
+ * What to send for the fallback: on create, the whole choice; on edit, only
+ * what differs from the saved one, and nothing when nothing changed. A fallback
+ * that is off sends no model when none is picked.
+ */
+export function fallbackInput(
+  saved: PersonalBotFallback | null,
+  draft: FallbackDraft,
+  providers: ReadonlyArray<ServerProvider>,
+): PersonalBotFallbackInput | undefined {
+  const selection =
+    draft.instanceId === "" || draft.model === ""
+      ? null
+      : buildModelSelection(
+          draft,
+          providers.find((provider) => provider.instanceId === draft.instanceId),
+          saved?.modelSelection ?? null,
+        );
+  const input: { enabled?: boolean; modelSelection?: ModelSelection } = {};
+  if (saved === null || saved.enabled !== draft.enabled) input.enabled = draft.enabled;
+  if (
+    selection !== null &&
+    (saved === null || !modelSelectionsEqual(saved.modelSelection, selection))
+  ) {
+    input.modelSelection = selection;
+  }
+  return Object.keys(input).length === 0 ? undefined : input;
+}
+
+/**
+ * The model's family: its id without version numbers and the context suffix,
+ * so "claude-sonnet-5-5" and "claude-sonnet-5" are both "claude-sonnet" and
+ * "gpt-5.5-codex" is "gpt-codex".
+ */
+function modelFamily(slug: string): string {
+  return slug
+    .toLocaleLowerCase()
+    .replace(/\[[^\]]*\]/g, "")
+    .split(/[-_/\s]+/)
+    .filter((part) => part !== "" && !/^v?\d+(?:\.\d+)*[km]?$/.test(part))
+    .join("-");
+}
+
+export const SAME_FAMILY_FALLBACK_HINT =
+  "Same provider as the main model: it only helps for a model-specific limit.";
+
+/**
+ * The muted hint for a fallback on the main model's provider instance and model
+ * family. A plan-wide limit hits both, so it helps only for a limit that is
+ * specific to one model. Null for anything else; it never blocks saving.
+ */
+export function sameFamilyFallbackHint(
+  main: Pick<ModelDraft, "instanceId" | "model">,
+  fallback: Pick<ModelDraft, "instanceId" | "model">,
+): string | null {
+  if (main.instanceId === "" || main.model === "" || fallback.model === "") return null;
+  if (main.instanceId !== fallback.instanceId) return null;
+  return modelFamily(main.model) === modelFamily(fallback.model) ? SAME_FAMILY_FALLBACK_HINT : null;
 }

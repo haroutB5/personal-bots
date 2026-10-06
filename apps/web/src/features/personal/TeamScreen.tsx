@@ -21,7 +21,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { PersonalPageHeader } from "./BotForm";
 import { TEAM_VIEW_STATE_KEY } from "./botsBackStack";
 import { isThreadLive } from "./botSummaries";
-import { botModelShortLabel } from "./botModelLabel";
+import { botActiveModelShortLabel } from "./botModelLabel";
 import { commandFailureMessage } from "./commandFeedback";
 import { friendlyTurnError } from "./conversationModel";
 import { shownInTeamChart } from "./groupModel";
@@ -252,12 +252,7 @@ function TeamBoard({
   }, [botById, working]);
   const modelLabels = useMemo(
     () =>
-      new Map(
-        shown.map((bot) => [
-          bot.botId as string,
-          botModelShortLabel(bot.modelSelection, providers),
-        ]),
-      ),
+      new Map(shown.map((bot) => [bot.botId as string, botActiveModelShortLabel(bot, providers)])),
     [providers, shown],
   );
   const entryOf = useCallback(
@@ -886,9 +881,7 @@ export function TeamScreen({ showBack = true }: { readonly showBack?: boolean })
   // The short model line the diagram shows, for the token table's rows.
   const tokenUsageModelLabels = useMemo(
     () =>
-      new Map(
-        bots.map((bot) => [bot.botId as string, botModelShortLabel(bot.modelSelection, providers)]),
-      ),
+      new Map(bots.map((bot) => [bot.botId as string, botActiveModelShortLabel(bot, providers)])),
     [bots, providers],
   );
   const feedTasks = useMemo(() => (taskFeed === null ? [] : [...taskFeed.values()]), [taskFeed]);

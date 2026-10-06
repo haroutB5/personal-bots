@@ -1,8 +1,12 @@
-import type {
-  ModelSelection,
-  SelectProviderOptionDescriptor,
-  ServerProvider,
+import {
+  botEffectiveModelSelection,
+  botFallbackActive,
+  type ModelSelection,
+  type PersonalBot,
+  type SelectProviderOptionDescriptor,
+  type ServerProvider,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import {
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
@@ -104,4 +108,83 @@ export function botModelShortLabel(
   const abbreviation =
     resolved.effort === undefined ? undefined : EFFORT_ABBREVIATIONS[resolved.effort];
   return abbreviation === undefined ? name : `${name} · ${abbreviation}`;
+}
+
+/** The word the short label ends with while a bot runs on its fallback model. */
+export const FALLBACK_LABEL_MARKER = "fallback";
+
+type BotWithFallback = Pick<PersonalBot, "modelSelection" | "fallbackActive">;
+
+function formatLocalTime(atMs: number, nowMs: number, timeZone: string | undefined): string {
+  const day = (ms: number) =>
+    new Intl.DateTimeFormat("en-GB", {
+      ...(timeZone === undefined ? {} : { timeZone }),
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(ms);
+  const time = new Intl.DateTimeFormat("en-GB", {
+    ...(timeZone === undefined ? {} : { timeZone }),
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(atMs);
+  if (day(atMs) === day(nowMs)) return time;
+  const weekday = new Intl.DateTimeFormat("en-GB", {
+    ...(timeZone === undefined ? {} : { timeZone }),
+    weekday: "short",
+  }).format(atMs);
+  return `${weekday} ${time}`;
+}
+
+/**
+ * Why a bot is on its fallback model, for a title or an accessible name:
+ * "on fallback until about 14:30 (Codex usage limit)". The time is in the
+ * device's own zone and is left out when the provider gave no reset time.
+ * Null while the bot is on its own model.
+ */
+export function fallbackNoteLabel(
+  bot: Pick<PersonalBot, "fallbackActive">,
+  nowMs: number = Date.now(),
+  timeZone?: string,
+): string | null {
+  const active = botFallbackActive(bot);
+  if (active === null) return null;
+  const resetMs =
+    active.resetAt === undefined ? Number.NaN : DateTime.toEpochMillis(active.resetAt);
+  const until = Number.isFinite(resetMs)
+    ? ` until about ${formatLocalTime(resetMs, nowMs, timeZone)}`
+    : "";
+  const provider = active.fromProvider.trim();
+  return `on fallback${until}${provider === "" ? "" : ` (${provider} usage limit)`}`;
+}
+
+/**
+ * The long model label for a bot: what it runs on right now, with the fallback
+ * note when that is its fallback ("Sonnet 5.5 high, on fallback until about
+ * 14:30 (Codex usage limit)").
+ */
+export function botActiveModelLabel(
+  bot: BotWithFallback,
+  providers: ReadonlyArray<ServerProvider>,
+  nowMs: number = Date.now(),
+  timeZone?: string,
+): string | null {
+  const label = botModelLabel(botEffectiveModelSelection(bot), providers);
+  if (label === null) return null;
+  const note = fallbackNoteLabel(bot, nowMs, timeZone);
+  return note === null ? label : `${label}, ${note}`;
+}
+
+/**
+ * The short model label for a bot: what it runs on right now, ending
+ * "· fallback" while that is its fallback ("Sonnet 5.5 · H · fallback").
+ */
+export function botActiveModelShortLabel(
+  bot: BotWithFallback,
+  providers: ReadonlyArray<ServerProvider>,
+): string | null {
+  const label = botModelShortLabel(botEffectiveModelSelection(bot), providers);
+  if (label === null) return null;
+  return botFallbackActive(bot) === null ? label : `${label} · ${FALLBACK_LABEL_MARKER}`;
 }

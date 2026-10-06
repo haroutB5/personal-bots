@@ -6,6 +6,7 @@ import {
   type BotAvatarShape,
   botTeam,
   DEFAULT_PERSONAL_BOT_TEAM,
+  botFallback,
   type EnvironmentId,
   isBotPinned,
   isTeamLead,
@@ -18,11 +19,10 @@ import {
   PersonalGroupId,
   savesMemoryWithoutAsking,
   hidesBotPreviews,
-  type ServerProvider,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
-import { Check, ChevronLeft } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { randomUUID } from "~/lib/utils";
@@ -30,17 +30,23 @@ import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatarPicker } from "./BotAvatarPicker";
+import { BotFallbackSection } from "./BotFallbackSection";
+import { FIELD_CLASS, LABEL_CLASS, ModelSearchField } from "./BotModelFields";
 import {
   botContextWindowDescriptor,
   botEffortDescriptor,
   botInstructionSupportWarning,
+  buildModelSelection,
   CONTEXT_WINDOW_OPTION_ID,
   defaultModelFor,
   EFFORT_OPTION_IDS,
+  type FallbackDraft,
+  fallbackDraftFromBot,
+  fallbackInput,
   isBotProviderSelectable,
+  isFallbackDraftValid,
   modelOptionLabel,
   noBotProviderMessage,
-  searchModels,
   usesModelSearch,
 } from "./botFormModel";
 import {
@@ -64,122 +70,8 @@ import {
 import { usePersonalBackTarget } from "./usePersonalBackTarget";
 import { personalGroupAddMember } from "./usePersonalGroups";
 
-const FIELD_CLASS =
-  "w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border-strong)] bg-[var(--personal-fill-muted)] px-3.5 text-base text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-tertiary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] aria-invalid:border-[var(--personal-error)]";
-const LABEL_CLASS = "mb-1.5 block text-sm font-medium text-[var(--personal-text)]";
 const NAME_MAX = 60;
 const TITLE_MAX = 60;
-
-/**
- * Type-to-search model field for providers with long catalogues (OpenCode
- * lists hundreds): a native picker of that length is unusable on a phone.
- */
-function ModelSearchField({
-  models,
-  value,
-  onChange,
-}: {
-  readonly models: ServerProvider["models"];
-  readonly value: string;
-  readonly onChange: (slug: string) => void;
-}): JSX.Element {
-  const [query, setQuery] = useState("");
-  // The list stays folded until the field is tapped, so the form below it
-  // is not pushed a screen down by a catalogue nobody asked to browse.
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const selected = models.find((model) => model.slug === value);
-  const trimmed = query.trim();
-  // Browsing shows every model; typing narrows the same list.
-  const results = !open ? [] : trimmed.length === 0 ? models : searchModels(models, trimmed, 80);
-  const pick = (slug: string) => {
-    onChange(slug);
-    setQuery("");
-    setOpen(false);
-  };
-  return (
-    <div
-      ref={containerRef}
-      onBlur={(event) => {
-        // Moving focus into the list (tapping a model) keeps it open.
-        if (containerRef.current?.contains(event.relatedTarget as Node | null)) return;
-        setOpen(false);
-        setQuery("");
-      }}
-    >
-      <input
-        id="bot-model"
-        type="search"
-        value={query}
-        onFocus={() => setOpen(true)}
-        onClick={() => setOpen(true)}
-        onChange={(event) => {
-          setQuery(event.target.value);
-          setOpen(true);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            setOpen(false);
-            setQuery("");
-            return;
-          }
-          if (event.key !== "Enter") return;
-          event.preventDefault();
-          const first = trimmed.length > 0 ? results[0] : undefined;
-          if (first !== undefined) pick(first.slug);
-        }}
-        placeholder={selected === undefined ? "Search models" : modelOptionLabel(selected)}
-        aria-autocomplete="list"
-        aria-controls="bot-model-results"
-        aria-expanded={results.length > 0}
-        autoComplete="off"
-        autoCapitalize="off"
-        autoCorrect="off"
-        spellCheck={false}
-        enterKeyHint="search"
-        className={`${FIELD_CLASS} h-11`}
-      />
-      <p className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
-        {trimmed.length > 0
-          ? results.length === 0
-            ? `No models match "${trimmed}".`
-            : `${results.length} matching`
-          : selected === undefined
-            ? `${models.length} models. Pick one, or type to narrow the list.`
-            : `Selected: ${modelOptionLabel(selected)}`}
-      </p>
-      {results.length > 0 ? (
-        <ul
-          id="bot-model-results"
-          role="listbox"
-          aria-label="Models"
-          // iOS never focuses a tapped button, so the field's blur would fold
-          // the list before the tap lands; keep focus in the field instead.
-          onMouseDown={(event) => event.preventDefault()}
-          className="mt-1.5 max-h-[264px] divide-y divide-[var(--personal-border)] overflow-y-auto overscroll-contain rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-surface)]"
-        >
-          {results.map((model) => {
-            const isSelected = model.slug === value;
-            return (
-              <li key={model.slug} role="option" aria-selected={isSelected}>
-                <button
-                  type="button"
-                  onClick={() => pick(model.slug)}
-                  className={`flex min-h-11 w-full items-center gap-2 px-3.5 py-2 text-left text-[15px] text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)] ${isSelected ? "font-semibold" : ""}`}
-                >
-                  <span className="min-w-0 flex-1">{modelOptionLabel(model)}</span>
-                  {isSelected ? (
-                    <Check aria-hidden="true" className="size-4 shrink-0" strokeWidth={2} />
-                  ) : null}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-    </div>
-  );
-}
 
 interface BotDraft {
   name: string;
@@ -194,12 +86,47 @@ interface BotDraft {
   effort: string;
   /** Context window option id (e.g. "1m"); "" keeps the model's default. */
   contextWindow: string;
+  /** The usage-limit fallback: on/off and its model, effort and context window. */
+  fallbackEnabled: boolean;
+  fallbackInstanceId: string;
+  fallbackModel: string;
+  fallbackEffort: string;
+  fallbackContextWindow: string;
   team: PersonalBotTeam;
   lead: boolean;
   pinned: boolean;
   memoryAutoSave: boolean;
   hidePreviews: boolean;
   notifications: BotNotificationsChoice;
+}
+
+function fallbackFields(
+  fallback: FallbackDraft,
+): Pick<
+  BotDraft,
+  | "fallbackEnabled"
+  | "fallbackInstanceId"
+  | "fallbackModel"
+  | "fallbackEffort"
+  | "fallbackContextWindow"
+> {
+  return {
+    fallbackEnabled: fallback.enabled,
+    fallbackInstanceId: fallback.instanceId,
+    fallbackModel: fallback.model,
+    fallbackEffort: fallback.effort,
+    fallbackContextWindow: fallback.contextWindow,
+  };
+}
+
+function fallbackDraftOf(draft: BotDraft): FallbackDraft {
+  return {
+    enabled: draft.fallbackEnabled,
+    instanceId: draft.fallbackInstanceId,
+    model: draft.fallbackModel,
+    effort: draft.fallbackEffort,
+    contextWindow: draft.fallbackContextWindow,
+  };
 }
 
 /** Field-by-field: has the owner changed anything since the form opened? */
@@ -209,6 +136,7 @@ function botDraftsEqual(left: BotDraft, right: BotDraft): boolean {
 
 function draftFromBot(bot: PersonalBot): BotDraft {
   return {
+    ...fallbackFields(fallbackDraftFromBot(bot)),
     name: bot.name,
     title: bot.title,
     description: bot.description,
@@ -342,6 +270,7 @@ function BotForm({
       model: defaultModelFor(first),
       effort: "",
       contextWindow: "",
+      ...fallbackFields(fallbackDraftFromBot(null)),
       team: DEFAULT_PERSONAL_BOT_TEAM,
       lead: false,
       pinned: false,
@@ -412,7 +341,18 @@ function BotForm({
     providerStatus?.label ?? "This provider",
   );
   const models = selectedProvider?.models ?? [];
-  const canSave = draft.instanceId !== "" && draft.model !== "" && !busy;
+  // The fallback's provider: the saved one stays listed even when it went unavailable.
+  const fallbackProviderOptions = useMemo(() => {
+    const options = [...selectableProviders];
+    const current = providers.find((provider) => provider.instanceId === draft.fallbackInstanceId);
+    if (current !== undefined && !options.includes(current)) options.unshift(current);
+    return options;
+  }, [draft.fallbackInstanceId, providers, selectableProviders]);
+  const canSave =
+    draft.instanceId !== "" &&
+    draft.model !== "" &&
+    isFallbackDraftValid(fallbackDraftOf(draft)) &&
+    !busy;
 
   const update = (patch: Partial<BotDraft>) => {
     setDraft((previous) => ({ ...previous, ...patch }));
@@ -432,29 +372,8 @@ function BotForm({
       ? draft.contextWindow
       : "";
 
-  const buildModelSelection = (): ModelSelection => {
-    const unchanged =
-      bot !== null &&
-      bot.modelSelection.instanceId === draft.instanceId &&
-      bot.modelSelection.model === draft.model;
-    const base = unchanged
-      ? bot.modelSelection
-      : ({ instanceId: draft.instanceId, model: draft.model } as ModelSelection);
-    const others = (base.options ?? []).filter(
-      (option) => !EFFORT_OPTION_IDS.includes(option.id) && option.id !== CONTEXT_WINDOW_OPTION_ID,
-    );
-    const options = [
-      ...others,
-      ...(effortDescriptor !== null && effortValue !== ""
-        ? [{ id: effortDescriptor.id, value: effortValue }]
-        : []),
-      ...(contextWindowDescriptor !== null && contextWindowValue !== ""
-        ? [{ id: contextWindowDescriptor.id, value: contextWindowValue }]
-        : []),
-    ];
-    const { options: _previous, ...rest } = base;
-    return (options.length > 0 ? { ...rest, options } : rest) as ModelSelection;
-  };
+  const buildMainModelSelection = (): ModelSelection =>
+    buildModelSelection(draft, selectedProvider, bot?.modelSelection ?? null);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -491,21 +410,31 @@ function BotForm({
       instructions: draft.instructions.trim(),
       avatarShape: draft.avatarShape,
       avatarColor: draft.avatarColor,
-      modelSelection: buildModelSelection(),
+      modelSelection: buildMainModelSelection(),
       team: draft.team,
       lead: draft.lead,
       pinned: draft.pinned,
       memoryAutoSave: draft.memoryAutoSave,
     };
+    // Create sends the whole fallback; edit only what changed.
+    const fallback = fallbackInput(
+      bot === null ? null : botFallback(bot),
+      fallbackDraftOf(draft),
+      providers,
+    );
     const notificationsMute = muteForChoice(draft.notifications, baseline.notifications);
     let result =
       bot === null
-        ? await createBot({ environmentId, input: { botId, ...fields } })
+        ? await createBot({
+            environmentId,
+            input: { botId, ...fields, ...(fallback === undefined ? {} : { fallback }) },
+          })
         : await updateBot({
             environmentId,
             input: {
               botId,
               ...fields,
+              ...(fallback === undefined ? {} : { fallback }),
               hidePreviews: draft.hidePreviews,
               ...(notificationsMute === undefined ? {} : { notificationsMute }),
             },
@@ -772,6 +701,24 @@ function BotForm({
           </p>
         </div>
       ) : null}
+
+      <BotFallbackSection
+        draft={fallbackDraftOf(draft)}
+        onChange={(patch) =>
+          update({
+            ...(patch.enabled === undefined ? {} : { fallbackEnabled: patch.enabled }),
+            ...(patch.instanceId === undefined ? {} : { fallbackInstanceId: patch.instanceId }),
+            ...(patch.model === undefined ? {} : { fallbackModel: patch.model }),
+            ...(patch.effort === undefined ? {} : { fallbackEffort: patch.effort }),
+            ...(patch.contextWindow === undefined
+              ? {}
+              : { fallbackContextWindow: patch.contextWindow }),
+          })
+        }
+        providers={providers}
+        providerOptions={fallbackProviderOptions}
+        main={{ instanceId: draft.instanceId, model: draft.model }}
+      />
 
       <div>
         <label htmlFor="bot-team" className={LABEL_CLASS}>

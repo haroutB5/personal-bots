@@ -29,11 +29,14 @@ const STATE_DOT: Record<ConversationState, string> = {
 export function ConversationSubtitle({
   state,
   modelLabel,
+  modelNote = null,
   status,
   quiet = null,
 }: {
   state: ConversationState;
   modelLabel: string | null;
+  /** Why the model is the fallback ("on fallback until about 14:30 ..."), read out after the label. */
+  modelNote?: string | null;
   status: string;
   /** Shortens the status to "No response" (and mutes the live dot) while a working bot is silent. */
   quiet?: QuietNotice | null;
@@ -60,6 +63,7 @@ export function ConversationSubtitle({
           <span data-testid="chat-model-label" className="shrink-0 whitespace-nowrap">
             <span aria-hidden="true">· </span>
             {modelLabel}
+            {modelNote !== null ? <span className="sr-only"> ({modelNote})</span> : null}
           </span>
         ) : null}
       </span>

@@ -49,11 +49,15 @@ export function isServerTurnNotice(notice: PersonalChatNoticeMarker): boolean {
   return (
     notice.notice === "usage-limit-resumed" ||
     notice.notice === "team-bot-answer" ||
-    notice.notice === "release-landed"
+    notice.notice === "release-landed" ||
+    notice.notice === "model-fallback-resumed"
   );
 }
 
 export const RESUMED_NOTICE_LABEL = "Auto-continue after usage reset";
+export const FALLBACK_RESUMED_NOTICE_LABEL = "Continued on the fallback model";
+export const FALLBACK_ON_NOTICE_TEXT = "Switched to the fallback model.";
+export const FALLBACK_OFF_NOTICE_TEXT = "Back on the main model.";
 
 function formatResumeTime(resumeAtMs: number, nowMs: number, timeZone: string): string {
   const day = (ms: number) =>
@@ -88,6 +92,7 @@ export function chatNoticeLabel(
   timeZone: string = PERSONAL_TIME_ZONE,
 ): string {
   if (notice.notice === "usage-limit-resumed") return RESUMED_NOTICE_LABEL;
+  if (notice.notice === "model-fallback-resumed") return FALLBACK_RESUMED_NOTICE_LABEL;
   const trimmed = text.trim();
   if (notice.notice === "team-bot-answer")
     return trimmed === "" ? "You answered a request" : trimmed;
@@ -95,6 +100,13 @@ export function chatNoticeLabel(
   // row, never usage-limit wording.
   if (notice.notice === "team-bot-change") return trimmed === "" ? "Team change" : trimmed;
   if (notice.notice === "memory-saved") return trimmed === "" ? "Memory saved" : trimmed;
+  // The fallback model switch and its return: the server's line is the whole row.
+  if (notice.notice === "model-fallback-on") {
+    return trimmed === "" ? FALLBACK_ON_NOTICE_TEXT : trimmed;
+  }
+  if (notice.notice === "model-fallback-off") {
+    return trimmed === "" ? FALLBACK_OFF_NOTICE_TEXT : trimmed;
+  }
   // The release waiter's turn: its outcome line ("Release landed: ..."),
   // under the line saying the app wrote it.
   if (notice.notice === "release-landed") {

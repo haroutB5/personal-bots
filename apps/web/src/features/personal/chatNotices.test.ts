@@ -8,6 +8,9 @@ import type { BotSummary } from "./botSummaries";
 import {
   chatNoticeLabel,
   chatNoticeUndo,
+  FALLBACK_OFF_NOTICE_TEXT,
+  FALLBACK_ON_NOTICE_TEXT,
+  FALLBACK_RESUMED_NOTICE_LABEL,
   isServerTurnNotice,
   readChatNotice,
   RESUMED_NOTICE_LABEL,
@@ -227,5 +230,60 @@ describe("1.60.22: a note line carries its Undo", () => {
       }),
     } as never)!;
     expect(chatNoticeUndo(notice)).toBeNull();
+  });
+});
+
+describe("1.65.0: the usage-limit model fallback rows", () => {
+  const read = (marker: object) => readChatNotice({ context: context(marker) } as never)!;
+
+  it("shows the switch and the return as plain lines, with a fallback text when empty", () => {
+    const on = read({ notice: "model-fallback-on", provider: "Codex" });
+    const off = read({ notice: "model-fallback-off", provider: "Codex" });
+    expect(isServerTurnNotice(on)).toBe(false);
+    expect(isServerTurnNotice(off)).toBe(false);
+    const line = "Codex hit its usage limit. Now on Sonnet 5.5 until about 14:30.";
+    expect(
+      chatNoticeLabel(
+        on,
+        `  ${line}
+`,
+        NOW,
+      ),
+    ).toBe(line);
+    expect(chatNoticeLabel(on, "  ", NOW)).toBe(FALLBACK_ON_NOTICE_TEXT);
+    expect(chatNoticeLabel(off, "Back on GPT-6.", NOW)).toBe("Back on GPT-6.");
+    expect(chatNoticeLabel(off, "", NOW)).toBe(FALLBACK_OFF_NOTICE_TEXT);
+    expect(chatNoticeLabel(on, line, NOW)).not.toMatch(/Paused|Continues at/);
+  });
+
+  it("shows the continue turn as a system row that starts a turn, whatever prompt it carries", () => {
+    const notice = read({ notice: "model-fallback-resumed", provider: "Codex" });
+    expect(isServerTurnNotice(notice)).toBe(true);
+    expect(chatNoticeLabel(notice, "[Continue] Your previous turn stopped...", NOW)).toBe(
+      FALLBACK_RESUMED_NOTICE_LABEL,
+    );
+    expect(FALLBACK_RESUMED_NOTICE_LABEL).toBe("Continued on the fallback model");
+    const marker = { notice: "model-fallback-resumed", provider: "Codex" };
+    const items = buildConversationItems([
+      entry("owner-1", "user", "2026-09-27T19:40:00.000Z", "Build it"),
+      entry("assistant-1", "assistant", "2026-09-27T19:41:00.000Z", "Limit hit"),
+      entry("personal-resume-f1", "user", "2026-09-27T19:42:00.000Z", "Continue", marker),
+    ]);
+    const row = items.find((item) => item.id === "personal-resume-f1")!;
+    expect(row.kind).toBe("notice");
+    expect(isTurnBoundary(row)).toBe(true);
+  });
+
+  it("the switch and return rows are not turn boundaries", () => {
+    const items = buildConversationItems([
+      entry("owner-1", "user", "2026-09-27T19:40:00.000Z", "Build it"),
+      entry("personal-notice-f1", "assistant", "2026-09-27T19:41:00.000Z", "Switched.", {
+        notice: "model-fallback-on",
+        provider: "Codex",
+      }),
+    ]);
+    const row = items.find((item) => item.id === "personal-notice-f1")!;
+    expect(row.kind).toBe("notice");
+    expect(isTurnBoundary(row)).toBe(false);
   });
 });

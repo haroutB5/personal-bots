@@ -7,7 +7,16 @@ import {
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { describe, expect, it } from "vite-plus/test";
 
-import { botModelLabel, botModelShortLabel } from "./botModelLabel";
+import * as DateTime from "effect/DateTime";
+
+import {
+  botActiveModelLabel,
+  botActiveModelShortLabel,
+  botModelLabel,
+  botModelShortLabel,
+  fallbackNoteLabel,
+} from "./botModelLabel";
+import { taskCardBotLine } from "./botSummaries";
 
 const select = (id: string, options: ReadonlyArray<readonly [string, string]>) => ({
   id,
@@ -160,5 +169,61 @@ describe("botModelShortLabel", () => {
     );
     expect(botModelShortLabel(selection("codex", "gpt-6-luna"), [])).toBe("gpt-6-luna");
     expect(botModelShortLabel(selection("codex", ""), providers)).toBeNull();
+  });
+});
+
+describe("a bot on its fallback model", () => {
+  const home = selection("codex", "gpt-6-astra", [["reasoningEffort", "medium"]]);
+  const fallbackModel = selection("claudeAgent", "claude-sonnet-5-5", [
+    ["effort", "high"],
+    ["contextWindow", "1m"],
+  ]);
+  const NOW = Date.parse("2026-09-27T10:00:00.000Z");
+  const onFallback = (resetAt?: string) =>
+    ({
+      modelSelection: home,
+      fallbackActive: {
+        modelSelection: fallbackModel,
+        since: DateTime.makeUnsafe("2026-09-27T09:00:00.000Z"),
+        ...(resetAt === undefined ? {} : { resetAt: DateTime.makeUnsafe(resetAt) }),
+        fromProvider: "Codex",
+      },
+    }) as never;
+  const atHome = { modelSelection: home } as never;
+
+  it("labels a bot on its own model exactly as before", () => {
+    expect(botActiveModelShortLabel(atHome, providers)).toBe("GPT-6 Astra · M");
+    expect(botActiveModelLabel(atHome, providers)).toBe("GPT-6 Astra medium");
+    expect(fallbackNoteLabel(atHome)).toBeNull();
+  });
+
+  it("names the fallback model and marks the short label", () => {
+    expect(botActiveModelShortLabel(onFallback(), providers)).toBe("Sonnet 5.5 · H · fallback");
+  });
+
+  it("says why and until when in the long label, in the given zone", () => {
+    const bot = onFallback("2026-09-27T14:30:00.000Z");
+    expect(fallbackNoteLabel(bot, NOW, "UTC")).toBe(
+      "on fallback until about 14:30 (Codex usage limit)",
+    );
+    expect(botActiveModelLabel(bot, providers, NOW, "UTC")).toBe(
+      "Sonnet 5.5 high, on fallback until about 14:30 (Codex usage limit)",
+    );
+    expect(fallbackNoteLabel(bot, NOW, "Asia/Tokyo")).toContain("23:30");
+  });
+
+  it("adds the weekday when the reset is not today", () => {
+    expect(fallbackNoteLabel(onFallback("2026-09-29T08:05:00.000Z"), NOW, "UTC")).toBe(
+      "on fallback until about Tue 08:05 (Codex usage limit)",
+    );
+  });
+
+  it("marks the task card's bot line too", () => {
+    expect(taskCardBotLine(onFallback(), providers)).toBe("Sonnet 5.5 · H · fallback");
+    expect(taskCardBotLine(atHome, providers)).toBe("GPT-6 Astra · M");
+  });
+
+  it("leaves the time out when the provider gave no reset", () => {
+    expect(fallbackNoteLabel(onFallback(), NOW, "UTC")).toBe("on fallback (Codex usage limit)");
   });
 });

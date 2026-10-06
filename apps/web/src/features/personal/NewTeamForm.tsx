@@ -17,7 +17,7 @@ import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatar } from "./BotAvatar";
-import { botModelShortLabel } from "./botModelLabel";
+import { botActiveModelShortLabel } from "./botModelLabel";
 import { commandFailureMessage } from "./commandFeedback";
 import {
   leaderMoveWarning,
@@ -118,8 +118,7 @@ export function NewTeamForm({
 
   const bots = useMemo(() => allBots.filter((bot) => !isGroupOnlyBot(bot)), [allBots]);
   const labels = useMemo(
-    () =>
-      new Map(bots.map((bot) => [bot.botId, botModelShortLabel(bot.modelSelection, providers)])),
+    () => new Map(bots.map((bot) => [bot.botId, botActiveModelShortLabel(bot, providers)])),
     [bots, providers],
   );
   const leader = bots.find((bot) => bot.botId === leaderId) ?? null;
