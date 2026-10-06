@@ -143,6 +143,30 @@ export const PERSONAL_TASKS_RENEWAL_WAIT_MS = 60_000;
 /** A provider wait longer than this gives the task's slot back instead of holding it. */
 export const PERSONAL_TASKS_LONG_PROVIDER_WAIT_MS = 2 * 60_000;
 
+/**
+ * A turn that fails on a limit reports the error first and the limit's details
+ * (reset time, provider) on the turn's completion right after (Codex order). An
+ * error that reads like a limit, on a turn that has not completed yet, waits this
+ * long for those details before the attempt settles on it. The 30 s sweep
+ * settles it if they never come.
+ */
+export const PERSONAL_TASKS_LIMIT_DETAIL_WAIT_MS = 10_000;
+
+/**
+ * The wait the provider reported during this attempt. The session carries the
+ * last wait of the thread, so one reported before the attempt started belongs to
+ * an earlier attempt (the one that just hit the limit) and says nothing about
+ * this one.
+ */
+export const providerRetryOfAttempt = (
+  retry: OrchestrationSession["providerRetry"],
+  attemptStartedAtMs: number,
+): OrchestrationSession["providerRetry"] => {
+  if (retry === undefined) return undefined;
+  const observedAtMs = Date.parse(retry.observedAt);
+  return Number.isFinite(observedAtMs) && observedAtMs < attemptStartedAtMs ? undefined : retry;
+};
+
 export interface ProviderWaitPause {
   readonly retry: NonNullable<OrchestrationSession["providerRetry"]>;
   /** The provider's reported next attempt / reset; null = not reported (use the backoff). */
@@ -1831,9 +1855,24 @@ export const make = Effect.gen(function* () {
         }
         // A turn that failed on a rate limit the adapter recognised waits for
         // the reset it reported (Codex usage limits), not a pattern guess.
-        const limit =
-          session.providerRetry?.kind === "rate_limited" ? session.providerRetry : undefined;
+        const ownRetry = providerRetryOfAttempt(
+          session.providerRetry,
+          DateTime.toEpochMillis(attempt.startedAt),
+        );
+        const limit = ownRetry?.kind === "rate_limited" ? ownRetry : undefined;
         const now = yield* DateTime.now;
+        // The error comes first and the turn's completion, which carries the
+        // limit's details, right after: give them a moment so a limited task
+        // gets its fallback or its reported reset instead of a guessed backoff.
+        if (
+          limit === undefined &&
+          session.activeTurnId !== null &&
+          classifyProviderError(session.lastError) === "rate_limited" &&
+          DateTime.toEpochMillis(now) - Date.parse(session.updatedAt) <
+            PERSONAL_TASKS_LIMIT_DETAIL_WAIT_MS
+        ) {
+          return;
+        }
         const resetMs = limit?.retryAt === undefined ? Number.NaN : Date.parse(limit.retryAt);
         yield* finishAttempt(attempt, {
           kind: "failed",
@@ -1934,7 +1973,10 @@ export const make = Effect.gen(function* () {
       }
       if (attempt !== null) {
         const now = yield* DateTime.now;
-        const pause = providerWaitPause(session.providerRetry, DateTime.toEpochMillis(now));
+        const pause = providerWaitPause(
+          providerRetryOfAttempt(session.providerRetry, DateTime.toEpochMillis(attempt.startedAt)),
+          DateTime.toEpochMillis(now),
+        );
         if (pause !== null) {
           yield* pauseForProviderWait(attempt, pause, now);
           return;

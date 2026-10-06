@@ -202,7 +202,8 @@ export function MessageSearchResults({
             hit={hit}
             query={query}
             now={now}
-            title={titles.get(hit.threadId) ?? group.name}
+            // A group's own thread is always titled "Group chat": the group's name says which.
+            title={group.name}
             ownerName={group.name}
             face={
               <GroupAvatarCluster

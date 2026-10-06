@@ -169,6 +169,21 @@ it("renders a group hit with the member cluster and the group route", async () =
   expect(root.findByProps({ "data-cluster": "2/3" })).toBeTruthy();
 });
 
+it("titles a group hit with the group's name, not its thread's \"Group chat\"", async () => {
+  state.shells = [{ id: "gt-1", environmentId: ENV, title: "Group chat" }];
+  state.search = {
+    status: "ready",
+    hits: [hit({ threadId: "gt-1", botId: null, groupId: "grp-1", messageId: "msg-9" })],
+    capped: false,
+  };
+  const root = await render("invoice", [group("grp-1", "QA Kiwi Group", ["bot-1"])]);
+  expect(links(root)[0]!.props["aria-label"]).toBe(
+    "QA Kiwi Group, QA Kiwi Group: …sent the Invoice yesterday",
+  );
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain("Group chat");
+  state.shells = [];
+});
+
 it("keeps the order it was given and skips a chat whose bot or group is unknown", async () => {
   state.search = {
     status: "ready",

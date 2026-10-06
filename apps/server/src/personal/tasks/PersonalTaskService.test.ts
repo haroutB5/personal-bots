@@ -3298,3 +3298,219 @@ it.effect(
     }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, fallbackProviders(100))));
   },
 );
+
+// The order Codex reports a usage limit in: the error first (the session errors with the
+// turn still open and no details), then the turn's completion carrying the reset time.
+const CODEX_LIMIT_ERROR = "Codex usage limit reached. Try again later.";
+
+const codexLimitInOrder = (harness: Harness, threadId: ThreadId, turnId: TurnId, waitMs: number) =>
+  Effect.gen(function* () {
+    const first = yield* DateTime.now;
+    yield* setSession(
+      harness,
+      makeSession({
+        threadId,
+        status: "error",
+        activeTurnId: turnId,
+        lastError: CODEX_LIMIT_ERROR,
+        updatedAt: DateTime.formatIso(first),
+      }),
+    );
+    const second = yield* DateTime.now;
+    const retry = { ...providerWait("rate_limited", second, waitMs), provider: "codex" };
+    yield* setSession(
+      harness,
+      makeSession({
+        threadId,
+        status: "error",
+        activeTurnId: null,
+        lastError: CODEX_LIMIT_ERROR,
+        providerRetry: retry,
+        updatedAt: DateTime.formatIso(second),
+      }),
+    );
+    return retry;
+  });
+
+it.effect(
+  "a task whose Codex limit arrives as an error and then a completed turn moves to the fallback",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("fb-order", "developer");
+      const thread = threadOf(root);
+      const turnId = yield* beginTurn(harness, thread);
+      const startsBefore = turnStarts(harness).length;
+
+      // The error alone does not end the attempt: its limit details are still coming.
+      const first = yield* DateTime.now;
+      yield* setSession(
+        harness,
+        makeSession({
+          threadId: thread,
+          status: "error",
+          activeTurnId: turnId,
+          lastError: CODEX_LIMIT_ERROR,
+          updatedAt: DateTime.formatIso(first),
+        }),
+      );
+      expect((yield* reload(root.taskId)).status).toBe("running");
+      const before = Option.getOrThrow(yield* bots.getBotById({ botId: botId("developer") }));
+      expect(before.fallbackActive).toBeUndefined();
+
+      const second = yield* DateTime.now;
+      yield* setSession(
+        harness,
+        makeSession({
+          threadId: thread,
+          status: "error",
+          activeTurnId: null,
+          lastError: CODEX_LIMIT_ERROR,
+          providerRetry: {
+            ...providerWait("rate_limited", second, 6 * 60 * 60_000),
+            provider: "codex",
+          },
+          updatedAt: DateTime.formatIso(second),
+        }),
+      );
+      const bot = Option.getOrThrow(yield* bots.getBotById({ botId: botId("developer") }));
+      expect(bot.fallbackActive?.modelSelection.model).toBe("claude-sonnet-5-5");
+
+      yield* service.sweep;
+      yield* service.drain;
+      const resumed = turnStarts(harness).slice(startsBefore);
+      expect(resumed.length).toBe(1);
+      expect(resumed[0]?.modelSelection).toMatchObject({
+        instanceId: "claudeAgent",
+        model: "claude-sonnet-5-5",
+      });
+      expect((yield* reload(root.taskId)).status).toBe("running");
+    }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, fallbackProviders(10))));
+  },
+);
+
+it.effect(
+  "a task whose Codex limit arrives in that order waits for the reported reset when no fallback applies",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const root = yield* createRoot("fb-order-wait", "developer");
+      const thread = threadOf(root);
+      const turnId = yield* beginTurn(harness, thread);
+      const retry = yield* codexLimitInOrder(harness, thread, turnId, 3 * 60 * 60_000);
+      const paused = yield* reload(root.taskId);
+      expect([paused.status, paused.errorCategory]).toEqual(["rate_limited", "rate_limited"]);
+      // The reported reset, not the one minute backoff of an unreported limit.
+      expect(DateTime.toEpochMillis(paused.availableAt!)).toBe(Date.parse(retry.retryAt!));
+    }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, fallbackProviders(100))));
+  },
+);
+
+it.effect(
+  "a limit error that never gets its completion settles after the wait on the unreported backoff",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("fb-order-lost", "developer");
+      const thread = threadOf(root);
+      const turnId = yield* beginTurn(harness, thread);
+      const first = yield* DateTime.now;
+      yield* setSession(
+        harness,
+        makeSession({
+          threadId: thread,
+          status: "error",
+          activeTurnId: turnId,
+          lastError: CODEX_LIMIT_ERROR,
+          updatedAt: DateTime.formatIso(first),
+        }),
+      );
+      yield* TestClock.adjust("5 seconds");
+      yield* service.sweep;
+      yield* service.drain;
+      expect((yield* reload(root.taskId)).status).toBe("running");
+      yield* TestClock.adjust("6 seconds");
+      yield* service.sweep;
+      yield* service.drain;
+      const settled = yield* reload(root.taskId);
+      expect([settled.status, settled.errorCategory]).toEqual(["rate_limited", "rate_limited"]);
+    }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, fallbackProviders(100))));
+  },
+);
+
+it.effect("an error that does not read like a limit still settles at once", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const root = yield* createRoot("fb-order-plain", "developer");
+    const thread = threadOf(root);
+    const turnId = yield* beginTurn(harness, thread);
+    const now = yield* DateTime.now;
+    yield* setSession(
+      harness,
+      makeSession({
+        threadId: thread,
+        status: "error",
+        activeTurnId: turnId,
+        lastError: "The model crashed.",
+        updatedAt: DateTime.formatIso(now),
+      }),
+    );
+    expect((yield* reload(root.taskId)).status).toBe("failed");
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect(
+  "the task that triggers the switch runs once on the fallback: the old wait does not end its retry",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("fb-once", "developer");
+      const thread = threadOf(root);
+      const turnId = yield* beginTurn(harness, thread);
+      // Reported while attempt 1's turn was waiting, a moment before the switch.
+      yield* TestClock.adjust("5 seconds");
+      const reported = DateTime.subtract(yield* DateTime.now, { seconds: 1 });
+      const stale = {
+        ...providerWait("rate_limited", reported, 6 * 60 * 60_000),
+        provider: "codex",
+      };
+      const startsBefore = turnStarts(harness).length;
+      yield* waitOnProvider(harness, thread, turnId, stale);
+
+      // The switch released the task: attempt 2 starts on the fallback.
+      yield* TestClock.adjust("2 seconds");
+      yield* service.sweep;
+      yield* service.drain;
+      expect(turnStarts(harness).length - startsBefore).toBe(1);
+      expect((yield* reload(root.taskId)).status).toBe("running");
+
+      // Attempt 2's turn starts while the thread's session still shows attempt 1's wait.
+      // That wait does not belong to attempt 2.
+      const second = TurnId.make("turn-fallback");
+      yield* waitOnProvider(harness, thread, second, stale);
+      expect((yield* reload(root.taskId)).status).toBe("running");
+      expect(interrupts(harness).length).toBe(1);
+
+      // Its own turn finishes on the fallback and its reply is the task's result.
+      yield* endTurn(harness, thread, second, "Done on the fallback.");
+      const done = yield* reload(root.taskId);
+      expect(done.status).toBe("completed");
+      expect(done.result?.summary).toBe("Done on the fallback.");
+      expect(turnStarts(harness).length - startsBefore).toBe(1);
+      const detail = yield* service.get({ taskId: root.taskId });
+      expect(detail.attempts.map((attempt) => attempt.errorCategory)).toEqual([
+        "rate_limited",
+        null,
+      ]);
+    }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, fallbackProviders(10))));
+  },
+);
