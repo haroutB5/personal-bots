@@ -4,6 +4,8 @@
  * from the memory service so the task service can use it without importing it.
  */
 
+import { secretRedactor } from "./secrets/secretRedaction.ts";
+
 const SECRET_PATTERNS: ReadonlyArray<RegExp> = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /\b(?:sk|pk|rk)[-_](?:live|test|proj|ant)?[-_]?[A-Za-z0-9_-]{16,}/,
@@ -138,6 +140,8 @@ export function redactSecrets(text: string, options: SecretCheckOptions = {}): s
     );
   }
   const urls = options.lenient === true ? urlSpans(out) : [];
+  // A value the owner saved as a key is a secret whatever it looks like (and in any spelling).
+  out = secretRedactor.redactText(out);
   return out.replace(LONG_TOKEN, (token, offset: number) =>
     readsAsKey(token, offset, urls, options.lenient === true) ? "[redacted]" : token,
   );
@@ -149,6 +153,7 @@ export function redactSecrets(text: string, options: SecretCheckOptions = {}): s
  */
 export function looksLikeSecret(text: string, options: SecretCheckOptions = {}): boolean {
   if (SECRET_PATTERNS.some((pattern) => pattern.test(text))) return true;
+  if (secretRedactor.redactText(text) !== text) return true;
   if (secretLinkSpans(text).length > 0) return true;
   // A long unbroken token mixing letters and digits reads as a key.
   const lenient = options.lenient === true;

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 
+import { secretRedactor } from "./secrets/secretRedaction.ts";
 import { looksLikeSecret, redactSecrets } from "./secretText.ts";
 import { evidenceFromText } from "./tasks/workRecord.ts";
 
@@ -164,5 +165,19 @@ describe("the long-token rule", () => {
     ]) {
       expect(looksLikeSecret(text, { lenient: true })).toBe(true);
     }
+  });
+});
+
+describe("a key the owner saved", () => {
+  afterEach(() => secretRedactor.clear());
+
+  it("is a secret whatever it looks like, so memory and records refuse it", () => {
+    const plain = "just-some-words-here";
+    expect(looksLikeSecret(`remember ${plain}`)).toBe(false);
+    secretRedactor.set("ODD_KEY", plain);
+    expect(looksLikeSecret(`remember ${plain}`)).toBe(true);
+    expect(redactSecrets(`remember ${plain}`)).toBe("remember [secret ODD_KEY]");
+    secretRedactor.clear();
+    expect(looksLikeSecret(`remember ${plain}`)).toBe(false);
   });
 });
