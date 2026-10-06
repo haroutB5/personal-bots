@@ -90,107 +90,109 @@ import {
   type WorkRecordPatch,
 } from "./workRecord.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
+import {
+  LEASE_MINUTES,
+  PERSONAL_TASKS_DEFAULT_MAX_CHILDREN,
+  PERSONAL_TASKS_DEFAULT_MAX_DEPTH,
+  PERSONAL_TASK_TURN_OWNERSHIP_MS,
+  SWEEP_INTERVAL,
+  attemptMessageId,
+  minutesFrom,
+  personalTaskMessageContext,
+  type AttemptOutcome,
+  type Changed,
+  type WorkItem,
+} from "./taskShared.ts";
+import {
+  BACKGROUND_WAIT_PROVIDER,
+  PERSONAL_TASK_BACKGROUND_FOLLOW_UP_MS,
+  PERSONAL_TASK_BACKGROUND_WAIT_MS,
+  backgroundAttemptKey,
+  heldReplyTexts,
+  isWaitingOnBackground,
+  newBackgroundWait,
+  stepBackgroundWait,
+  type BackgroundWait,
+} from "./taskBackgroundPolicy.ts";
+import {
+  PERSONAL_TASKS_LIMIT_DETAIL_WAIT_MS,
+  PERSONAL_TASKS_RENEWAL_WAIT_MS,
+  classifyProviderError,
+  consecutiveRateLimited,
+  immediateRateLimitRetry,
+  providerRetryOfAttempt,
+  providerWaitMessage,
+  providerWaitPause,
+  rateLimitBackoffMinutes,
+  settleSessionError,
+  type ProviderWaitPause,
+} from "./taskLimitPolicy.ts";
+import {
+  BACKGROUND_SESSION_ENDED_NOTE,
+  TASK_HISTORY_DEFAULT_LIMIT,
+  TASK_HISTORY_MAX_LIMIT,
+  TASK_RELATED_MAX_IDS,
+  TASK_REPLAY_TERMINAL_LIMIT,
+  TASK_REPLAY_TERMINAL_LIMIT_FULL,
+  backgroundCapNote,
+  composeTaskReplies,
+  toTaskSummary,
+  withNote,
+  withoutWaitingMarker,
+} from "./taskResultPolicy.ts";
+import {
+  isTerminal,
+  isWaitingForUser,
+  sessionIsAlive,
+  sessionIsBusy,
+} from "./taskSessionPolicy.ts";
+import {
+  FRESH_SESSION_NOTE,
+  PERSONAL_TASK_REOPEN_NOTE_PREFIX,
+  delegationContinuationText,
+  notesContinuationText,
+  openingTurnHeader,
+  openingTurnText,
+  reopenNote,
+  sourceLabel,
+  steerText,
+  taskSections,
+} from "./taskTurnPolicy.ts";
 
 /** Global cap on active provider turns started by the dispatcher. */
 export const PERSONAL_TASKS_CONCURRENCY = 5;
-export const PERSONAL_TASKS_DEFAULT_MAX_DEPTH = 2;
-export const PERSONAL_TASKS_DEFAULT_MAX_CHILDREN = 4;
-/** Backoff before each rate-limited re-run; one more rate limit fails the task. */
-export const PERSONAL_TASKS_RATE_LIMIT_BACKOFF_MINUTES = [1, 5, 15] as const;
-const LEASE_MINUTES = 2;
-/**
- * How long after an attempt settles its thread still counts as task-driven.
- * Only has to outlast the gap between two reactors of the same domain event,
- * so seconds are plenty; it is deliberately short so an ordinary chat turn
- * right after a task finishes still notifies.
- */
-export const PERSONAL_TASK_TURN_OWNERSHIP_MS = 30_000;
-const SWEEP_INTERVAL = "30 seconds";
+export {
+  LEASE_MINUTES,
+  PERSONAL_TASKS_DEFAULT_MAX_CHILDREN,
+  PERSONAL_TASKS_DEFAULT_MAX_DEPTH,
+  PERSONAL_TASK_TURN_OWNERSHIP_MS,
+  personalTaskMessageContext,
+} from "./taskShared.ts";
 
-/**
- * How long a Claude task stays running after its latest turn ends while
- * background work that turn left (a Bash run with run_in_background, a
- * background subagent, a Monitor) is still live. Claude Code starts a new
- * turn in the same session when that work finishes. The result keeps the
- * earlier turns' replies and appends each follow-up reply after a marker, so
- * a short "nothing pending" follow-up never replaces the real report; while
- * the task waits, the replies so far show on the task as a preview marked
- * `waitingOnBackgroundSince`. Work that never ends (a dev server) closes the
- * task with those replies and a note once no turn has run for this long.
- */
-export const PERSONAL_TASK_BACKGROUND_WAIT_MS = 20 * 60_000;
-/**
- * Once the background work has ended, how long to wait for the turn Claude
- * Code starts to report it before the latest reply stands as the result.
- */
-export const PERSONAL_TASK_BACKGROUND_FOLLOW_UP_MS = 60_000;
-/** Only Claude sessions run a new turn of their own when background work ends. */
-const BACKGROUND_WAIT_PROVIDER = "claudeAgent";
-
-const RATE_LIMIT_PATTERN =
-  /rate.?limit|too many requests|\b429\b|\b529\b|overloaded|quota|usage limit|provider.{0,40}unavailable|service unavailable|\b503\b/i;
-
-/** Rate limits and an unreachable provider back off; anything else fails the attempt. */
-export const classifyProviderError = (message: string | null): "rate_limited" | "provider_error" =>
-  message !== null && RATE_LIMIT_PATTERN.test(message) ? "rate_limited" : "provider_error";
-
-/**
- * A turn that ends on "No conversation found" is followed by the app's own
- * renewal: a fresh session that sends the same message again. The attempt
- * waits this long for the renewal to start before that error counts as its end.
- */
-export const PERSONAL_TASKS_RENEWAL_WAIT_MS = 60_000;
-
-/** A provider wait longer than this gives the task's slot back instead of holding it. */
-export const PERSONAL_TASKS_LONG_PROVIDER_WAIT_MS = 2 * 60_000;
-
-/**
- * A turn that fails on a limit reports the error first and the limit's details
- * (reset time, provider) on the turn's completion right after (Codex order). An
- * error that reads like a limit, on a turn that has not completed yet, waits this
- * long for those details before the attempt settles on it. The 30 s sweep
- * settles it if they never come.
- */
-export const PERSONAL_TASKS_LIMIT_DETAIL_WAIT_MS = 10_000;
-
-/**
- * The wait the provider reported during this attempt. The session carries the
- * last wait of the thread, so one reported before the attempt started belongs to
- * an earlier attempt (the one that just hit the limit) and says nothing about
- * this one.
- */
-export const providerRetryOfAttempt = (
-  retry: OrchestrationSession["providerRetry"],
-  attemptStartedAtMs: number,
-): OrchestrationSession["providerRetry"] => {
-  if (retry === undefined) return undefined;
-  const observedAtMs = Date.parse(retry.observedAt);
-  return Number.isFinite(observedAtMs) && observedAtMs < attemptStartedAtMs ? undefined : retry;
-};
-
-export interface ProviderWaitPause {
-  readonly retry: NonNullable<OrchestrationSession["providerRetry"]>;
-  /** The provider's reported next attempt / reset; null = not reported (use the backoff). */
-  readonly retryAtMs: number | null;
-}
-
-/**
- * Whether a running task turn should stop waiting on its provider. A reported
- * wait (rate limit or retry) pauses when it is more than two minutes out; a
- * rate limit that reports no reset always pauses. Short retries are left to
- * the provider.
- */
-export const providerWaitPause = (
-  retry: OrchestrationSession["providerRetry"],
-  nowMs: number,
-): ProviderWaitPause | null => {
-  if (retry === undefined) return null;
-  const retryAtMs = retry.retryAt === undefined ? Number.NaN : Date.parse(retry.retryAt);
-  if (!Number.isFinite(retryAtMs)) {
-    return retry.kind === "rate_limited" ? { retry, retryAtMs: null } : null;
-  }
-  return retryAtMs - nowMs > PERSONAL_TASKS_LONG_PROVIDER_WAIT_MS ? { retry, retryAtMs } : null;
-};
+export {
+  PERSONAL_TASKS_LIMIT_DETAIL_WAIT_MS,
+  PERSONAL_TASKS_LONG_PROVIDER_WAIT_MS,
+  PERSONAL_TASKS_RATE_LIMIT_BACKOFF_MINUTES,
+  PERSONAL_TASKS_RENEWAL_WAIT_MS,
+  classifyProviderError,
+  providerRetryOfAttempt,
+  providerWaitPause,
+  type ProviderWaitPause,
+} from "./taskLimitPolicy.ts";
+export {
+  PERSONAL_TASK_BACKGROUND_FOLLOW_UP_MS,
+  PERSONAL_TASK_BACKGROUND_WAIT_MS,
+} from "./taskBackgroundPolicy.ts";
+export {
+  BACKGROUND_FOLLOW_UP_MARKER,
+  PERSONAL_TASK_RESULT_MAX_CHARS,
+  TASK_REPLAY_TERMINAL_LIMIT,
+  TASK_SUMMARY_RESULT_PREVIEW_CHARS,
+  backgroundCapNote,
+  composeTaskReplies,
+  toTaskSummary,
+} from "./taskResultPolicy.ts";
+export { FRESH_SESSION_NOTE, reopenNote } from "./taskTurnPolicy.ts";
 
 export interface PersonalTaskCreateOptions extends PersonalTaskCreateInput {
   readonly source?: PersonalTaskSource;
@@ -444,223 +446,6 @@ export class PersonalTaskService extends Context.Service<
     }) => Effect.Effect<PersonalTask, PersonalTasksError>;
   }
 >()("t3/personal/tasks/PersonalTaskService") {}
-
-type Changed = Array<PersonalTask>;
-
-type AttemptOutcome =
-  | { readonly kind: "completed"; readonly summary: string }
-  | { readonly kind: "interrupted"; readonly message: string | null }
-  | {
-      readonly kind: "failed";
-      readonly category: "rate_limited" | "provider_error" | "dispatch_failed";
-      readonly message: string | null;
-      /** A reset the provider reported; replaces the 1/5/15 min backoff. */
-      readonly availableAt?: DateTime.Utc;
-      /** The usage limit the provider reported, for the bot's model fallback. */
-      readonly limit?: {
-        readonly provider: string;
-        readonly instanceId?: string | undefined;
-        readonly reason?: string | undefined;
-        readonly retryAt?: string | undefined;
-      };
-    };
-
-type WorkItem =
-  | { readonly type: "pump" }
-  | { readonly type: "sweep" }
-  | {
-      readonly type: "session";
-      readonly threadId: ThreadId;
-      readonly session: OrchestrationSession;
-    }
-  | { readonly type: "settle"; readonly threadId: ThreadId }
-  | { readonly type: "resume"; readonly threadId: ThreadId };
-
-/** What an active attempt knows about the background work in its chat. */
-interface BackgroundWait {
-  readonly attemptKey: string;
-  /** Tasks already live when the attempt started; never waited for. */
-  readonly baseline: ReadonlySet<string>;
-  /** `updatedAt` of the last ended turn that left work running; null = never. */
-  pendingReadyAt: string | null;
-  /** Since when nothing has run while that work stayed live, epoch ms. */
-  idleSinceMs: number;
-  /** When the work was first seen ended with no newer turn after it, epoch ms. */
-  clearedAtMs: number | null;
-  /** ISO time the first turn that left work running ended; null = never. */
-  waitingSince: string | null;
-  /** Replies of the turns that ended with work left, oldest first. */
-  readonly replies: Array<{ readonly messageId: string; readonly text: string }>;
-}
-
-const backgroundAttemptKey = (attempt: PersonalTaskAttempt) =>
-  `${attempt.taskId}:${attempt.attempt}`;
-
-/** Added to the result of a task closed by the background-work cap. */
-export const backgroundCapNote = (count: number) =>
-  `(Closed by the task runner: ${count === 1 ? "a background command" : `${count} background commands`} the bot started ${count === 1 ? "was" : "were"} still running ${Math.round(PERSONAL_TASK_BACKGROUND_WAIT_MS / 60_000)} minutes after this reply. Anything the bot reports later is in its chat, not here.)`;
-
-const BACKGROUND_SESSION_ENDED_NOTE =
-  "(Closed by the task runner: the bot's session ended while background work it started was still running.)";
-
-const withNote = (summary: string, note: string) =>
-  note.length === 0 ? summary : summary.length === 0 ? note : `${summary}\n\n${note}`;
-
-/** Put before each reply after the first one in a result. */
-export const BACKGROUND_FOLLOW_UP_MARKER = "(Follow-up after background work finished:)";
-
-/** A composed result longer than this loses its oldest follow-ups, never the first reply. */
-export const PERSONAL_TASK_RESULT_MAX_CHARS = 100_000;
-/** What a single follow-up keeps once it is all that is left to trim. */
-const FOLLOW_UP_MIN_KEPT_CHARS = 1_000;
-
-/**
- * One result from the replies of an attempt's turns, earliest first. The
- * first reply stays whole; every later one follows a marker. Past
- * {@link PERSONAL_TASK_RESULT_MAX_CHARS} the oldest follow-ups go first and
- * a line says how many; the newest follow-up is cut last.
- */
-export const composeTaskReplies = (replies: ReadonlyArray<string>): string => {
-  const [first, ...rest] = replies.filter((reply) => reply.trim().length > 0);
-  if (first === undefined) return "";
-  const kept = rest.map((reply) => `${BACKGROUND_FOLLOW_UP_MARKER}\n\n${reply}`);
-  let dropped = 0;
-  const compose = () =>
-    [
-      first,
-      ...(dropped === 0
-        ? []
-        : [
-            `(${dropped} earlier follow-up ${dropped === 1 ? "reply" : "replies"} left out to keep this result short.)`,
-          ]),
-      ...kept,
-    ].join("\n\n");
-  while (kept.length > 1 && compose().length > PERSONAL_TASK_RESULT_MAX_CHARS) {
-    kept.shift();
-    dropped += 1;
-  }
-  if (kept.length === 1 && compose().length > PERSONAL_TASK_RESULT_MAX_CHARS) {
-    const budget = PERSONAL_TASK_RESULT_MAX_CHARS - (compose().length - kept[0]!.length);
-    kept[0] = `${kept[0]!.slice(0, Math.max(budget, FOLLOW_UP_MIN_KEPT_CHARS)).trimEnd()}…`;
-  }
-  return compose();
-};
-
-/** Drops the "still waiting" mark from a result once the wait is over. */
-const withoutWaitingMarker = (result: PersonalTask["result"]): PersonalTask["result"] =>
-  result === null || result.waitingOnBackgroundSince === undefined
-    ? result
-    : { summary: result.summary };
-
-/** A session in the middle of a turn: a queued task for its thread waits. */
-const sessionIsBusy = (session: OrchestrationSession | null | undefined) =>
-  session?.status === "running" || session?.status === "starting";
-
-/** A session that still has a provider process behind it. */
-const sessionIsAlive = (session: OrchestrationSession | null | undefined) =>
-  session !== null &&
-  session !== undefined &&
-  session.status !== "stopped" &&
-  session.status !== "error";
-
-const isTerminal = (status: PersonalTaskStatus) => PERSONAL_TASK_TERMINAL_STATUSES.includes(status);
-
-/** Id prefix of the note that tells a reopened task it is continuing. */
-const PERSONAL_TASK_REOPEN_NOTE_PREFIX = "reopen:";
-
-/** Tells a bot that a reopened task started a fresh session, and where its state is. */
-export const FRESH_SESSION_NOTE =
-  "This task was reopened after a long chat, so you start a fresh session and the earlier conversation is not in your context. The work record below is your state. When you need an exact detail from a message (a request, a number, a decision), call read_chat_history: it reads this chat's earlier messages, newest first, and can search them. It cannot show tool output (files you read, command results): run the command or read the file again if you need it.";
-
-/** Ends a reopened task's continuation turn text, after the steer that reopened it. */
-export const reopenNote = (status: PersonalTaskStatus) =>
-  `This task had ${status === "completed" ? "finished" : `ended (${status})`} and has been reopened in this same chat. Continue where you stopped.`;
-
-/**
- * Finished tasks replayed to a new subscriber; older ones come from
- * `history` and `related`. 200 with the task-summaries kill switch on,
- * which is what every client got before summaries.
- */
-export const TASK_REPLAY_TERMINAL_LIMIT = 20;
-const TASK_REPLAY_TERMINAL_LIMIT_FULL = 200;
-
-/** Longest result preview a summary carries; the delegation card shows 4 lines. */
-export const TASK_SUMMARY_RESULT_PREVIEW_CHARS = 600;
-
-const TASK_HISTORY_DEFAULT_LIMIT = 20;
-const TASK_HISTORY_MAX_LIMIT = 100;
-const TASK_RELATED_MAX_IDS = 100;
-
-/**
- * What lists and the live feed send: the task without its long text. The
- * objective and acceptance/expected-output bodies are blank and the result is
- * a preview; `personalTasks.get` has everything. Opening the app used to
- * download every task's full text (641 KB for 150 tasks).
- */
-export const toTaskSummary = (task: PersonalTask): PersonalTask => {
-  const summary = task.result?.summary;
-  const preview =
-    summary === undefined || summary.length <= TASK_SUMMARY_RESULT_PREVIEW_CHARS
-      ? summary
-      : `${summary.slice(0, TASK_SUMMARY_RESULT_PREVIEW_CHARS).trimEnd()}…`;
-  return {
-    ...task,
-    objective: "",
-    acceptanceCriteria: "",
-    expectedOutput: "",
-    result:
-      task.result === null || preview === undefined ? null : { ...task.result, summary: preview },
-    detailOmitted: true,
-  };
-};
-
-const minutesFrom = (now: DateTime.Utc, minutes: number) => DateTime.add(now, { minutes });
-
-/** The user message that starts an attempt's turn; deterministic so a re-dispatch dedupes. */
-const attemptMessageId = (attempt: PersonalTaskAttempt) =>
-  personalTaskMessageId(attempt.taskId, attempt.attempt);
-
-const sourceLabel = (task: PersonalTask, delegatorName: string | null) => {
-  switch (task.source) {
-    case "user":
-      return "[Task from you]";
-    case "routine":
-      return "[Routine task]";
-    case "delegation":
-      return `[Delegated task from ${delegatorName ?? "another bot"}]`;
-  }
-};
-
-const taskSections = (task: PersonalTask, brief: PersonalDelegationBrief | null) =>
-  [
-    `Task id: ${task.taskId}`,
-    `Title: ${task.title}`,
-    `Objective:\n${task.objective}`,
-    brief?.context ? `Context:\n${brief.context}` : null,
-    brief?.constraints ? `Constraints:\n${brief.constraints}` : null,
-    task.acceptanceCriteria ? `Acceptance criteria:\n${task.acceptanceCriteria}` : null,
-    task.expectedOutput ? `Expected output:\n${task.expectedOutput}` : null,
-  ].filter((section) => section !== null);
-
-/**
- * The message context that marks a task turn as server-authored. The record is
- * never referenced from the text, so `projectComposerContextForProvider` drops
- * it and the provider prompt is unchanged.
- */
-export const personalTaskMessageContext = (
-  marker: PersonalTaskMessageMarker,
-): OrchestrationMessageContext => ({
-  version: 1,
-  records: [
-    {
-      version: 1,
-      contextId: ComposerContextId.make(PERSONAL_TASK_MESSAGE_CONTEXT_KIND),
-      label: "Task turn",
-      kind: PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
-      payload: marker,
-    },
-  ],
-});
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
@@ -1138,39 +923,34 @@ export const make = Effect.gen(function* () {
           return;
         }
         if (outcome.kind === "failed" && outcome.category === "rate_limited") {
-          if (fallbackHit?.switched === true) {
-            // On the fallback model now: run again at once, with the work record.
+          // The model fallback took over (run again at once), or a reported reset is
+          // honest about the wait and is used as-is, rather than spending the
+          // unreported-limit backoff budget.
+          const immediate = immediateRateLimitRetry({
+            fallbackSwitched: fallbackHit?.switched === true,
+            reportedResetMs:
+              outcome.availableAt === undefined
+                ? null
+                : DateTime.toEpochMillis(outcome.availableAt),
+            nowMs: DateTime.toEpochMillis(now),
+          });
+          if (immediate !== null) {
             yield* writeTask(changed, task.value, {
               status: "rate_limited",
               result: withoutWaitingMarker(task.value.result),
-              availableAt: now,
-              errorCategory: "rate_limited",
-              errorMessage: outcome.message,
-            });
-            return;
-          }
-          // A reported reset is honest about the wait, so it is used as-is
-          // rather than spending the unreported-limit backoff budget.
-          if (
-            outcome.availableAt !== undefined &&
-            DateTime.toEpochMillis(outcome.availableAt) > DateTime.toEpochMillis(now)
-          ) {
-            yield* writeTask(changed, task.value, {
-              status: "rate_limited",
-              result: withoutWaitingMarker(task.value.result),
-              availableAt: outcome.availableAt,
+              availableAt:
+                immediate.kind === "run_now"
+                  ? now
+                  : (outcome.availableAt ?? DateTime.makeUnsafe(immediate.availableAtMs)),
               errorCategory: "rate_limited",
               errorMessage: outcome.message,
             });
             return;
           }
           const attempts = yield* repository.listAttempts(attempt.taskId);
-          let consecutive = 0;
-          for (const entry of attempts.toReversed()) {
-            if (entry.errorCategory !== "rate_limited") break;
-            consecutive += 1;
-          }
-          const backoff = PERSONAL_TASKS_RATE_LIMIT_BACKOFF_MINUTES[consecutive - 1];
+          const backoff = rateLimitBackoffMinutes(
+            consecutiveRateLimited(attempts.map((entry) => entry.errorCategory)),
+          );
           if (backoff !== undefined) {
             yield* writeTask(changed, task.value, {
               status: "rate_limited",
@@ -1238,22 +1018,12 @@ export const make = Effect.gen(function* () {
         ),
       );
       return {
-        text: [
-          stillRunning.length > 0
-            ? "[Task continuation] These delegated tasks have finished. Their results:"
-            : "[Task continuation] Your delegated tasks have finished. Their results:",
-          ...results.map((result) => result.text),
-          ...(stillRunning.length > 0
-            ? [
-                `Still running: ${stillRunning.map((handoff) => handoff.brief.title).join(", ")}. Their results will follow in a later continuation.`,
-              ]
-            : []),
-          ...notes,
-          stillRunning.length > 0
-            ? "Continue the task below with these results. Do not give a final answer yet: the tasks still running will report back."
-            : "Continue the task below with these results and give your final answer.",
-          ...taskSections(task, null),
-        ].join("\n\n"),
+        text: delegationContinuationText({
+          results: results.map((result) => result.text),
+          stillRunningTitles: stillRunning.map((handoff) => handoff.brief.title),
+          notes,
+          sections: taskSections(task, null),
+        }),
         marker: marker(
           "continuation",
           null,
@@ -1265,13 +1035,7 @@ export const make = Effect.gen(function* () {
     // queued: it starts with its full brief, updates after it.
     if (notes.length > 0 && attemptNumber > 1) {
       return {
-        text: [
-          "[Task continuation]",
-          ...notes,
-          ...(freshRecord === null ? [] : [FRESH_SESSION_NOTE, freshRecord]),
-          "Continue the task below.",
-          ...taskSections(task, null),
-        ].join("\n\n"),
+        text: notesContinuationText({ notes, freshRecord, sections: taskSections(task, null) }),
         marker: marker("continuation", null, []),
       };
     }
@@ -1288,18 +1052,12 @@ export const make = Effect.gen(function* () {
         delegatorName = Option.isSome(bot) ? bot.value.name : null;
       }
     }
-    const header =
-      attemptNumber > 1
-        ? `${sourceLabel(task, delegatorName)} Retry, attempt ${attemptNumber}.`
-        : sourceLabel(task, delegatorName);
     return {
-      text: [
-        header,
-        ...taskSections(task, Option.isSome(handoff) ? handoff.value.brief : null),
-        ...(notes.length > 0
-          ? [`Updates since this task was handed over:\n\n${notes.join("\n\n")}`]
-          : []),
-      ].join("\n\n"),
+      text: openingTurnText({
+        header: openingTurnHeader(sourceLabel(task, delegatorName), attemptNumber),
+        sections: taskSections(task, Option.isSome(handoff) ? handoff.value.brief : null),
+        notes,
+      }),
       marker: marker(attemptNumber > 1 ? "retry" : "start", delegatorBotId, []),
     };
   });
@@ -1466,15 +1224,13 @@ export const make = Effect.gen(function* () {
       activeThreadIds.add(threadId);
       // Work already live in the chat (left by an earlier attempt or by the
       // user's own turn) is not this attempt's to wait for.
-      backgroundByThread.set(threadId, {
-        attemptKey: backgroundAttemptKey(claimed.attempt),
-        baseline: new Set(liveness.getThreadLiveTaskIds(threadId)),
-        pendingReadyAt: null,
-        idleSinceMs: 0,
-        clearedAtMs: null,
-        waitingSince: null,
-        replies: [],
-      });
+      backgroundByThread.set(
+        threadId,
+        newBackgroundWait(
+          backgroundAttemptKey(claimed.attempt),
+          new Set(liveness.getThreadLiveTaskIds(threadId)),
+        ),
+      );
     }
     yield* publish(changed);
     return claimed;
@@ -1573,9 +1329,6 @@ export const make = Effect.gen(function* () {
   // allow: a note that needs a fresh provider process waits until the
   // thread's session is gone, so the next turn starts a new process (which
   // is when provider environments are built).
-  const isWaitingForUser = (status: PersonalTaskStatus) =>
-    status === "waiting_for_user" || status === "waiting_for_browser";
-
   const tryResume = Effect.fn("PersonalTaskService.tryResume")(function* (
     changed: Changed,
     task: PersonalTask,
@@ -1616,24 +1369,17 @@ export const make = Effect.gen(function* () {
     const key = backgroundAttemptKey(attempt);
     const existing = backgroundByThread.get(attempt.providerThreadId);
     if (existing?.attemptKey === key) return existing;
-    const created: BackgroundWait = {
-      attemptKey: key,
-      baseline: new Set(),
-      pendingReadyAt: null,
-      idleSinceMs: 0,
-      clearedAtMs: null,
-      waitingSince: null,
-      replies: [],
-    };
+    const created = newBackgroundWait(key);
     backgroundByThread.set(attempt.providerThreadId, created);
     return created;
   };
 
   /** A turn of the attempt ended with background work left; the task still runs. */
-  const waitingOnBackground = (attempt: PersonalTaskAttempt) => {
-    const state = backgroundByThread.get(attempt.providerThreadId);
-    return state?.attemptKey === backgroundAttemptKey(attempt) && state.pendingReadyAt !== null;
-  };
+  const waitingOnBackground = (attempt: PersonalTaskAttempt) =>
+    isWaitingOnBackground(
+      backgroundByThread.get(attempt.providerThreadId),
+      backgroundAttemptKey(attempt),
+    );
 
   /**
    * The attempt's result text: the replies of the turns that ended with
@@ -1643,15 +1389,14 @@ export const make = Effect.gen(function* () {
   const composeAttemptReplies = (
     attempt: PersonalTaskAttempt,
     last: ProjectionThreadMessage | undefined,
-  ) => {
-    const state = backgroundByThread.get(attempt.providerThreadId);
-    const held = state?.attemptKey === backgroundAttemptKey(attempt) ? state.replies : [];
-    const texts = held.map((reply) => reply.text);
-    if (last !== undefined && !held.some((reply) => reply.messageId === last.messageId)) {
-      texts.push(last.text);
-    }
-    return composeTaskReplies(texts);
-  };
+  ) =>
+    composeTaskReplies(
+      heldReplyTexts(
+        backgroundByThread.get(attempt.providerThreadId),
+        backgroundAttemptKey(attempt),
+        last,
+      ),
+    );
 
   /**
    * While the task waits on background work, its replies so far go on the task
@@ -1689,53 +1434,41 @@ export const make = Effect.gen(function* () {
     session: OrchestrationSession,
     last: ProjectionThreadMessage | undefined,
   ) {
-    const state = backgroundFor(attempt);
     const pending =
       session.providerName === BACKGROUND_WAIT_PROVIDER
         ? liveness
             .getThreadLiveTaskIds(attempt.providerThreadId)
-            .filter((taskId) => !state.baseline.has(taskId))
+            .filter((taskId) => !backgroundFor(attempt).baseline.has(taskId))
         : [];
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-    if (pending.length > 0) {
-      if (state.pendingReadyAt !== session.updatedAt) {
-        if (state.pendingReadyAt === null) {
-          yield* Effect.logInfo("personal task waiting on background work", {
-            taskId: attempt.taskId,
-            threadId: attempt.providerThreadId,
-            backgroundTasks: pending,
-          });
-          state.waitingSince = session.updatedAt;
-        }
-        state.pendingReadyAt = session.updatedAt;
-        const endedMs = Date.parse(session.updatedAt);
-        state.idleSinceMs = Number.isFinite(endedMs) ? Math.min(endedMs, nowMs) : nowMs;
+    const step = stepBackgroundWait(backgroundFor(attempt), {
+      pending,
+      sessionUpdatedAt: session.updatedAt,
+      nowMs,
+      last: last === undefined ? undefined : { messageId: last.messageId, text: last.text },
+    });
+    backgroundByThread.set(attempt.providerThreadId, step.state);
+    if (step.kind === "wait") {
+      if (step.started) {
+        yield* Effect.logInfo("personal task waiting on background work", {
+          taskId: attempt.taskId,
+          threadId: attempt.providerThreadId,
+          backgroundTasks: pending,
+        });
       }
-      state.clearedAtMs = null;
-      // This turn's reply is held before anything else, so no later turn, cap
-      // or session end can replace it.
-      const reply =
-        last !== undefined &&
-        last.text.trim().length > 0 &&
-        !state.replies.some((held) => held.messageId === last.messageId)
-          ? last
-          : undefined;
-      if (reply !== undefined) {
-        state.replies.push({ messageId: reply.messageId, text: reply.text });
+      if (step.publishPreview) {
+        yield* publishWaitingPreview(attempt, step.state).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("personal task could not publish its waiting preview", {
+              taskId: attempt.taskId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
       }
-      if (nowMs - state.idleSinceMs < PERSONAL_TASK_BACKGROUND_WAIT_MS) {
-        if (reply !== undefined) {
-          yield* publishWaitingPreview(attempt, state).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("personal task could not publish its waiting preview", {
-                taskId: attempt.taskId,
-                cause: Cause.pretty(cause),
-              }),
-            ),
-          );
-        }
-        return "wait" as const;
-      }
+      return "wait" as const;
+    }
+    if (step.capped) {
       yield* Effect.logWarning("personal task closed with background work still running", {
         taskId: attempt.taskId,
         threadId: attempt.providerThreadId,
@@ -1743,15 +1476,7 @@ export const make = Effect.gen(function* () {
       });
       return backgroundCapNote(pending.length);
     }
-    // Never waited: the turn ends the task exactly as it always has.
-    if (state.pendingReadyAt === null) return "";
-    // A turn ended after the one that left the work: its reply is the result.
-    if (session.updatedAt !== state.pendingReadyAt) return "";
-    // The work ended but the turn that reports it has not run yet.
-    state.clearedAtMs ??= nowMs;
-    return nowMs - state.clearedAtMs < PERSONAL_TASK_BACKGROUND_FOLLOW_UP_MS
-      ? ("wait" as const)
-      : "";
+    return "";
   });
 
   // The provider session a bot just moved off (its home, after a usage limit) reports
@@ -1880,61 +1605,43 @@ export const make = Effect.gen(function* () {
         // session: the renewal is the same attempt, so the error is not yet its end. The CLI
         // then exits and the stream fails with an error of its own: while the wait is open that
         // follow-on error belongs to the same failed resume. If no renewal follows, the error
-        // counts once the wait is over (the sweep settles it).
-        if (
-          isMissingProviderConversationText(session.lastError) ||
-          renewalWaitSince.has(renewalKey)
-        ) {
-          const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-          const since = renewalWaitSince.get(renewalKey) ?? nowMs;
-          renewalWaitSince.set(renewalKey, since);
-          if (nowMs - since < PERSONAL_TASKS_RENEWAL_WAIT_MS) {
-            return;
-          }
-          renewalWaitSince.delete(renewalKey);
-        }
-        // A turn that failed on a rate limit the adapter recognised waits for
-        // the reset it reported (Codex usage limits), not a pattern guess.
-        const ownRetry = providerRetryOfAttempt(
-          session.providerRetry,
-          DateTime.toEpochMillis(attempt.startedAt),
-        );
-        const limit = ownRetry?.kind === "rate_limited" ? ownRetry : undefined;
+        // counts once the wait is over (the sweep settles it). A limit's details arrive on the
+        // turn's completion right after its error, so a limited task waits a moment for them.
         const now = yield* DateTime.now;
-        // The error comes first and the turn's completion, which carries the
-        // limit's details, right after: give them a moment so a limited task
-        // gets its fallback or its reported reset instead of a guessed backoff.
-        if (
-          limit === undefined &&
-          session.activeTurnId !== null &&
-          classifyProviderError(session.lastError) === "rate_limited" &&
-          DateTime.toEpochMillis(now) - Date.parse(session.updatedAt) <
-            PERSONAL_TASKS_LIMIT_DETAIL_WAIT_MS
-        ) {
+        const settlement = settleSessionError({
+          lastError: session.lastError,
+          lostConversation: isMissingProviderConversationText(session.lastError),
+          renewalWaitSinceMs: renewalWaitSince.get(renewalKey),
+          nowMs: DateTime.toEpochMillis(now),
+          providerRetry: session.providerRetry,
+          attemptStartedAtMs: DateTime.toEpochMillis(attempt.startedAt),
+          activeTurnId: session.activeTurnId,
+          sessionUpdatedAtMs: Date.parse(session.updatedAt),
+        });
+        if (settlement.kind === "wait") {
+          if (settlement.renewalWaitSinceMs !== undefined) {
+            renewalWaitSince.set(renewalKey, settlement.renewalWaitSinceMs);
+          }
           return;
         }
-        const resetMs = limit?.retryAt === undefined ? Number.NaN : Date.parse(limit.retryAt);
+        if (settlement.clearRenewalWait) renewalWaitSince.delete(renewalKey);
         yield* finishAttempt(attempt, {
           kind: "failed",
-          category: limit !== undefined ? "rate_limited" : classifyProviderError(session.lastError),
+          category: settlement.category,
           message: session.lastError,
-          ...(limit === undefined
+          ...(settlement.limit === undefined
             ? {}
             : {
                 limit: {
-                  provider: limit.provider,
+                  provider: settlement.limit.provider,
                   instanceId: session.providerInstanceId,
-                  reason: limit.reason,
-                  retryAt: limit.retryAt,
+                  reason: settlement.limit.reason,
+                  retryAt: settlement.limit.retryAt,
                 },
               }),
-          ...(Number.isFinite(resetMs)
-            ? {
-                availableAt: DateTime.add(now, {
-                  milliseconds: resetMs - DateTime.toEpochMillis(now),
-                }),
-              }
-            : {}),
+          ...(settlement.resetAtMs === undefined
+            ? {}
+            : { availableAt: DateTime.makeUnsafe(settlement.resetAtMs) }),
         });
         return;
       }
@@ -1952,12 +1659,7 @@ export const make = Effect.gen(function* () {
     now: DateTime.Utc,
   ) {
     const { retry, retryAtMs } = pause;
-    const what = retry.kind === "rate_limited" ? "rate limited" : "retrying";
-    const detail = retry.reason === undefined ? "" : ` (${retry.reason})`;
-    const message =
-      retryAtMs === null
-        ? `The provider is ${what}${detail} and did not report when the limit resets.`
-        : `The provider is ${what}${detail}; its next attempt is at ${DateTime.formatIso(DateTime.makeUnsafe(retryAtMs))}.`;
+    const message = providerWaitMessage(pause);
     yield* finishAttempt(attempt, {
       kind: "failed",
       category: "rate_limited",
@@ -2545,14 +2247,6 @@ export const make = Effect.gen(function* () {
         }),
       )
       .pipe(toPublic("retry"));
-
-  // A steer already written as "Update from <name>: ..." keeps its own prefix,
-  // so the bot does not read "Update from CTO: Update from CTO: ...".
-  const ALREADY_PREFIXED = /^update from [^:\n]{1,80}:/i;
-  const steerText = (fromName: string, message: string) =>
-    ALREADY_PREFIXED.test(message.trim())
-      ? message.trim()
-      : `Update from ${fromName.trim() || "your delegator"}: ${message.trim()}`;
 
   /** Whether a bot is live, read on the writing connection (see requireLiveBotInTransaction). */
   const botIsLive = (botId: PersonalBotId) =>
