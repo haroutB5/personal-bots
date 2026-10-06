@@ -74,6 +74,100 @@ export interface ResearchClientOptions {
   onEvent?: ((event: ResearchEvent) => void) | undefined;
 }
 
+/**
+ * Tavily's `country` is a closed list of lowercase English names and rejects
+ * anything else with HTTP 400 (an ISO code such as "UK" included). Names pass
+ * through case-insensitively, common ISO codes and aliases map to their name,
+ * and anything unknown is dropped so the search runs worldwide instead of failing.
+ */
+const TAVILY_COUNTRIES = new Set(
+  (
+    "afghanistan,albania,algeria,andorra,angola,argentina,armenia,australia,austria,azerbaijan,bahamas," +
+    "bahrain,bangladesh,barbados,belarus,belgium,belize,benin,bhutan,bolivia,bosnia and herzegovina," +
+    "botswana,brazil,brunei,bulgaria,burkina faso,burundi,cambodia,cameroon,canada,cape verde," +
+    "central african republic,chad,chile,china,colombia,comoros,congo,costa rica,croatia,cuba,cyprus," +
+    "czech republic,denmark,djibouti,dominican republic,ecuador,egypt,el salvador,equatorial guinea," +
+    "eritrea,estonia,ethiopia,fiji,finland,france,gabon,gambia,georgia,germany,ghana,greece,guatemala," +
+    "guinea,haiti,honduras,hungary,iceland,india,indonesia,iran,iraq,ireland,israel,italy,jamaica,japan," +
+    "jordan,kazakhstan,kenya,kuwait,kyrgyzstan,latvia,lebanon,lesotho,liberia,libya,liechtenstein," +
+    "lithuania,luxembourg,madagascar,malawi,malaysia,maldives,mali,malta,mauritania,mauritius,mexico," +
+    "moldova,monaco,mongolia,montenegro,morocco,mozambique,myanmar,namibia,nepal,netherlands," +
+    "new zealand,nicaragua,niger,nigeria,north korea,north macedonia,norway,oman,pakistan,panama," +
+    "papua new guinea,paraguay,peru,philippines,poland,portugal,qatar,romania,russia,rwanda,saudi arabia," +
+    "senegal,serbia,singapore,slovakia,slovenia,somalia,south africa,south korea,south sudan,spain," +
+    "sri lanka,sudan,sweden,switzerland,syria,taiwan,tajikistan,tanzania,thailand,togo," +
+    "trinidad and tobago,tunisia,turkey,turkmenistan,uganda,ukraine,united arab emirates," +
+    "united kingdom,united states,uruguay,uzbekistan,venezuela,vietnam,yemen,zambia,zimbabwe"
+  ).split(","),
+);
+const TAVILY_COUNTRY_ALIASES: Readonly<Record<string, string>> = {
+  uk: "united kingdom",
+  gb: "united kingdom",
+  "great britain": "united kingdom",
+  britain: "united kingdom",
+  england: "united kingdom",
+  us: "united states",
+  usa: "united states",
+  "united states of america": "united states",
+  uae: "united arab emirates",
+  ae: "united arab emirates",
+  au: "australia",
+  at: "austria",
+  be: "belgium",
+  br: "brazil",
+  ca: "canada",
+  ch: "switzerland",
+  cl: "chile",
+  cn: "china",
+  co: "colombia",
+  cz: "czech republic",
+  de: "germany",
+  dk: "denmark",
+  eg: "egypt",
+  es: "spain",
+  fi: "finland",
+  fr: "france",
+  gr: "greece",
+  hu: "hungary",
+  id: "indonesia",
+  ie: "ireland",
+  il: "israel",
+  in: "india",
+  it: "italy",
+  jp: "japan",
+  kr: "south korea",
+  mx: "mexico",
+  my: "malaysia",
+  ng: "nigeria",
+  nl: "netherlands",
+  no: "norway",
+  nz: "new zealand",
+  pe: "peru",
+  ph: "philippines",
+  pk: "pakistan",
+  pl: "poland",
+  pt: "portugal",
+  ro: "romania",
+  ru: "russia",
+  sa: "saudi arabia",
+  se: "sweden",
+  sg: "singapore",
+  th: "thailand",
+  tr: "turkey",
+  tw: "taiwan",
+  ua: "ukraine",
+  vn: "vietnam",
+  za: "south africa",
+};
+
+/** The `country` value Tavily accepts for what the caller gave, or undefined to leave the field out. */
+export function tavilyCountry(country: string | undefined): string | undefined {
+  const name = country?.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!name) return undefined;
+  const mapped = TAVILY_COUNTRY_ALIASES[name] ?? name;
+  return TAVILY_COUNTRIES.has(mapped) ? mapped : undefined;
+}
+
 /** Most Google results one search_google call returns. */
 export const GOOGLE_RESULTS_MAX = 8;
 
@@ -471,7 +565,9 @@ export function createResearchClient(
                   max_results: 6,
                   include_answer: false,
                   include_raw_content: false,
-                  ...(options.country ? { country: options.country } : {}),
+                  ...(tavilyCountry(options.country)
+                    ? { country: tavilyCountry(options.country) }
+                    : {}),
                   ...(options.timeRange ? { time_range: options.timeRange } : {}),
                   ...(options.domains?.length ? { include_domains: options.domains } : {}),
                 },
@@ -531,7 +627,7 @@ export function createResearchClient(
             tool,
             provider: "tavily",
             outcome: result.error ? "failed" : "served",
-            fallbackReason,
+            ...(fallbackReason === undefined ? {} : { fallbackReason }),
             sources: result.sources.length,
             ms: Math.round(performance.now() - started),
           });

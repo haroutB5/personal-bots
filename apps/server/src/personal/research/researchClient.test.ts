@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { createResearchClient, publicResearchUrl } from "./researchClient.ts";
+import { createResearchClient, publicResearchUrl, tavilyCountry } from "./researchClient.ts";
 
 /** These tests pin the Tavily path (and its guards); the Parallel path has its own file. */
 const tavilyOnly = (fetcher: typeof fetch) =>
@@ -272,6 +272,35 @@ describe("public research", () => {
     const [kept] = await second;
     expect(kept?.error).toBeNull();
     expect(kept?.sources[0]?.url).toBe("https://shop.example/camera");
+  });
+});
+
+describe("Tavily country", () => {
+  it("maps codes and aliases to Tavily's names and drops what it does not list", () => {
+    expect(tavilyCountry("UK")).toBe("united kingdom");
+    expect(tavilyCountry("gb")).toBe("united kingdom");
+    expect(tavilyCountry(" Great  Britain ")).toBe("united kingdom");
+    expect(tavilyCountry("US")).toBe("united states");
+    expect(tavilyCountry("fr")).toBe("france");
+    expect(tavilyCountry("DE")).toBe("germany");
+    expect(tavilyCountry("United Kingdom")).toBe("united kingdom");
+    expect(tavilyCountry("New Zealand")).toBe("new zealand");
+    expect(tavilyCountry("narnia")).toBeUndefined();
+    expect(tavilyCountry("zz")).toBeUndefined();
+    expect(tavilyCountry("")).toBeUndefined();
+    expect(tavilyCountry(undefined)).toBeUndefined();
+  });
+
+  it("sends Tavily a name it accepts, and no country at all when it would reject the value", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => reply([]));
+    const client = tavilyOnly(fetcher);
+    const bodyOf = (call: number) => JSON.parse(String(fetcher.mock.calls[call]![1]!.body));
+    await client.search("bot", "key", ["a"], { country: "UK" });
+    await client.search("bot", "key", ["b"], { country: "narnia" });
+    await client.search("bot", "key", ["c"], {});
+    expect(bodyOf(0).country).toBe("united kingdom");
+    expect(bodyOf(1)).not.toHaveProperty("country");
+    expect(bodyOf(2)).not.toHaveProperty("country");
   });
 });
 

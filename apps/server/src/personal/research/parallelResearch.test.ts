@@ -440,7 +440,8 @@ describe("modes", () => {
     expect(String(fetcher.mock.calls[0]?.[0])).toBe("https://api.tavily.com/search");
     expect(result?.provider).toBe("tavily");
     expect(events).toEqual([expect.objectContaining({ provider: "tavily", outcome: "served" })]);
-    expect(events[0]?.fallbackReason).toBeUndefined();
+    // Served by Tavily with nothing tried before: the field is left out, not logged as undefined.
+    expect(events[0]).not.toHaveProperty("fallbackReason");
   });
 
   it("reads the switch on every call", async () => {
