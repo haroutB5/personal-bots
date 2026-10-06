@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createResearchClient, publicResearchUrl } from "./researchClient.ts";
 
+/** These tests pin the Tavily path (and its guards); the Parallel path has its own file. */
+const tavilyOnly = (fetcher: typeof fetch) =>
+  createResearchClient(fetcher, { mode: () => "tavily" });
+
 /**
  * Lets the limiter's hand-off chain run: abort -> release -> the queued fetch
  * starts. Every link is a promise, so draining the microtask queue is enough.
@@ -21,7 +25,7 @@ describe("public research", () => {
           finish = resolve;
         }),
     );
-    const client = createResearchClient(fetcher);
+    const client = tavilyOnly(fetcher);
     const first = client.search("bot", "secret", ["camera", "camera"], {});
     const second = client.search("bot", "secret", ["camera"], {});
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -35,7 +39,7 @@ describe("public research", () => {
   it("limits concurrency globally across bots while preserving partial successes", async () => {
     const waiting: Array<(response: Response) => void> = [];
     const fetcher = vi.fn<typeof fetch>(() => new Promise((resolve) => waiting.push(resolve)));
-    const client = createResearchClient(fetcher);
+    const client = tavilyOnly(fetcher);
     const first = client.read(
       "a",
       "key",
@@ -58,7 +62,7 @@ describe("public research", () => {
 
   it("isolates different credentials and bot scopes", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => reply([]));
-    const client = createResearchClient(fetcher);
+    const client = tavilyOnly(fetcher);
     await Promise.all([
       client.search("a", "key1", ["same"], {}),
       client.search("a", "key2", ["same"], {}),
@@ -83,7 +87,7 @@ describe("public research", () => {
           }),
         ),
     );
-    const result = await createResearchClient(fetcher).products("bot", "key", "camera", "uk");
+    const result = await tavilyOnly(fetcher).products("bot", "key", "camera", "uk");
     expect(result.sources[0]).toMatchObject({
       price: "£90",
       delivery: null,
@@ -101,9 +105,7 @@ describe("public research", () => {
         { url: "javascript:alert(1)", raw_content: "bad" },
       ]),
     );
-    const [result] = await createResearchClient(fetcher).read("bot", "key", [
-      "https://example.com/a",
-    ]);
+    const [result] = await tavilyOnly(fetcher).read("bot", "key", ["https://example.com/a"]);
     expect(result?.sources).toHaveLength(1);
     expect(result?.sources[0]?.content).toHaveLength(12000);
     expect(result?.sources[0]?.truncated).toBe(true);
@@ -114,7 +116,7 @@ describe("public research", () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response("x".repeat(2_000_001)))
       .mockResolvedValueOnce(reply([]));
-    const client = createResearchClient(fetcher);
+    const client = tavilyOnly(fetcher);
     const [failed] = await client.search("bot", "key", ["query"], {});
     expect(failed?.error).not.toBeNull();
     const [retried] = await client.search("bot", "key", ["query"], {});
@@ -126,15 +128,13 @@ describe("public research", () => {
     const fetcher = vi.fn<typeof fetch>(async () =>
       reply([{ url: "https://example.com/empty", raw_content: "" }]),
     );
-    const [result] = await createResearchClient(fetcher).read("bot", "key", [
-      "https://example.com/empty",
-    ]);
+    const [result] = await tavilyOnly(fetcher).read("bot", "key", ["https://example.com/empty"]);
     expect(result?.error).toContain("extraction failed");
   });
 
   it("returns a failure rather than inventing results for malformed responses", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => new Response('{"oops":true}'));
-    const [result] = await createResearchClient(fetcher).search("bot", "key", ["query"], {});
+    const [result] = await tavilyOnly(fetcher).search("bot", "key", ["query"], {});
     expect(result?.error).not.toBeNull();
     expect(result?.sources).toEqual([]);
   });
@@ -151,7 +151,7 @@ describe("public research", () => {
   ])("refuses private or credential-bearing URLs: %s", async (url) => {
     expect(publicResearchUrl(url)).toBeNull();
     const fetcher = vi.fn<typeof fetch>();
-    const [result] = await createResearchClient(fetcher).read("bot", "key", [url]);
+    const [result] = await tavilyOnly(fetcher).read("bot", "key", [url]);
     expect(fetcher).not.toHaveBeenCalled();
     expect(result?.error).not.toBeNull();
   });
@@ -169,7 +169,7 @@ describe("public research", () => {
   ])("refuses share-link capability tokens: %s", async (url) => {
     expect(publicResearchUrl(url)).toBeNull();
     const fetcher = vi.fn<typeof fetch>();
-    const [result] = await createResearchClient(fetcher).read("bot", "key", [url]);
+    const [result] = await tavilyOnly(fetcher).read("bot", "key", [url]);
     expect(fetcher).not.toHaveBeenCalled();
     expect(result?.error).not.toBeNull();
   });
@@ -179,14 +179,14 @@ describe("public research", () => {
     // The name check alone lets it through; the outbound value check is what stops it.
     expect(publicResearchUrl(url)).not.toBeNull();
     const fetcher = vi.fn<typeof fetch>();
-    const [result] = await createResearchClient(fetcher).read("bot", "key", [url]);
+    const [result] = await tavilyOnly(fetcher).read("bot", "key", [url]);
     expect(fetcher).not.toHaveBeenCalled();
     expect(result?.error).not.toBeNull();
   });
 
   it("refuses a search query with a share link pasted into it", async () => {
     const fetcher = vi.fn<typeof fetch>();
-    const [result] = await createResearchClient(fetcher).search(
+    const [result] = await tavilyOnly(fetcher).search(
       "bot",
       "key",
       ["what is https://www.dropbox.com/scl/fi/abc/report.pdf?rlkey=9f2k1lqz0d about"],
@@ -215,7 +215,7 @@ describe("public research", () => {
           });
         }),
     );
-    const client = createResearchClient(fetcher);
+    const client = tavilyOnly(fetcher);
     const cancel = new AbortController();
     const abandoned = client.read(
       "a",
@@ -259,7 +259,7 @@ describe("public research", () => {
           });
         }),
     );
-    const client = createResearchClient(fetcher);
+    const client = tavilyOnly(fetcher);
     const cancel = new AbortController();
     const first = client.search("bot", "key", ["camera"], {}, cancel.signal);
     const second = client.search("bot", "key", ["camera"], {});
@@ -293,7 +293,7 @@ describe("Google search", () => {
         { title: "Camera shop", link: "https://shop.example/camera", snippet: "In stock" },
       ]),
     );
-    const result = await createResearchClient(fetcher).google("bot", "serp-key", "camera", {
+    const result = await tavilyOnly(fetcher).google("bot", "serp-key", "camera", {
       country: "uk",
       timeRange: "week",
       num: 5,
@@ -330,7 +330,7 @@ describe("Google search", () => {
         })),
       ),
     );
-    const result = await createResearchClient(fetcher).google("bot", "key", "anything", {});
+    const result = await tavilyOnly(fetcher).google("bot", "key", "anything", {});
     expect(new URL(String(fetcher.mock.calls[0]![0])).searchParams.get("num")).toBe("8");
     expect(result.sources).toHaveLength(8);
   });
@@ -342,14 +342,14 @@ describe("Google search", () => {
           JSON.stringify({ error: "Google hasn't returned any results for this query." }),
         ),
     );
-    const result = await createResearchClient(fetcher).google("bot", "key", "zzqx", {});
+    const result = await tavilyOnly(fetcher).google("bot", "key", "zzqx", {});
     expect(result.error).toBeNull();
     expect(result.sources).toEqual([]);
   });
 
   it("refuses a query with a share link pasted into it", async () => {
     const fetcher = vi.fn<typeof fetch>();
-    const result = await createResearchClient(fetcher).google(
+    const result = await tavilyOnly(fetcher).google(
       "bot",
       "key",
       "https://www.dropbox.com/scl/fi/abc/report.pdf?rlkey=9f2k1lqz0d",

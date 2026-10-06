@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import { PersonalBotRepository } from "../../../personal/PersonalBotRepository.ts";
 import { PersonalBrowser } from "../../../personal/browser/PersonalBrowser.ts";
@@ -15,7 +15,10 @@ import { McpInvocationContext } from "../../McpInvocationContext.ts";
 import { PersonalToolkitHandlersLive } from "./handlers.ts";
 import { PersonalToolkit } from "./tools.ts";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 const encodeResult = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function search(
@@ -23,7 +26,7 @@ function search(
   linked: boolean,
   key?: string,
   exposure: ReadonlyArray<string> = [],
-  tool: "search_web" | "search_google" = "search_web",
+  tool: "search_web" | "search_google" | "read_pages" = "search_web",
 ) {
   const layer = PersonalToolkitHandlersLive.pipe(
     Layer.provide(
@@ -44,7 +47,7 @@ function search(
             botId: PersonalBotId.make("bot"),
             systemInstructions: null,
             environment: key
-              ? tool === "search_web"
+              ? tool !== "search_google"
                 ? { PB_SECRET_TAVILY_API_KEY: key }
                 : { PB_SECRET_SERPAPI_API_KEY: key }
               : {},
@@ -57,6 +60,11 @@ function search(
     if (tool === "search_google") {
       return yield* toolkit
         .handle("search_google", { query: "public facts" })
+        .pipe(Stream.unwrap, Stream.runCollect);
+    }
+    if (tool === "read_pages") {
+      return yield* toolkit
+        .handle("read_pages", { urls: ["https://example.com/facts"] })
         .pipe(Stream.unwrap, Stream.runCollect);
     }
     return yield* toolkit
@@ -75,7 +83,10 @@ function search(
   );
 }
 
-describe("research tool access", () => {
+describe("research tool access (Tavily kill switch)", () => {
+  // These pin the Tavily-only behaviour: the key is required and used as the credential.
+  beforeEach(() => vi.stubEnv("T3CODE_PERSONAL_RESEARCH_PROVIDER", "tavily"));
+
   for (const [capability, linked] of [
     [false, true],
     [true, false],
@@ -194,4 +205,124 @@ describe("search_google access", () => {
       expect(encodeResult(result)).not.toContain("serp-key");
     }),
   );
+});
+
+const parallelPage = () =>
+  new Response(
+    encodeResult({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        content: [{ type: "text", text: "{}" }],
+        structuredContent: {
+          results: [
+            {
+              url: "https://example.com/facts",
+              title: "Source",
+              excerpts: ["Facts from Parallel"],
+            },
+          ],
+        },
+        isError: false,
+      },
+    }),
+    { headers: { "Content-Type": "application/json" } },
+  );
+
+describe("search_web and read_pages through Parallel (default)", () => {
+  beforeEach(() => vi.stubEnv("T3CODE_PERSONAL_RESEARCH_PROVIDER", ""));
+
+  for (const tool of ["search_web", "read_pages"] as const) {
+    it.effect(`${tool} works with no Tavily key at all, sending no credential`, () =>
+      Effect.gen(function* () {
+        const fetcher = vi.fn<typeof fetch>(async () => parallelPage());
+        vi.stubGlobal("fetch", fetcher);
+        const result = yield* search(true, true, undefined, [], tool);
+        expect(fetcher).toHaveBeenCalledTimes(1);
+        expect(String(fetcher.mock.calls[0]?.[0])).toBe("https://search.parallel.ai/mcp");
+        expect(fetcher.mock.calls[0]?.[1]?.headers).not.toHaveProperty("Authorization");
+        const encoded = encodeResult(result);
+        expect(encoded).toContain("Facts from Parallel");
+        expect(encoded).toContain('"provider":"parallel"');
+      }),
+    );
+
+    it.effect(
+      `${tool} is refused before any network call once a sensitive site was open, key or not`,
+      () =>
+        Effect.gen(function* () {
+          for (const key of [undefined, "tavily-key"]) {
+            const fetcher = vi.fn<typeof fetch>(async () => parallelPage());
+            vi.stubGlobal("fetch", fetcher);
+            const result = yield* search(true, true, key, ["https://bank.example"], tool).pipe(
+              Effect.catch((error) => Effect.succeed(String(error))),
+            );
+            expect(fetcher).not.toHaveBeenCalled();
+            expect(encodeResult(result)).toMatch(/sensitive/i);
+            expect(encodeResult(result)).toContain("https://bank.example");
+          }
+        }),
+    );
+
+    it.effect(`${tool} still needs the personal capability and a linked bot`, () =>
+      Effect.gen(function* () {
+        for (const [capability, linked] of [
+          [false, true],
+          [true, false],
+        ] as const) {
+          const fetcher = vi.fn<typeof fetch>(async () => parallelPage());
+          vi.stubGlobal("fetch", fetcher);
+          const result = yield* search(capability, linked, undefined, [], tool).pipe(
+            Effect.catch((error) => Effect.succeed(String(error))),
+          );
+          expect(encodeResult(result)).toMatch(/capability|personal bot chat/i);
+          expect(fetcher).not.toHaveBeenCalled();
+        }
+      }),
+    );
+
+    it.effect(`${tool} falls back to Tavily with the saved key when Parallel fails`, () =>
+      Effect.gen(function* () {
+        const fetcher = vi.fn<typeof fetch>(async (input) =>
+          String(input).includes("search.parallel.ai")
+            ? new Response("down", { status: 503 })
+            : new Response(
+                JSON.stringify({
+                  results: [
+                    {
+                      title: "Source",
+                      url: "https://example.com/facts",
+                      content: "Facts from Tavily",
+                      raw_content: "Facts from Tavily",
+                    },
+                  ],
+                }),
+              ),
+        );
+        vi.stubGlobal("fetch", fetcher);
+        const result = yield* search(true, true, "tavily-key", [], tool);
+        expect(fetcher).toHaveBeenCalledTimes(2);
+        expect(fetcher.mock.calls[1]?.[1]?.headers).toMatchObject({
+          Authorization: "Bearer tavily-key",
+        });
+        const encoded = encodeResult(result);
+        expect(encoded).toContain("Facts from Tavily");
+        expect(encoded).toContain('"provider":"tavily"');
+        expect(encoded).not.toContain("tavily-key");
+      }),
+    );
+
+    it.effect(`${tool} with the tavily switch and no key names the key and calls nothing`, () =>
+      Effect.gen(function* () {
+        vi.stubEnv("T3CODE_PERSONAL_RESEARCH_PROVIDER", "tavily");
+        const fetcher = vi.fn<typeof fetch>(async () => parallelPage());
+        vi.stubGlobal("fetch", fetcher);
+        const result = yield* search(true, true, undefined, [], tool).pipe(
+          Effect.catch((error) => Effect.succeed(String(error))),
+        );
+        expect(encodeResult(result)).toContain("TAVILY_API_KEY");
+        expect(fetcher).not.toHaveBeenCalled();
+      }),
+    );
+  }
 });

@@ -32,7 +32,10 @@ import * as OrchestrationEngine from "../../../orchestration/Services/Orchestrat
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import { PersonalBrowser } from "../../../personal/browser/PersonalBrowser.ts";
 import { PersonalSessionAccess } from "../../../personal/secrets/PersonalSessionAccess.ts";
-import { createResearchClient } from "../../../personal/research/researchClient.ts";
+import {
+  createResearchClient,
+  type ResearchEvent,
+} from "../../../personal/research/researchClient.ts";
 import * as PersonalMemoryService from "../../../personal/memory/PersonalMemoryService.ts";
 import * as PersonalRoutineService from "../../../personal/routines/PersonalRoutineService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -187,7 +190,19 @@ const make = Effect.gen(function* () {
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const sessions = yield* PersonalSessionAccess;
   const browser = yield* PersonalBrowser;
-  const research = createResearchClient();
+  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  /**
+   * One line per search_web / read_pages call: which provider served it and, when
+   * Parallel failed first, why. Counts and reason slugs only: no query, no URL.
+   */
+  const logResearch = (event: ResearchEvent) =>
+    (event.outcome === "failed" ? Effect.logWarning : Effect.logInfo)(
+      "personal research call",
+      event,
+    );
+  const research = createResearchClient(undefined, {
+    onEvent: (event) => void runFork(logResearch(event)),
+  });
   const engine = yield* Effect.serviceOption(OrchestrationEngine.OrchestrationEngineService);
 
   /** The "Saved a note" / "Forgot a note" line with its Undo, in the bot's chat. */
@@ -295,16 +310,39 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const researchAccess = Effect.fn("personal.researchAccess")(function* (name: string) {
+  /**
+   * Who may research, before any provider is called: the personal capability,
+   * a bot's own chat, and no sensitive site open in it. The key comes after and
+   * may be absent: search_web and read_pages run on Parallel, which needs none.
+   */
+  const researchGate = Effect.fn("personal.researchAccess")(function* (name: string) {
     const { scope, botId } = yield* requireBotThread;
     yield* refuseWhileCarryingSensitiveData(scope.threadId);
     const grant = yield* sessions.forThread(scope.threadId);
-    const key = grant.environment[`PB_SECRET_${name}`];
-    if (!key)
+    return { key: grant.environment[`PB_SECRET_${name}`] || undefined, scope: botId };
+  });
+
+  /** The tools that cannot run without their own key (search_google, search_products). */
+  const researchAccess = Effect.fn("personal.researchKeyAccess")(function* (name: string) {
+    const access = yield* researchGate(name);
+    if (access.key === undefined)
       return yield* refuse(
         `Save ${name} using request_secret to enable this tool. Use native web search or the browser meanwhile. Do not ask for keys in chat.`,
       );
-    return { key, scope: botId };
+    return { key: access.key, scope: access.scope };
+  });
+
+  /**
+   * search_web and read_pages: the Tavily key is only needed when the provider
+   * switch says Tavily-only; otherwise it just enables the fallback.
+   */
+  const webResearchAccess = Effect.fn("personal.webResearchAccess")(function* () {
+    const access = yield* researchGate("TAVILY_API_KEY");
+    if (access.key === undefined && research.providerMode() === "tavily")
+      return yield* refuse(
+        "Save TAVILY_API_KEY using request_secret to enable this tool. Use native web search or the browser meanwhile. Do not ask for keys in chat.",
+      );
+    return access;
   });
 
   /**
@@ -455,7 +493,7 @@ const make = Effect.gen(function* () {
   return PersonalToolkit.of({
     search_web: (input) =>
       Effect.gen(function* () {
-        const access = yield* researchAccess("TAVILY_API_KEY");
+        const access = yield* webResearchAccess();
         const results = yield* Effect.tryPromise({
           // The signal is the fiber's: interrupting the turn aborts the fetches
           // and hands their concurrency slots straight back.
@@ -477,7 +515,7 @@ const make = Effect.gen(function* () {
       }),
     read_pages: (input) =>
       Effect.gen(function* () {
-        const access = yield* researchAccess("TAVILY_API_KEY");
+        const access = yield* webResearchAccess();
         const results = yield* Effect.tryPromise({
           try: (signal) => research.read(access.scope, access.key, input.urls, signal),
           catch: () => refuse("Page reading failed."),

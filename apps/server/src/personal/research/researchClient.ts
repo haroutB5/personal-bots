@@ -1,6 +1,25 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeNet from "node:net";
 import * as DateTime from "effect/DateTime";
+import {
+  PARALLEL_FETCH_TIMEOUT_MS,
+  PARALLEL_SEARCH_TIMEOUT_MS,
+  ParallelFailure,
+  ResearchCancelled,
+  callParallelTool,
+  looksGarbled,
+  looksLikeBlockPage,
+  parallelEndpoint,
+  parallelFetchArguments,
+  parallelFetchRows,
+  parallelSearchArguments,
+  parallelSearchRows,
+  researchProviderMode,
+  type FallbackReason,
+  type ResearchProviderMode,
+} from "./parallelSearch.ts";
+
+export { researchProviderMode, type FallbackReason, type ResearchProviderMode };
 
 export interface ResearchSource {
   url: string;
@@ -28,6 +47,31 @@ export interface SearchOptions {
   domains?: readonly string[] | undefined;
   /** Google results wanted (search_google only); the provider may return fewer. */
   num?: number | undefined;
+}
+
+/**
+ * What one provider call came to, for the log. Counts and reason slugs only:
+ * never a query, a URL, a title or any provider text.
+ */
+export interface ResearchEvent {
+  tool: "search" | "read";
+  /** The provider that served the call, or the last one tried when it failed. */
+  provider: "parallel" | "tavily";
+  outcome: "served" | "failed";
+  /** Set when Parallel failed first; Tavily's own outcome is `outcome`. */
+  fallbackReason?: FallbackReason | undefined;
+  sources: number;
+  ms: number;
+}
+
+export interface ResearchClientOptions {
+  /** Defaults to the T3CODE_PERSONAL_RESEARCH_PROVIDER switch, read per call. */
+  mode?: (() => ResearchProviderMode) | undefined;
+  /** Defaults to the MCP server, or T3CODE_PERSONAL_RESEARCH_PARALLEL_URL. */
+  parallelUrl?: (() => string) | undefined;
+  /** Tests only: shortens Parallel's 20 s search / 30 s fetch timeouts. */
+  parallelTimeoutMs?: number | undefined;
+  onEvent?: ((event: ResearchEvent) => void) | undefined;
 }
 
 /** Most Google results one search_google call returns. */
@@ -237,7 +281,11 @@ function follow(
 /** One server-lifetime client: four requests at once, identical in-flight work shared.
  * No completed-result cache: a previous price or stock check is never presented as fresh.
  */
-export function createResearchClient(fetchImpl: typeof fetch = fetch) {
+export function createResearchClient(
+  fetchImpl: typeof fetch = fetch,
+  clientOptions: ResearchClientOptions = {},
+) {
+  const providerMode = clientOptions.mode ?? (() => researchProviderMode());
   const timestamp = () => DateTime.formatIso(DateTime.nowUnsafe());
   const pending = new Map<string, PendingResearch>();
   let active = 0;
@@ -255,9 +303,53 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
     }
   }
 
+  /** Parallel's answer for one query or page, or a {@link ParallelFailure} saying why it is not usable. */
+  async function viaParallel(
+    kind: "search" | "extract",
+    request: string,
+    search: SearchOptions,
+    signal: AbortSignal,
+  ): Promise<ResearchSource[]> {
+    const endpoint = (clientOptions.parallelUrl ?? parallelEndpoint)();
+    if (kind === "search") {
+      const answer = await callParallelTool(
+        fetchImpl,
+        endpoint,
+        "web_search",
+        parallelSearchArguments(request, search),
+        signal,
+        clientOptions.parallelTimeoutMs ?? PARALLEL_SEARCH_TIMEOUT_MS,
+      );
+      const found = sources(parallelSearchRows(answer, search.domains), "search-snippet").slice(
+        0,
+        6,
+      );
+      if (found.length === 0) throw new ParallelFailure("empty");
+      const readable = found.filter((source) => !looksGarbled(source.content));
+      if (readable.length === 0) throw new ParallelFailure("garbled");
+      return readable;
+    }
+    const answer = await callParallelTool(
+      fetchImpl,
+      endpoint,
+      "web_fetch",
+      parallelFetchArguments(request),
+      signal,
+      clientOptions.parallelTimeoutMs ?? PARALLEL_FETCH_TIMEOUT_MS,
+    );
+    const found = sources(parallelFetchRows(answer), "page-content").filter((source) =>
+      source.content.trim(),
+    );
+    if (found.length === 0) throw new ParallelFailure("empty");
+    if (found.every((source) => looksGarbled(source.content))) throw new ParallelFailure("garbled");
+    if (found.every((source) => looksLikeBlockPage(source.content)))
+      throw new ParallelFailure("blocked_page");
+    return found;
+  }
+
   function run(
     scope: string,
-    key: string,
+    key: string | undefined,
     kind: "search" | "extract" | "shopping" | "google",
     request: string,
     options: SearchOptions,
@@ -269,7 +361,7 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
     const serpapi = kind === "shopping" || kind === "google";
     const stub = (error: string): ResearchResult => ({
       request,
-      provider: serpapi ? "serpapi" : "tavily",
+      provider: serpapi ? "serpapi" : providerMode() === "tavily" ? "tavily" : "parallel",
       retrievedAt: timestamp(),
       sources: [],
       error,
@@ -286,20 +378,64 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
     if (pending.size >= 64) return Promise.resolve(stub("Research is busy. Retry shortly."));
     const controller = new AbortController();
     const task = limited(async (): Promise<ResearchResult> => {
-      const provider = serpapi ? "serpapi" : "tavily";
+      const mode = serpapi ? "tavily" : providerMode();
       const result: ResearchResult = {
         request,
-        provider,
+        provider: serpapi ? "serpapi" : mode === "tavily" ? "tavily" : "parallel",
         retrievedAt: timestamp(),
         sources: [],
         error: null,
       };
+      const started = performance.now();
+      const tool = kind === "search" ? "search" : "read";
+      let fallbackReason: FallbackReason | undefined;
+      let tavilyCalled = false;
       try {
         // Cancelled while queued: give the slot straight back instead of
         // spending a provider call nobody is waiting for.
         if (controller.signal.aborted) throw new Error("Cancelled before the request started.");
         if (kind === "extract" && !outboundResearchUrl(request))
           throw new Error("Use a public HTTP(S) page URL without credentials or access tokens.");
+        // Parallel first for search_web and read_pages. This sits after the
+        // URL screen above, so a signed link never reaches either provider.
+        if (!serpapi && mode !== "tavily") {
+          try {
+            result.sources = await viaParallel(
+              kind === "search" ? "search" : "extract",
+              request,
+              options,
+              controller.signal,
+            );
+            result.retrievedAt = timestamp();
+            clientOptions.onEvent?.({
+              tool,
+              provider: "parallel",
+              outcome: "served",
+              sources: result.sources.length,
+              ms: Math.round(performance.now() - started),
+            });
+            return result;
+          } catch (error) {
+            // A caller that left is not Parallel failing: no fallback, no log line.
+            if (error instanceof ResearchCancelled || controller.signal.aborted) throw error;
+            fallbackReason = error instanceof ParallelFailure ? error.reason : "protocol_error";
+            if (mode === "parallel-only" || key === undefined) {
+              result.error = `Parallel ${kind === "search" ? "search" : "page reading"} failed (${fallbackReason}). ${key === undefined && mode !== "parallel-only" ? "No Tavily key is saved to fall back on. " : ""}Try another source or the browser.`;
+              clientOptions.onEvent?.({
+                tool,
+                provider: "parallel",
+                outcome: "failed",
+                fallbackReason,
+                sources: 0,
+                ms: Math.round(performance.now() - started),
+              });
+              return result;
+            }
+            result.provider = "tavily";
+          }
+        }
+        if (key === undefined) throw new Error("No provider key.");
+        tavilyCalled = !serpapi;
         const endpoint = serpapi
           ? new URL("https://serpapi.com/search.json")
           : new URL(`https://api.tavily.com/${kind}`);
@@ -351,6 +487,7 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
         });
         if (!response.ok) {
+          const provider = serpapi ? "serpapi" : "tavily";
           result.error = `${provider} request failed (HTTP ${response.status}). ${[401, 403].includes(response.status) ? "Check the saved API key." : response.status === 429 ? "Rate limit reached; retry later." : "Try another source or the browser."}`;
           await response.body?.cancel();
           return result;
@@ -387,6 +524,17 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
         // Never return provider bodies, URLs with API keys, or exception messages.
         result.error =
           "Research request failed or timed out. Check the public URL and provider configuration; try another source or the browser.";
+      } finally {
+        // Every Tavily exit, including the early return on an HTTP error.
+        if (tavilyCalled)
+          clientOptions.onEvent?.({
+            tool,
+            provider: "tavily",
+            outcome: result.error ? "failed" : "served",
+            fallbackReason,
+            sources: result.sources.length,
+            ms: Math.round(performance.now() - started),
+          });
       }
       return result;
     }).finally(() => pending.delete(id));
@@ -396,9 +544,11 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
   }
 
   return {
+    /** The provider switch as of now: handlers need it to know whether a Tavily key is required. */
+    providerMode,
     search: (
       scope: string,
-      key: string,
+      key: string | undefined,
       queries: readonly string[],
       options: SearchOptions,
       signal?: AbortSignal,
@@ -406,7 +556,7 @@ export function createResearchClient(fetchImpl: typeof fetch = fetch) {
       Promise.all(
         [...new Set(queries)].map((query) => run(scope, key, "search", query, options, signal)),
       ),
-    read: (scope: string, key: string, urls: readonly string[], signal?: AbortSignal) =>
+    read: (scope: string, key: string | undefined, urls: readonly string[], signal?: AbortSignal) =>
       Promise.all([...new Set(urls)].map((url) => run(scope, key, "extract", url, {}, signal))),
     products: (scope: string, key: string, query: string, country: string, signal?: AbortSignal) =>
       run(scope, key, "shopping", query, { country }, signal),
