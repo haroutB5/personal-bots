@@ -11,6 +11,8 @@
 //   BADCHOICES, CHOICESBUSY, CHOICES, CHOICES6, CHOICES7  replies that end with a choices block.
 //   LONGMSG  a long multi-paragraph reply.   SLOW<n>  works for n seconds, then answers.
 //   DELEGATE:<botId>  calls the delegate_task MCP tool.   TASKDONE  answers a delegated task.
+//   MCPTOOL <name> <one-line json>  calls any MCP tool the bot has (update_bot, create_bot, ...) and
+//     answers "MCPTOOL <name> ok|refused: <the tool's result>", so a test reads the outcome in the chat.
 //   anything else  "Got it." plus the reply quote it received, if any.
 // State and log: FAKE_CLAUDE_PID_DIR (set by the script; default the OS temp folder).
 import { appendFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
@@ -286,6 +288,31 @@ lines.on("line", async (line) => {
         finish("ok", false);
       },
       Number(slow[1]) * 1000,
+    );
+    return;
+  }
+  const tool = text.match(/MCPTOOL (\w+) (\{.*\})/);
+  if (tool) {
+    let toolArgs;
+    try {
+      toolArgs = JSON.parse(tool[2]);
+    } catch (err) {
+      assistant(`MCPTOOL ${tool[1]} has bad JSON: ${err}`);
+      finish("failed", false);
+      return;
+    }
+    mcpCall(tool[1], toolArgs).then(
+      (res) => {
+        const body = JSON.stringify(res?.result ?? res?.error ?? res).slice(0, 1500);
+        log(`mcptool ${tool[1]} ${body}`);
+        assistant(`MCPTOOL ${tool[1]} ${res?.result?.isError ? "refused" : "ok"}: ${body}`);
+        finish("ok", false);
+      },
+      (err) => {
+        log(`mcptool ${tool[1]} failed ${err}`);
+        assistant(`MCPTOOL ${tool[1]} failed: ${err}`);
+        finish("failed", false);
+      },
     );
     return;
   }
