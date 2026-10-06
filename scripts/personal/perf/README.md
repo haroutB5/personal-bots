@@ -238,3 +238,18 @@ Final release against 1.64.0, 8 interleaved runs each (`qa/perf1641/final/summar
 - _Gate._ The committed `perf:check` fails J2.chatShell (ceiling 237) on 1.64.0 itself on this rig
   (p50 309 and 316) and on 1.64.1 (277 to 282); J1-warm.wall (1785) sits at its edge on both. Only the four
   deterministic counters were ratcheted (see `budget.json`); no ceiling was loosened.
+
+## 1.64.2: the start gap (6 Oct 2026)
+
+`startgap.mjs <release> <throwaway root under the temp folder> <port> [runs] [out.json]` spawns a server and, from before the
+spawn, sends an HTTP GET and a `/ws` upgrade every 50 ms plus three phone-model clients (the web client's 15 s attempt
+timeout and its 1 s base backoff ladder). It reports the port-open time, the first answered request, how many requests sent
+after the port opened were never answered, and each phone model's reconnect time.
+
+Finding on 1.64.1 (10 restarts, synthetic 300 MB root): the port opens at about 0.92 s and the routes are ready at about
+1.69 s. Requests that arrive in the first ~0.4 s (until the request handler is attached) are never answered, not even after the
+server is ready; the rest wait and are answered at ready. 146 of 3902 requests sent after port open were never answered, in 10
+of 10 restarts. 6 of 30 phone models hit it and reconnected after 18.1 to 19.9 s (15 s attempt timeout, then the backoff).
+A real Chrome that opens the app 250 ms after the port opens did not load it in 25 s, 10 of 10. 1.64.2 holds early requests and
+replays them to the handler: 0 of 1188 unanswered, no phone model above 2.5 s, Chrome loads the app and connects `/ws` at a median
+3.0 s. Startup itself is unchanged (ready median 1686 vs 1687 ms). See `HANDOFF-1642.md`.

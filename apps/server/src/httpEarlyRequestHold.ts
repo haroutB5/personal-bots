@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - a raw Node socket server callback, outside any Effect fiber; each timer is cleared on every completion path.
 import type * as NodeHttp from "node:http";
-import type { Duplex } from "node:stream";
+import type * as NodeStream from "node:stream";
 
 /**
  * The listening socket opens as soon as the HTTP server layer is built, but
@@ -33,7 +33,7 @@ type HeldRequest = {
 type HeldUpgrade = {
   readonly kind: "upgrade";
   readonly request: NodeHttp.IncomingMessage;
-  readonly socket: Duplex;
+  readonly socket: NodeStream.Duplex;
   readonly head: Buffer;
   readonly timer: ReturnType<typeof setTimeout>;
 };
@@ -77,7 +77,11 @@ export function holdEarlyRequestsUntilHandled<T extends NodeHttp.Server>(
     });
   };
 
-  const holdUpgrade = (request: NodeHttp.IncomingMessage, socket: Duplex, head: Buffer) => {
+  const holdUpgrade = (
+    request: NodeHttp.IncomingMessage,
+    socket: NodeStream.Duplex,
+    head: Buffer,
+  ) => {
     const entry: HeldUpgrade = {
       kind: "upgrade",
       request,
