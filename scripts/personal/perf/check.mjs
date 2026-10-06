@@ -4,6 +4,9 @@
 //   node scripts/personal/perf/check.mjs --ratchet  # check, then lower budgets that were beaten
 //   node scripts/personal/perf/check.mjs --origin http://127.0.0.1:38711   # a throwaway server
 //                                                   # (needs its login.mjs auth state)
+//   node scripts/personal/perf/check.mjs --origin http://127.0.0.1:38711 --bot Researcher
+//                                                   # the bot whose chat J2 opens, when the
+//                                                   # server has no bot called "Frontend"
 //
 // budget.json holds, per journey, the p50 ceiling of each gated metric plus
 // the bench settings it was measured with. Budgets only ever go down: an
@@ -21,6 +24,8 @@ const budget = JSON.parse(NodeFS.readFileSync(budgetFile, "utf8"));
 const ratchet = process.argv.includes("--ratchet");
 const originFlag = process.argv.indexOf("--origin");
 const origin = originFlag >= 0 ? process.argv[originFlag + 1] : budget.settings.origin;
+const botFlag = process.argv.indexOf("--bot");
+const bot = botFlag >= 0 ? process.argv[botFlag + 1] : budget.settings.bot;
 const out = NodePath.join(PERF_HOME, `check-${Date.now()}.json`);
 const benchArgs = [
   new URL("./bench.mjs", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"),
@@ -34,7 +39,7 @@ const benchArgs = [
   String(budget.settings.cpu),
   "--out",
   out,
-  ...(budget.settings.bot ? ["--bot", budget.settings.bot] : []),
+  ...(bot ? ["--bot", bot] : []),
 ];
 const bench = NodeChildProcess.spawnSync(process.execPath, benchArgs, { stdio: "inherit" });
 if (bench.status !== 0) {

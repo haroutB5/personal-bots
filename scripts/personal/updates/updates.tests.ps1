@@ -185,6 +185,40 @@ Assert-Equal 'lint: an error in a file the run changed is red, and names it' $tr
 $lintCrash = @(@{ Name = 'lint'; Dir = '.'; File = $env:ComSpec; Args = @('/c', 'exit', '1'); Kind = 'lint' })
 Assert-Equal 'lint: exit 1 with nothing listed (a crash) is red' 1 (Invoke-UpdatesGates -Gates $lintCrash -Root $tempRoot -LogDir $gateDir -Log $callerLog -ChangedPaths @()).Count
 
+# 6 Oct: the 04:00 run was reverted ("lint exited 1 with no lint errors listed") because `vp lint` printed
+# its default layout (a header line, then ",-[file:line:col]") that the parser could not read.
+# The fixture is the real gate-lint.log of that run, trimmed to its 12 error blocks, a dozen warning
+# blocks and the tail: 6 files with errors, "Found 858 warnings and 12 errors."
+$realLint = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures\lint-default-layout-6oct.log') -Raw
+$expectedErrorFiles = 'apps/server/src/provider/Layers/CodexSessionRuntime.test.ts,apps/server/src/provider/processTree.test.ts,apps/server/src/provider/processTree.ts,scripts/personal/adblock/build-list.mjs,scripts/personal/adblock/crawl.mjs,scripts/personal/adblock/extract-domains.mjs'
+Assert-Equal 'lint (real default layout): the 6 files with errors, no warning-only files' $expectedErrorFiles (Get-UpdatesLintErrorFiles -Output $realLint)
+$realSummary = Get-UpdatesLintSummary -Output $realLint
+Assert-Equal 'lint (real default layout): the summary line' '858 warnings, 12 errors' ("$($realSummary.Warnings) warnings, $($realSummary.Errors) errors")
+Assert-Equal 'lint: no summary line (a crash) reads as none' $true ($null -eq (Get-UpdatesLintSummary -Output "something broke`nTimed out"))
+Assert-Equal 'lint: a warning block alone lists no file' 0 @(Get-UpdatesLintErrorFiles -Output "  ! eslint(no-unused-vars): Catch parameter 'e' is never used.`n     ,-[scripts/personal/adblock/crawl.mjs:105:12]`n 105 |   } catch (e) {}`n     ``----`n").Count
+Assert-Equal 'lint: a warning after an error does not borrow its location' 'a.ts' (Get-UpdatesLintErrorFiles -Output "  x r(a): m`n   ,-[a.ts:1:1]`n 1 | x`n   ``----`n`n  ! r(b): w`n   ,-[b.ts:2:2]`n 2 | y`n   ``----`n")
+Assert-Equal 'lint: Windows separators become forward slashes in the default layout' 'apps/web/src/x.tsx' (Get-UpdatesLintErrorFiles -Output "  x r(a): m`n   ,-[apps\web\src\x.tsx:3:4]`n")
+$realLintPath = 'C:\Users\Ht\.personal-bots\claude-code-updates\runs\20261006-0400\gate-lint.log'
+if (Test-Path -LiteralPath $realLintPath) {
+    Assert-Equal 'lint: the whole real 6 Oct log (15 000 lines) gives the same 6 files' $expectedErrorFiles (Get-UpdatesLintErrorFiles -Output (Get-Content -LiteralPath $realLintPath -Raw))
+}
+$fixtureLint = Join-Path $gateDir 'fake-lint-real.cmd'
+Set-Content -LiteralPath $fixtureLint -Encoding ASCII -Value @('@echo off', ('type "{0}"' -f (Join-Path $PSScriptRoot 'fixtures\lint-default-layout-6oct.log')), 'exit /b 1')
+$realGate = @(@{ Name = 'lint'; Dir = '.'; File = $fixtureLint; Args = @(); Kind = 'lint' })
+Assert-Equal 'lint (real log, exit 1): errors only in files the run did not change are not red' 0 (Invoke-UpdatesGates -Gates $realGate -Root $tempRoot -LogDir $gateDir -Log $callerLog -ChangedPaths @('apps/server/package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml')).Count
+$realRed = Invoke-UpdatesGates -Gates $realGate -Root $tempRoot -LogDir $gateDir -Log $callerLog -ChangedPaths @('scripts/personal/adblock/crawl.mjs', 'README.md')
+Assert-Equal 'lint (real log, exit 1): an error in a changed file is red and names it' $true (($realRed.Count -eq 1) -and ($realRed[0] -like 'lint: lint error(s) in a file this run changed: scripts/personal/adblock/crawl.mjs*'))
+$noErrorsGate = Join-Path $gateDir 'fake-lint-zero.cmd'
+Set-Content -LiteralPath $noErrorsGate -Encoding ASCII -Value @('@echo off', 'echo Found 12 warnings and 0 errors.', 'exit /b 1')
+Assert-Equal 'lint: exit 1 with a summary of 0 errors is not a crash' 0 (Invoke-UpdatesGates -Gates @(@{ Name = 'lint'; Dir = '.'; File = $noErrorsGate; Args = @(); Kind = 'lint' }) -Root $tempRoot -LogDir $gateDir -Log $callerLog -ChangedPaths @()).Count
+$unreadableGate = Join-Path $gateDir 'fake-lint-unreadable.cmd'
+Set-Content -LiteralPath $unreadableGate -Encoding ASCII -Value @('@echo off', 'echo something in a layout nobody wrote a parser for', 'echo Found 3 warnings and 2 errors.', 'exit /b 1')
+$unreadableRed = Invoke-UpdatesGates -Gates @(@{ Name = 'lint'; Dir = '.'; File = $unreadableGate; Args = @(); Kind = 'lint' }) -Root $tempRoot -LogDir $gateDir -Log $callerLog -ChangedPaths @()
+Assert-Equal 'lint: errors counted but none tied to a file is red (never pass on a guess)' $true (($unreadableRed.Count -eq 1) -and ($unreadableRed[0] -like 'lint: lint counted 2 error(s) but none could be tied to a file*'))
+$cleanGate = Join-Path $gateDir 'fake-lint-clean.cmd'
+Set-Content -LiteralPath $cleanGate -Encoding ASCII -Value @('@echo off', 'echo Found 858 warnings and 0 errors.', 'exit /b 0')
+Assert-Equal 'lint: exit 0 with 0 errors is green' 0 (Invoke-UpdatesGates -Gates @(@{ Name = 'lint'; Dir = '.'; File = $cleanGate; Args = @(); Kind = 'lint' }) -Root $tempRoot -LogDir $gateDir -Log $callerLog -ChangedPaths @()).Count
+
 Write-Host 'The urgent marker matches the push service'
 $ledgerSource = Get-Content -LiteralPath (Join-Path $PbRepoRoot 'apps\server\src\personal\claudeCodeReview\proposalLedger.ts') -Raw
 Assert-Equal 'URGENT_REPORT_PREFIX' $true ($ledgerSource -match ('export const URGENT_REPORT_PREFIX = "' + [regex]::Escape($UpdatesUrgentPrefix) + '";'))

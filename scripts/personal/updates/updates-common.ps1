@@ -465,12 +465,44 @@ function Get-UpdatesKnownFailures {
             Where-Object { $_.Length -gt 0 -and -not $_.StartsWith('#') })
 }
 
-# Files with a lint ERROR (warnings do not count) in `vp lint` output, forward slashes.
+# Files with a lint ERROR (warnings do not count) in `vp lint` output, forward
+# slashes. Two layouts exist: the one-line `file:line:col: error rule: text`, and
+# the default one `vp lint` prints when piped (what the nightly captured on
+# 6 Oct): a header line `  x rule(name): text` for an error (`  ! ...` for a
+# warning), then a code frame whose first line is `,-[file:line:col]`. The
+# 6 Oct run could not read the second layout, saw exit 1 with no files listed,
+# called it a crash and reverted a good run.
 function Get-UpdatesLintErrorFiles([string]$Output) {
     $clean = $Output -replace "\x1b\[[0-9;]*m", ''
-    return @($clean -split "`r?`n" | ForEach-Object {
-            if ($_ -match '^\s*(\S.*?):\d+:\d+: error\b') { ($Matches[1] -replace '\\', '/').Trim() }
-        } | Sort-Object -Unique)
+    # The error mark is "x" in the plain layout and a multiplication sign or a heavy x in a Unicode terminal; the warning mark is "!" or a warning sign.
+    $errorMark = '^\s*[x\u00d7\u2716]\s+\S'
+    $warningMark = '^\s*[!\u26a0]\s+\S'
+    $files = New-Object System.Collections.Generic.HashSet[string]
+    $inError = $false
+    foreach ($line in ($clean -split "`r?`n")) {
+        if ($line -match '^\s*(\S.*?):\d+:\d+: error\b') {
+            [void]$files.Add(($Matches[1] -replace '\\', '/').Trim())
+            $inError = $false
+        } elseif ($line -match $errorMark) {
+            $inError = $true
+        } elseif ($line -match $warningMark) {
+            $inError = $false
+        } elseif ($inError -and $line -match ',-\[(.+?):\d+:\d+\]') {
+            [void]$files.Add(($Matches[1] -replace '\\', '/').Trim())
+            $inError = $false
+        }
+    }
+    return @($files | Sort-Object)
+}
+
+# `vp lint` ends with "Found N warnings and M errors."; no such line means the
+# run did not finish (a crash or a timeout). Returns $null then.
+function Get-UpdatesLintSummary([string]$Output) {
+    $clean = $Output -replace "\x1b\[[0-9;]*m", ''
+    $m = [regex]::Matches($clean, 'Found (\d+) warnings? and (\d+) errors?')
+    if ($m.Count -eq 0) { return $null }
+    $last = $m[$m.Count - 1]
+    return [pscustomobject]@{ Warnings = [int]$last.Groups[1].Value; Errors = [int]$last.Groups[2].Value }
 }
 
 function Get-UpdatesVitestFailures([string]$Output) {
@@ -541,12 +573,18 @@ function Invoke-UpdatesGates {
             continue
         }
         if ($gate.Kind -eq 'lint') {
-            $errorFiles = @(Get-UpdatesLintErrorFiles -Output ($res.Out + "`n" + $res.Err))
+            $lintText = $res.Out + "`n" + $res.Err
+            $errorFiles = @(Get-UpdatesLintErrorFiles -Output $lintText)
+            $summary = Get-UpdatesLintSummary -Output $lintText
             $mine = @($errorFiles | Where-Object { $file = $_; @($ChangedPaths | Where-Object { ($_ -replace '\\', '/') -eq $file }).Count -gt 0 })
             if ($mine.Count -gt 0) {
                 $red.Add("$($gate.Name): lint error(s) in a file this run changed: $($mine -join ', ') (log $gateLog)") | Out-Null
-            } elseif ($res.Code -ne 0 -and $errorFiles.Count -eq 0) {
-                $red.Add("$($gate.Name) exited $($res.Code) with no lint errors listed (crash or timeout; log $gateLog)") | Out-Null
+            } elseif ($res.TimedOut -or ($res.Code -ne 0 -and $null -eq $summary -and $errorFiles.Count -eq 0)) {
+                # No "Found N warnings and M errors" line: the run did not finish.
+                $red.Add("$($gate.Name) exited $($res.Code) without a lint summary (crash or timeout; log $gateLog)") | Out-Null
+            } elseif ($null -ne $summary -and $summary.Errors -gt 0 -and $errorFiles.Count -eq 0) {
+                # Errors were counted but none could be tied to a file: the layout changed. Never pass on a guess.
+                $red.Add("$($gate.Name): lint counted $($summary.Errors) error(s) but none could be tied to a file (output layout changed?; log $gateLog)") | Out-Null
             } elseif ($errorFiles.Count -gt 0) {
                 & $Log "gate $($gate.Name): $($errorFiles.Count) file(s) with pre-existing lint errors, none changed by this run"
             }
