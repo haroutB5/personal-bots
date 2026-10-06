@@ -67,7 +67,10 @@ export function useNewChatPrompt(
     } finally {
       busy.current = false;
     }
+    // Gone, not fading out: the screen it was opened from may be hidden by now,
+    // and a sheet that cannot finish its exit animation would linger in the page.
     setIsOpen(false);
+    setMounted(false);
   };
 
   const dialog =

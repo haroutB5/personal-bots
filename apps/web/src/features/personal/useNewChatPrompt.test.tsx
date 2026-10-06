@@ -99,8 +99,8 @@ describe("useNewChatPrompt", () => {
     open();
     await act(async () => dialog().onStart("  Plan B  "));
     expect(log.events).toEqual(["create", "rename new-thread Plan B", "navigate"]);
-    // The sheet is closed again once the chat is on its way.
-    expect(dialog().open).toBe(false);
+    // The sheet is gone once the chat is on its way.
+    expect(mounted()).toBe(false);
   });
 
   it("keeps the auto-title when the name is empty", async () => {
