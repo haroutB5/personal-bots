@@ -25,6 +25,13 @@ export const PERSONAL_CHAT_NOTICE_CONTEXT_KIND = "personal-chat-notice";
  * memory-saved: a bot saved or forgot a note on its own (an assistant-role
  * row whose text is the whole line; `provider` carries "Memory"), so the
  * owner sees it land and can take it back with the row's Undo.
+ * model-fallback-on: the bot's provider hit its usage limit and the bot now runs
+ * on its fallback model (an assistant-role row whose text is the whole line).
+ * model-fallback-off: the original limit reset and the bot is back on its own
+ * model (an assistant-role row whose text is the whole line).
+ * model-fallback-resumed: the server's continue turn on the fallback model (a
+ * user-role turn message, since the provider needs a prompt; rendered as a
+ * system row).
  */
 export const PersonalChatNoticeKind = Schema.Literals([
   "usage-limit-paused",
@@ -33,6 +40,9 @@ export const PersonalChatNoticeKind = Schema.Literals([
   "team-bot-answer",
   "release-landed",
   "memory-saved",
+  "model-fallback-on",
+  "model-fallback-off",
+  "model-fallback-resumed",
 ]);
 export type PersonalChatNoticeKind = typeof PersonalChatNoticeKind.Type;
 

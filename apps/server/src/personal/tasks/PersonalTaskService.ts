@@ -62,6 +62,7 @@ import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { isMissingProviderConversationText } from "../../provider/missingProviderConversation.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import * as PersonalModelFallback from "../PersonalModelFallbackService.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
 import {
@@ -430,6 +431,13 @@ type AttemptOutcome =
       readonly message: string | null;
       /** A reset the provider reported; replaces the 1/5/15 min backoff. */
       readonly availableAt?: DateTime.Utc;
+      /** The usage limit the provider reported, for the bot's model fallback. */
+      readonly limit?: {
+        readonly provider: string;
+        readonly instanceId?: string | undefined;
+        readonly reason?: string | undefined;
+        readonly retryAt?: string | undefined;
+      };
     };
 
 type WorkItem =
@@ -641,6 +649,8 @@ export const make = Effect.gen(function* () {
   // Work records live beside the task tables. Optional so a layer that has no
   // SQL client (a unit test of the dispatcher alone) simply keeps none.
   const sqlOption = yield* Effect.serviceOption(SqlClient.SqlClient);
+  // Optional so the task service stays testable alone; the server always has it.
+  const modelFallback = yield* Effect.serviceOption(PersonalModelFallback.PersonalModelFallback);
   const workStore = Option.map(sqlOption, (sql) => ({
     sql,
     exposures: makeSensitiveExposureStore(sql),
@@ -1041,6 +1051,31 @@ export const make = Effect.gen(function* () {
     outcome: AttemptOutcome,
   ) {
     const changed: Changed = [];
+    // A usage limit the provider reported: the bot moves to its fallback model
+    // (when it has one with room) and the task runs again at once instead of
+    // waiting for the reset. Decided before the transaction: it writes a chat
+    // line through the orchestration engine.
+    const fallbackHit =
+      outcome.kind === "failed" &&
+      outcome.category === "rate_limited" &&
+      outcome.limit !== undefined &&
+      Option.isSome(modelFallback)
+        ? yield* repository.getTask(attempt.taskId).pipe(
+            Effect.flatMap((task) =>
+              Option.isNone(task) || task.value.status !== "running"
+                ? Effect.succeed(undefined)
+                : modelFallback.value.onLimitHit({
+                    botId: task.value.botId,
+                    threadId: attempt.providerThreadId,
+                    source: "task",
+                    instanceId: outcome.limit?.instanceId,
+                    providerName: outcome.limit?.provider,
+                    reason: outcome.limit?.reason,
+                    retryAt: outcome.limit?.retryAt,
+                  }),
+            ),
+          )
+        : undefined;
     yield* repository.transaction(
       Effect.gen(function* () {
         const now = yield* DateTime.now;
@@ -1065,6 +1100,17 @@ export const make = Effect.gen(function* () {
           return;
         }
         if (outcome.kind === "failed" && outcome.category === "rate_limited") {
+          if (fallbackHit?.switched === true) {
+            // On the fallback model now: run again at once, with the work record.
+            yield* writeTask(changed, task.value, {
+              status: "rate_limited",
+              result: withoutWaitingMarker(task.value.result),
+              availableAt: now,
+              errorCategory: "rate_limited",
+              errorMessage: outcome.message,
+            });
+            return;
+          }
           // A reported reset is honest about the wait, so it is used as-is
           // rather than spending the unreported-limit backoff budget.
           if (
@@ -1793,6 +1839,16 @@ export const make = Effect.gen(function* () {
           kind: "failed",
           category: limit !== undefined ? "rate_limited" : classifyProviderError(session.lastError),
           message: session.lastError,
+          ...(limit === undefined
+            ? {}
+            : {
+                limit: {
+                  provider: limit.provider,
+                  instanceId: session.providerInstanceId,
+                  reason: limit.reason,
+                  retryAt: limit.retryAt,
+                },
+              }),
           ...(Number.isFinite(resetMs)
             ? {
                 availableAt: DateTime.add(now, {
@@ -1827,6 +1883,9 @@ export const make = Effect.gen(function* () {
       kind: "failed",
       category: "rate_limited",
       message,
+      ...(retry.kind === "rate_limited"
+        ? { limit: { provider: retry.provider, reason: retry.reason, retryAt: retry.retryAt } }
+        : {}),
       ...(retryAtMs === null
         ? {}
         : {

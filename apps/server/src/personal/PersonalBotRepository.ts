@@ -12,6 +12,7 @@ import {
   BotAvatarShape,
   ChatAttachment,
   ModelSelection,
+  PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
   PersonalBot,
   PersonalBotId,
   PersonalBotTeam,
@@ -45,6 +46,10 @@ export const CreatePersonalBotInput = Schema.Struct({
   lead: Schema.Boolean,
   pinned: Schema.Boolean,
   memoryAutoSave: Schema.optional(Schema.Boolean),
+  /** Omitted means on (the column default). */
+  fallbackEnabled: Schema.optional(Schema.Boolean),
+  /** Omitted means the default fallback model (stored as NULL). */
+  fallbackModelSelection: Schema.optional(ModelSelection),
   sortOrder: Schema.Number,
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
@@ -67,6 +72,8 @@ export const UpdatePersonalBotInput = Schema.Struct({
   pinned: Schema.optional(Schema.Boolean),
   memoryAutoSave: Schema.optional(Schema.Boolean),
   hidePreviews: Schema.optional(Schema.Boolean),
+  fallbackEnabled: Schema.optional(Schema.Boolean),
+  fallbackModelSelection: Schema.optional(ModelSelection),
   /** Absent leaves the mute alone; null turns notifications back on. */
   notificationsMutedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   updatedAt: Schema.DateTimeUtcFromString,
@@ -120,6 +127,43 @@ export const SetPersonalMetaInput = Schema.Struct({
   value: Schema.String,
 });
 export type SetPersonalMetaInput = typeof SetPersonalMetaInput.Type;
+
+/** One row of `personal_bot_fallbacks`: a bot running on its fallback model. */
+export interface PersonalBotFallbackState {
+  readonly botId: PersonalBotId;
+  readonly fallbackModel: ModelSelectionType;
+  /** The provider instance that hit its limit (the bot's own, at the time). */
+  readonly fromInstanceId: string;
+  /** That provider as the owner knows it: "Codex", "Claude". */
+  readonly fromProvider: string;
+  readonly reason: string | null;
+  readonly startedAt: string;
+  /** ISO; null when the provider did not say when the limit resets. */
+  readonly resetAt: string | null;
+  /** The chat the switch line went to; the switch-back line goes there too. */
+  readonly noticeThreadId: string | null;
+}
+
+const decodeStoredModelSelection = Schema.decodeUnknownOption(
+  Schema.fromJsonString(ModelSelection),
+);
+
+function withFallbackActive(
+  bot: PersonalBot,
+  states: ReadonlyMap<string, PersonalBotFallbackState>,
+): PersonalBot {
+  const state = states.get(bot.botId);
+  if (state === undefined) return bot;
+  return {
+    ...bot,
+    fallbackActive: {
+      modelSelection: state.fallbackModel,
+      since: DateTime.makeUnsafe(state.startedAt),
+      ...(state.resetAt === null ? {} : { resetAt: DateTime.makeUnsafe(state.resetAt) }),
+      fromProvider: state.fromProvider,
+    },
+  };
+}
 
 export interface PersonalMessageSearchRow {
   readonly messageId: string;
@@ -196,6 +240,24 @@ export class PersonalBotRepository extends Context.Service<
       readonly needle: string;
       readonly limit: number;
     }) => Effect.Effect<ReadonlyArray<PersonalMessageSearchRow>, PersonalBotRepositoryError>;
+    /** Every bot that runs on its fallback model right now (migration 101). */
+    readonly listFallbackStates: () => Effect.Effect<
+      ReadonlyArray<PersonalBotFallbackState>,
+      PersonalBotRepositoryError
+    >;
+    /** Switches a bot onto its fallback; false when it already is on one. */
+    readonly startFallback: (
+      state: PersonalBotFallbackState,
+    ) => Effect.Effect<boolean, PersonalBotRepositoryError>;
+    /** The reset time moved (a later window, a re-check); null means not known. */
+    readonly updateFallbackReset: (input: {
+      readonly botId: PersonalBotId;
+      readonly resetAt: string | null;
+    }) => Effect.Effect<void, PersonalBotRepositoryError>;
+    /** Switches a bot back to its own model; false when it was not on a fallback. */
+    readonly endFallback: (
+      botId: PersonalBotId,
+    ) => Effect.Effect<boolean, PersonalBotRepositoryError>;
     /** Removes exactly one bot-thread link row; the thread itself is deleted via `thread.delete`. */
     readonly deleteThreadLink: (
       input: GetPersonalBotThreadInput,
@@ -254,6 +316,8 @@ const PersonalBotDbRow = Schema.Struct({
   pinned: Schema.Number,
   memoryAutoSave: Schema.Number,
   hidePreviews: Schema.Number,
+  fallbackEnabled: Schema.Number,
+  fallbackModel: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
   notificationsMutedUntil: Schema.NullOr(Schema.DateTimeUtcFromString),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
@@ -276,6 +340,8 @@ const PersonalBotRawDbRow = Schema.Struct({
   pinned: Schema.Unknown,
   memoryAutoSave: Schema.Unknown,
   hidePreviews: Schema.Unknown,
+  fallbackEnabled: Schema.Unknown,
+  fallbackModel: Schema.Unknown,
   notificationsMutedUntil: Schema.Unknown,
   createdAt: Schema.Unknown,
   updatedAt: Schema.Unknown,
@@ -416,6 +482,11 @@ function toPersonalBot(row: typeof PersonalBotDbRow.Type): PersonalBot {
     pinned: row.pinned === 1,
     memoryAutoSave: row.memoryAutoSave === 1,
     hidePreviews: row.hidePreviews === 1,
+    fallback: {
+      enabled: row.fallbackEnabled === 1,
+      modelSelection:
+        (row.fallbackModel as ModelSelectionType | null) ?? PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
+    },
     notificationsMutedUntil: row.notificationsMutedUntil,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -551,6 +622,8 @@ export const make = Effect.gen(function* () {
           is_lead,
           pinned,
           memory_auto_save,
+          fallback_enabled,
+          fallback_model_json,
           created_at,
           updated_at,
           deleted_at
@@ -570,6 +643,8 @@ export const make = Effect.gen(function* () {
           ${input.lead ? 1 : 0},
           ${input.pinned ? 1 : 0},
           ${input.memoryAutoSave === false ? 0 : 1},
+          ${input.fallbackEnabled === false ? 0 : 1},
+          ${input.fallbackModelSelection === undefined ? null : JSON.stringify(input.fallbackModelSelection)},
           ${input.createdAt},
           ${input.updatedAt},
           NULL
@@ -598,6 +673,8 @@ export const make = Effect.gen(function* () {
           pinned AS "pinned",
           memory_auto_save AS "memoryAutoSave",
           hide_previews AS "hidePreviews",
+          fallback_enabled AS "fallbackEnabled",
+          fallback_model_json AS "fallbackModel",
           notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -628,6 +705,8 @@ export const make = Effect.gen(function* () {
           pinned AS "pinned",
           memory_auto_save AS "memoryAutoSave",
           hide_previews AS "hidePreviews",
+          fallback_enabled AS "fallbackEnabled",
+          fallback_model_json AS "fallbackModel",
           notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -667,6 +746,14 @@ export const make = Effect.gen(function* () {
               ${input.hidePreviews === undefined ? null : input.hidePreviews ? 1 : 0},
               hide_previews
             ),
+            fallback_enabled = COALESCE(
+              ${input.fallbackEnabled === undefined ? null : input.fallbackEnabled ? 1 : 0},
+              fallback_enabled
+            ),
+            fallback_model_json = COALESCE(
+              ${input.fallbackModelSelection === undefined ? null : JSON.stringify(input.fallbackModelSelection)},
+              fallback_model_json
+            ),
             notifications_muted_until = CASE
               WHEN ${input.notificationsMutedUntil === undefined ? 0 : 1} = 1
                 THEN ${input.notificationsMutedUntil ?? null}
@@ -690,6 +777,8 @@ export const make = Effect.gen(function* () {
           pinned AS "pinned",
           memory_auto_save AS "memoryAutoSave",
           hide_previews AS "hidePreviews",
+          fallback_enabled AS "fallbackEnabled",
+          fallback_model_json AS "fallbackModel",
           notifications_muted_until AS "notificationsMutedUntil",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -1028,6 +1117,20 @@ export const make = Effect.gen(function* () {
         ),
     });
 
+  /** The bot with the fallback it runs on right now, when it runs on one. */
+  const withActiveFallback = (
+    rowOption: Effect.Effect<Option.Option<PersonalBot>, PersonalBotRepositoryError>,
+  ) =>
+    rowOption.pipe(
+      Effect.flatMap((option) =>
+        Option.isNone(option)
+          ? Effect.succeed(option)
+          : fallbackStateMap.pipe(
+              Effect.map((states) => Option.some(withFallbackActive(option.value, states))),
+            ),
+      ),
+    );
+
   const decodeThreadRow = (
     operation: string,
     rowOption: Option.Option<typeof PersonalBotThreadRawDbRow.Type>,
@@ -1064,7 +1167,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((rowOption) =>
-        decodeBotRow("PersonalBotRepository.getBotById:decodeRow", rowOption),
+        withActiveFallback(decodeBotRow("PersonalBotRepository.getBotById:decodeRow", rowOption)),
       ),
     );
 
@@ -1089,6 +1192,13 @@ export const make = Effect.gen(function* () {
           ),
         ),
       ),
+      Effect.flatMap((bots) =>
+        fallbackStateMap.pipe(
+          Effect.map((states) =>
+            states.size === 0 ? bots : bots.map((bot) => withFallbackActive(bot, states)),
+          ),
+        ),
+      ),
     );
 
   const updateBot: PersonalBotRepository["Service"]["updateBot"] = (input) =>
@@ -1100,7 +1210,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((rowOption) =>
-        decodeBotRow("PersonalBotRepository.updateBot:decodeRow", rowOption),
+        withActiveFallback(decodeBotRow("PersonalBotRepository.updateBot:decodeRow", rowOption)),
       ),
     );
 
@@ -1266,6 +1376,84 @@ export const make = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("PersonalBotRepository.searchMessages:query")),
     );
 
+  const listFallbackStates: PersonalBotRepository["Service"]["listFallbackStates"] = () =>
+    sql<{
+      readonly botId: string;
+      readonly fallbackModel: string;
+      readonly fromInstanceId: string;
+      readonly fromProvider: string;
+      readonly reason: string | null;
+      readonly startedAt: string;
+      readonly resetAt: string | null;
+      readonly noticeThreadId: string | null;
+    }>`
+      SELECT bot_id AS "botId", fallback_model_json AS "fallbackModel",
+             from_instance_id AS "fromInstanceId", from_provider AS "fromProvider",
+             reason AS "reason", started_at AS "startedAt", reset_at AS "resetAt",
+             notice_thread_id AS "noticeThreadId"
+      FROM personal_bot_fallbacks
+      ORDER BY started_at ASC
+    `.pipe(
+      Effect.map((rows) =>
+        rows.flatMap((row): PersonalBotFallbackState[] => {
+          const model = decodeStoredModelSelection(row.fallbackModel);
+          return Option.isNone(model)
+            ? []
+            : [
+                {
+                  botId: row.botId as PersonalBotId,
+                  fallbackModel: model.value as ModelSelectionType,
+                  fromInstanceId: row.fromInstanceId,
+                  fromProvider: row.fromProvider,
+                  reason: row.reason,
+                  startedAt: row.startedAt,
+                  resetAt: row.resetAt,
+                  noticeThreadId: row.noticeThreadId,
+                },
+              ];
+        }),
+      ),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listFallbackStates:query")),
+    );
+
+  const fallbackStateMap = listFallbackStates().pipe(
+    Effect.map((states) => new Map(states.map((state) => [state.botId as string, state] as const))),
+  );
+
+  const startFallback: PersonalBotRepository["Service"]["startFallback"] = (state) =>
+    sql<{ readonly botId: string }>`
+      INSERT INTO personal_bot_fallbacks (
+        bot_id, fallback_model_json, from_instance_id, from_provider, reason, started_at,
+        reset_at, notice_thread_id
+      )
+      VALUES (
+        ${state.botId}, ${JSON.stringify(state.fallbackModel)}, ${state.fromInstanceId},
+        ${state.fromProvider}, ${state.reason}, ${state.startedAt}, ${state.resetAt},
+        ${state.noticeThreadId}
+      )
+      ON CONFLICT(bot_id) DO NOTHING
+      RETURNING bot_id AS "botId"
+    `.pipe(
+      Effect.map((rows) => rows.length > 0),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.startFallback:query")),
+    );
+
+  const updateFallbackReset: PersonalBotRepository["Service"]["updateFallbackReset"] = (input) =>
+    sql`
+      UPDATE personal_bot_fallbacks SET reset_at = ${input.resetAt} WHERE bot_id = ${input.botId}
+    `.pipe(
+      Effect.asVoid,
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.updateFallbackReset:query")),
+    );
+
+  const endFallback: PersonalBotRepository["Service"]["endFallback"] = (botId) =>
+    sql<{ readonly botId: string }>`
+      DELETE FROM personal_bot_fallbacks WHERE bot_id = ${botId} RETURNING bot_id AS "botId"
+    `.pipe(
+      Effect.map((rows) => rows.length > 0),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.endFallback:query")),
+    );
+
   const deleteThreadLink: PersonalBotRepository["Service"]["deleteThreadLink"] = (input) =>
     deleteThreadLinkRow(input).pipe(
       Effect.mapError(
@@ -1423,6 +1611,10 @@ export const make = Effect.gen(function* () {
     getThreadLink,
     setThreadArchived,
     recordThreadViewed,
+    listFallbackStates,
+    startFallback,
+    updateFallbackReset,
+    endFallback,
     updateThreadState,
     searchMessages,
     deleteThreadLink,

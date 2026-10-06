@@ -36,6 +36,13 @@ export const isPersonalResumeMessageId = (messageId: string) =>
 export const PERSONAL_CHAT_RESUME_PROMPT =
   "[Auto-continue after usage reset] Your previous turn stopped because the usage limit was reached. The limit has now reset. Continue where you left off, without repeating work that is already done.";
 
+/**
+ * The text the provider gets when the continue runs on the bot's fallback model
+ * because the original model hit its usage limit (it does not wait for a reset).
+ */
+export const PERSONAL_CHAT_FALLBACK_RESUME_PROMPT =
+  "[Auto-continue on a fallback model] Your previous turn stopped because the usage limit of the model you were running on was reached, so you now run on a different model until that limit resets. Continue where you left off, without repeating work that is already done.";
+
 export type LimitHitDecision =
   | { readonly kind: "schedule"; readonly resumeAtMs: number }
   | {

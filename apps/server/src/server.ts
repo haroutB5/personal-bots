@@ -127,6 +127,7 @@ import * as PersonalClaudeCodeReview from "./personal/claudeCodeReview/PersonalC
 import * as PersonalTaskTitleBackfill from "./personal/taskTitleBackfill.ts";
 import * as PersonalTurnRetry from "./personal/PersonalTurnRetryService.ts";
 import * as PersonalChatResume from "./personal/PersonalChatResumeService.ts";
+import * as PersonalModelFallback from "./personal/PersonalModelFallbackService.ts";
 import * as PersonalBotTokenUsage from "./personal/PersonalBotTokenUsageService.ts";
 import * as PersonalTaskChatArchive from "./personal/PersonalTaskChatArchiveService.ts";
 import * as PersonalReleaseNotices from "./personal/releaseNotices/PersonalReleaseNoticeService.ts";
@@ -592,6 +593,9 @@ const PersonalReactorsLive = Layer.effectDiscard(
     yield* (yield* PersonalTurnRetry.PersonalTurnRetry).start();
     // Continues a bot chat stopped by a usage limit once it resets.
     yield* (yield* PersonalChatResume.PersonalChatResume).start();
+    // Moves a bot that hit its provider's usage limit to its fallback model, and
+    // back once the limit has reset and the bot is idle (PERSONAL_MODEL_FALLBACK=off disables).
+    yield* (yield* PersonalModelFallback.PersonalModelFallback).start();
     // Cancels lead-bot confirm cards nobody answered in 15 minutes and tells their lead.
     yield* (yield* PersonalLeadBots.PersonalLeadBotService).start();
     // Archives finished delegated-task chats after 48 idle hours (startup + every 5 min).
@@ -633,6 +637,8 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
   Layer.provideMerge(PersonalRoutineService.layer),
   Layer.provideMerge(PersonalTasksDispatcherLive),
   Layer.provideMerge(PersonalTaskService.layerLive),
+  // The task service and the chat resume ask it what to do about a usage limit.
+  Layer.provideMerge(PersonalModelFallback.layer),
   // Groups consume the bot service and repository below them, exactly as the
   // task service does, so they sit above both and below the seed.
   Layer.provideMerge(PersonalGroupsDispatcherLive),

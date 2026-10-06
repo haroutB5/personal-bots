@@ -26,12 +26,14 @@ import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEng
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
+import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
 import { botModelSelectionForThread } from "./botModelSelection.ts";
 import {
   decideLimitHit,
   isPersonalResumeMessageId,
   pausedNoticeText,
   PERSONAL_CHAT_RESUME_BUSY_WAIT_MS,
+  PERSONAL_CHAT_FALLBACK_RESUME_PROMPT,
   PERSONAL_CHAT_RESUME_PROMPT,
   PERSONAL_CHAT_RESUME_PROVIDER_GAP_MS,
   PERSONAL_CHAT_RESUME_SLOT_MAX_MS,
@@ -87,6 +89,8 @@ interface ResumeRow {
   readonly provider: string;
   readonly hitAt: string;
   readonly resumeAt: string | null;
+  /** 1: the continue runs on the bot's fallback model (no wait for the reset). */
+  readonly fallback: number;
 }
 
 /** A resumed chat holding a task slot until its turn ends. */
@@ -122,6 +126,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   // Optional so this reactor stays testable alone; the server always has it.
   const tasks = yield* Effect.serviceOption(PersonalTaskService.PersonalTaskService);
+  const modelFallback = yield* Effect.serviceOption(PersonalModelFallback.PersonalModelFallback);
 
   const held = new Map<string, HeldSlot>();
   /** Last resume start per provider, for the gap between them. */
@@ -266,6 +271,34 @@ export const make = Effect.gen(function* () {
     `;
     // The same hit seen again (a replayed session event): already handled.
     if (inserted.length === 0) return;
+    // The bot's provider hit its usage limit: with a fallback model that has room
+    // the bot moves to it and this chat continues now, not after the reset. The
+    // fallback writes its own muted line, so no "Paused" row here.
+    if (Option.isSome(modelFallback)) {
+      const hit = yield* modelFallback.value.onLimitHit({
+        botId: link.value.botId,
+        threadId,
+        source: "chat",
+        instanceId: session.providerInstanceId,
+        providerName: session.providerName,
+        reason: retry.reason,
+        retryAt: retry.retryAt,
+      });
+      if (hit.switched) {
+        yield* sql`
+          UPDATE personal_chat_resumes
+          SET status = 'scheduled', resume_at = ${iso(now)}, outcome = NULL, fallback = 1
+          WHERE resume_id = ${resumeId}
+        `;
+        yield* Effect.logInfo("personal chat continues on the fallback model", {
+          threadId,
+          resumeId,
+          provider: session.providerName,
+          model: hit.modelLabel ?? null,
+        });
+        return;
+      }
+    }
     const provider = providerLabel(session.providerName);
     yield* writeNotice(
       threadId,
@@ -345,6 +378,7 @@ export const make = Effect.gen(function* () {
       shell.value.modelSelection,
     );
     const provider = providerLabel(row.provider);
+    const onFallback = row.fallback === 1;
     yield* engine.dispatch({
       type: "thread.turn.start",
       commandId: CommandId.make(`personal-chat-resume:${row.resumeId}:turn.start`),
@@ -353,9 +387,12 @@ export const make = Effect.gen(function* () {
       message: {
         messageId: MessageId.make(`${PERSONAL_RESUME_MESSAGE_ID_PREFIX}${row.resumeId}`),
         role: "user",
-        text: PERSONAL_CHAT_RESUME_PROMPT,
+        text: onFallback ? PERSONAL_CHAT_FALLBACK_RESUME_PROMPT : PERSONAL_CHAT_RESUME_PROMPT,
         attachments: [],
-        context: noticeContext({ notice: "usage-limit-resumed", provider }),
+        context: noticeContext({
+          notice: onFallback ? "model-fallback-resumed" : "usage-limit-resumed",
+          provider,
+        }),
       },
       runtimeMode: shell.value.runtimeMode,
       interactionMode: shell.value.interactionMode,
@@ -372,7 +409,7 @@ export const make = Effect.gen(function* () {
     }
     const due = yield* sql<ResumeRow>`
       SELECT resume_id AS "resumeId", thread_id AS "threadId", provider,
-             hit_at AS "hitAt", resume_at AS "resumeAt"
+             hit_at AS "hitAt", resume_at AS "resumeAt", fallback AS "fallback"
       FROM personal_chat_resumes
       WHERE status = 'scheduled' AND resume_at <= ${iso(now)}
       ORDER BY resume_at, hit_at

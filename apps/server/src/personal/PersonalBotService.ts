@@ -497,9 +497,16 @@ export const make = Effect.gen(function* () {
       // team that was named has to be one that exists.
       const team = yield* requireKnownTeam(input.team ?? DEFAULT_PERSONAL_BOT_TEAM);
       const lead = input.lead ?? false;
+      const { fallback: fallbackInput, ...createFields } = input;
       yield* repository
         .createBot({
-          ...input,
+          ...createFields,
+          ...(fallbackInput?.enabled === undefined
+            ? {}
+            : { fallbackEnabled: fallbackInput.enabled }),
+          ...(fallbackInput?.modelSelection === undefined
+            ? {}
+            : { fallbackModelSelection: fallbackInput.modelSelection }),
           title: input.title?.trim() ?? "",
           team,
           lead,
@@ -530,10 +537,16 @@ export const make = Effect.gen(function* () {
       // Same rule as create, so the drag-and-drop path on the team diagram and
       // any API caller land on a team that exists.
       const team = input.team === undefined ? undefined : yield* requireKnownTeam(input.team);
-      const { notificationsMute, ...fields } = input;
+      const { notificationsMute, fallback: fallbackInput, ...fields } = input;
       const updated = yield* repository
         .updateBot({
           ...fields,
+          ...(fallbackInput?.enabled === undefined
+            ? {}
+            : { fallbackEnabled: fallbackInput.enabled }),
+          ...(fallbackInput?.modelSelection === undefined
+            ? {}
+            : { fallbackModelSelection: fallbackInput.modelSelection }),
           ...(notificationsMute === undefined
             ? {}
             : { notificationsMutedUntil: notificationsMutedUntilFor(notificationsMute, now) }),
@@ -544,6 +557,20 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError(repositoryError("update")));
       if (Option.isNone(updated)) {
         return yield* notFound(`Personal bot '${input.botId}' was not found.`);
+      }
+      // The owner picked a new main model: that is the bot's model now, so a
+      // fallback it was running on ends here (and returns on the next limit).
+      if (input.modelSelection !== undefined && updated.value.fallbackActive !== undefined) {
+        const ended = yield* repository
+          .endFallback(input.botId)
+          .pipe(Effect.mapError(repositoryError("update")));
+        if (ended) {
+          yield* Effect.logInfo("personal model fallback ended: the owner changed the model", {
+            botId: input.botId,
+          });
+          const { fallbackActive: _ended, ...plain } = updated.value;
+          return plain;
+        }
       }
       // One lead per team, read from the row as it now stands: a bot that
       // changed team in this same call leads the team it landed on.

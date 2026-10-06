@@ -11,7 +11,7 @@ import {
 } from "./baseSchemas.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ModelSelection, OrchestrationMessageRole } from "./orchestration.ts";
-import { ProviderDriverKind } from "./providerInstance.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 /**
  * Driver kinds whose adapter actually carries a personal bot's persona to
@@ -91,6 +91,48 @@ export const personalBotTeams = (
 /** New bots join the assistant's team as an ordinary member. */
 export const DEFAULT_PERSONAL_BOT_TEAM: PersonalBotTeam = "assistant";
 
+/**
+ * The model a bot switches to when its provider reports a usage limit (1.65.0).
+ * Default for every bot: Claude Sonnet 5.5, effort high, 1M context window.
+ */
+export const PERSONAL_BOT_DEFAULT_FALLBACK_MODEL: ModelSelection = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-sonnet-5-5",
+  options: [
+    { id: "effort", value: "high" },
+    { id: "contextWindow", value: "1m" },
+  ],
+};
+
+export const PersonalBotFallback = Schema.Struct({
+  /** On for every bot unless the owner turns it off in the bot form. */
+  enabled: Schema.Boolean,
+  modelSelection: ModelSelection,
+});
+export type PersonalBotFallback = typeof PersonalBotFallback.Type;
+
+/**
+ * Present only while the bot runs on its fallback model because its home
+ * provider hit a usage limit. `PersonalBot.modelSelection` stays the home
+ * model (what the owner saved); this is what the bot's turns use right now.
+ */
+export const PersonalBotFallbackActive = Schema.Struct({
+  modelSelection: ModelSelection,
+  since: Schema.DateTimeUtcFromString,
+  /** When the original limit resets, when the provider said; absent means it is re-checked. */
+  resetAt: Schema.optional(Schema.DateTimeUtcFromString),
+  /** The provider that hit its limit, as the owner knows it: "Codex", "Claude". */
+  fromProvider: Schema.String,
+});
+export type PersonalBotFallbackActive = typeof PersonalBotFallbackActive.Type;
+
+/** What a create or update may set; absent fields stay as they are. */
+export const PersonalBotFallbackInput = Schema.Struct({
+  enabled: Schema.optional(Schema.Boolean),
+  modelSelection: Schema.optional(ModelSelection),
+});
+export type PersonalBotFallbackInput = typeof PersonalBotFallbackInput.Type;
+
 export const PersonalBot = Schema.Struct({
   botId: PersonalBotId,
   name: Schema.String,
@@ -128,6 +170,13 @@ export const PersonalBot = Schema.Struct({
    */
   hidePreviews: Schema.optionalKey(Schema.Boolean),
   /**
+   * The usage-limit fallback setting (always sent by the server; optional on
+   * the wire like the fields above). Read it through {@link botFallback}.
+   */
+  fallback: Schema.optionalKey(PersonalBotFallback),
+  /** Set only while the bot runs on its fallback. Read it through {@link botFallbackActive}. */
+  fallbackActive: Schema.optionalKey(PersonalBotFallbackActive),
+  /**
    * Notifications from this bot are silenced until this time: no web push and
    * no in-app banner. Null (or absent, from an older server) means on; a time
    * in the year 9999 means "until I turn it back on". Read it through
@@ -152,6 +201,26 @@ export const PersonalBot = Schema.Struct({
   updatedAt: Schema.DateTimeUtcFromString,
 });
 export type PersonalBot = typeof PersonalBot.Type;
+
+/** The bot's fallback setting, the default when an older server did not send one. */
+export const botFallback = (bot: {
+  readonly fallback?: PersonalBotFallback;
+}): PersonalBotFallback =>
+  bot.fallback ?? { enabled: true, modelSelection: PERSONAL_BOT_DEFAULT_FALLBACK_MODEL };
+
+/** The fallback the bot is running on right now, or null on its own model. */
+export const botFallbackActive = (bot: {
+  readonly fallbackActive?: PersonalBotFallbackActive;
+}): PersonalBotFallbackActive | null => bot.fallbackActive ?? null;
+
+/**
+ * The model the bot's turns use right now: its fallback while one is active,
+ * else the model the owner saved.
+ */
+export const botEffectiveModelSelection = (bot: {
+  readonly modelSelection: ModelSelection;
+  readonly fallbackActive?: PersonalBotFallbackActive;
+}): ModelSelection => bot.fallbackActive?.modelSelection ?? bot.modelSelection;
 
 /** Lives only inside groups: hidden from the main lists (see `PersonalBot.groupOnly`). */
 export const isGroupOnlyBot = (bot: { readonly groupOnly?: boolean }): boolean =>
@@ -310,6 +379,8 @@ export const PersonalBotCreateInput = Schema.Struct({
   pinned: Schema.optional(Schema.Boolean),
   /** Omitted means off: save_memory needs the user's explicit ask. */
   memoryAutoSave: Schema.optional(Schema.Boolean),
+  /** Omitted means on, with the default fallback model. */
+  fallback: Schema.optional(PersonalBotFallbackInput),
 });
 export type PersonalBotCreateInput = typeof PersonalBotCreateInput.Type;
 
@@ -331,6 +402,8 @@ export const PersonalBotUpdateInput = Schema.Struct({
   memoryAutoSave: Schema.optional(Schema.Boolean),
   /** Absent leaves it alone. */
   hidePreviews: Schema.optional(Schema.Boolean),
+  /** Absent leaves it alone; a field inside it left out stays as it is. */
+  fallback: Schema.optional(PersonalBotFallbackInput),
   notificationsMute: Schema.optional(PersonalBotNotificationMute),
 });
 export type PersonalBotUpdateInput = typeof PersonalBotUpdateInput.Type;

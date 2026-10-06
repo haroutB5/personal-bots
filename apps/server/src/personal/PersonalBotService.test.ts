@@ -742,3 +742,84 @@ it.live("searchMessages ignores a too-short query and returns one hit per chat",
     });
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
+
+it.effect(
+  "every bot has the usage-limit fallback on with Sonnet 5.5 High 1M by default; the form can change it",
+  () => {
+    const context = makeContext();
+    return Effect.gen(function* () {
+      const service = yield* PersonalBotService.PersonalBotService;
+      const created = yield* service.create(botInput("bot-fb-default"));
+      expect(created.fallback).toEqual({
+        enabled: true,
+        modelSelection: {
+          instanceId: "claudeAgent",
+          model: "claude-sonnet-5-5",
+          options: [
+            { id: "effort", value: "high" },
+            { id: "contextWindow", value: "1m" },
+          ],
+        },
+      });
+      expect(created.fallbackActive).toBeUndefined();
+
+      const off = yield* service.update({ botId: created.botId, fallback: { enabled: false } });
+      expect(off.fallback?.enabled).toBe(false);
+      // The model it would switch to stays what it was.
+      expect(off.fallback?.modelSelection.model).toBe("claude-sonnet-5-5");
+
+      const picked = yield* service.update({
+        botId: created.botId,
+        fallback: {
+          enabled: true,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-opus-5-5",
+            options: [{ id: "effort", value: "medium" }],
+          },
+        },
+      });
+      expect(picked.fallback).toMatchObject({
+        enabled: true,
+        modelSelection: { model: "claude-opus-5-5" },
+      });
+
+      const withFallback = yield* service.create({
+        ...botInput("bot-fb-created"),
+        fallback: { enabled: false },
+      });
+      expect(withFallback.fallback?.enabled).toBe(false);
+    }).pipe(Effect.provide(makeTestLayer(context)));
+  },
+);
+
+it.effect("saving a new main model ends a fallback the bot was running on", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+    const repository = yield* PersonalBotRepository.PersonalBotRepository;
+    const created = yield* service.create(botInput("bot-fb-model"));
+    yield* repository.startFallback({
+      botId: created.botId,
+      fallbackModel: created.fallback!.modelSelection,
+      fromInstanceId: "codex",
+      fromProvider: "Codex",
+      reason: null,
+      startedAt: "2026-10-06T15:00:00.000Z",
+      resetAt: null,
+      noticeThreadId: null,
+    });
+    const listed = (yield* service.list()).bots.find((bot) => bot.botId === created.botId);
+    expect(listed?.fallbackActive?.fromProvider).toBe("Codex");
+
+    // Editing something else keeps it; a new main model ends it.
+    const renamed = yield* service.update({ botId: created.botId, name: "Renamed" });
+    expect(renamed.fallbackActive).toBeDefined();
+    const moved = yield* service.update({
+      botId: created.botId,
+      modelSelection: created.modelSelection,
+    });
+    expect(moved.fallbackActive).toBeUndefined();
+    expect((yield* repository.listFallbackStates()).length).toBe(0);
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});

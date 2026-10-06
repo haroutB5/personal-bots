@@ -46,6 +46,7 @@ import {
 } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import * as PersonalModelFallback from "../PersonalModelFallbackService.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalTaskRepository from "./PersonalTaskRepository.ts";
 import {
@@ -91,8 +92,11 @@ const makeLayer = (
   decorateBots?: (
     bots: PersonalBotRepository.PersonalBotRepository["Service"],
   ) => PersonalBotRepository.PersonalBotRepository["Service"],
+  /** Turns the usage-limit model fallback on, with these provider snapshots. */
+  fallbackProviders?: ReadonlyArray<unknown>,
 ) =>
   PersonalTaskService.layer.pipe(
+    Layer.provideMerge(fallbackProviders === undefined ? Layer.empty : PersonalModelFallback.layer),
     Layer.provideMerge(
       decorateBots === undefined
         ? Layer.empty
@@ -121,7 +125,8 @@ const makeLayer = (
     ),
     Layer.provideMerge(
       Layer.succeed(ProviderRegistry.ProviderRegistry, {
-        getProviders: Effect.succeed([]),
+        getProviders: Effect.succeed(fallbackProviders ?? []),
+        refreshInstance: () => Effect.succeed(fallbackProviders ?? []),
       } as unknown as ProviderRegistry.ProviderRegistryShape),
     ),
     Layer.provideMerge(ThreadBackgroundLiveness.layer),
@@ -3205,3 +3210,91 @@ describe("work record (1.60.41)", () => {
     },
   );
 });
+
+// --- usage-limit model fallback ---------------------------------------------------
+
+const fallbackProviders = (claudeUsedPercent: number) => [
+  { instanceId: "codex", driver: "codex", enabled: true, installed: true, status: "ready" },
+  {
+    instanceId: "claudeAgent",
+    driver: "claudeAgent",
+    enabled: true,
+    installed: true,
+    status: "ready",
+    usageLimits: {
+      checkedAt: "2026-10-06T15:00:00.000Z",
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "5 hours",
+          usedPercent: claudeUsedPercent,
+          resetsAt: "2099-01-01T00:00:00.000Z",
+        },
+      ],
+    },
+  },
+];
+
+it.effect(
+  "a Codex limit on a task moves its bot to the fallback model and the task runs again at once",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const root = yield* createRoot("fb-run", "developer");
+      const thread = threadOf(root);
+      const turnId = yield* beginTurn(harness, thread);
+      const now = yield* DateTime.now;
+      const limit = providerWait("rate_limited", now, 6 * 60 * 60_000);
+      const startsBefore = turnStarts(harness).length;
+      yield* waitOnProvider(harness, thread, turnId, { ...limit, provider: "codex" });
+
+      // The bot is on the fallback and the task is not parked for six hours.
+      const bot = Option.getOrThrow(yield* bots.getBotById({ botId: botId("developer") }));
+      expect(bot.modelSelection.instanceId).toBe("codex");
+      expect(bot.fallbackActive?.modelSelection.model).toBe("claude-sonnet-5-5");
+      expect(
+        harness.dispatched.some(
+          (command) =>
+            command.type === "thread.message.assistant.delta" &&
+            command.delta.startsWith("Codex hit its usage limit. Developer is on Sonnet 5.5"),
+        ),
+      ).toBe(true);
+
+      // The next dispatcher pass runs the task again, on the fallback model.
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      yield* service.sweep;
+      yield* service.drain;
+      const resumed = turnStarts(harness).slice(startsBefore).at(-1);
+      expect(resumed?.modelSelection).toMatchObject({
+        instanceId: "claudeAgent",
+        model: "claude-sonnet-5-5",
+      });
+      expect((yield* reload(root.taskId)).status).toBe("running");
+    }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, fallbackProviders(10))));
+  },
+);
+
+it.effect(
+  "a Codex limit on a task still waits for the reset when the fallback provider is limited",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const bots = yield* PersonalBotRepository.PersonalBotRepository;
+      const root = yield* createRoot("fb-wait", "developer");
+      const thread = threadOf(root);
+      const turnId = yield* beginTurn(harness, thread);
+      const now = yield* DateTime.now;
+      const limit = providerWait("rate_limited", now, 6 * 60 * 60_000);
+      yield* waitOnProvider(harness, thread, turnId, { ...limit, provider: "codex" });
+      const bot = Option.getOrThrow(yield* bots.getBotById({ botId: botId("developer") }));
+      expect(bot.fallbackActive).toBeUndefined();
+      const paused = yield* reload(root.taskId);
+      expect([paused.status, paused.errorCategory]).toEqual(["rate_limited", "rate_limited"]);
+      expect(DateTime.toEpochMillis(paused.availableAt!)).toBe(Date.parse(limit.retryAt!));
+    }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, fallbackProviders(100))));
+  },
+);

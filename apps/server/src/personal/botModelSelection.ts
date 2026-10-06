@@ -40,6 +40,11 @@ export const botModelSelectionForThread = (
     if (Option.isNone(link)) return undefined;
     const bot = yield* bots.getBotById({ botId: link.value.botId });
     if (Option.isNone(bot)) return undefined;
+    // A bot on its usage-limit fallback runs its turns on the fallback model,
+    // whatever provider the chat's old session was on; its saved model comes
+    // back when the fallback ends (the reactor then moves the chat again).
+    const fallback = bot.value.fallbackActive?.modelSelection;
+    if (fallback !== undefined) return fallback;
     return threadModelSelection === undefined
       ? bot.value.modelSelection
       : sendModelSelection(bot.value.modelSelection, threadModelSelection);
