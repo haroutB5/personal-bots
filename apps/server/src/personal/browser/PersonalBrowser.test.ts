@@ -656,7 +656,7 @@ describe("PersonalBrowser", () => {
         yield* browser.handleAutomationRequest(request("type", { text: key }));
         yield* browser.handleAutomationRequest(request("press", { key: "Enter" }));
         expect(page.dialogAnswers).toEqual([{ accept: true, promptText: "[secret TYPED_KEY]" }]);
-        expect(JSON.stringify(page.typed)).not.toContain(key);
+        expect(page.typed.join("|")).not.toContain(key);
       }).pipe(
         Effect.ensuring(Effect.sync(() => secretRedactor.clear())),
         Effect.provide(makeLayer(fake.driver)),

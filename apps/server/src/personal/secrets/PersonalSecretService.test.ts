@@ -1104,7 +1104,7 @@ describe("brokered secrets", () => {
         const finished = yield* reload(task.taskId);
         expect(finished.status).toBe("completed");
         expect(finished.result?.summary).toContain("[secret LEAKY_KEY]");
-        expect(JSON.stringify(finished)).not.toContain(BROKERED_VALUE);
+        expect(text(finished)).not.toContain(BROKERED_VALUE);
       }),
     ),
   );
@@ -1196,7 +1196,7 @@ describe("secrets boundary: a bot that tries to print its keys", () => {
           expect(envOutput).toBe(ENV_VALUE);
           // The brokered key was never in the process.
           expect(brokeredOutput).not.toContain(BROKERED);
-          expect(JSON.stringify(sessionEnv)).not.toContain(BROKERED);
+          expect(text(sessionEnv)).not.toContain(BROKERED);
 
           // --- The same bot uses the broker tool against the local API.
           const handlerLayer = PersonalToolkitHandlersLive.pipe(

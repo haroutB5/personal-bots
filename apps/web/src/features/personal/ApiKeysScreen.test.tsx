@@ -25,7 +25,7 @@ const SECRETS: ReadonlyArray<SecretRow> = [
 
 const state = vi.hoisted(() => ({
   calls: [] as Array<{ readonly command: string; readonly target: unknown }>,
-  secrets: [] as Array<unknown>,
+  secrets: [] as ReadonlyArray<unknown>,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
