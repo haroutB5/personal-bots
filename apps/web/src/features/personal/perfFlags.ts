@@ -59,7 +59,14 @@ export type PerfOptimization =
   | "stream-telemetry"
   // A finger drag on the shared browser sends one summed scroll step per animation
   // frame (wheelBatcher.ts, 1.60.34); off: one per touch move, as before.
-  | "wheel-batch";
+  | "wheel-batch"
+  // The Bots list reads each chat's activity time once per rebuild and keeps it
+  // per shell (chatActivity.ts memo, botSummaries newestFirst, 1.64.1); off:
+  // parsed again inside every sort comparison, as before.
+  | "activity-memo"
+  // The team constellation measures each candidate layout once while ordering
+  // them (1.64.1); off: twice per comparison, as before.
+  | "layout-once";
 
 export function perfOptimizationOn(name: PerfOptimization): boolean {
   try {

@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { perfOptimizationOn } from "./perfFlags";
 import {
   RECENT_DELEGATION_WINDOW_MS,
   teamDropOutcome,
@@ -245,7 +246,15 @@ function twoOrbitPlans(count: number, maxRx: number, lines: Lines): ReadonlyArra
       }
     }
   }
-  return plans.toSorted((left, right) => height(left, lines) - height(right, lines));
+  // Each plan's height is measured once, not twice per comparison (a 19-member
+  // team has 550 plans: the old comparator measured about 10 000 of them).
+  if (!perfOptimizationOn("layout-once")) {
+    return plans.toSorted((left, right) => height(left, lines) - height(right, lines));
+  }
+  return plans
+    .map((plan) => ({ plan, tall: height(plan, lines) }))
+    .toSorted((left, right) => left.tall - right.tall)
+    .map((entry) => entry.plan);
 }
 
 /**

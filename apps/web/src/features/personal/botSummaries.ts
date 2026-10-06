@@ -22,7 +22,8 @@ import {
   THINKING_LABEL,
 } from "./conversationModel";
 import { botModelLabel, botModelShortLabel } from "./botModelLabel";
-import { chatActivityMs } from "./chatActivity";
+import { chatActivityMs, chatActivityMsUncached } from "./chatActivity";
+import { perfOptimizationOn } from "./perfFlags";
 import { routineNextRunLabel } from "./taskPresentation";
 
 export interface BotProviderStatus {
@@ -332,6 +333,26 @@ export function botStatusLine(summary: BotSummary, now: number): string {
 }
 
 /**
+ * The shells, newest conversation first. Each shell's activity is read once
+ * (a decorated sort), not twice per comparison; the order is the same stable
+ * order `toSorted((l, r) => activity(r) - activity(l))` gave.
+ */
+function newestFirst(
+  shells: ReadonlyArray<EnvironmentThreadShell>,
+  activityMs: (shell: EnvironmentThreadShell) => number,
+  decorated: boolean,
+): EnvironmentThreadShell[] {
+  if (!decorated) {
+    return shells.toSorted((left, right) => activityMs(right) - activityMs(left));
+  }
+  if (shells.length < 2) return [...shells];
+  return shells
+    .map((shell) => ({ shell, at: activityMs(shell) }))
+    .toSorted((left, right) => right.at - left.at)
+    .map((entry) => entry.shell);
+}
+
+/**
  * Join bots with their linked thread shells. Only real state feeds the row:
  * activity, attention and timestamps all come from the thread shells. Rows are
  * ordered by latest activity (chat-list convention), then the bots' own order.
@@ -360,8 +381,13 @@ export function buildBotSummaries(input: {
     input.links.map((link) => [link.threadId as string, link] as const),
   );
   // Real conversation activity, never `updatedAt` (see chatActivity.ts).
+  // `activity-memo` is read once per rebuild, not once per chat: a localStorage
+  // read per shell was itself 2% of the phone's main thread while bots streamed.
+  const memoOn = perfOptimizationOn("activity-memo");
   const activityMs = (shell: EnvironmentThreadShell) =>
-    chatActivityMs(shell, linksByThread.get(shell.id));
+    memoOn
+      ? chatActivityMs(shell, linksByThread.get(shell.id))
+      : chatActivityMsUncached(shell, linksByThread.get(shell.id));
   const shellsByBot = new Map<string, EnvironmentThreadShell[]>();
   // Every linked chat, archived or not: what the bot is doing counts wherever
   // it happens. A task reopened in a chat auto-archive had put away ran for an
@@ -388,12 +414,8 @@ export function buildBotSummaries(input: {
   }
 
   const summaries = input.bots.map((bot): BotSummary => {
-    const shells = (shellsByBot.get(bot.botId) ?? []).toSorted(
-      (left, right) => activityMs(right) - activityMs(left),
-    );
-    const busyShells = (busyShellsByBot.get(bot.botId) ?? []).toSorted(
-      (left, right) => activityMs(right) - activityMs(left),
-    );
+    const shells = newestFirst(shellsByBot.get(bot.botId) ?? [], activityMs, memoOn);
+    const busyShells = newestFirst(busyShellsByBot.get(bot.botId) ?? [], activityMs, memoOn);
     const newestThread = shells[0] ?? null;
     // A limit that has passed (a later reply, a task that ended on it, or a
     // bot moved to another provider) must not pin the row: the chat itself

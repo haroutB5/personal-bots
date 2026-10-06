@@ -100,20 +100,35 @@ export function canRetryTask(status: PersonalTaskStatus): boolean {
   return PERSONAL_TASK_RETRYABLE_STATUSES.includes(status);
 }
 
+const localDateTimeFormats = new Map<string, Intl.DateTimeFormat>();
+/**
+ * One formatter per zone: building an Intl.DateTimeFormat costs far more than
+ * using one, and the Bots list formats a routine's next run for every bot on
+ * every rebuild (1.64.1: 1% of the phone's main thread while bots streamed).
+ */
+function localDateTimeFormat(timeZone: string): Intl.DateTimeFormat {
+  let format = localDateTimeFormats.get(timeZone);
+  if (format === undefined) {
+    format = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+    localDateTimeFormats.set(timeZone, format);
+  }
+  return format;
+}
+
 /** "Mon 14 Sep, 09:00" in the given zone (Europe/London by default). */
 export function formatLocalDateTime(
   instant: Date | number,
   timeZone: string = PERSONAL_TIME_ZONE,
 ): string {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(instant);
+  const parts = localDateTimeFormat(timeZone).formatToParts(instant);
   const pick = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value ?? "";
   // ICU's en-GB short September is "Sept"; the app writes "Sep".

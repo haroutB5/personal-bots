@@ -2,6 +2,8 @@
 //
 //   node scripts/personal/perf/check.mjs            # check (exit 1 on a regression)
 //   node scripts/personal/perf/check.mjs --ratchet  # check, then lower budgets that were beaten
+//   node scripts/personal/perf/check.mjs --origin http://127.0.0.1:38711   # a throwaway server
+//                                                   # (needs its login.mjs auth state)
 //
 // budget.json holds, per journey, the p50 ceiling of each gated metric plus
 // the bench settings it was measured with. Budgets only ever go down: an
@@ -17,11 +19,13 @@ import { PERF_HOME, round } from "./lib.mjs";
 const budgetFile = new URL("./budget.json", import.meta.url);
 const budget = JSON.parse(NodeFS.readFileSync(budgetFile, "utf8"));
 const ratchet = process.argv.includes("--ratchet");
+const originFlag = process.argv.indexOf("--origin");
+const origin = originFlag >= 0 ? process.argv[originFlag + 1] : budget.settings.origin;
 const out = NodePath.join(PERF_HOME, `check-${Date.now()}.json`);
 const benchArgs = [
   new URL("./bench.mjs", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"),
   "--origin",
-  budget.settings.origin,
+  origin,
   "--runs",
   String(budget.settings.runs),
   "--journeys",

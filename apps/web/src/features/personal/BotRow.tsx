@@ -103,6 +103,19 @@ export function previewOf(summary: BotSummary, describeTurn: (turn: ServerTurn) 
  * or a code fence is empty, so the next line is used.
  */
 export function plainPreviewLine(line: string): string {
+  const known = previewLineCache.get(line);
+  if (known !== undefined) return known;
+  const plain = computePlainPreviewLine(line);
+  // A rebuild asks again for every row's line: keep the answers, bounded.
+  if (previewLineCache.size >= PREVIEW_LINE_CACHE_MAX) previewLineCache.clear();
+  previewLineCache.set(line, plain);
+  return plain;
+}
+
+const PREVIEW_LINE_CACHE_MAX = 500;
+const previewLineCache = new Map<string, string>();
+
+function computePlainPreviewLine(line: string): string {
   const trimmed = line.trim();
   if (/^(`{3,}|~{3,}|[-*_]{3,}\s*$)/.test(trimmed)) return "";
   return trimmed
