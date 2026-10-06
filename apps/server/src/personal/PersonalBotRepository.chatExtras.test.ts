@@ -390,6 +390,21 @@ it.live("search: a snippet is cut around the match in SQL", () =>
   }).pipe(Effect.provide(testLayer)),
 );
 
+it("snippetOf drops code fences and folds whitespace", () => {
+  const fence = "`".repeat(3);
+  expect(
+    snippetOf({
+      snippet: `Ready to ship?
+
+${fence}choices
+Yes, ship it
+Not yet
+${fence}`,
+      snippetStart: 1,
+    }),
+  ).toBe("Ready to ship? Yes, ship it Not yet");
+});
+
 it("asciiLower folds ASCII only, like SQLite lower()", () => {
   expect(asciiLower("ÉCole RELEASE")).toBe("École release");
 });

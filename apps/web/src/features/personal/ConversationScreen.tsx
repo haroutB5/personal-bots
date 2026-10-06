@@ -141,6 +141,7 @@ import { setPersonalPreference, usePersonalPreference } from "./personalPreferen
 import { diagnosticsEnabled, DiagnosticsOverlay } from "./DiagnosticsOverlay";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { useReportViewingThread } from "./useReportViewingThread";
+import { readChatNotice } from "./chatNotices";
 import { useChatSeenState, useMarkChatSeen, useRefetchOnTurnsSettled } from "./unreadChats";
 import { markMessageSent, observeChatMessages, reportChatUsable } from "./perfRum";
 import { warmHighlighterWhenIdle } from "./highlighterWarmup";
@@ -848,6 +849,17 @@ export function ConversationScreen({
   // Another chat finishing a turn lights its chip: refetch the list (it carries
   // the unread flag), debounced, as the bot's chat list does.
   useRefetchOnTurnsSettled(chipsShown ? chipModel.turnsKey : "", list.refresh);
+  // The server's "switched to the fallback model" and "back on the main model" lines
+  // change the bot's label (header, list, tiles): refetch the bots when one lands.
+  const fallbackNoticeKey = useMemo(
+    () =>
+      String(
+        messages.filter((message) => readChatNotice(message)?.notice.startsWith("model-fallback-"))
+          .length,
+      ),
+    [messages],
+  );
+  useRefetchOnTurnsSettled(fallbackNoticeKey, list.refresh);
   // The "+" chip swaps this chat for the new one and keeps Back where it was.
   const onChipNewChat = () =>
     newChat.open({ replace: true, keepState: true, onBeforeStart: markChatSwitched });

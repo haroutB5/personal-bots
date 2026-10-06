@@ -29,7 +29,11 @@ const SNIPPET_CHARS = 140;
  * `row.snippetStart` (1-based) and is at most 200 characters.
  */
 export function snippetOf(row: Pick<PersonalMessageSearchRow, "snippet" | "snippetStart">): string {
-  const flat = row.snippet.replace(/\s+/g, " ").trim();
+  // Code fences and their language tag read as noise in a one-line snippet.
+  const flat = row.snippet
+    .replace(/`{3,}[\w-]*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   const clipped = flat.length > SNIPPET_CHARS ? `${flat.slice(0, SNIPPET_CHARS).trimEnd()}…` : flat;
   return row.snippetStart > 1 ? `…${clipped}` : clipped;
 }
