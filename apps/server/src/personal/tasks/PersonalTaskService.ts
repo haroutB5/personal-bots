@@ -1740,6 +1740,26 @@ export const make = Effect.gen(function* () {
       : "";
   });
 
+  // The provider session a bot just moved off (its home, after a usage limit) reports
+  // its end a moment after the switch: an error, a stop. That is the earlier attempt's
+  // turn dying, not the attempt that started on the fallback, so it ends nothing.
+  const fromSupersededSession = Effect.fn("PersonalTaskService.fromSupersededSession")(function* (
+    attempt: PersonalTaskAttempt,
+    session: OrchestrationSession,
+  ) {
+    if (session.providerInstanceId === undefined) return false;
+    const task = yield* repository.getTask(attempt.taskId);
+    if (Option.isNone(task)) return false;
+    const states = yield* botRepository.listFallbackStates();
+    const state = states.find((candidate) => candidate.botId === task.value.botId);
+    return (
+      state !== undefined &&
+      state.fromInstanceId === session.providerInstanceId &&
+      state.fallbackModel.instanceId !== state.fromInstanceId &&
+      DateTime.toEpochMillis(attempt.startedAt) >= Date.parse(state.startedAt)
+    );
+  });
+
   // Decides whether the attempt's turn has ended, reading the projected
   // session (authoritative) rather than trusting event order. A session state
   // older than the attempt belongs to an earlier turn on the same thread.
@@ -1820,6 +1840,9 @@ export const make = Effect.gen(function* () {
         if (!observed && !fresh) {
           return;
         }
+        if (yield* fromSupersededSession(attempt, session)) {
+          return;
+        }
         // The session closed while the task only waited on background work:
         // the bot had already replied, so its replies are the result.
         if (session.status === "stopped" && waitingOnBackground(attempt)) {
@@ -1834,6 +1857,9 @@ export const make = Effect.gen(function* () {
         return;
       case "error": {
         if (!observed && !fresh) {
+          return;
+        }
+        if (yield* fromSupersededSession(attempt, session)) {
           return;
         }
         // The failed resume reports its error before the app's renewal starts the fresh
@@ -1977,7 +2003,7 @@ export const make = Effect.gen(function* () {
           providerRetryOfAttempt(session.providerRetry, DateTime.toEpochMillis(attempt.startedAt)),
           DateTime.toEpochMillis(now),
         );
-        if (pause !== null) {
+        if (pause !== null && !(yield* fromSupersededSession(attempt, session))) {
           yield* pauseForProviderWait(attempt, pause, now);
           return;
         }

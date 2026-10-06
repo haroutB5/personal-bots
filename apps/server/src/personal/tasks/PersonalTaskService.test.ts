@@ -229,11 +229,15 @@ const makeSession = (input: {
   readonly activeTurnId: TurnId | null;
   readonly lastError?: string;
   readonly providerRetry?: OrchestrationSession["providerRetry"];
+  readonly providerInstanceId?: string;
   readonly updatedAt: string;
 }): OrchestrationSession => ({
   threadId: input.threadId,
   status: input.status,
   providerName: "codex",
+  ...(input.providerInstanceId !== undefined
+    ? { providerInstanceId: ProviderInstanceId.make(input.providerInstanceId) }
+    : {}),
   runtimeMode: "full-access",
   activeTurnId: input.activeTurnId,
   lastError: input.lastError ?? null,
@@ -3464,6 +3468,128 @@ it.effect("an error that does not read like a limit still settles at once", () =
     );
     expect((yield* reload(root.taskId)).status).toBe("failed");
   }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+/** The user message the dispatcher posted for an attempt: what makes a session state fresh for it. */
+const postAttemptMessage = (
+  harness: Harness,
+  taskId: PersonalTask["taskId"],
+  threadId: ThreadId,
+  attempt: number,
+) =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    harness.messages.set(threadId, [
+      ...(harness.messages.get(threadId) ?? []),
+      {
+        messageId: MessageId.make(`personal-task-${taskId}-${attempt}`),
+        threadId,
+        turnId: null,
+        role: "user",
+        text: `Retry, attempt ${attempt}.`,
+        isStreaming: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+  });
+
+it.effect(
+  "the old provider session's late error or stop does not end the attempt running on the fallback",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seedBots;
+      const service = yield* PersonalTaskService.PersonalTaskService;
+      const root = yield* createRoot("fb-late-old", "developer");
+      const thread = threadOf(root);
+      const turnId = yield* beginTurn(harness, thread);
+      const startsBefore = turnStarts(harness).length;
+      yield* TestClock.adjust("5 seconds");
+      const reported = DateTime.subtract(yield* DateTime.now, { seconds: 1 });
+      yield* waitOnProvider(harness, thread, turnId, {
+        ...providerWait("rate_limited", reported, 6 * 60 * 60_000),
+        provider: "codex",
+      });
+      yield* TestClock.adjust("2 seconds");
+      yield* service.sweep;
+      yield* service.drain;
+      expect(turnStarts(harness).length - startsBefore).toBe(1);
+      expect((yield* reload(root.taskId)).status).toBe("running");
+      yield* postAttemptMessage(harness, root.taskId, thread, 2);
+
+      // The home session (codex) reports its end while the fallback attempt is starting.
+      const late = DateTime.formatIso(yield* DateTime.now);
+      for (const status of ["error", "stopped"] as const) {
+        yield* setSession(
+          harness,
+          makeSession({
+            threadId: thread,
+            status,
+            activeTurnId: null,
+            lastError: CODEX_LIMIT_ERROR,
+            providerInstanceId: "codex",
+            updatedAt: late,
+          }),
+        );
+        expect((yield* reload(root.taskId)).status).toBe("running");
+      }
+
+      // The fallback's own turn runs and its reply is the result.
+      const second = TurnId.make("turn-fallback-late");
+      yield* setSession(
+        harness,
+        makeSession({
+          threadId: thread,
+          status: "running",
+          activeTurnId: second,
+          providerInstanceId: "claudeAgent",
+          updatedAt: DateTime.formatIso(yield* DateTime.now),
+        }),
+      );
+      yield* endTurn(harness, thread, second, "Finished on the fallback.");
+      const done = yield* reload(root.taskId);
+      expect([done.status, done.result?.summary]).toEqual([
+        "completed",
+        "Finished on the fallback.",
+      ]);
+      expect(turnStarts(harness).length - startsBefore).toBe(1);
+    }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, fallbackProviders(10))));
+  },
+);
+
+it.effect("an error from the fallback's own session still ends the attempt running on it", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalTaskService.PersonalTaskService;
+    const root = yield* createRoot("fb-own-error", "developer");
+    const thread = threadOf(root);
+    const turnId = yield* beginTurn(harness, thread);
+    yield* TestClock.adjust("5 seconds");
+    const reported = DateTime.subtract(yield* DateTime.now, { seconds: 1 });
+    yield* waitOnProvider(harness, thread, turnId, {
+      ...providerWait("rate_limited", reported, 6 * 60 * 60_000),
+      provider: "codex",
+    });
+    yield* TestClock.adjust("2 seconds");
+    yield* service.sweep;
+    yield* service.drain;
+    expect((yield* reload(root.taskId)).status).toBe("running");
+    yield* postAttemptMessage(harness, root.taskId, thread, 2);
+    yield* setSession(
+      harness,
+      makeSession({
+        threadId: thread,
+        status: "error",
+        activeTurnId: null,
+        lastError: "The model crashed.",
+        providerInstanceId: "claudeAgent",
+        updatedAt: DateTime.formatIso(yield* DateTime.now),
+      }),
+    );
+    expect((yield* reload(root.taskId)).status).toBe("failed");
+  }).pipe(Effect.provide(makeLayer(harness, undefined, undefined, fallbackProviders(10))));
 });
 
 it.effect(
