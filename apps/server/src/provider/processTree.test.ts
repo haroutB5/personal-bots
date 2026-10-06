@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { spawn } from "node:child_process";
-import { setTimeout as delay } from "node:timers/promises";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -170,7 +170,7 @@ describe("terminateDescendants", () => {
       Effect.gen(function* () {
         // The parent stands in for a provider CLI; its child is the bot's
         // `sleep`, which prints its PID and waits.
-        const parent = spawn(
+        const parent = NodeChildProcess.spawn(
           process.execPath,
           [
             "-e",
@@ -192,7 +192,7 @@ describe("terminateDescendants", () => {
           assert.include(ended.killed, childPid);
           const found = ended.found.map((process) => process.pid);
           for (const pid of ended.killed) assert.include(found, pid);
-          yield* Effect.promise(() => delay(500));
+          yield* Effect.promise(() => NodeTimersPromises.setTimeout(500));
           assert.isFalse(isAlive(childPid));
           assert.isTrue(isAlive(parent.pid!));
         } finally {

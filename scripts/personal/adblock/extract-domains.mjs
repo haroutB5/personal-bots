@@ -1,5 +1,5 @@
 // node scripts/personal/adblock/extract-domains.mjs <lists dir>   (needs easylist.txt, easyprivacy.txt, pgl.txt in it)
-import fs from "node:fs";
+import * as NodeFS from "node:fs";
 const out = new Set();
 let total = 0,
   kept = 0;
@@ -23,7 +23,7 @@ const okOpts = new Set([
   "important",
 ]);
 for (const f of ["easylist.txt", "easyprivacy.txt"]) {
-  for (const raw of fs.readFileSync(process.argv[2] + "/" + f, "utf8").split(/\r?\n/)) {
+  for (const raw of NodeFS.readFileSync(process.argv[2] + "/" + f, "utf8").split(/\r?\n/)) {
     const line = raw.trim();
     if (
       !line.startsWith("||") ||
@@ -46,9 +46,9 @@ for (const f of ["easylist.txt", "easyprivacy.txt"]) {
     out.add(host);
   }
 }
-for (const l of fs.readFileSync(process.argv[2] + "/pgl.txt", "utf8").split(/\r?\n/)) {
+for (const l of NodeFS.readFileSync(process.argv[2] + "/pgl.txt", "utf8").split(/\r?\n/)) {
   const h = l.trim().toLowerCase();
   if (h && !h.startsWith("#") && h.includes(".")) out.add(h);
 }
-fs.writeFileSync(process.argv[2] + "/domains-full.txt", [...out].sort().join("\n") + "\n");
+NodeFS.writeFileSync(process.argv[2] + "/domains-full.txt", [...out].sort().join("\n") + "\n");
 console.log({ total, kept, unique: out.size });

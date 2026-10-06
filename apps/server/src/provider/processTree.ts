@@ -20,8 +20,9 @@
  *
  * @module provider/processTree
  */
-import { execFile } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as Effect from "effect/Effect";
@@ -83,7 +84,7 @@ export function descendantsOf(
 const run = (file: string, args: ReadonlyArray<string>, timeoutMs: number) =>
   new Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>(
     (resolve) => {
-      execFile(
+      NodeChildProcess.execFile(
         file,
         [...args],
         { windowsHide: true, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
@@ -171,7 +172,8 @@ export async function listProcesses(
   deps: WindowsToolDeps & { readonly platform?: NodeJS.Platform; readonly run?: RunFn } = {},
 ): Promise<ProcessEntry[] | null> {
   const exec = deps.run ?? run;
-  if ((deps.platform ?? process.platform) === "win32") {
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- the host platform picks the process-list tool; tests inject it.
+  if ((deps.platform ?? NodeOS.platform()) === "win32") {
     const result = await exec(
       resolveWindowsPowerShell(deps),
       ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_SNAPSHOT_SCRIPT],
@@ -187,7 +189,8 @@ const snapshotProcesses = Effect.promise(() => listProcesses());
 
 const killOne = (pid: number) =>
   Effect.promise(async (): Promise<boolean> => {
-    if (process.platform === "win32") {
+    // oxlint-disable-next-line t3code/no-global-process-runtime -- the host platform picks taskkill or SIGKILL.
+    if (NodeOS.platform() === "win32") {
       // By PID, without /T: the tree was already walked with the reuse guard.
       const result = await run(resolveWindowsTaskkill(), ["/PID", String(pid), "/F"], 15_000);
       return result.code === 0;

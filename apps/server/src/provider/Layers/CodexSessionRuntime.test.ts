@@ -1117,24 +1117,24 @@ describe("buildCodexAdditionalContext bot instructions", () => {
     }
   });
 
-  it("is wired through buildTurnStartParams", () => {
-    const params = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("is wired through buildTurnStartParams", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "full-access",
         prompt: "hi",
         model: "gpt-5.3-codex",
         interactionMode: "default",
         systemInstructions: "You are Backend.",
-      }),
-    );
-    NodeAssert.equal(
-      params.additionalContext?.t3_code_bot_01?.value,
-      "<bot_instructions>You are Backend.</bot_instructions>",
-    );
-    NodeAssert.doesNotMatch(
-      params.collaborationMode?.settings.developer_instructions ?? "",
-      /bot_instructions/,
-    );
-  });
+      });
+      NodeAssert.equal(
+        params.additionalContext?.t3_code_bot_01?.value,
+        "<bot_instructions>You are Backend.</bot_instructions>",
+      );
+      NodeAssert.doesNotMatch(
+        params.collaborationMode?.settings.developer_instructions ?? "",
+        /bot_instructions/,
+      );
+    }),
+  );
 });

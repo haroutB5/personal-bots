@@ -1,10 +1,12 @@
 // Training crawl: which third-party hosts do popular UK/US news, recipe and shopping pages contact?
 // The pages used to measure the list (dailymail, allrecipes, ebay, vinted, thesun) are deliberately NOT in this list.
 //   node scripts/personal/adblock/crawl.mjs   (writes crawl-out.json in the current directory, uses ./prof-crawl)
-import { createRequire } from "node:module";
-import path from "node:path";
-import fs from "node:fs";
-const require = createRequire(new URL("../../../apps/server/package.json", import.meta.url));
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeFS from "node:fs";
+const require = NodeModule.createRequire(
+  new URL("../../../apps/server/package.json", import.meta.url),
+);
 const { chromium } = require("playwright-core");
 const { getDomain } = require("tldts");
 import { acceptConsent } from "./consent.mjs";
@@ -80,7 +82,7 @@ https://www.pcmag.com/
 https://www.thetimes.co.uk/
 https://www.hellomagazine.com/
 https://www.glamourmagazine.co.uk/`.split("\n");
-const ctx = await chromium.launchPersistentContext(path.resolve("prof-crawl"), {
+const ctx = await chromium.launchPersistentContext(NodePath.resolve("prof-crawl"), {
   channel: "chrome",
   headless: true,
   viewport: { width: 390, height: 760 },
@@ -122,7 +124,7 @@ for (const url of sites) {
   };
   console.log(url, hosts.size, Date.now() - t0, consent);
   await page.close().catch(() => {});
-  fs.writeFileSync("crawl-out.json", JSON.stringify(out));
+  NodeFS.writeFileSync("crawl-out.json", JSON.stringify(out));
 }
 await ctx.close();
 console.log("DONE");
