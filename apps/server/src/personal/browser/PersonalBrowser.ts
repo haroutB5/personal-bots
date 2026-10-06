@@ -274,7 +274,7 @@ export interface PersonalBrowserOptions {
   readonly streamMaxFps?: number | undefined;
   /**
    * A rougher, smaller picture while the page scrolls, a sharp one when it stops. Off from the
-   * environment unless T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=on (see HANDOFF-16044); on when
+   * environment unless T3CODE_PERSONAL_BROWSER_ADAPTIVE_JPEG=on (see docs/releases/HANDOFF-16044.md); on when
    * the option is left out, which is how the tests build it.
    */
   readonly adaptiveJpeg?: boolean;

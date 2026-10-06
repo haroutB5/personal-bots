@@ -205,8 +205,8 @@ range since the last review, and the proposals carried over from the ledger
    fast-forwarded with `merge --ff-only`; ahead or diverged is refused) that
    holds no code the live release lacks, `backup.ps1`. "No code" means no
    difference outside the notes and tooling a release is not built from:
-   top-level `*.md` (the `HANDOFF-<n>.md` commit the team adds on top of every
-   release), `docs/`, and `scripts/personal/` except `app-version.txt`
+   top-level `*.md`, `docs/` (the `docs/releases/HANDOFF-<n>.md` commit the team
+   adds on top of every release; until 1.66.0 it was a top-level file), and `scripts/personal/` except `app-version.txt`
    (`updates-common.ps1`, `Test-UpdatesNotInRelease`). In a live run the
    checkout's `node_modules` are reinstalled when they no longer match
    `pnpm-lock.yaml`. Setting `PB_UPDATES_NO_REPORT=1` keeps a refusal's report

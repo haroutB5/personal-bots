@@ -2527,7 +2527,7 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
  * Each group is handled by its own `toLayer` call in `apps/server/src/ws.ts`,
  * so each gets its own budget and the practical limit is ~200 methods *per
  * group*. Adding a group is the way to add headroom; see
- * `HANDOFF-rpc-ceiling.md` for the measurements behind those numbers.
+ * `docs/releases/HANDOFF-rpc-ceiling.md` for the measurements behind those numbers.
  */
 /**
  * Server lifecycle, configuration, providers, diagnostics, usage and the cloud relay.

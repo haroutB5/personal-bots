@@ -118,7 +118,7 @@ plus a warm-up, 4x CPU, 390x844, a throwaway server with the fake Claude CLI),
 1.30.1. The machine and Chrome moved, not the code. By CTO decision those four
 ceilings were reset once to 1.30.1's measured-today p50, then ratcheted as usual
 (p50 x (1 + headroom), by CTO decision for this step) against 1.59.4; the
-other seven ceilings were not touched. Numbers and logs: HANDOFF-1591.md and
+other seven ceilings were not touched. Numbers and logs: docs/releases/HANDOFF-1591.md and
 `~/.personal-bots/qa/frontend-1593/`.
 
 **J2.chatShell fix and recalibration, 2026-09-30 (1.59.5).** The probe stamps
@@ -252,4 +252,4 @@ server is ready; the rest wait and are answered at ready. 146 of 3902 requests s
 of 10 restarts. 6 of 30 phone models hit it and reconnected after 18.1 to 19.9 s (15 s attempt timeout, then the backoff).
 A real Chrome that opens the app 250 ms after the port opens did not load it in 25 s, 10 of 10. 1.64.2 holds early requests and
 replays them to the handler: 0 of 1188 unanswered, no phone model above 2.5 s, Chrome loads the app and connects `/ws` at a median
-3.0 s. Startup itself is unchanged (ready median 1686 vs 1687 ms). See `HANDOFF-1642.md`.
+3.0 s. Startup itself is unchanged (ready median 1686 vs 1687 ms). See `docs/releases/HANDOFF-1642.md`.
