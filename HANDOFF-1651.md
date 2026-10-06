@@ -62,4 +62,17 @@ Harout: select sentences of a bot's reply to copy. 1.65.0 made message text non-
 
 ## Gates and proof
 
-(filled in below after the run)
+- Server `npx vp test run src/personal src/mcp`: exit 0, 156 files, 2100 passed, 3 skipped. `tsc --noEmit` exit 0 for server, web and contracts. Web `npx vp test run --project unit src/features/personal`: exit 0, 204 files, 2047 passed. `vp fmt --check` clean on every changed file; `vp lint` exit 0 on them (5 warnings, all in lines this release did not touch).
+- Build: `build.ps1 -NoActivate -CopyExternals`, 4 .env keys loaded, externals copied, no migration. Release id = the commit it was built from (see the report); not activated.
+- Browser and server checks on a throwaway root from the staged release (fake CLIs, Sonnet 5.5 seed, headless Chrome 390 px dark, touch emulation, isolated profile). Harness and evidence: `~/.personal-bots/qa/hbots-1651/` (`h/` scripts, `shots/`, `c1-result.json`, `c2-result.json`, `gates/`).
+  - `c1` (14 checks, real MCP path: a fake lead chat calls `create_bot` / `update_bot`): create with fallback off + own model; update turns it on, changes the effort (context window kept), turns it off; Fable fallback and a missing effort refused with nothing changed; a bot the user made gets a card (nothing changes), the card lists `usage-limit fallback: on → off`, his Yes applies it; the bot form (`/bots/<id>/edit`) shows the switch off, then on with Sonnet 5.5 / High / 1M; 0 page errors, 0 ERROR lines in the server log.
+  - `c2` (touch emulation): Bots page has no Pinned chats section and lists the pinned chat nowhere, a pinned group is among the group rows once, first, with its pin; the bot's own chat list and the chat chips have the pinned chat first with its pin. Message text is `user-select: none` on touch; long press opens Reply / Select text / Copy text; Select text selects the whole message and the mode stays on while the selection is narrowed to a sentence; a tap on another message ends it and clears the selection; a single tap does nothing; a double tap selects exactly the tapped word ("strongest"), the page scale stays 1 and no menu opens; two slow taps do nothing; a long press on another message still opens the menu; the same in a group chat's verdict message; desktop (mouse, 1100 px): text selectable with no mode, double click selects "warehouse" natively.
+  - Throwaway script: start and stop run twice (one with a junction inside the root pointing at a folder outside it, which survived), each time no root, PID, port or process naming the root left; also run with its output captured by a calling script.
+- The cooldown log line is proven by the unit test only (real service, real repository, a real logger), not by a live two-limit run.
+
+## Not tested / left out
+
+- Real iPhone Safari: whether iOS shows its handles and Copy bubble for a selection set by script, and how its own double tap and callout behave, cannot be proven headless. Chrome with touch emulation shows the selection, the mode and the events; the iPhone check is Harout's.
+- Nothing ran against a real account (fake CLIs). The new tool fields were only exercised on the Claude provider; the resolution code is provider-generic (it reads the provider's own model, effort and context lists).
+- Watcher and Musey (Harout-made, on Muse Spark) still need their fallback switch turned off: a lead calling `update_bot` for them raises a confirm card from a chat turn Harout started.
+- Group pin: pinning is only through the group's own menu now (the Bots page no longer lists pinned items).
