@@ -404,7 +404,15 @@ export function buildBotSummaries(input: {
     else list.push(shell);
   };
   const newestMessageByThread = new Map<string, PersonalBotThreadNewestMessage>();
+  // Each bot's open (not archived) links, grouped once: the four per-bot flags
+  // below scanned every link of every bot (about 30 000 comparisons a rebuild).
+  const openLinksByBot = new Map<string, PersonalBotThread[]>();
   for (const link of input.links) {
+    if (link.archivedAt === null) {
+      const open = openLinksByBot.get(link.botId);
+      if (open === undefined) openLinksByBot.set(link.botId, [link]);
+      else open.push(link);
+    }
     if (link.newestMessage != null) newestMessageByThread.set(link.threadId, link.newestMessage);
     const shell = shellsById.get(link.threadId);
     if (shell === undefined) continue;
@@ -414,6 +422,9 @@ export function buildBotSummaries(input: {
   }
 
   const summaries = input.bots.map((bot): BotSummary => {
+    const openLinks = memoOn
+      ? (openLinksByBot.get(bot.botId) ?? [])
+      : input.links.filter((link) => link.botId === bot.botId && link.archivedAt === null);
     const shells = newestFirst(shellsByBot.get(bot.botId) ?? [], activityMs, memoOn);
     const busyShells = newestFirst(busyShellsByBot.get(bot.botId) ?? [], activityMs, memoOn);
     const newestThread = shells[0] ?? null;
@@ -462,35 +473,19 @@ export function buildBotSummaries(input: {
       attentionThreads: shells.filter(threadNeedsAttention),
       hasPendingApprovals: shells.some((shell) => shell.hasPendingApprovals),
       hasPendingUserInput: shells.some((shell) => shell.hasPendingUserInput),
-      needsBrowserHelp: input.links.some(
-        (link) =>
-          link.botId === bot.botId &&
-          link.archivedAt === null &&
-          link.threadId === input.browserHelpThreadId,
-      ),
+      needsBrowserHelp: openLinks.some((link) => link.threadId === input.browserHelpThreadId),
       // Off the links, not the shells: a secret request keeps its chat's
       // hasPendingUserInput false, so only the request row knows about it.
-      needsSecret: input.links.some(
-        (link) =>
-          link.botId === bot.botId &&
-          link.archivedAt === null &&
-          (input.secretRequestThreadIds?.has(link.threadId) ?? false),
+      needsSecret: openLinks.some(
+        (link) => input.secretRequestThreadIds?.has(link.threadId) ?? false,
       ),
       waitingFor:
         busyShells
           .map((shell) => input.waitingByThread?.get(shell.id) ?? null)
           .find((label) => label !== null) ?? null,
-      usingPc: input.links.some(
-        (link) =>
-          link.botId === bot.botId &&
-          link.archivedAt === null &&
-          link.threadId === input.desktop?.holderThreadId,
-      ),
-      waitingForPc: input.links.some(
-        (link) =>
-          link.botId === bot.botId &&
-          link.archivedAt === null &&
-          (input.desktop?.waitingThreadIds.has(link.threadId) ?? false),
+      usingPc: openLinks.some((link) => link.threadId === input.desktop?.holderThreadId),
+      waitingForPc: openLinks.some(
+        (link) => input.desktop?.waitingThreadIds.has(link.threadId) ?? false,
       ),
       nextRoutine,
       lastActivityMs: newestThread === null ? null : activityMs(newestThread),

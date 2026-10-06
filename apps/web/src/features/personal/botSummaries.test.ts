@@ -7,9 +7,10 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { motionForSummary } from "./avatarMotion";
+import { PERF_OFF_STORAGE_KEY, perfOptimizationOn } from "./perfFlags";
 import {
   buildBotSummaries,
   botStatus,
@@ -913,5 +914,84 @@ describe("taskCardBotLine", () => {
 
   it("is null when the bot is gone", () => {
     expect(taskCardBotLine(null, [claude])).toBeNull();
+  });
+});
+
+describe("activity-memo kill switch (1.64.1)", () => {
+  let stored: string | null = null;
+  beforeEach(() => {
+    stored = null;
+    // The unit project has no DOM: a one-key stand-in for localStorage.
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => (key === PERF_OFF_STORAGE_KEY ? stored : null),
+      setItem: (key: string, value: string) => {
+        if (key === PERF_OFF_STORAGE_KEY) stored = value;
+      },
+      removeItem: () => {
+        stored = null;
+      },
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // 7 bots, 60 chats of every kind: archived, busy, equal times, a link-only
+  // time, a PC holder, a browser-help chat, a pending secret.
+  const bots = Array.from({ length: 7 }, (_, index) =>
+    bot(`b${index}`, `Bot ${index}`, "codex", index),
+  );
+  const links: PersonalBotThread[] = [];
+  const shells: EnvironmentThreadShell[] = [];
+  for (let index = 0; index < 60; index += 1) {
+    const botId = `b${index % 7}`;
+    const threadId = `t${index}`;
+    const at = new Date(Date.UTC(2026, 9, 1, 8, index % 9, 0)).toISOString();
+    links.push(
+      index % 11 === 0
+        ? link(botId, threadId, "2026-10-02T00:00:00.000Z")
+        : index % 13 === 0
+          ? ({
+              ...link(botId, threadId),
+              lastActivityAt: DateTime.makeUnsafe("2026-10-03T00:00:00.000Z"),
+            } as unknown as PersonalBotThread)
+          : link(botId, threadId),
+    );
+    shells.push(
+      shell(threadId, at, {
+        latestUserMessageAt: index % 5 === 0 ? at : null,
+        hasPendingApprovals: index % 17 === 0,
+        latestTurn:
+          index % 4 === 0
+            ? { state: "running", requestedAt: at, startedAt: at, completedAt: null }
+            : null,
+      }),
+    );
+  }
+  const input = {
+    bots,
+    links,
+    shells,
+    providers: [provider("codex")],
+    browserHelpThreadId: "t14",
+    secretRequestThreadIds: new Set(["t3", "t10"]),
+    desktop: { holderThreadId: "t5", waitingThreadIds: new Set(["t6", "t7"]) },
+  };
+
+  it("builds exactly the same rows with the memo and grouped links switched off", () => {
+    const on = buildBotSummaries(input);
+    expect(perfOptimizationOn("activity-memo")).toBe(true);
+    globalThis.localStorage.setItem(PERF_OFF_STORAGE_KEY, "activity-memo");
+    expect(perfOptimizationOn("activity-memo")).toBe(false);
+    const off = buildBotSummaries(input);
+    expect(off.map((summary) => summary.bot.botId)).toEqual(on.map((summary) => summary.bot.botId));
+    for (const [position, summary] of on.entries()) {
+      const other = off[position]!;
+      expect({ ...summary, bot: summary.bot.botId }).toEqual({ ...other, bot: other.bot.botId });
+    }
+    expect(on.some((summary) => summary.needsSecret)).toBe(true);
+    expect(on.some((summary) => summary.usingPc)).toBe(true);
+    expect(on.some((summary) => summary.waitingForPc)).toBe(true);
+    expect(on.some((summary) => summary.needsBrowserHelp)).toBe(true);
   });
 });
