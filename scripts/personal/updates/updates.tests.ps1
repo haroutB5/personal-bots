@@ -215,6 +215,10 @@ $unreadableGate = Join-Path $gateDir 'fake-lint-unreadable.cmd'
 Set-Content -LiteralPath $unreadableGate -Encoding ASCII -Value @('@echo off', 'echo something in a layout nobody wrote a parser for', 'echo Found 3 warnings and 2 errors.', 'exit /b 1')
 $unreadableRed = Invoke-UpdatesGates -Gates @(@{ Name = 'lint'; Dir = '.'; File = $unreadableGate; Args = @(); Kind = 'lint' }) -Root $tempRoot -LogDir $gateDir -Log $callerLog -ChangedPaths @()
 Assert-Equal 'lint: errors counted but none tied to a file is red (never pass on a guess)' $true (($unreadableRed.Count -eq 1) -and ($unreadableRed[0] -like 'lint: lint counted 2 error(s) but none could be tied to a file*'))
+$partialGate = Join-Path $gateDir 'fake-lint-partial.cmd'
+Set-Content -LiteralPath $partialGate -Encoding ASCII -Value @('@echo off', 'echo   x r(a): m', 'echo    ,-[unchanged/old.ts:1:1]', 'exit /b 1')
+$partialRed = Invoke-UpdatesGates -Gates @(@{ Name = 'lint'; Dir = '.'; File = $partialGate; Args = @(); Kind = 'lint' }) -Root $tempRoot -LogDir $gateDir -Log $callerLog -ChangedPaths @('apps/server/package.json')
+Assert-Equal 'lint: an error printed, then a crash before the summary, is red even if the file is unchanged' $true (($partialRed.Count -eq 1) -and ($partialRed[0] -like 'lint exited 1 without a lint summary*'))
 $cleanGate = Join-Path $gateDir 'fake-lint-clean.cmd'
 Set-Content -LiteralPath $cleanGate -Encoding ASCII -Value @('@echo off', 'echo Found 858 warnings and 0 errors.', 'exit /b 0')
 Assert-Equal 'lint: exit 0 with 0 errors is green' 0 (Invoke-UpdatesGates -Gates @(@{ Name = 'lint'; Dir = '.'; File = $cleanGate; Args = @(); Kind = 'lint' }) -Root $tempRoot -LogDir $gateDir -Log $callerLog -ChangedPaths @()).Count

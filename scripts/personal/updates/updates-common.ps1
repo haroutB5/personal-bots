@@ -579,8 +579,11 @@ function Invoke-UpdatesGates {
             $mine = @($errorFiles | Where-Object { $file = $_; @($ChangedPaths | Where-Object { ($_ -replace '\\', '/') -eq $file }).Count -gt 0 })
             if ($mine.Count -gt 0) {
                 $red.Add("$($gate.Name): lint error(s) in a file this run changed: $($mine -join ', ') (log $gateLog)") | Out-Null
-            } elseif ($res.TimedOut -or ($res.Code -ne 0 -and $null -eq $summary -and $errorFiles.Count -eq 0)) {
-                # No "Found N warnings and M errors" line: the run did not finish.
+            } elseif ($res.TimedOut -or ($res.Code -ne 0 -and $null -eq $summary -and ($errorFiles.Count -eq 0 -or $lintText -match ',-\[[^\]]+:\d+:\d+\]'))) {
+                # No "Found N warnings and M errors" line: the run did not finish. The default
+                # (",-[file:line:col]") layout always ends with that summary, so an error printed in it
+                # without the summary is a crash partway, never a pass. The one-line layout
+                # ("file:line:col: error ...") prints no summary, so there only nothing listed is a crash.
                 $red.Add("$($gate.Name) exited $($res.Code) without a lint summary (crash or timeout; log $gateLog)") | Out-Null
             } elseif ($null -ne $summary -and $summary.Errors -gt 0 -and $errorFiles.Count -eq 0) {
                 # Errors were counted but none could be tied to a file: the layout changed. Never pass on a guess.
