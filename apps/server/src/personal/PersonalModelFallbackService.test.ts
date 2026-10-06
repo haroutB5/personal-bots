@@ -21,7 +21,9 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -39,6 +41,7 @@ import {
   decideSwitchBack,
   FALLBACK_DEFAULT_HOLD_MS,
   FALLBACK_RECHECK_MS,
+  FALLBACK_RESWITCH_COOLDOWN_MS,
   FALLBACK_SWITCH_BACK_GRACE_MS,
   fallbackModelLabel,
   limitPool,
@@ -555,6 +558,65 @@ it.effect("goes back only after the reset and only when the bot is idle, with on
     expect(yield* hit()).toEqual({ switched: false, skipped: "cooldown" });
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+it.effect(
+  "a switch the cooldown holds back is logged with the bot, the reason and the seconds left",
+  () => {
+    const harness = makeHarness();
+    const logs: Array<{ message: unknown; annotations: Record<string, unknown> }> = [];
+    // `Effect.logInfo(text, fields)` hands the logger [text, fields].
+    const logger = Logger.make<unknown, void>(({ fiber, message }) => {
+      const [text, fields] = Array.isArray(message) ? message : [message, {}];
+      logs.push({
+        message: text,
+        annotations: { ...fiber.getRef(References.CurrentLogAnnotations), ...fields },
+      });
+    });
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      yield* seedBot();
+      const service = yield* PersonalModelFallback.PersonalModelFallback;
+      yield* hit();
+      harness.providers = [
+        snapshot("codex", "codex", usage([{ id: "primary", used: 3 }])),
+        snapshot("claudeAgent", "claudeAgent", usage([{ id: "five_hour", used: 20 }])),
+      ];
+      yield* TestClock.setTime(RESET + FALLBACK_SWITCH_BACK_GRACE_MS + 1000);
+      yield* service.sweep;
+      logs.length = 0;
+
+      // 20 s after the switch back: held, and the line says for how much longer.
+      yield* TestClock.adjust(20_000);
+      expect(yield* hit()).toEqual({ switched: false, skipped: "cooldown" });
+      const held = logs.filter((line) => line.message === "personal model fallback not used");
+      expect(held).toHaveLength(1);
+      expect(held[0]!.annotations).toMatchObject({
+        botId: BOT,
+        source: "chat",
+        reason: "cooldown",
+        secondsLeft: Math.ceil((FALLBACK_RESWITCH_COOLDOWN_MS - 20_000) / 1000),
+      });
+
+      // A bot that does not exist is logged the same way, with no time left.
+      logs.length = 0;
+      yield* service.onLimitHit({
+        botId: "bot-missing",
+        threadId: CHAT,
+        source: "task",
+        instanceId: CODEX,
+        providerName: "codex",
+        reason: "usage_limit",
+        retryAt: null,
+      });
+      expect(logs.map((line) => line.annotations)).toEqual([
+        expect.objectContaining({ botId: "bot-missing", source: "task", reason: "no_bot" }),
+      ]);
+    }).pipe(
+      Effect.provide(makeLayer(harness)),
+      Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+    );
+  },
+);
 
 it.effect("a reset the provider still reports as spent moves the switch back later", () => {
   const harness = makeHarness();

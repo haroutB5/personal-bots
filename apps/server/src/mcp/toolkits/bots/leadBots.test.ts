@@ -109,6 +109,12 @@ const claudeProvider = {
             type: "select",
             options: ["low", "medium", "high"].map((id) => ({ id, label: id })),
           },
+          {
+            id: "contextWindow",
+            label: "Context window",
+            type: "select",
+            options: ["200k", "1m"].map((id) => ({ id, label: id })),
+          },
         ],
       },
     },
@@ -1522,5 +1528,292 @@ describe("team lead bot tools", () => {
           void harness;
         }),
       ),
+  );
+});
+
+describe("lead bot usage-limit fallback settings", () => {
+  const botNamed = (id: string) =>
+    liveBots.pipe(Effect.map((bots) => bots.find((bot) => bot.botId === botId(id))!));
+
+  it.effect("update_bot turns a bot's fallback off and on, and changes its model", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call } = yield* setup;
+        // A bot the lead made itself is the lead's to change, with no card.
+        const made = yield* call("create_bot", { name: "Tax", model: "claude-sonnet-5-5" });
+        const id = made.botId;
+        const fallbackOf = (yield* liveBots).find((bot) => bot.botId === id)!.fallback;
+        expect(fallbackOf).toMatchObject({
+          enabled: true,
+          modelSelection: { model: "claude-sonnet-5-5" },
+        });
+
+        const off = yield* call("update_bot", { bot: "Tax", fallbackEnabled: false });
+        expect(off).toMatchObject({ pending: false, changed: ["fallbackEnabled"] });
+        expect(off.line).toBe("CFO edited bot 'Tax' (usage-limit fallback off) on Finance");
+        expect((yield* liveBots).find((bot) => bot.botId === id)!.fallback?.enabled).toBe(false);
+        // The model is untouched by an off switch.
+        expect(
+          (yield* liveBots).find((bot) => bot.botId === id)!.fallback?.modelSelection.model,
+        ).toBe("claude-sonnet-5-5");
+
+        const model = yield* call("update_bot", {
+          bot: "Tax",
+          fallbackEnabled: true,
+          fallbackModel: { model: "claude-opus-5-5", effort: "low" },
+        });
+        expect(model.changed).toEqual(["fallbackEnabled", "fallbackModel"]);
+        expect(model.line).toBe(
+          "CFO edited bot 'Tax' (usage-limit fallback on, fallback model → Opus 5.5 · L) on Finance",
+        );
+        const row = (yield* liveBots).find((bot) => bot.botId === id)!;
+        expect(row.fallback).toEqual({
+          enabled: true,
+          modelSelection: {
+            instanceId: CLAUDE,
+            model: "claude-opus-5-5",
+            options: [{ id: "effort", value: "low" }],
+          },
+        });
+        // The bot's own model is not the fallback's business.
+        expect(row.modelSelection.model).toBe("claude-sonnet-5-5");
+
+        // The audit row keeps the old and new fallback whole.
+        const sql = yield* SqlClient.SqlClient;
+        const audit = yield* sql<{
+          readonly changed_fields_json: string;
+          readonly before_json: string;
+          readonly after_json: string;
+        }>`SELECT changed_fields_json, before_json, after_json FROM personal_lead_bot_actions WHERE action = 'update' ORDER BY created_at DESC, rowid DESC`;
+        expect(parseJson(audit[0]!.changed_fields_json)).toEqual([
+          "fallbackEnabled",
+          "fallbackModel",
+        ]);
+        expect(parseJson(audit[0]!.before_json)).toMatchObject({
+          fallbackEnabled: false,
+          fallbackModel: { model: "claude-sonnet-5-5" },
+        });
+        expect(parseJson(audit[0]!.after_json)).toMatchObject({
+          fallbackEnabled: true,
+          fallbackModel: { model: "claude-opus-5-5" },
+        });
+        expect(harness.notifications.at(-1)).toMatchObject({
+          title: "CFO edited bot 'Tax'",
+          body: "usage-limit fallback on, fallback model → Opus 5.5 · L on Finance",
+        });
+
+        // The same thing again changes nothing and says nothing.
+        const announced = harness.notifications.length;
+        const again = yield* call("update_bot", {
+          bot: "Tax",
+          fallbackEnabled: true,
+          fallbackModel: { model: "claude-opus-5-5", effort: "low" },
+        });
+        expect(again.changed).toEqual([]);
+        expect(harness.notifications).toHaveLength(announced);
+      }),
+    ),
+  );
+
+  it.effect("the fallback's effort and context window follow the model's own lists", () =>
+    withHarness(() =>
+      Effect.gen(function* () {
+        const { call, refusal } = yield* setup;
+        const made = yield* call("create_bot", { name: "Tax" });
+        const fallbackSelection = () =>
+          liveBots.pipe(
+            Effect.map((bots) => bots.find((bot) => bot.botId === made.botId)!.fallback),
+          );
+        // A new bot starts on the default fallback: Sonnet 5.5, high, 1M.
+        expect((yield* fallbackSelection())?.modelSelection).toEqual({
+          instanceId: CLAUDE,
+          model: "claude-sonnet-5-5",
+          options: [
+            { id: "effort", value: "high" },
+            { id: "contextWindow", value: "1m" },
+          ],
+        });
+
+        // Only the effort moves: the context window stays.
+        yield* call("update_bot", { bot: "Tax", fallbackModel: { effort: "low" } });
+        expect((yield* fallbackSelection())?.modelSelection.options).toEqual([
+          { id: "effort", value: "low" },
+          { id: "contextWindow", value: "1m" },
+        ]);
+        // Only the context window moves: the effort stays.
+        yield* call("update_bot", { bot: "Tax", fallbackModel: { context: "200k" } });
+        expect((yield* fallbackSelection())?.modelSelection.options).toEqual([
+          { id: "effort", value: "low" },
+          { id: "contextWindow", value: "200k" },
+        ]);
+
+        expect(
+          yield* refusal("update_bot", { bot: "Tax", fallbackModel: { effort: "max" } }),
+        ).toContain("'max' is not an effort 'claude-sonnet-5-5' offers");
+        expect(
+          yield* refusal("update_bot", { bot: "Tax", fallbackModel: { context: "9m" } }),
+        ).toContain("'9m' is not a context window");
+        expect(
+          yield* refusal("update_bot", {
+            bot: "Tax",
+            fallbackModel: { model: "claude-opus-5-5", context: "1m" },
+          }),
+        ).toContain("has no context window setting");
+        expect(
+          yield* refusal("update_bot", { bot: "Tax", fallbackModel: { model: "gpt-nope" } }),
+        ).toContain("'gpt-nope' is not a model 'claudeAgent' offers");
+        expect(
+          yield* refusal("update_bot", { bot: "Tax", fallbackModel: { provider: "nowhere" } }),
+        ).toContain("Provider 'nowhere' is not available");
+        // A refused call changed nothing.
+        expect((yield* fallbackSelection())?.modelSelection.options).toEqual([
+          { id: "effort", value: "low" },
+          { id: "contextWindow", value: "200k" },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("a Fable or Mythos model is refused as a fallback, on create and update", () =>
+    withHarness(() =>
+      Effect.gen(function* () {
+        const { call, refusal, bots } = yield* setup;
+        expect(
+          yield* refusal("create_bot", {
+            name: "Pricey",
+            fallbackModel: { model: "claude-fable-5-1" },
+          }),
+        ).toContain("only the user can choose it");
+        const made = yield* call("create_bot", { name: "Tax" });
+        expect(
+          yield* refusal("update_bot", {
+            bot: "Tax",
+            fallbackModel: { model: "claude-fable-5-1" },
+          }),
+        ).toContain("only the user can choose it");
+        const stored = () =>
+          liveBots.pipe(
+            Effect.map((rows) => rows.find((bot) => bot.botId === made.botId)!.fallback),
+          );
+        expect((yield* stored())?.modelSelection.model).toBe("claude-sonnet-5-5");
+        // Harout's own Fable fallback stays as it is when only the switch is changed.
+        yield* bots.update({
+          botId: PersonalBotId.make(made.botId),
+          fallback: { modelSelection: { instanceId: CLAUDE, model: "claude-fable-5-1" } },
+        });
+        const off = yield* call("update_bot", { bot: "Tax", fallbackEnabled: false });
+        expect(off.changed).toEqual(["fallbackEnabled"]);
+        const same = yield* call("update_bot", {
+          bot: "Tax",
+          fallbackModel: { model: "claude-fable-5-1" },
+        });
+        expect(same.changed).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("create_bot takes the fallback switch and model", () =>
+    withHarness(() =>
+      Effect.gen(function* () {
+        const { call } = yield* setup;
+        const made = yield* call("create_bot", {
+          name: "Tax",
+          fallbackEnabled: false,
+          fallbackModel: { model: "claude-opus-5-5", effort: "medium" },
+        });
+        const row = (yield* liveBots).find((bot) => bot.botId === made.botId)!;
+        expect(row.fallback).toEqual({
+          enabled: false,
+          modelSelection: {
+            instanceId: CLAUDE,
+            model: "claude-opus-5-5",
+            options: [{ id: "effort", value: "medium" }],
+          },
+        });
+        const sql = yield* SqlClient.SqlClient;
+        const audit = yield* sql<{ readonly after_json: string }>`
+          SELECT after_json FROM personal_lead_bot_actions WHERE action = 'create'
+        `;
+        expect(parseJson(audit[0]!.after_json)).toMatchObject({
+          fallback: { enabled: false, modelSelection: { model: "claude-opus-5-5" } },
+        });
+        // Without the fields a new bot has the default: on, Sonnet 5.5.
+        const plain = yield* call("create_bot", { name: "Plain" });
+        expect((yield* liveBots).find((bot) => bot.botId === plain.botId)!.fallback).toMatchObject({
+          enabled: true,
+          modelSelection: { model: "claude-sonnet-5-5" },
+        });
+      }),
+    ),
+  );
+
+  it.effect("a bot the user made still goes to a card for a fallback change", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call, refusal } = yield* setup;
+        // A routine or task turn cannot raise the card.
+        taskSays(harness, CFO_THREAD, "[Routine] Review the finance team's bots.");
+        expect(yield* refusal("update_bot", { bot: "Analyst", fallbackEnabled: false })).toContain(
+          "Ask Harout to request this in chat",
+        );
+        expect(
+          yield* refusal("update_bot", {
+            bot: "Analyst",
+            fallbackModel: { model: "claude-opus-5-5" },
+          }),
+        ).toContain("change its fallback");
+        expect((yield* botNamed("analyst")).fallback?.enabled).toBe(true);
+
+        // A turn the user started: a card, nothing changes yet, then his Yes applies it.
+        userSays(harness, CFO_THREAD, "Turn off Analyst's fallback and make it Opus on low.");
+        const asked = yield* call("update_bot", {
+          bot: "Analyst",
+          fallbackEnabled: false,
+          fallbackModel: { model: "claude-opus-5-5", effort: "low" },
+        });
+        expect(asked).toMatchObject({
+          pending: true,
+          changed: ["fallbackEnabled", "fallbackModel"],
+        });
+        expect((yield* botNamed("analyst")).fallback?.enabled).toBe(true);
+        const [change] = yield* pendingChanges;
+        expect(change!.lines).toEqual([
+          "usage-limit fallback: on → off",
+          "fallback model: Sonnet 5.5 · H → Opus 5.5 · L",
+        ]);
+        yield* tap("approved");
+        const row = yield* botNamed("analyst");
+        expect(row.fallback).toEqual({
+          enabled: false,
+          modelSelection: {
+            instanceId: CLAUDE,
+            model: "claude-opus-5-5",
+            options: [{ id: "effort", value: "low" }],
+          },
+        });
+        expect(yield* auditSummary("update")).toBe(
+          "CFO edited bot 'Analyst' (usage-limit fallback off, fallback model → Opus 5.5 · L) on Finance (approved by the user)",
+        );
+      }),
+    ),
+  );
+
+  it.effect("a card for a fallback change is stale once the bot's fallback changed meanwhile", () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const { call, bots } = yield* setup;
+        userSays(harness, CFO_THREAD, "Switch Analyst's fallback off.");
+        yield* call("update_bot", { bot: "Analyst", fallbackEnabled: false });
+        // Harout changes the fallback model himself before tapping.
+        yield* bots.update({
+          botId: botId("analyst"),
+          fallback: { modelSelection: { instanceId: CLAUDE, model: "claude-opus-5-5" } },
+        });
+        const settled = yield* tap("approved");
+        expect(settled.status).toBe("failed");
+        expect(settled.outcome).toContain("has changed since the request was made");
+        expect((yield* botNamed("analyst")).fallback?.enabled).toBe(true);
+      }),
+    ),
   );
 });

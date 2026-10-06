@@ -386,7 +386,7 @@ export type CastVoteResult = typeof CastVoteResult.Type;
 const LEAD_ONLY = "Team leads only.";
 const NOT_SETTABLE = "Not settable by a lead: any value is refused.";
 const USER_MADE_RULE =
-  "A bot you created yourself is yours to manage while it stays on your team. Any other bot (one the user set up, another lead made, or one moved since) is not: removing it, or changing its name, instructions, description, model or effort, is not done at once. It puts a Yes/No card in this chat and nothing changes until Harout taps Yes himself; the call returns pending, so tell him in one line what you asked for and end your turn, and his answer arrives as a follow-up message. It works only from a chat turn Harout started (a routine, task or group turn is refused, so ask him to request it in chat). Title, avatar, mute and memory auto-save stay open. The built-in system bots (Updates, Sync reports and the seeded defaults) are never yours to change.";
+  "A bot you created yourself is yours to manage while it stays on your team. Any other bot (one the user set up, another lead made, or one moved since) is not: removing it, or changing its name, instructions, description, model, effort or usage-limit fallback, is not done at once. It puts a Yes/No card in this chat and nothing changes until Harout taps Yes himself; the call returns pending, so tell him in one line what you asked for and end your turn, and his answer arrives as a follow-up message. It works only from a chat turn Harout started (a routine, task or group turn is refused, so ask him to request it in chat). Title, avatar, mute and memory auto-save stay open. The built-in system bots (Updates, Sync reports and the seeded defaults) are never yours to change.";
 
 /** The fields create_bot and update_bot share. Every one is optional. */
 const BotFieldsShape = {
@@ -436,6 +436,42 @@ const BotFieldsShape = {
   memoryAutoSave: Schema.optional(
     Schema.Boolean.annotate({
       description: "Let the bot save memories without the user asking each time.",
+    }),
+  ),
+  fallbackEnabled: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Switch the bot to its fallback model when its provider reports a usage limit (on by default for every bot). false turns the switch off: the bot then waits for the reset.",
+    }),
+  ),
+  fallbackModel: Schema.optional(
+    Schema.Struct({
+      provider: Schema.optional(
+        Schema.String.annotate({
+          description:
+            "Provider instance for the fallback model, as list_bots shows it. Default: the bot's current fallback provider (Claude for a new bot).",
+        }),
+      ),
+      model: Schema.optional(
+        Schema.String.annotate({
+          description:
+            "A model slug that provider offers, for example claude-sonnet-5-5. Fable and Mythos models are refused. Default: the bot's current fallback model (a new bot: Sonnet 5.5).",
+        }),
+      ),
+      effort: Schema.optional(
+        Schema.String.annotate({
+          description: "An effort the fallback model offers: low, medium, high, xhigh or max.",
+        }),
+      ),
+      context: Schema.optional(
+        Schema.String.annotate({
+          description:
+            'A context window the fallback model offers, for example "1m". Only some models offer a choice.',
+        }),
+      ),
+    }).annotate({
+      description:
+        "The model the bot switches to when its usage limit is hit. Fields left out stay as the bot has them (a new bot starts from Sonnet 5.5, high effort, 1M context).",
     }),
   ),
   team: Schema.optional(Schema.Unknown.annotate({ description: NOT_SETTABLE })),
@@ -725,7 +761,7 @@ const CastVoteTool = Tool.make("cast_vote", {
   .annotate(Tool.OpenWorld, false);
 
 const CreateBotTool = Tool.make("create_bot", {
-  description: `${LEAD_ONLY} Create a new bot on your own team, always as an ordinary member: never a lead, never pinned, never on another team. It appears in list_bots at once, so you can delegate to it. Give it a clear name, a description and instructions, and pick a model and effort that fit the work (a cheaper model for simple jobs). Only models a provider actually offers are accepted, and never a Fable or Mythos model. The new bot gets no secrets or connections; the user grants those himself. Limited to 5 new bots per rolling 24 hours. Every create is posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
+  description: `${LEAD_ONLY} Create a new bot on your own team, always as an ordinary member: never a lead, never pinned, never on another team. It appears in list_bots at once, so you can delegate to it. Give it a clear name, a description and instructions, and pick a model and effort that fit the work (a cheaper model for simple jobs). Every bot switches to a fallback model when its usage limit is hit (Sonnet 5.5, high effort, 1M context unless you set fallbackEnabled or fallbackModel). Only models a provider actually offers are accepted, and never a Fable or Mythos model. The new bot gets no secrets or connections; the user grants those himself. Limited to 5 new bots per rolling 24 hours. Every create is posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
   parameters: CreateBotInput,
   success: LeadBotResult,
   failure: BotsToolFailure,
@@ -738,7 +774,7 @@ const CreateBotTool = Tool.make("create_bot", {
   .annotate(Tool.OpenWorld, false);
 
 const UpdateBotTool = Tool.make("update_bot", {
-  description: `${LEAD_ONLY} Change a bot that is on your own team: its name, title, description, instructions, avatar shape or colour, model and effort, notification mute or memory auto-save. Only the fields you pass change. You cannot edit yourself, another lead or a bot on another team, and you cannot change anyone's team, lead flag or pinned state. ${USER_MADE_RULE} Ask the user before making a large change to the instructions of a bot you created (rewriting them, or changing what the bot may do); small tweaks are fine. Names need at least 3 characters with a letter, one alphabet only, and no invisible characters. A Fable or Mythos bot keeps its model and effort as they are. Every edit is posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
+  description: `${LEAD_ONLY} Change a bot that is on your own team: its name, title, description, instructions, avatar shape or colour, model and effort, usage-limit fallback (fallbackEnabled and fallbackModel), notification mute or memory auto-save. Only the fields you pass change. You cannot edit yourself, another lead or a bot on another team, and you cannot change anyone's team, lead flag or pinned state. ${USER_MADE_RULE} Ask the user before making a large change to the instructions of a bot you created (rewriting them, or changing what the bot may do); small tweaks are fine. Names need at least 3 characters with a letter, one alphabet only, and no invisible characters. A Fable or Mythos bot keeps its model and effort as they are. Every edit is posted in your chat and sent to the user as a notification. Refused unless you are a team lead right now.`,
   parameters: UpdateBotInput,
   success: LeadBotResult,
   failure: BotsToolFailure,

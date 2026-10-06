@@ -215,7 +215,14 @@ export const make = Effect.gen(function* () {
   const onLimitHit: PersonalModelFallbackShape["onLimitHit"] = (input) =>
     Effect.gen(function* () {
       const botOption = yield* bots.getBotById({ botId: input.botId });
-      if (Option.isNone(botOption)) return { switched: false, skipped: "no_bot" };
+      if (Option.isNone(botOption)) {
+        yield* Effect.logInfo("personal model fallback not used", {
+          botId: input.botId,
+          source: input.source,
+          reason: "no_bot",
+        });
+        return { switched: false, skipped: "no_bot" };
+      }
       const bot = botOption.value;
       const fallback = bot.fallback ?? {
         enabled: true,
@@ -251,6 +258,15 @@ export const make = Effect.gen(function* () {
       const retryAtMs = input.retryAt == null ? Number.NaN : Date.parse(input.retryAt);
       const lastBack = lastSwitchBackAtMs.get(bot.botId);
       if (lastBack !== undefined && now - lastBack < FALLBACK_RESWITCH_COOLDOWN_MS) {
+        // Same line as every other guard that holds a switch back, with the time left.
+        yield* Effect.logInfo("personal model fallback not used", {
+          botId: bot.botId,
+          source: input.source,
+          reason: "cooldown",
+          secondsLeft: Math.ceil((FALLBACK_RESWITCH_COOLDOWN_MS - (now - lastBack)) / 1000),
+          home: bot.modelSelection.model,
+          fallback: fallback.modelSelection.model,
+        });
         return { switched: false, skipped: "cooldown" };
       }
       const decision = decideFallback({

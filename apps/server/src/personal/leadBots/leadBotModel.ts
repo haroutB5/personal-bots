@@ -13,6 +13,8 @@ import { seedModelFor } from "../seedModel.ts";
 /** Claude calls the effort option `effort`, Codex `reasoningEffort`, OpenCode `variant`. */
 const EFFORT_OPTION_IDS: ReadonlyArray<string> = ["effort", "reasoningEffort", "variant"];
 const DEFAULT_NEW_MODEL_EFFORT = "medium";
+/** The context window option (the bot form's own id for it); only models with a choice offer it. */
+const CONTEXT_WINDOW_OPTION_ID = "contextWindow";
 
 /** The providers a bot can run on: usable now and able to carry the bot's persona. */
 export const selectableProviders = (
@@ -34,6 +36,14 @@ const effortDescriptor = (model: ServerProviderModel) =>
       descriptor.options.length > 0,
   );
 
+const contextDescriptor = (model: ServerProviderModel) =>
+  model.capabilities?.optionDescriptors?.find(
+    (descriptor) =>
+      descriptor.id === CONTEXT_WINDOW_OPTION_ID &&
+      descriptor.type === "select" &&
+      descriptor.options.length > 1,
+  );
+
 export interface LeadModelRequest {
   /** A provider instance id; default is the provider the bot is on (or the lead is on). */
   readonly provider?: string | undefined;
@@ -41,6 +51,8 @@ export interface LeadModelRequest {
   readonly model?: string | undefined;
   /** An effort the chosen model offers (for example "low", "medium", "high"). */
   readonly effort?: string | undefined;
+  /** A context window the chosen model offers (for example "1m"). */
+  readonly context?: string | undefined;
 }
 
 export type LeadModelResult =
@@ -102,9 +114,10 @@ export function resolveLeadModelSelection(input: {
   }
 
   const descriptor = effortDescriptor(model);
+  const contextOption = contextDescriptor(model);
   const sameModel =
     !input.seedFallback && base.instanceId === instanceId && base.model === model.slug;
-  let options: ReadonlyArray<ProviderOptionSelection> | undefined;
+  let options: Array<ProviderOptionSelection> = [];
   const requestedEffort = request.effort?.trim();
   if (requestedEffort !== undefined && requestedEffort !== "") {
     if (descriptor === undefined || descriptor.type !== "select") {
@@ -118,24 +131,43 @@ export function resolveLeadModelSelection(input: {
     }
     options = [{ id: descriptor.id, value: requestedEffort }];
   } else if (sameModel) {
-    options = base.options === undefined ? undefined : normalizeOptions(base);
+    options = base.options === undefined ? [] : normalizeOptions(base, EFFORT_OPTION_IDS);
   } else if (descriptor !== undefined && descriptor.type === "select") {
     // A new model with no effort named starts at medium when it offers it.
     options = descriptor.options.some((option) => option.id === DEFAULT_NEW_MODEL_EFFORT)
       ? [{ id: descriptor.id, value: DEFAULT_NEW_MODEL_EFFORT }]
-      : undefined;
+      : [];
+  }
+  const requestedContext = request.context?.trim();
+  if (requestedContext !== undefined && requestedContext !== "") {
+    if (contextOption === undefined || contextOption.type !== "select") {
+      return { ok: false, reason: `'${model.slug}' has no context window setting to choose.` };
+    }
+    if (!contextOption.options.some((option) => option.id === requestedContext)) {
+      return {
+        ok: false,
+        reason: `'${requestedContext}' is not a context window '${model.slug}' offers. Context windows: ${contextOption.options.map((option) => option.id).join(", ")}.`,
+      };
+    }
+    options = [...options, { id: contextOption.id, value: requestedContext }];
+  } else if (sameModel && contextOption !== undefined && base.options !== undefined) {
+    // The context window the bot already has stays when only the effort moves.
+    options = [...options, ...normalizeOptions(base, [CONTEXT_WINDOW_OPTION_ID])];
   }
 
   const selection = {
     instanceId: provider.instanceId,
     model: model.slug,
-    ...(options === undefined || options.length === 0 ? {} : { options }),
+    ...(options.length === 0 ? {} : { options }),
   } as ModelSelection;
   return { ok: true, selection, changed: !sameSelection(base, selection) };
 }
 
-const normalizeOptions = (selection: ModelSelection): ReadonlyArray<ProviderOptionSelection> =>
-  EFFORT_OPTION_IDS.flatMap((id) => {
+const normalizeOptions = (
+  selection: ModelSelection,
+  ids: ReadonlyArray<string>,
+): Array<ProviderOptionSelection> =>
+  ids.flatMap((id) => {
     const value = getModelSelectionStringOptionValue(selection, id);
     return value === undefined ? [] : [{ id, value }];
   });
@@ -148,10 +180,17 @@ const effortOf = (selection: ModelSelection): string | undefined => {
   return undefined;
 };
 
-const sameSelection = (left: ModelSelection, right: ModelSelection): boolean =>
+const contextOf = (selection: ModelSelection): string | undefined => {
+  const value = getModelSelectionStringOptionValue(selection, CONTEXT_WINDOW_OPTION_ID);
+  return value === undefined || value.trim() === "" ? undefined : value;
+};
+
+/** Same provider, model, effort and context window. */
+export const sameSelection = (left: ModelSelection, right: ModelSelection): boolean =>
   left.instanceId === right.instanceId &&
   left.model === right.model &&
-  effortOf(left) === effortOf(right);
+  effortOf(left) === effortOf(right) &&
+  contextOf(left) === contextOf(right);
 
 const EFFORT_ABBREVIATIONS: Readonly<Record<string, string>> = {
   low: "L",

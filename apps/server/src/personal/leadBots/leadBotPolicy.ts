@@ -68,10 +68,16 @@ export const isProtectedBot = (bot: { readonly botId: string; readonly name: str
  * The fields whose change on a bot the calling lead does not own needs the
  * user's tap on a confirm card: what the bot is (name), what it does
  * (instructions, description) and what it costs (model, provider, effort: one
- * "model" change). Title, avatar, mute and memory auto-save are cosmetic and
- * stay open.
+ * "model" change; the usage-limit fallback, on/off or its model: one "fallback"
+ * change). Title, avatar, mute and memory auto-save are cosmetic and stay open.
  */
-export const LEAD_BOT_SENSITIVE_FIELDS = ["name", "instructions", "description", "model"] as const;
+export const LEAD_BOT_SENSITIVE_FIELDS = [
+  "name",
+  "instructions",
+  "description",
+  "model",
+  "fallback",
+] as const;
 export type LeadBotSensitiveField = (typeof LEAD_BOT_SENSITIVE_FIELDS)[number];
 
 export type LeadBotRefusalCode =
@@ -103,6 +109,17 @@ export interface LeadBotFacts {
     readonly instanceId: string;
     readonly model: string;
     /** True when instance, model or effort differs from what the target has now (always for create). */
+    readonly changed: boolean;
+  } | null;
+  /**
+   * The usage-limit fallback model the call asks for (create or update), when it
+   * names one. Held to the same Fable/Mythos rule as the main model: a lead may
+   * not send a bot to the most expensive tiers when its limit is hit either.
+   */
+  readonly requestedFallbackModel?: {
+    readonly instanceId: string;
+    readonly model: string;
+    /** True when instance, model, effort or context differs from the target's fallback now (always for create). */
     readonly changed: boolean;
   } | null;
   /** Bots this lead created in the last {@link LEAD_BOT_CREATE_WINDOW_MS}. */
@@ -161,8 +178,9 @@ const refuse = (code: LeadBotRefusalCode, reason: string): LeadBotVerdict => ({
  *  1. The caller must still exist and be a team lead RIGHT NOW (a lead demoted
  *     a moment ago is refused: the flag is read from the row, never remembered).
  *  2. It never sets a team, a lead flag or a pinned flag, and never puts a bot
- *     on a Fable or Mythos model unless that is the model the bot already has
- *     (Harout's own choice, left as it is).
+ *     on a Fable or Mythos model (as its main model or its usage-limit fallback)
+ *     unless that is the model the bot already has (Harout's own choice, left
+ *     as it is).
  *  3. Create: a bot lands on the caller's own team, at most
  *     {@link LEAD_BOT_CREATES_PER_DAY} per rolling day.
  *  4. Update and remove: never a protected bot (Updates, Sync reports, any
@@ -170,7 +188,7 @@ const refuse = (code: LeadBotRefusalCode, reason: string): LeadBotVerdict => ({
  *     the caller's own team that is not the caller and not a lead.
  *  5. A bot the calling lead did not create, or created but which has left its
  *     team since, is the user's to change: remove, and an edit of its name,
- *     instructions, description or model/effort, are not done at once but put to
+ *     instructions, description, model/effort or usage-limit fallback, are not done at once but put to
  *     the user as a confirm card (`confirm: true`); only a turn the user started
  *     can raise one (routine, task and server turns are refused). Cosmetic edits
  *     stay open.
@@ -211,6 +229,17 @@ export function authorizeLeadBotAction(facts: LeadBotFacts): LeadBotVerdict {
       return refuse(
         "forbidden_model",
         `'${facts.requestedModel.model}' is one of the most expensive models and only the user can choose it. Pick another model.`,
+      );
+    }
+  }
+
+  const fallbackModel = facts.requestedFallbackModel;
+  if (fallbackModel != null && isLeadForbiddenModel(fallbackModel.model)) {
+    const unchanged = facts.action === "update" && target !== null && !fallbackModel.changed;
+    if (!unchanged) {
+      return refuse(
+        "forbidden_model",
+        `'${fallbackModel.model}' is one of the most expensive models and only the user can choose it, as a fallback too. Pick another model.`,
       );
     }
   }

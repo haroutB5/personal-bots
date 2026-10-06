@@ -16,12 +16,14 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
   BotAvatarShape,
+  botFallback,
   botNotificationsMutedUntil,
   botTeam,
   CommandId,
   ComposerContextId,
   MessageId,
   ModelSelection,
+  PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
   PERSONAL_CHAT_NOTICE_CONTEXT_KIND,
   PERSONAL_TASK_TERMINAL_STATUSES,
   PersonalBotId,
@@ -120,6 +122,10 @@ export interface LeadBotFields {
   readonly effort?: string | undefined;
   readonly notificationsMute?: PersonalBotNotificationMute | undefined;
   readonly memoryAutoSave?: boolean | undefined;
+  /** Switch the model when the usage limit is hit: on or off. */
+  readonly fallbackEnabled?: boolean | undefined;
+  /** The model that switch goes to; what is left out stays as the bot has it (a new bot: the default fallback). */
+  readonly fallbackModel?: LeadModelRequest | undefined;
   /** Present only so a call that carries them is refused rather than silently ignored. */
   readonly team?: unknown;
   readonly lead?: unknown;
@@ -196,6 +202,7 @@ const sensitiveChangesOf = (
   target: PersonalBot,
   fields: LeadBotFields,
   model: LeadModelResult | null,
+  fallbackModel: LeadModelResult | null,
 ): ReadonlyArray<LeadBotSensitiveField> => {
   const changes: Array<LeadBotSensitiveField> = [];
   if (
@@ -211,6 +218,13 @@ const sensitiveChangesOf = (
     changes.push("description");
   }
   if (model !== null && model.ok && model.changed) changes.push("model");
+  if (
+    (fields.fallbackEnabled !== undefined &&
+      fields.fallbackEnabled !== botFallback(target).enabled) ||
+    (fallbackModel !== null && fallbackModel.ok && fallbackModel.changed)
+  ) {
+    changes.push("fallback");
+  }
   return changes;
 };
 
@@ -223,6 +237,34 @@ const modelRequestOf = (fields: LeadBotFields): LeadModelRequest => ({
   effort: fields.effort,
 });
 
+/** True when the call names any part of the fallback model. */
+const wantsFallbackModel = (fields: LeadBotFields): boolean => {
+  const request = fields.fallbackModel;
+  return (
+    request !== undefined &&
+    (request.provider !== undefined ||
+      request.model !== undefined ||
+      request.effort !== undefined ||
+      request.context !== undefined)
+  );
+};
+
+/**
+ * The fallback model a call asks for, from the providers' own lists: what is
+ * left out stays as the bot has it (`base`).
+ */
+const resolveFallbackRequest = (
+  providers: ReadonlyArray<ServerProvider>,
+  fields: LeadBotFields,
+  base: ModelSelection,
+): LeadModelResult =>
+  resolveLeadModelSelection({
+    providers,
+    base,
+    seedFallback: false,
+    request: fields.fallbackModel ?? {},
+  });
+
 /** The keys an approved update may write; anything else in a stored payload is ignored. */
 const PATCH_KEYS = [
   "name",
@@ -234,6 +276,7 @@ const PATCH_KEYS = [
   "modelSelection",
   "memoryAutoSave",
   "notificationsMute",
+  "fallback",
 ] as const;
 
 type Patch = { -readonly [K in keyof PersonalBotUpdateInput]?: PersonalBotUpdateInput[K] };
@@ -254,6 +297,9 @@ const baseOf = (current: PersonalBot, patch: Patch): Record<string, unknown> => 
         break;
       case "memoryAutoSave":
         base[key] = current.memoryAutoSave === true;
+        break;
+      case "fallback":
+        base[key] = botFallback(current);
         break;
       default:
         base[key] = current[key];
@@ -299,6 +345,17 @@ const diffLines = (
   }
   if (patch.notificationsMute !== undefined) {
     lines.push(`notifications: ${patch.notificationsMute === "on" ? "on" : "muted"}`);
+  }
+  const fallbackNow = botFallback(current);
+  if (patch.fallback?.enabled !== undefined) {
+    lines.push(
+      `usage-limit fallback: ${fallbackNow.enabled ? "on" : "off"} → ${patch.fallback.enabled ? "on" : "off"}`,
+    );
+  }
+  if (patch.fallback?.modelSelection !== undefined) {
+    lines.push(
+      `fallback model: ${leadBotModelLabel(fallbackNow.modelSelection, providers)} → ${leadBotModelLabel(patch.fallback.modelSelection, providers)}`,
+    );
   }
   return lines;
 };
@@ -573,6 +630,13 @@ export const make = Effect.gen(function* () {
           readonly target: PersonalBot | null;
         }) => LeadModelResult)
       | undefined;
+    /** The same for the usage-limit fallback model. */
+    readonly resolveFallbackModel?:
+      | ((rows: {
+          readonly caller: PersonalBot;
+          readonly target: PersonalBot | null;
+        }) => LeadModelResult)
+      | undefined;
   }) {
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const caller = yield* liveBot(input.callerBotId);
@@ -581,6 +645,10 @@ export const make = Effect.gen(function* () {
       input.resolveModel === undefined || caller === null
         ? null
         : input.resolveModel({ caller, target });
+    const fallbackModel =
+      input.resolveFallbackModel === undefined || caller === null
+        ? null
+        : input.resolveFallbackModel({ caller, target });
     const busy =
       input.action === "remove" && target !== null
         ? yield* busyCountsOf(target.botId).pipe(orFail("check what the bot is doing"))
@@ -599,13 +667,21 @@ export const make = Effect.gen(function* () {
               changed: input.action === "create" || model.changed,
             }
           : null,
+      requestedFallbackModel:
+        fallbackModel !== null && fallbackModel.ok
+          ? {
+              instanceId: fallbackModel.selection.instanceId,
+              model: fallbackModel.selection.model,
+              changed: input.action === "create" || fallbackModel.changed,
+            }
+          : null,
       createsInWindow:
         input.action === "create" && caller !== null
           ? yield* createsInWindow(caller.botId, nowMs)
           : 0,
       sensitiveChanges:
         input.action === "update" && target !== null
-          ? sensitiveChangesOf(target, input.fields, model)
+          ? sensitiveChangesOf(target, input.fields, model, fallbackModel)
           : [],
       targetOwnedByCaller:
         target !== null && caller !== null ? yield* ownedByCaller(caller.botId, target) : false,
@@ -627,8 +703,18 @@ export const make = Effect.gen(function* () {
       return yield* new PersonalLeadBotError({ code: verdict.code, reason: verdict.reason });
     }
     if (model !== null && !model.ok) return yield* invalid(model.reason);
+    if (fallbackModel !== null && !fallbackModel.ok) {
+      return yield* invalid(`Fallback model: ${fallbackModel.reason}`);
+    }
     // The verdict only allows a real, live lead, so the caller row is present.
-    return { caller: caller!, target, team: verdict.team, model, confirm: verdict.confirm };
+    return {
+      caller: caller!,
+      target,
+      team: verdict.team,
+      model,
+      fallbackModel,
+      confirm: verdict.confirm,
+    };
   });
 
   /**
@@ -865,10 +951,15 @@ export const make = Effect.gen(function* () {
           caller: leadRow,
           team,
           model,
+          fallbackModel,
         } = yield* authorize({
           action: "create",
           callerBotId: caller.botId,
           fields,
+          // A new bot's fallback starts from the default one; what the call names changes it.
+          resolveFallbackModel: wantsFallbackModel(fields)
+            ? () => resolveFallbackRequest(all, fields, PERSONAL_BOT_DEFAULT_FALLBACK_MODEL)
+            : undefined,
           // From the lead's own provider unless one is named; an omitted model
           // is the seed choice (Opus 5.5 medium), never the lead's own, which
           // might be one only the user may pick.
@@ -901,6 +992,21 @@ export const make = Effect.gen(function* () {
             lead: false,
             pinned: false,
             memoryAutoSave: fields.memoryAutoSave ?? false,
+            ...(fields.fallbackEnabled === undefined && fallbackModel === null
+              ? {}
+              : {
+                  fallback: {
+                    ...(fields.fallbackEnabled === undefined
+                      ? {}
+                      : { enabled: fields.fallbackEnabled }),
+                    ...(fallbackModel === null
+                      ? {}
+                      : {
+                          modelSelection: (fallbackModel as Extract<LeadModelResult, { ok: true }>)
+                            .selection,
+                        }),
+                  },
+                }),
           })
           .pipe(orFail("create the bot"));
         const modelLabel = leadBotModelLabel(created.modelSelection, all);
@@ -923,6 +1029,7 @@ export const make = Effect.gen(function* () {
             model: created.modelSelection,
             team: botTeam(created),
             memoryAutoSave: created.memoryAutoSave === true,
+            fallback: botFallback(created),
           },
           reason: null,
           line,
@@ -947,6 +1054,7 @@ export const make = Effect.gen(function* () {
     fields: LeadBotFields,
     nextName: string | undefined,
     model: LeadModelResult | null,
+    fallbackModel: LeadModelResult | null,
     nowMs: number,
   ) => {
     const changed: Array<string> = [];
@@ -992,6 +1100,17 @@ export const make = Effect.gen(function* () {
         changed.push("notificationsMute");
       }
     }
+    const fallbackNow = botFallback(current);
+    const fallbackPatch: { enabled?: boolean; modelSelection?: ModelSelection } = {};
+    if (fields.fallbackEnabled !== undefined && fields.fallbackEnabled !== fallbackNow.enabled) {
+      fallbackPatch.enabled = fields.fallbackEnabled;
+      changed.push("fallbackEnabled");
+    }
+    if (fallbackModel !== null && fallbackModel.ok && fallbackModel.changed) {
+      fallbackPatch.modelSelection = fallbackModel.selection;
+      changed.push("fallbackModel");
+    }
+    if (Object.keys(fallbackPatch).length > 0) patch.fallback = fallbackPatch;
     return { changed, patch };
   };
 
@@ -1033,6 +1152,14 @@ export const make = Effect.gen(function* () {
           before[key] = current.memoryAutoSave === true;
           after[key] = updated.memoryAutoSave === true;
           break;
+        case "fallbackEnabled":
+          before[key] = botFallback(current).enabled;
+          after[key] = botFallback(updated).enabled;
+          break;
+        case "fallbackModel":
+          before[key] = botFallback(current).modelSelection;
+          after[key] = botFallback(updated).modelSelection;
+          break;
         default:
           before[key] = current[key as "name"];
           after[key] = updated[key as "name"];
@@ -1041,6 +1168,12 @@ export const make = Effect.gen(function* () {
     const what = changed
       .map((key) => {
         if (key === "model") return `model → ${modelLabel}`;
+        if (key === "fallbackEnabled") {
+          return `usage-limit fallback ${botFallback(updated).enabled ? "on" : "off"}`;
+        }
+        if (key === "fallbackModel") {
+          return `fallback model → ${leadBotModelLabel(botFallback(updated).modelSelection, input.providers)}`;
+        }
         if (key === "instructions" || key === "description") {
           return `${key}: ${current[key].length} → ${updated[key].length} chars`;
         }
@@ -1177,6 +1310,7 @@ export const make = Effect.gen(function* () {
           target,
           team,
           model,
+          fallbackModel,
           confirm,
         } = yield* authorize({
           action: "update",
@@ -1195,11 +1329,24 @@ export const make = Effect.gen(function* () {
                       request: modelRequestOf(fields),
                     })
             : undefined,
+          resolveFallbackModel: wantsFallbackModel(fields)
+            ? ({ target: row }) =>
+                row === null
+                  ? { ok: false, reason: "No such bot." }
+                  : resolveFallbackRequest(all, fields, botFallback(row).modelSelection)
+            : undefined,
         });
         const current = target!;
         const { name: nextName } = yield* validateText(fields, current);
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-        const { changed, patch } = computePatch(current, fields, nextName, model, nowMs);
+        const { changed, patch } = computePatch(
+          current,
+          fields,
+          nextName,
+          model,
+          fallbackModel,
+          nowMs,
+        );
         if (changed.length === 0) {
           return {
             botId: current.botId,
@@ -1455,6 +1602,7 @@ export const make = Effect.gen(function* () {
       }
     }
     const patchModel = patch.modelSelection;
+    const patchFallbackModel = patch.fallback?.modelSelection;
     const {
       caller: leadRow,
       target,
@@ -1473,6 +1621,13 @@ export const make = Effect.gen(function* () {
               found === null
                 ? { ok: false, reason: "No such bot." }
                 : { ok: true, selection: patchModel, changed: true },
+      resolveFallbackModel:
+        patchFallbackModel === undefined
+          ? undefined
+          : ({ target: found }) =>
+              found === null
+                ? { ok: false, reason: "No such bot." }
+                : { ok: true, selection: patchFallbackModel, changed: true },
     });
     const current = target!;
     const expectedBase = canonicalJson(decodeJson(row.baseJson));
@@ -1507,7 +1662,16 @@ export const make = Effect.gen(function* () {
       },
       current,
     );
-    const changed = Object.keys(patch).map((key) => (key === "modelSelection" ? "model" : key));
+    const changed = Object.keys(patch).flatMap((key) =>
+      key === "modelSelection"
+        ? ["model"]
+        : key === "fallback"
+          ? [
+              ...(patch.fallback?.enabled === undefined ? [] : ["fallbackEnabled"]),
+              ...(patch.fallback?.modelSelection === undefined ? [] : ["fallbackModel"]),
+            ]
+          : [key],
+    );
     if (nextName !== undefined && patch.name !== undefined) patch.name = nextName;
     return yield* applyUpdate({
       leadRow,
