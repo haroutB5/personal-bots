@@ -73,6 +73,13 @@ node scripts/personal/perf/stream.mjs --origin local
 node scripts/personal/perf/coldstart.mjs --runs 5
 # real-user timings from the phone:
 node scripts/personal/perf/rum.mjs --days 7
+# the in-app journeys bench.mjs does not walk (list scroll, Team, Tasks, Scheduled, Computer, a long chat, send):
+node scripts/personal/perf/journeys.mjs --origin http://127.0.0.1:38711 --runs 7 --long /bots/<bot>/<thread>
+node scripts/personal/perf/journeys.mjs --origin <url> --journeys team --runs 12 --ab layout-once
+# the phone and the server while bots work (5 streaming turns, Bots list open):
+node scripts/personal/perf/churn.mjs --origin <url> --seconds 25 --server-pid <pid> [--off activity-memo]
+# the committed gate against a throwaway server:
+node scripts/personal/perf/check.mjs --origin <url> --bot Researcher
 ```
 
 Before measuring, check the machine: the bench prints CPU busy % and free
@@ -181,3 +188,53 @@ and says whether the page was warm (service-worker controlled) and whether it
 came via the relay or direct. The beacons go to `POST /api/personal/client-diag`,
 which is allowlisted and rate limited. They land in the server log as
 `client-diag {"event":"perf",...}`, and `rum.mjs` summarises them.
+
+## 1.64.1: the Bots list while bots work, and what else was measured (6 Oct 2026)
+
+Rig: a throwaway data root built once from synthetic data (20 bots, 390 chats of which 258 archived,
+16.2k messages; `qa/perf1641/seed-golden.mjs`, the fake Claude CLI), a fresh copy per measurement, one
+server per side, runs interleaved, 390x844 at DPR 3, 4x CPU. Never the live root. The tools and every
+raw result are in `C:/Users/Ht/.personal-bots/qa/perf1641/` (`RESULT.md` there is the index).
+
+**The one big offender.** With the Bots list open and five bots streaming, the phone's main thread was
+saturated: 19.3 s of long tasks in a 25 s window, frames at p95 214 ms, 127 frames over 100 ms.
+A CPU profile (sourcemaps, `symbolize.mjs`) put a third of it in `buildBotSummaries`: it sorted each
+bot's chats with a comparator that parsed five date strings twice per comparison, and it rebuilt on
+every shell update. `churn.mjs` is that scenario as a number.
+
+| Change (commit)                                                             | Measured, same build on/off or old/new build, fresh servers, interleaved                                                                                                                                 | Kill switch        |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| Activity read once per shell, memoised, decorated sort (3cb80245b2)         | long tasks 19595 -> 6760 ms (-65%), script 699 -> 372 ms/s, frame p95 196 -> 88 ms, frames over 100 ms 140 -> 24 (4 pairs); J1-warm liveRows 4062 -> 3795 ms, J1-cold liveRows 2813 -> 2613 ms (6 pairs) | `activity-memo`    |
+| Open links grouped per bot once (63e3ce696b)                                | long tasks 6826 -> 5731 ms (-16%), script 329 -> 292 ms/s (4 pairs, previous build vs this one)                                                                                                          | `activity-memo`    |
+| Team: each candidate layout measured once (3cb80245b2)                      | Team long tasks 831 -> 652 ms, script 791 -> 608 ms (6 pairs), wall unchanged                                                                                                                            | `layout-once`      |
+| One `Intl.DateTimeFormat` per zone, bounded preview-line cache (3cb80245b2) | about 1% of the phone's main thread in the streaming profile each; no isolated A/B                                                                                                                       | none (pure caches) |
+
+Final release against 1.64.0, 8 interleaved runs each (`qa/perf1641/final/summary.txt`): J1-warm liveRows
+4224 -> 3746 ms (-11%), J1-warm wall 1846 -> 1604 ms, J1-cold liveRows 2956 -> 2609 ms, Team long tasks
+807 -> 623 ms and script 1134 -> 715 ms, J2-back 148 -> 128 ms; everything else within noise (J2.chatShell
+251 -> 270 ms is inside the run-to-run spread). Streaming scenario, final vs 1.64.0 (4 pairs): long tasks
+19344 -> 5347 ms (-72%), script 683 -> 293 ms/s (-57%), frame p95 214 -> 71 ms, frames over 100 ms 127 -> 21.
+
+**Measured and left alone (numbers for the next pass).**
+
+- _Avatar animations._ Five working bots cost the phone's page about 250 ms/s of main thread (unthrottled,
+  Chrome headless and headed): the 30 running CSS animations are restyled about 115 times a second. Pausing
+  `working-pill` and `working-body` halves that; all five flags off (`all-busy-motion`, `anim-all`,
+  `anim-comet`, `anim-thought`) takes the list from 414 to 105 ms/s. Not changed: it is the product look, and
+  it is Chrome, not the iPhone. Next step: A/B `bots:perf-off=all-busy-motion,anim-all` on the phone.
+- _A long single turn._ One turn with 400 replies (p99 of the real data: 146, max 338) takes 15 s to open
+  at 4x and 17 s of script to scroll; turn paging (10 user turns) does not help a single huge turn.
+  A chat of 100 ordinary turns (450 messages) shows 40 messages and its post-open long tasks are 2.5 s, mostly
+  Shiki highlighting run in render (`UncachedShikiCodeBlock`).
+- _Payloads._ `personalBots.list` is 121 KB (107 KB of it the 390 chat links, 258 archived) and costs the
+  server 41 ms and the phone about 450 ms of schema decode at 4x; `subscribeShell` is 540 KB.
+- _Server._ Startup: port open at 1.0 s, first answered request at 1.85 s (n=5); a request in that gap is never
+  answered (cause not found), and NODE_COMPILE_CACHE saves only 160 ms. Under five streams the server
+  runs at 40 to 60% of a core, `sql.transaction` p50 4.5 ms (raw SQLite NORMAL is 0.02 ms: the time is
+  Effect and tracing around about 13 statements per command), request ping p50 20 ms, p95 40 to 70 ms.
+  `T3CODE_TRACE_MIN_LEVEL=Error` cut server CPU 61 -> 50% and ping p95 71 -> 56 ms (3 pairs) but drops the
+  span traces the team reads, so it is not the default. RSS plateaus at about 520 to 620 MB after 12 bursts
+  (about 19 hours of live-sized traffic), 240 to 380 MB idle: no leak.
+- _Gate._ The committed `perf:check` fails J2.chatShell (ceiling 237) on 1.64.0 itself on this rig
+  (p50 309 and 316) and on 1.64.1 (277 to 282); J1-warm.wall (1785) sits at its edge on both. Only the four
+  deterministic counters were ratcheted (see `budget.json`); no ceiling was loosened.

@@ -83,8 +83,14 @@ for (const [journey, metrics] of Object.entries(budget.journeys)) {
   }
 }
 if (ratchet && lowered > 0) {
+  // Keep what the previous ratchet said (it carries the evidence); the version
+  // line from the server has CR/LF in it, so flatten it.
+  budget.ratchetHistory = [
+    ...(budget.ratchetHistory ?? []),
+    { at: budget.ratchetedAt, from: budget.ratchetedFrom },
+  ];
   budget.ratchetedAt = new Date().toISOString();
-  budget.ratchetedFrom = report.version;
+  budget.ratchetedFrom = String(report.version).replace(/\s+/g, " ").trim();
   NodeFS.writeFileSync(budgetFile, `${JSON.stringify(budget, null, 2)}\n`);
   console.log(
     `ratchet: lowered ${lowered} budget(s); commit budget.json with the change that earned it`,
