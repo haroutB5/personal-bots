@@ -292,6 +292,10 @@ function Invoke-Pipeline {
     if ($build.Code -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $releaseDir 'dist\bin.mjs'))) {
         Add-Step "build.ps1 failed (exit $($build.Code))"
         Undo-Run 'the build failed'
+        # The half-built release folder is ours; nothing else would ever remove it.
+        if (Remove-UpdatesFailedBuildRelease -Paths $paths -Release $script:release) {
+            Add-Step "removed the half-built release $($script:release)"
+        }
         $script:result = 'build-failed'
         $script:summary = 'The build failed, so every change of this run (and the version bump) was reverted. Nothing was restarted.'
         $script:release = $null

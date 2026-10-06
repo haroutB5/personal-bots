@@ -450,3 +450,19 @@ function Invoke-PbNative {
         throw "$FilePath $($Arguments -join ' ') failed with exit code $code."
     }
 }
+
+# The upstream T3 Code commit (12 chars) a checkout is synced through: the
+# merge-base with upstream/main. A checkout with no upstream remote gets ''.
+# (git prints nothing there, and PowerShell 5.1 casts that empty output to
+# $null rather than '', which made `.Trim()` throw and the build crash.)
+function Get-PbUpstreamBase {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $base = [string](& git -C $RepoRoot merge-base HEAD upstream/main 2>$null)
+    $ErrorActionPreference = $previous
+    if ($null -eq $base) { return '' }
+    $base = $base.Trim()
+    if ($base.Length -gt 12) { $base = $base.Substring(0, 12) }
+    return $base
+}

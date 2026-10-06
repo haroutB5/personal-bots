@@ -303,6 +303,25 @@ function Select-UpdatesRollbackTarget {
     return $null
 }
 
+# Removes the half-built release folder a failed build.ps1 leaves behind (its
+# name is the HEAD sha of the run). Never the active release, never the one the
+# server is running, never an empty name. Returns $true when a folder was
+# removed. The folder goes through Remove-PbReleaseDirectory, which unlinks
+# junctions first and so never follows node_modules into the checkout.
+function Remove-UpdatesFailedBuildRelease {
+    param([Parameter(Mandatory = $true)]$Paths, [string]$Release)
+    if (-not $Release -or $Release -notmatch '^[0-9a-f]{7,40}(-dirty-[0-9A-Za-z]+)?$') { return $false }
+    $current = ''
+    if (Test-Path -LiteralPath $Paths.CurrentFile -PathType Leaf) { $current = (Get-Content -LiteralPath $Paths.CurrentFile -Raw).Trim() }
+    $state = Read-PbServerState -Paths $Paths
+    $live = ''
+    if ($state) { $live = [string]$state.release }
+    if ($Release -eq $current -or $Release -eq $live) { return $false }
+    $dir = Join-Path $Paths.ReleasesDir $Release
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return $false }
+    return (Remove-PbReleaseDirectory -Path $dir)
+}
+
 # The live release's externals mode from its VERSION file ('copied' or 'junction').
 function Get-UpdatesReleaseExternals([string]$ReleaseName) {
     $paths = Get-PbPaths -Root dev

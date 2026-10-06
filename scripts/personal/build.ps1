@@ -143,12 +143,7 @@ if ($resolveCode -ne 0) { throw "node-pty or playwright-core does not resolve fr
 
 # The upstream T3 Code commit this build is synced through (merge-base with
 # upstream/main), when the checkout has the upstream remote.
-$previous = $ErrorActionPreference
-$ErrorActionPreference = 'Continue'
-$upstreamBase = [string](& git -C $PbRepoRoot merge-base HEAD upstream/main 2>$null)
-$ErrorActionPreference = $previous
-$upstreamBase = $upstreamBase.Trim()
-if ($upstreamBase.Length -gt 12) { $upstreamBase = $upstreamBase.Substring(0, 12) }
+$upstreamBase = Get-PbUpstreamBase -RepoRoot $PbRepoRoot
 if ($versionCode -ne 0) { throw "The staged CLI failed to start (t3 --version exited $versionCode)." }
 
 $builtAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')

@@ -377,6 +377,47 @@ Start-Sleep -Seconds 60
     $script:failures++
 }
 
+# 6 Oct: a failed build used to leave its half-built release folder behind for good.
+Write-Host 'Failed-build release cleanup'
+$cleanRoot = Join-Path $tempRoot 'failed-build'
+$cleanReleases = Join-Path $cleanRoot 'releases'
+New-Item -ItemType Directory -Path $cleanReleases -Force | Out-Null
+$cleanPaths = [pscustomobject]@{
+    ReleasesDir = $cleanReleases
+    CurrentFile = (Join-Path $cleanReleases 'current.txt')
+    StateFile   = (Join-Path $cleanRoot 'server-state.json')
+}
+Set-Content -LiteralPath $cleanPaths.CurrentFile -Value 'aaaaaaaaaaaa' -Encoding ASCII
+foreach ($name in @('aaaaaaaaaaaa', 'bbbbbbbbbbbb', 'cccccccccccc')) {
+    New-Item -ItemType Directory -Path (Join-Path $cleanReleases "$name\dist") -Force | Out-Null
+}
+$cleanLink = Join-Path $cleanRoot 'checkout-node-modules'
+New-Item -ItemType Directory -Path $cleanLink -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $cleanLink 'keep.txt') -Value 'x' -Encoding ASCII
+& $env:ComSpec /d /s /c ('mklink /J "' + (Join-Path $cleanReleases 'bbbbbbbbbbbb\node_modules') + '" "' + $cleanLink + '"') 2>&1 | Out-Null
+Assert-Equal 'the active release is never removed' $false (Remove-UpdatesFailedBuildRelease -Paths $cleanPaths -Release 'aaaaaaaaaaaa')
+Assert-Equal '...and its folder is still there' $true (Test-Path -LiteralPath (Join-Path $cleanReleases 'aaaaaaaaaaaa'))
+Assert-Equal 'an empty name removes nothing' $false (Remove-UpdatesFailedBuildRelease -Paths $cleanPaths -Release '')
+Assert-Equal 'a name with path parts removes nothing' $false (Remove-UpdatesFailedBuildRelease -Paths $cleanPaths -Release '..aaaaaaaaaaa')
+Assert-Equal 'a missing folder is not an error' $false (Remove-UpdatesFailedBuildRelease -Paths $cleanPaths -Release 'dddddddddddd')
+Assert-Equal 'the half-built release (with a node_modules junction) is removed' $true (Remove-UpdatesFailedBuildRelease -Paths $cleanPaths -Release 'bbbbbbbbbbbb')
+Assert-Equal '...its folder is gone' $false (Test-Path -LiteralPath (Join-Path $cleanReleases 'bbbbbbbbbbbb'))
+Assert-Equal '...the junction target is untouched' $true (Test-Path -LiteralPath (Join-Path $cleanLink 'keep.txt'))
+Set-Content -LiteralPath $cleanPaths.StateFile -Value '{"release":"cccccccccccc"}' -Encoding ASCII
+Assert-Equal 'the release the server runs is never removed' $false (Remove-UpdatesFailedBuildRelease -Paths $cleanPaths -Release 'cccccccccccc')
+Assert-Equal '...and its folder is still there' $true (Test-Path -LiteralPath (Join-Path $cleanReleases 'cccccccccccc'))
+
+# 6 Oct: build.ps1 crashed on a checkout with no upstream remote (empty merge-base output is $null in PowerShell 5.1).
+Write-Host 'Upstream base'
+$upRepo = Join-Path $tempRoot 'no-upstream'
+New-Item -ItemType Directory -Path $upRepo -Force | Out-Null
+[void](Invoke-UpdatesGit -Repo $upRepo -GitArgs @('init', '-q'))
+[void](Invoke-UpdatesGit -Repo $upRepo -GitArgs ($UpdatesGitIdentity + @('commit', '-q', '--allow-empty', '-m', 'first')))
+Assert-Equal 'a checkout with no upstream remote gives an empty base, not a crash' '' (Get-PbUpstreamBase -RepoRoot $upRepo)
+[void](Invoke-UpdatesGit -Repo $upRepo -GitArgs @('update-ref', 'refs/remotes/upstream/main', 'HEAD'))
+$upHead = Get-UpdatesGitText -Repo $upRepo -GitArgs @('rev-parse', 'HEAD')
+Assert-Equal 'with an upstream/main it is the first 12 characters of the merge-base' $upHead.Substring(0, 12) (Get-PbUpstreamBase -RepoRoot $upRepo)
+
 # Only our own temp folder, never followed through a junction (there are none in it).
 & $env:ComSpec /d /s /c ('rmdir /s /q "' + $tempRoot + '"') 2>&1 | Out-Null
 
