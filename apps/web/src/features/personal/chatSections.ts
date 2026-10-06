@@ -7,14 +7,15 @@ import {
 } from "@t3tools/contracts";
 
 import { chatActivityMs } from "./chatActivity";
-import { isChatPinned, snoozeEndMs, soonestWakeFirst } from "./chatState";
+import { snoozeEndMs, soonestWakeFirst } from "./chatState";
 import { groupLastActivityMs, isGroupRelayLink } from "./groupModel";
 
 /**
- * The two sections the Chats screen draws above the bot rows: the pinned
- * chats and groups, and the snoozed ones. A row is one chat (a thread of a
- * bot) or one group. A snoozed chat is only in Snoozed, pinned or not; an
- * archived chat or group is in neither (archiving clears both on the server).
+ * The section the Chats screen draws below the bot rows: the snoozed chats
+ * and groups. A row is one chat (a thread of a bot) or one group. An archived
+ * chat or group is not in it (archiving clears the snooze on the server).
+ * Pinned chats are not listed here: a pin shows in the bot's own chat list
+ * and chat chips (Harout, 1.65.1).
  */
 export type ChatSectionRow =
   | {
@@ -36,8 +37,6 @@ export type ChatSectionRow =
     };
 
 export interface ChatSections {
-  /** Newest activity first. */
-  readonly pinned: ReadonlyArray<ChatSectionRow>;
   /** Soonest wake first. */
   readonly snoozed: ReadonlyArray<ChatSectionRow>;
 }
@@ -57,7 +56,7 @@ export function buildChatSections(input: {
   for (const link of input.links) {
     if (link.archivedAt !== null || isGroupRelayLink(link, input.relayThreadIds)) continue;
     const wakeMs = snoozeEndMs(link, input.nowMs);
-    if (wakeMs === null && !isChatPinned(link)) continue;
+    if (wakeMs === null) continue;
     const bot = botsById.get(link.botId);
     const shell = shellsById.get(link.threadId);
     if (bot === undefined || shell === undefined || shell.archivedAt !== null) continue;
@@ -74,7 +73,7 @@ export function buildChatSections(input: {
   }
   for (const group of input.groups) {
     const wakeMs = snoozeEndMs(group, input.nowMs);
-    if (wakeMs === null && !isChatPinned(group)) continue;
+    if (wakeMs === null) continue;
     rows.push({
       kind: "group",
       key: group.groupId,
@@ -84,21 +83,18 @@ export function buildChatSections(input: {
     });
   }
   const newestFirst = rows.toSorted((left, right) => right.activityMs - left.activityMs);
-  return {
-    pinned: newestFirst.filter((row) => row.wakeMs === null),
-    snoozed: soonestWakeFirst(
-      newestFirst.filter((row) => row.wakeMs !== null),
-      (row) => row.wakeMs ?? 0,
-    ),
-  };
+  return { snoozed: soonestWakeFirst(newestFirst, (row) => row.wakeMs ?? 0) };
 }
 
-/** The groups (not archived) the Chats list shows among its rows: awake and not pinned. */
+/**
+ * The groups (not archived) the Chats list shows among its rows: the awake ones. A pinned
+ * group stays among them: it has no bot chat list to be pinned in.
+ */
 export function plainGroups(
   groups: ReadonlyArray<PersonalGroup>,
   nowMs: number,
 ): ReadonlyArray<PersonalGroup> {
-  return groups.filter((group) => !isChatPinned(group) && snoozeEndMs(group, nowMs) === null);
+  return groups.filter((group) => snoozeEndMs(group, nowMs) === null);
 }
 
 /** What the section search matches: the chat's title and its bot, or the group's name. */

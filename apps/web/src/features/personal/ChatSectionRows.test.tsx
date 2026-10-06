@@ -3,7 +3,7 @@ import type { PersonalBot, PersonalBotThread, PersonalGroup } from "@t3tools/con
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
-import { PinnedChatList, SnoozedChatList, sectionChatPreview } from "./ChatSectionRows";
+import { SnoozedChatList } from "./ChatSectionRows";
 import type { ChatSectionRow } from "./chatSections";
 
 vi.mock("@tanstack/react-router", () => ({
@@ -26,28 +26,8 @@ vi.mock("@tanstack/react-router", () => ({
     </a>
   ),
 }));
-vi.mock("~/components/ui/menu", () => ({
-  Menu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  MenuTrigger: ({
-    children,
-    render,
-  }: {
-    children: React.ReactNode;
-    render: React.ReactElement<{ "aria-label"?: string }>;
-  }) => (
-    <button type="button" data-menu-trigger="" aria-label={render.props["aria-label"]}>
-      {children}
-    </button>
-  ),
-  MenuPopup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  MenuItem: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
-    <button type="button" data-menu-item="" onClick={onClick}>
-      {children}
-    </button>
-  ),
-}));
 vi.mock("./BotAvatar", () => ({ BotAvatar: () => <span data-avatar="" /> }));
-vi.mock("./BotRow", () => ({ ROW_CLASS: "row", plainPreviewLine: (line: string) => line.trim() }));
+vi.mock("./BotRow", () => ({ ROW_CLASS: "row" }));
 vi.mock("./GroupRow", () => ({
   GroupRow: ({
     group,
@@ -63,8 +43,6 @@ vi.mock("./GroupRow", () => ({
     </a>
   ),
 }));
-vi.mock("./PinMark", () => ({ PinMark: () => <span data-pin-mark="" /> }));
-vi.mock("./relativeTime", () => ({ formatRelativeTime: () => "2h" }));
 vi.mock("./groupModel", () => ({ roundForGroup: () => null }));
 
 const NOW = Date.UTC(2026, 9, 6, 10, 0);
@@ -73,17 +51,13 @@ const bot = { botId: "dev", name: "Dev", avatarShape: "pill", avatarColor: "#fff
 const chatRow = (
   threadId: string,
   title: string,
-  extra: { wakeMs?: number | null; newestMessage?: unknown; bot?: PersonalBot } = {},
+  extra: { wakeMs?: number | null } = {},
 ): ChatSectionRow => ({
   kind: "chat",
   key: threadId,
-  link: {
-    botId: "dev",
-    threadId,
-    newestMessage: extra.newestMessage,
-  } as unknown as PersonalBotThread,
+  link: { botId: "dev", threadId } as unknown as PersonalBotThread,
   shell: { id: threadId, title } as unknown as EnvironmentThreadShell,
-  bot: extra.bot ?? bot,
+  bot,
   activityMs: NOW - 7_200_000,
   wakeMs: extra.wakeMs ?? null,
 });
@@ -95,12 +69,7 @@ const groupRow = (groupId: string, wakeMs: number | null = null): ChatSectionRow
   wakeMs,
 });
 
-const actions = () => ({
-  onUnpin: vi.fn(),
-  onSnooze: vi.fn(),
-  onMarkUnread: vi.fn(),
-  onWake: vi.fn(),
-});
+const actions = () => ({ onWake: vi.fn() });
 
 let renderer: ReactTestRenderer | undefined;
 afterEach(async () => {
@@ -116,83 +85,12 @@ const render = (node: React.ReactElement) => {
 };
 const labelled = (root: ReactTestInstance, label: string) =>
   root.findAll((node) => node.type === "button" && node.props["aria-label"] === label);
-const itemsText = (root: ReactTestInstance) =>
-  root.findAll((node) => node.props["data-menu-item"] === "").map((node) => node.children.join(""));
 
-it("sectionChatPreview shows the last message's first line, and nothing for hidden or no message", () => {
-  expect(
-    sectionChatPreview(
-      chatRow("t", "T", { newestMessage: { text: "\n  Hello there\nmore" } }) as never,
-    ),
-  ).toBe("Hello there");
-  expect(sectionChatPreview(chatRow("t", "T") as never)).toBe("");
-  expect(
-    sectionChatPreview(chatRow("t", "T", { newestMessage: { text: "", hidden: true } }) as never),
-  ).not.toBe("");
-});
-
-it("draws nothing when nothing is pinned or snoozed", () => {
-  const props = { now: NOW, rounds: [], memberBotsOf: () => [], actions: actions() };
-  const pinned = render(<PinnedChatList rows={[]} unreadThreadIds={new Set()} {...props} />);
-  expect(pinned.findAll((node) => node.type === "section")).toHaveLength(0);
-  const snoozed = render(<SnoozedChatList rows={[]} {...props} />);
-  expect(snoozed.findAll((node) => node.type === "details")).toHaveLength(0);
-});
-
-it("a pinned chat row opens the chat, shows a pin and its unread dot, and names both", () => {
+it("draws nothing when nothing is snoozed", () => {
   const root = render(
-    <PinnedChatList
-      rows={[chatRow("t1", "Plans")]}
-      now={NOW}
-      unreadThreadIds={new Set(["t1"])}
-      rounds={[]}
-      memberBotsOf={() => []}
-      actions={actions()}
-    />,
+    <SnoozedChatList rows={[]} now={NOW} rounds={[]} memberBotsOf={() => []} actions={actions()} />,
   );
-  const link = root.findAll((node) => node.type === "a")[0]!;
-  expect(link.props["data-to"]).toBe("/bots/$botId/$threadId");
-  expect(JSON.parse(link.props["data-params"])).toEqual({ botId: "dev", threadId: "t1" });
-  expect(link.props["aria-label"]).toBe("Plans, Dev, pinned, unread");
-  expect(root.findAll((node) => node.props["data-pin-mark"] === "")).toHaveLength(1);
-  expect(JSON.stringify(renderer!.toJSON())).toContain("unread-dot");
-});
-
-it("a pinned chat's menu offers Unpin, Snooze and Mark unread; a group's has no Mark unread", () => {
-  const handlers = actions();
-  const chat = chatRow("t1", "Plans");
-  const group = groupRow("g1");
-  const root = render(
-    <PinnedChatList
-      rows={[chat, group]}
-      now={NOW}
-      unreadThreadIds={new Set()}
-      rounds={[]}
-      memberBotsOf={() => []}
-      actions={handlers}
-    />,
-  );
-  expect(labelled(root, "Options for Plans")).toHaveLength(1);
-  expect(labelled(root, "Options for Group g1")).toHaveLength(1);
-  const items = root.findAll((node) => node.props["data-menu-item"] === "");
-  expect(itemsText(root)).toEqual([
-    "Unpin chat",
-    "Snooze…",
-    "Mark unread",
-    "Unpin group",
-    "Snooze…",
-  ]);
-  act(() => items[0]!.props.onClick());
-  act(() => items[1]!.props.onClick());
-  act(() => items[2]!.props.onClick());
-  act(() => items[3]!.props.onClick());
-  expect(handlers.onUnpin).toHaveBeenNthCalledWith(1, chat);
-  expect(handlers.onSnooze).toHaveBeenCalledWith(chat);
-  expect(handlers.onMarkUnread).toHaveBeenCalledWith(chat);
-  expect(handlers.onUnpin).toHaveBeenNthCalledWith(2, group);
-  expect(root.findAll((node) => node.props["data-group-row"] === "")[0]!.props["data-pinned"]).toBe(
-    "true",
-  );
+  expect(root.findAll((node) => node.type === "details")).toHaveLength(0);
 });
 
 it("the Snoozed section counts its rows, shows each wake time and wakes on Wake now", () => {
@@ -210,9 +108,10 @@ it("the Snoozed section counts its rows, shows each wake time and wakes on Wake 
   );
   const json = JSON.stringify(renderer!.toJSON());
   expect(json).toContain('"Snoozed (","2",")"');
-  expect(root.findAll((node) => node.type === "a")[0]!.props["aria-label"]).toMatch(
-    /^Plans, Dev, wakes /,
-  );
+  const link = root.findAll((node) => node.type === "a")[0]!;
+  expect(link.props["data-to"]).toBe("/bots/$botId/$threadId");
+  expect(JSON.parse(link.props["data-params"])).toEqual({ botId: "dev", threadId: "t1" });
+  expect(link.props["aria-label"]).toMatch(/^Plans, Dev, wakes /);
   // The group row carries its wake time in place of the preview.
   expect(
     root.findAll((node) => node.props["data-group-row"] === "")[0]!.props["data-wake"],
@@ -223,6 +122,21 @@ it("the Snoozed section counts its rows, shows each wake time and wakes on Wake 
   act(() => labelled(root, "Wake Group g1 now")[0]!.props.onClick());
   expect(handlers.onWake).toHaveBeenNthCalledWith(1, chat);
   expect(handlers.onWake).toHaveBeenNthCalledWith(2, group);
+});
+
+it("a snoozed row has no pin mark and no Pinned section around it", () => {
+  const root = render(
+    <SnoozedChatList
+      rows={[chatRow("t1", "Plans", { wakeMs: NOW + 3_600_000 })]}
+      now={NOW}
+      rounds={[]}
+      memberBotsOf={() => []}
+      actions={actions()}
+    />,
+  );
+  const json = JSON.stringify(renderer!.toJSON());
+  expect(json).not.toContain("Pinned");
+  expect(root.findAll((node) => node.props["data-pin-mark"] === "")).toHaveLength(0);
 });
 
 it("Wake now is a 44 px button", () => {

@@ -45,10 +45,10 @@ import {
 } from "./botSummaries";
 import { useTogglePinBot } from "./usePinBot";
 import { buildChatSections, plainGroups, sectionRowMatches } from "./chatSections";
-import { PinnedChatList, SnoozedChatList, type ChatSectionActions } from "./ChatSectionRows";
+import { SnoozedChatList, type ChatSectionActions } from "./ChatSectionRows";
 import type { ChatSectionRow } from "./chatSections";
+import { isChatPinned, pinnedFirst } from "./chatState";
 import { MessageSearchResults } from "./MessageSearchResults";
-import { SnoozeSheet } from "./SnoozeSheet";
 import { useBulkChatActions } from "./useBulkChatActions";
 import { useGroupChatState } from "./useGroupChatState";
 import { useSnoozeWakeClock } from "./useSnoozeWakeClock";
@@ -81,7 +81,7 @@ import {
 } from "./groupModel";
 import { GroupRow } from "./GroupRow";
 import { PinnedBotTile, PinnedSnapshotTile, PinnedStrip } from "./PinnedStrip";
-import { isChatUnread, unreadChatsByBot, useChatSeenState } from "./unreadChats";
+import { unreadChatsByBot, useChatSeenState } from "./unreadChats";
 import {
   mergePersonalGroups,
   usePersonalGroupsFeed,
@@ -581,9 +581,10 @@ export function ChatsScreen({
     () => filterBotSummaries(listedWithUnread, query),
     [query, listedWithUnread],
   );
-  // A pinned or snoozed group is in its own section, not among the rows.
+  // A snoozed group is in the Snoozed section, not among the rows. A pinned group has no bot
+  // chat list to be pinned in, so it stays among the rows, first, with its pin.
   const visibleGroups = useMemo(
-    () => filterGroups(plainGroups(groups, wakeClock), query, nameOf),
+    () => pinnedFirst(filterGroups(plainGroups(groups, wakeClock), query, nameOf), isChatPinned),
     [groups, nameOf, query, wakeClock],
   );
   // Archived groups stay out of the list, but a search reaches them (tagged
@@ -604,12 +605,12 @@ export function ChatsScreen({
       }),
     [botsById],
   );
-  // Pinned and snoozed chats and groups across every bot: the Pinned section above the bot rows
-  // and the Snoozed section below them. The search narrows both.
+  // Snoozed chats and groups across every bot: the Snoozed section below the bot rows. The search
+  // narrows it. A pinned chat is pinned in its own bot's chat list, not here (Harout, 1.65.1).
   const sections = useMemo(
     () =>
       list.data === null
-        ? { pinned: [], snoozed: [] }
+        ? { snoozed: [] }
         : buildChatSections({
             bots: list.data.bots,
             links: list.data.threads,
@@ -624,28 +625,12 @@ export function ChatsScreen({
     (group: PersonalGroup) => memberBotsOf(group).map((bot) => bot.name),
     [memberBotsOf],
   );
-  const pinnedRows = useMemo(
-    () => sections.pinned.filter((row) => sectionRowMatches(row, query, memberNames)),
-    [memberNames, query, sections.pinned],
-  );
   const snoozedRows = useMemo(
     () => sections.snoozed.filter((row) => sectionRowMatches(row, query, memberNames)),
     [memberNames, query, sections.snoozed],
   );
-  const pinnedUnreadIds = useMemo(
-    () =>
-      new Set(
-        pinnedRows.flatMap((row) =>
-          row.kind === "chat" && isChatUnread(row.link, chatSeen, row.shell)
-            ? [row.link.threadId as string]
-            : [],
-        ),
-      ),
-    [chatSeen, pinnedRows],
-  );
   const runBulk = useBulkChatActions(environmentId);
   const groupChatState = useGroupChatState(environmentId);
-  const [snoozeTarget, setSnoozeTarget] = useState<ChatSectionRow | null>(null);
   const [sectionError, setSectionError] = useState<string | null>(null);
   const [sectionBusy, setSectionBusy] = useState(false);
   const runSectionAction = async (task: () => Promise<string | null>) => {
@@ -656,38 +641,17 @@ export function ChatsScreen({
     setSectionError(failure);
   };
   const runChatAction = async (
-    action: "pin" | "unpin" | "snooze" | "wake" | "markUnread",
+    action: "wake",
     row: Extract<ChatSectionRow, { kind: "chat" }>,
-    snoozeUntilMs?: number,
   ): Promise<string | null> => {
-    const outcome = await runBulk(action, [row.link.threadId], 0, { snoozeUntilMs });
+    const outcome = await runBulk(action, [row.link.threadId], 0);
     return outcome.status === "settled" && outcome.anyFailed ? outcome.notice : null;
   };
   const sectionActions: ChatSectionActions = {
-    onUnpin: (row) =>
-      void runSectionAction(() =>
-        row.kind === "chat"
-          ? runChatAction("unpin", row)
-          : groupChatState.setPinned(row.key, false),
-      ),
-    onSnooze: (row) => setSnoozeTarget(row),
-    onMarkUnread: (row) => {
-      if (row.kind === "chat") void runSectionAction(() => runChatAction("markUnread", row));
-    },
     onWake: (row) =>
       void runSectionAction(() =>
         row.kind === "chat" ? runChatAction("wake", row) : groupChatState.snooze(row.key, null),
       ),
-  };
-  const onSnoozePicked = (untilMs: number) => {
-    const row = snoozeTarget;
-    setSnoozeTarget(null);
-    if (row === null) return;
-    void runSectionAction(() =>
-      row.kind === "chat"
-        ? runChatAction("snooze", row, untilMs)
-        : groupChatState.snooze(row.key, untilMs),
-    );
   };
   // Avatar poses for the visible rows, pinned box included: every thinking or
   // working bot moves (Harout, 1.49.0; it used to be the first one only).
@@ -727,11 +691,13 @@ export function ChatsScreen({
             key: group.groupId,
             group,
             archived: false,
+            pinned: isChatPinned(group),
           }) as const,
       ),
       ...rest.map((summary) => ({ kind: "bot", key: summary.bot.botId, summary }) as const),
       ...searchedArchivedGroups.map(
-        (group) => ({ kind: "group", key: group.groupId, group, archived: true }) as const,
+        (group) =>
+          ({ kind: "group", key: group.groupId, group, archived: true, pinned: false }) as const,
       ),
     ],
     [rest, searchedArchivedGroups, visibleGroups],
@@ -1004,15 +970,6 @@ export function ChatsScreen({
             />
           </div>
 
-          <PinnedChatList
-            rows={pinnedRows}
-            now={now}
-            unreadThreadIds={pinnedUnreadIds}
-            rounds={rounds}
-            memberBotsOf={memberBotsOf}
-            actions={sectionActions}
-          />
-
           {visible.length > 0 || visibleGroups.length > 0 || searchedArchivedGroups.length > 0 ? (
             <>
               {pinned.length > 0 ? (
@@ -1048,6 +1005,7 @@ export function ChatsScreen({
                           now={now}
                           selected={selectedChat === groupSelectionKey(row.group.groupId)}
                           archived={row.archived}
+                          pinned={row.pinned}
                         />
                       </li>
                     ),
@@ -1055,7 +1013,7 @@ export function ChatsScreen({
                 </ul>
               ) : null}
             </>
-          ) : query.trim().length > 0 && pinnedRows.length === 0 && snoozedRows.length === 0 ? (
+          ) : query.trim().length > 0 && snoozedRows.length === 0 ? (
             <p className="mt-6 text-center text-[15px] text-[var(--personal-text-secondary)]">
               No bots or chats match "{query.trim()}".
             </p>
@@ -1079,14 +1037,6 @@ export function ChatsScreen({
             actions={sectionActions}
             busy={sectionBusy}
           />
-
-          {snoozeTarget !== null ? (
-            <SnoozeSheet
-              title={`Snooze ${snoozeTarget.kind === "chat" ? snoozeTarget.shell.title : snoozeTarget.group.name}`}
-              onPick={onSnoozePicked}
-              onCancel={() => setSnoozeTarget(null)}
-            />
-          ) : null}
 
           {query.trim().length === 0 && archivedGroups.length > 0 ? (
             /* Like a bot's Archived chats: collapsed, at the bottom, one tap away. */

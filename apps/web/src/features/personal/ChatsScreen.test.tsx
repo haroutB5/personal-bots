@@ -176,22 +176,6 @@ vi.mock("./useBulkChatActions", () => ({ useBulkChatActions: () => state.bulk })
 vi.mock("./useGroupChatState", () => ({
   useGroupChatState: () => ({ setPinned: state.groupPin, snooze: state.groupSnooze }),
 }));
-vi.mock("./SnoozeSheet", () => ({
-  SnoozeSheet: ({
-    title,
-    onPick,
-    onCancel,
-  }: {
-    title: string;
-    onPick: (untilMs: number) => void;
-    onCancel: () => void;
-  }) => (
-    <div data-snooze-sheet={title}>
-      <button type="button" data-pick="" onClick={() => onPick(1_800_000_000_000)} />
-      <button type="button" data-cancel="" onClick={onCancel} />
-    </div>
-  ),
-}));
 vi.mock("./MessageSearchResults", () => ({
   MessageSearchResults: ({ query }: { query: string }) => (
     <section data-testid="message-search" data-query={query} />
@@ -1322,7 +1306,7 @@ describe("ChatsScreen working progress", () => {
   });
 });
 
-describe("ChatsScreen pinned, snoozed and unread chats", () => {
+describe("ChatsScreen snoozed, pinned-group and unread chats", () => {
   const decodeGroup = Schema.decodeUnknownSync(PersonalGroup);
   const NOW = Date.now();
   const at = (hours: number) => DateTime.makeUnsafe(NOW + hours * 3_600_000);
@@ -1402,65 +1386,47 @@ describe("ChatsScreen pinned, snoozed and unread chats", () => {
     expect(renderer!.root.findAllByProps({ "data-testid": "snoozed-chats" })).toHaveLength(0);
   });
 
-  it("puts a pinned chat and a pinned group in Pinned, above the bot rows and not among them", async () => {
+  it("lists no pinned chat on the Bots page: the pin shows in the bot's own chat list", async () => {
     seed(
       [link("t1", { pinnedAt: at(-30) }), link("t2")],
       [shell("t1", 3, "Launch plans"), shell("t2", 1)],
-      [group({ pinnedAt: iso(-20) })],
     );
     await render();
-    const pinned = renderer!.root.findByProps({ "aria-label": "Pinned chats" });
-    expect(pinned.findAllByProps({ "aria-label": "Launch plans, Ada, pinned" })).not.toHaveLength(
-      0,
+    expect(renderer!.root.findAllByProps({ "aria-label": "Pinned chats" })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ "data-testid": "pinned-chats" })).toHaveLength(0);
+    // Neither chat is listed as a row of its own: only the bot is.
+    expect(json()).not.toContain("Launch plans");
+    expect(buttonWithText("Unpin chat")).toHaveLength(0);
+  });
+
+  it("keeps a pinned group among the group rows, first, with its pin, listed once", async () => {
+    seed(
+      [],
+      [],
+      [
+        group({ groupId: "group-2", name: "Plain crew", threadId: "group-thread-2" }),
+        group({ pinnedAt: iso(-20) }),
+      ],
     );
-    expect(
-      pinned.findAllByProps({ "aria-label": "Launch crew, pinned group chat" }),
-    ).not.toHaveLength(0);
-    // Above the bot list in the page, and the group is not listed a second time among the rows.
+    await render();
+    expect(renderer!.root.findAllByProps({ "aria-label": "Pinned chats" })).toHaveLength(0);
     const text = json();
-    expect(text.indexOf("Pinned chats")).toBeLessThan(text.indexOf("Your chats"));
+    // Listed once, and ahead of the plain group although it comes second in the data.
+    expect(text.split("Launch crew")).toHaveLength(2);
+    expect(text.indexOf("Launch crew")).toBeLessThan(text.indexOf("Plain crew"));
     const rows = renderer!.root.findByProps({ "aria-label": "Your chats" });
-    expect(rows.findAllByProps({ "aria-label": "Launch crew, group chat" })).toHaveLength(0);
-  });
-
-  it("unpins a pinned chat from its menu, marks it unread and snoozes it", async () => {
-    seed([link("t1", { pinnedAt: at(-30) })], [shell("t1", 3, "Launch plans")]);
-    await render();
-    await press(buttonWithText("Unpin chat")[0]);
-    expect(state.bulk).toHaveBeenLastCalledWith("unpin", ["t1"], 0, { snoozeUntilMs: undefined });
-
-    await press(buttonWithText("Mark unread")[0]);
-    expect(state.bulk).toHaveBeenLastCalledWith("markUnread", ["t1"], 0, {
-      snoozeUntilMs: undefined,
-    });
-
-    await press(buttonWithText("Snooze…")[0]);
     expect(
-      renderer!.root.findAll((node) => node.props["data-snooze-sheet"] === "Snooze Launch plans"),
-    ).toHaveLength(1);
-    await press(renderer!.root.findAll((node) => node.props["data-pick"] === "")[0]);
-    expect(state.bulk).toHaveBeenLastCalledWith("snooze", ["t1"], 0, {
-      snoozeUntilMs: 1_800_000_000_000,
-    });
+      rows.findAllByProps({ "aria-label": "Launch crew, pinned group chat" }),
+    ).not.toHaveLength(0);
+    expect(buttonWithText("Unpin group")).toHaveLength(0);
   });
 
-  it("pins and snoozes a group through the group call, with no Mark unread for it", async () => {
-    seed([], [], [group({ pinnedAt: iso(-20) })]);
+  it("says why when waking a group is refused", async () => {
+    state.groupSnooze.mockResolvedValueOnce("Could not wake this group. Try again.");
+    seed([], [], [group({ snoozedUntil: iso(30) })]);
     await render();
-    expect(buttonWithText("Mark unread")).toHaveLength(0);
-    await press(buttonWithText("Unpin group")[0]);
-    expect(state.groupPin).toHaveBeenCalledWith("group-1", false);
-    await press(buttonWithText("Snooze…")[0]);
-    await press(renderer!.root.findAll((node) => node.props["data-pick"] === "")[0]);
-    expect(state.groupSnooze).toHaveBeenCalledWith("group-1", 1_800_000_000_000);
-  });
-
-  it("says why when a section action is refused", async () => {
-    state.groupPin.mockResolvedValueOnce("Could not unpin this group. Try again.");
-    seed([], [], [group({ pinnedAt: iso(-20) })]);
-    await render();
-    await press(buttonWithText("Unpin group")[0]);
-    expect(json()).toContain("Could not unpin this group. Try again.");
+    await press(buttonLabelled("Wake Launch crew now")[0]);
+    expect(json()).toContain("Could not wake this group. Try again.");
   });
 
   it("moves a snoozed chat and group out of the rows into Snoozed, each with Wake now", async () => {
@@ -1478,7 +1444,7 @@ describe("ChatsScreen pinned, snoozed and unread chats", () => {
       expect(list.findAllByProps({ "aria-label": "Launch crew, group chat" })).toHaveLength(0);
     }
     await press(buttonLabelled("Wake Launch plans now")[0]);
-    expect(state.bulk).toHaveBeenLastCalledWith("wake", ["t1"], 0, { snoozeUntilMs: undefined });
+    expect(state.bulk).toHaveBeenLastCalledWith("wake", ["t1"], 0);
     await press(buttonLabelled("Wake Launch crew now")[0]);
     expect(state.groupSnooze).toHaveBeenCalledWith("group-1", null);
   });
@@ -1491,7 +1457,7 @@ describe("ChatsScreen pinned, snoozed and unread chats", () => {
     expect(rows.findAllByProps({ "aria-label": "Launch crew, group chat" })).not.toHaveLength(0);
   });
 
-  it("the search narrows Pinned and hands the query to the in-messages section", async () => {
+  it("the search hands the query to the in-messages section and still lists no pinned chat", async () => {
     seed(
       [link("t1", { pinnedAt: at(-30) }), link("t2", { pinnedAt: at(-20) })],
       [shell("t1", 3, "Launch plans"), shell("t2", 2, "Taxes")],
@@ -1502,9 +1468,8 @@ describe("ChatsScreen pinned, snoozed and unread chats", () => {
     await act(async () => {
       input.props.onChange({ target: { value: "tax" } });
     });
-    const pinned = renderer!.root.findByProps({ "aria-label": "Pinned chats" });
-    expect(pinned.findAllByProps({ "aria-label": "Taxes, Ada, pinned" })).not.toHaveLength(0);
-    expect(pinned.findAllByProps({ "aria-label": "Launch plans, Ada, pinned" })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ "aria-label": "Pinned chats" })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ "aria-label": "Taxes, Ada, pinned" })).toHaveLength(0);
     // The hook behind it decides when 2 characters are enough; the screen hands the query over.
     expect(
       renderer!.root.findAllByProps({ "data-testid": "message-search" })[0]?.props["data-query"],

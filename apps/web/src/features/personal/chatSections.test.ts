@@ -54,14 +54,14 @@ function sections(input: {
 }
 
 describe("buildChatSections", () => {
-  it("lists pinned chats and groups together, newest activity first", () => {
+  it("lists no pinned chat or group: a pin shows in the bot's own chat list", () => {
     const out = sections({
       links: [link("a", { pinnedAt: hours(-50) }), link("b", { pinnedAt: hours(-40) }), link("c")],
       shells: [shell("a", -5), shell("b", -1), shell("c", -2)],
       groups: [group("g1", -3, { pinnedAt: hours(-30) }), group("g2", -2)],
     });
-    expect(out.pinned.map((row) => row.key)).toEqual(["b", "g1", "a"]);
     expect(out.snoozed).toEqual([]);
+    expect("pinned" in out).toBe(false);
   });
 
   it("lists snoozed chats and groups by soonest wake, and a snoozed pinned chat only there", () => {
@@ -74,25 +74,24 @@ describe("buildChatSections", () => {
       groups: [group("g1", -3, { snoozedUntil: hours(3) })],
     });
     expect(out.snoozed.map((row) => row.key)).toEqual(["b", "g1", "a"]);
-    expect(out.pinned).toEqual([]);
     expect(out.snoozed[0]?.wakeMs).toBe(NOW + 2 * 3_600_000);
   });
 
   it("a group snooze that has run out is awake again", () => {
     const out = sections({ groups: [group("g1", -3, { snoozedUntil: hours(-1) })] });
     expect(out.snoozed).toEqual([]);
-    expect(out.pinned).toEqual([]);
   });
 
   it("leaves out archived chats, relays, group-only bots, chats with no shell and archived shells", () => {
+    const asleep = { snoozedUntil: hours(3) };
     const out = sections({
       links: [
-        link("archived", { pinnedAt: hours(-1), archivedAt: hours(-1) }),
-        link("relay", { pinnedAt: hours(-1) }),
-        link("hidden", { pinnedAt: hours(-1) }, "hidden"),
-        link("no-shell", { pinnedAt: hours(-1) }),
-        link("shell-archived", { pinnedAt: hours(-1) }),
-        link("ok", { pinnedAt: hours(-1) }),
+        link("archived", { ...asleep, archivedAt: hours(-1) }),
+        link("relay", asleep),
+        link("hidden", asleep, "hidden"),
+        link("no-shell", asleep),
+        link("shell-archived", asleep),
+        link("ok", asleep),
       ],
       shells: [
         shell("archived", -1),
@@ -103,34 +102,38 @@ describe("buildChatSections", () => {
       ],
       relays: ["relay"],
     });
-    expect(out.pinned.map((row) => row.key)).toEqual(["ok"]);
+    expect(out.snoozed.map((row) => row.key)).toEqual(["ok"]);
   });
 });
 
 describe("plainGroups", () => {
-  it("keeps the groups that are neither pinned nor asleep", () => {
+  it("keeps the groups that are awake, pinned or not (a group has no bot chat list to pin in)", () => {
     const groups = [
       group("plain", -1),
       group("pinned", -1, { pinnedAt: hours(-5) }),
       group("asleep", -1, { snoozedUntil: hours(4) }),
       group("woken", -1, { snoozedUntil: hours(-4) }),
     ];
-    expect(plainGroups(groups, NOW).map((entry) => entry.groupId)).toEqual(["plain", "woken"]);
+    expect(plainGroups(groups, NOW).map((entry) => entry.groupId)).toEqual([
+      "plain",
+      "pinned",
+      "woken",
+    ]);
   });
 });
 
 describe("sectionRowMatches", () => {
   const out = sections({
-    links: [link("a", { pinnedAt: hours(-1) })],
+    links: [link("a", { snoozedUntil: hours(2) })],
     shells: [shell("a", -1)],
-    groups: [group("g1", -1, { pinnedAt: hours(-1) })],
+    groups: [group("g1", -1, { snoozedUntil: hours(2) })],
   });
   const names = () => ["Ada"];
 
   it("matches a chat on its title or its bot, a group on its name or members", () => {
     const [chat, grp] = [
-      out.pinned.find((row) => row.kind === "chat")!,
-      out.pinned.find((row) => row.kind === "group")!,
+      out.snoozed.find((row) => row.kind === "chat")!,
+      out.snoozed.find((row) => row.kind === "group")!,
     ];
     expect(sectionRowMatches(chat, "title a", names)).toBe(true);
     expect(sectionRowMatches(chat, "dev", names)).toBe(true);
