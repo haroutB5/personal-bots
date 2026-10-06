@@ -276,6 +276,9 @@ import {
   PersonalBot,
   PersonalBotArchiveThreadInput,
   PersonalBotArchiveThreadsInput,
+  PersonalBotUpdateThreadsInput,
+  PersonalBotSearchMessagesInput,
+  PersonalBotSearchMessagesResult,
   PersonalBotWorkingProgressInput,
   PersonalBotWorkingProgressResult,
   PersonalBotTokenUsageInput,
@@ -613,6 +616,8 @@ export const WS_METHODS = {
   personalBotsArchiveThread: "personalBots.archiveThread",
   personalBotsDeleteThread: "personalBots.deleteThread",
   personalBotsArchiveThreads: "personalBots.archiveThreads",
+  personalBotsUpdateThreads: "personalBots.updateThreads",
+  personalBotsSearchMessages: "personalBots.searchMessages",
   personalBotsWorkingProgress: "personalBots.workingProgress",
   personalBotsTokenUsage: "personalBots.tokenUsage",
   personalBotsDeleteThreads: "personalBots.deleteThreads",
@@ -1295,6 +1300,18 @@ const WsPersonalBotsDeleteThreadRpc = Rpc.make(WS_METHODS.personalBotsDeleteThre
 const WsPersonalBotsArchiveThreadsRpc = Rpc.make(WS_METHODS.personalBotsArchiveThreads, {
   payload: PersonalBotArchiveThreadsInput,
   success: PersonalBotThreadsBatchResult,
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsUpdateThreadsRpc = Rpc.make(WS_METHODS.personalBotsUpdateThreads, {
+  payload: PersonalBotUpdateThreadsInput,
+  success: PersonalBotThreadsBatchResult,
+  error: PersonalBotsRpcError,
+});
+
+const WsPersonalBotsSearchMessagesRpc = Rpc.make(WS_METHODS.personalBotsSearchMessages, {
+  payload: PersonalBotSearchMessagesInput,
+  success: PersonalBotSearchMessagesResult,
   error: PersonalBotsRpcError,
 });
 
@@ -2597,6 +2614,8 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalBotsArchiveThreadRpc,
   WsPersonalBotsDeleteThreadRpc,
   WsPersonalBotsArchiveThreadsRpc,
+  WsPersonalBotsUpdateThreadsRpc,
+  WsPersonalBotsSearchMessagesRpc,
   WsPersonalBotsWorkingProgressRpc,
   WsPersonalBotsTokenUsageRpc,
   WsPersonalBotsDeleteThreadsRpc,

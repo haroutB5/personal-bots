@@ -983,6 +983,23 @@ export const make = Effect.gen(function* () {
    * logged as `path: muted` and dropped. Unread and attention counts in the
    * app come from thread state, not from here, so they still update.
    */
+  const isThreadSnoozed = (threadId: string, nowMs: number) => {
+    const nowIso = DateTime.formatIso(DateTime.makeUnsafe(nowMs));
+    return sql<{ readonly one: number }>`
+      SELECT 1 AS "one" FROM personal_bot_threads
+      WHERE thread_id = ${threadId} AND snoozed_until > ${nowIso}
+      UNION ALL
+      SELECT 1 AS "one" FROM personal_groups
+      WHERE thread_id = ${threadId} AND snoozed_until > ${nowIso}
+      LIMIT 1
+    `.pipe(
+      Effect.map((rows) => rows.length > 0),
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause) ? Effect.interrupt : Effect.succeed(false),
+      ),
+    );
+  };
+
   const deliver = (
     eventId: string,
     requested: PersonalPushPayload,
@@ -1013,6 +1030,20 @@ export const make = Effect.gen(function* () {
             bot.notificationsMutedUntil == null
               ? null
               : DateTime.formatIso(bot.notificationsMutedUntil),
+        });
+        return;
+      }
+      // A snoozed chat (or group) stays quiet until it wakes; the wake itself
+      // marks it unread. Like a mute, only this path is dropped: counts and the
+      // chat's own state still update.
+      if (
+        options.viewing !== undefined &&
+        (yield* isThreadSnoozed(options.viewing.threadId, nowMs))
+      ) {
+        yield* Effect.logInfo("personal notification path", {
+          eventId,
+          path: "snoozed",
+          threadId: options.viewing.threadId,
         });
         return;
       }

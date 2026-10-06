@@ -1,6 +1,10 @@
 import * as Effect from "effect/Effect";
 
-import type { PersonalBotThreadsBatchResult, ThreadId } from "@t3tools/contracts";
+import type {
+  PersonalBotThreadsBatchResult,
+  PersonalBotUpdateThreadsInput,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import { forEachItem } from "./bulkPersonalItems.ts";
 import { deletePersonalChat, type PersonalChatDeleteServices } from "./deletePersonalChat.ts";
@@ -56,6 +60,30 @@ export const archivePersonalChats = Effect.fn("archivePersonalChats")(function* 
     requested: threadIds.length,
     changed: result.done.length,
     failed: result.failed.length,
+  });
+  return result;
+});
+
+/** Pins, snoozes or marks unread several chats, each through the bot service's `updateThread`. */
+export const updatePersonalChats = Effect.fn("updatePersonalChats")(function* (
+  bots: PersonalBotService.PersonalBotService["Service"],
+  input: PersonalBotUpdateThreadsInput,
+) {
+  const result = yield* forEachChat(input.threadIds, "Couldn't change this chat.", (threadId) =>
+    bots.updateThread({
+      threadId,
+      ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
+      ...(input.snoozedUntil === undefined ? {} : { snoozedUntil: input.snoozedUntil }),
+      ...(input.markUnread === undefined ? {} : { markUnread: input.markUnread }),
+    }),
+  );
+  yield* Effect.logInfo("personal chats update", {
+    requested: input.threadIds.length,
+    changed: result.done.length,
+    failed: result.failed.length,
+    ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
+    ...(input.snoozedUntil === undefined ? {} : { snoozed: input.snoozedUntil !== null }),
+    ...(input.markUnread === undefined ? {} : { markUnread: input.markUnread }),
   });
   return result;
 });

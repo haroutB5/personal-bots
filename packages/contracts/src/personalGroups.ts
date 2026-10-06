@@ -180,6 +180,13 @@ export const PersonalGroup = Schema.Struct({
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  /** Only when pinned: when the owner pinned the group (it sits at the top of the Chats list). */
+  pinnedAt: Schema.optional(Schema.DateTimeUtcFromString),
+  /**
+   * Only on a group that was ever snoozed: when the snooze ends. In the past it is
+   * over: the group is awake and sorts as if a message arrived at that time.
+   */
+  snoozedUntil: Schema.optional(Schema.DateTimeUtcFromString),
 });
 export type PersonalGroup = typeof PersonalGroup.Type;
 
@@ -316,6 +323,9 @@ export const PersonalGroupUpdateInput = Schema.Struct({
   name: Schema.optional(Schema.String),
   description: Schema.optional(Schema.String),
   archived: Schema.optional(Schema.Boolean),
+  pinned: Schema.optional(Schema.Boolean),
+  /** A future time snoozes the group, null wakes it now. */
+  snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
 });
 export type PersonalGroupUpdateInput = typeof PersonalGroupUpdateInput.Type;
 

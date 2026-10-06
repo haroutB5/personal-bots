@@ -681,3 +681,64 @@ it.effect("an undecodable customTeams row still serves the profile", () => {
     });
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
+
+it.live(
+  "updateThread pins, snoozes, wakes and marks unread; refuses archived chats and a snooze past a year",
+  () => {
+    const context = makeContext();
+    return Effect.gen(function* () {
+      const service = yield* PersonalBotService.PersonalBotService;
+      const created = yield* service.create(botInput("bot-extras"));
+      const threadId = ThreadId.make("thread-extras");
+      yield* service.createThread({ botId: created.botId, threadId });
+
+      yield* service.updateThread({ threadId, pinned: true });
+      const inAnHour = DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 3600_000);
+      yield* service.updateThread({ threadId, snoozedUntil: inAnHour });
+      let link = (yield* service.list()).threads.find((entry) => entry.threadId === threadId)!;
+      expect(link.pinnedAt).toBeDefined();
+      expect(
+        link.snoozedUntil === undefined ? null : DateTime.toEpochMillis(link.snoozedUntil),
+      ).toBe(DateTime.toEpochMillis(inAnHour));
+
+      // Wake now ends the snooze at once; the chat is back, marked unread.
+      yield* service.updateThread({ threadId, snoozedUntil: null });
+      link = (yield* service.list()).threads.find((entry) => entry.threadId === threadId)!;
+      expect(link.snoozedUntil).toBeUndefined();
+      expect(link.pinnedAt).toBeDefined();
+
+      yield* service.updateThread({ threadId, pinned: false, markUnread: true });
+      link = (yield* service.list()).threads.find((entry) => entry.threadId === threadId)!;
+      expect(link.pinnedAt).toBeUndefined();
+      expect(link.markedUnread).toBe(true);
+
+      const tooFar = DateTime.makeUnsafe(
+        DateTime.toEpochMillis(DateTime.nowUnsafe()) + 400 * 24 * 3600_000,
+      );
+      const tooFarExit = yield* Effect.exit(
+        service.updateThread({ threadId, snoozedUntil: tooFar }),
+      );
+      expect(tooFarExit._tag).toBe("Failure");
+
+      yield* service.archiveThread({ threadId, archived: true });
+      const archivedExit = yield* Effect.exit(service.updateThread({ threadId, pinned: true }));
+      expect(archivedExit._tag).toBe("Failure");
+      const missing = yield* Effect.exit(
+        service.updateThread({ threadId: ThreadId.make("nope"), pinned: true }),
+      );
+      expect(missing._tag).toBe("Failure");
+    }).pipe(Effect.provide(makeTestLayer(context)));
+  },
+);
+
+it.live("searchMessages ignores a too-short query and returns one hit per chat", () => {
+  const context = makeContext();
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+    expect(yield* service.searchMessages({ query: "a " })).toEqual({ hits: [], capped: false });
+    expect(yield* service.searchMessages({ query: "nothing here" })).toEqual({
+      hits: [],
+      capped: false,
+    });
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});

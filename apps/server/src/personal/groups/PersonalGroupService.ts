@@ -430,6 +430,8 @@ export const make = Effect.gen(function* () {
       createdAt: group.createdAt,
       updatedAt: group.updatedAt,
       archivedAt: group.archivedAt,
+      ...(group.pinnedAt == null ? {} : { pinnedAt: group.pinnedAt }),
+      ...(group.snoozedUntil == null ? {} : { snoozedUntil: group.snoozedUntil }),
     } satisfies Omit<PersonalGroup, "newestMessage">;
     if (!options.withNewestMessage) {
       return base as PersonalGroup;
@@ -2006,12 +2008,50 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const group = yield* requireGroup(input.groupId);
           const now = yield* DateTime.now;
+          const snooze = input.snoozedUntil;
+          if (
+            snooze != null &&
+            DateTime.toEpochMillis(snooze) - DateTime.toEpochMillis(now) > 366 * 24 * 60 * 60 * 1000
+          ) {
+            return yield* Effect.fail(
+              new PersonalGroupsError({ message: "A group can be snoozed for at most a year." }),
+            );
+          }
+          // Archiving drops the pin and the snooze, as it does for a chat.
+          const archiving = input.archived === true;
+          const nextPinnedAt =
+            archiving || input.pinned === false
+              ? null
+              : input.pinned === true
+                ? (group.pinnedAt ?? now)
+                : (group.pinnedAt ?? null);
+          // Wake now ends a running snooze at this moment (the group comes back
+          // at the top); waking a group that is not snoozed changes nothing.
+          const stillSnoozed =
+            group.snoozedUntil != null &&
+            DateTime.toEpochMillis(group.snoozedUntil) > DateTime.toEpochMillis(now);
+          const nextSnoozedUntil = archiving
+            ? null
+            : snooze === undefined
+              ? (group.snoozedUntil ?? null)
+              : snooze === null
+                ? stillSnoozed
+                  ? now
+                  : (group.snoozedUntil ?? null)
+                : snooze;
+          const conversationChanged =
+            input.name !== undefined ||
+            input.description !== undefined ||
+            input.archived !== undefined;
           const next: GroupRecord = {
             ...group,
             ...(input.name === undefined ? {} : { name: input.name.trim() }),
             ...(input.description === undefined ? {} : { description: input.description }),
             ...(input.archived === undefined ? {} : { archivedAt: input.archived ? now : null }),
-            updatedAt: now,
+            pinnedAt: nextPinnedAt,
+            snoozedUntil: nextSnoozedUntil,
+            // Pin and snooze are not conversation: they leave updatedAt alone.
+            ...(conversationChanged ? { updatedAt: now } : {}),
           };
           yield* repository.writeGroup(next);
           return yield* publishGroup(next);

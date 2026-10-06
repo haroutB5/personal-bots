@@ -121,6 +121,19 @@ export const SetPersonalMetaInput = Schema.Struct({
 });
 export type SetPersonalMetaInput = typeof SetPersonalMetaInput.Type;
 
+export interface PersonalMessageSearchRow {
+  readonly messageId: string;
+  readonly threadId: string;
+  readonly botId: string | null;
+  readonly groupId: string | null;
+  readonly role: "user" | "assistant";
+  readonly createdAt: string;
+  readonly archived: boolean;
+  /** About 200 characters of the message from `snippetStart` on (1-based). */
+  readonly snippet: string;
+  readonly snippetStart: number;
+}
+
 export class PersonalBotRepository extends Context.Service<
   PersonalBotRepository,
   {
@@ -161,6 +174,28 @@ export class PersonalBotRepository extends Context.Service<
       readonly threadId: ThreadId;
       readonly viewedAt: string;
     }) => Effect.Effect<void, PersonalBotRepositoryError>;
+    /**
+     * Pin, snooze and mark-unread of one chat (migration 100). Fields left
+     * `undefined` stay as they are. False when the chat is not a bot chat the
+     * owner can change (missing, archived or a group relay).
+     */
+    readonly updateThreadState: (input: {
+      readonly threadId: ThreadId;
+      readonly pinnedAt?: string | null;
+      readonly snoozedUntil?: string | null;
+      /** Wakes a snoozed chat now: a snooze that ends after this time ends at it. */
+      readonly wakeAt?: string;
+      readonly markedUnreadAt?: string | null;
+    }) => Effect.Effect<boolean, PersonalBotRepositoryError>;
+    /**
+     * Case-insensitive (ASCII) substring search over what the owner and the
+     * bots said, newest first, at most `limit` rows. Chats of bots that hide
+     * their previews, group relays, deleted chats and bots are left out.
+     */
+    readonly searchMessages: (input: {
+      readonly needle: string;
+      readonly limit: number;
+    }) => Effect.Effect<ReadonlyArray<PersonalMessageSearchRow>, PersonalBotRepositoryError>;
     /** Removes exactly one bot-thread link row; the thread itself is deleted via `thread.delete`. */
     readonly deleteThreadLink: (
       input: GetPersonalBotThreadInput,
@@ -274,6 +309,11 @@ const PersonalBotThreadListDbRow = Schema.Struct({
   groupRelay: Schema.Number,
   lastReplyAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   lastViewedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  eligible: Schema.Number,
+  pinnedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  snoozedUntil: Schema.NullOr(Schema.DateTimeUtcFromString),
+  wokeAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  markedUnreadAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 });
 
 const PersonalBotThreadListRawDbRow = Schema.Struct({
@@ -287,6 +327,11 @@ const PersonalBotThreadListRawDbRow = Schema.Struct({
   groupRelay: Schema.Unknown,
   lastReplyAt: Schema.Unknown,
   lastViewedAt: Schema.Unknown,
+  eligible: Schema.Unknown,
+  pinnedAt: Schema.Unknown,
+  snoozedUntil: Schema.Unknown,
+  wokeAt: Schema.Unknown,
+  markedUnreadAt: Schema.Unknown,
 });
 
 const PersonalMetaDbRow = Schema.Struct({
@@ -405,9 +450,47 @@ function toPersonalBotThreadWithPreview(
     newestMessage,
     // Only when true, so the list stays the same size for every other chat.
     ...(row.groupRelay === 1 ? { groupRelay: true } : {}),
-    ...(isThreadRowUnread(row) && row.lastReplyAt !== null
-      ? { unread: true, lastReplyAt: row.lastReplyAt }
-      : {}),
+    ...unreadFields(row),
+    ...(row.pinnedAt !== null ? { pinnedAt: row.pinnedAt } : {}),
+    ...(row.snoozedUntil !== null ? { snoozedUntil: row.snoozedUntil } : {}),
+  };
+}
+
+/**
+ * The unread part of a list row. A bot reply after the owner last had the chat
+ * open makes it unread (`isThreadRowUnread`). So does the owner marking it
+ * unread, and a snooze running out (`wokeAt`): both count from their own time
+ * until `last_viewed_at` passes it, for every bot, and `lastReplyAt` carries
+ * the later of the bot's reply and that time so a client that opens the chat
+ * can clear it before a refetch.
+ */
+export function unreadFields(row: {
+  readonly groupRelay: number;
+  readonly eligible: number;
+  readonly lastReplyAt: DateTime.Utc | null;
+  readonly lastViewedAt: DateTime.Utc | null;
+  readonly wokeAt: DateTime.Utc | null;
+  readonly markedUnreadAt: DateTime.Utc | null;
+}): {
+  readonly unread?: true;
+  readonly markedUnread?: true;
+  readonly lastReplyAt?: DateTime.Utc;
+} {
+  const replyUnread = isThreadRowUnread(row) && row.lastReplyAt !== null;
+  const markMs = Math.max(
+    row.markedUnreadAt === null ? -Infinity : DateTime.toEpochMillis(row.markedUnreadAt),
+    row.wokeAt === null ? -Infinity : DateTime.toEpochMillis(row.wokeAt),
+  );
+  const viewedMs = row.lastViewedAt === null ? -Infinity : DateTime.toEpochMillis(row.lastViewedAt);
+  const markedUnread =
+    row.groupRelay !== 1 && row.eligible === 1 && Number.isFinite(markMs) && markMs > viewedMs;
+  if (!replyUnread && !markedUnread) return {};
+  const replyMs =
+    replyUnread && row.lastReplyAt !== null ? DateTime.toEpochMillis(row.lastReplyAt) : -Infinity;
+  return {
+    unread: true,
+    ...(markedUnread ? { markedUnread: true as const } : {}),
+    lastReplyAt: DateTime.makeUnsafe(Math.max(replyMs, markedUnread ? markMs : -Infinity)),
   };
 }
 
@@ -669,7 +752,9 @@ export const make = Effect.gen(function* () {
     execute: ({ threadId, archivedAt }) =>
       sql`
         UPDATE personal_bot_threads
-        SET archived_at = ${archivedAt}
+        SET archived_at = ${archivedAt},
+            pinned_at = CASE WHEN ${archivedAt} IS NULL THEN pinned_at ELSE NULL END,
+            snoozed_until = CASE WHEN ${archivedAt} IS NULL THEN snoozed_until ELSE NULL END
         WHERE thread_id = ${threadId}
         RETURNING
           bot_id AS "botId",
@@ -704,10 +789,15 @@ export const make = Effect.gen(function* () {
   // stream. The newest TWO eligible threads per bot keep a preview, so a
   // client whose shells are one update behind the server still finds its
   // newest thread's text; anything else falls back to the thread title.
+  //
+  // Snooze (migration 100): a chat snoozed until a time after `now` is not
+  // eligible (no preview, no unread) and its `snoozedUntil` goes out; one whose
+  // time has passed is awake again, ordered as if a message arrived at the wake
+  // time (`activity_at`) and unread from then (`wokeAt`, see `unreadFields`).
   const listThreadLinkRows = SqlSchema.findAll({
-    Request: Schema.Void,
+    Request: Schema.Struct({ now: Schema.String }),
     Result: PersonalBotThreadListRawDbRow,
-    execute: () =>
+    execute: ({ now }) =>
       sql`
         WITH candidates AS (
           SELECT
@@ -716,10 +806,14 @@ export const make = Effect.gen(function* () {
             t.created_at,
             t.archived_at,
             t.last_viewed_at,
+            t.pinned_at,
+            t.snoozed_until,
+            t.marked_unread_at,
             CASE
               WHEN t.archived_at IS NULL
                 AND p.archived_at IS NULL
                 AND p.deleted_at IS NULL
+                AND (t.snoozed_until IS NULL OR t.snoozed_until <= ${now})
                 AND NOT EXISTS (
                   SELECT 1
                   FROM personal_group_members gm
@@ -739,9 +833,21 @@ export const make = Effect.gen(function* () {
               ),
               p.created_at,
               t.created_at
-            ) AS activity_at
+            ) AS base_activity_at
           FROM personal_bot_threads t
           LEFT JOIN projection_threads p ON p.thread_id = t.thread_id
+        ),
+        timed AS (
+          SELECT
+            c.*,
+            CASE
+              WHEN c.snoozed_until IS NOT NULL
+                AND c.snoozed_until <= ${now}
+                AND c.snoozed_until > c.base_activity_at
+              THEN c.snoozed_until
+              ELSE c.base_activity_at
+            END AS activity_at
+          FROM candidates c
         ),
         ranked AS (
           SELECT
@@ -750,7 +856,7 @@ export const make = Effect.gen(function* () {
               PARTITION BY c.bot_id, c.eligible
               ORDER BY c.activity_at DESC, c.created_at ASC, c.thread_id ASC
             ) AS preview_rank
-          FROM candidates c
+          FROM timed c
         )
         SELECT
           r.bot_id AS "botId",
@@ -784,7 +890,12 @@ export const make = Effect.gen(function* () {
           COALESCE(
             r.last_viewed_at,
             (SELECT value FROM personal_meta WHERE key = ${PERSONAL_CHAT_UNREAD_SINCE_META_KEY})
-          ) AS "lastViewedAt"
+          ) AS "lastViewedAt",
+          r.eligible AS "eligible",
+          r.pinned_at AS "pinnedAt",
+          CASE WHEN r.snoozed_until > ${now} THEN r.snoozed_until END AS "snoozedUntil",
+          CASE WHEN r.snoozed_until <= ${now} THEN r.snoozed_until END AS "wokeAt",
+          r.marked_unread_at AS "markedUnreadAt"
         FROM ranked r
         LEFT JOIN personal_bots hb ON hb.bot_id = r.bot_id
         LEFT JOIN projection_thread_messages m
@@ -1060,6 +1171,101 @@ export const make = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("PersonalBotRepository.recordThreadViewed:query")),
     );
 
+  const updateThreadState: PersonalBotRepository["Service"]["updateThreadState"] = (input) =>
+    sql<{ readonly threadId: string }>`
+      UPDATE personal_bot_threads
+      SET pinned_at = CASE WHEN ${input.pinnedAt === undefined ? 0 : 1} = 1
+            THEN ${input.pinnedAt ?? null} ELSE pinned_at END,
+          snoozed_until = CASE WHEN ${input.snoozedUntil === undefined ? 0 : 1} = 1
+            THEN ${input.snoozedUntil ?? null}
+            WHEN ${input.wakeAt ?? null} IS NOT NULL AND snoozed_until > ${input.wakeAt ?? null}
+            THEN ${input.wakeAt ?? null}
+            ELSE snoozed_until END,
+          marked_unread_at = CASE WHEN ${input.markedUnreadAt === undefined ? 0 : 1} = 1
+            THEN ${input.markedUnreadAt ?? null} ELSE marked_unread_at END
+      WHERE thread_id = ${input.threadId}
+        AND archived_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM personal_group_members gm
+          WHERE gm.thread_id = personal_bot_threads.thread_id
+        )
+      RETURNING thread_id AS "threadId"
+    `.pipe(
+      Effect.map((rows) => rows.length > 0),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.updateThreadState:query")),
+    );
+
+  // A scan of the messages table with the substring test (about 40 ms on the
+  // 24 MB / 35k-row live copy of 6 Oct), then joins for the few rows that
+  // match. `instr(lower(text), needle)` finds the match; the snippet is cut in
+  // SQL so a long reply never crosses into the server.
+  const searchMessages: PersonalBotRepository["Service"]["searchMessages"] = (input) =>
+    sql<{
+      readonly messageId: string;
+      readonly threadId: string;
+      readonly botId: string | null;
+      readonly groupId: string | null;
+      readonly role: "user" | "assistant";
+      readonly createdAt: string;
+      readonly archived: number;
+      readonly snippet: string;
+      readonly snippetStart: number;
+    }>`
+      WITH hits AS (
+        SELECT m.message_id, m.thread_id, m.role, m.created_at, m.text,
+               instr(lower(m.text), ${input.needle}) AS pos
+        FROM projection_thread_messages m
+        WHERE m.role IN ('user', 'assistant')
+          AND instr(lower(m.text), ${input.needle}) > 0
+      )
+      SELECT
+        h.message_id AS "messageId",
+        h.thread_id AS "threadId",
+        t.bot_id AS "botId",
+        g.group_id AS "groupId",
+        h.role AS "role",
+        h.created_at AS "createdAt",
+        (t.archived_at IS NOT NULL OR p.archived_at IS NOT NULL OR g.archived_at IS NOT NULL)
+          AS "archived",
+        substr(h.text, CASE WHEN h.pos > 60 THEN h.pos - 60 ELSE 1 END, 200) AS "snippet",
+        CASE WHEN h.pos > 60 THEN h.pos - 60 ELSE 1 END AS "snippetStart"
+      FROM hits h
+      JOIN projection_threads p ON p.thread_id = h.thread_id AND p.deleted_at IS NULL
+      LEFT JOIN personal_bot_threads t ON t.thread_id = h.thread_id
+      LEFT JOIN personal_bots b ON b.bot_id = t.bot_id
+      LEFT JOIN personal_groups g ON g.thread_id = h.thread_id AND g.deleted_at IS NULL
+      WHERE (t.thread_id IS NOT NULL OR g.group_id IS NOT NULL)
+        AND (
+          t.thread_id IS NULL
+          OR (
+            b.deleted_at IS NULL
+            AND b.hide_previews = 0
+            AND NOT EXISTS (
+              SELECT 1 FROM personal_group_members relay WHERE relay.thread_id = t.thread_id
+            )
+          )
+        )
+        AND (
+          g.group_id IS NULL
+          OR NOT EXISTS (
+            SELECT 1
+            FROM personal_group_members gm
+            JOIN personal_bots hb ON hb.bot_id = gm.bot_id
+            WHERE gm.group_id = g.group_id AND gm.left_at IS NULL AND hb.hide_previews = 1
+          )
+        )
+      ORDER BY h.created_at DESC, h.message_id DESC
+      LIMIT ${input.limit}
+    `.pipe(
+      Effect.map((rows) =>
+        rows.map((row): PersonalMessageSearchRow => ({
+          ...row,
+          archived: Number(row.archived) === 1,
+        })),
+      ),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.searchMessages:query")),
+    );
+
   const deleteThreadLink: PersonalBotRepository["Service"]["deleteThreadLink"] = (input) =>
     deleteThreadLinkRow(input).pipe(
       Effect.mapError(
@@ -1087,7 +1293,8 @@ export const make = Effect.gen(function* () {
   });
 
   const listThreadLinkPreviews = () =>
-    listThreadLinkRows().pipe(
+    DateTime.now.pipe(
+      Effect.flatMap((now) => listThreadLinkRows({ now: DateTime.formatIso(now) })),
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "PersonalBotRepository.listThreadLinks:query",
@@ -1216,6 +1423,8 @@ export const make = Effect.gen(function* () {
     getThreadLink,
     setThreadArchived,
     recordThreadViewed,
+    updateThreadState,
+    searchMessages,
     deleteThreadLink,
     listThreadLinks,
     listGroupPresence,

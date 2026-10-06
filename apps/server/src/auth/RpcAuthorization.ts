@@ -110,6 +110,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalBotsArchiveThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalBotsDeleteThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalBotsArchiveThreads]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalBotsUpdateThreads]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalBotsSearchMessages]: AuthOrchestrationReadScope,
   [WS_METHODS.personalBotsWorkingProgress]: AuthOrchestrationReadScope,
   [WS_METHODS.personalBotsTokenUsage]: AuthOrchestrationReadScope,
   [WS_METHODS.personalBotsDeleteThreads]: AuthOrchestrationOperateScope,

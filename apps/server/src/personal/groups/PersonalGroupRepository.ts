@@ -39,6 +39,10 @@ export interface PersonalGroupRecord {
   readonly createdAt: DateTime.Utc;
   readonly updatedAt: DateTime.Utc;
   readonly archivedAt: DateTime.Utc | null;
+  /** Migration 100: when the owner pinned the group, null when not. */
+  readonly pinnedAt?: DateTime.Utc | null;
+  /** Migration 100: when the snooze ends (past = awake), null when never snoozed. */
+  readonly snoozedUntil?: DateTime.Utc | null;
 }
 
 /**
@@ -81,6 +85,8 @@ const GroupDbRow = Schema.Struct({
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  pinnedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  snoozedUntil: Schema.NullOr(Schema.DateTimeUtcFromString),
 });
 
 const MemberDbRow = Schema.Struct({
@@ -169,7 +175,9 @@ const GROUP_COLUMNS = `
   max_bot_turns AS "maxBotTurns",
   created_at AS "createdAt",
   updated_at AS "updatedAt",
-  archived_at AS "archivedAt"
+  archived_at AS "archivedAt",
+  pinned_at AS "pinnedAt",
+  snoozed_until AS "snoozedUntil"
 `;
 
 const MEMBER_COLUMNS = `
@@ -482,6 +490,8 @@ export const make = Effect.gen(function* () {
         SET name = ${group.name},
             description = ${group.description},
             archived_at = ${isoOrNull(group.archivedAt)},
+            pinned_at = ${isoOrNull(group.pinnedAt ?? null)},
+            snoozed_until = ${isoOrNull(group.snoozedUntil ?? null)},
             updated_at = ${iso(group.updatedAt)}
         WHERE group_id = ${group.groupId} AND deleted_at IS NULL
       `,

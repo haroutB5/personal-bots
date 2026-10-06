@@ -276,6 +276,22 @@ export const PersonalBotThread = Schema.Struct({
    */
   unread: Schema.optional(Schema.Boolean),
   lastReplyAt: Schema.optional(Schema.DateTimeUtcFromString),
+  /**
+   * Only on `personalBots.list`, and only when true: the chat is unread because
+   * the owner marked it unread, or because a snooze ran out, not (only) because
+   * the bot replied. It shows for every bot, not just the ones that show unread
+   * chats. `lastReplyAt` then carries the time the mark or the wake happened
+   * when that is later than the bot's last reply.
+   */
+  markedUnread: Schema.optional(Schema.Boolean),
+  /** Only on `personalBots.list`, and only when pinned: when the owner pinned the chat. */
+  pinnedAt: Schema.optional(Schema.DateTimeUtcFromString),
+  /**
+   * Only on `personalBots.list`, and only while snoozed: when the chat wakes.
+   * A snooze that has run out is not sent; the chat comes back as unread with
+   * the wake time as `lastReplyAt`.
+   */
+  snoozedUntil: Schema.optional(Schema.DateTimeUtcFromString),
 });
 export type PersonalBotThread = typeof PersonalBotThread.Type;
 
@@ -362,6 +378,67 @@ export const PersonalBotDeleteThreadsInput = Schema.Struct({
   threadIds: PersonalBotThreadIdBatch,
 });
 export type PersonalBotDeleteThreadsInput = typeof PersonalBotDeleteThreadsInput.Type;
+
+/**
+ * Pin, snooze or mark unread on several chats (one is a batch of one), each
+ * exactly as it would be on its own. Omitted fields are left alone.
+ * - `pinned`: pin or unpin.
+ * - `snoozedUntil`: a time in the future snoozes, null wakes the chat now (it
+ *   comes back as unread at the top).
+ * - `markUnread`: true marks them unread until the owner opens them again.
+ * Chats that are archived or group relays are refused (reported in `failed`).
+ */
+export const PersonalBotUpdateThreadsInput = Schema.Struct({
+  threadIds: PersonalBotThreadIdBatch,
+  pinned: Schema.optional(Schema.Boolean),
+  snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  markUnread: Schema.optional(Schema.Boolean),
+});
+export type PersonalBotUpdateThreadsInput = typeof PersonalBotUpdateThreadsInput.Type;
+
+/** The most message hits one search returns. */
+export const PERSONAL_MESSAGE_SEARCH_MAX_RESULTS = 40;
+export const PERSONAL_MESSAGE_SEARCH_MIN_QUERY_CHARS = 2;
+export const PERSONAL_MESSAGE_SEARCH_MAX_QUERY_CHARS = 100;
+
+/**
+ * Search inside chat messages (what the owner and the bots said, never the
+ * reasoning trace, tool output or system rows). Newest hits first, one hit per
+ * chat, at most `limit` (default and ceiling `PERSONAL_MESSAGE_SEARCH_MAX_RESULTS`).
+ */
+export const PersonalBotSearchMessagesInput = Schema.Struct({
+  query: Schema.String.check(
+    Schema.isMinLength(PERSONAL_MESSAGE_SEARCH_MIN_QUERY_CHARS),
+    Schema.isMaxLength(PERSONAL_MESSAGE_SEARCH_MAX_QUERY_CHARS),
+  ),
+  limit: Schema.optional(Schema.Number),
+});
+export type PersonalBotSearchMessagesInput = typeof PersonalBotSearchMessagesInput.Type;
+
+export const PersonalBotSearchMessageHit = Schema.Struct({
+  threadId: ThreadId,
+  /** The bot the chat belongs to; null for a group chat. */
+  botId: Schema.NullOr(PersonalBotId),
+  /** Set when the chat is a group's shared chat. */
+  groupId: Schema.NullOr(Schema.String),
+  messageId: MessageId,
+  role: Schema.Literals(["user", "assistant"]),
+  /** About 140 characters of the message around the match, one line, ellipsised at a cut end. */
+  snippet: Schema.String,
+  createdAt: Schema.DateTimeUtcFromString,
+  /** The chat is archived (a hit in an archived chat is tagged by the list). */
+  archived: Schema.Boolean,
+  /** Hits in this chat beyond the one shown. */
+  moreInChat: Schema.Number,
+});
+export type PersonalBotSearchMessageHit = typeof PersonalBotSearchMessageHit.Type;
+
+export const PersonalBotSearchMessagesResult = Schema.Struct({
+  hits: Schema.Array(PersonalBotSearchMessageHit),
+  /** The search stopped at the cap: there may be more chats that match. */
+  capped: Schema.Boolean,
+});
+export type PersonalBotSearchMessagesResult = typeof PersonalBotSearchMessagesResult.Type;
 
 /**
  * What a bulk archive or delete did: the chats it changed, and the ones it

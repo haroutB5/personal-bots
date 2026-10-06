@@ -21,6 +21,8 @@ import {
   isProviderAvailable,
   PersonalBotId,
   PERSONAL_BOT_MUTED_INDEFINITELY_ISO,
+  PERSONAL_MESSAGE_SEARCH_MAX_RESULTS,
+  PERSONAL_MESSAGE_SEARCH_MIN_QUERY_CHARS,
   PersonalBotTeam,
   PersonalBotsError,
   PersonalBotThread,
@@ -33,6 +35,8 @@ import {
   type PersonalBot,
   type PersonalBotCreateInput,
   type PersonalBotNotificationMute,
+  type PersonalBotSearchMessagesInput,
+  type PersonalBotSearchMessagesResult,
   type PersonalBotsListResult,
   type PersonalBotUpdateInput,
   type PersonalFile,
@@ -52,6 +56,12 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import { withGroupPresence } from "./groupOnlyBots.ts";
+import {
+  asciiLower,
+  groupMessageSearchRows,
+  PERSONAL_MESSAGE_SEARCH_RAW_ROWS,
+  PERSONAL_SNOOZE_MAX_MS,
+} from "./personalMessageSearch.ts";
 import { PERSONAL_THREAD_TITLE } from "./personalThreadTitles.ts";
 import { PERSONAL_SEED_MODEL_ENV, seedModelFor } from "./seedModel.ts";
 import {
@@ -198,6 +208,20 @@ export class PersonalBotService extends Context.Service<
       readonly threadId: ThreadId;
       readonly archived: boolean;
     }) => Effect.Effect<PersonalBotThread, PersonalBotsError>;
+    /**
+     * Pin, snooze or mark one chat unread (see `PersonalBotUpdateThreadsInput`).
+     * Fails for a chat that is gone, archived or a group relay, and for a snooze
+     * more than a year away.
+     */
+    readonly updateThread: (input: {
+      readonly threadId: ThreadId;
+      readonly pinned?: boolean;
+      readonly snoozedUntil?: DateTime.Utc | null;
+      readonly markUnread?: boolean;
+    }) => Effect.Effect<void, PersonalBotsError>;
+    readonly searchMessages: (
+      input: PersonalBotSearchMessagesInput,
+    ) => Effect.Effect<PersonalBotSearchMessagesResult, PersonalBotsError>;
     /**
      * Permanently deletes exactly one chat: the orchestration thread plus
      * its bot-thread link row. Bot-level data (bot row, memories, secrets,
@@ -650,6 +674,56 @@ export const make = Effect.gen(function* () {
       return updated.value;
     });
 
+  const updateThread: PersonalBotService["Service"]["updateThread"] = (input) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      const snooze = input.snoozedUntil;
+      if (
+        snooze !== undefined &&
+        snooze !== null &&
+        DateTime.toEpochMillis(snooze) - DateTime.toEpochMillis(now) > PERSONAL_SNOOZE_MAX_MS
+      ) {
+        return yield* notFound("A chat can be snoozed for at most a year.");
+      }
+      const changed = yield* repository
+        .updateThreadState({
+          threadId: input.threadId,
+          ...(input.pinned === undefined ? {} : { pinnedAt: input.pinned ? nowIso : null }),
+          ...(snooze === undefined
+            ? {}
+            : snooze === null
+              ? { wakeAt: nowIso }
+              : { snoozedUntil: DateTime.formatIso(snooze) }),
+          ...(input.markUnread === true ? { markedUnreadAt: nowIso } : {}),
+        })
+        .pipe(Effect.mapError(repositoryError("thread update")));
+      if (!changed) {
+        return yield* notFound(
+          `Personal bot thread '${input.threadId}' was not found or is archived.`,
+        );
+      }
+    });
+
+  const searchMessages: PersonalBotService["Service"]["searchMessages"] = (input) =>
+    Effect.gen(function* () {
+      const needle = asciiLower(input.query.trim());
+      if (needle.length < PERSONAL_MESSAGE_SEARCH_MIN_QUERY_CHARS) {
+        return { hits: [], capped: false };
+      }
+      const limit = Math.max(
+        1,
+        Math.min(
+          Math.floor(input.limit ?? PERSONAL_MESSAGE_SEARCH_MAX_RESULTS),
+          PERSONAL_MESSAGE_SEARCH_MAX_RESULTS,
+        ),
+      );
+      const rows = yield* repository
+        .searchMessages({ needle, limit: PERSONAL_MESSAGE_SEARCH_RAW_ROWS })
+        .pipe(Effect.mapError(repositoryError("message search")));
+      return groupMessageSearchRows(rows, limit, rows.length >= PERSONAL_MESSAGE_SEARCH_RAW_ROWS);
+    });
+
   /**
    * An archived chat stops working: its turn ends and so do the commands its
    * session started, as when it is deleted. A session already stopped has
@@ -884,6 +958,8 @@ export const make = Effect.gen(function* () {
     createThread,
     createSharedThread,
     archiveThread,
+    updateThread,
+    searchMessages,
     deleteThread,
     getProfile,
     setProfile,

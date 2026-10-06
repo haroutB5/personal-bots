@@ -191,7 +191,11 @@ import * as PersonalBotService from "./personal/PersonalBotService.ts";
 import { personalWorkingProgress } from "./personal/workingProgress.ts";
 import * as PersonalBotTokenUsage from "./personal/PersonalBotTokenUsageService.ts";
 import { deletePersonalChat } from "./personal/deletePersonalChat.ts";
-import { archivePersonalChats, deletePersonalChats } from "./personal/bulkPersonalChats.ts";
+import {
+  archivePersonalChats,
+  deletePersonalChats,
+  updatePersonalChats,
+} from "./personal/bulkPersonalChats.ts";
 import {
   deletePersonalFiles,
   deletePersonalLogins,
@@ -3266,6 +3270,22 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.personalBotsArchiveThreads,
             archivePersonalChats(personalBots, input.threadIds, input.archived),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.personalBotsUpdateThreads]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsUpdateThreads,
+            updatePersonalChats(personalBots, input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.personalBotsSearchMessages]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.personalBotsSearchMessages,
+            personalBots.searchMessages(input),
             {
               "rpc.aggregate": "server",
             },

@@ -2542,3 +2542,53 @@ it.effect("list and subscribe replay the tally a parked round is waiting on", ()
     expect([...replayed].map((event) => event.type)).toEqual(["group", "round", "vote"]);
   }).pipe(Effect.provide(makeLayer(harness)));
 });
+
+it.live(
+  "a group can be pinned and snoozed; archiving drops both, and neither moves updatedAt",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const service = yield* PersonalGroupService.PersonalGroupService;
+      yield* seedBots;
+      const created = yield* makeGroup(["assistant", "dev"]);
+      expect(created.pinnedAt).toBeUndefined();
+
+      const pinned = yield* service.update({ groupId: GROUP, pinned: true });
+      expect(pinned.pinnedAt).toBeDefined();
+      expect(DateTime.toEpochMillis(pinned.updatedAt)).toBe(
+        DateTime.toEpochMillis(created.updatedAt),
+      );
+
+      const wakeAt = DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 3600_000);
+      const snoozed = yield* service.update({ groupId: GROUP, snoozedUntil: wakeAt });
+      expect(DateTime.toEpochMillis(snoozed.snoozedUntil!)).toBe(DateTime.toEpochMillis(wakeAt));
+      expect(snoozed.pinnedAt).toBeDefined();
+
+      const awake = yield* service.update({ groupId: GROUP, snoozedUntil: null });
+      expect(DateTime.toEpochMillis(awake.snoozedUntil!)).toBeLessThanOrEqual(
+        DateTime.toEpochMillis(DateTime.nowUnsafe()) + 1000,
+      );
+      expect(DateTime.toEpochMillis(awake.snoozedUntil!)).toBeLessThan(
+        DateTime.toEpochMillis(wakeAt),
+      );
+
+      const tooFar = yield* Effect.exit(
+        service.update({
+          groupId: GROUP,
+          snoozedUntil: DateTime.makeUnsafe(
+            DateTime.toEpochMillis(DateTime.nowUnsafe()) + 400 * 86_400_000,
+          ),
+        }),
+      );
+      expect(tooFar._tag).toBe("Failure");
+
+      const archived = yield* service.update({ groupId: GROUP, archived: true });
+      expect(archived.pinnedAt).toBeUndefined();
+      expect(archived.snoozedUntil).toBeUndefined();
+
+      // It survives a reload from the table.
+      const listed = (yield* service.list()).groups;
+      expect(listed.find((group) => group.groupId === GROUP)?.pinnedAt).toBeUndefined();
+    }).pipe(Effect.provide(makeLayer(harness)));
+  },
+);
