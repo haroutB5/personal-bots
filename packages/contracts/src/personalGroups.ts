@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { MessageId, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { PersonalBotId, PersonalBotThreadNewestMessage } from "./personalBots.ts";
+import { PersonalReplyQuote } from "./personalReply.ts";
 
 export const PersonalGroupId = TrimmedNonEmptyString.pipe(Schema.brand("PersonalGroupId"));
 export type PersonalGroupId = typeof PersonalGroupId.Type;
@@ -371,6 +372,8 @@ export const PersonalGroupSendMessageInput = Schema.Struct({
   /** Client-minted, so a resend of the same message opens no second round. */
   messageId: MessageId,
   text: Schema.String,
+  /** The message this one replies to; carried on the posted message and shown to the members. */
+  replyTo: Schema.optional(PersonalReplyQuote),
 });
 export type PersonalGroupSendMessageInput = typeof PersonalGroupSendMessageInput.Type;
 

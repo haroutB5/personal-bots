@@ -21,7 +21,9 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  personalReplyContext,
   ProjectId,
+  readPersonalReplyQuote,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -1080,6 +1082,40 @@ describe("ProviderCommandReactor", () => {
       expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
         messageId: "user-message-with-context",
       });
+    }),
+  );
+
+  effectIt.effect("gives the model a reply's quote while the stored message stays as typed", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const quote = { messageId: "bot-message-1", name: "Mori", excerpt: "All green." };
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-reply"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-reply"),
+          role: "user",
+          text: "Thanks, ship it",
+          attachments: [],
+          context: personalReplyContext(quote),
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+        input: `[Replying to Mori's earlier message: "All green."]\n\nThanks, ship it`,
+      });
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const stored = readModel.threads
+        .find((entry) => entry.id === ThreadId.make("thread-1"))
+        ?.messages.find((entry) => entry.id === asMessageId("user-message-reply"));
+      expect(stored?.text).toBe("Thanks, ship it");
+      expect(readPersonalReplyQuote(stored?.context)).toEqual(quote);
     }),
   );
 

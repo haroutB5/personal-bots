@@ -519,6 +519,181 @@ describe("personal composer queues while the bot works", () => {
   });
 });
 
+describe("personal composer replies", () => {
+  const quote = { messageId: "bot-msg-1", name: "Mori", excerpt: "All green." };
+
+  async function renderReply(overrides: Record<string, unknown> = {}) {
+    state.draft.prompt = "Thanks, ship it";
+    state.draft.files = [];
+    await act(async () =>
+      renderer.update(<PersonalComposer {...props} replyTo={quote} {...overrides} />),
+    );
+  }
+
+  it("shows who and what is being replied to, with an X that drops it", async () => {
+    const onClearReply = vi.fn();
+    await renderReply({ onClearReply });
+    const bar = renderer.root.findByProps({ "data-testid": "reply-bar" });
+    const text = bar
+      .findAll((node) => typeof node.type === "string")
+      .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+      .join("|");
+    expect(text).toContain("Replying to ");
+    expect(text).toContain("Mori");
+    expect(text).toContain("All green.");
+    await act(async () =>
+      renderer.root.findByProps({ "aria-label": "Cancel reply" }).props.onClick(),
+    );
+    expect(onClearReply).toHaveBeenCalledOnce();
+  });
+
+  it("shows no bar without a reply", async () => {
+    await renderReply({ replyTo: null });
+    expect(renderer.root.findAllByProps({ "data-testid": "reply-bar" })).toHaveLength(0);
+  });
+
+  it("sends the quote with the message as a context record, then drops it", async () => {
+    const onClearReply = vi.fn();
+    await renderReply({ onClearReply });
+    await act(async () => renderer.root.findByProps({ "aria-label": "Send" }).props.onClick());
+
+    expect(state.start).toHaveBeenCalledOnce();
+    const message = state.start.mock.calls[0]?.[0].input.message;
+    expect(message.text).toBe("Thanks, ship it");
+    expect(message.context.records).toHaveLength(1);
+    expect(message.context.records[0]).toMatchObject({
+      kind: "personal-reply",
+      payload: quote,
+    });
+    expect(onClearReply).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the quote when the send fails, so Send can be tapped again", async () => {
+    state.start.mockResolvedValue({ _tag: "Failure" });
+    vi.useFakeTimers();
+    const onClearReply = vi.fn();
+    await renderReply({ onClearReply });
+    await act(async () => {
+      void renderer.root.findByProps({ "aria-label": "Send" }).props.onClick();
+      await vi.runAllTimersAsync();
+    });
+    vi.useRealTimers();
+    expect(onClearReply).not.toHaveBeenCalled();
+  });
+
+  it("carries the quote on the row that says Sending", async () => {
+    const rows: Array<{ readonly replyTo?: unknown }> = [];
+    const onPendingChange = vi.fn((update: (pending: never[]) => typeof rows) => {
+      rows.splice(0, rows.length, ...update(rows as never[]));
+    });
+    await renderReply({ onPendingChange });
+    await act(async () => renderer.root.findByProps({ "aria-label": "Send" }).props.onClick());
+    expect(rows[0]?.replyTo).toEqual(quote);
+  });
+
+  it("sends a group message with the quote too", async () => {
+    await renderReply({ send: state.groupSend, mentionCandidates: [] });
+    await act(async () => renderer.root.findByProps({ "aria-label": "Send" }).props.onClick());
+    expect(state.start).not.toHaveBeenCalled();
+    expect(state.groupSend.mock.calls[0]?.[0]).toMatchObject({
+      text: "Thanks, ship it",
+      replyTo: quote,
+    });
+  });
+
+  it("sends a plain message without any context when nothing is quoted", async () => {
+    await renderReply({ replyTo: null });
+    await act(async () => renderer.root.findByProps({ "aria-label": "Send" }).props.onClick());
+    expect(state.start.mock.calls[0]?.[0].input.message).not.toHaveProperty("context");
+  });
+});
+
+describe("personal composer quick send (a tapped choice)", () => {
+  type QuickSend = (text: string) => Promise<boolean>;
+  const quickSendRef: { current: QuickSend | null } = { current: null };
+
+  async function renderQuick(overrides: Record<string, unknown> = {}) {
+    quickSendRef.current = null;
+    await act(async () =>
+      renderer.update(<PersonalComposer {...props} quickSendRef={quickSendRef} {...overrides} />),
+    );
+  }
+
+  it("sends the text as the owner's message and leaves the draft alone", async () => {
+    await renderQuick();
+    let result: boolean | undefined;
+    await act(async () => {
+      result = await quickSendRef.current!("Yes, ship it");
+    });
+    expect(result).toBe(true);
+    expect(state.start).toHaveBeenCalledOnce();
+    const message = state.start.mock.calls[0]?.[0].input.message;
+    expect(message.text).toBe("Yes, ship it");
+    expect(message.attachments).toEqual([]);
+    expect(message).not.toHaveProperty("context");
+    // What the owner had typed, and the file they attached, are still there.
+    expect(state.draft.prompt).toBe("Send this");
+    expect(state.draft.files).toHaveLength(1);
+  });
+
+  it("sends once when it is called twice in the same moment", async () => {
+    await renderQuick();
+    let results: boolean[] = [];
+    await act(async () => {
+      results = await Promise.all([
+        quickSendRef.current!("Not yet"),
+        quickSendRef.current!("Not yet"),
+      ]);
+    });
+    expect(results).toEqual([true, false]);
+    expect(state.start).toHaveBeenCalledOnce();
+  });
+
+  it("does not send while the chat cannot (offline), and says so", async () => {
+    await renderQuick({ disabledReason: "Your laptop is offline." });
+    let result: boolean | undefined;
+    await act(async () => {
+      result = await quickSendRef.current!("Yes");
+    });
+    expect(result).toBe(false);
+    expect(state.start).not.toHaveBeenCalled();
+  });
+
+  it("does not send an empty line", async () => {
+    await renderQuick();
+    let result: boolean | undefined;
+    await act(async () => {
+      result = await quickSendRef.current!("   ");
+    });
+    expect(result).toBe(false);
+    expect(state.start).not.toHaveBeenCalled();
+  });
+
+  it("reports a send that failed, so the buttons can be tried again", async () => {
+    state.start.mockResolvedValue({ _tag: "Failure" });
+    vi.useFakeTimers();
+    await renderQuick();
+    let result: boolean | undefined;
+    await act(async () => {
+      const pending = quickSendRef.current!("Yes");
+      await vi.runAllTimersAsync();
+      result = await pending;
+    });
+    vi.useRealTimers();
+    expect(result).toBe(false);
+  });
+
+  it("goes through a group's own send as well", async () => {
+    await renderQuick({ send: state.groupSend, mentionCandidates: [] });
+    await act(async () => {
+      await quickSendRef.current!("Option B");
+    });
+    expect(state.start).not.toHaveBeenCalled();
+    expect(state.groupSend.mock.calls[0]?.[0]).toMatchObject({ text: "Option B" });
+    expect(state.groupSend.mock.calls[0]?.[0]).not.toHaveProperty("replyTo");
+  });
+});
+
 describe("isSentTextEcho", () => {
   it("matches the sent text, or it with the last word committed differently", () => {
     expect(isSentTextEcho("saying the issue", "saying the issue")).toBe(true);

@@ -1,7 +1,9 @@
 import type { JSX } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
@@ -13,7 +15,9 @@ import {
   ThreadId,
   type PersonalBot,
   type PersonalBotId,
+  type PersonalReplyQuote,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, Ellipsis } from "lucide-react";
 
@@ -21,6 +25,7 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/compone
 import { cn, randomUUID } from "~/lib/utils";
 import { deriveTimelineEntriesWithState, type TimelineEntriesProjection } from "~/session-logic";
 import { useThreadDetail, useThreadShells, useThreadStatus } from "~/state/entities";
+import { primaryServerProvidersAtom } from "~/state/server";
 import { useEnvironmentThread, useRetryEnvironmentThread } from "~/state/threads";
 import type { ChatMessage } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -53,6 +58,9 @@ import {
   type PendingOutgoingMessage,
 } from "./MessageList";
 import { PersonalComposer } from "./PersonalComposer";
+import { providerShortName } from "./botSummaries";
+import { useQuietSince } from "./chatSilence";
+import { QuietNoticeLine } from "./QuietNoticeLine";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
 import { useReportViewingThread } from "./useReportViewingThread";
@@ -287,7 +295,11 @@ export function GroupConversationScreen({
   );
 
   const send = useCallback(
-    async (input: { readonly messageId: string; readonly text: string }) => {
+    async (input: {
+      readonly messageId: string;
+      readonly text: string;
+      readonly replyTo?: PersonalReplyQuote;
+    }) => {
       if (environmentId === null) return { _tag: "Failure" as const };
       return sendMessage({
         environmentId,
@@ -295,6 +307,7 @@ export function GroupConversationScreen({
           groupId: PersonalGroupId.make(groupId),
           messageId: MessageId.make(input.messageId),
           text: input.text,
+          ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
         },
       });
     },
@@ -474,6 +487,59 @@ export function GroupConversationScreen({
         }
       : null;
 
+  // A member that has sent nothing for 90 s: the header says so, with a timer.
+  // Read from the member's own chat (its tool steps and text land there; the
+  // group's transcript only gets the relayed reply) and from the round itself.
+  const providers = useAtomValue(primaryServerProvidersAtom);
+  const activeBot = round?.activeBotId == null ? null : (botsById.get(round.activeBotId) ?? null);
+  const memberRef = useMemo(
+    () =>
+      environmentId === null || round?.activeThreadId == null || round.status !== "running"
+        ? null
+        : scopeThreadRef(environmentId, round.activeThreadId),
+    [environmentId, round?.activeThreadId, round?.status],
+  );
+  const memberThread = useThreadDetail(memberRef);
+  const memberWaitsOnOwner = useMemo(() => {
+    if (memberThread === null || memberThread === undefined) return false;
+    const requests = derivePendingRequests(memberThread.activities);
+    return requests.approvals.length > 0 || requests.userInputs.length > 0;
+  }, [memberThread]);
+  const quietSinceMs = useQuietSince({
+    active: round?.status === "running" && !laptopOffline && !memberWaitsOnOwner,
+    chatKey: `${groupId}:${round?.activeThreadId ?? ""}`,
+    stamps: [
+      thread?.updatedAt,
+      memberThread?.updatedAt,
+      round === null ? null : DateTime.formatIso(round.updatedAt),
+    ],
+  });
+  const quiet =
+    quietSinceMs === null || activeBot === null
+      ? null
+      : {
+          provider: providerShortName(activeBot.modelSelection.instanceId, providers),
+          sinceMs: quietSinceMs,
+        };
+
+  // Reply: the quote waits in the composer for this group; a tapped choice goes
+  // out through the composer's own send (`quickSendRef`).
+  const [replyState, setReplyState] = useState<{
+    readonly groupId: string;
+    readonly quote: PersonalReplyQuote;
+  } | null>(null);
+  const replyTo = replyState?.groupId === groupId ? replyState.quote : null;
+  const onReply = useCallback(
+    (quote: PersonalReplyQuote) => setReplyState({ groupId, quote }),
+    [groupId],
+  );
+  const onClearReply = useCallback(() => setReplyState(null), []);
+  const quickSendRef = useRef<((text: string) => Promise<boolean>) | null>(null);
+  const onChoose = useCallback(
+    (text: string) => quickSendRef.current?.(text) ?? Promise.resolve(false),
+    [],
+  );
+
   const disabledReason = laptopOffline
     ? connectionPhase === "offline" || connectionPhase === "error"
       ? "Your laptop is offline. This draft is saved on this device and has not been sent."
@@ -520,17 +586,21 @@ export function GroupConversationScreen({
                   aria-hidden="true"
                   className={cn(
                     "size-2 shrink-0 rounded-full",
-                    live
-                      ? "bg-[var(--personal-live)]"
-                      : stateLabel.tone === "review"
-                        ? "bg-[var(--personal-review)]"
-                        : "bg-[var(--personal-text-tertiary)]",
+                    quiet !== null
+                      ? "bg-[var(--personal-text-tertiary)]"
+                      : live
+                        ? "bg-[var(--personal-live)]"
+                        : stateLabel.tone === "review"
+                          ? "bg-[var(--personal-review)]"
+                          : "bg-[var(--personal-text-tertiary)]",
                   )}
                 />
                 {/* No flex-1: on the phone it pushed the state away from the
                     members across a gap; now it follows them, as in a bot chat. */}
                 <span className="min-w-0 truncate">{groupSubtitle(group, nameOf)}</span>
-                <span className="shrink-0 whitespace-nowrap">· {stateLabel.label}</span>
+                <span className="shrink-0 whitespace-nowrap">
+                  · {quiet === null ? stateLabel.label : "No response"}
+                </span>
               </span>
             ) : null}
           </span>
@@ -572,6 +642,7 @@ export function GroupConversationScreen({
           </MenuPopup>
         </Menu>
       </header>
+      {quiet === null ? null : <QuietNoticeLine notice={quiet} />}
 
       {group !== null && thread !== null && environmentId !== null && threadRef !== null ? (
         <>
@@ -603,6 +674,9 @@ export function GroupConversationScreen({
             renderDelegation={() => null}
             groupSpeaker={groupSpeaker}
             readOnly={archived}
+            onReply={archived ? undefined : onReply}
+            onChoose={archived ? undefined : onChoose}
+            choicesBusy={live || disabledReason !== null}
           />
           {vote !== null && !archived ? (
             /* The same slot as the round card, and never at the same time as
@@ -650,6 +724,9 @@ export function GroupConversationScreen({
               onPendingChange={(update) => setPending((current) => update(current))}
               send={send}
               mentionCandidates={mentionCandidates}
+              replyTo={replyTo}
+              onClearReply={onClearReply}
+              quickSendRef={quickSendRef}
             />
           )}
         </>

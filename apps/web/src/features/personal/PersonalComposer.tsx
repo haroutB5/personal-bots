@@ -1,5 +1,11 @@
-import type { ChangeEvent, JSX, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import type {
+  ChangeEvent,
+  JSX,
+  KeyboardEvent,
+  MutableRefObject,
+  PointerEvent as ReactPointerEvent,
+} from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -7,6 +13,8 @@ import {
   type ModelSelection,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  personalReplyContext,
+  type PersonalReplyQuote,
   type ThreadId,
 } from "@t3tools/contracts";
 import { truncate } from "@t3tools/shared/String";
@@ -46,6 +54,7 @@ import { AttachmentPreview, type AttachmentPreviewData } from "./AttachmentPrevi
 import { activeMentionDraft, applyMention, matchMentionCandidates } from "./mentionDraft";
 import { MentionPopover, type MentionRow } from "./MentionPopover";
 import { COMPOSER_INPUT_ATTRIBUTE, consumeComposerRefocus } from "./composerRefocus";
+import { ReplyBar } from "./ReplyQuote";
 
 const LINE_HEIGHT_PX = 22;
 const MAX_LINES = 5;
@@ -139,6 +148,9 @@ export function PersonalComposer({
   onPendingChange,
   send: sendOverride,
   mentionCandidates,
+  replyTo = null,
+  onClearReply,
+  quickSendRef,
 }: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
@@ -182,9 +194,20 @@ export function PersonalComposer({
     readonly messageId: string;
     readonly text: string;
     readonly createdAt: string;
+    readonly replyTo?: PersonalReplyQuote;
   }) => Promise<{ readonly _tag: string }>;
   /** Members offered by `@mention` autocomplete. Absent outside a group. */
   mentionCandidates?: ReadonlyArray<MentionRow>;
+  /** The message the next send replies to: shown as a bar above the field and sent with it. */
+  replyTo?: PersonalReplyQuote | null;
+  /** Drops the quote: the bar's X, and once a reply has been sent. */
+  onClearReply?: () => void;
+  /**
+   * Filled with a function that sends a line of text as the owner's message
+   * (a tapped choice) through the same path, retries and pending row as the
+   * field's own send, without touching the draft. Resolves true once sent.
+   */
+  quickSendRef?: MutableRefObject<((text: string) => Promise<boolean>) | null>;
 }): JSX.Element {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -438,12 +461,22 @@ export function PersonalComposer({
     retryAttachmentUpload({ environmentId, image: attachment, draftTarget: threadRef });
   };
 
-  const send = async () => {
-    if (!canSend || sendingRef.current || preparingRef.current) return;
+  const send = async (quick?: string): Promise<boolean> => {
+    // A tapped choice: its own text, no draft, no attachments, no reply quote.
+    const isQuick = quick !== undefined;
+    if (
+      isQuick
+        ? quick.trim().length === 0 || sending || preparing || disabledReason !== null
+        : !canSend
+    ) {
+      return false;
+    }
+    if (sendingRef.current || preparingRef.current) return false;
     sendingRef.current = true;
-    const sentPrompt = prompt;
-    const text = prompt.trim();
-    const snapshot = [...attachments];
+    const sentPrompt = isQuick ? "" : prompt;
+    const text = isQuick ? quick.trim() : prompt.trim();
+    const quote = isQuick ? null : replyTo;
+    const snapshot = isQuick ? [] : [...attachments];
     const snapshotIds = new Set(snapshot.map((attachment) => attachment.id));
     const messageId = newMessageId();
     const midTurn = working;
@@ -452,9 +485,11 @@ export function PersonalComposer({
     setQueuedAtMs(null);
     // The composer empties the moment Send is tapped, draft store included;
     // a failed send puts everything back below.
-    setPrompt(threadRef, "");
-    sentEchoRef.current =
-      text.length > 0 ? { text: sentPrompt, until: Date.now() + SENT_ECHO_WINDOW_MS } : null;
+    if (!isQuick) {
+      setPrompt(threadRef, "");
+      sentEchoRef.current =
+        text.length > 0 ? { text: sentPrompt, until: Date.now() + SENT_ECHO_WINDOW_MS } : null;
+    }
     if (snapshotIds.size > 0) {
       setInFlightIds((current) => new Set([...current, ...snapshotIds]));
     }
@@ -487,7 +522,7 @@ export function PersonalComposer({
         setSending(false);
         restoreDraft();
         setError("An attachment didn't upload. Remove it or try again.");
-        return;
+        return false;
       }
 
       const createdAt = new Date().toISOString();
@@ -505,6 +540,7 @@ export function PersonalComposer({
           text,
           createdAt,
           attachments: snapshot.map((attachment) => ({ id: attachment.id, name: attachment.name })),
+          ...(quote !== null ? { replyTo: quote } : {}),
         },
       ]);
 
@@ -525,6 +561,7 @@ export function PersonalComposer({
               messageId,
               text: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
               createdAt,
+              ...(quote !== null ? { replyTo: quote } : {}),
             });
           }
           return await startTurn({
@@ -536,6 +573,7 @@ export function PersonalComposer({
                 role: "user",
                 text: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
                 attachments: uploaded,
+                ...(quote !== null ? { context: personalReplyContext(quote) } : {}),
               },
               modelSelection: chatTurnModelSelection(botModelSelection, thread.modelSelection),
               titleSeed,
@@ -563,21 +601,41 @@ export function PersonalComposer({
         onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
         restoreDraft();
         setError(`${botName ?? "The bot"} didn't get that message. Try sending it again.`);
-      } else {
-        setQueuedAtMs(midTurn ? Date.now() : null);
-        for (const attachment of snapshot) removeAttachment(attachment);
-        releaseInFlight();
+        return false;
       }
+      setQueuedAtMs(midTurn ? Date.now() : null);
+      for (const attachment of snapshot) removeAttachment(attachment);
+      releaseInFlight();
+      if (quote !== null) onClearReply?.();
+      return true;
     } catch {
       setRetrying(false);
       onPendingChange((pending) => pending.filter((message) => message.id !== messageId));
       restoreDraft();
       setError("Couldn't send that message. Your draft is still saved; try again.");
+      return false;
     } finally {
       sendingRef.current = false;
       setSending(false);
     }
   };
+
+  // The screen's tapped choices send through this composer's own path.
+  useEffect(() => {
+    if (quickSendRef === undefined) return;
+    quickSendRef.current = (text) => send(text);
+    return () => {
+      quickSendRef.current = null;
+    };
+  });
+
+  // Picking Reply puts the cursor in the field, after the menu has handed focus back.
+  const replyMessageId = replyTo?.messageId ?? null;
+  useEffect(() => {
+    if (replyMessageId === null) return;
+    const timer = setTimeout(() => textareaRef.current?.focus({ preventScroll: true }), 120);
+    return () => clearTimeout(timer);
+  }, [replyMessageId]);
 
   const stop = async () => {
     setStopping(true);
@@ -750,6 +808,9 @@ export function PersonalComposer({
           activeIndex={activeMentionIndex}
           onPick={(candidate) => insertMention(candidate.name)}
         />
+      ) : null}
+      {replyTo !== null && !sending ? (
+        <ReplyBar quote={replyTo} onCancel={() => onClearReply?.()} />
       ) : null}
       <div className="flex items-end gap-2">
         {supportsUploads ? (

@@ -20,6 +20,7 @@ import {
   PersonalSecretRequestId,
   type ApprovalRequestId,
   type EnvironmentId,
+  type PersonalReplyQuote,
   type PersonalSecretRequest,
   type PersonalTask,
   type ProviderApprovalDecision,
@@ -68,8 +69,15 @@ import { markChatSwitched, rememberChipsShown } from "./chatChipHandoff";
 import { buildChatChips } from "./chatChipRows";
 import { ConversationHeaderLine, ConversationHeaderName } from "./ConversationHeaderName";
 import { ConversationSubtitle } from "./ConversationSubtitle";
+import { QuietNoticeLine, type QuietNotice } from "./QuietNoticeLine";
+import { ownerCardPending, useQuietSince } from "./chatSilence";
 import { botMuteState } from "./botMuteModel";
-import { conversationHeaderStatus, resolveBotProvider, taskCardBotLine } from "./botSummaries";
+import {
+  conversationHeaderStatus,
+  providerShortName,
+  resolveBotProvider,
+  taskCardBotLine,
+} from "./botSummaries";
 import { botModelShortLabel } from "./botModelLabel";
 import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerLink } from "./ConversationComputerLink";
@@ -514,6 +522,21 @@ export function ConversationScreen({
   const turnBusy =
     working || (providerWait && thread?.session !== null && thread?.session?.status !== "error");
   const latestTurn = thread?.latestTurn ?? null;
+  // A working bot that has sent nothing for 90 s: the header says so, with a
+  // live timer, in place of "Working". Time spent waiting on the owner (a
+  // secret, login or approval card) and time offline do not count.
+  const quietSinceMs = useQuietSince({
+    active: working && !laptopOffline && !ownerCardPending(items),
+    chatKey: threadId,
+    stamps: [thread?.updatedAt],
+  });
+  const quiet: QuietNotice | null =
+    quietSinceMs === null || bot === null
+      ? null
+      : {
+          provider: providerShortName(bot.modelSelection.instanceId, providers),
+          sinceMs: quietSinceMs,
+        };
   // One muted line of what the running turn is doing, for models that keep
   // their progress in thinking summaries and would otherwise read as blank.
   const progressNote = useMemo(
@@ -822,6 +845,23 @@ export function ConversationScreen({
     : provider !== null && bot !== null && !provider.available
       ? `${provider.label} can't run right now, so ${bot.name} can't reply. Fix it on your computer or edit the bot.`
       : null;
+  // Reply: the quote waits in the composer for this chat; a tapped choice goes
+  // out through the composer's own send (`quickSendRef`).
+  const [replyState, setReplyState] = useState<{
+    readonly threadId: ThreadId;
+    readonly quote: PersonalReplyQuote;
+  } | null>(null);
+  const replyTo = replyState?.threadId === threadId ? replyState.quote : null;
+  const onReply = useCallback(
+    (quote: PersonalReplyQuote) => setReplyState({ threadId, quote }),
+    [threadId],
+  );
+  const onClearReply = useCallback(() => setReplyState(null), []);
+  const quickSendRef = useRef<((text: string) => Promise<boolean>) | null>(null);
+  const onChoose = useCallback(
+    (text: string) => quickSendRef.current?.(text) ?? Promise.resolve(false),
+    [],
+  );
   const onStopFromMenu = async () => {
     const error = await onInterrupt();
     if (error !== null) setActionError(error);
@@ -871,7 +911,10 @@ export function ConversationScreen({
                 color={bot.avatarColor}
                 size={48}
                 label={bot.name}
-                motion={motionForConversationState(conversationState, turnThinking)}
+                motion={motionForConversationState(
+                  quiet === null ? conversationState : "idle",
+                  turnThinking,
+                )}
                 comet={perfOptimizationOn("anim-comet")}
                 thought="header"
               />
@@ -894,6 +937,7 @@ export function ConversationScreen({
                       state={conversationState}
                       modelLabel={headerModelLabel}
                       status={headerStatus}
+                      quiet={quiet}
                     />
                   ) : null}
                 </ConversationHeaderLine>
@@ -919,7 +963,10 @@ export function ConversationScreen({
               color={bot.avatarColor}
               size={48}
               label={bot.name}
-              motion={motionForConversationState(conversationState, turnThinking)}
+              motion={motionForConversationState(
+                quiet === null ? conversationState : "idle",
+                turnThinking,
+              )}
               comet={perfOptimizationOn("anim-comet")}
               thought="header"
             />
@@ -935,6 +982,7 @@ export function ConversationScreen({
                   state={conversationState}
                   modelLabel={headerModelLabel}
                   status={headerStatus}
+                  quiet={quiet}
                 />
               ) : null}
             </div>
@@ -1075,7 +1123,11 @@ export function ConversationScreen({
         onSave={(title) => renameChat(threadId, title)}
       />
 
-      <ProgressNoteLine note={progressNote} />
+      {quiet === null ? (
+        <ProgressNoteLine note={progressNote} />
+      ) : (
+        <QuietNoticeLine notice={quiet} />
+      )}
 
       {thread !== null && environmentId !== null && threadRef !== null ? (
         <>
@@ -1132,6 +1184,9 @@ export function ConversationScreen({
             describeTurn={describeTurn}
             renderDelegation={renderDelegation}
             readOnly={archived}
+            onReply={archived ? undefined : onReply}
+            onChoose={archived ? undefined : onChoose}
+            choicesBusy={turnBusy || disabledReason !== null}
           />
           <ConversationDesktopLine
             environmentId={environmentId}
@@ -1180,6 +1235,9 @@ export function ConversationScreen({
               canInterrupt={interruptInput !== null}
               onInterrupt={onInterrupt}
               onPendingChange={(update) => setPending((current) => update(current))}
+              replyTo={replyTo}
+              onClearReply={onClearReply}
+              quickSendRef={quickSendRef}
             />
           )}
         </>

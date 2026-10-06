@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from "react";
-import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { PendingApproval } from "@t3tools/client-runtime/pending-requests";
 import type {
@@ -10,6 +10,7 @@ import type {
   ProviderApprovalOption,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { readPersonalReplyQuote, type PersonalReplyQuote } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { ArrowDown, ChevronRight, FileText } from "lucide-react";
 
@@ -40,6 +41,11 @@ import { MemoryChangeCard } from "./MemoryChangeCard";
 import { ToolDetails } from "./ToolDetails";
 import type { LatestMessageReadStatus, MessageReadStatus } from "./messageReadStatus";
 import { consumeChatSwitched } from "./chatChipHandoff";
+import { ChoiceButtons, type ChoicesState } from "./ChoiceButtons";
+import { mayHaveChoices, splitChoices } from "./choices";
+import { jumpToMessage, replyQuoteForMessage } from "./messageReply";
+import { ReplyQuoteChip } from "./ReplyQuote";
+import { ReplyableMessage } from "./ReplyableMessage";
 
 /** A message the user sent that the server has not echoed back yet. */
 export interface PendingOutgoingMessage {
@@ -49,6 +55,8 @@ export interface PendingOutgoingMessage {
   readonly text: string;
   readonly createdAt: string;
   readonly attachments: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  /** The message it replies to, drawn above it like the sent one. */
+  readonly replyTo?: PersonalReplyQuote | undefined;
 }
 
 const STICK_THRESHOLD_PX = 80;
@@ -95,16 +103,47 @@ const READ_STATUS_LABEL: Record<MessageReadStatus, string> = {
   read: "Read",
 };
 
+const USER_BUBBLE_CLASS =
+  "rounded-[var(--personal-radius-bubble)] bg-[var(--personal-fill-muted)] px-3.5 py-2.5 text-[15px] leading-[1.4] break-words whitespace-pre-wrap text-[var(--personal-text)] md:text-[16px] md:leading-[1.5]";
+
+/** The owner's text bubble, with the quote of the message it replies to above the text. */
+function UserBubble({
+  text,
+  quote,
+  onJump,
+  widthClass = "max-w-[78%]",
+}: {
+  text: string;
+  quote: PersonalReplyQuote | null;
+  onJump?: ((messageId: string) => void) | undefined;
+  /** `max-w-full` when a wrapper already holds the 78%. */
+  widthClass?: string;
+}) {
+  if (quote === null) return <p className={cn(widthClass, USER_BUBBLE_CLASS)}>{text}</p>;
+  return (
+    <div className={cn("flex min-w-0 flex-col gap-1.5", widthClass, USER_BUBBLE_CLASS)}>
+      <ReplyQuoteChip quote={quote} onJump={onJump} />
+      <p>{text}</p>
+    </div>
+  );
+}
+
 const UserMessage = memo(function UserMessage({
   environmentId,
   message,
   readStatus = null,
+  onReply,
+  onJump,
 }: {
   environmentId: EnvironmentId;
   message: ChatMessage;
   /** Only on the owner's latest message: whether the bot has taken it in yet. */
   readStatus?: MessageReadStatus | null;
+  /** Reply on this message; absent where nothing can be sent (an archived chat). */
+  onReply?: ((quote: PersonalReplyQuote) => void) | undefined;
+  onJump?: ((messageId: string) => void) | undefined;
 }) {
+  const quote = useMemo(() => readPersonalReplyQuote(message.context), [message.context]);
   const resources = useMemo(
     () => selectMessageImageResources(message.attachments),
     [message.attachments],
@@ -195,9 +234,25 @@ const UserMessage = memo(function UserMessage({
         />
       )}
       {message.text.trim().length > 0 ? (
-        <p className="max-w-[78%] rounded-[var(--personal-radius-bubble)] bg-[var(--personal-fill-muted)] px-3.5 py-2.5 text-[15px] leading-[1.4] break-words whitespace-pre-wrap text-[var(--personal-text)] md:text-[16px] md:leading-[1.5]">
-          {message.text}
-        </p>
+        onReply === undefined ? (
+          <UserBubble text={message.text} quote={quote} onJump={onJump} />
+        ) : (
+          <ReplyableMessage
+            messageId={String(message.id)}
+            quote={replyQuoteForMessage({ message, botName: "" })}
+            copyText={message.text}
+            onReply={onReply}
+            align="end"
+            className="max-w-[78%]"
+          >
+            <UserBubble
+              text={message.text}
+              quote={quote}
+              onJump={onJump}
+              widthClass="max-w-full min-w-0"
+            />
+          </ReplyableMessage>
+        )
       ) : null}
       {readStatus !== null ? (
         // role="status" is a polite live region: "Queued" turning into "Read"
@@ -215,24 +270,62 @@ const AssistantMessage = memo(function AssistantMessage({
   threadRef,
   workspaceRoot,
   botName,
+  onReply,
+  choices,
+  onChoose,
 }: {
   message: ChatMessage;
   threadRef: ScopedThreadRef;
   workspaceRoot: string | undefined;
   botName: string;
+  /** Reply on this message; absent where nothing can be sent (an archived chat). */
+  onReply?: ((quote: PersonalReplyQuote) => void) | undefined;
+  /** Where the message's tap-to-answer block stands; null while it is not the kind that has one. */
+  choices?: ChoicesState | null | undefined;
+  onChoose?: ((text: string) => Promise<boolean>) | undefined;
 }) {
+  const split = useMemo(
+    () => (mayHaveChoices(message.text) ? splitChoices(message.text, message.streaming) : null),
+    [message.streaming, message.text],
+  );
   if (message.text.length === 0) return null;
-  return (
-    <div className="personal-markdown max-w-[90%] text-[15px] leading-[1.45] text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]">
+  // Without a state to draw them in, a block is left as the code block it is.
+  const hasState = choices !== null && choices !== undefined;
+  const drawChoices = split !== null && hasState && split.options !== null;
+  const heldBack = split !== null && split.options === null && split.body !== message.text;
+  const body = split !== null && (drawChoices || heldBack) ? split.body : message.text;
+  const options = drawChoices ? split.options : null;
+  const content = (
+    <div className="personal-markdown max-w-[90%] min-w-0 text-[15px] leading-[1.45] text-[var(--personal-text)] md:text-[16px] md:leading-[1.6]">
       <span className="sr-only">{botName} said:</span>
-      <ChatMarkdown
-        text={message.text}
-        cwd={workspaceRoot}
-        threadRef={threadRef}
-        isStreaming={message.streaming}
-        lineBreaks={shouldPreserveAssistantLineBreaks(message.text)}
-      />
+      {body.length > 0 ? (
+        <ChatMarkdown
+          text={body}
+          cwd={workspaceRoot}
+          threadRef={threadRef}
+          isStreaming={message.streaming}
+          lineBreaks={shouldPreserveAssistantLineBreaks(body)}
+        />
+      ) : null}
+      {options !== null && hasState ? (
+        <ChoiceButtons options={options} state={choices} botName={botName} onChoose={onChoose} />
+      ) : null}
     </div>
+  );
+  if (onReply === undefined || message.streaming) return content;
+  return (
+    <ReplyableMessage
+      messageId={String(message.id)}
+      quote={replyQuoteForMessage({
+        message: { id: message.id, role: message.role, text: body },
+        botName,
+      })}
+      copyText={body}
+      onReply={onReply}
+      align="start"
+    >
+      {content}
+    </ReplyableMessage>
   );
 });
 
@@ -262,6 +355,9 @@ const GroupMessage = memo(function GroupMessage({
   speaker,
   botId,
   showSpeaker,
+  onReply,
+  choices,
+  onChoose,
 }: {
   message: ChatMessage;
   threadRef: ScopedThreadRef;
@@ -269,6 +365,9 @@ const GroupMessage = memo(function GroupMessage({
   speaker: GroupSpeakerPresentation | null;
   botId: string;
   showSpeaker: boolean;
+  onReply?: ((quote: PersonalReplyQuote) => void) | undefined;
+  choices?: ChoicesState | null | undefined;
+  onChoose?: ((text: string) => Promise<boolean>) | undefined;
 }) {
   const name = speaker?.name ?? "A bot";
   return (
@@ -309,6 +408,9 @@ const GroupMessage = memo(function GroupMessage({
         threadRef={threadRef}
         workspaceRoot={workspaceRoot}
         botName={name}
+        onReply={onReply}
+        choices={choices}
+        onChoose={onChoose}
       />
     </div>
   );
@@ -395,6 +497,39 @@ function ApprovalCard({
 
 const NO_PINNED_APPROVALS: ReadonlyArray<PendingApproval> = [];
 
+/**
+ * Where each reply's tap-to-answer block stands, by item id (only replies that
+ * have a well-formed one appear). A set stays open while nothing was said
+ * after it; once the owner sent anything, it is used, and the option that
+ * message repeats is marked as the pick. A set also waits while the chat
+ * cannot take a message (`busy`).
+ */
+export function choicesStates(
+  items: ReadonlyArray<ConversationItem>,
+  busy: boolean,
+): ReadonlyMap<string, ChoicesState> {
+  const states = new Map<string, ChoicesState>();
+  let laterOwnerText: string | null | undefined;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!;
+    if (item.kind !== "message" && item.kind !== "group-message") continue;
+    if (item.message.role === "user") {
+      laterOwnerText = item.message.text.trim();
+      continue;
+    }
+    if (item.message.role !== "assistant" || !mayHaveChoices(item.message.text)) continue;
+    const options = splitChoices(item.message.text).options;
+    if (options === null) continue;
+    states.set(
+      item.id,
+      laterOwnerText === undefined
+        ? { kind: "open", disabled: busy }
+        : { kind: "used", picked: options.find((option) => option === laterOwnerText) ?? null },
+    );
+  }
+  return states;
+}
+
 /** Read-only cards keep their text for reading and VoiceOver; a disabled fieldset turns every control off. */
 function lockCard(key: string, readOnly: boolean, card: ReactNode): ReactNode {
   if (!readOnly) return card;
@@ -450,6 +585,9 @@ export function MessageList({
   groupSpeaker,
   readOnly = false,
   showContextUsed = false,
+  onReply,
+  onChoose,
+  choicesBusy = false,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
@@ -527,7 +665,17 @@ export function MessageList({
    * "Context used" line shows which rules and notes the turn was given.
    */
   showContextUsed?: boolean;
+  /** Reply on a message (the screen puts the quote in its composer); absent: no Reply. */
+  onReply?: ((quote: PersonalReplyQuote) => void) | undefined;
+  /** Sends a tapped choice as the owner's message; resolves true once it was sent. */
+  onChoose?: ((text: string) => Promise<boolean>) | undefined;
+  /** The chat cannot take a message now (the bot is busy, offline, ...): open choices wait. */
+  choicesBusy?: boolean;
 }): JSX.Element {
+  const choicesById = useMemo(() => choicesStates(items, choicesBusy), [items, choicesBusy]);
+  const jumpToQuoted = useCallback((messageId: string) => {
+    jumpToMessage(contentRef.current ?? document, messageId);
+  }, []);
   const turnStarts = useMemo(
     () => (showContextUsed ? turnStartByAssistantItem(items) : new Map<string, string>()),
     [items, showContextUsed],
@@ -812,6 +960,9 @@ export function MessageList({
                         speaker={groupSpeaker?.(item.speaker.botId) ?? null}
                         botId={item.speaker.botId}
                         showSpeaker={false}
+                        onReply={onReply}
+                        choices={choicesById.get(item.id)}
+                        onChoose={onChoose}
                       />
                     </details>
                   );
@@ -841,6 +992,9 @@ export function MessageList({
                         speaker={groupSpeaker?.(item.speaker.botId) ?? null}
                         botId={item.speaker.botId}
                         showSpeaker={isVerdict ? false : item.showSpeaker}
+                        onReply={onReply}
+                        choices={choicesById.get(item.id)}
+                        onChoose={onChoose}
                       />
                     </div>
                   );
@@ -983,6 +1137,8 @@ export function MessageList({
                         ? latestMessageStatus.status
                         : null
                     }
+                    onReply={onReply}
+                    onJump={jumpToQuoted}
                   />
                 ) : (
                   <Fragment key={item.id}>
@@ -991,6 +1147,9 @@ export function MessageList({
                       threadRef={threadRef}
                       workspaceRoot={workspaceRoot}
                       botName={botName}
+                      onReply={onReply}
+                      choices={choicesById.get(item.id)}
+                      onChoose={onChoose}
                     />
                     {item.message.streaming ||
                     !turnStarts.has(item.id) ||
@@ -1044,9 +1203,7 @@ export function MessageList({
                 </span>
               ))}
               {message.text.length > 0 ? (
-                <p className="max-w-[78%] rounded-[var(--personal-radius-bubble)] bg-[var(--personal-fill-muted)] px-3.5 py-2.5 text-[15px] leading-[1.4] break-words whitespace-pre-wrap text-[var(--personal-text)] md:text-[16px] md:leading-[1.5]">
-                  {message.text}
-                </p>
+                <UserBubble text={message.text} quote={message.replyTo ?? null} />
               ) : null}
               <span className="text-xs text-[var(--personal-text-tertiary)]">Sending</span>
             </div>

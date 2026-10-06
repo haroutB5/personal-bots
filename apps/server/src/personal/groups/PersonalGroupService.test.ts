@@ -24,6 +24,7 @@ import {
   PersonalGroupRoundId,
   PersonalGroupVoteId,
   ProviderInstanceId,
+  readPersonalReplyQuote,
   ThreadId,
   TurnId,
   type OrchestrationCommand,
@@ -608,6 +609,54 @@ it.effect("a broadcast gathers contributions then delivers exactly one final ver
     yield* send("What should we do next?", "msg-next");
     expect((yield* currentRound).activeBotId).toBe(botId("assistant"));
     expect((yield* currentRound).queue).toEqual(order.slice(1));
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+// ---------------------------------------------------------------------------
+// 3b. replying to a message carries its quote to the transcript and the members
+// ---------------------------------------------------------------------------
+
+it.effect("a reply keeps its quote on the posted message and shows it to the member", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    const service = yield* PersonalGroupService.PersonalGroupService;
+    yield* makeGroup(["assistant", "dev"]);
+    const replyTo = { messageId: "earlier-reply", name: "Dev", excerpt: "Monday is safer." };
+    yield* service.sendMessage({
+      groupId: GROUP,
+      messageId: MessageId.make("msg-reply"),
+      text: "@Assistant agreed, book it",
+      replyTo,
+    });
+    yield* service.drain;
+
+    const posted = groupTranscript(harness).find((message) => message.text.includes("book it"));
+    // The group marker stays first, so speaker attribution reads as before.
+    expect(markerOf(posted)?.speaker).toEqual({ kind: "user" });
+    expect(posted?.context?.records.map((record) => record.kind)).toEqual([
+      "personal-group",
+      "personal-reply",
+    ]);
+    expect(readPersonalReplyQuote(posted?.context)).toEqual(replyTo);
+    // The text the owner typed is untouched; the quote is added for the member.
+    expect(posted?.text).toBe("@Assistant agreed, book it");
+    const brief = turnStarts(harness)[0]!.message.text;
+    expect(brief).toContain(
+      'You: [Replying to Dev\'s earlier message: "Monday is safer."]\n\n@Assistant agreed, book it',
+    );
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a message that is not a reply carries no reply record", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* seedBots;
+    yield* makeGroup(["assistant", "dev"]);
+    yield* send("@Assistant plain question", "msg-plain");
+    const posted = groupTranscript(harness).find((message) => message.text.includes("plain"));
+    expect(posted?.context?.records.map((record) => record.kind)).toEqual(["personal-group"]);
+    expect(turnStarts(harness)[0]!.message.text).not.toContain("Replying to");
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 

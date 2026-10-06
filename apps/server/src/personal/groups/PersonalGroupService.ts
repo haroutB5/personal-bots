@@ -25,6 +25,10 @@ import {
   PERSONAL_GROUP_MAX_MEMBERS,
   PERSONAL_GROUP_MAX_TURNS_PER_MEMBER_PER_ROUND,
   PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
+  type PersonalReplyQuote,
+  makePersonalReplyQuote,
+  personalReplyContext,
+  withPersonalReplyQuote,
   PERSONAL_GROUP_ROUND_WALL_CLOCK_MAX_MS,
   PERSONAL_GROUP_ROUND_WALL_CLOCK_MS,
   PERSONAL_GROUP_ROUND_WALL_CLOCK_PER_TURN_MS,
@@ -130,6 +134,7 @@ const windowMsFor = (queuedTurns: number): number =>
  */
 export const personalGroupMessageContext = (
   marker: PersonalGroupMessageMarker,
+  replyTo?: PersonalReplyQuote,
 ): OrchestrationMessageContext => ({
   version: 1,
   records: [
@@ -140,6 +145,12 @@ export const personalGroupMessageContext = (
       kind: PERSONAL_GROUP_MESSAGE_CONTEXT_KIND,
       payload: marker,
     },
+    // A reply's quote rides beside the marker; the catch-up adds it to the
+    // text the members read (`readMessageText`).
+    ...(replyTo === undefined
+      ? []
+      : personalReplyContext(makePersonalReplyQuote({ ...replyTo, text: replyTo.excerpt }))
+          .records),
   ],
 });
 
@@ -397,7 +408,10 @@ export const make = Effect.gen(function* () {
 
   const readMessageText = (messageId: MessageId) =>
     messages.getByMessageId({ messageId }).pipe(
-      Effect.map((row) => (Option.isSome(row) ? row.value.text : "")),
+      // A reply's quote goes in front of its text, as a model reads it in a bot chat.
+      Effect.map((row) =>
+        Option.isSome(row) ? withPersonalReplyQuote(row.value.text, row.value.context) : "",
+      ),
       Effect.orElseSucceed(() => ""),
     );
 
@@ -2169,12 +2183,15 @@ export const make = Effect.gen(function* () {
                 messageId: input.messageId,
                 text: input.text,
                 attachments: [],
-                context: personalGroupMessageContext({
-                  groupId: group.groupId,
-                  seq: row.seq,
-                  roundId,
-                  speaker: { kind: "user" },
-                }),
+                context: personalGroupMessageContext(
+                  {
+                    groupId: group.groupId,
+                    seq: row.seq,
+                    roundId,
+                    speaker: { kind: "user" },
+                  },
+                  input.replyTo,
+                ),
               },
               createdAt: DateTime.formatIso(now),
             })

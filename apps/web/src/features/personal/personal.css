@@ -1070,3 +1070,21 @@
     animation: personal-chip-fade 120ms linear;
   }
 }
+
+/* Reply's jump: the original message flashes once so the eye finds it
+ * (jumpToMessage in messageReply.ts sets the attribute for 1.6 s). A fill
+ * that fades out, no movement, so reduced motion needs no other version. */
+[data-reply-highlight] {
+  animation: personal-reply-highlight 1.6s ease-out;
+}
+@keyframes personal-reply-highlight {
+  0%,
+  45% {
+    background-color: var(--personal-fill-muted);
+    box-shadow: 0 0 0 6px var(--personal-fill-muted);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 6px transparent;
+  }
+}

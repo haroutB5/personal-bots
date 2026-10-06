@@ -30,6 +30,23 @@ describe("personalBotSystemInstructions", () => {
     assert.notInclude(text, "Computer tab");
   });
 
+  // Tap-to-answer: every provider's bot gets the same one line (the coverage
+  // test beside botInstructionCoverage.ts proves each adapter passes these
+  // instructions on), and the chat renders exactly this format.
+  it("tells the bot how to offer tap-to-answer choices", () => {
+    const text = personalBotSystemInstructions(persona(""));
+
+    assert.include(text, "fenced block tagged choices");
+    assert.include(text, "```choices");
+    assert.include(text, "2 to 6 options");
+    assert.include(text, "one short option per line");
+    assert.include(text, "sends that line as the user's next message");
+    assert.include(text, "never for secrets");
+    // It sits inside the app rules, so it reaches every provider the rules reach.
+    assert.isTrue(text.indexOf("```choices") < text.indexOf("</app_rules>"));
+    assert.isTrue(text.indexOf("```choices") > text.indexOf("<app_rules>"));
+  });
+
   // Password-blind by construction: the server fills, the bot never holds or
   // types a password, a one-time code is the user's, and a sensitive site's
   // pause is explained so the bot asks instead of hunting for another route.

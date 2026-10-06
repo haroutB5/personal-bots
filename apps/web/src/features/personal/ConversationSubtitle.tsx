@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { cn } from "~/lib/utils";
 
 import type { ConversationState } from "./conversationModel";
+import type { QuietNotice } from "./QuietNoticeLine";
 
 const STATE_DOT: Record<ConversationState, string> = {
   idle: "bg-[var(--personal-text-tertiary)]",
@@ -29,19 +30,32 @@ export function ConversationSubtitle({
   state,
   modelLabel,
   status,
+  quiet = null,
 }: {
   state: ConversationState;
   modelLabel: string | null;
   status: string;
+  /** Shortens the status to "No response" (and mutes the live dot) while a working bot is silent. */
+  quiet?: QuietNotice | null;
 }): JSX.Element {
   return (
     <p className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[13px] leading-[18px] text-[var(--personal-text-secondary)]">
-      <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", STATE_DOT[state])} />
+      <span
+        aria-hidden="true"
+        className={cn(
+          "size-2 shrink-0 rounded-full",
+          quiet === null ? STATE_DOT[state] : "bg-[var(--personal-text-tertiary)]",
+        )}
+      />
       <span
         data-testid="chat-status-line"
         className="flex h-[18px] min-w-0 flex-1 flex-wrap items-center gap-x-1.5 overflow-hidden"
       >
-        <span className="max-w-full min-w-0 truncate whitespace-nowrap">{status}</span>
+        {/* While the bot is quiet the header says so in two words; the full
+            line with the provider and the timer sits under it (QuietNoticeLine). */}
+        <span className="max-w-full min-w-0 truncate whitespace-nowrap">
+          {quiet === null ? status : "No response"}
+        </span>
         {modelLabel !== null ? (
           <span data-testid="chat-model-label" className="shrink-0 whitespace-nowrap">
             <span aria-hidden="true">· </span>

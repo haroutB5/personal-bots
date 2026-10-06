@@ -13,6 +13,7 @@ import {
   type OrchestrationSessionProviderRetry,
   PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  withPersonalReplyQuote,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -1981,10 +1982,14 @@ const make = Effect.gen(function* () {
     const turnInput = {
       threadId: event.payload.threadId,
       messageId: event.payload.messageId,
-      messageText: projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      }),
+      // A reply keeps its quote off the stored text; the model reads it here.
+      messageText: withPersonalReplyQuote(
+        projectComposerContextForProvider({
+          text: message.text,
+          records: message.context?.records ?? [],
+        }),
+        message.context,
+      ),
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,
