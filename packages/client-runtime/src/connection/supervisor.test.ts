@@ -235,14 +235,45 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   };
 });
 
+// Ceilings by failure count: 2s, then 4s for the rest of the 40 fast retries, then doubling to the 5 minute cap.
+const FAST_RETRY_COUNT = 40;
+const RETRY_CEILINGS_MS = [
+  2_000,
+  ...Array.from({ length: FAST_RETRY_COUNT - 1 }, () => 4_000),
+  8_000,
+  16_000,
+  32_000,
+  64_000,
+  128_000,
+  256_000,
+  300_000,
+  300_000,
+];
+
 describe("retryDelayMs", () => {
-  it("doubles from 2 seconds to a 5 minute cap, jittered within the upper half of each step", () => {
-    const ceilings = [2_000, 4_000, 8_000, 16_000, 32_000, 64_000, 128_000, 256_000, 300_000];
-    for (const [failureCount, ceiling] of [...ceilings, 300_000].entries()) {
+  it("holds a 4 second ceiling for 40 retries, then doubles to a 5 minute cap, jittered within the upper half of each step", () => {
+    for (const [failureCount, ceiling] of RETRY_CEILINGS_MS.entries()) {
       expect(EnvironmentSupervisor.retryDelayMs(failureCount, 0)).toBe(ceiling / 2);
       expect(EnvironmentSupervisor.retryDelayMs(failureCount, 0.5)).toBe((ceiling * 3) / 4);
       expect(EnvironmentSupervisor.retryDelayMs(failureCount, 1 - Number.EPSILON)).toBe(ceiling);
     }
+  });
+
+  it("reaches a restarted server within a few seconds, and does not hammer one that stays down", () => {
+    // Worst case for a restart: the server comes back just after an attempt, so the wait is the delay itself.
+    for (let failureCount = 0; failureCount < FAST_RETRY_COUNT; failureCount += 1) {
+      expect(
+        EnvironmentSupervisor.retryDelayMs(failureCount, 1 - Number.EPSILON),
+      ).toBeLessThanOrEqual(4_000);
+    }
+    // Worst case for load: every delay at its minimum. Attempts that fit in the first five minutes of an outage.
+    let elapsedMs = 0;
+    let attempts = 0;
+    for (let failureCount = 0; elapsedMs < 300_000; failureCount += 1) {
+      elapsedMs += EnvironmentSupervisor.retryDelayMs(failureCount, 0);
+      attempts += 1;
+    }
+    expect(attempts).toBeLessThanOrEqual(50);
   });
 });
 
@@ -374,36 +405,36 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
-  it.effect("retries forever with exponential backoff capped at five minutes", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        prepare: () => Effect.fail(transient()),
-      });
-      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
+  it.effect(
+    "retries forever: a short 4 second ladder for two minutes, then exponential backoff capped at five minutes",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          prepare: () => Effect.fail(transient()),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
 
-      yield* awaitState(
-        supervisor.state,
-        (state) => state.phase === "backoff" && state.attempt === 1,
-      );
-      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
-
-      const delays = [
-        2_000, 4_000, 8_000, 16_000, 32_000, 64_000, 128_000, 256_000, 300_000, 300_000,
-      ];
-      for (const [index, delay] of delays.entries()) {
-        yield* TestClock.adjust(delay - 1);
-        expect(yield* Ref.get(harness.prepareCount)).toBe(index + 1);
-        yield* TestClock.adjust(1);
-        yield* eventuallyState(
+        yield* awaitState(
           supervisor.state,
-          (state) => state.phase === "backoff" && state.attempt === index + 2,
+          (state) => state.phase === "backoff" && state.attempt === 1,
         );
-      }
+        expect(yield* Ref.get(harness.prepareCount)).toBe(1);
 
-      expect(yield* Ref.get(harness.prepareCount)).toBe(delays.length + 1);
-    }).pipe(Effect.provide(TestClock.layer())),
+        const delays = RETRY_CEILINGS_MS;
+        for (const [index, delay] of delays.entries()) {
+          yield* TestClock.adjust(delay - 1);
+          expect(yield* Ref.get(harness.prepareCount)).toBe(index + 1);
+          yield* TestClock.adjust(1);
+          yield* eventuallyState(
+            supervisor.state,
+            (state) => state.phase === "backoff" && state.attempt === index + 2,
+          );
+        }
+
+        expect(yield* Ref.get(harness.prepareCount)).toBe(delays.length + 1);
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("keeps the latest failure visible throughout the next connection attempt", () =>

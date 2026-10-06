@@ -33,6 +33,13 @@ import * as ConnectionWakeups from "./wakeups.ts";
 
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
+// The usual reason a connected client loses its server is a restart, and the
+// server is back within a minute or two. For the first FAST_RETRY_COUNT
+// retries the ceiling stays at 4s (delay 2 to 4s), about two minutes in all,
+// so the client is back within a few seconds of the server being ready. A
+// server that stays down longer climbs the ladder from there.
+const FAST_RETRY_CEILING_MS = 4_000;
+const FAST_RETRY_COUNT = 40;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 // Mobile resumes, explicit retries, and offline events want a fast answer:
@@ -108,16 +115,23 @@ export interface EnvironmentSupervisorOptions {
 
 /**
  * Delay before the next attempt after `failureCount` consecutive failures
- * (0 for the first retry). The ceiling doubles from 2s up to 5 minutes, and
- * the delay is a random point in its upper half: never quicker than half the
- * ceiling, and spread out so clients that lost the same server do not all
- * reconnect in the same second. `random` is in [0, 1).
+ * (0 for the first retry). The delay is a random point in the upper half of a
+ * ceiling: never quicker than half the ceiling, and spread out so clients that
+ * lost the same server do not all reconnect in the same second. The ceiling
+ * doubles from 2s to 4s and stays there for the first FAST_RETRY_COUNT
+ * retries, then doubles from 8s up to 5 minutes. `random` is in [0, 1).
  *
- * The long cap only applies to a connection that keeps failing. Returning to
- * the app, the network coming back, and an explicit retry all skip the wait.
+ * The long ladder only applies to a connection that keeps failing. Returning
+ * to the app, the network coming back, and an explicit retry all skip the wait.
  */
 export function retryDelayMs(failureCount: number, random: number): number {
-  const ceiling = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (failureCount + 1));
+  const ceiling =
+    failureCount < FAST_RETRY_COUNT
+      ? Math.min(FAST_RETRY_CEILING_MS, RETRY_BASE_DELAY_MS * 2 ** (failureCount + 1))
+      : Math.min(
+          RETRY_MAX_DELAY_MS,
+          FAST_RETRY_CEILING_MS * 2 ** (failureCount - FAST_RETRY_COUNT + 1),
+        );
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
 }
 
