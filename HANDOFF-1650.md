@@ -42,6 +42,18 @@ Staged with `build.ps1 -NoActivate -CopyExternals`, not active. DevOps ships aft
 - Logs (server log): `personal model fallback switched` (bot, source chat/task, from, to, reason, resetAt, tasksReleased), `personal model fallback ended` (bot, reason, heldMs), `personal model fallback not used` (reason), `personal chat continues on the fallback model`.
 - Bots on Codex today: IT, Security, Astra, Scheduler (gpt-6-luna). Every bot has the switch on by default, including the OpenCode bots (Musey, Watcher on Muse Spark free); for Claude bots the default fallback is mostly the same pool and does nothing.
 
+## QA fixes after the first staging (qa-1650 NO-SHIP on 6c2203305200)
+
+All in the task path (`PersonalTaskService.ts`) plus one web line.
+
+1. **A task that fails on a usage limit never switched.** Codex reports the limit as `runtime.error` (session `error`, turn still open, no details) and then `turn.completed` with `providerRetry`. The task settled on the first snapshot, so it had no limit details: guessed backoff, no fallback. Now an error that reads like a rate limit, on a turn that has not completed (`activeTurnId` set), waits up to `PERSONAL_TASKS_LIMIT_DETAIL_WAIT_MS` (10 s) for the completion; the 30 s sweep settles it if it never comes. A limited task then switches, or waits for the reported reset when no fallback applies (not the one-minute guess).
+2. **The task that triggers the switch ran twice.** Two causes. (a) The thread's session still carried attempt 1's wait: a wait observed before an attempt started is ignored for that attempt (`providerRetryOfAttempt`). (b) The real killer, found by running QA's harness: a moment after the switch the old home provider session reports its own end (a usage-limit `error`, a stop) with `providerInstanceId` = the instance the bot moved off. It landed on attempt 2 (just started on the fallback) and ended it as rate limited, so the task ran again 5 minutes later. A snapshot from `personal_bot_fallbacks.from_instance_id` ends nothing for an attempt that began after the switch (`fromSupersededSession`; restart safe, no new state).
+3. Group search hits show the group's name (`MessageSearchResults.tsx`), not the thread's "Group chat".
+
+New tests (`PersonalTaskService.test.ts`): Codex order replay (error first, completion second) switches and runs once; same order with the fallback limited waits for the reported reset; a limit error that never gets its completion settles after the wait; a plain error settles at once; the stale wait does not end the retry; the old session's late error or stop does not end the attempt on the fallback; an error from the fallback's own session still does. The last four of the new tests fail on the previous code. Web: `MessageSearchResults.test.tsx` group name.
+
+Re-test on a throwaway root with QA's harness (`~/.personal-bots/qa/hbots-1650-b/rt/`, fake CLIs): home limited 100 s and 300 s: attempt 1 `rate_limited`, attempt 2 completes on the fallback in about 3 s with one TASKDONE and no attempt 3; fallback also limited: no switch, task parked on the reported reset (gap under 2 s), runs once after it.
+
 ## Tests and gates (final)
 
 Server `npx vp test run src/personal` exit 0, 1785 passed, 3 skipped (`src/personal` + `src/persistence` together: 1892 passed); server `tsc --noEmit` exit 0; web `npx vp test run --project unit src/features/personal` exit 0, 2024 passed (203 files); web `tsc --noEmit` exit 0; contracts `tsc --noEmit` exit 0; `vp fmt --check` clean on every changed file; lint 0 errors on changed files.
