@@ -6,11 +6,13 @@ Starts, pairs and stops a fresh-root throwaway hbots server for tests. One scrip
 Start  (-Name <n> -Release <folder|worktree|sha12>): makes a fresh root %TEMP%\hbots-tw-<n>, writes
        userdata\settings.json so the Claude provider is a fake CLI (never a real account), sets
        PERSONAL_SEED_MODEL=claude-sonnet-5-5 (seeded bots must not start on Fable), picks a free port,
-       starts the server from the release and prints the URL, a pairing link and the server PID.
+       starts the server from the release and prints the URL, a pairing link, the PID and the server's
+       own PID. PID is the cmd.exe wrapper the server runs under (the one -Stop stops, with its tree);
+       Server is the node process that listens. Safe to call as: $info = script.ps1 ... -Json | ConvertFrom-Json.
        -Release is a release folder (dist\bin.mjs), a built worktree (apps\server\dist\bin.mjs) or a
        sha12 under ~\.personal-bots\releases.
-Stop   (-Stop <n>): stops only the PID recorded in the root (after checking its command line still names
-       that release and root), then deletes the root. Reparse points (junctions, symlinks) inside the
+Stop   (-Stop <n>): stops only the PID recorded in the root and its child tree (after checking its
+       command line still names that release and root), then deletes the root. Reparse points (junctions, symlinks) inside the
        root are unlinked and never followed. Nothing else is touched; nothing is killed by name.
 Pair   (-Pair <n>): prints a fresh single-use pairing link for a running throwaway server.
 List   (-List): the throwaway roots under %TEMP% and whether their server runs.
@@ -275,10 +277,11 @@ foreach ($key in $envSet.Keys) {
 }
 $proc = $null
 try {
-    $argList = @('"' + $bin + '"', 'serve', '--base-dir', '"' + $root + '"', '--host', '127.0.0.1', '--no-browser', '--port', [string]$Port)
-    $proc = Start-Process -FilePath $nodeExe -ArgumentList ($argList -join ' ') -WorkingDirectory $root -WindowStyle Hidden `
-        -RedirectStandardOutput (Join-Path $root 'server.log') -RedirectStandardError (Join-Path $root 'server.err.log') -PassThru
-    $null = $proc.Handle
+    # The detached cmd.exe launch the release scripts use: output goes to the log from inside cmd.
+    # A process started with redirected handles would hold the pipe of a caller that captures this
+    # script's output ($info = script.ps1 -Json | ConvertFrom-Json) open until the server exits.
+    $proc = Start-PbServeProcess -NodeExe $nodeExe -BinPath $bin -BaseDir $root -LogFile (Join-Path $root 'server.log') `
+        -WorkingDirectory $root -Port $Port -HostName '127.0.0.1'
 } finally {
     foreach ($key in $envSet.Keys) {
         [Environment]::SetEnvironmentVariable($key, $previousEnv[$key], 'Process')
@@ -309,7 +312,7 @@ while ((Get-Date) -lt $deadline) {
 }
 if (-not $up) {
     $tail = ''
-    foreach ($log in @('server.err.log', 'server.log')) {
+    foreach ($log in @('server.log')) {
         $path = Join-Path $root $log
         if (Test-Path -LiteralPath $path) { $tail += (Get-Content -LiteralPath $path -Tail 8 -ErrorAction SilentlyContinue | Out-String) }
     }
@@ -318,6 +321,11 @@ if (-not $up) {
     throw ("The server did not come up on $origin" + $(if ($proc.HasExited) { " (it exited with code $($proc.ExitCode))" } else { " within $StartTimeoutSeconds s" }) + ". Root removed. Last log lines:`n" + $tail)
 }
 
+# The recorded PID is the cmd.exe wrapper (the one -Stop kills, with its tree); the server is its child.
+$listener = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+$serverPid = if ($listener.Count -gt 0) { $listener[0].OwningProcess } else { $null }
+$record['serverPid'] = $serverPid
+Write-TwText -Path (Join-Path $root $RecordName) -Text ($record | ConvertTo-Json)
 try {
     $link = New-TwPairingLink -Record ([pscustomobject]$record) -NodeExe $nodeExe
 } catch {
@@ -329,6 +337,7 @@ Show-Result ([ordered]@{
         URL     = $origin
         Pairing = $link
         PID     = $proc.Id
-        Version = ((Invoke-WebRequest -Uri ($origin + '/version.txt') -UseBasicParsing -TimeoutSec 5).Content.Trim())
+        Server  = $serverPid
+        Version = (((Invoke-WebRequest -Uri ($origin + '/version.txt') -UseBasicParsing -TimeoutSec 5).Content -split "`r?`n")[0].Trim())
         Stop    = ('powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\throwaway-server.ps1 -Stop ' + $Name)
     })
