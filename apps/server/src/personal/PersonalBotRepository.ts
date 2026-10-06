@@ -528,6 +528,13 @@ function toPersonalBotThreadWithPreview(
 }
 
 /**
+ * A chat marked unread from inside the open chat is left a moment later, and
+ * leaving stamps `last_viewed_at`. Marks count from this long after they were
+ * made, so that leave does not read the chat again; the next real open does.
+ */
+export const MARKED_UNREAD_GRACE_MS = 30_000;
+
+/**
  * The unread part of a list row. A bot reply after the owner last had the chat
  * open makes it unread (`isThreadRowUnread`). So does the owner marking it
  * unread, and a snooze running out (`wokeAt`): both count from their own time
@@ -549,7 +556,9 @@ export function unreadFields(row: {
 } {
   const replyUnread = isThreadRowUnread(row) && row.lastReplyAt !== null;
   const markMs = Math.max(
-    row.markedUnreadAt === null ? -Infinity : DateTime.toEpochMillis(row.markedUnreadAt),
+    row.markedUnreadAt === null
+      ? -Infinity
+      : DateTime.toEpochMillis(row.markedUnreadAt) + MARKED_UNREAD_GRACE_MS,
     row.wokeAt === null ? -Infinity : DateTime.toEpochMillis(row.wokeAt),
   );
   const viewedMs = row.lastViewedAt === null ? -Infinity : DateTime.toEpochMillis(row.lastViewedAt);

@@ -773,3 +773,38 @@ it.effect("a chat turn stopped by a limit waits when the fallback provider is li
 });
 
 void MessageId;
+
+it.effect("a fallback on the home provider never re-queues its own limit hits (no loop)", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    const bots = yield* PersonalBotRepository.PersonalBotRepository;
+    yield* seedBot();
+    yield* bots.updateBot({
+      botId: BOT,
+      modelSelection: { instanceId: CLAUDE, model: "claude-opus-5-5" } as ModelSelection,
+      updatedAt: DateTime.makeUnsafe(NOW),
+    });
+    expect(yield* hit({ instanceId: CLAUDE, reason: "seven_day_opus" })).toEqual({
+      switched: true,
+      modelLabel: "Sonnet 5.5 · H",
+    });
+    // The Sonnet turn then hits the account's 5-hour limit: same instance, so it
+    // waits for the reset instead of switching again or re-running at once.
+    expect(yield* hit({ instanceId: CLAUDE, reason: "five_hour" })).toEqual({
+      switched: false,
+      skipped: "already_on_fallback",
+    });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("a late hit from the home provider is no longer treated as in flight", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    yield* seedBot();
+    yield* hit();
+    yield* TestClock.setTime(NOW + 6 * 60_000);
+    expect(yield* hit()).toEqual({ switched: false, skipped: "already_on_fallback" });
+  }).pipe(Effect.provide(makeLayer(harness)));
+});

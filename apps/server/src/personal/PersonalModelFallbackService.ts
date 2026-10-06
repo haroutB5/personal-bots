@@ -121,6 +121,8 @@ const noticeContext = (marker: PersonalChatNoticeMarker): OrchestrationMessageCo
 });
 
 const PROBE_TIMEOUT = Duration.seconds(30);
+/** A limit hit from the home provider this soon after the switch is a turn that was already running. */
+const IN_FLIGHT_WINDOW_MS = 5 * 60_000;
 /** A provider re-probe for one bot at most this often. */
 const PROBE_MIN_GAP_MS = 2 * 60_000;
 
@@ -228,7 +230,15 @@ export const make = Effect.gen(function* () {
       if (active !== undefined && on && input.instanceId != null) {
         const states = yield* bots.listFallbackStates();
         const state = states.find((candidate) => candidate.botId === bot.botId);
-        if (state !== undefined && state.fromInstanceId === input.instanceId) {
+        // Only a hit from the home provider, soon after the switch (a turn that was
+        // in flight). A fallback on the home provider itself cannot tell its own
+        // hits from the home's, and a late hit means the fallback is limited too.
+        if (
+          state !== undefined &&
+          state.fromInstanceId === input.instanceId &&
+          fallback.modelSelection.instanceId !== input.instanceId &&
+          now - Date.parse(state.startedAt) < IN_FLIGHT_WINDOW_MS
+        ) {
           return {
             switched: true,
             modelLabel: fallbackModelLabel(active.modelSelection),

@@ -219,7 +219,11 @@ it.live("mark unread: unread for any bot until the chat is opened again", () =>
     const marked = yield* link(threadId);
     expect(marked.unread).toBe(true);
     expect(marked.markedUnread).toBe(true);
-    expect(iso(marked.lastReplyAt)).toBe("2026-10-06T08:10:00.000Z");
+    // Counts from 30 s after the mark, so the leave that follows marking from
+    // inside the open chat (a viewed stamp a second or two later) does not read it.
+    expect(iso(marked.lastReplyAt)).toBe("2026-10-06T08:10:30.000Z");
+    yield* repository.recordThreadViewed({ threadId, viewedAt: "2026-10-06T08:10:02.000Z" });
+    expect((yield* link(threadId)).unread).toBe(true);
     // The chat is opened again (viewed after the mark): read.
     yield* repository.recordThreadViewed({ threadId, viewedAt: "2026-10-06T08:11:00.000Z" });
     expect((yield* link(threadId)).unread).toBeUndefined();
