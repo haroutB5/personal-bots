@@ -27,6 +27,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { installClaudeSdkWarningFilter } from "./claudeSdkWarnings.ts";
 import { type ClaudeScopedLimitNames, claudeRateLimitEventToUpdate } from "./claudeUsageLimits.ts";
 import {
   type ClaudeProcessHandle,
@@ -238,6 +239,10 @@ const remapClaudeForkTurnBoundaries = (
   });
   return remapped.some((id) => id === null) ? undefined : remapped;
 };
+
+// The SDK warns on every bypassPermissions session start that canUseTool will
+// not be invoked; we keep the callback on purpose (see claudeSdkWarnings).
+installClaudeSdkWarningFilter();
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
 type ClaudeTextStreamKind = Extract<
