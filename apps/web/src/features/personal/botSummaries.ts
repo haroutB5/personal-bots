@@ -21,8 +21,9 @@ import {
   providerWaitState,
   THINKING_LABEL,
 } from "./conversationModel";
-import { botModelLabel, botModelShortLabel } from "./botModelLabel";
+import { botActiveModelLabel, botActiveModelShortLabel } from "./botModelLabel";
 import { chatActivityMs, chatActivityMsUncached } from "./chatActivity";
+import { isChatSnoozed } from "./chatState";
 import { perfOptimizationOn } from "./perfFlags";
 import { routineNextRunLabel } from "./taskPresentation";
 
@@ -39,7 +40,7 @@ export interface BotSummary {
   readonly provider: BotProviderStatus;
   /** "Opus 5.5 medium": the bot's model and effort, for the row beside its name. */
   readonly modelLabel: string | null;
-  /** {@link botModelShortLabel}: the pinned tile's form of the label. */
+  /** {@link botActiveModelShortLabel}: the pinned tile's form of the label. */
   readonly modelShortLabel: string | null;
   /** Most recently updated, non-archived thread linked to the bot. */
   readonly newestThread: EnvironmentThreadShell | null;
@@ -135,12 +136,12 @@ export function resolveBotProvider(
  * has no model to name; null when the bot itself is gone.
  */
 export function taskCardBotLine(
-  bot: Pick<PersonalBot, "modelSelection"> | null,
+  bot: Pick<PersonalBot, "modelSelection" | "fallbackActive"> | null,
   providers: ReadonlyArray<ServerProvider>,
 ): string | null {
   if (bot === null) return null;
   return (
-    botModelShortLabel(bot.modelSelection, providers) ??
+    botActiveModelShortLabel(bot, providers) ??
     resolveBotProvider(bot.modelSelection.instanceId, providers).label
   );
 }
@@ -381,6 +382,12 @@ export function buildBotSummaries(input: {
   /** From `threadIdsAwaitingSecret`: chats with a pending secret request. */
   readonly secretRequestThreadIds?: ReadonlySet<string>;
   readonly routines?: ReadonlyArray<PersonalRoutine>;
+  /**
+   * The time a snooze is judged against (the screen's wake clock). A snoozed
+   * chat is not the bot's newest chat and gives the row no preview or order;
+   * what it is doing still counts (busy shells). Defaults to the real time.
+   */
+  readonly nowMs?: number;
   /** From `personalDesktop.status`: who holds the PC and who waits for it. */
   readonly desktop?: {
     readonly holderThreadId: string | null;
@@ -399,6 +406,7 @@ export function buildBotSummaries(input: {
     memoOn
       ? chatActivityMs(shell, linksByThread.get(shell.id))
       : chatActivityMsUncached(shell, linksByThread.get(shell.id));
+  const nowMs = input.nowMs ?? Date.now();
   const shellsByBot = new Map<string, EnvironmentThreadShell[]>();
   // Every linked chat, archived or not: what the bot is doing counts wherever
   // it happens. A task reopened in a chat auto-archive had put away ran for an
@@ -429,6 +437,7 @@ export function buildBotSummaries(input: {
     if (shell === undefined) continue;
     push(busyShellsByBot, link.botId, shell);
     if (link.archivedAt !== null || shell.archivedAt !== null) continue;
+    if (isChatSnoozed(link, nowMs)) continue;
     push(shellsByBot, link.botId, shell);
   }
 
@@ -469,8 +478,8 @@ export function buildBotSummaries(input: {
     return {
       bot,
       provider: resolveBotProvider(bot.modelSelection.instanceId, input.providers),
-      modelLabel: botModelLabel(bot.modelSelection, input.providers),
-      modelShortLabel: botModelShortLabel(bot.modelSelection, input.providers),
+      modelLabel: botActiveModelLabel(bot, input.providers),
+      modelShortLabel: botActiveModelShortLabel(bot, input.providers),
       newestThread,
       newestMessage:
         newestThread === null ? null : (newestMessageByThread.get(newestThread.id) ?? null),

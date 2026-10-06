@@ -1,4 +1,5 @@
 import { PersonalBot, PersonalGroup } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -27,6 +28,14 @@ const state = vi.hoisted(() => ({
   togglePin: vi.fn(),
   setMute: vi.fn(async (_bot: unknown, _mute: unknown) => true),
   navigate: vi.fn(),
+  bulk: vi.fn(async (..._args: unknown[]) => ({
+    status: "settled" as const,
+    notice: "",
+    failedIds: [] as string[],
+    anyFailed: false,
+  })),
+  groupPin: vi.fn(async (..._args: unknown[]): Promise<string | null> => null),
+  groupSnooze: vi.fn(async (..._args: unknown[]): Promise<string | null> => null),
   groupsData: { groups: [], rounds: [] } as { groups: unknown[]; rounds: unknown[] } | null,
   groupFeedCalls: [] as Array<string | null>,
   progressNotes: new Map<string, { note: string; turnId: string | null; toolStep?: boolean }>(),
@@ -163,6 +172,31 @@ vi.mock("./useSecretRequests", () => ({
   usePendingSecretRequests: () => ({ data: null, error: null, refresh: () => {} }),
 }));
 vi.mock("./useRefreshBotsForTaskThreads", () => ({ useRefreshBotsForTaskThreads: () => {} }));
+vi.mock("./useBulkChatActions", () => ({ useBulkChatActions: () => state.bulk }));
+vi.mock("./useGroupChatState", () => ({
+  useGroupChatState: () => ({ setPinned: state.groupPin, snooze: state.groupSnooze }),
+}));
+vi.mock("./SnoozeSheet", () => ({
+  SnoozeSheet: ({
+    title,
+    onPick,
+    onCancel,
+  }: {
+    title: string;
+    onPick: (untilMs: number) => void;
+    onCancel: () => void;
+  }) => (
+    <div data-snooze-sheet={title}>
+      <button type="button" data-pick="" onClick={() => onPick(1_800_000_000_000)} />
+      <button type="button" data-cancel="" onClick={onCancel} />
+    </div>
+  ),
+}));
+vi.mock("./MessageSearchResults", () => ({
+  MessageSearchResults: ({ query }: { query: string }) => (
+    <section data-testid="message-search" data-query={query} />
+  ),
+}));
 vi.mock("./useDeleteBot", () => ({ useDeleteBot: () => async () => state.deleteOutcome }));
 vi.mock("./usePinBot", () => ({ useTogglePinBot: () => state.togglePin }));
 vi.mock("./BotMute", async (importOriginal) => ({
@@ -252,6 +286,9 @@ afterEach(async () => {
   state.timeouts.clear();
   state.reload.mockClear();
   state.navigate.mockClear();
+  state.bulk.mockClear();
+  state.groupPin.mockClear();
+  state.groupSnooze.mockClear();
   state.groupsData = { groups: [], rounds: [] };
   state.groupFeedCalls.length = 0;
   state.progressNotes = new Map();
@@ -1282,5 +1319,209 @@ describe("ChatsScreen working progress", () => {
     ]);
     await act(async () => renderer!.update(<ChatsScreen />));
     expect(busyAvatar().props["data-motion"]).toBe("thinking");
+  });
+});
+
+describe("ChatsScreen pinned, snoozed and unread chats", () => {
+  const decodeGroup = Schema.decodeUnknownSync(PersonalGroup);
+  const NOW = Date.now();
+  const at = (hours: number) => DateTime.makeUnsafe(NOW + hours * 3_600_000);
+  const iso = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString();
+
+  const link = (threadId: string, extra: Record<string, unknown> = {}, botId = "bot-ada") => ({
+    botId,
+    threadId,
+    createdAt: iso(-100),
+    archivedAt: null,
+    ...extra,
+  });
+  const shell = (id: string, hoursAgo: number, title = `Thread ${id}`) => ({
+    id,
+    environmentId: "env-1",
+    title,
+    updatedAt: iso(-hoursAgo),
+    createdAt: iso(-hoursAgo),
+    latestUserMessageAt: null,
+    archivedAt: null,
+    latestTurn: null,
+    session: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+  });
+  const group = (extra: Record<string, unknown> = {}) =>
+    decodeGroup({
+      groupId: "group-1",
+      name: "Launch crew",
+      description: "",
+      threadId: "group-thread-1",
+      maxBotTurns: 6,
+      members: [],
+      createdAt: "2026-09-19T09:00:00.000Z",
+      updatedAt: "2026-09-19T09:00:00.000Z",
+      archivedAt: null,
+      ...extra,
+    });
+
+  async function render() {
+    stubWindow();
+    await act(async () => {
+      renderer = create(<ChatsScreen />);
+    });
+  }
+  const json = () => JSON.stringify(renderer!.toJSON());
+  const press = async (node: ReactTestInstance | undefined) => {
+    expect(node).toBeDefined();
+    await act(async () => {
+      node!.props.onClick();
+    });
+  };
+  const buttonWithText = (label: string) =>
+    renderer!.root.findAll(
+      (node) =>
+        node.type === "button" &&
+        node.children.some((child) => typeof child === "string" && child === label),
+    );
+  const buttonLabelled = (label: string) =>
+    renderer!.root.findAll((node) => node.type === "button" && node.props["aria-label"] === label);
+
+  function seed(
+    threads: Array<Record<string, unknown>>,
+    shells: Array<ReturnType<typeof shell>>,
+    groups: unknown[] = [],
+    bots = [bot("bot-ada", "Ada")],
+  ) {
+    state.listData = { bots, threads, personalProjectId: null };
+    state.shells = shells;
+    state.groupsData = { groups, rounds: [] };
+  }
+
+  it("draws no Pinned or Snoozed section when nothing is pinned or snoozed", async () => {
+    seed([link("t1")], [shell("t1", 1)]);
+    await render();
+    expect(renderer!.root.findAllByProps({ "aria-label": "Pinned chats" })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ "data-testid": "snoozed-chats" })).toHaveLength(0);
+  });
+
+  it("puts a pinned chat and a pinned group in Pinned, above the bot rows and not among them", async () => {
+    seed(
+      [link("t1", { pinnedAt: at(-30) }), link("t2")],
+      [shell("t1", 3, "Launch plans"), shell("t2", 1)],
+      [group({ pinnedAt: iso(-20) })],
+    );
+    await render();
+    const pinned = renderer!.root.findByProps({ "aria-label": "Pinned chats" });
+    expect(pinned.findAllByProps({ "aria-label": "Launch plans, Ada, pinned" })).not.toHaveLength(
+      0,
+    );
+    expect(
+      pinned.findAllByProps({ "aria-label": "Launch crew, pinned group chat" }),
+    ).not.toHaveLength(0);
+    // Above the bot list in the page, and the group is not listed a second time among the rows.
+    const text = json();
+    expect(text.indexOf("Pinned chats")).toBeLessThan(text.indexOf("Your chats"));
+    const rows = renderer!.root.findByProps({ "aria-label": "Your chats" });
+    expect(rows.findAllByProps({ "aria-label": "Launch crew, group chat" })).toHaveLength(0);
+  });
+
+  it("unpins a pinned chat from its menu, marks it unread and snoozes it", async () => {
+    seed([link("t1", { pinnedAt: at(-30) })], [shell("t1", 3, "Launch plans")]);
+    await render();
+    await press(buttonWithText("Unpin chat")[0]);
+    expect(state.bulk).toHaveBeenLastCalledWith("unpin", ["t1"], 0, { snoozeUntilMs: undefined });
+
+    await press(buttonWithText("Mark unread")[0]);
+    expect(state.bulk).toHaveBeenLastCalledWith("markUnread", ["t1"], 0, {
+      snoozeUntilMs: undefined,
+    });
+
+    await press(buttonWithText("Snooze…")[0]);
+    expect(
+      renderer!.root.findAll((node) => node.props["data-snooze-sheet"] === "Snooze Launch plans"),
+    ).toHaveLength(1);
+    await press(renderer!.root.findAll((node) => node.props["data-pick"] === "")[0]);
+    expect(state.bulk).toHaveBeenLastCalledWith("snooze", ["t1"], 0, {
+      snoozeUntilMs: 1_800_000_000_000,
+    });
+  });
+
+  it("pins and snoozes a group through the group call, with no Mark unread for it", async () => {
+    seed([], [], [group({ pinnedAt: iso(-20) })]);
+    await render();
+    expect(buttonWithText("Mark unread")).toHaveLength(0);
+    await press(buttonWithText("Unpin group")[0]);
+    expect(state.groupPin).toHaveBeenCalledWith("group-1", false);
+    await press(buttonWithText("Snooze…")[0]);
+    await press(renderer!.root.findAll((node) => node.props["data-pick"] === "")[0]);
+    expect(state.groupSnooze).toHaveBeenCalledWith("group-1", 1_800_000_000_000);
+  });
+
+  it("says why when a section action is refused", async () => {
+    state.groupPin.mockResolvedValueOnce("Could not unpin this group. Try again.");
+    seed([], [], [group({ pinnedAt: iso(-20) })]);
+    await render();
+    await press(buttonWithText("Unpin group")[0]);
+    expect(json()).toContain("Could not unpin this group. Try again.");
+  });
+
+  it("moves a snoozed chat and group out of the rows into Snoozed, each with Wake now", async () => {
+    seed(
+      [link("t1", { snoozedUntil: at(5) })],
+      [shell("t1", 1, "Launch plans")],
+      [group({ snoozedUntil: iso(30) })],
+    );
+    await render();
+    expect(renderer!.root.findAllByProps({ "data-testid": "snoozed-chats" })).not.toHaveLength(0);
+    expect(json()).toContain('"Snoozed (","2",")"');
+    expect(json()).toContain("Wakes ");
+    // The group is not among the rows either.
+    for (const list of renderer!.root.findAllByProps({ "aria-label": "Your chats" })) {
+      expect(list.findAllByProps({ "aria-label": "Launch crew, group chat" })).toHaveLength(0);
+    }
+    await press(buttonLabelled("Wake Launch plans now")[0]);
+    expect(state.bulk).toHaveBeenLastCalledWith("wake", ["t1"], 0, { snoozeUntilMs: undefined });
+    await press(buttonLabelled("Wake Launch crew now")[0]);
+    expect(state.groupSnooze).toHaveBeenCalledWith("group-1", null);
+  });
+
+  it("a snooze that has run out is awake: the group is back among the rows", async () => {
+    seed([], [], [group({ snoozedUntil: iso(-1) })]);
+    await render();
+    expect(renderer!.root.findAllByProps({ "data-testid": "snoozed-chats" })).toHaveLength(0);
+    const rows = renderer!.root.findByProps({ "aria-label": "Your chats" });
+    expect(rows.findAllByProps({ "aria-label": "Launch crew, group chat" })).not.toHaveLength(0);
+  });
+
+  it("the search narrows Pinned and hands the query to the in-messages section", async () => {
+    seed(
+      [link("t1", { pinnedAt: at(-30) }), link("t2", { pinnedAt: at(-20) })],
+      [shell("t1", 3, "Launch plans"), shell("t2", 2, "Taxes")],
+    );
+    await render();
+    expect(renderer!.root.findAllByProps({ "data-testid": "message-search" })).toHaveLength(0);
+    const input = renderer!.root.findByType("input");
+    await act(async () => {
+      input.props.onChange({ target: { value: "tax" } });
+    });
+    const pinned = renderer!.root.findByProps({ "aria-label": "Pinned chats" });
+    expect(pinned.findAllByProps({ "aria-label": "Taxes, Ada, pinned" })).not.toHaveLength(0);
+    expect(pinned.findAllByProps({ "aria-label": "Launch plans, Ada, pinned" })).toHaveLength(0);
+    // The hook behind it decides when 2 characters are enough; the screen hands the query over.
+    expect(
+      renderer!.root.findAllByProps({ "data-testid": "message-search" })[0]?.props["data-query"],
+    ).toBe("tax");
+  });
+
+  it("counts a chat marked unread on a bot that is not a lead, and not a plain unread reply", async () => {
+    seed(
+      [
+        link("t1", { unread: true, markedUnread: true, lastReplyAt: at(-1) }),
+        link("t2", { unread: true, lastReplyAt: at(-1) }),
+      ],
+      [shell("t1", 3), shell("t2", 2)],
+    );
+    await render();
+    const text = json();
+    expect(text).toContain("1 unread chat");
+    expect(text).not.toContain("2 unread chats");
   });
 });

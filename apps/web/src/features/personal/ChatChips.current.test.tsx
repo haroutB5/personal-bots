@@ -20,6 +20,7 @@ const chip = (threadId: string, current: boolean): ChatChip => ({
   current,
   state: "idle",
   unread: false,
+  pinned: false,
   label: current ? `Chat ${threadId}, current chat` : `Chat ${threadId}`,
 });
 

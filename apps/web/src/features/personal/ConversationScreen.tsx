@@ -17,6 +17,7 @@ import {
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
 import {
+  botEffectiveModelSelection,
   PersonalSecretRequestId,
   type ApprovalRequestId,
   type EnvironmentId,
@@ -67,6 +68,10 @@ import { BotMuteMenuItems, useSetBotMute } from "./BotMute";
 import { ChatChips } from "./ChatChips";
 import { markChatSwitched, rememberChipsShown } from "./chatChipHandoff";
 import { buildChatChips } from "./chatChipRows";
+import { isChatPinned } from "./chatState";
+import { SnoozeSheet } from "./SnoozeSheet";
+import { useBulkChatActions } from "./useBulkChatActions";
+import { useSnoozeWakeClock } from "./useSnoozeWakeClock";
 import { ConversationHeaderLine, ConversationHeaderName } from "./ConversationHeaderName";
 import { ConversationSubtitle } from "./ConversationSubtitle";
 import { QuietNoticeLine, type QuietNotice } from "./QuietNoticeLine";
@@ -78,7 +83,7 @@ import {
   resolveBotProvider,
   taskCardBotLine,
 } from "./botSummaries";
-import { botModelShortLabel } from "./botModelLabel";
+import { botActiveModelShortLabel, fallbackNoteLabel } from "./botModelLabel";
 import { commandFailureMessage } from "./commandFeedback";
 import { ConversationComputerLink } from "./ConversationComputerLink";
 import { ConversationDesktopLine } from "./ConversationDesktopLine";
@@ -558,7 +563,10 @@ export function ConversationScreen({
   const provider =
     bot === null ? null : resolveBotProvider(bot.modelSelection.instanceId, providers);
   const headerStatus = conversationHeaderStatus(conversationState, stateLabel, provider);
-  const headerModelLabel = bot === null ? null : botModelShortLabel(bot.modelSelection, providers);
+  const headerModelLabel = bot === null ? null : botActiveModelShortLabel(bot, providers);
+  const headerModelNote = bot === null ? null : fallbackNoteLabel(bot);
+  // A typed message, Retry and wrapup send what the bot runs on right now (its fallback while on it).
+  const botTurnModel = bot === null ? null : botEffectiveModelSelection(bot);
 
   const visiblePending = useMemo(
     () => pendingForThread(pending, threadId, messages),
@@ -570,7 +578,7 @@ export function ConversationScreen({
   const failedTurnRetry = useRetryFailedTurn({
     environmentId,
     thread,
-    botModelSelection: bot?.modelSelection ?? null,
+    botModelSelection: botTurnModel,
     target: retryTarget,
     failureKey: thread?.session?.updatedAt ?? null,
   });
@@ -736,6 +744,29 @@ export function ConversationScreen({
     await navigate({ to: "/bots/$botId", params: { botId }, replace: true });
   };
 
+  // Pin, snooze and mark unread: the same server path as the chat list's own actions, for this one
+  // chat. Snooze and Mark unread then leave the chat the way Back does (Team origin returns to Team).
+  const runChatAction = useBulkChatActions(environmentId);
+  const [snoozeOpen, setSnoozeOpen] = useState(false);
+  const pinned = link !== null && isChatPinned(link);
+  const onPinChange = async () => {
+    setActionError(null);
+    const outcome = await runChatAction(pinned ? "unpin" : "pin", [threadId], 0);
+    if (outcome.status === "settled" && outcome.anyFailed) setActionError(outcome.notice);
+  };
+  const leaveAfter = async (
+    action: "snooze" | "markUnread",
+    options?: { snoozeUntilMs: number },
+  ) => {
+    setActionError(null);
+    const outcome = await runChatAction(action, [threadId], 0, options);
+    if (outcome.status === "settled" && outcome.anyFailed) {
+      setActionError(outcome.notice);
+      return;
+    }
+    await navigate({ to: backTarget.to, replace: true });
+  };
+
   const [unarchiving, setUnarchiving] = useState(false);
   /** Stays on the chat: the shell clears its archivedAt and the composer comes back. */
   const onUnarchive = async () => {
@@ -750,7 +781,7 @@ export function ConversationScreen({
   const { send: sendWrapup, sending: wrapupSending } = useWrapupChat(
     environmentId,
     thread,
-    bot?.modelSelection ?? null,
+    botTurnModel,
   );
   const onWrapup = async () => {
     const started = await sendWrapup();
@@ -780,6 +811,8 @@ export function ConversationScreen({
   const allShells = useThreadShells();
   const relayThreadIds = usePersonalGroupRelayThreadIds(environmentId);
   const chatSeen = useChatSeenState();
+  // A snooze that runs out while this screen is open puts its chat back in the chips.
+  const wakeClock = useSnoozeWakeClock(list.data?.threads, list.refresh);
   const chipModel = useMemo(
     () =>
       list.data === null
@@ -793,8 +826,10 @@ export function ConversationScreen({
             tasks,
             waitingLabels,
             seen: chatSeen,
+            nowMs: wakeClock,
           }),
     [
+      wakeClock,
       allShells,
       botId,
       chatSeen,
@@ -936,6 +971,7 @@ export function ConversationScreen({
                     <ConversationSubtitle
                       state={conversationState}
                       modelLabel={headerModelLabel}
+                      modelNote={headerModelNote}
                       status={headerStatus}
                       quiet={quiet}
                     />
@@ -981,6 +1017,7 @@ export function ConversationScreen({
                 <ConversationSubtitle
                   state={conversationState}
                   modelLabel={headerModelLabel}
+                  modelNote={headerModelNote}
                   status={headerStatus}
                   quiet={quiet}
                 />
@@ -1088,6 +1125,16 @@ export function ConversationScreen({
             >
               Wrapup chat
             </MenuItem>
+            {!archived ? (
+              <>
+                <MenuSeparator />
+                <MenuItem onClick={() => void onPinChange()}>
+                  {pinned ? "Unpin chat" : "Pin chat"}
+                </MenuItem>
+                <MenuItem onClick={() => setSnoozeOpen(true)}>Snooze…</MenuItem>
+                <MenuItem onClick={() => void leaveAfter("markUnread")}>Mark unread</MenuItem>
+              </>
+            ) : null}
             {bot !== null ? (
               <>
                 <MenuSeparator />
@@ -1116,6 +1163,16 @@ export function ConversationScreen({
         </Menu>
       </header>
       {newChat.dialog}
+      {snoozeOpen ? (
+        <SnoozeSheet
+          title="Snooze chat"
+          onPick={(untilMs) => {
+            setSnoozeOpen(false);
+            void leaveAfter("snooze", { snoozeUntilMs: untilMs });
+          }}
+          onCancel={() => setSnoozeOpen(false)}
+        />
+      ) : null}
       <RenameChatDialog
         open={renameOpen}
         initialTitle={renameChatInitialTitle(chatTitle)}
@@ -1228,7 +1285,7 @@ export function ConversationScreen({
               threadId={threadId}
               thread={thread}
               botName={botName}
-              botModelSelection={bot?.modelSelection ?? null}
+              botModelSelection={botTurnModel}
               disabledReason={disabledReason}
               working={turnBusy}
               queuedNotice={false}

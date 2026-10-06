@@ -133,8 +133,14 @@ export function filterGroups(
  * text, not to order rows), and inventing one from the round would leave a
  * group that has only ever been renamed with no time at all.
  */
-export function groupLastActivityMs(group: PersonalGroup): number {
-  return DateTime.toEpochMillis(group.updatedAt);
+export function groupLastActivityMs(group: PersonalGroup, nowMs: number = Date.now()): number {
+  const updatedMs = DateTime.toEpochMillis(group.updatedAt);
+  // A snooze that has run out sorts the group as if a message arrived then.
+  const wokeMs =
+    group.snoozedUntil === undefined || group.snoozedUntil === null
+      ? 0
+      : DateTime.toEpochMillis(group.snoozedUntil);
+  return wokeMs > 0 && wokeMs <= nowMs ? Math.max(updatedMs, wokeMs) : updatedMs;
 }
 
 /** One line of the newest message, for the group row's preview. */

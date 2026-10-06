@@ -16,7 +16,31 @@ import {
 /** Which part of a bot's chat list select mode covers: Select all never reaches the other. */
 export type ChatSection = "active" | "archived";
 
-export type BulkChatAction = "archive" | "unarchive" | "delete";
+export type BulkChatAction =
+  | "archive"
+  | "unarchive"
+  | "delete"
+  | "pin"
+  | "unpin"
+  | "snooze"
+  | "wake"
+  | "markUnread";
+
+/** The actions that change a chat's state (`personalBots.updateThreads`) rather than archive or delete it. */
+export type ChatStateAction = Extract<
+  BulkChatAction,
+  "pin" | "unpin" | "snooze" | "wake" | "markUnread"
+>;
+
+export function isChatStateAction(action: BulkChatAction): action is ChatStateAction {
+  return (
+    action === "pin" ||
+    action === "unpin" ||
+    action === "snooze" ||
+    action === "wake" ||
+    action === "markUnread"
+  );
+}
 
 const CHAT: BulkNoun = { one: "chat", many: "chats" };
 
@@ -65,6 +89,11 @@ const VERB: Record<BulkChatAction, BulkVerb> = {
   archive: { done: "Archived", failed: "archived" },
   unarchive: { done: "Unarchived", failed: "unarchived" },
   delete: DELETE_VERB,
+  pin: { done: "Pinned", failed: "pinned" },
+  unpin: { done: "Unpinned", failed: "unpinned" },
+  snooze: { done: "Snoozed", failed: "snoozed" },
+  wake: { done: "Woke", failed: "woken" },
+  markUnread: { done: "Marked", failed: "marked unread" },
 };
 
 /**
@@ -75,10 +104,14 @@ export function bulkResultNotice(
   action: BulkChatAction,
   result: PersonalBotThreadsBatchResult,
 ): { readonly text: string; readonly failed: boolean } {
-  return resultNotice(
+  const notice = resultNotice(
     VERB[action],
     CHAT,
     result.done.length,
     result.failed.map((entry) => entry.message),
   );
+  // "Marked 3 chats." reads as nothing: "3 chats marked unread."
+  return action === "markUnread"
+    ? { ...notice, text: notice.text.replace(/^Marked (\d+ chats?)\./, "$1 marked unread.") }
+    : notice;
 }

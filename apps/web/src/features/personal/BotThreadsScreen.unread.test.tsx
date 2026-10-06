@@ -54,7 +54,11 @@ vi.mock("~/state/use-atom-command", () => ({
     command === ARCHIVE_COMMAND ? state.archive : state.otherCommand,
 }));
 vi.mock("./BotAvatar", () => ({ BotAvatar: () => <span data-avatar="" /> }));
-vi.mock("./botModelLabel", () => ({ botModelShortLabel: () => null }));
+vi.mock("./botModelLabel", () => ({
+  botModelShortLabel: () => null,
+  botActiveModelShortLabel: () => null,
+  fallbackNoteLabel: () => null,
+}));
 const makeReply = vi.hoisted(() => () => new Date(Date.UTC(2026, 9, 2, 10, 5)));
 vi.mock("effect/DateTime", () => ({ toEpochMillis: (value: Date) => value.getTime() }));
 vi.mock("./botThreadRows", () => {
@@ -72,6 +76,7 @@ vi.mock("./botThreadRows", () => {
     botThreadRows: () => ({
       active: [row("thread-open", "Open chat", null), row("thread-read", "Read chat", null, false)],
       archived: [row("thread-archived", "Old plans", "2026-09-30T10:00:00.000Z")],
+      snoozed: [],
     }),
   };
 });

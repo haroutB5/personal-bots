@@ -126,6 +126,17 @@ export const personalBotDeleteThreads = createEnvironmentRpcCommand(connectionAt
   onSuccess: refreshBotsList,
 });
 
+/**
+ * Pin, snooze or mark unread on one chat or a whole selection (one request,
+ * one list refresh). The list carries `pinnedAt`, `snoozedUntil` and the
+ * unread flags, so the screens redraw from the refetch.
+ */
+export const personalBotUpdateThreads = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-bots:update-threads",
+  tag: WS_METHODS.personalBotsUpdateThreads,
+  onSuccess: refreshBotsList,
+});
+
 export const personalFileDelete = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "personal-files:delete",
   tag: WS_METHODS.personalFilesDelete,

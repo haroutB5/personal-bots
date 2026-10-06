@@ -8,6 +8,7 @@ import { cn } from "~/lib/utils";
 
 import { ROW_CLASS, SELECTED_ROW_CLASS, selectedChatProps } from "./BotRow";
 import { GroupAvatarCluster } from "./GroupAvatarCluster";
+import { PinMark } from "./PinMark";
 import {
   activeGroupMembers,
   groupLastActivityMs,
@@ -31,6 +32,8 @@ export const GroupRow = memo(function GroupRow({
   now,
   selected = false,
   archived = false,
+  pinned = false,
+  wakeText,
 }: {
   readonly group: PersonalGroup;
   /** The group's live round, or null. Drives the working dot and the status. */
@@ -42,13 +45,17 @@ export const GroupRow = memo(function GroupRow({
   readonly selected?: boolean | undefined;
   /** Shown in the Archived groups section or a search hit: tagged "Archived". */
   readonly archived?: boolean | undefined;
+  /** The owner pinned this group: a small pin by the name. */
+  readonly pinned?: boolean | undefined;
+  /** A snoozed group says when it wakes ("Wakes today 18:00") in place of its preview. */
+  readonly wakeText?: string | undefined;
 }): JSX.Element {
   const members = activeGroupMembers(group);
   const nameOf = (botId: string) =>
     bots.find((candidate) => candidate.botId === botId)?.name ?? null;
   const status = groupStatusLine(round, nameOf, { archived });
   const live = isGroupRoundLive(round);
-  const lastActivityMs = groupLastActivityMs(group);
+  const lastActivityMs = groupLastActivityMs(group, now);
 
   return (
     <Link
@@ -56,7 +63,9 @@ export const GroupRow = memo(function GroupRow({
       params={{ groupId: group.groupId }}
       // The cluster says "group" visually; this says it to a screen reader,
       // which would otherwise hear a row that looks like every bot row.
-      aria-label={`${group.name}, ${archived ? "archived " : ""}group chat`}
+      aria-label={`${group.name}, ${archived ? "archived " : ""}${pinned ? "pinned " : ""}group chat${
+        wakeText === undefined ? "" : `, ${wakeText}`
+      }`}
       className={cn(ROW_CLASS, selected && SELECTED_ROW_CLASS)}
       {...selectedChatProps(selected)}
     >
@@ -66,6 +75,7 @@ export const GroupRow = memo(function GroupRow({
           <span className="truncate text-[17px] leading-[22px] font-semibold text-[var(--personal-text)]">
             {group.name}
           </span>
+          {pinned ? <PinMark /> : null}
           {archived ? (
             <span className="ml-2 shrink-0 rounded-full bg-[var(--personal-fill-muted)] px-2 text-[12px] leading-5 font-medium text-[var(--personal-text-secondary)]">
               Archived
@@ -97,7 +107,7 @@ export const GroupRow = memo(function GroupRow({
           {status.label === "Ready" || archived ? "" : ` · ${status.label}`}
         </span>
         <span className="truncate text-sm leading-5 text-[var(--personal-text-preview)]">
-          {groupPreviewLine(group)}
+          {wakeText ?? groupPreviewLine(group)}
         </span>
       </span>
     </Link>

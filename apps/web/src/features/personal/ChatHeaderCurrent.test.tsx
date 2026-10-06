@@ -17,7 +17,11 @@ import { ConversationShellHeader } from "./ConversationShellFirst";
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
 vi.mock("~/state/server", () => ({ primaryServerProvidersAtom: {} }));
 vi.mock("./BotAvatar", () => ({ BotAvatar: () => <span data-avatar="" /> }));
-vi.mock("./botModelLabel", () => ({ botModelShortLabel: () => "Sonnet 5.5 · M" }));
+vi.mock("./botModelLabel", () => ({
+  botModelShortLabel: () => "Sonnet 5.5 · M",
+  botActiveModelShortLabel: () => "Sonnet 5.5 · M",
+  fallbackNoteLabel: () => null,
+}));
 vi.mock("./usePersonalBackTarget", () => ({
   usePersonalBackTarget: () => ({ to: "/bots", label: "Back to Bots" }),
 }));
@@ -45,6 +49,7 @@ const chip = (threadId: string, current: boolean): ChatChip => ({
   current,
   state: "idle",
   unread: false,
+  pinned: false,
   label: current ? `Chat ${threadId}, current chat` : `Chat ${threadId}`,
 });
 

@@ -44,6 +44,7 @@ import { consumeChatSwitched } from "./chatChipHandoff";
 import { ChoiceButtons, type ChoicesState } from "./ChoiceButtons";
 import { mayHaveChoices, splitChoices } from "./choices";
 import { jumpToMessage, replyQuoteForMessage } from "./messageReply";
+import { clearMessageJump, peekMessageJump } from "./pendingMessageJump";
 import { ReplyQuoteChip } from "./ReplyQuote";
 import { ReplyableMessage } from "./ReplyableMessage";
 
@@ -852,6 +853,24 @@ export function MessageList({
     const scroller = scrollerRef.current;
     if (scroller !== null) scroller.scrollTop = scroller.scrollHeight;
   }, [threadId]);
+
+  // A tap on a message search hit asked for this chat to open on that message.
+  // The thread loads progressively, so this tries again whenever the items
+  // change, until the message is there or the request lapses.
+  useEffect(() => {
+    const messageId = peekMessageJump(threadId);
+    if (messageId === null) return;
+    // Let go of the bottom first, so following new content does not undo the jump.
+    const wasFollowing = stickRef.current;
+    stickRef.current = false;
+    if (jumpToMessage(contentRef.current ?? document, messageId)) {
+      clearMessageJump(threadId);
+    } else {
+      stickRef.current = wasFollowing;
+    }
+    // `items` is the trigger: a thread that loads in pages may bring the message later.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies
+  }, [threadId, items]);
 
   const jumpToLatest = () => {
     const scroller = scrollerRef.current;

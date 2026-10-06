@@ -6,7 +6,7 @@ import type {
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Link } from "@tanstack/react-router";
-import { Plus } from "lucide-react";
+import { Pin, Plus } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
@@ -187,6 +187,14 @@ export function ChatChips({
               data-unread={chip.unread}
             >
               <ChipDot chip={chip} />
+              {chip.pinned ? (
+                <Pin
+                  aria-hidden="true"
+                  data-chip-pin=""
+                  className="size-3 shrink-0"
+                  strokeWidth={2}
+                />
+              ) : null}
               <span className="min-w-0 truncate">{chip.text}</span>
             </span>
           </Link>

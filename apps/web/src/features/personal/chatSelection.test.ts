@@ -6,6 +6,7 @@ import {
   bulkDeleteConfirmLabel,
   bulkDeleteConfirmMessage,
   bulkResultNotice,
+  isChatStateAction,
   selectedCountLabel,
   toggleChatSelection,
   visibleSelection,
@@ -86,5 +87,42 @@ describe("bulk result notice", () => {
     expect(bulkResultNotice("archive", { done: [], failed: failed.slice(1) }).text).toBe(
       "1 chat couldn't be archived: Couldn't delete this chat.",
     );
+  });
+});
+
+describe("bulk pin, snooze and mark unread", () => {
+  it("tells state actions from archive and delete", () => {
+    for (const action of ["pin", "unpin", "snooze", "wake", "markUnread"] as const) {
+      expect(isChatStateAction(action)).toBe(true);
+    }
+    for (const action of ["archive", "unarchive", "delete"] as const) {
+      expect(isChatStateAction(action)).toBe(false);
+    }
+  });
+
+  it("words each result in one plain line", () => {
+    const done = { done: ids("a", "b"), failed: [] };
+    expect(bulkResultNotice("pin", done).text).toBe("Pinned 2 chats.");
+    expect(bulkResultNotice("unpin", { done: ids("a"), failed: [] }).text).toBe("Unpinned 1 chat.");
+    expect(bulkResultNotice("snooze", done).text).toBe("Snoozed 2 chats.");
+    expect(bulkResultNotice("wake", { done: ids("a"), failed: [] }).text).toBe("Woke 1 chat.");
+    expect(bulkResultNotice("markUnread", done).text).toBe("2 chats marked unread.");
+  });
+
+  it("names the refused chats and why", () => {
+    const notice = bulkResultNotice("markUnread", {
+      done: ids("a"),
+      failed: [{ threadId: "b" as never, message: "That chat is archived." }],
+    });
+    expect(notice).toEqual({
+      text: "1 chat marked unread. 1 chat couldn't be marked unread: That chat is archived.",
+      failed: true,
+    });
+    expect(
+      bulkResultNotice("snooze", {
+        done: [],
+        failed: [{ threadId: "b" as never, message: "A chat can be snoozed for at most a year." }],
+      }).text,
+    ).toBe("1 chat couldn't be snoozed: A chat can be snoozed for at most a year.");
   });
 });

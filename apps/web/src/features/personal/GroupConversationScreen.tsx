@@ -31,6 +31,9 @@ import type { ChatMessage } from "~/types";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { ArchivedChatBar } from "./ArchivedChatBar";
+import { isChatPinned } from "./chatState";
+import { SnoozeSheet } from "./SnoozeSheet";
+import { useGroupChatState } from "./useGroupChatState";
 import { buildConversationItems } from "./conversationModel";
 import { commandFailureMessage } from "./commandFeedback";
 import { GroupAvatarCluster } from "./GroupAvatarCluster";
@@ -374,6 +377,25 @@ export function GroupConversationScreen({
     await navigate({ to: "/bots", replace: true });
   };
 
+  // Pin and snooze (a group has no unread state, so no Mark unread). Snooze leaves the chat the
+  // way Archive does.
+  const groupChatState = useGroupChatState(environmentId);
+  const [snoozeOpen, setSnoozeOpen] = useState(false);
+  const pinned = group !== null && isChatPinned(group);
+  const onPinChange = async () => {
+    setActionError(null);
+    setActionError(await groupChatState.setPinned(groupId, !pinned));
+  };
+  const onSnooze = async (untilMs: number) => {
+    setActionError(null);
+    const failure = await groupChatState.snooze(groupId, untilMs);
+    if (failure !== null) {
+      setActionError(failure);
+      return;
+    }
+    await navigate({ to: "/bots", replace: true });
+  };
+
   const [unarchiving, setUnarchiving] = useState(false);
   /** Stays on the conversation: the feed moves the group back into the list. */
   const onUnarchive = async () => {
@@ -623,6 +645,14 @@ export function GroupConversationScreen({
               </MenuItem>
             ) : null}
             <MenuSeparator />
+            {!archived ? (
+              <>
+                <MenuItem onClick={() => void onPinChange()}>
+                  {pinned ? "Unpin group" : "Pin group"}
+                </MenuItem>
+                <MenuItem onClick={() => setSnoozeOpen(true)}>Snooze…</MenuItem>
+              </>
+            ) : null}
             {archived ? (
               <MenuItem disabled={unarchiving} onClick={() => void onUnarchive()}>
                 Unarchive group
@@ -643,6 +673,16 @@ export function GroupConversationScreen({
         </Menu>
       </header>
       {quiet === null ? null : <QuietNoticeLine notice={quiet} />}
+      {snoozeOpen ? (
+        <SnoozeSheet
+          title="Snooze group"
+          onPick={(untilMs) => {
+            setSnoozeOpen(false);
+            void onSnooze(untilMs);
+          }}
+          onCancel={() => setSnoozeOpen(false)}
+        />
+      ) : null}
 
       {group !== null && thread !== null && environmentId !== null && threadRef !== null ? (
         <>

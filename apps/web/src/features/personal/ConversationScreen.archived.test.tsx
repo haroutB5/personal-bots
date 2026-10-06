@@ -27,6 +27,8 @@ const state = vi.hoisted(() => ({
     turnsKey: string;
   },
   renamed: [] as Array<[string, string]>,
+  bulk: (() => {}) as (...args: unknown[]) => unknown,
+  linkPinned: false,
 }));
 
 const ARCHIVE_COMMAND = vi.hoisted(() => ({ name: "personalBotArchiveThread" }));
@@ -154,7 +156,11 @@ vi.mock("./botSummaries", () => ({
   resolveBotProvider: () => null,
   taskCardBotLine: () => null,
 }));
-vi.mock("./botModelLabel", () => ({ botModelShortLabel: () => null }));
+vi.mock("./botModelLabel", () => ({
+  botModelShortLabel: () => null,
+  botActiveModelShortLabel: () => null,
+  fallbackNoteLabel: () => null,
+}));
 vi.mock("./ConversationComputerLink", () => ({ ConversationComputerLink: () => null }));
 vi.mock("./ConversationDesktopLine", () => ({ ConversationDesktopLine: () => null }));
 vi.mock("./resumeLastChat", () => ({ useLeaveResumedChatIfGone: () => {} }));
@@ -301,7 +307,14 @@ vi.mock("./usePersonalBots", () => ({
           modelSelection: {},
         },
       ],
-      threads: [{ botId: "bot-a", threadId: "thread-1", archivedAt: state.linkArchivedAt }],
+      threads: [
+        {
+          botId: "bot-a",
+          threadId: "thread-1",
+          archivedAt: state.linkArchivedAt,
+          ...(state.linkPinned ? { pinnedAt: "2026-10-01T10:00:00.000Z" } : {}),
+        },
+      ],
     },
     isPending: false,
     error: null,
@@ -312,6 +325,22 @@ vi.mock("./useRefreshBotsForTaskThreads", () => ({ useRefreshBotsForTaskThreads:
 vi.mock("./wrapupChat", () => ({
   useWrapupChat: () => ({ send: state.sendWrapup, sending: false }),
 }));
+vi.mock("./useBulkChatActions", () => ({ useBulkChatActions: () => state.bulk }));
+vi.mock("./SnoozeSheet", () => ({
+  SnoozeSheet: ({
+    onPick,
+    onCancel,
+  }: {
+    onPick: (untilMs: number) => void;
+    onCancel: () => void;
+  }) => (
+    <div data-snooze-sheet="">
+      <button type="button" data-pick="" onClick={() => onPick(1_800_000_000_000)} />
+      <button type="button" data-cancel="" onClick={onCancel} />
+    </div>
+  ),
+}));
+vi.mock("./chatState", async (importOriginal) => await importOriginal());
 vi.mock("./useDeleteChat", () => ({ useDeleteChat: () => state.deleteChat }));
 vi.mock("./RenameChatDialog", () => ({ RenameChatDialog: () => null }));
 vi.mock("./pendingOutgoing", () => ({ pendingForThread: () => [] }));
@@ -363,6 +392,13 @@ beforeEach(() => {
   state.sendWrapup = vi.fn(async () => true);
   state.startNewChat = vi.fn(async () => undefined);
   state.chipModel = null;
+  state.bulk = vi.fn(async () => ({
+    status: "settled",
+    notice: "",
+    failedIds: [],
+    anyFailed: false,
+  }));
+  state.linkPinned = false;
   state.renamed = [];
   state.prewarm = [];
   state.viewing = [];
@@ -609,4 +645,99 @@ it("+ opens the name sheet and Start chat creates it, replacing history and nami
   expect(options.keepState).toBe(true);
   await options.onCreated("new-thread");
   expect(state.renamed).toEqual([["new-thread", "Plan B"]]);
+});
+
+// Pin, snooze and mark unread in the chat's own menu.
+const openChat = () => {
+  state.shell = { title: "Plans", archivedAt: null };
+  state.linkArchivedAt = null;
+};
+
+it("offers Pin chat, Snooze and Mark unread on an open chat, and none of them on an archived one", async () => {
+  await renderScreen();
+  expect(buttonsLabelled("Pin chat")).toHaveLength(0);
+  expect(buttonsLabelled("Snooze…")).toHaveLength(0);
+  expect(buttonsLabelled("Mark unread")).toHaveLength(0);
+  await act(async () => renderer?.unmount());
+
+  openChat();
+  await renderScreen();
+  expect(buttonsLabelled("Pin chat")).toHaveLength(1);
+  expect(buttonsLabelled("Snooze…")).toHaveLength(1);
+  expect(buttonsLabelled("Mark unread")).toHaveLength(1);
+});
+
+it("Pin chat pins this chat and stays on it; a pinned chat offers Unpin chat", async () => {
+  openChat();
+  await renderScreen();
+  await act(async () => {
+    buttonsLabelled("Pin chat")[0]!.props.onClick();
+  });
+  expect(state.bulk).toHaveBeenCalledWith("pin", ["thread-1"], 0);
+  expect(state.navigate).not.toHaveBeenCalled();
+  await act(async () => renderer?.unmount());
+
+  state.linkPinned = true;
+  await renderScreen();
+  expect(buttonsLabelled("Pin chat")).toHaveLength(0);
+  await act(async () => {
+    buttonsLabelled("Unpin chat")[0]!.props.onClick();
+  });
+  expect(state.bulk).toHaveBeenLastCalledWith("unpin", ["thread-1"], 0);
+});
+
+it("Mark unread marks this chat and leaves it the way Back does", async () => {
+  openChat();
+  await renderScreen();
+  await act(async () => {
+    buttonsLabelled("Mark unread")[0]!.props.onClick();
+  });
+  expect(state.bulk).toHaveBeenCalledWith("markUnread", ["thread-1"], 0, undefined);
+  expect(state.navigate).toHaveBeenCalledWith({ to: "/bots", replace: true });
+});
+
+it("a refused Mark unread stays on the chat and says why", async () => {
+  openChat();
+  state.bulk = vi.fn(async () => ({
+    status: "settled",
+    notice: "1 chat couldn't be marked unread: not found.",
+    failedIds: ["thread-1"],
+    anyFailed: true,
+  }));
+  await renderScreen();
+  await act(async () => {
+    buttonsLabelled("Mark unread")[0]!.props.onClick();
+  });
+  expect(state.navigate).not.toHaveBeenCalled();
+  expect(String(lastMessageListProps().errorText)).toContain("couldn't be marked unread");
+});
+
+it("Snooze asks when, then snoozes this chat until then and leaves it", async () => {
+  openChat();
+  await renderScreen();
+  await act(async () => {
+    buttonsLabelled("Snooze…")[0]!.props.onClick();
+  });
+  const pick = renderer!.root.findAll((node) => node.props["data-pick"] === "")[0]!;
+  await act(async () => {
+    pick.props.onClick();
+  });
+  expect(state.bulk).toHaveBeenCalledWith("snooze", ["thread-1"], 0, {
+    snoozeUntilMs: 1_800_000_000_000,
+  });
+  expect(state.navigate).toHaveBeenCalledWith({ to: "/bots", replace: true });
+});
+
+it("cancelling the snooze sheet changes nothing", async () => {
+  openChat();
+  await renderScreen();
+  await act(async () => {
+    buttonsLabelled("Snooze…")[0]!.props.onClick();
+  });
+  const cancel = renderer!.root.findAll((node) => node.props["data-cancel"] === "")[0]!;
+  await act(async () => {
+    cancel.props.onClick();
+  });
+  expect(state.bulk).not.toHaveBeenCalled();
+  expect(renderer!.root.findAll((node) => node.props["data-snooze-sheet"] === "")).toHaveLength(0);
 });

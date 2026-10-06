@@ -52,7 +52,11 @@ vi.mock("~/state/use-atom-command", () => ({
     command === ARCHIVE_COMMAND ? state.archive : state.otherCommand,
 }));
 vi.mock("./BotAvatar", () => ({ BotAvatar: () => <span data-avatar="" /> }));
-vi.mock("./botModelLabel", () => ({ botModelShortLabel: () => null }));
+vi.mock("./botModelLabel", () => ({
+  botModelShortLabel: () => null,
+  botActiveModelShortLabel: () => null,
+  fallbackNoteLabel: () => null,
+}));
 vi.mock("./botThreadRows", () => {
   const row = (threadId: string, title: string, archivedAt: string | null) => ({
     link: { botId: "bot-a", threadId, archivedAt },
@@ -63,6 +67,7 @@ vi.mock("./botThreadRows", () => {
     botThreadRows: () => ({
       active: [row("thread-open", "Open chat", null)],
       archived: [row("thread-archived", "Old plans", "2026-09-30T10:00:00.000Z")],
+      snoozed: [],
     }),
   };
 });

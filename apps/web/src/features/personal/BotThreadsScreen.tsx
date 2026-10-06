@@ -2,8 +2,9 @@ import type { JSX } from "react";
 import { useCallback, useMemo, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { botEffectiveModelSelection, type EnvironmentId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import * as DateTime from "effect/DateTime";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, Ellipsis, NotebookPen, Pencil, Plus } from "lucide-react";
 
@@ -15,7 +16,7 @@ import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { BotAvatar } from "./BotAvatar";
-import { botModelShortLabel } from "./botModelLabel";
+import { botActiveModelShortLabel, fallbackNoteLabel } from "./botModelLabel";
 import { botThreadRows, type BotThreadRow } from "./botThreadRows";
 import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
 import { commandFailureMessage } from "./commandFeedback";
@@ -41,7 +42,11 @@ import {
   toggleChatSelection,
   visibleSelection,
 } from "./chatSelection";
-import { useBulkChatActions } from "./useBulkChatActions";
+import { useBulkChatActions, type BulkChatOptions } from "./useBulkChatActions";
+import { isChatPinned, wakeLabel } from "./chatState";
+import { PinMark } from "./PinMark";
+import { SnoozeSheet } from "./SnoozeSheet";
+import { useSnoozeWakeClock } from "./useSnoozeWakeClock";
 import { useLongPress } from "./useLongPress";
 import { isChatUnread, useChatSeenState, useRefetchOnTurnsSettled } from "./unreadChats";
 import { UnreadDot } from "./UnreadChatsBadge";
@@ -57,6 +62,9 @@ import {
   useBulkNotice,
   useEscapeToExit,
 } from "./SelectMode";
+
+/** A snoozed row has nothing to select: it wakes first. */
+const ignoreLongPress = () => {};
 
 const ICON_LINK =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -101,7 +109,7 @@ function ThreadRowContent({
 }: {
   row: BotThreadRow;
   now: number;
-  /** The bot replied since the owner last opened it (`isChatUnread`). */
+  /** Unread: the bot replied since the owner last opened it, or the owner marked it (`isChatUnread`). */
   unread?: boolean;
 }) {
   const live = isThreadLive(row.shell);
@@ -116,8 +124,10 @@ function ThreadRowContent({
         )}
       >
         {row.shell.title}
+        {isChatPinned(row.link) ? <span className="sr-only">, pinned</span> : null}
         {unread ? <span className="sr-only">, unread</span> : null}
       </span>
+      {isChatPinned(row.link) ? <PinMark /> : null}
       {needsYou ? (
         <span className="flex shrink-0 items-center gap-1.5 text-[13px] text-[var(--personal-text-secondary)]">
           <span aria-hidden="true" className="size-2 rounded-full bg-[var(--personal-review)]" />
@@ -161,6 +171,9 @@ function ThreadRow({
   onError,
   onLongPress,
   unread = false,
+  onTogglePin,
+  onSnooze,
+  onWake,
 }: {
   environmentId: EnvironmentId;
   botId: string;
@@ -171,6 +184,12 @@ function ThreadRow({
   onError: (message: string | null) => void;
   /** Press and hold: select mode, starting with this chat. */
   onLongPress: (threadId: string) => void;
+  /** Swipe right: Pin or Unpin (open chats). */
+  onTogglePin?: ((row: BotThreadRow) => void) | undefined;
+  /** Swipe right: Snooze, which asks when (open chats). */
+  onSnooze?: ((row: BotThreadRow) => void) | undefined;
+  /** A snoozed row: its "Wake now" button, and the wake time in place of the preview. */
+  onWake?: ((row: BotThreadRow) => void) | undefined;
 }) {
   const threadId = row.link.threadId;
   const longPress = useLongPress(useCallback(() => onLongPress(threadId), [onLongPress, threadId]));
@@ -202,11 +221,26 @@ function ThreadRow({
     else if (outcome.status === "done") onError(null);
   };
   const title = row.shell.title;
+  const pinned = isChatPinned(row.link);
+  const wakeMs =
+    row.link.snoozedUntil === undefined ? null : DateTime.toEpochMillis(row.link.snoozedUntil);
   return (
     <li>
       <SwipeToDelete
         label={`Delete ${title}`}
         onDelete={onDelete}
+        secondaryActions={
+          archived || onWake !== undefined || onTogglePin === undefined || onSnooze === undefined
+            ? undefined
+            : [
+                {
+                  label: `${pinned ? "Unpin" : "Pin"} ${title}`,
+                  text: pinned ? "Unpin" : "Pin",
+                  run: () => onTogglePin(row),
+                },
+                { label: `Snooze ${title}`, text: "Snooze", run: () => onSnooze(row) },
+              ]
+        }
         trailingActions={[
           archived
             ? { label: `Unarchive ${title}`, text: "Unarchive", run: () => setArchived(false) }
@@ -243,6 +277,31 @@ function ThreadRow({
               Delete
             </button>
           </div>
+        ) : onWake !== undefined ? (
+          <div className="flex items-center gap-3">
+            <Link
+              to="/bots/$botId/$threadId"
+              params={{ botId, threadId: row.link.threadId }}
+              draggable={false}
+              aria-label={`${title}, ${wakeMs === null ? "snoozed" : wakeLabel(wakeMs, now).toLowerCase()}`}
+              className="flex min-h-14 min-w-0 flex-1 flex-col justify-center py-2 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--personal-text)]"
+            >
+              <span className="truncate text-[15px] text-[var(--personal-text)]">{title}</span>
+              {wakeMs === null ? null : (
+                <span className="truncate text-[13px] text-[var(--personal-text-secondary)]">
+                  {wakeLabel(wakeMs, now)}
+                </span>
+              )}
+            </Link>
+            <button
+              type="button"
+              aria-label={`Wake ${title} now`}
+              onClick={() => onWake(row)}
+              className="h-11 shrink-0 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] px-3 text-sm font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            >
+              Wake now
+            </button>
+          </div>
         ) : (
           <div {...longPress} className={NO_TOUCH_SELECT}>
             <Link
@@ -270,7 +329,8 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   const shells = useThreadShells();
   const bot = list.data?.bots.find((candidate) => candidate.botId === botId) ?? null;
   const providers = useAtomValue(primaryServerProvidersAtom);
-  const modelLabel = bot === null ? null : botModelShortLabel(bot.modelSelection, providers);
+  const modelLabel = bot === null ? null : botActiveModelShortLabel(bot, providers);
+  const modelNote = bot === null ? null : fallbackNoteLabel(bot);
   const newChat = useNewChatPrompt(environmentId, bot);
   const [now] = useState(() => Date.now());
   const [wrapupError, setWrapupError] = useState<string | null>(null);
@@ -286,17 +346,21 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   });
 
   const relayThreadIds = usePersonalGroupRelayThreadIds(environmentId);
+  // One timer for the nearest wake time: it moves the clock past it (a woken chat is back in the
+  // list at once) and refetches, which brings it back unread at the top.
+  const wakeClock = useSnoozeWakeClock(list.data?.threads, list.refresh);
   const rows = useMemo(
     () =>
       bot === null || list.data === null
-        ? { active: [], archived: [] }
+        ? { active: [], archived: [], snoozed: [] }
         : botThreadRows(
             bot.botId,
             list.data.threads,
             shells.filter((shell) => shell.environmentId === environmentId),
             relayThreadIds,
+            wakeClock,
           ),
-    [bot, environmentId, list.data, relayThreadIds, shells],
+    [bot, environmentId, list.data, relayThreadIds, shells, wakeClock],
   );
   // Unread dots for every bot's chats, from the same list; archived rows never get one. The chat
   // chips mark a chat unread for any bot, so the list must too (only the Bots home list keeps its
@@ -324,9 +388,13 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
     : "";
   useRefetchOnTurnsSettled(turnsKey, list.refresh);
 
-  // Wrapup acts on the most recent non-archived chat (rows.active is newest
-  // first): the same chat "New chat" would supersede.
-  const newestThreadId = rows.active[0]?.link.threadId ?? null;
+  // Wrapup acts on the most recent open chat: the same chat "New chat" would supersede. The rows
+  // are pinned first, so the newest is found by its activity, not by position.
+  const newestThreadId =
+    rows.active.reduce<BotThreadRow | null>(
+      (newest, row) => (newest === null || row.updatedMs > newest.updatedMs ? row : newest),
+      null,
+    )?.link.threadId ?? null;
   const wrapupThreadRef = useMemo(
     () =>
       environmentId === null || newestThreadId === null
@@ -338,7 +406,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   const { send: sendWrapup, sending: wrapupSending } = useWrapupChat(
     environmentId,
     wrapupThread,
-    bot?.modelSelection ?? null,
+    bot === null ? null : botEffectiveModelSelection(bot),
   );
   const wrapupDisabled =
     newestThreadId === null || laptopOffline || wrapupThread === null || wrapupSending;
@@ -402,14 +470,40 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   const exitSelect = useCallback(() => setSelection(null), []);
   useEscapeToExit(selecting, exitSelect);
 
-  const onBulk = async (action: BulkChatAction) => {
+  // Snooze asks when: the sheet is for the chosen chats (select mode) or one swiped row.
+  const [snoozeIds, setSnoozeIds] = useState<ReadonlyArray<string> | null>(null);
+  const allChosenPinned =
+    chosen.length > 0 &&
+    sectionRows
+      .filter((row) => chosen.includes(row.link.threadId))
+      .every((row) => isChatPinned(row.link));
+
+  // One chat, from a swipe: the same server path as the bulk bar, one id.
+  const runOne = async (action: BulkChatAction, threadId: string, options?: BulkChatOptions) => {
+    setActionError(null);
+    const outcome = await runBulk(action, [threadId], 0, options);
+    if (outcome.status === "settled" && outcome.anyFailed) setActionError(outcome.notice);
+  };
+  const onTogglePin = (row: BotThreadRow) =>
+    void runOne(isChatPinned(row.link) ? "unpin" : "pin", row.link.threadId);
+  const onSnoozeRow = (row: BotThreadRow) => setSnoozeIds([row.link.threadId]);
+  const onWake = (row: BotThreadRow) => void runOne("wake", row.link.threadId);
+  const onSnoozePicked = (untilMs: number) => {
+    const ids = snoozeIds;
+    setSnoozeIds(null);
+    if (ids === null) return;
+    if (selection !== null) void onBulk("snooze", { snoozeUntilMs: untilMs });
+    else if (ids[0] !== undefined) void runOne("snooze", ids[0], { snoozeUntilMs: untilMs });
+  };
+
+  const onBulk = async (action: BulkChatAction, options?: BulkChatOptions) => {
     if (selection === null || chosen.length === 0 || bulkBusy) return;
     const section = selection.section;
     const working = sectionRows.filter(
       (row) => chosen.includes(row.link.threadId) && isThreadLive(row.shell),
     ).length;
     setBulkBusy(true);
-    const outcome = await runBulk(action, chosen, working);
+    const outcome = await runBulk(action, chosen, working, options);
     setBulkBusy(false);
     if (outcome.status === "cancelled") return;
     setNotice({ text: outcome.notice, failed: outcome.anyFailed });
@@ -470,6 +564,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
                     className="truncate text-[13px] text-[var(--personal-text-secondary)]"
                   >
                     {modelLabel}
+                    {modelNote !== null ? <span className="sr-only"> ({modelNote})</span> : null}
                   </p>
                 ) : null}
               </div>
@@ -556,6 +651,34 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
             >
               {selection.section === "archived" ? "Unarchive" : "Archive"}
             </button>
+            {selection.section === "active" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void onBulk(allChosenPinned ? "unpin" : "pin")}
+                  disabled={chosen.length === 0 || bulkBusy}
+                  className={cn(SELECT_TEXT_BUTTON, "text-[var(--personal-text)]")}
+                >
+                  {allChosenPinned ? "Unpin" : "Pin"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSnoozeIds(chosen)}
+                  disabled={chosen.length === 0 || bulkBusy}
+                  className={cn(SELECT_TEXT_BUTTON, "text-[var(--personal-text)]")}
+                >
+                  Snooze
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onBulk("markUnread")}
+                  disabled={chosen.length === 0 || bulkBusy}
+                  className={cn(SELECT_TEXT_BUTTON, "text-[var(--personal-text)]")}
+                >
+                  Mark unread
+                </button>
+              </>
+            ) : null}
             <SelectModeDeleteButton
               disabled={chosen.length === 0}
               busy={bulkBusy}
@@ -566,6 +689,13 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
       ) : null}
 
       {newChat.dialog}
+      {snoozeIds !== null ? (
+        <SnoozeSheet
+          title={snoozeIds.length === 1 ? "Snooze chat" : `Snooze ${snoozeIds.length} chats`}
+          onPick={onSnoozePicked}
+          onCancel={() => setSnoozeIds(null)}
+        />
+      ) : null}
       {bot !== null && environmentId !== null && selection === null ? (
         <>
           {/* Stacked on the phone; side by side on desktop, where two
@@ -607,7 +737,9 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
 
           {rows.active.length === 0 ? (
             <p className="mt-6 text-center text-[15px] text-[var(--personal-text-secondary)]">
-              No chats with {bot.name} yet.
+              {rows.snoozed.length > 0
+                ? `Every chat with ${bot.name} is snoozed.`
+                : `No chats with ${bot.name} yet.`}
             </p>
           ) : (
             <ul className="mt-4 divide-y divide-[var(--personal-border)] border-y border-[var(--personal-border)]">
@@ -622,10 +754,35 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
                   onError={setActionError}
                   onLongPress={selectFromActive}
                   unread={unreadThreadIds.has(row.link.threadId)}
+                  onTogglePin={onTogglePin}
+                  onSnooze={onSnoozeRow}
                 />
               ))}
             </ul>
           )}
+
+          {rows.snoozed.length > 0 ? (
+            <details className="mt-6">
+              <summary className="flex min-h-11 cursor-pointer items-center text-[15px] font-medium text-[var(--personal-text-secondary)]">
+                Snoozed ({rows.snoozed.length})
+              </summary>
+              <ul className="divide-y divide-[var(--personal-border)]">
+                {rows.snoozed.map((row) => (
+                  <ThreadRow
+                    key={row.link.threadId}
+                    environmentId={environmentId}
+                    botId={bot.botId}
+                    row={row}
+                    now={wakeClock}
+                    archived={false}
+                    onError={setActionError}
+                    onLongPress={ignoreLongPress}
+                    onWake={onWake}
+                  />
+                ))}
+              </ul>
+            </details>
+          ) : null}
 
           {rows.archived.length > 0 ? (
             <details className="mt-6">

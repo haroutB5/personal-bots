@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 
 import { isThreadLive, isThreadRateLimited, threadNeedsAttention } from "./botSummaries";
 import { botThreadRows, type BotThreadRow } from "./botThreadRows";
+import { isChatPinned } from "./chatState";
 import { conversationChatTitle } from "./ConversationHeaderName";
 import { isTurnThinking } from "./conversationModel";
 import { isChatUnread, type ChatSeenState } from "./unreadChats";
@@ -43,12 +44,18 @@ export interface ChatChip {
   readonly current: boolean;
   readonly state: ChatChipState;
   readonly unread: boolean;
+  /** The owner pinned this chat: it sits first and draws a small pin. */
+  readonly pinned: boolean;
   /** What a screen reader says besides the text: "needs you", "thinking", "current chat"... */
   readonly label: string;
 }
 
 export interface ChatChipModel {
-  /** Temporary chip first (if any), then the owner's chats, oldest first. */
+  /**
+   * Temporary chip first (if any), then the pinned chats (newest activity
+   * first), then the owner's other chats, oldest first. Snoozed chats are not
+   * here (unless one is the open chat, as a temporary chip).
+   */
   readonly chips: ReadonlyArray<ChatChip>;
   /** Open chats the owner started with this bot: the N of "All N". */
   readonly openCount: number;
@@ -156,18 +163,26 @@ export function buildChatChips(input: {
   /** Chats waiting on another bot's task, with the words the header uses (waitingLabelsByThread). */
   readonly waitingLabels: ReadonlyMap<string, string>;
   readonly seen: ChatSeenState;
+  /** The time a snooze is judged against (the screen's wake clock). */
+  readonly nowMs?: number | undefined;
 }): ChatChipModel {
-  const { active, archived } = botThreadRows(
+  const { active, archived, snoozed } = botThreadRows(
     input.botId,
     input.links,
     input.shells,
     input.relayThreadIds,
+    input.nowMs,
   );
   const taskChats = taskChatThreadIds(
     active.map((row) => row.link),
     input.tasks,
   );
-  const owner = active.filter((row) => !taskChats.has(row.link.threadId)).toSorted(byCreation);
+  const ownerRows = active.filter((row) => !taskChats.has(row.link.threadId));
+  // `active` is pinned first and newest first: the pinned part keeps that order.
+  const owner = [
+    ...ownerRows.filter((row) => isChatPinned(row.link)),
+    ...ownerRows.filter((row) => !isChatPinned(row.link)).toSorted(byCreation),
+  ];
 
   const toChip = (row: BotThreadRow, kind: ChatChipKind): ChatChip => {
     const threadId = row.link.threadId as string;
@@ -183,6 +198,8 @@ export function buildChatChips(input: {
     const subject =
       kind === "task" ? `Task: ${title}` : kind === "archived" ? `Archived: ${title}` : title;
     const words = current ? "current chat" : stateWords(state, row.shell, waitingLabel);
+    const pinned = isChatPinned(row.link);
+    const spoken = [pinned ? "pinned" : null, words].filter((part) => part !== null).join(", ");
     return {
       threadId,
       text,
@@ -190,7 +207,8 @@ export function buildChatChips(input: {
       current,
       state,
       unread,
-      label: words === null ? subject : `${subject}, ${words}`,
+      pinned,
+      label: spoken === "" ? subject : `${subject}, ${spoken}`,
     };
   };
 
@@ -201,7 +219,10 @@ export function buildChatChips(input: {
   if (!owner.some((row) => row.link.threadId === input.currentThreadId)) {
     const taskRow = active.find((row) => row.link.threadId === input.currentThreadId);
     const archivedRow = archived.find((row) => row.link.threadId === input.currentThreadId);
-    if (taskRow !== undefined) chips.unshift(toChip(taskRow, "task"));
+    // A snoozed chat opened from the Snoozed section: an ordinary chip while it is open.
+    const snoozedRow = snoozed.find((row) => row.link.threadId === input.currentThreadId);
+    if (snoozedRow !== undefined) chips.unshift(toChip(snoozedRow, "chat"));
+    else if (taskRow !== undefined) chips.unshift(toChip(taskRow, "task"));
     else if (archivedRow !== undefined) chips.unshift(toChip(archivedRow, "archived"));
   }
   const turnsKey = owner

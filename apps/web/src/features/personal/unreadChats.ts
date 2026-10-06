@@ -53,9 +53,11 @@ export function isChatUnread(
 }
 
 /**
- * The unread chats of every bot that shows them ({@link showsUnreadChats}),
- * by bot id. Bots with none are absent. Reads only the list the Bots screen
- * already has: no request per row.
+ * The unread chats by bot id. Bots with none are absent. A bot that shows
+ * unread chats ({@link showsUnreadChats}) counts every unread chat; any other
+ * bot counts only the chats the owner marked unread (or that woke from a
+ * snooze), `markedUnread`, which show for every bot. Reads only the list the
+ * Bots screen already has: no request per row.
  */
 export function unreadChatsByBot(input: {
   readonly bots: ReadonlyArray<Pick<PersonalBot, "botId" | "lead">>;
@@ -68,14 +70,14 @@ export function unreadChatsByBot(input: {
     input.bots.filter((bot) => showsUnreadChats(bot)).map((bot) => bot.botId),
   );
   const out = new Map<string, Set<string>>();
-  if (shown.size === 0) return out;
   const relays = input.relayThreadIds ?? new Set<string>();
   const shellsById =
     input.shells === undefined
       ? null
       : new Map(input.shells.map((shell) => [shell.id as string, shell] as const));
   for (const link of input.links) {
-    if (!shown.has(link.botId) || isGroupRelayLink(link, relays)) continue;
+    if (!shown.has(link.botId) && link.markedUnread !== true) continue;
+    if (isGroupRelayLink(link, relays)) continue;
     // A chat whose shell has not arrived yet is not listed anywhere either.
     const shell = shellsById === null ? null : shellsById.get(link.threadId);
     if (shell === undefined) continue;
@@ -105,11 +107,44 @@ function setSeenState(next: ChatSeenState): void {
   for (const listener of listeners) listener();
 }
 
+/**
+ * Chats the owner marked unread from this device. The marking is only kept
+ * if the next time the chat is left is not taken as having read it: marking
+ * from inside the open chat and then leaving would otherwise write "seen up
+ * to now" and hide the very chat just marked.
+ */
+const markedUnreadHere = new Set<string>();
+
+/**
+ * "Mark unread" on this device: forgets what this device saw of the chat, so
+ * the unread flag from the list shows again, and keeps the leave of the chat
+ * (it may be open right now) from marking it seen. Opening the chat again
+ * clears it as any open does.
+ */
+export function clearChatSeen(threadId: string): void {
+  markedUnreadHere.add(threadId);
+  if (!seenState.seenUpToMs.has(threadId)) return;
+  const seenUpToMs = new Map(seenState.seenUpToMs);
+  seenUpToMs.delete(threadId);
+  setSeenState({ ...seenState, seenUpToMs });
+}
+
 /** The chat is open and visible (`open` true), or no longer is. */
 export function markChatOpen(threadId: string, open: boolean, nowMs: number = Date.now()): void {
   if (open) {
+    markedUnreadHere.delete(threadId);
     if (seenState.openThreadId === threadId) return;
     setSeenState({ ...seenState, openThreadId: threadId });
+    return;
+  }
+  if (markedUnreadHere.delete(threadId)) {
+    // Marked unread while it was open: leaving is not reading it.
+    const kept = new Map(seenState.seenUpToMs);
+    kept.delete(threadId);
+    setSeenState({
+      openThreadId: seenState.openThreadId === threadId ? null : seenState.openThreadId,
+      seenUpToMs: kept,
+    });
     return;
   }
   // Leaving: everything up to now has been seen. The server stamps the same
@@ -124,6 +159,7 @@ export function markChatOpen(threadId: string, open: boolean, nowMs: number = Da
 
 /** Test hook: forget everything this device saw. */
 export function resetChatSeenState(): void {
+  markedUnreadHere.clear();
   setSeenState(NO_CHAT_SEEN);
 }
 

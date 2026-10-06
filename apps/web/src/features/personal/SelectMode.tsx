@@ -80,7 +80,7 @@ export function SelectModeHeader({
 export function SelectModeActions({ children }: { children: ReactNode }): JSX.Element {
   return (
     <div
-      className="sticky bottom-0 -mx-5 mt-auto flex items-center justify-between border-t border-[var(--personal-border)] bg-[var(--personal-bg)] px-5 pt-2"
+      className="sticky bottom-0 -mx-5 mt-auto flex flex-wrap items-center justify-between border-t border-[var(--personal-border)] bg-[var(--personal-bg)] px-5 pt-2"
       style={{ paddingBottom: "max(env(safe-area-inset-bottom), 8px)" }}
     >
       {children}

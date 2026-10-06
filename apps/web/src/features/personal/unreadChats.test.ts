@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  clearChatSeen,
   isChatUnread,
   markChatOpen,
   NO_CHAT_SEEN,
@@ -110,6 +111,37 @@ describe("unreadChatsByBot", () => {
     expect([...(out.get("bot-cto") ?? [])]).toEqual(["t1"]);
   });
 
+  it("counts a chat the owner marked unread (or that woke) for every bot, replies for leads only", () => {
+    const links = [
+      link("t1", { markedUnread: true }, "bot-dev"),
+      link("t2", {}, "bot-dev"),
+      link("t3", { markedUnread: true }),
+      link("t4"),
+      link("t5", { markedUnread: true, unread: undefined }, "bot-dev"),
+    ];
+    const out = unreadChatsByBot({ bots, links, seen: NO_CHAT_SEEN });
+    // A bot that is not a lead: only the marked chat, not its plain reply.
+    expect([...(out.get("bot-dev") ?? [])]).toEqual(["t1"]);
+    // A lead keeps counting both kinds.
+    expect([...(out.get("bot-cto") ?? [])]).toEqual(["t3", "t4"]);
+  });
+
+  it("a marked chat that is archived, a relay or open here is not counted", () => {
+    const links = [
+      link("t-open", { markedUnread: true }, "bot-dev"),
+      link("t-relay", { markedUnread: true }, "bot-dev"),
+      link("t-ok", { markedUnread: true }, "bot-dev"),
+    ];
+    const out = unreadChatsByBot({
+      bots,
+      links,
+      shells: [shell("t-open"), shell("t-relay"), shell("t-ok")],
+      relayThreadIds: new Set(["t-relay"]),
+      seen: seen({ openThreadId: "t-open" }),
+    });
+    expect([...(out.get("bot-dev") ?? [])]).toEqual(["t-ok"]);
+  });
+
   it("is empty when no bot shows unread chats", () => {
     const out = unreadChatsByBot({
       bots: [{ botId: "bot-cto", lead: false }] as never,
@@ -148,6 +180,53 @@ describe("this device's seen state", () => {
     markChatOpen("t2", true);
     markChatOpen("t1", false, 3_000);
     expect(readChatSeenState().openThreadId).toBe("t2");
+  });
+});
+
+describe("Mark unread on this device (clearChatSeen)", () => {
+  const marked = link("t1", {
+    markedUnread: true,
+    lastReplyAt: DateTime.makeUnsafe("2026-10-02T10:00:00.000Z"),
+  });
+
+  it("marking from inside the open chat, then leaving it, keeps the chat unread", () => {
+    markChatOpen("t1", true);
+    clearChatSeen("t1");
+    markChatOpen("t1", false, REPLY_MS + 60_000);
+    const state = readChatSeenState();
+    expect(state.openThreadId).toBeNull();
+    expect(state.seenUpToMs.has("t1")).toBe(false);
+    expect(isChatUnread(marked, state)).toBe(true);
+  });
+
+  it("drops what the device had seen of a chat it left earlier", () => {
+    markChatOpen("t1", false, REPLY_MS + 60_000);
+    expect(isChatUnread(marked, readChatSeenState())).toBe(false);
+    clearChatSeen("t1");
+    expect(readChatSeenState().seenUpToMs.has("t1")).toBe(false);
+    expect(isChatUnread(marked, readChatSeenState())).toBe(true);
+  });
+
+  it("only the first leave is not a read; opening it again and leaving reads it as before", () => {
+    markChatOpen("t1", true);
+    clearChatSeen("t1");
+    markChatOpen("t1", false, 1_000);
+    markChatOpen("t1", true);
+    markChatOpen("t1", false, REPLY_MS + 120_000);
+    expect(isChatUnread(marked, readChatSeenState())).toBe(false);
+  });
+
+  it("opening the chat again before any leave also ends the hold", () => {
+    clearChatSeen("t1");
+    markChatOpen("t1", true);
+    markChatOpen("t1", false, REPLY_MS + 60_000);
+    expect(isChatUnread(marked, readChatSeenState())).toBe(false);
+  });
+
+  it("does not touch another chat", () => {
+    markChatOpen("t2", false, 5_000);
+    clearChatSeen("t1");
+    expect(readChatSeenState().seenUpToMs.get("t2")).toBe(5_000);
   });
 });
 
