@@ -67,7 +67,6 @@ import { ChatChips } from "./ChatChips";
 import { markChatSwitched, rememberChipsShown } from "./chatChipHandoff";
 import { buildChatChips } from "./chatChipRows";
 import { ConversationHeaderLine, ConversationHeaderName } from "./ConversationHeaderName";
-import { NewChatDialog } from "./NewChatDialog";
 import { ConversationSubtitle } from "./ConversationSubtitle";
 import { botMuteState } from "./botMuteModel";
 import { conversationHeaderStatus, resolveBotProvider, taskCardBotLine } from "./botSummaries";
@@ -136,7 +135,7 @@ import { PersonalComposer } from "./PersonalComposer";
 import { ProgressNoteLine } from "./ProgressNoteLine";
 import { deriveLatestProgressNote } from "./latestProgress";
 import { useLaptopOffline, usePersonalConnectionPhase } from "./PersonalOfflineBanner";
-import { useStartBotChat } from "./startBotChat";
+import { useNewChatPrompt } from "./useNewChatPrompt";
 import { usePersonalRelatedTasks, usePersonalTasks } from "./usePersonalAutomation";
 import { usePrewarmChatSession } from "./usePrewarmChatSession";
 import { mergeTaskLists } from "./taskPresentation";
@@ -150,7 +149,7 @@ import { useWrapupChat } from "./wrapupChat";
 import { useDeleteChat } from "./useDeleteChat";
 import { RenameChatDialog } from "./RenameChatDialog";
 import { pendingForThread } from "./pendingOutgoing";
-import { renameChatDraftTitle, renameChatInitialTitle, useRenameChat } from "./renameChat";
+import { renameChatInitialTitle, useRenameChat } from "./renameChat";
 import { findRetryTarget, useRetryFailedTurn } from "./retryFailedTurn";
 import { usePersonalBackTarget } from "./usePersonalBackTarget";
 import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
@@ -257,7 +256,7 @@ export function ConversationScreen({
     reportDefect: false,
   });
   const cancelSecret = useAtomCommand(personalSecretCancel, { reportFailure: false });
-  const { start: startNewChat, starting } = useStartBotChat(environmentId, bot?.botId ?? null);
+  const newChat = useNewChatPrompt(environmentId, bot);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const keyboardInset = useKeyboardInset(shellRef);
   const now = useMinuteNow();
@@ -791,17 +790,9 @@ export function ConversationScreen({
   // Another chat finishing a turn lights its chip: refetch the list (it carries
   // the unread flag), debounced, as the bot's chat list does.
   useRefetchOnTurnsSettled(chipsShown ? chipModel.turnsKey : "", list.refresh);
-  const [newChatOpen, setNewChatOpen] = useState(false);
-  const onStartNamedChat = async (title: string) => {
-    const name = renameChatDraftTitle(title, "");
-    markChatSwitched();
-    await startNewChat({
-      replace: true,
-      keepState: true,
-      ...(name === null ? {} : { onCreated: (newThreadId) => renameChat(newThreadId, name) }),
-    });
-    setNewChatOpen(false);
-  };
+  // The "+" chip swaps this chat for the new one and keeps Back where it was.
+  const onChipNewChat = () =>
+    newChat.open({ replace: true, keepState: true, onBeforeStart: markChatSwitched });
 
   const loadEarlier =
     environmentId !== null && threadHasOlderTurns(threadState)
@@ -912,7 +903,7 @@ export function ConversationScreen({
                 botName={bot.name}
                 chips={chipModel.chips}
                 openCount={chipModel.openCount}
-                onNewChat={() => setNewChatOpen(true)}
+                onNewChat={onChipNewChat}
               />
             </div>
           </>
@@ -1027,7 +1018,7 @@ export function ConversationScreen({
             ) : null}
             {interruptInput !== null || (bot !== null && providerWait) ? <MenuSeparator /> : null}
             {bot !== null ? (
-              <MenuItem disabled={starting} onClick={() => void startNewChat()}>
+              <MenuItem disabled={newChat.starting} onClick={() => newChat.open()}>
                 New chat
               </MenuItem>
             ) : null}
@@ -1076,15 +1067,7 @@ export function ConversationScreen({
           </MenuPopup>
         </Menu>
       </header>
-      {bot !== null ? (
-        <NewChatDialog
-          open={newChatOpen}
-          botName={bot.name}
-          starting={starting}
-          onOpenChange={setNewChatOpen}
-          onStart={(title) => void onStartNamedChat(title)}
-        />
-      ) : null}
+      {newChat.dialog}
       <RenameChatDialog
         open={renameOpen}
         initialTitle={renameChatInitialTitle(chatTitle)}

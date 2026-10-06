@@ -15,7 +15,7 @@ import { chatNoticeLabel, readChatNotice } from "./chatNotices";
 import { readServerTurn, type ServerTurn } from "./delegationModel";
 import { HIDDEN_PREVIEW_LABEL, HIDDEN_WORKING_LABEL, hidesBotPreviews } from "./previewPrivacy";
 import { formatRelativeTime } from "./relativeTime";
-import { useStartBotChat } from "./startBotChat";
+import { useNewChatPrompt } from "./useNewChatPrompt";
 import { UnreadChatsBadge } from "./UnreadChatsBadge";
 
 /**
@@ -184,7 +184,7 @@ export const BotRow = memo(function BotRow({
   const unreadChats = summary.unreadChats ?? 0;
   const { bot, newestThread, provider, live, lastActivityMs } = summary;
   const status = botStatus(summary, now);
-  const { start, starting } = useStartBotChat(environmentId, bot.botId);
+  const newChat = useNewChatPrompt(environmentId, bot);
   const rowClass = cn(ROW_CLASS, selected && SELECTED_ROW_CLASS);
   const selectedProps = selectedChatProps(selected);
 
@@ -285,15 +285,18 @@ export const BotRow = memo(function BotRow({
   }
 
   return (
-    <button
-      type="button"
-      onClick={() => void start()}
-      disabled={starting}
-      aria-busy={starting}
-      className={cn(rowClass, "cursor-pointer disabled:cursor-wait")}
-      {...selectedProps}
-    >
-      {content}
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => newChat.open()}
+        disabled={newChat.starting}
+        aria-busy={newChat.starting}
+        className={cn(rowClass, "cursor-pointer disabled:cursor-wait")}
+        {...selectedProps}
+      >
+        {content}
+      </button>
+      {newChat.dialog}
+    </>
   );
 });

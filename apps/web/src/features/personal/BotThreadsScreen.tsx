@@ -21,7 +21,7 @@ import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
 import { commandFailureMessage } from "./commandFeedback";
 import { isThreadLive, isThreadRateLimited, threadNeedsAttention } from "./botSummaries";
 import { formatRelativeTime } from "./relativeTime";
-import { useStartBotChat } from "./startBotChat";
+import { useNewChatPrompt } from "./useNewChatPrompt";
 import { useLaptopOffline } from "./PersonalOfflineBanner";
 import { usePersonalTasks } from "./usePersonalAutomation";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
@@ -271,7 +271,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
   const bot = list.data?.bots.find((candidate) => candidate.botId === botId) ?? null;
   const providers = useAtomValue(primaryServerProvidersAtom);
   const modelLabel = bot === null ? null : botModelShortLabel(bot.modelSelection, providers);
-  const { start, starting } = useStartBotChat(environmentId, bot?.botId ?? null);
+  const newChat = useNewChatPrompt(environmentId, bot);
   const [now] = useState(() => Date.now());
   const [wrapupError, setWrapupError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -565,6 +565,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
         </>
       ) : null}
 
+      {newChat.dialog}
       {bot !== null && environmentId !== null && selection === null ? (
         <>
           {/* Stacked on the phone; side by side on desktop, where two
@@ -572,9 +573,9 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
           <div className="mt-3 flex flex-col gap-3 md:flex-row">
             <button
               type="button"
-              onClick={() => void start()}
-              disabled={starting}
-              aria-busy={starting}
+              onClick={() => newChat.open()}
+              disabled={newChat.starting}
+              aria-busy={newChat.starting}
               className="flex h-11 items-center justify-center gap-2 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] md:flex-1 text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--personal-bg)] disabled:opacity-40"
             >
               <Plus aria-hidden="true" className="size-5" strokeWidth={1.75} />

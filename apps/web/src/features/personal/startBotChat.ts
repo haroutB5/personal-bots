@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import type { EnvironmentId, PersonalBotId } from "@t3tools/contracts";
 import { ThreadId } from "@t3tools/contracts";
@@ -29,14 +29,18 @@ export function useStartBotChat(environmentId: EnvironmentId | null, botId: Pers
   const navigate = useNavigate();
   const createThread = useAtomCommand(personalBotCreateThread);
   const [starting, setStarting] = useState(false);
+  // The state above lags a tap behind: two quick taps must still make one chat.
+  const inFlight = useRef(false);
 
   const start = useCallback(
     async (options?: StartBotChatOptions) => {
-      if (environmentId === null || botId === null || starting) return;
+      if (environmentId === null || botId === null || inFlight.current) return;
+      inFlight.current = true;
       setStarting(true);
       const threadId = ThreadId.make(randomUUID());
       const result = await createThread({ environmentId, input: { botId, threadId } });
       if (result._tag === "Success") await options?.onCreated?.(threadId);
+      inFlight.current = false;
       setStarting(false);
       if (result._tag === "Success") {
         await navigate({
@@ -47,7 +51,7 @@ export function useStartBotChat(environmentId: EnvironmentId | null, botId: Pers
         });
       }
     },
-    [botId, createThread, environmentId, navigate, starting],
+    [botId, createThread, environmentId, navigate],
   );
 
   return { start, starting };

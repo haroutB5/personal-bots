@@ -25,7 +25,7 @@ import { botStatus, type BotSummary } from "./botSummaries";
 import type { ChatsSnapshotRow } from "./chatsSnapshot";
 import { GroupAvatarCluster } from "./GroupAvatarCluster";
 import { activeGroupMembers, groupStatusLine, isGroupRoundLive, groupSubtitle } from "./groupModel";
-import { useStartBotChat } from "./startBotChat";
+import { useNewChatPrompt } from "./useNewChatPrompt";
 import { usePressOpenedMenuGuard } from "./pressOpenedMenuGuard";
 import { unreadChatsLabel } from "./unreadChats";
 import { UnreadDot } from "./UnreadChatsBadge";
@@ -505,7 +505,7 @@ export function PinnedBotTile({
   readonly selected?: boolean | undefined;
 }): JSX.Element {
   const { bot, newestThread, provider } = summary;
-  const { start, starting } = useStartBotChat(environmentId, bot.botId);
+  const newChat = useNewChatPrompt(environmentId, bot);
   const status = botStatus(summary, now);
   const badge = pinnedBotBadge(summary, now);
   const setMute = useSetBotMute(environmentId);
@@ -513,34 +513,37 @@ export function PinnedBotTile({
     ? { kind: "botEdit", botId: bot.botId }
     : newestThread !== null
       ? { kind: "thread", botId: bot.botId, threadId: newestThread.id }
-      : { kind: "start", start: () => void start(), starting };
+      : { kind: "start", start: () => newChat.open(), starting: newChat.starting };
   return (
-    <PinnedTile
-      name={bot.name}
-      avatar={
-        <BotAvatar
-          shape={bot.avatarShape}
-          color={bot.avatarColor}
-          size={PINNED_AVATAR_SIZE}
-          label={bot.name}
-          motion={motion}
-          comet={comet}
-          thought="pinned"
-        />
-      }
-      badge={badge}
-      statusLabel={badge === null ? null : status.label}
-      target={target}
-      onUnpin={onUnpin}
-      selected={selected}
-      muted={botMuteState(bot, now).muted}
-      menuExtra={
-        <BotMuteMenuItems bot={bot} now={now} onChange={(mute) => void setMute(bot, mute)} />
-      }
-      modelLabel={summary.modelLabel}
-      modelShortLabel={summary.modelShortLabel}
-      unreadChats={summary.unreadChats}
-    />
+    <>
+      <PinnedTile
+        name={bot.name}
+        avatar={
+          <BotAvatar
+            shape={bot.avatarShape}
+            color={bot.avatarColor}
+            size={PINNED_AVATAR_SIZE}
+            label={bot.name}
+            motion={motion}
+            comet={comet}
+            thought="pinned"
+          />
+        }
+        badge={badge}
+        statusLabel={badge === null ? null : status.label}
+        target={target}
+        onUnpin={onUnpin}
+        selected={selected}
+        muted={botMuteState(bot, now).muted}
+        menuExtra={
+          <BotMuteMenuItems bot={bot} now={now} onChange={(mute) => void setMute(bot, mute)} />
+        }
+        modelLabel={summary.modelLabel}
+        modelShortLabel={summary.modelShortLabel}
+        unreadChats={summary.unreadChats}
+      />
+      {newChat.dialog}
+    </>
   );
 }
 
