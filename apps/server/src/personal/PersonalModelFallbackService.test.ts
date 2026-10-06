@@ -600,7 +600,7 @@ it.effect(
       // A bot that does not exist is logged the same way, with no time left.
       logs.length = 0;
       yield* service.onLimitHit({
-        botId: "bot-missing",
+        botId: PersonalBotId.make("bot-missing"),
         threadId: CHAT,
         source: "task",
         instanceId: CODEX,

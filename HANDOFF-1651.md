@@ -28,7 +28,7 @@ Tests (`leadBots.test.ts`, 6 new): off and on and model change with audit and an
 ```powershell
 # start (release = a release folder, a built worktree, or a sha12 under ~\.personal-bots\releases)
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\throwaway-server.ps1 -Name fb1651 -Release 3c8940d78e26
-# prints Name, Root, URL, Pairing (single-use link), PID, Version, Stop command
+# prints Name, Root, URL, Pairing (single-use link), PID, Server, Version, Stop command (-Json: one object)
 powershell ... -File scripts\personal\throwaway-server.ps1 -Pair fb1651     # a fresh pairing link
 powershell ... -File scripts\personal\throwaway-server.ps1 -List            # roots under %TEMP% and whether they run
 powershell ... -File scripts\personal\throwaway-server.ps1 -Stop fb1651     # kill the recorded PID, delete the root
@@ -37,7 +37,7 @@ powershell ... -File scripts\personal\throwaway-server.ps1 -Stop fb1651     # ki
 - Root `%TEMP%\hbots-tw-<name>` (name: lower-case letters, digits, dashes). Always fresh: it refuses an existing root, so a test never inherits an old database.
 - `userdata\settings.json` points `providers.claudeAgent.binaryPath` at a fake CLI (forward slashes, no BOM) and adds a second instance `claudeLimited` ("Home (limited)") on a second fake; codex, opencode, cursor and grok are disabled. `PERSONAL_SEED_MODEL=claude-sonnet-5-5`, headless browser, no T3 Connect. Free port on 127.0.0.1.
 - The fakes live in `scripts/personal/testing/fake-claude/` (QA's 1.65.0 fakes plus an `MCPTOOL <name> <json>` trigger that calls any MCP tool and answers with the result). The script copies them to `<root>\fake\fakeok` and `fakelimit`; the folder name picks the persona. Trigger words and the `limit-until` / `usage-full` state files are listed at the top of `cli.js`. State and log: `<root>\fake-pids`.
-- Server output: `<root>\server.log`, `server.err.log`. The record (name, port, PID, bin, start time) is `<root>\throwaway.json`.
+- Server output (stdout and stderr together): `<root>\server.log`. The record (name, port, PID, server PID, bin, start time) is `<root>\throwaway.json`. The server is started the way the release scripts do it (a detached `cmd.exe` wrapper with the output redirected inside cmd), so a caller that captures the script's output (`$info = ...ps1 -Json | ConvertFrom-Json`) does not hang on a pipe the server keeps open (found and fixed in this release's own test). PID is that wrapper, Server is the node process that listens.
 - `-Stop` re-checks that the PID's command line still names this release and this root before it kills it (taskkill of that one PID and its child tree), so a reused PID is never touched; nothing is killed by name. It then deletes the root: every reparse point (junction, symlink) under the root is unlinked first and never followed. If the PID will not die the root is kept and the exit code is 1.
 - If the server does not come up it is stopped, the root is removed and the last log lines are shown.
 

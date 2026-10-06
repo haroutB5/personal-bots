@@ -204,7 +204,10 @@ describe("ReplyableMessage: select text", () => {
           <p>All green.</p>
         </ReplyableMessage>,
         // The refs the component reads: the row, and the wrapper of its text.
-        { createNodeMock: (element) => (element.props["data-replyable"] === "" ? anchorNode : {}) },
+        {
+          createNodeMock: (element) =>
+            (element.props as Record<string, unknown>)["data-replyable"] === "" ? anchorNode : {},
+        },
       );
     });
     return renderer!.root;
