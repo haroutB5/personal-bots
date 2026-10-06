@@ -278,8 +278,14 @@ export type ListTasksResult = typeof ListTasksResult.Type;
 export const RequestSecretInput = Schema.Struct({
   name: PersonalSecretName.annotate({
     description:
-      "UPPER_SNAKE name such as GITHUB_TOKEN. The value arrives as the environment variable PB_SECRET_<NAME>.",
+      "UPPER_SNAKE name such as GITHUB_TOKEN. By default the key is brokered: you use it through secret_request with {{secret:NAME}} and never see the value. If the user saves it as an environment variable instead, it is PB_SECRET_<NAME> in new shell commands.",
   }),
+  origins: Schema.optional(
+    Schema.Array(Schema.String).check(Schema.isMaxLength(8)).annotate({
+      description:
+        "The HTTPS origin(s) of the API the key is for, e.g. ['https://api.vercel.com']. Shown on the form for the user to confirm; a brokered key can only be sent there.",
+    }),
+  ),
   label: TrimmedNonEmptyString.annotate({
     description:
       "What the user sees on the secure form, for example 'GitHub personal access token'.",
@@ -292,7 +298,10 @@ export const RequestSecretInput = Schema.Struct({
 export const RequestSecretResult = Schema.Struct({
   requestId: Schema.String,
   name: Schema.String,
+  /** The variable name when the key is saved as an environment variable; brokered keys have none. */
   envVar: Schema.String,
+  mode: Schema.optional(Schema.Literals(["brokered", "env"])),
+  origins: Schema.optional(Schema.Array(Schema.String)),
   status: Schema.Literals(["pending", "fulfilled"]),
   note: Schema.String,
 });
@@ -655,7 +664,7 @@ const SteerTaskTool = Tool.make("steer_task", {
 
 const RequestSecretTool = Tool.make("request_secret", {
   description:
-    "Ask the user for an API key or token through a secure form. Never use this for website passwords: those are the user's saved logins, filled by use_login. Never ask for secrets in chat and never print one. When the secret is already saved, the result says so and no form is shown. Otherwise end your turn after calling this: you are resumed in a fresh session where the value is the environment variable PB_SECRET_<NAME> for shell commands.",
+    "Ask the user for an API key or token through a secure form. Never use this for website passwords: those are the user's saved logins, filled by use_login. Never ask for secrets in chat and never print one. When the secret is already saved, the result says so and no form is shown. Pass origins (the API's HTTPS origin) so the user can confirm where the key may be sent. Otherwise end your turn after calling this: you are resumed in a fresh session. A brokered key (the default) is used only through secret_request with a {{secret:NAME}} placeholder, so you never see its value; if the user saves it as an environment variable the result says so and it is PB_SECRET_<NAME> for shell commands.",
   parameters: RequestSecretInput,
   success: RequestSecretResult,
   failure: BotsToolFailure,

@@ -38,6 +38,7 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalLoginRepository from "../secrets/PersonalLoginRepository.ts";
+import { secretRedactor } from "../secrets/secretRedaction.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as BrowserLease from "./BrowserLease.ts";
 import { REDACTED_CREDENTIAL } from "./credentialRedactor.ts";
@@ -115,7 +116,10 @@ class FakePage implements BrowserPage {
       dispose: async () => {},
     };
   }
-  async typeText() {}
+  readonly typed: string[] = [];
+  async typeText(input: { readonly text: string }) {
+    this.typed.push(input.text);
+  }
   async scrollLocator() {}
   async waitForLocator() {}
   async waitForText() {}
@@ -630,6 +634,33 @@ describe("PersonalBrowser", () => {
         yield* browser.handleAutomationRequest(request("press", { key: "Enter" }));
         expect(page.dialogAnswers).toEqual([{ accept: true, promptText: "my-store" }]);
       }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("a saved key a bot tries to type into a page is typed as [secret NAME]", () => {
+      const fake = makeFakeDriver();
+      const key = "typed_Key_0123456789abcdef";
+      secretRedactor.set("TYPED_KEY", key);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const page = fake.state.page;
+        yield* browser.handleAutomationRequest(
+          request("type", { locator: "input", text: `k=${key}` }),
+        );
+        yield* browser.handleAutomationRequest(
+          request("type", { locator: "input", text: "plain text" }),
+        );
+        expect(page.typed).toEqual(["k=[secret TYPED_KEY]", "plain text"]);
+        // The same for the answer to a prompt dialog.
+        page.openDialog({ type: "prompt", message: "Key?", defaultValue: "" });
+        yield* browser.handleAutomationRequest(request("type", { text: key }));
+        yield* browser.handleAutomationRequest(request("press", { key: "Enter" }));
+        expect(page.dialogAnswers).toEqual([{ accept: true, promptText: "[secret TYPED_KEY]" }]);
+        expect(JSON.stringify(page.typed)).not.toContain(key);
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => secretRedactor.clear())),
+        Effect.provide(makeLayer(fake.driver)),
+      );
     });
 
     it.effect("the person in control answers the dialog from the panel", () => {

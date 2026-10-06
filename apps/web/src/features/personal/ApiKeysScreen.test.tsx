@@ -4,14 +4,28 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { ApiKeysScreen, secretNameProblem } from "./ApiKeysScreen";
 
-const SECRETS = [
-  { name: "TAVILY_API_KEY", label: "Tavily", shared: true },
-  { name: "SERPAPI_API_KEY", label: "SerpApi", shared: false },
+interface SecretRow {
+  name: string;
+  label: string;
+  shared: boolean;
+  mode: "brokered" | "env";
+  origins: ReadonlyArray<string>;
+}
+
+const SECRETS: ReadonlyArray<SecretRow> = [
+  {
+    name: "TAVILY_API_KEY",
+    label: "Tavily",
+    shared: true,
+    mode: "brokered",
+    origins: ["https://api.tavily.com"],
+  },
+  { name: "SERPAPI_API_KEY", label: "SerpApi", shared: false, mode: "env", origins: [] },
 ];
 
 const state = vi.hoisted(() => ({
   calls: [] as Array<{ readonly command: string; readonly target: unknown }>,
-  secrets: [] as Array<{ name: string; label: string; shared: boolean }>,
+  secrets: [] as Array<unknown>,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -21,6 +35,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("./useSecretRequests", () => ({
   personalSecretCreate: "create",
+  personalSecretSetMode: "setMode",
   personalSecretSetSharing: "setSharing",
   useSavedSecrets: () => ({ data: { secrets: state.secrets }, error: null }),
 }));
@@ -41,7 +56,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-const renderScreen = async (secrets = SECRETS) => {
+const renderScreen = async (secrets: ReadonlyArray<SecretRow> = SECRETS) => {
   state.secrets = secrets;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   await act(async () => {
@@ -59,6 +74,18 @@ const type = async (id: string, value: string) => {
   await act(async () => {
     renderer!.root.findByProps({ id }).props.onChange({ target: { value } });
   });
+};
+
+const typeOrigins = async (value: string) => {
+  await act(async () => {
+    renderer!.root
+      .findByProps({ placeholder: "https://api.vercel.com" })
+      .props.onChange({ target: { value } });
+  });
+};
+
+const chooseMode = async (mode: "brokered" | "env") => {
+  await act(async () => renderer!.root.findByProps({ "data-mode": mode }).props.onClick());
 };
 
 const submit = async () => {
@@ -129,6 +156,8 @@ describe("API keys screen", () => {
     await type("api-key-name", "openweather_api_key");
     await type("api-key-label", "Weather");
     await type("api-key-value", "sk-entered-now");
+    // Brokered is the default, so the address it is bound to comes with it.
+    await typeOrigins("https://api.openweathermap.org");
     expect(renderer!.root.findByProps({ id: "api-key-value" }).props.type).toBe("password");
     await submit();
 
@@ -139,10 +168,80 @@ describe("API keys screen", () => {
     expect(input.name).toBe("OPENWEATHER_API_KEY");
     expect(input.label).toBe("Weather");
     expect(input.shared).toBe(true);
+    expect(input.mode).toBe("brokered");
+    expect(input.origins).toEqual(["https://api.openweathermap.org"]);
     expect(Redacted.value(input.value as Redacted.Redacted<string>)).toBe("sk-entered-now");
     // The form is gone, and the value with it.
     expect(renderer!.root.findAllByType("form")).toEqual([]);
     expect(JSON.stringify(renderer!.toJSON())).not.toContain("sk-entered-now");
+  });
+
+  it("shows each key's mode and the addresses a brokered key is bound to", async () => {
+    await renderScreen();
+    const modes = renderer!.root
+      .findAll((node) => typeof node.props["data-secret-mode"] === "string")
+      .map((node) => [node.props["data-secret-mode"], JSON.stringify(node.props.children)]);
+    expect(modes).toEqual([
+      ["brokered", expect.stringContaining("https://api.tavily.com")],
+      ["env", expect.stringContaining("Environment variable")],
+    ]);
+  });
+
+  it("will not save a brokered key without an address, and says what to enter", async () => {
+    await renderScreen();
+    await openForm();
+    await type("api-key-name", "OPENWEATHER_API_KEY");
+    await type("api-key-value", "sk-entered-now");
+    await submit();
+    expect(state.calls).toEqual([]);
+    expect(JSON.stringify(renderer!.toJSON())).toContain(
+      "Enter the address this key may be sent to",
+    );
+    await typeOrigins("http://192.168.0.1");
+    await submit();
+    expect(state.calls).toEqual([]);
+    expect(JSON.stringify(renderer!.toJSON())).toContain("public https:// address");
+  });
+
+  it("saves an environment variable key with no address when that is chosen", async () => {
+    await renderScreen();
+    await openForm();
+    await type("api-key-name", "LEGACY_KEY");
+    await type("api-key-value", "sk-entered-now");
+    await chooseMode("env");
+    expect(renderer!.root.findAllByProps({ placeholder: "https://api.vercel.com" })).toEqual([]);
+    await submit();
+    const input = (state.calls[0]!.target as { input: Record<string, unknown> }).input;
+    expect(input.mode).toBe("env");
+    expect(input.origins).toEqual([]);
+  });
+
+  it("moves an environment variable key to brokered with its address", async () => {
+    await renderScreen();
+    const open = renderer!.root.findByProps({ "aria-label": "Change access for SERPAPI_API_KEY" });
+    expect(JSON.stringify(open.props.children)).toContain("Make brokered");
+    await act(async () => open.props.onClick());
+    const panel = renderer!.root.findByProps({ "aria-label": "Access for SERPAPI_API_KEY" });
+    expect(panel).toBeDefined();
+    await chooseMode("brokered");
+    await typeOrigins("serpapi.com, https://api.serpapi.com/search");
+    const save = renderer!.root
+      .findAllByType("button")
+      .find((node) => node.props.children === "Save access");
+    await act(async () => save!.props.onClick());
+    expect(state.calls).toEqual([
+      {
+        command: "setMode",
+        target: {
+          environmentId: "env-1",
+          input: {
+            name: "SERPAPI_API_KEY",
+            mode: "brokered",
+            origins: ["https://serpapi.com", "https://api.serpapi.com"],
+          },
+        },
+      },
+    ]);
   });
 
   it("offers the add action when there are no keys yet", async () => {

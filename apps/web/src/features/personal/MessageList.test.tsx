@@ -156,6 +156,8 @@ const PENDING_SECRET: SecretRequestCardItem = {
     purpose: "Push the release tag.",
     status: "pending",
     shared: false,
+    // What the bot named as the API's address: the card shows it for the owner to confirm.
+    origins: ["https://api.github.com"],
     createdAt: DateTime.makeUnsafe("2026-09-14T10:00:00.000Z"),
     fulfilledAt: null,
   } satisfies PersonalSecretRequest,
@@ -425,13 +427,15 @@ it("says so when a question is closed elsewhere", async () => {
 
 it("shows a secret the bot asked for, and sends the typed value once", async () => {
   stubEnvironment();
-  const provided: Array<[string, string, boolean]> = [];
+  const provided: Array<readonly unknown[]> = [];
   await act(async () => {
     renderer = create(
       <MessageList
         {...BASE_PROPS}
         items={[secretItem(PENDING_SECRET)]}
-        onProvideSecret={(requestId, value, shared) => provided.push([requestId, value, shared])}
+        onProvideSecret={(requestId, value, shared, access) =>
+          provided.push([requestId, value, shared, access])
+        }
       />,
     );
   });
@@ -454,11 +458,55 @@ it("shows a secret the bot asked for, and sends the typed value once", async () 
     renderer!.root.findByProps({ type: "checkbox" }).props.onChange({ target: { checked: true } }),
   );
   await act(async () => optionButton("Save secret").props.onClick());
-  expect(provided).toEqual([["secret-1", "ghp_live_value", true]]);
+  // Brokered is the default, bound to the address the bot named.
+  expect(provided).toEqual([
+    ["secret-1", "ghp_live_value", true, { mode: "brokered", origins: ["https://api.github.com"] }],
+  ]);
 
   // The field is cleared before the send, so the value is nowhere in the tree.
   expect(renderer!.root.findByProps({ type: "password" }).props.value).toBe("");
   expect(JSON.stringify(renderer!.toJSON())).not.toContain("ghp_live_value");
+});
+
+it("sends an environment variable choice with no address, and refuses a brokered key with none", async () => {
+  stubEnvironment();
+  const provided: Array<readonly unknown[]> = [];
+  const noAddress: SecretRequestCardItem = {
+    ...PENDING_SECRET,
+    request: { ...PENDING_SECRET.request, origins: [] },
+  };
+  await act(async () => {
+    renderer = create(
+      <MessageList
+        {...BASE_PROPS}
+        items={[secretItem(noAddress)]}
+        onProvideSecret={(requestId, value, shared, access) =>
+          provided.push([requestId, value, shared, access])
+        }
+      />,
+    );
+  });
+  await act(async () =>
+    renderer!.root
+      .findByProps({ type: "password" })
+      .props.onChange({ target: { value: "ghp_live_value" } }),
+  );
+
+  // Brokered with no address cannot be saved; the card says what to enter instead.
+  await act(async () => optionButton("Save secret").props.onClick());
+  expect(provided).toEqual([]);
+  expect(
+    renderer!.root.findAll((node) =>
+      node.children.includes(
+        "Enter the address this key may be sent to, like https://api.vercel.com.",
+      ),
+    ),
+  ).not.toEqual([]);
+
+  // Choosing the environment variable needs no address.
+  await act(async () => renderer!.root.findByProps({ "data-mode": "env" }).props.onClick());
+  await act(async () => optionButton("Save secret").props.onClick());
+  expect(provided).toEqual([["secret-1", "ghp_live_value", false, { mode: "env", origins: [] }]]);
 });
 
 it("declines a secret request without providing a value", async () => {

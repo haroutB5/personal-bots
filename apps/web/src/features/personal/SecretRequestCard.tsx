@@ -5,7 +5,23 @@ import { Check, KeyRound, X } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
+import {
+  initialSecretAccess,
+  SecretAccessFields,
+  secretAccessChoice,
+  secretAccessProblem,
+  type SecretAccessChoice,
+  type SecretAccessState,
+} from "./SecretAccessFields";
 import type { SecretRequestCardItem } from "./secretRequestCards";
+
+/** Answers a secret request: the value, whether every bot may use it, and how bots use it. */
+export type ProvideSecret = (
+  requestId: string,
+  value: string,
+  shared: boolean,
+  access: SecretAccessChoice,
+) => void;
 
 const CARD_CLASS =
   "rounded-[var(--personal-radius-card)] border border-[var(--personal-review-border)] bg-[var(--personal-review-bg)] p-3.5";
@@ -31,7 +47,7 @@ export function SecretRequestCard({
   card: SecretRequestCardItem;
   botName: string;
   responding: boolean;
-  onProvide: (requestId: string, value: string, shared: boolean) => void;
+  onProvide: ProvideSecret;
   onDecline: (requestId: string) => void;
 }): JSX.Element {
   if (card.kind === "pending") {
@@ -89,7 +105,7 @@ function PendingSecretRequestCard({
   card: Extract<SecretRequestCardItem, { kind: "pending" }>;
   botName: string;
   responding: boolean;
-  onProvide: (requestId: string, value: string, shared: boolean) => void;
+  onProvide: ProvideSecret;
   onDecline: (requestId: string) => void;
 }): JSX.Element {
   // Component state, nowhere else. The composer draft store is per-device and
@@ -97,11 +113,16 @@ function PendingSecretRequestCard({
   // the card unmounts or the value is sent.
   const [value, setValue] = useState("");
   const [shared, setShared] = useState(false);
+  const request = card.request;
+  const [access, setAccess] = useState<SecretAccessState>(() =>
+    initialSecretAccess(request.origins ?? []),
+  );
+  const [showProblem, setShowProblem] = useState(false);
   const fieldId = useId();
   const helpId = `${fieldId}-help`;
   const declineId = `${fieldId}-decline`;
-  const request = card.request;
   const purpose = request.purpose.trim();
+  const accessProblem = secretAccessProblem(access);
   const ready = value.length > 0 && !responding;
 
   return (
@@ -143,6 +164,16 @@ function PendingSecretRequestCard({
         never sent to {botName} as text.
       </p>
 
+      <div className="mt-3">
+        <SecretAccessFields
+          state={access}
+          onChange={setAccess}
+          disabled={responding}
+          showProblem={showProblem}
+          botName={botName}
+        />
+      </div>
+
       <label className="mt-3 flex min-h-11 items-center gap-3 text-[15px] text-[var(--personal-text)]">
         <input
           type="checkbox"
@@ -169,11 +200,15 @@ function PendingSecretRequestCard({
           disabled={!ready}
           onClick={() => {
             if (!ready) return;
+            if (accessProblem !== null) {
+              setShowProblem(true);
+              return;
+            }
             const provided = value;
             // Cleared before the send so the field never holds the value while
             // the request is in flight.
             setValue("");
-            onProvide(card.requestId, provided, shared);
+            onProvide(card.requestId, provided, shared, secretAccessChoice(access));
           }}
           className={cn(
             BUTTON_CLASS,

@@ -32,7 +32,7 @@ import { NoteNoticeRow } from "./NoteNoticeRow";
 import { groupSystemLabel, readGroupMarker } from "./groupModel";
 import { QuestionCard } from "./QuestionCard";
 import type { UserInputAnswers } from "./questionCards";
-import { SecretRequestCard } from "./SecretRequestCard";
+import { SecretRequestCard, type ProvideSecret } from "./SecretRequestCard";
 import { LoginRequestCard, type ProvideLogin } from "./LoginRequestCard";
 import { ConnectionApprovalCard } from "./ConnectionApprovalCard";
 import { approvalHasExpired } from "./connectionApprovalCards";
@@ -620,7 +620,7 @@ export function MessageList({
   onAnswerQuestion: (requestId: string, answers: UserInputAnswers) => void;
   onDismissQuestion: (requestId: string) => void;
   /** The value goes straight to the fulfil RPC; nothing here stores it. */
-  onProvideSecret: (requestId: string, value: string, shared: boolean) => void;
+  onProvideSecret: ProvideSecret;
   onDeclineSecret: (requestId: string) => void;
   onProvideLogin?: ProvideLogin;
   onCancelLogin?: (requestId: string) => void;

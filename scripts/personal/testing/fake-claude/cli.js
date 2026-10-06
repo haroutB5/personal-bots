@@ -13,9 +13,14 @@
 //   DELEGATE:<botId>  calls the delegate_task MCP tool.   TASKDONE  answers a delegated task.
 //   MCPTOOL <name> <one-line json>  calls any MCP tool the bot has (update_bot, create_bot, ...) and
 //     answers "MCPTOOL <name> ok|refused: <the tool's result>", so a test reads the outcome in the chat.
+//   PRINTENV <VARNAME>  runs a real shell command that echoes that environment variable (what a bot's
+//     Bash does), shows it as a tool call and result, then says it in a streamed reply split into small
+//     pieces. A key saved as an environment variable (PB_SECRET_<NAME>) must come out masked; a brokered
+//     key is not in the process, so the shell prints nothing.
 //   anything else  "Got it." plus the reply quote it received, if any.
 // State and log: FAKE_CLAUDE_PID_DIR (set by the script; default the OS temp folder).
 import { appendFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
@@ -289,6 +294,91 @@ lines.on("line", async (line) => {
       },
       Number(slow[1]) * 1000,
     );
+    return;
+  }
+  const printenv = text.match(/PRINTENV (\w+)/);
+  if (printenv) {
+    const variable = printenv[1];
+    // The platform shell, started with this process's own environment: exactly what a bot's Bash sees.
+    const [shell, shellArgs] =
+      process.platform === "win32"
+        ? ["cmd.exe", ["/d", "/s", "/c", `echo %${variable}%`]]
+        : ["sh", ["-c", `echo "$${variable}"`]];
+    const printed = spawnSync(shell, shellArgs, {
+      env: process.env,
+      encoding: "utf8",
+    }).stdout.trim();
+    const command = process.platform === "win32" ? `echo %${variable}%` : `echo "$${variable}"`;
+    const toolId = `toolu_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
+    const stream = (event) =>
+      out({
+        type: "stream_event",
+        event,
+        parent_tool_use_id: null,
+        uuid: randomUUID(),
+        session_id: sessionId,
+      });
+    const full = (id, content, stop) =>
+      out({
+        type: "assistant",
+        session_id: sessionId,
+        uuid: randomUUID(),
+        parent_tool_use_id: null,
+        message: {
+          id,
+          type: "message",
+          role: "assistant",
+          model: "claude-sonnet-5-5",
+          content,
+          stop_reason: stop,
+          usage: { input_tokens: 10, output_tokens: 5 },
+        },
+      });
+    const start = (id) =>
+      stream({
+        type: "message_start",
+        message: {
+          id,
+          type: "message",
+          role: "assistant",
+          content: [],
+          model: "claude-sonnet-5-5",
+          stop_reason: null,
+          usage: { input_tokens: 10, output_tokens: 1 },
+        },
+      });
+    const first = `msg_${randomUUID()}`;
+    start(first);
+    full(
+      first,
+      [{ type: "tool_use", id: toolId, name: "Bash", input: { command, description: "Print it" } }],
+      "tool_use",
+    );
+    out({
+      type: "user",
+      session_id: sessionId,
+      uuid: randomUUID(),
+      parent_tool_use_id: null,
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: toolId, content: printed, is_error: false }],
+      },
+    });
+    const second = `msg_${randomUUID()}`;
+    const reply = `The value of ${variable} is: ${printed || "(empty)"}`;
+    start(second);
+    stream({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+    for (let at = 0; at < reply.length; at += 6) {
+      stream({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: reply.slice(at, at + 6) },
+      });
+    }
+    stream({ type: "content_block_stop", index: 0 });
+    full(second, [{ type: "text", text: reply }], "end_turn");
+    log(`printenv ${variable} printed ${printed.length} chars`);
+    finish(reply, false);
     return;
   }
   const tool = text.match(/MCPTOOL (\w+) (\{.*\})/);

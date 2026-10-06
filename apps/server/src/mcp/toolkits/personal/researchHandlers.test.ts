@@ -46,12 +46,22 @@ function search(
           Effect.succeed({
             botId: PersonalBotId.make("bot"),
             systemInstructions: null,
-            environment: key
-              ? tool !== "search_google"
-                ? { PB_SECRET_TAVILY_API_KEY: key }
-                : { PB_SECRET_SERPAPI_API_KEY: key }
-              : {},
+            environment: {},
           }),
+        secretsForThread: () =>
+          Effect.succeed(
+            key
+              ? [
+                  {
+                    name: tool !== "search_google" ? "TAVILY_API_KEY" : "SERPAPI_API_KEY",
+                    // Brokered on purpose: the server's own tools use it all the same.
+                    mode: "brokered" as const,
+                    origins: ["https://api.example.com"],
+                    value: key,
+                  },
+                ]
+              : [],
+          ),
       }),
     ),
   );

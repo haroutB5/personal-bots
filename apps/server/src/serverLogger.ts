@@ -8,6 +8,7 @@ import * as OtlpLogger from "effect/unstable/observability/OtlpLogger";
 
 import { otlpResource, ServerConfig } from "./config.ts";
 import { downgradeExpectedRefusals } from "./expectedToolRefusals.ts";
+import { redactSecretsInLogs } from "./personal/secrets/secretLogRedaction.ts";
 
 export const ServerLoggerLive = Effect.gen(function* () {
   const config = yield* ServerConfig;
@@ -39,8 +40,11 @@ export const ServerLoggerLive = Effect.gen(function* () {
   const loggerLayer = Logger.layer(
     // A bot tool's refusal is an answer, not a fault: it is logged at INFO (expectedToolRefusals.ts).
     otlpLogger === undefined
-      ? [downgradeExpectedRefusals(Logger.consolePretty()), Logger.tracerLogger]
-      : [downgradeExpectedRefusals(Logger.consolePretty()), otlpLogger],
+      ? [
+          redactSecretsInLogs(downgradeExpectedRefusals(Logger.consolePretty())),
+          Logger.tracerLogger,
+        ]
+      : [redactSecretsInLogs(downgradeExpectedRefusals(Logger.consolePretty())), otlpLogger],
     { mergeWithExisting: false },
   ).pipe(
     Layer.provide(OtlpExporter.layerFlusher),

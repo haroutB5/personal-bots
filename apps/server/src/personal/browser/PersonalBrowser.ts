@@ -75,6 +75,7 @@ import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { AGENT_LEASE_TTL_MS, BrowserLease, PERSONAL_BROWSER_PROFILE_ID } from "./BrowserLease.ts";
 import { applyRequestedProfileReset } from "./browserProfileReset.ts";
 import { makeCredentialRedactor } from "./credentialRedactor.ts";
+import { secretRedactor } from "../secrets/secretRedaction.ts";
 import { type EgressApproval, type EgressIntent, egressNeedingApproval } from "./egressGuard.ts";
 import {
   LOGIN_SCRIPT_REFUSED,
@@ -165,6 +166,14 @@ export interface ResolvedBrowserFile {
   readonly path: string;
   readonly name: string;
 }
+
+/** The request with any saved key in text to be typed replaced by `[secret NAME]`. */
+const withoutTypedSecrets = (request: PreviewAutomationRequest): PreviewAutomationRequest => {
+  if (request.operation !== "type") return request;
+  const typed = request.input as PreviewAutomationTypeInput;
+  const masked = secretRedactor.redactText(typed.text);
+  return masked === typed.text ? request : { ...request, input: { ...typed, text: masked } };
+};
 
 export class PersonalBrowser extends Context.Service<
   PersonalBrowser,
@@ -2063,8 +2072,12 @@ export const make = (options: PersonalBrowserOptions) =>
       );
 
     const handleAutomationRequest: PersonalBrowser["Service"]["handleAutomationRequest"] = (
-      request,
+      incoming,
     ) => {
+      // A saved key never goes into a web page: a bot with a shell can read an
+      // env-mode key, and typing it into a form (or a prompt dialog) would hand it
+      // to the site. The page gets "[secret NAME]" instead.
+      const request = withoutTypedSecrets(incoming);
       // Fast path: status never launches Chrome, never takes the lease and
       // never waits behind an in-flight op (MCP gives it a 500ms budget).
       if (request.operation === "status")

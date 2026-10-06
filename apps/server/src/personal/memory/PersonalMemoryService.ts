@@ -344,13 +344,14 @@ export const NOTE_FORGOTTEN_REASON = "Forgotten by a bot (a note it found out of
 export const RULE_FORGOTTEN_REASON = "Forgotten by a bot at the user's word.";
 /** Tools that bring web or browser content into a turn (app tools and provider built-ins). */
 const WEB_TOOL_PATTERN =
-  /(search_web|read_pages|search_google|search_products|preview_[a-z_]+|computer_[a-z_]+|use_login|WebFetch|WebSearch|web_fetch|web_search)/i;
+  /(search_web|read_pages|search_google|search_products|secret_request|preview_[a-z_]+|computer_[a-z_]+|use_login|WebFetch|WebSearch|web_fetch|web_search)/i;
 /** The same tools as WEB_TOOL_PATTERN, lowercase, for a SQL `instr` over a whole thread. */
 const WEB_TOOL_NEEDLES = [
   "search_web",
   "read_pages",
   "search_google",
   "search_products",
+  "secret_request",
   "preview_",
   "computer_",
   "use_login",

@@ -9,6 +9,7 @@ import type * as SqlError from "effect/unstable/sql/SqlError";
 
 import {
   PersonalBotId,
+  PersonalSecretMode,
   PersonalSecretName,
   PersonalSecretRequestId,
   PersonalSecretRequestStatus,
@@ -33,10 +34,24 @@ const RequestDbRow = Schema.Struct({
   purpose: Schema.String,
   status: PersonalSecretRequestStatus,
   shared: Schema.Number,
+  mode: PersonalSecretMode,
+  originsJson: Schema.String,
   createdAt: Schema.DateTimeUtcFromString,
   fulfilledAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 });
 const decodeRequestRow = Schema.decodeUnknownEffect(RequestDbRow);
+
+/** A bad or hand-edited column reads as "no origins": a brokered key then refuses every call. */
+const parseOrigins = (json: string): ReadonlyArray<string> => {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  } catch {
+    return [];
+  }
+};
 
 const REQUEST_COLUMNS = `
   request_id AS "requestId",
@@ -49,6 +64,8 @@ const REQUEST_COLUMNS = `
   purpose AS "purpose",
   status AS "status",
   shared AS "shared",
+  mode AS "mode",
+  origins_json AS "originsJson",
   created_at AS "createdAt",
   fulfilled_at AS "fulfilledAt"
 `;
@@ -75,6 +92,9 @@ export class PersonalSecretRepository extends Context.Service<
       readonly status: PersonalSecretRequest["status"];
       readonly shared: boolean;
       readonly fulfilledAt: DateTime.Utc | null;
+      /** Written with the row when given (a fulfilment); left alone otherwise. */
+      readonly mode?: PersonalSecretMode;
+      readonly origins?: ReadonlyArray<string>;
     }) => Effect.Effect<boolean, PersonalSecretRepositoryError>;
     /** Drops the fulfilled rows for `name`; returns how many there were. */
     readonly deleteFulfilledByName: (
@@ -84,6 +104,12 @@ export class PersonalSecretRepository extends Context.Service<
       name: string,
       shared: boolean,
     ) => Effect.Effect<void, PersonalSecretRepositoryError>;
+    /** Sets the mode and bound origins on every fulfilled row of `name`. */
+    readonly setMode: (input: {
+      readonly name: string;
+      readonly mode: PersonalSecretMode;
+      readonly origins: ReadonlyArray<string>;
+    }) => Effect.Effect<void, PersonalSecretRepositoryError>;
   }
 >()("t3/personal/secrets/PersonalSecretRepository") {}
 
@@ -108,9 +134,10 @@ export const make = Effect.gen(function* () {
         Effect.mapError((cause) =>
           PersistenceDecodeError.fromSchemaError(`PersonalSecretRepository.${operation}`, cause),
         ),
-        Effect.map((decoded): PersonalSecretRequest => ({
+        Effect.map(({ originsJson, ...decoded }): PersonalSecretRequest => ({
           ...decoded,
           shared: decoded.shared === 1,
+          origins: parseOrigins(originsJson),
         })),
       ),
     );
@@ -121,12 +148,13 @@ export const make = Effect.gen(function* () {
       sql`
         INSERT INTO personal_secret_requests (
           request_id, root_task_id, task_id, thread_id, bot_id, name, label, purpose,
-          status, shared, created_at, fulfilled_at
+          status, shared, mode, origins_json, created_at, fulfilled_at
         )
         VALUES (
           ${request.requestId}, ${request.rootTaskId}, ${request.taskId}, ${request.threadId},
           ${request.botId}, ${request.name}, ${request.label}, ${request.purpose},
-          ${request.status}, ${request.shared ? 1 : 0}, ${DateTime.formatIso(request.createdAt)},
+          ${request.status}, ${request.shared ? 1 : 0}, ${request.mode ?? "env"},
+          ${JSON.stringify(request.origins ?? [])}, ${DateTime.formatIso(request.createdAt)},
           ${request.fulfilledAt === null ? null : DateTime.formatIso(request.fulfilledAt)}
         )
         ON CONFLICT(request_id) DO NOTHING
@@ -175,6 +203,8 @@ export const make = Effect.gen(function* () {
         UPDATE personal_secret_requests
         SET status = ${input.status},
             shared = ${input.shared ? 1 : 0},
+            mode = COALESCE(${input.mode ?? null}, mode),
+            origins_json = COALESCE(${input.origins === undefined ? null : JSON.stringify(input.origins)}, origins_json),
             fulfilled_at = ${input.fulfilledAt === null ? null : DateTime.formatIso(input.fulfilledAt)}
         WHERE request_id = ${input.requestId}
           AND status = ${input.expectedStatus}
@@ -196,6 +226,15 @@ export const make = Effect.gen(function* () {
     ).pipe(Effect.map((rows) => rows.length));
 
   return {
+    setMode: (input) =>
+      query(
+        "setMode",
+        sql`
+      UPDATE personal_secret_requests
+      SET mode = ${input.mode}, origins_json = ${JSON.stringify(input.origins)}
+      WHERE name = ${input.name} AND status = 'fulfilled'
+    `,
+      ).pipe(Effect.asVoid),
     setSharing: (name, shared) =>
       query(
         "setSharing",

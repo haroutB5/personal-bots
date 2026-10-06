@@ -20,6 +20,7 @@ import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
+import { secretRedactor } from "../../personal/secrets/secretRedaction.ts";
 import type { ResourceAttribution } from "../../resourceTelemetry/ResourceAttribution.ts";
 
 const MEBIBYTE = 1024 * 1024;
@@ -749,6 +750,8 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
         payload = yield* serializeEvent(summarizeProviderEvent(event));
         if (payload === undefined) return;
       }
+      // A saved key a bot printed (tool output, a reply) must not outlive the chat in this file.
+      payload = secretRedactor.redactText(payload);
 
       const observedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
       const line = `[${observedAt}] ${resolveStreamLabel(stream)}: ${payload}\n`;

@@ -89,6 +89,7 @@ import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as PersonalSessionAccess from "../../personal/secrets/PersonalSessionAccess.ts";
+import { makeProviderEventSecretFilter } from "../secretEventRedaction.ts";
 const isModelSelection = Schema.is(ModelSelection);
 const encodePromptJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -1043,7 +1044,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     });
 
-  const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
+  const publishCanonicalEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(
       Effect.tap((canonicalEvent) =>
         canonicalEventLogger
@@ -1053,6 +1054,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       Effect.flatMap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
       Effect.asVoid,
     );
+
+  // Every runtime event, whichever adapter made it, leaves through here: a saved
+  // key a bot printed is masked before the chat, a task result or the log sees it.
+  const secretEventFilter = makeProviderEventSecretFilter();
+  const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
+    Effect.forEach(secretEventFilter.process(event), publishCanonicalEvent, { discard: true });
 
   const isCompactedEvent = (
     event: ProviderRuntimeEvent,

@@ -1,9 +1,18 @@
+// @effect-diagnostics nodeBuiltinImport:off - the boundary test runs a real shell and a real local HTTPS server.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeHttps from "node:https";
+import type * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   CommandId,
   CorrelationId,
+  EnvironmentId,
   EventId,
   MessageId,
   PersonalBotId,
@@ -15,19 +24,30 @@ import {
   type OrchestrationEvent,
   type OrchestrationSession,
   type PersonalTask,
+  type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Schema from "effect/Schema";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import { withProviderSessionEnvironment } from "../../mcp/McpProviderSession.ts";
+import { McpInvocationContext } from "../../mcp/McpInvocationContext.ts";
+import { PersonalToolkitHandlersLive } from "../../mcp/toolkits/personal/handlers.ts";
+import { PersonalToolkit } from "../../mcp/toolkits/personal/tools.ts";
+import { makeEventNdjsonLogStore } from "../../provider/Layers/EventNdjsonLogger.ts";
+import { makeProviderEventSecretFilter } from "../../provider/secretEventRedaction.ts";
+import { PersonalMemoryService } from "../memory/PersonalMemoryService.ts";
+import { PersonalBrowser } from "../browser/PersonalBrowser.ts";
+import { PersonalRoutineService } from "../routines/PersonalRoutineService.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
@@ -46,6 +66,21 @@ import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
 import * as PersonalSecretService from "./PersonalSecretService.ts";
 import * as PersonalSessionAccess from "./PersonalSessionAccess.ts";
+import { SecretBrokerConfig } from "./secretBroker.ts";
+import { TEST_TLS_CERT, TEST_TLS_KEY } from "./secretBrokerTestCert.ts";
+import { redactSecretsInLogs } from "./secretLogRedaction.ts";
+import { secretRedactor } from "./secretRedaction.ts";
+
+// These tests are about keys saved as environment variables, the only way before
+// 1.66.0. The brokered default has its own tests in PersonalSecretBrokering.test.ts.
+const previousDefaultMode = process.env.PERSONAL_SECRET_DEFAULT_MODE;
+beforeAll(() => {
+  process.env.PERSONAL_SECRET_DEFAULT_MODE = "env";
+});
+afterAll(() => {
+  if (previousDefaultMode === undefined) delete process.env.PERSONAL_SECRET_DEFAULT_MODE;
+  else process.env.PERSONAL_SECRET_DEFAULT_MODE = previousDefaultMode;
+});
 
 /** A value distinctive enough that finding it anywhere is a leak. */
 const SECRET_VALUE = "ghp_Sup3rS3cretValue-4f9a1c";
@@ -800,5 +835,543 @@ describe("keys the owner saves themselves", () => {
         expect(saved.label).toBe("UNLABELLED_KEY");
       }),
     ),
+  );
+});
+
+describe("brokered secrets", () => {
+  const BROKERED_VALUE = "brk_Zx9Qk2LmN4pR7sT0uV3wY6aB8cD1";
+  const withDefaultMode = <A, E, R>(body: Effect.Effect<A, E, R>) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const previous = process.env.PERSONAL_SECRET_DEFAULT_MODE;
+        delete process.env.PERSONAL_SECRET_DEFAULT_MODE;
+        return previous;
+      }),
+      () => body,
+      (previous) =>
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env.PERSONAL_SECRET_DEFAULT_MODE;
+          else process.env.PERSONAL_SECRET_DEFAULT_MODE = previous;
+        }),
+    );
+
+  afterEach(() => secretRedactor.clear());
+
+  it.effect("a new key is brokered by default and needs the origin it is bound to", () =>
+    withLayer(() =>
+      withDefaultMode(
+        Effect.gen(function* () {
+          yield* seedBots;
+          const secrets = yield* PersonalSecretService.PersonalSecretService;
+
+          const missing = yield* Effect.flip(
+            secrets.create({ name: "VERCEL_TOKEN", value: Redacted.make(BROKERED_VALUE) }),
+          );
+          expect(missing.message).toContain("HTTPS origin");
+
+          const bad = yield* Effect.flip(
+            secrets.create({
+              name: "VERCEL_TOKEN",
+              value: Redacted.make(BROKERED_VALUE),
+              origins: ["http://192.168.0.1"],
+            }),
+          );
+          expect(bad.message).toContain("public HTTPS origins");
+
+          const saved = yield* secrets.create({
+            name: "VERCEL_TOKEN",
+            value: Redacted.make(BROKERED_VALUE),
+            origins: ["api.vercel.com", "https://api.vercel.com/v9/projects"],
+          });
+          expect(saved.mode).toBe("brokered");
+          expect(saved.origins).toEqual(["https://api.vercel.com"]);
+          expect((yield* secrets.list()).secrets).toEqual([
+            expect.objectContaining({
+              name: "VERCEL_TOKEN",
+              mode: "brokered",
+              origins: ["https://api.vercel.com"],
+            }),
+          ]);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("PERSONAL_SECRET_DEFAULT_MODE=env brings back the old default", () =>
+    withLayer(() =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        const saved = yield* secrets.create({
+          name: "OLD_STYLE",
+          value: Redacted.make(BROKERED_VALUE),
+        });
+        // The describe-level setup left the switch on "env".
+        expect(saved.mode).toBe("env");
+        expect(saved.origins).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("a bot's request carries the origin it named, and the answer inherits it", () =>
+    withLayer((harness) =>
+      withDefaultMode(
+        Effect.gen(function* () {
+          yield* seedBots;
+          const secrets = yield* PersonalSecretService.PersonalSecretService;
+          const { task, threadId, turnId } = yield* runningTask(
+            harness,
+            "origin-hint",
+            "assistant",
+          );
+          const requested = yield* secrets.request({
+            task,
+            threadId,
+            botId: botId("assistant"),
+            name: "VERCEL_TOKEN",
+            label: "Vercel token",
+            purpose: "List projects.",
+            origins: ["https://api.vercel.com/ignored/path", "not an origin"],
+          });
+          // One bad address drops the whole hint: the owner is asked, nothing is guessed.
+          expect(requested.request.origins).toEqual(["https://api.vercel.com"]);
+
+          const tavily = yield* secrets.request({
+            task: yield* reload(task.taskId),
+            threadId,
+            botId: botId("assistant"),
+            name: "TAVILY_API_KEY",
+            label: "Tavily",
+            purpose: "Search.",
+          });
+          // Well-known keys the app's own tools use come with their origin.
+          expect(tavily.request.origins).toEqual(["https://api.tavily.com"]);
+
+          yield* endTurn(harness, threadId, turnId, "Waiting for the keys.");
+          // No origin typed on the answer: the one on the request is used.
+          const answered = yield* secrets.fulfill({
+            requestId: requested.request.requestId,
+            value: Redacted.make(BROKERED_VALUE),
+          });
+          expect(answered.mode).toBe("brokered");
+          expect(answered.origins).toEqual(["https://api.vercel.com"]);
+          // The task resumes once its last request is answered, with a note that names
+          // the tool, not an environment variable.
+          yield* secrets.fulfill({
+            requestId: tavily.request.requestId,
+            value: Redacted.make("tvly-value-0123456789"),
+          });
+          const startsBefore = turnStarts(harness).length;
+          yield* setSession(
+            harness,
+            makeSession(threadId, "stopped", null, DateTime.formatIso(yield* DateTime.now)),
+          );
+          const resumed = turnStarts(harness).slice(startsBefore);
+          expect(resumed.length).toBe(1);
+          expect(resumed[0]!.message.text).toContain("secret_request");
+          expect(resumed[0]!.message.text).toContain("{{secret:VERCEL_TOKEN}}");
+          expect(resumed[0]!.message.text).not.toContain("PB_SECRET_VERCEL_TOKEN");
+        }),
+      ),
+    ),
+  );
+
+  it.effect("a brokered key never reaches the session environment; an env key still does", () =>
+    withLayer((harness) =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const bots = yield* PersonalBotService.PersonalBotService;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+        const assistant = yield* runningTask(harness, "env-vs-brokered", "assistant");
+        yield* bots.createThread({ botId: botId("assistant"), threadId: assistant.threadId });
+
+        yield* secrets.create({
+          name: "ENV_KEY",
+          value: Redacted.make("env-key-value-12345"),
+          mode: "env",
+        });
+        yield* secrets.create({
+          name: "BROKERED_KEY",
+          value: Redacted.make(BROKERED_VALUE),
+          mode: "brokered",
+          origins: ["https://api.example.com"],
+        });
+
+        const grant = yield* access.forThread(assistant.threadId);
+        expect(Object.keys(grant.environment)).toEqual(["PB_SECRET_ENV_KEY"]);
+        // Not in any spelling, and not in what the provider process would be started with.
+        const providerEnv = withProviderSessionEnvironment(
+          {},
+          { personalSecretEnvironment: grant.environment },
+        );
+        expect(text(providerEnv)).not.toContain(BROKERED_VALUE);
+        expect(text(grant)).not.toContain(BROKERED_VALUE);
+
+        // The server's own tools still see both, with the way each may be used.
+        const server = yield* access.secretsForThread(assistant.threadId);
+        expect(
+          server.map((entry) => [entry.name, entry.mode, entry.origins, entry.value]).toSorted(),
+        ).toEqual([
+          ["BROKERED_KEY", "brokered", ["https://api.example.com"], BROKERED_VALUE],
+          ["ENV_KEY", "env", [], "env-key-value-12345"],
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("moving a key between modes changes what new sessions get", () =>
+    withLayer((harness) =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const bots = yield* PersonalBotService.PersonalBotService;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+        const assistant = yield* runningTask(harness, "switch", "assistant");
+        yield* bots.createThread({ botId: botId("assistant"), threadId: assistant.threadId });
+        yield* secrets.create({
+          name: "SWITCH_KEY",
+          value: Redacted.make("switch-value-0123456"),
+          mode: "env",
+        });
+        expect(Object.keys((yield* access.forThread(assistant.threadId)).environment)).toEqual([
+          "PB_SECRET_SWITCH_KEY",
+        ]);
+
+        // Brokered needs an address; nothing changes without one.
+        const refused = yield* Effect.flip(
+          secrets.setMode({ name: "SWITCH_KEY", mode: "brokered" }),
+        );
+        expect(refused.message).toContain("HTTPS origin");
+        expect((yield* secrets.list()).secrets[0]?.mode).toBe("env");
+
+        const listed = yield* secrets.setMode({
+          name: "SWITCH_KEY",
+          mode: "brokered",
+          origins: ["https://api.example.com"],
+        });
+        expect(listed.secrets[0]).toEqual(
+          expect.objectContaining({ mode: "brokered", origins: ["https://api.example.com"] }),
+        );
+        expect((yield* access.forThread(assistant.threadId)).environment).toEqual({});
+
+        // Back to env: the origins are dropped, the variable returns.
+        const back = yield* secrets.setMode({ name: "SWITCH_KEY", mode: "env" });
+        expect(back.secrets[0]).toEqual(expect.objectContaining({ mode: "env", origins: [] }));
+        expect(Object.keys((yield* access.forThread(assistant.threadId)).environment)).toEqual([
+          "PB_SECRET_SWITCH_KEY",
+        ]);
+
+        const unknown = yield* Effect.flip(secrets.setMode({ name: "NOPE", mode: "env" }));
+        expect(unknown.message).toContain("not found");
+      }),
+    ),
+  );
+
+  it.effect("the redactor learns a key when it is saved and forgets it when it is removed", () =>
+    withLayer(() =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        yield* secrets.create({
+          name: "MASKED_KEY",
+          value: Redacted.make(BROKERED_VALUE),
+          mode: "env",
+        });
+        expect(secretRedactor.redactText(`x ${BROKERED_VALUE} y`)).toBe("x [secret MASKED_KEY] y");
+        // Another spelling of it too.
+        expect(secretRedactor.redactText(Buffer.from(BROKERED_VALUE).toString("base64"))).toBe(
+          "[secret MASKED_KEY]",
+        );
+        yield* secrets.remove({ name: "MASKED_KEY" });
+        expect(secretRedactor.redactText(`x ${BROKERED_VALUE} y`)).toBe(`x ${BROKERED_VALUE} y`);
+      }),
+    ),
+  );
+
+  it.effect("a task result that holds a saved key is masked before it is stored", () =>
+    withLayer((harness) =>
+      Effect.gen(function* () {
+        yield* seedBots;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        yield* secrets.create({
+          name: "LEAKY_KEY",
+          value: Redacted.make(BROKERED_VALUE),
+          mode: "env",
+        });
+        const { task, threadId, turnId } = yield* runningTask(harness, "leaky", "assistant");
+        yield* endTurn(harness, threadId, turnId, `Done. The key was ${BROKERED_VALUE}.`);
+        const finished = yield* reload(task.taskId);
+        expect(finished.status).toBe("completed");
+        expect(finished.result?.summary).toContain("[secret LEAKY_KEY]");
+        expect(JSON.stringify(finished)).not.toContain(BROKERED_VALUE);
+      }),
+    ),
+  );
+});
+
+/**
+ * The 1.66.0 boundary, end to end with nothing mocked between the pieces that
+ * matter: a real shell started with the environment the server builds for a
+ * session, a real HTTPS server the broker tool calls, and the real masking on
+ * the provider event path, the event log, the task result and the server log.
+ * A leak anywhere shows up as the value (or its base64) in what a person or a
+ * later bot could read.
+ */
+describe("secrets boundary: a bot that tries to print its keys", () => {
+  const ENV_VALUE = "envmode_Ab12Cd34Ef56Gh78Ij90Kl";
+  const BROKERED = "brokered_Zx9Qk2LmN4pR7sT0uV3wY6aB8cD1";
+  const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+  let api: NodeHttps.Server;
+  let port = 0;
+
+  beforeAll(async () => {
+    api = NodeHttps.createServer(
+      { key: TEST_TLS_KEY, cert: TEST_TLS_CERT },
+      (request, response) => {
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ ok: true, youSent: request.headers.authorization }));
+      },
+    );
+    await new Promise<void>((resolve) => {
+      api.listen(0, "127.0.0.1", () => {
+        port = (api.address() as NodeNet.AddressInfo).port;
+        resolve();
+      });
+    });
+  });
+  afterAll(async () => {
+    await new Promise((resolve) => api.close(resolve));
+  });
+  afterEach(() => secretRedactor.clear());
+
+  /** What a bot's `echo $VAR` is: the platform shell, started with the session's environment. */
+  const shellEcho = (env: NodeJS.ProcessEnv, variable: string) =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcessPlatform;
+      const [command, args] =
+        platform === "win32"
+          ? ["cmd.exe", ["/d", "/s", "/c", `echo %${variable}%`]]
+          : ["sh", ["-c", `echo "$${variable}"`]];
+      return NodeChildProcess.spawnSync(command!, args as string[], {
+        env,
+        encoding: "utf8",
+      }).stdout.trim();
+    });
+
+  const base64 = (value: string) => Buffer.from(value).toString("base64");
+
+  it.effect(
+    "keeps both keys out of the chat, activity, event log, task result and server log",
+    () =>
+      withLayer((harness) =>
+        Effect.gen(function* () {
+          yield* seedBots;
+          const bots = yield* PersonalBotService.PersonalBotService;
+          const secrets = yield* PersonalSecretService.PersonalSecretService;
+          const access = yield* PersonalSessionAccess.PersonalSessionAccess;
+          const tasks = yield* PersonalTaskService.PersonalTaskService;
+          void tasks;
+          const { task, threadId, turnId } = yield* runningTask(harness, "boundary", "assistant");
+          yield* bots.createThread({ botId: botId("assistant"), threadId });
+
+          // One key each way, saved the way the owner would.
+          yield* secrets.create({ name: "ENV_KEY", value: Redacted.make(ENV_VALUE), mode: "env" });
+          yield* secrets.create({
+            name: "API_KEY",
+            value: Redacted.make(BROKERED),
+            mode: "brokered",
+            origins: [`https://api.test.example:${port}`],
+          });
+
+          // --- The provider session: a shell that echoes both variables.
+          const grant = yield* access.forThread(threadId);
+          const sessionEnv = withProviderSessionEnvironment(
+            { PATH: process.env.PATH ?? "", SystemRoot: process.env.SystemRoot ?? "" },
+            { personalSecretEnvironment: grant.environment },
+          );
+          const envOutput = yield* shellEcho(sessionEnv, "PB_SECRET_ENV_KEY");
+          const brokeredOutput = yield* shellEcho(sessionEnv, "PB_SECRET_API_KEY");
+          // The shell really did print the env-mode key: that is what the masking has to catch.
+          expect(envOutput).toBe(ENV_VALUE);
+          // The brokered key was never in the process.
+          expect(brokeredOutput).not.toContain(BROKERED);
+          expect(JSON.stringify(sessionEnv)).not.toContain(BROKERED);
+
+          // --- The same bot uses the broker tool against the local API.
+          const handlerLayer = PersonalToolkitHandlersLive.pipe(
+            Layer.provide(
+              Layer.mock(PersonalBrowser)({ sensitiveExposure: () => Effect.succeed([]) }),
+            ),
+            Layer.provide(
+              Layer.mock(PersonalBotRepository.PersonalBotRepository)({
+                listBots: () => Effect.succeed([]),
+              }),
+            ),
+            Layer.provide(Layer.mock(PersonalRoutineService)({})),
+            Layer.provide(
+              Layer.mock(PersonalMemoryService)({
+                botForThread: () => Effect.succeed(Option.some(botId("assistant"))),
+              }),
+            ),
+            Layer.provide(Layer.succeed(PersonalSessionAccess.PersonalSessionAccess, access)),
+            Layer.provide(
+              Layer.succeed(SecretBrokerConfig, {
+                resolve: async () => [{ address: "127.0.0.1", family: 4 }],
+                isAddressAllowed: () => true,
+                requestOptions: { ca: TEST_TLS_CERT },
+              }),
+            ),
+          );
+          const brokerResult = yield* Effect.gen(function* () {
+            const toolkit = yield* PersonalToolkit;
+            return yield* toolkit
+              .handle("secret_request", {
+                method: "GET",
+                url: `https://api.test.example:${port}/v1/me`,
+                headers: { Authorization: "Bearer {{secret:API_KEY}}" },
+              })
+              .pipe(Stream.unwrap, Stream.runCollect);
+          }).pipe(
+            Effect.provide(handlerLayer),
+            Effect.provideService(McpInvocationContext, {
+              environmentId: EnvironmentId.make("env"),
+              threadId,
+              providerSessionId: "session",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              capabilities: new Set(["personal" as const]),
+              issuedAt: 1,
+            }),
+          );
+          const brokerText = encode(brokerResult);
+          // The API echoed the Authorization header it received; the bot gets it masked.
+          expect(brokerText).toContain("[secret API_KEY]");
+          expect(brokerText).not.toContain(BROKERED);
+
+          // --- What the adapter would emit: output of the shell, the tool result and a
+          // reply that quotes both, with the key split across deltas (as tokens arrive).
+          const event = (type: string, extra: Record<string, unknown>, id: string) =>
+            ({
+              eventId: id,
+              provider: "claudeAgent",
+              providerInstanceId: "claudeAgent",
+              threadId,
+              createdAt: "2026-10-07T00:00:00.000Z",
+              type,
+              turnId,
+              ...extra,
+            }) as unknown as ProviderRuntimeEvent;
+          const reply = `Here you go: ${envOutput} and ${brokerText} and ${base64(`user:${envOutput}`)}`;
+          const cut = (text: string, size: number) =>
+            Array.from({ length: Math.ceil(text.length / size) }, (_, index) =>
+              text.slice(index * size, (index + 1) * size),
+            );
+          const emitted: Array<ProviderRuntimeEvent> = [
+            event(
+              "item.started",
+              { itemId: "cmd", payload: { itemType: "command_execution" } },
+              "e0",
+            ),
+            ...cut(envOutput, 7).map((piece, index) =>
+              event(
+                "content.delta",
+                { itemId: "cmd", payload: { streamKind: "command_output", delta: piece } },
+                `cmd-${index}`,
+              ),
+            ),
+            event(
+              "item.completed",
+              {
+                itemId: "cmd",
+                payload: {
+                  itemType: "command_execution",
+                  detail: `echo $PB_SECRET_ENV_KEY -> ${envOutput}`,
+                  data: { output: envOutput, exitCode: 0 },
+                },
+              },
+              "e1",
+            ),
+            ...cut(reply, 5).map((piece, index) =>
+              event(
+                "content.delta",
+                { itemId: "msg", payload: { streamKind: "assistant_text", delta: piece } },
+                `msg-${index}`,
+              ),
+            ),
+            event(
+              "item.completed",
+              { itemId: "msg", payload: { itemType: "assistant_message" } },
+              "e2",
+            ),
+            event("turn.completed", { payload: { state: "completed" } }, "e3"),
+          ];
+
+          // --- 1. The chat: what reaches the bus, and the messages built from the deltas.
+          expect(secretRedactor.size()).toBe(2);
+          const filter = makeProviderEventSecretFilter();
+          const published = emitted.flatMap((entry) => filter.process(entry));
+          const chat = published
+            .filter((entry) => entry.type === "content.delta")
+            .map((entry) => (entry.payload as { delta: string }).delta);
+          const transcript = chat.join("");
+          const everything = encode(published);
+          for (const leak of [ENV_VALUE, BROKERED, base64(ENV_VALUE), base64(BROKERED)]) {
+            expect(everything, leak).not.toContain(leak);
+          }
+          expect(transcript).toContain("[secret ENV_KEY]");
+          expect(filter.holding()).toBe(0);
+
+          // --- 2. The event log on disk (native and canonical both go through it).
+          const logDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-secret-log-"));
+          try {
+            const store = yield* makeEventNdjsonLogStore(NodePath.join(logDir, "events.log"), {
+              batchWindowMs: 0,
+            });
+            for (const entry of emitted) {
+              yield* store.logger("native").write({ raw: entry, message: reply }, threadId);
+            }
+            yield* store.close();
+            const logged = NodeFS.readdirSync(logDir)
+              .map((file) => NodeFS.readFileSync(NodePath.join(logDir, file), "utf8"))
+              .join("\n");
+            expect(logged.length).toBeGreaterThan(0);
+            for (const leak of [ENV_VALUE, BROKERED, base64(ENV_VALUE)]) {
+              expect(logged, leak).not.toContain(leak);
+            }
+            expect(logged).toContain("[secret ENV_KEY]");
+          } finally {
+            NodeFS.rmSync(logDir, { recursive: true, force: true });
+          }
+
+          // --- 3. The task result, even when the raw reply got that far.
+          yield* endTurn(harness, threadId, turnId, reply);
+          const finished = yield* reload(task.taskId);
+          expect(finished.status).toBe("completed");
+          expect(encode(finished)).not.toContain(ENV_VALUE);
+          expect(encode(finished)).not.toContain(BROKERED);
+          expect(finished.result?.summary).toContain("[secret ENV_KEY]");
+
+          // --- 4. The server log.
+          const lines: Array<string> = [];
+          const capture = Logger.make<unknown, void>((options) => {
+            lines.push(encode(options.message));
+          });
+          yield* Effect.gen(function* () {
+            yield* Effect.logError(`tool failed with ${envOutput}`, {
+              header: `Bearer ${BROKERED}`,
+            });
+            yield* Effect.logWarning(reply);
+          }).pipe(
+            Effect.provide(
+              Logger.layer([redactSecretsInLogs(capture)], { mergeWithExisting: false }),
+            ),
+          );
+          expect(lines.length).toBe(2);
+          for (const line of lines) {
+            expect(line).not.toContain(ENV_VALUE);
+            expect(line).not.toContain(BROKERED);
+          }
+        }),
+      ),
   );
 });

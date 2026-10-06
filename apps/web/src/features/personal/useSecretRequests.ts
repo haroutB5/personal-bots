@@ -89,6 +89,16 @@ export const personalSecretSetSharing = createEnvironmentRpcCommand(connectionAt
     ),
 });
 
+/** Moves a saved key between brokered and environment-variable access, and sets its addresses. */
+export const personalSecretSetMode = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "personal-secrets:mode",
+  tag: WS_METHODS.personalSecretsSetMode,
+  onSuccess: (target, registry) =>
+    Effect.sync(() =>
+      registry.refresh(personalSavedSecrets({ environmentId: target.environmentId, input: {} })),
+    ),
+});
+
 export function useSavedSecrets(environmentId: EnvironmentId | null) {
   const atom = useMemo(
     () => (environmentId === null ? null : personalSavedSecrets({ environmentId, input: {} })),

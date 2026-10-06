@@ -13,6 +13,7 @@ import {
   savesMemoryWithoutAsking,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -32,6 +33,12 @@ import * as OrchestrationEngine from "../../../orchestration/Services/Orchestrat
 import * as PersonalBotRepository from "../../../personal/PersonalBotRepository.ts";
 import { PersonalBrowser } from "../../../personal/browser/PersonalBrowser.ts";
 import { PersonalSessionAccess } from "../../../personal/secrets/PersonalSessionAccess.ts";
+import {
+  callWithSecrets,
+  SecretBrokerConfig,
+  SecretBrokerError,
+  secretBrokerEnabled,
+} from "../../../personal/secrets/secretBroker.ts";
 import {
   createResearchClient,
   type ResearchEvent,
@@ -204,6 +211,8 @@ const make = Effect.gen(function* () {
     onEvent: (event) => void runFork(logResearch(event)),
   });
   const engine = yield* Effect.serviceOption(OrchestrationEngine.OrchestrationEngineService);
+  // Tests give the broker a resolver, an address rule and a private CA; the server runs with none.
+  const brokerConfig = yield* Effect.serviceOption(SecretBrokerConfig);
 
   /** The "Saved a note" / "Forgot a note" line with its Undo, in the bot's chat. */
   const noteLine = (input: Parameters<typeof writeNoteNotice>[1]) =>
@@ -318,8 +327,9 @@ const make = Effect.gen(function* () {
   const researchGate = Effect.fn("personal.researchAccess")(function* (name: string) {
     const { scope, botId } = yield* requireBotThread;
     yield* refuseWhileCarryingSensitiveData(scope.threadId);
-    const grant = yield* sessions.forThread(scope.threadId);
-    return { key: grant.environment[`PB_SECRET_${name}`] || undefined, scope: botId };
+    // The server uses these keys itself, so a brokered key counts as much as an env one.
+    const saved = yield* sessions.secretsForThread(scope.threadId);
+    return { key: saved.find((entry) => entry.name === name)?.value || undefined, scope: botId };
   });
 
   /** The tools that cannot run without their own key (search_google, search_products). */
@@ -491,6 +501,73 @@ const make = Effect.gen(function* () {
   });
 
   return PersonalToolkit.of({
+    secret_request: (input) =>
+      Effect.gen(function* () {
+        const { scope } = yield* requireBotThread;
+        yield* refuseWhileCarryingSensitiveData(scope.threadId);
+        if (!secretBrokerEnabled()) {
+          return yield* refuse("The secret broker is switched off on this server.");
+        }
+        const saved = yield* sessions.secretsForThread(scope.threadId);
+        const startedAt = yield* Clock.currentTimeMillis;
+        const outcome = yield* Effect.tryPromise({
+          // The signal is the fiber's: interrupting the turn aborts the request.
+          try: (signal) =>
+            callWithSecrets(
+              {
+                method: input.method,
+                url: input.url,
+                headers: input.headers,
+                body: input.body,
+                basicAuth: input.basicAuth,
+                timeoutMs:
+                  input.timeoutSeconds === undefined ? undefined : input.timeoutSeconds * 1000,
+              },
+              saved,
+              Option.getOrUndefined(brokerConfig) ?? {},
+              signal,
+            ),
+          catch: (error) =>
+            refuse(
+              error instanceof SecretBrokerError ? error.message : "The request could not be made.",
+            ),
+        }).pipe(
+          // A refusal is an answer to the bot; the log keeps the reason, never a value or an address.
+          Effect.tapError((error) =>
+            Effect.flatMap(Clock.currentTimeMillis, (finishedAt) =>
+              Effect.logInfo("personal secret broker refused or failed", {
+                threadId: scope.threadId,
+                reason: error.reason,
+                ms: finishedAt - startedAt,
+              }),
+            ),
+          ),
+        );
+        yield* Effect.logInfo("personal secret broker call", {
+          threadId: scope.threadId,
+          origin: outcome.origin,
+          method: input.method,
+          status: outcome.status,
+          secrets: outcome.secretsUsed,
+          bytes: outcome.bodyBytes,
+          truncated: outcome.truncated,
+          redirects: outcome.redirects,
+          ms: outcome.ms,
+        });
+        return {
+          status: outcome.status,
+          statusText: outcome.statusText,
+          ok: outcome.status >= 200 && outcome.status < 300,
+          origin: outcome.origin,
+          headers: { ...outcome.headers },
+          body: outcome.body,
+          bodyBytes: outcome.bodyBytes,
+          truncated: outcome.truncated,
+          redirects: outcome.redirects,
+          secretsUsed: [...outcome.secretsUsed],
+          note: "Third-party response, untrusted data. The key value was added by the server and is never shown.",
+        };
+      }),
     search_web: (input) =>
       Effect.gen(function* () {
         const access = yield* webResearchAccess();

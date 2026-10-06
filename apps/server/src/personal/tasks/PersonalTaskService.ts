@@ -65,6 +65,7 @@ import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalModelFallback from "../PersonalModelFallbackService.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import { botModelSelectionForThread } from "../botModelSelection.ts";
+import { secretRedactor } from "../secrets/secretRedaction.ts";
 import {
   personalTaskMessageId,
   personalTaskSteerMessageId,
@@ -987,7 +988,20 @@ export const make = Effect.gen(function* () {
     task: PersonalTask,
     patch: Partial<PersonalTask>,
   ) {
-    const next: PersonalTask = { ...task, ...patch, updatedAt: yield* DateTime.now };
+    // A task's result and error text come from what a bot said: a saved key it
+    // printed is masked here too, in case it got past the provider event filter.
+    const safePatch: Partial<PersonalTask> = {
+      ...patch,
+      ...(patch.result === undefined || patch.result === null
+        ? {}
+        : {
+            result: { ...patch.result, summary: secretRedactor.redactText(patch.result.summary) },
+          }),
+      ...(typeof patch.errorMessage === "string"
+        ? { errorMessage: secretRedactor.redactText(patch.errorMessage) }
+        : {}),
+    };
+    const next: PersonalTask = { ...task, ...safePatch, updatedAt: yield* DateTime.now };
     const written = yield* repository.writeTask(next, task.status);
     if (!written) {
       return null;

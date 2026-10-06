@@ -128,6 +128,7 @@ import {
   type UserInputAnswers,
 } from "./questionCards";
 import { deriveSecretRequestCards, type SecretRequestOutcome } from "./secretRequestCards";
+import type { ProvideSecret } from "./SecretRequestCard";
 import { useConnectionApprovalCards } from "./useConnectionApprovalCards";
 import { useLeadBotChangeCards } from "./useLeadBotChangeCards";
 import { useMemoryCards } from "./useMemoryCards";
@@ -669,7 +670,7 @@ export function ConversationScreen({
   // Providing a secret. The value is passed straight through to the RPC as a
   // Redacted payload and is never held here, logged, or put in any store: the
   // only copy on this device was the card's own input, already cleared.
-  const onProvideSecret = async (requestId: string, value: string, shared: boolean) => {
+  const onProvideSecret: ProvideSecret = async (requestId, value, shared, access) => {
     if (environmentId === null) return;
     setRespondingIds((current) => new Set(current).add(requestId));
     const result = await fulfillSecret({
@@ -678,6 +679,8 @@ export function ConversationScreen({
         requestId: PersonalSecretRequestId.make(requestId),
         value: Redacted.make(value),
         shared,
+        mode: access.mode,
+        origins: [...access.origins],
       },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -1223,9 +1226,7 @@ export function ConversationScreen({
             }
             onAnswerQuestion={(requestId, answers) => void onAnswerQuestion(requestId, answers)}
             onDismissQuestion={(requestId) => void onDismissQuestion(requestId)}
-            onProvideSecret={(requestId, value, shared) =>
-              void onProvideSecret(requestId, value, shared)
-            }
+            onProvideSecret={(...args) => void onProvideSecret(...args)}
             onDeclineSecret={(requestId) => void onDeclineSecret(requestId)}
             onProvideLogin={loginRequests.provide}
             onCancelLogin={(requestId) => void loginRequests.cancel(requestId)}

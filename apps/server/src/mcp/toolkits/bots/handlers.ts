@@ -8,6 +8,7 @@ import {
   PersonalTaskStatus,
   personalBotTeamLabel,
   personalSecretEnvVar,
+  personalSecretPlaceholder,
   type PersonalBot,
   type PersonalDelegationBrief,
   type PersonalTask,
@@ -68,7 +69,7 @@ export const CAST_VOTE_DECIDED_NOTE =
 export const PENDING_CONFIRM_NOTE =
   "Not done yet: a Yes/No card in this chat asks Harout to confirm, and only his tap can approve it. Do not retry, rephrase or work around it. Tell him in one line what you asked for and end your turn; his answer arrives as a follow-up message.";
 export const REQUEST_SECRET_NOTE =
-  "Requested. The user will enter it in a secure form; you'll be resumed. Never ask for it in chat.";
+  "Requested. The user will enter it in a secure form and choose whether it is brokered (you use it through secret_request and never see it) or an environment variable; you'll be resumed and told which. Never ask for it in chat.";
 
 /**
  * The help reason as the user sees it: one line, at most
@@ -692,17 +693,23 @@ const make = Effect.gen(function* () {
             name: input.name,
             label: input.label,
             purpose: input.purpose,
+            ...(input.origins === undefined ? {} : { origins: input.origins }),
           })
           .pipe(Effect.mapError(readable));
         const envVar = personalSecretEnvVar(input.name);
+        const brokered = result.status === "fulfilled" && result.request.mode === "brokered";
         return {
           requestId: result.request.requestId,
           name: input.name,
           envVar,
           status: result.status,
+          ...(result.status === "fulfilled" ? { mode: result.request.mode ?? "env" } : {}),
+          ...(brokered ? { origins: [...(result.request.origins ?? [])] } : {}),
           note:
             result.status === "fulfilled"
-              ? `${input.name} is already stored. It is ${envVar} in sessions started after it was saved; do not print it.`
+              ? brokered
+                ? `${input.name} is already saved and brokered: call secret_request with ${personalSecretPlaceholder(input.name)} where its value goes. It only works for ${(result.request.origins ?? []).join(", ")}. You never see the value.`
+                : `${input.name} is already stored. It is ${envVar} in sessions started after it was saved; do not print it.`
               : REQUEST_SECRET_NOTE,
         };
       }),

@@ -3513,6 +3513,10 @@ const makeWsRpcLayer = (
             personalSecrets.setSharing(input),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.personalSecretsSetMode]: (input) =>
+          observeRpcEffect(WS_METHODS.personalSecretsSetMode, personalSecrets.setMode(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.personalSecretsCreate]: (input) =>
           observeRpcEffect(WS_METHODS.personalSecretsCreate, personalSecrets.create(input), {
             "rpc.aggregate": "server",

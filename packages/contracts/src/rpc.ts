@@ -332,6 +332,7 @@ import {
   PersonalSecretFulfillInput,
   PersonalSecretNameInput,
   PersonalSecretSharingInput,
+  PersonalSecretModeInput,
   PersonalSecretRequest,
   PersonalSecretRequestIdInput,
   PersonalSecretsError,
@@ -665,6 +666,7 @@ export const WS_METHODS = {
   personalSecretsCreate: "personalSecrets.create",
   personalSecretsDelete: "personalSecrets.delete",
   personalSecretsSetSharing: "personalSecrets.setSharing",
+  personalSecretsSetMode: "personalSecrets.setMode",
 
   // Owner-managed service connections. Credential fields are write-only.
   personalConnectionsList: "personalConnections.list",
@@ -1572,6 +1574,12 @@ const WsPersonalSecretsDeleteRpc = Rpc.make(WS_METHODS.personalSecretsDelete, {
 
 const WsPersonalSecretsSetSharingRpc = Rpc.make(WS_METHODS.personalSecretsSetSharing, {
   payload: PersonalSecretSharingInput,
+  success: PersonalSecretsListResult,
+  error: PersonalSecretsRpcError,
+});
+
+const WsPersonalSecretsSetModeRpc = Rpc.make(WS_METHODS.personalSecretsSetMode, {
+  payload: PersonalSecretModeInput,
   success: PersonalSecretsListResult,
   error: PersonalSecretsRpcError,
 });
@@ -2655,6 +2663,7 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalSecretsCreateRpc,
   WsPersonalSecretsDeleteRpc,
   WsPersonalSecretsSetSharingRpc,
+  WsPersonalSecretsSetModeRpc,
   WsPersonalConnectionsListRpc,
   WsPersonalConnectionsConnectRpc,
   WsPersonalConnectionsValidateRpc,

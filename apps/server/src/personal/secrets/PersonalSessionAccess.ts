@@ -4,7 +4,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { personalSecretEnvVar, type PersonalBotId, type ThreadId } from "@t3tools/contracts";
+import {
+  personalSecretEnvVar,
+  type PersonalBotId,
+  type PersonalSecretMode,
+  type ThreadId,
+} from "@t3tools/contracts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
@@ -17,8 +22,10 @@ export interface PersonalSessionGrant {
   /** The bot the thread belongs to; null for every non-personal thread. */
   readonly botId: PersonalBotId | null;
   /**
-   * `PB_SECRET_<NAME>` for each fulfilled secret the bot requested, plus
-   * every shared one. Read from the secret store when the session starts.
+   * `PB_SECRET_<NAME>` for each fulfilled `env`-mode secret the bot requested,
+   * plus every shared one. Read from the secret store when the session
+   * starts. A brokered secret is never here: its value does not enter a
+   * provider process (see `secretsForThread`).
    */
   readonly environment: Readonly<Record<string, string>>;
   /**
@@ -29,6 +36,14 @@ export interface PersonalSessionGrant {
    * bot, or a failed lookup.
    */
   readonly systemInstructions: string | null;
+}
+
+/** One secret a bot can use, with how it may be used. Server-side only. */
+export interface PersonalSessionSecret {
+  readonly name: string;
+  readonly mode: PersonalSecretMode;
+  readonly origins: ReadonlyArray<string>;
+  readonly value: string;
 }
 
 const NONE: PersonalSessionGrant = { botId: null, environment: {}, systemInstructions: null };
@@ -43,6 +58,15 @@ export class PersonalSessionAccess extends Context.Service<
   PersonalSessionAccess,
   {
     readonly forThread: (threadId: ThreadId) => Effect.Effect<PersonalSessionGrant>;
+    /**
+     * Every secret the thread's bot can use, whatever its mode, with its
+     * value: for the server's own tools (the research keys, the
+     * `secret_request` broker). Never put in a provider process or a
+     * response. Empty for a non-personal thread or a failed lookup.
+     */
+    readonly secretsForThread: (
+      threadId: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<PersonalSessionSecret>>;
     /**
      * Just the bot's session instructions (no secret reads), for turns sent
      * outside the reactor such as the post-restart continuation. Null for
@@ -76,15 +100,11 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const forThread: PersonalSessionAccess["Service"]["forThread"] = (threadId) =>
+  /** The secrets a bot can use: its own and every shared one, read from the store. */
+  const readSecrets = (botId: PersonalBotId) =>
     Effect.gen(function* () {
-      const link = yield* bots.getThreadLink({ threadId });
-      if (Option.isNone(link)) {
-        return NONE;
-      }
-      const botId = link.value.botId;
       const fulfilled = yield* secrets.listByStatus("fulfilled");
-      // One env var per name: the bot's own row wins over a shared one when
+      // One value per name: the bot's own row wins over a shared one when
       // both exist, so an unshared value is never shadowed by a shared one.
       const byName = new Map<string, (typeof fulfilled)[number]>();
       for (const entry of fulfilled) {
@@ -94,7 +114,7 @@ export const make = Effect.gen(function* () {
           byName.set(entry.name, entry);
         }
       }
-      const environment: Record<string, string> = {};
+      const accessible: Array<PersonalSessionSecret> = [];
       for (const entry of byName.values()) {
         const value = yield* store
           .get(
@@ -119,8 +139,28 @@ export const make = Effect.gen(function* () {
             ),
           );
         if (Option.isSome(value)) {
-          environment[personalSecretEnvVar(entry.name)] = decoder.decode(value.value);
+          accessible.push({
+            name: entry.name,
+            mode: entry.mode ?? "env",
+            origins: entry.origins ?? [],
+            value: decoder.decode(value.value),
+          });
         }
+      }
+      return accessible;
+    });
+
+  const forThread: PersonalSessionAccess["Service"]["forThread"] = (threadId) =>
+    Effect.gen(function* () {
+      const link = yield* bots.getThreadLink({ threadId });
+      if (Option.isNone(link)) {
+        return NONE;
+      }
+      const botId = link.value.botId;
+      const environment: Record<string, string> = {};
+      for (const secret of yield* readSecrets(botId)) {
+        // Brokered values stay on the server; only env-mode keys reach the shell.
+        if (secret.mode === "env") environment[personalSecretEnvVar(secret.name)] = secret.value;
       }
       const systemInstructions = yield* instructionsForThread(threadId);
       return { botId, environment, systemInstructions } satisfies PersonalSessionGrant;
@@ -133,7 +173,24 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  return { forThread, instructionsForThread } satisfies PersonalSessionAccess["Service"];
+  const secretsForThread: PersonalSessionAccess["Service"]["secretsForThread"] = (threadId) =>
+    Effect.gen(function* () {
+      const link = yield* bots.getThreadLink({ threadId });
+      return Option.isNone(link) ? [] : yield* readSecrets(link.value.botId);
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("personal secret lookup failed; granting nothing", {
+          threadId,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as([] as ReadonlyArray<PersonalSessionSecret>)),
+      ),
+    );
+
+  return {
+    forThread,
+    secretsForThread,
+    instructionsForThread,
+  } satisfies PersonalSessionAccess["Service"];
 });
 
 export const layer = Layer.effect(PersonalSessionAccess, make);

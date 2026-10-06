@@ -8,9 +8,17 @@ import { ChevronLeft, Plus } from "lucide-react";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { commandFailureMessage } from "./commandFeedback";
+import {
+  initialSecretAccess,
+  SecretAccessFields,
+  secretAccessChoice,
+  secretAccessProblem,
+  type SecretAccessState,
+} from "./SecretAccessFields";
 import { usePersonalEnvironmentId } from "./usePersonalBots";
 import {
   personalSecretCreate,
+  personalSecretSetMode,
   personalSecretSetSharing,
   useSavedSecrets,
 } from "./useSecretRequests";
@@ -44,6 +52,8 @@ function ApiKeyForm({ onDone }: { onDone: () => void }): JSX.Element {
   const [valueError, setValueError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [access, setAccess] = useState<SecretAccessState>(() => initialSecretAccess());
+  const [showAccessProblem, setShowAccessProblem] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const valueRef = useRef<HTMLInputElement>(null);
 
@@ -52,15 +62,18 @@ function ApiKeyForm({ onDone }: { onDone: () => void }): JSX.Element {
     if (environmentId === null || busy) return;
     const problem = secretNameProblem(name);
     const missingValue = value.length === 0 ? "Paste the key's value." : null;
+    const accessProblem = secretAccessProblem(access);
     setNameError(problem);
     setValueError(missingValue);
+    setShowAccessProblem(accessProblem !== null);
     const firstError =
       problem !== null ? nameRef.current : missingValue !== null ? valueRef.current : null;
-    if (problem !== null || missingValue !== null) {
+    if (problem !== null || missingValue !== null || accessProblem !== null) {
       firstError?.focus();
       firstError?.scrollIntoView({ block: "center" });
       return;
     }
+    const choice = secretAccessChoice(access);
     setSubmitError(null);
     setBusy(true);
     const result = await createSecret({
@@ -70,6 +83,8 @@ function ApiKeyForm({ onDone }: { onDone: () => void }): JSX.Element {
         label: label.trim(),
         value: Redacted.make(value),
         shared: true,
+        mode: choice.mode,
+        origins: [...choice.origins],
       },
     });
     setBusy(false);
@@ -112,8 +127,9 @@ function ApiKeyForm({ onDone }: { onDone: () => void }): JSX.Element {
           className={FIELD_CLASS}
         />
         <p id="api-key-name-help" className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
-          Bots read this key as PB_SECRET_{name.trim() || "NAME"}, so it has to match the name the
-          bot looks for.
+          Bots ask for this key by name ({"{{secret:"}
+          {name.trim() || "NAME"}
+          {"}}"}), so it has to match the name the bot looks for.
         </p>
         {nameError === null ? null : (
           <p
@@ -169,8 +185,7 @@ function ApiKeyForm({ onDone }: { onDone: () => void }): JSX.Element {
           className={FIELD_CLASS}
         />
         <p id="api-key-value-help" className="mt-1.5 text-sm text-[var(--personal-text-secondary)]">
-          Saved on your computer and given to every bot as an environment variable. It is never
-          shown in a chat.
+          Saved on your computer and never shown in a chat.
         </p>
         {valueError === null ? null : (
           <p
@@ -182,6 +197,13 @@ function ApiKeyForm({ onDone }: { onDone: () => void }): JSX.Element {
           </p>
         )}
       </div>
+
+      <SecretAccessFields
+        state={access}
+        onChange={setAccess}
+        disabled={busy}
+        showProblem={showAccessProblem}
+      />
 
       {submitError === null ? null : (
         <p role="alert" className="text-sm text-[var(--personal-error)]">
@@ -211,12 +233,97 @@ function ApiKeyForm({ onDone }: { onDone: () => void }): JSX.Element {
   );
 }
 
+/** Changes how bots use one saved key: brokered with its addresses, or an environment variable. */
+function AccessPanel({
+  secret,
+  onDone,
+}: {
+  secret: {
+    readonly name: string;
+    readonly mode: "brokered" | "env";
+    readonly origins: ReadonlyArray<string>;
+  };
+  onDone: () => void;
+}): JSX.Element {
+  const environmentId = usePersonalEnvironmentId();
+  const setMode = useAtomCommand(personalSecretSetMode, { reportFailure: false });
+  const [access, setAccess] = useState<SecretAccessState>(() => ({
+    mode: secret.mode === "brokered" ? "brokered" : "env",
+    originsText: secret.origins.join(", "),
+  }));
+  const [showProblem, setShowProblem] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const onSave = async () => {
+    if (environmentId === null || busy) return;
+    if (secretAccessProblem(access) !== null) {
+      setShowProblem(true);
+      return;
+    }
+    const choice = secretAccessChoice(access);
+    setBusy(true);
+    const result = await setMode({
+      environmentId,
+      input: { name: secret.name, mode: choice.mode, origins: [...choice.origins] },
+    });
+    setBusy(false);
+    const failure = commandFailureMessage(result, "Could not change this key. Try again.");
+    setError(failure);
+    if (failure === null) onDone();
+  };
+
+  return (
+    <div
+      role="group"
+      aria-label={`Access for ${secret.name}`}
+      className="flex flex-col gap-3 border-t border-[var(--personal-border)] px-4 py-3"
+    >
+      <SecretAccessFields
+        state={access}
+        onChange={setAccess}
+        disabled={busy}
+        showProblem={showProblem}
+      />
+      <p className="text-[13px] leading-snug text-[var(--personal-text-secondary)]">
+        Applies to new sessions; a session that is already running may still hold the key as an
+        environment variable.
+      </p>
+      {error === null ? null : (
+        <p role="alert" className="text-sm text-[var(--personal-error)]">
+          {error}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={onDone}
+          disabled={busy}
+          className="h-11 flex-1 rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-fill-muted)] text-[15px] font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => void onSave()}
+          disabled={busy}
+          aria-busy={busy}
+          className="h-11 flex-1 rounded-[var(--personal-radius-button)] bg-[var(--personal-primary)] text-[15px] font-semibold text-[var(--personal-primary-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+        >
+          {busy ? "Saving…" : "Save access"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** /bots/settings/api-keys: saved API keys and which bots may use them. */
 export function ApiKeysScreen(): JSX.Element {
   const environmentId = usePersonalEnvironmentId();
   const list = useSavedSecrets(environmentId);
   const setSharing = useAtomCommand(personalSecretSetSharing, { reportFailure: false });
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const secrets = list.data?.secrets ?? [];
@@ -266,6 +373,11 @@ export function ApiKeysScreen(): JSX.Element {
       <p className="mt-2 text-[14px] leading-snug text-[var(--personal-text-secondary)]">
         Turning sharing off applies to new sessions; running sessions may already have the key.
       </p>
+      <p className="mt-2 text-[14px] leading-snug text-[var(--personal-text-secondary)]">
+        Brokered keys stay on the server: a bot names one in a request and the server adds it, for
+        the addresses you set. An environment variable key can be read, and printed, by any bot with
+        a shell.
+      </p>
 
       {(error ?? list.error) === null ? null : (
         <p role="alert" className="mt-3 text-sm text-[var(--personal-error)]">
@@ -296,34 +408,56 @@ export function ApiKeysScreen(): JSX.Element {
       ) : (
         <ul className="mt-4 divide-y divide-[var(--personal-border)] overflow-hidden rounded-[var(--personal-radius-card)] border border-[var(--personal-border)] bg-[var(--personal-surface)]">
           {secrets.map((secret) => (
-            <li key={secret.name} className="flex min-h-16 items-center">
-              <div className="min-w-0 flex-1 px-4 py-3">
-                <span className="block truncate text-[15px] font-semibold text-[var(--personal-text)]">
-                  {secret.label}
-                </span>
-                <span className="block break-all text-[13px] text-[var(--personal-text-secondary)]">
-                  {secret.name}
-                </span>
+            <li key={secret.name} className="flex flex-col">
+              <div className="flex min-h-16 items-center">
+                <div className="min-w-0 flex-1 px-4 py-3">
+                  <span className="block truncate text-[15px] font-semibold text-[var(--personal-text)]">
+                    {secret.label}
+                  </span>
+                  <span className="block break-all text-[13px] text-[var(--personal-text-secondary)]">
+                    {secret.name}
+                  </span>
+                  <span
+                    data-secret-mode={secret.mode}
+                    className="mt-0.5 block break-all text-[13px] text-[var(--personal-text-secondary)]"
+                  >
+                    {secret.mode === "brokered"
+                      ? `Brokered${secret.origins.length > 0 ? `: ${secret.origins.join(", ")}` : ""}`
+                      : "Environment variable"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={secret.shared}
+                  aria-label={`Allow all bots to use ${secret.name}`}
+                  disabled={busy !== null}
+                  onClick={() => void onToggleShared(secret.name, !secret.shared)}
+                  className="mr-2 flex h-11 shrink-0 items-center gap-2 px-2 text-[13px] text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+                >
+                  <span aria-hidden="true">All bots</span>
+                  <span
+                    aria-hidden="true"
+                    className={`relative inline-flex h-6 w-10 shrink-0 items-center rounded-full border border-[var(--personal-border)] ${secret.shared ? "bg-[var(--personal-primary)]" : "bg-[var(--personal-fill-muted)]"}`}
+                  >
+                    <span
+                      className={`inline-block size-5 rounded-full bg-[var(--personal-surface)] shadow ${secret.shared ? "translate-x-[16px]" : "translate-x-0.5"}`}
+                    />
+                  </span>
+                </button>
               </div>
               <button
                 type="button"
-                role="switch"
-                aria-checked={secret.shared}
-                aria-label={`Allow all bots to use ${secret.name}`}
-                disabled={busy !== null}
-                onClick={() => void onToggleShared(secret.name, !secret.shared)}
-                className="mr-2 flex h-11 shrink-0 items-center gap-2 px-2 text-[13px] text-[var(--personal-text-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)] disabled:opacity-40"
+                aria-expanded={editing === secret.name}
+                aria-label={`Change access for ${secret.name}`}
+                onClick={() => setEditing(editing === secret.name ? null : secret.name)}
+                className="mx-4 mb-2 flex h-11 items-center self-start rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] px-3.5 text-[14px] font-medium text-[var(--personal-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
               >
-                <span aria-hidden="true">All bots</span>
-                <span
-                  aria-hidden="true"
-                  className={`relative inline-flex h-6 w-10 shrink-0 items-center rounded-full border border-[var(--personal-border)] ${secret.shared ? "bg-[var(--personal-primary)]" : "bg-[var(--personal-fill-muted)]"}`}
-                >
-                  <span
-                    className={`inline-block size-5 rounded-full bg-[var(--personal-surface)] shadow ${secret.shared ? "translate-x-[16px]" : "translate-x-0.5"}`}
-                  />
-                </span>
+                {secret.mode === "env" ? "Make brokered" : "Change access"}
               </button>
+              {editing === secret.name ? (
+                <AccessPanel secret={secret} onDone={() => setEditing(null)} />
+              ) : null}
             </li>
           ))}
         </ul>
