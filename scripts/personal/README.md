@@ -92,6 +92,29 @@ of `build.ps1` (staging needs no finished notes; the proof is written after QA)
 and not part of `restart.ps1`, so a rollback is never held up by notes.
 `release-safety.tests.ps1` tests it and the build default.
 
+### Gate evidence: the gates are recorded and tied to the commit
+
+After `build.ps1 -CopyExternals` staged the release (clean tree, code committed), run
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.ps1 -Version x.y.z -Release <sha12>
+```
+
+It runs the fork gate (`server-tests`, `server-tsc`, `web-tests`, `web-tsc`, `ps-tests`) and the phone e2e against the
+staged release, and records each command, its exit code, the test counts, the e2e journeys, the git commit and whether
+tracked files were modified. It writes `releases\<sha12>\gate-evidence.json` (full logs in `gate-evidence-logs\`, plus the
+SHA-256 of the staged `dist\bin.mjs`) and a "Gate evidence" section between two marker comments in
+`docs\releases\HANDOFF-<ver>.md` (a missing notes file is created with `PROOF_PLACEHOLDER`). Commit the notes, then push; only
+`docs/releases` may change after the gates ran. `-Gates e2e -Merge` reruns one gate and keeps the others (same commit and binary).
+`-Gates` can also name `lint`. Exit 1 means a gate failed or the tree was not clean (the evidence is still written).
+
+`check-gate-evidence.ps1 -Version x.y.z -Release <sha12> -Commit <main sha> -RepoRoot <repo>` refuses (exit 1) a release whose
+evidence is missing, failed (recomputed from exit codes and counts, the file's own `ok` is not trusted), recorded for a
+different commit, for a tree that was not clean, for another `dist\bin.mjs`, whose evidence commit is not an ancestor of the
+shipped commit, or with any file outside `docs/releases` changed since; and when the notes at that commit have no matching
+Gate evidence section. The release waiter runs it right after the notes check, from the pinned tools copy. It is not part of
+`build.ps1` and not of `restart.ps1`, so staging and a rollback are never held up by it. `gate-evidence.tests.ps1` tests both.
+
 ### Tell the requesting chat when a release lands
 
 A release waiter (backup, `restart.ps1`, `smoke.ps1`, rollback on a failed

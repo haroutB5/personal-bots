@@ -169,6 +169,7 @@ if ($Json) {
         passed = if ($result) { $result.passed } else { 0 }
         failed = if ($result) { $result.failed } else { $null }
         failures = [string[]]$failureLines
+        journeys = @(if ($result -and $result.results) { $result.results | ForEach-Object { [ordered]@{ id = [string]$_.id; ok = [bool]$_.ok; ms = $_.ms } } })
         leftovers = $leftovers
         artifacts = if ($exit -eq 0) { $null } else { $ArtifactsDir }
     }
