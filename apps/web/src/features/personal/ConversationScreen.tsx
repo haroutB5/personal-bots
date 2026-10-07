@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -66,10 +66,32 @@ import { CHAT_PROBLEM_BUTTON, ChatLoadProblem } from "./ChatLoadProblem";
 import { threadLoadProblem } from "./threadLoadProblem";
 import { BotMuteMenuItems, useSetBotMute } from "./BotMute";
 import { ChatChips } from "./ChatChips";
-import { markChatSwitched, rememberChipsShown } from "./chatChipHandoff";
-import { buildChatChips } from "./chatChipRows";
-import { isChatPinned } from "./chatState";
-import { SnoozeSheet } from "./SnoozeSheet";
+import { ChatSettingsSheet } from "./ChatSettingsSheet";
+import {
+  clearPendingWrapup,
+  markChatSwitched,
+  markPendingWrapup,
+  pendingWrapupFor,
+  pendingWrapupStep,
+  rememberChipsShown,
+} from "./chatChipHandoff";
+import { chatSwitchNavigation } from "./chatChipNavigation";
+import { useFrozenChipOrder } from "./chatChipOrder";
+import { buildChatChips, type ChatChip } from "./chatChipRows";
+import {
+  buildChatSettingsTarget,
+  CHAT_SETTINGS_HINT,
+  chatActionAnnouncement,
+  chatActionFailure,
+  chatSettingsHeader,
+  chatSettingsHint,
+  chatSettingsRows,
+  type ChatSettingsRowId,
+  type ChatSettingsTarget,
+} from "./chatSettingsModel";
+import { whenWords } from "./chatState";
+import { NO_TOUCH_SELECT } from "./SelectMode";
+import { useHoldCue } from "./useHoldCue";
 import { useBulkChatActions } from "./useBulkChatActions";
 import { useSnoozeWakeClock } from "./useSnoozeWakeClock";
 import { ConversationHeaderLine, ConversationHeaderName } from "./ConversationHeaderName";
@@ -143,7 +165,12 @@ import { diagnosticsEnabled, DiagnosticsOverlay } from "./DiagnosticsOverlay";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { useReportViewingThread } from "./useReportViewingThread";
 import { readChatNotice } from "./chatNotices";
-import { useChatSeenState, useMarkChatSeen, useRefetchOnTurnsSettled } from "./unreadChats";
+import {
+  isChatUnread,
+  useChatSeenState,
+  useMarkChatSeen,
+  useRefetchOnTurnsSettled,
+} from "./unreadChats";
 import { markMessageSent, observeChatMessages, reportChatUsable } from "./perfRum";
 import { warmHighlighterWhenIdle } from "./highlighterWarmup";
 import { PersonalComposer } from "./PersonalComposer";
@@ -161,7 +188,8 @@ import {
 } from "./usePersonalBots";
 import { useRefreshBotsForTaskThreads } from "./useRefreshBotsForTaskThreads";
 import { useWrapupChat } from "./wrapupChat";
-import { useDeleteChat } from "./useDeleteChat";
+import { type DeleteChatOptions, useDeleteChat } from "./useDeleteChat";
+import { hidesBotPreviews } from "./previewPrivacy";
 import { RenameChatDialog } from "./RenameChatDialog";
 import { pendingForThread } from "./pendingOutgoing";
 import { renameChatInitialTitle, useRenameChat } from "./renameChat";
@@ -734,41 +762,69 @@ export function ConversationScreen({
     });
   };
 
-  const onArchive = async () => {
-    if (environmentId === null) return;
-    const result = await archiveThread({ environmentId, input: { threadId, archived: true } });
-    const failure = commandFailureMessage(result, "Couldn't archive this chat. Try again.");
-    if (failure !== null) {
-      // The menu has already closed, so the transcript's alert is the only
-      // place left to say the chat is still here.
-      setActionError(failure);
-      return;
-    }
-    setActionError(null);
+  // Pin, snooze, wake and mark unread: the same server path as the chat list's own actions. On the
+  // open chat Snooze and Mark unread then leave it the way Back does (Team origin returns to Team);
+  // on another chat nothing navigates.
+  const runChatAction = useBulkChatActions(environmentId);
+  const [announcement, setAnnouncement] = useState("");
+  /** What a screen reader hears after an action on a chat that is not the open one. */
+  const announce = (text: string) => setAnnouncement(text);
+  const leaveChat = async () => {
+    await navigate({ to: backTarget.to, replace: true });
+  };
+  const goToChatList = async () => {
     await navigate({ to: "/bots/$botId", params: { botId }, replace: true });
   };
-
-  // Pin, snooze and mark unread: the same server path as the chat list's own actions, for this one
-  // chat. Snooze and Mark unread then leave the chat the way Back does (Team origin returns to Team).
-  const runChatAction = useBulkChatActions(environmentId);
-  const [snoozeOpen, setSnoozeOpen] = useState(false);
-  const pinned = link !== null && isChatPinned(link);
-  const onPinChange = async () => {
-    setActionError(null);
-    const outcome = await runChatAction(pinned ? "unpin" : "pin", [threadId], 0);
-    if (outcome.status === "settled" && outcome.anyFailed) setActionError(outcome.notice);
-  };
-  const leaveAfter = async (
-    action: "snooze" | "markUnread",
+  /** Pin, Unpin, Snooze, Wake or Mark unread on one chat. Returns whether it worked. */
+  const runStateAction = async (
+    target: ChatSettingsTarget,
+    action: "pin" | "unpin" | "snooze" | "wake" | "markUnread",
     options?: { snoozeUntilMs: number },
-  ) => {
+  ): Promise<boolean> => {
     setActionError(null);
-    const outcome = await runChatAction(action, [threadId], 0, options);
+    const outcome = await runChatAction(action, [target.threadId], 0, options);
     if (outcome.status === "settled" && outcome.anyFailed) {
       setActionError(outcome.notice);
+      return false;
+    }
+    if (!target.isOpenChat) {
+      announce(
+        chatActionAnnouncement(
+          action,
+          target.title,
+          action === "snooze" && options !== undefined
+            ? whenWords(options.snoozeUntilMs, Date.now())
+            : undefined,
+        ),
+      );
+    }
+    return true;
+  };
+
+  const archiveChat = async (target: ChatSettingsTarget) => {
+    if (environmentId === null) return;
+    const other = !target.isOpenChat;
+    const result = await archiveThread({
+      environmentId,
+      input: { threadId: ThreadId.make(target.threadId), archived: true },
+    });
+    const failure = commandFailureMessage(
+      result,
+      other ? "" : "Couldn't archive this chat. Try again.",
+    );
+    if (failure !== null) {
+      // The sheet has already closed, so the transcript's alert is the only
+      // place left to say the chat is still here. Another chat is named in it.
+      setActionError(
+        other
+          ? chatActionFailure("archive", target.title, failure === "" ? undefined : failure)
+          : failure,
+      );
       return;
     }
-    await navigate({ to: backTarget.to, replace: true });
+    setActionError(null);
+    if (other) announce(chatActionAnnouncement("archive", target.title));
+    else await goToChatList();
   };
 
   const [unarchiving, setUnarchiving] = useState(false);
@@ -793,8 +849,14 @@ export function ConversationScreen({
   };
 
   const deleteChat = useDeleteChat(environmentId);
-  const onDeleteChat = async () => {
-    const outcome = await deleteChat(threadId);
+  /** Confirms, then deletes one chat. The open chat then goes to the All list; another chat stays. */
+  const deleteChatNow = async (
+    id: ThreadId,
+    options: DeleteChatOptions | undefined,
+    leaves: boolean,
+    announceAs?: string,
+  ) => {
+    const outcome = await deleteChat(id, options);
     if (outcome.status === "failed") {
       // Confirm has closed the dialog and the chat is still here: without this
       // the only feedback is a console warning, so the user taps Confirm again.
@@ -803,10 +865,18 @@ export function ConversationScreen({
     }
     if (outcome.status === "cancelled") return;
     setActionError(null);
-    await navigate({ to: "/bots/$botId", params: { botId }, replace: true });
+    if (leaves) await goToChatList();
+    else if (announceAs !== undefined) announce(chatActionAnnouncement("delete", announceAs));
   };
+  const onDeleteChat = () => deleteChatNow(threadId, undefined, true);
 
   const renameChat = useRenameChat(environmentId);
+  /** The chat the Rename dialog is for (the open chat or another one). */
+  const [renameTarget, setRenameTarget] = useState<{
+    readonly threadId: ThreadId;
+    readonly title: string;
+    readonly isOpenChat: boolean;
+  } | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const chatTitle = threadShell?.title ?? thread?.title;
 
@@ -844,6 +914,18 @@ export function ConversationScreen({
       threadIdParam,
       waitingLabels,
     ],
+  );
+  // The order holds still while the owner stays in this bot's chats (chatChipOrder.ts).
+  const frozenOwner = useFrozenChipOrder(botId, chipModel?.ownerChips ?? null);
+  const chipRow = useMemo<ReadonlyArray<ChatChip>>(
+    () =>
+      chipModel === null
+        ? []
+        : [
+            ...(chipModel.temporary === null ? [] : [chipModel.temporary]),
+            ...(frozenOwner.chips ?? chipModel.ownerChips),
+          ],
+    [chipModel, frozenOwner.chips],
   );
   const chipsShown = bot !== null && chipModel !== null && chipModel.visible;
   useEffect(() => {
@@ -919,6 +1001,159 @@ export function ConversationScreen({
 
   const botMuted = bot !== null && botMuteState(bot, now.getTime()).muted;
 
+  // A wrapup started from another chat's settings arrives here as a mark: send it once this
+  // chat's thread has loaded, or say it could not start.
+  useEffect(() => {
+    if (!pendingWrapupFor(threadIdParam)) return;
+    const step = pendingWrapupStep({
+      pending: true,
+      threadLoaded: thread !== null,
+      canStart: !archived && disabledReason === null && !turnBusy && !wrapupSending,
+    });
+    if (step === "wait") return;
+    clearPendingWrapup();
+    if (step === "start") void onWrapup();
+    else setActionError("Couldn't start the wrapup. Try again.");
+  }, [threadIdParam, thread, archived, disabledReason, turnBusy, wrapupSending]);
+
+  // Chat settings: one sheet for any chip's chat, or the open chat from the header or the menu.
+  const [settingsFor, setSettingsFor] = useState<string | null>(null);
+  const settingsOpener = useRef<HTMLElement | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const holdHintId = useId();
+  const openSettings = useCallback((target: string, opener: HTMLElement | null) => {
+    settingsOpener.current =
+      opener ??
+      (typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null));
+    setSettingsFor(target);
+  }, []);
+  const nameHoldTarget = useRef<HTMLElement | null>(null);
+  const openOwnSettings = () => openSettings(threadIdParam, nameHoldTarget.current);
+  // The three header blocks that open the open chat's settings when held.
+  const avatarHold = useHoldCue(openOwnSettings);
+  const lineHold = useHoldCue(openOwnSettings);
+  const singleHold = useHoldCue(openOwnSettings);
+  const holdProps = (hold: ReturnType<typeof useHoldCue>) => ({
+    ...hold.attributes,
+    draggable: false as const,
+    onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
+      nameHoldTarget.current = event.currentTarget;
+      hold.handlers.onPointerDown(event);
+    },
+    onPointerMove: hold.handlers.onPointerMove,
+    onPointerUp: hold.handlers.onPointerUp,
+    onPointerCancel: hold.handlers.onPointerCancel,
+    onContextMenu: (event: React.MouseEvent<HTMLElement>) => {
+      event.preventDefault();
+      nameHoldTarget.current = event.currentTarget;
+      openOwnSettings();
+    },
+  });
+  const settingsTarget = useMemo(() => {
+    if (settingsFor === null || list.data === null) return null;
+    const targetLink = list.data.threads.find((candidate) => candidate.threadId === settingsFor);
+    const targetShell = allShells.find(
+      (candidate) => candidate.environmentId === environmentId && candidate.id === settingsFor,
+    );
+    if (targetLink === undefined || targetShell === undefined) return null;
+    const isOpenChat = settingsFor === threadIdParam;
+    return buildChatSettingsTarget({
+      threadId: settingsFor,
+      currentThreadId: threadIdParam,
+      kind: chipModel?.chips.find((chip) => chip.threadId === settingsFor)?.kind ?? "chat",
+      link: targetLink,
+      shell: targetShell,
+      waitingLabel: waitingLabels.get(settingsFor) ?? null,
+      unread: !isOpenChat && isChatUnread(targetLink, chatSeen, targetShell),
+      hidePreviews: bot !== null && hidesBotPreviews(bot),
+      openChatBusy: turnBusy,
+      nowMs: wakeClock,
+    });
+  }, [
+    allShells,
+    bot,
+    chatSeen,
+    chipModel,
+    environmentId,
+    list.data,
+    settingsFor,
+    threadIdParam,
+    turnBusy,
+    wakeClock,
+    waitingLabels,
+  ]);
+  // The chat went away while its sheet was open (deleted or archived elsewhere): close it.
+  useEffect(() => {
+    if (settingsFor !== null && settingsTarget === null && list.data !== null) {
+      setSettingsFor(null);
+    }
+  }, [settingsFor, settingsTarget, list.data]);
+  const onSettingsSnooze = async (untilMs: number) => {
+    const target = settingsTarget;
+    setSettingsFor(null);
+    if (target === null) return;
+    const done = await runStateAction(target, "snooze", { snoozeUntilMs: untilMs });
+    if (done && target.isOpenChat) await leaveChat();
+  };
+  const onSettingsSelect = async (id: Exclude<ChatSettingsRowId, "snooze">) => {
+    const target = settingsTarget;
+    setSettingsFor(null);
+    if (target === null) return;
+    switch (id) {
+      case "pin":
+      case "unpin":
+      case "wake":
+        await runStateAction(target, id);
+        return;
+      case "markUnread": {
+        const done = await runStateAction(target, "markUnread");
+        if (done && target.isOpenChat) await leaveChat();
+        return;
+      }
+      case "rename":
+        setRenameTarget({
+          threadId: ThreadId.make(target.threadId),
+          title: target.title,
+          isOpenChat: target.isOpenChat,
+        });
+        setRenameOpen(true);
+        return;
+      case "wrapup":
+        if (target.isOpenChat) {
+          await onWrapup();
+        } else {
+          // useWrapupChat needs the chat's thread: open the chat and let it send once it has loaded.
+          markPendingWrapup(target.threadId);
+          markChatSwitched();
+          await navigate(chatSwitchNavigation(botId, target.threadId));
+        }
+        return;
+      case "archive":
+        await archiveChat(target);
+        return;
+      case "unarchive":
+        await onUnarchive();
+        return;
+      case "delete":
+        await deleteChatNow(
+          ThreadId.make(target.threadId),
+          { title: target.isOpenChat ? undefined : target.title, working: target.working },
+          target.isOpenChat,
+          target.title,
+        );
+        return;
+    }
+  };
+  const settingsRows =
+    settingsTarget === null
+      ? null
+      : chatSettingsRows(settingsTarget, {
+          turnsUnavailable: disabledReason !== null,
+          wrapupSending,
+          threadLoading: thread === null,
+          nowMs: wakeClock,
+        });
+
   const chat = (
     <div
       ref={shellRef}
@@ -930,6 +1165,13 @@ export function ConversationScreen({
       }}
     >
       {diagnosticsEnabled() ? <DiagnosticsOverlay /> : null}
+      {/* One hint for every held block in the header (aria-describedby). */}
+      <span id={holdHintId} hidden>
+        {CHAT_SETTINGS_HINT}
+      </span>
+      <div role="status" aria-live="polite" className="sr-only">
+        {announcement}
+      </div>
       <header
         className={cn(
           "personal-column flex shrink-0 items-center gap-3 px-2",
@@ -954,7 +1196,11 @@ export function ConversationScreen({
               params={{ botId: bot.botId }}
               aria-hidden="true"
               tabIndex={-1}
-              className="shrink-0 rounded-full outline-none active:opacity-70"
+              {...holdProps(avatarHold)}
+              className={cn(
+                "personal-hold-target shrink-0 rounded-full outline-none active:opacity-70",
+                NO_TOUCH_SELECT,
+              )}
             >
               <BotAvatar
                 shape={bot.avatarShape}
@@ -974,7 +1220,12 @@ export function ConversationScreen({
                 to="/bots/$botId/edit"
                 params={{ botId: bot.botId }}
                 aria-label={`Edit ${bot.name}${botMuted ? ", notifications muted" : ""}`}
-                className="flex h-[31px] min-w-0 shrink-0 items-start rounded-[var(--personal-radius-button)] pt-1.75 outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+                aria-describedby={holdHintId}
+                {...holdProps(lineHold)}
+                className={cn(
+                  "personal-hold-target flex h-[31px] min-w-0 shrink-0 items-start rounded-[var(--personal-radius-button)] pt-1.75 outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+                  NO_TOUCH_SELECT,
+                )}
               >
                 <ConversationHeaderLine
                   name={bot.name}
@@ -996,9 +1247,11 @@ export function ConversationScreen({
               <ChatChips
                 botId={botId}
                 botName={bot.name}
-                chips={chipModel.chips}
+                chips={chipRow}
                 openCount={chipModel.openCount}
                 onNewChat={onChipNewChat}
+                onChipSettings={openSettings}
+                resortEpoch={frozenOwner.resortEpoch}
               />
             </div>
           </>
@@ -1007,7 +1260,12 @@ export function ConversationScreen({
             to="/bots/$botId/edit"
             params={{ botId: bot.botId }}
             aria-label={`Edit ${bot.name}${botMuted ? ", notifications muted" : ""}`}
-            className="flex min-h-11 min-w-0 flex-1 items-center gap-4 rounded-[var(--personal-radius-button)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
+            aria-describedby={holdHintId}
+            {...holdProps(singleHold)}
+            className={cn(
+              "personal-hold-target flex min-h-11 min-w-0 flex-1 items-center gap-4 rounded-[var(--personal-radius-button)] outline-none active:opacity-70 focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]",
+              NO_TOUCH_SELECT,
+            )}
           >
             <BotAvatar
               shape={bot.avatarShape}
@@ -1095,6 +1353,7 @@ export function ConversationScreen({
           <MenuTrigger
             render={
               <button
+                ref={menuButtonRef}
                 type="button"
                 aria-label="Chat options"
                 className={cn(ICON_BUTTON, chipsShown && "mt-0.5 self-start")}
@@ -1117,6 +1376,15 @@ export function ConversationScreen({
               </MenuItem>
             ) : null}
             {interruptInput !== null || (bot !== null && providerWait) ? <MenuSeparator /> : null}
+            {/* The one door to the chat's own actions (pin, snooze, rename, archive...): the sheet
+                holds them, so the menu keeps no copies. */}
+            <MenuItem onClick={() => openSettings(threadIdParam, menuButtonRef.current)}>
+              Chat settings…
+              <span className="ml-auto pl-4 text-[13px] text-[var(--personal-text-tertiary)]">
+                {chatSettingsHint(chipsShown)}
+              </span>
+            </MenuItem>
+            <MenuSeparator />
             {bot !== null ? (
               <MenuItem disabled={newChat.starting} onClick={() => newChat.open()}>
                 New chat
@@ -1132,24 +1400,6 @@ export function ConversationScreen({
                 />
               ) : null}
             </MenuItem>
-            <MenuItem
-              disabled={
-                archived || disabledReason !== null || turnBusy || wrapupSending || thread === null
-              }
-              onClick={() => void onWrapup()}
-            >
-              Wrapup chat
-            </MenuItem>
-            {!archived ? (
-              <>
-                <MenuSeparator />
-                <MenuItem onClick={() => void onPinChange()}>
-                  {pinned ? "Unpin chat" : "Pin chat"}
-                </MenuItem>
-                <MenuItem onClick={() => setSnoozeOpen(true)}>Snooze…</MenuItem>
-                <MenuItem onClick={() => void leaveAfter("markUnread")}>Mark unread</MenuItem>
-              </>
-            ) : null}
             {bot !== null ? (
               <>
                 <MenuSeparator />
@@ -1160,39 +1410,34 @@ export function ConversationScreen({
                 />
               </>
             ) : null}
-            <MenuSeparator />
-            <MenuItem disabled={thread === null} onClick={() => setRenameOpen(true)}>
-              Rename chat
-            </MenuItem>
-            {archived ? (
-              <MenuItem disabled={unarchiving} onClick={() => void onUnarchive()}>
-                Unarchive chat
-              </MenuItem>
-            ) : (
-              <MenuItem onClick={() => void onArchive()}>Archive chat</MenuItem>
-            )}
-            <MenuItem variant="destructive" onClick={() => void onDeleteChat()}>
-              Delete chat
-            </MenuItem>
           </MenuPopup>
         </Menu>
       </header>
       {newChat.dialog}
-      {snoozeOpen ? (
-        <SnoozeSheet
-          title="Snooze chat"
-          onPick={(untilMs) => {
-            setSnoozeOpen(false);
-            void leaveAfter("snooze", { snoozeUntilMs: untilMs });
-          }}
-          onCancel={() => setSnoozeOpen(false)}
+      {settingsTarget !== null && settingsRows !== null ? (
+        <ChatSettingsSheet
+          returnFocusTo={settingsOpener}
+          header={chatSettingsHeader(settingsTarget, now.getTime())}
+          groups={settingsRows}
+          chatName={settingsTarget.title}
+          onSelect={(id) => void onSettingsSelect(id)}
+          onSnoozePick={(untilMs) => void onSettingsSnooze(untilMs)}
+          onCancel={() => setSettingsFor(null)}
         />
       ) : null}
       <RenameChatDialog
         open={renameOpen}
-        initialTitle={renameChatInitialTitle(chatTitle)}
+        initialTitle={renameChatInitialTitle(renameTarget?.title ?? chatTitle)}
         onOpenChange={setRenameOpen}
-        onSave={(title) => renameChat(threadId, title)}
+        onSave={async (title) => {
+          const target = renameTarget;
+          if (target === null) return null;
+          const failure = await renameChat(target.threadId, title);
+          if (failure === null && !target.isOpenChat) {
+            announce(chatActionAnnouncement("rename", target.title, title));
+          }
+          return failure;
+        }}
       />
 
       {quiet === null ? (

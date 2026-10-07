@@ -1,9 +1,10 @@
 import type {
   JSX,
   KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { Link } from "@tanstack/react-router";
 import { Pin, Plus } from "lucide-react";
@@ -13,7 +14,9 @@ import { cn } from "~/lib/utils";
 import { CURRENT_CHIP_SELECTOR, chatSwitchNavigation } from "./chatChipNavigation";
 import type { ChatChip } from "./chatChipRows";
 import { markChatSwitched } from "./chatChipHandoff";
+import { CHAT_SETTINGS_HINT } from "./chatSettingsModel";
 import { composerHasFocus, requestComposerRefocus } from "./composerRefocus";
+import { useHoldCue } from "./useHoldCue";
 
 const NO_IDS: ReadonlySet<string> = new Set();
 
@@ -43,6 +46,77 @@ function ChipDot({ chip }: { readonly chip: ChatChip }): JSX.Element | null {
 }
 
 /**
+ * One chat's chip. A tap switches to the chat; a hold (or a right-click, or the
+ * ContextMenu key, which the row handles) opens that chat's settings. A hold
+ * that fires never switches: useLongPress swallows the click that ends it.
+ */
+function ChatChipLink({
+  botId,
+  chip,
+  tabbable,
+  isFresh,
+  hintId,
+  onFocus,
+  onItemPointerDown,
+  onSwitch,
+  onSettings,
+}: {
+  readonly botId: string;
+  readonly chip: ChatChip;
+  readonly tabbable: boolean;
+  readonly isFresh: boolean;
+  readonly hintId: string;
+  readonly onFocus: () => void;
+  readonly onItemPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
+  readonly onSwitch: (chip: ChatChip, event: ReactMouseEvent<HTMLElement>) => void;
+  readonly onSettings: (threadId: string) => void;
+}): JSX.Element {
+  const hold = useHoldCue(() => onSettings(chip.threadId));
+  return (
+    <Link
+      {...chatSwitchNavigation(botId, chip.threadId)}
+      data-chip-item=""
+      data-chip-id={chip.threadId}
+      {...hold.attributes}
+      aria-label={chip.label}
+      aria-describedby={hintId}
+      aria-current={chip.current ? "page" : undefined}
+      tabIndex={tabbable ? 0 : -1}
+      draggable={false}
+      onFocus={onFocus}
+      onPointerDown={(event) => {
+        onItemPointerDown(event);
+        hold.handlers.onPointerDown(event);
+      }}
+      onPointerMove={hold.handlers.onPointerMove}
+      onPointerUp={hold.handlers.onPointerUp}
+      onPointerCancel={hold.handlers.onPointerCancel}
+      onContextMenu={(event) => {
+        // A right-click on a desktop, or the hold itself on Android: the same sheet,
+        // and opening it a second time is harmless.
+        event.preventDefault();
+        onSettings(chip.threadId);
+      }}
+      onClick={(event) => onSwitch(chip, event)}
+      className="personal-chip-hit"
+    >
+      <span
+        className={cn("personal-chip", isFresh && "personal-chip-in")}
+        data-state={chip.state}
+        data-current={chip.current}
+        data-unread={chip.unread}
+      >
+        <ChipDot chip={chip} />
+        {chip.pinned ? (
+          <Pin aria-hidden="true" data-chip-pin="" className="size-3 shrink-0" strokeWidth={2} />
+        ) : null}
+        <span className="min-w-0 truncate">{chip.text}</span>
+      </span>
+    </Link>
+  );
+}
+
+/**
  * The chat chips: slim pills in the bot's chat header, one per chat the owner
  * started with the bot, then "+" (new chat) and "All N" (the full list). Each
  * pill is 24 px tall inside a 44 px tap band that overlaps nothing.
@@ -53,18 +127,26 @@ export function ChatChips({
   chips,
   openCount,
   onNewChat,
+  onChipSettings,
+  resortEpoch = 0,
 }: {
   readonly botId: string;
   readonly botName: string;
   readonly chips: ReadonlyArray<ChatChip>;
   readonly openCount: number;
   readonly onNewChat: () => void;
+  /** A hold, right-click or ContextMenu key on a chip: open that chat's settings. `opener` takes focus back. */
+  readonly onChipSettings?: ((threadId: string, opener: HTMLElement | null) => void) | undefined;
+  /** Moves when the order was re-taken after the app came back: the open chip is centred again at once. */
+  readonly resortEpoch?: number | undefined;
 }): JSX.Element {
   const rowRef = useRef<HTMLDivElement | null>(null);
   const [fade, setFade] = useState({ left: false, right: false });
   const [focusId, setFocusId] = useState<string | null>(null);
   const composerHadFocus = useRef(false);
   const firstCentre = useRef(true);
+  const lastEpoch = useRef(resortEpoch);
+  const hintId = useId();
   const fresh = useFreshChipIds(chips.map((chip) => chip.threadId));
   const currentId = chips.find((chip) => chip.current)?.threadId ?? null;
   const tabbableId = focusId ?? currentId ?? chips[0]?.threadId ?? "new";
@@ -94,7 +176,8 @@ export function ChatChips({
   );
 
   // The open chat sits in the middle of the row: at once when the row first
-  // shows, smoothly after every switch.
+  // shows (and when the order was re-taken after the app came back), smoothly
+  // after every switch.
   const chipsKey = chips.map((chip) => chip.threadId).join("|");
   useLayoutEffect(() => {
     const row = rowRef.current;
@@ -104,12 +187,16 @@ export function ChatChips({
       const left = target.offsetLeft - (row.clientWidth - target.offsetWidth) / 2;
       row.scrollTo({
         left: Math.max(0, left),
-        behavior: firstCentre.current || reducedMotion() ? "instant" : "smooth",
+        behavior:
+          firstCentre.current || lastEpoch.current !== resortEpoch || reducedMotion()
+            ? "instant"
+            : "smooth",
       });
       firstCentre.current = false;
+      lastEpoch.current = resortEpoch;
     }
     updateFade();
-  }, [currentId, chipsKey, updateFade]);
+  }, [currentId, chipsKey, resortEpoch, updateFade]);
   useEffect(() => {
     const row = rowRef.current;
     if (row === null || typeof ResizeObserver === "undefined") return;
@@ -126,7 +213,36 @@ export function ChatChips({
     if (composerHadFocus.current) event.preventDefault();
   };
 
+  const onChipSwitch = (chip: ChatChip, event: ReactMouseEvent<HTMLElement>) => {
+    if (chip.current) {
+      event.preventDefault();
+      return;
+    }
+    markChatSwitched();
+    if (composerHadFocus.current) requestComposerRefocus();
+    composerHadFocus.current = false;
+  };
+
+  const openSettingsFor = (threadId: string) => {
+    const row = rowRef.current;
+    const opener =
+      row === null || typeof row.querySelector !== "function"
+        ? null
+        : row.querySelector<HTMLElement>(`[data-chip-id="${threadId}"]`);
+    onChipSettings?.(threadId, opener);
+  };
+
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    // ContextMenu or Shift+F10 on a focused chip: its settings, the keyboard's way in.
+    if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+      const target = event.target as HTMLElement;
+      const threadId = target.getAttribute?.("data-chip-id") ?? null;
+      if (threadId !== null && threadId !== "") {
+        event.preventDefault();
+        onChipSettings?.(threadId, target);
+      }
+      return;
+    }
     const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
     if (!keys.includes(event.key)) return;
     const items = [...event.currentTarget.querySelectorAll<HTMLElement>("[data-chip-item]")];
@@ -150,6 +266,10 @@ export function ChatChips({
       // the 56 px of that column are chip room and "All" is not cut off at the end.
       className="relative z-[1] -mr-14 -mb-[3px] h-11 min-w-0 shrink-0 md:mr-0"
     >
+      {/* One hint for every chip (aria-describedby): hidden elements still describe. */}
+      <span id={hintId} hidden>
+        {CHAT_SETTINGS_HINT}
+      </span>
       <div
         ref={rowRef}
         data-fade-left={fade.left}
@@ -159,45 +279,18 @@ export function ChatChips({
         className="personal-chip-row"
       >
         {chips.map((chip) => (
-          <Link
+          <ChatChipLink
             key={chip.threadId}
-            {...chatSwitchNavigation(botId, chip.threadId)}
-            data-chip-item=""
-            data-chip-id={chip.threadId}
-            aria-label={chip.label}
-            aria-current={chip.current ? "page" : undefined}
-            tabIndex={tabbableId === chip.threadId ? 0 : -1}
+            botId={botId}
+            chip={chip}
+            tabbable={tabbableId === chip.threadId}
+            isFresh={fresh.has(chip.threadId)}
+            hintId={hintId}
             onFocus={() => setFocusId(chip.threadId)}
-            onPointerDown={onItemPointerDown}
-            onClick={(event) => {
-              if (chip.current) {
-                event.preventDefault();
-                return;
-              }
-              markChatSwitched();
-              if (composerHadFocus.current) requestComposerRefocus();
-              composerHadFocus.current = false;
-            }}
-            className="personal-chip-hit"
-          >
-            <span
-              className={cn("personal-chip", fresh.has(chip.threadId) && "personal-chip-in")}
-              data-state={chip.state}
-              data-current={chip.current}
-              data-unread={chip.unread}
-            >
-              <ChipDot chip={chip} />
-              {chip.pinned ? (
-                <Pin
-                  aria-hidden="true"
-                  data-chip-pin=""
-                  className="size-3 shrink-0"
-                  strokeWidth={2}
-                />
-              ) : null}
-              <span className="min-w-0 truncate">{chip.text}</span>
-            </span>
-          </Link>
+            onItemPointerDown={onItemPointerDown}
+            onSwitch={onChipSwitch}
+            onSettings={openSettingsFor}
+          />
         ))}
         <button
           type="button"

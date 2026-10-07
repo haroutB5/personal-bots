@@ -51,13 +51,21 @@ function build(links: PersonalBotThread[], current: string) {
 }
 
 describe("chat chips with pinned and snoozed chats", () => {
-  it("puts pinned chats first (newest activity first), then the rest oldest first", () => {
+  it("puts pinned chats first, then the rest, each newest activity first", () => {
+    // The id's number is the hours since the chat last had activity: t1 is the newest.
     const model = build(
-      [link("t1", 10), link("t9", 8, { pinnedAt }), link("t3", 6), link("t2", 4, { pinnedAt })],
+      [link("t3", 10), link("t9", 8, { pinnedAt }), link("t1", 6), link("t2", 4, { pinnedAt })],
       "t1",
     );
     expect(model.chips.map((chip) => chip.threadId)).toEqual(["t2", "t9", "t1", "t3"]);
     expect(model.chips.map((chip) => chip.pinned)).toEqual([true, true, false, false]);
+  });
+
+  it("orders the unpinned chats by activity, not by when they were made", () => {
+    const model = build([link("t1", 1), link("t5", 9), link("t3", 5)], "t1");
+    expect(model.chips.map((chip) => chip.threadId)).toEqual(["t1", "t3", "t5"]);
+    const reversed = build([link("t5", 1), link("t1", 9), link("t3", 5)], "t5");
+    expect(reversed.chips.map((chip) => chip.threadId)).toEqual(["t1", "t3", "t5"]);
   });
 
   it("says a chip is pinned to a screen reader", () => {

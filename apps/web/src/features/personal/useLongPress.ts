@@ -43,6 +43,15 @@ export interface LongPressHandlers {
   readonly onContextMenu: (event: ReactMouseEvent) => void;
 }
 
+export interface LongPressOptions {
+  /**
+   * Called with true when a press starts and false when it ends: cancelled
+   * (lifted early, moved, scrolled) or fired. For a visual cue while the
+   * finger rests; the hold itself still runs `onLongPress`.
+   */
+  readonly onPressChange?: ((pressing: boolean) => void) | undefined;
+}
+
 /**
  * Press and hold a row: `onLongPress` runs once the finger has rested
  * `LONG_PRESS_MS` without moving `LONG_PRESS_SLOP_PX`, so scrolling and the
@@ -52,31 +61,50 @@ export interface LongPressHandlers {
  * `-webkit-touch-callout: none` on the row, so iOS offers neither text
  * selection nor a link preview for the same hold.
  */
-export function useLongPress(onLongPress: () => void, enabled = true): LongPressHandlers {
+export function useLongPress(
+  onLongPress: () => void,
+  enabled = true,
+  options?: LongPressOptions,
+): LongPressHandlers {
   const timer = useRef<number | null>(null);
   const start = useRef<{ x: number; y: number } | null>(null);
+  const pressing = useRef(false);
   const callback = useRef(onLongPress);
+  const pressChange = useRef(options?.onPressChange);
   useEffect(() => {
     callback.current = onLongPress;
-  }, [onLongPress]);
+    pressChange.current = options?.onPressChange;
+  }, [onLongPress, options?.onPressChange]);
 
-  const cancel = () => {
+  const setPressing = (next: boolean) => {
+    if (pressing.current === next) return;
+    pressing.current = next;
+    pressChange.current?.(next);
+  };
+  const clearTimer = () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = null;
     start.current = null;
+  };
+  const cancel = () => {
+    clearTimer();
+    setPressing(false);
   };
   useEffect(() => cancel, []);
 
   return {
     onPointerDown: (event) => {
       if (!enabled || (event.pointerType === "mouse" && event.button !== 0)) return;
-      cancel();
+      // A new press restarts the clock without announcing an end first.
+      clearTimer();
       start.current = { x: event.clientX, y: event.clientY };
+      setPressing(true);
       timer.current = window.setTimeout(() => {
         timer.current = null;
         start.current = null;
         swallowClickUntilLift();
         callback.current();
+        setPressing(false);
       }, LONG_PRESS_MS);
     },
     onPointerMove: (event) => {

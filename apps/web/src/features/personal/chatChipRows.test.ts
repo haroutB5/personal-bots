@@ -54,6 +54,10 @@ const shell = (
 const task = (taskId: string, threadId: string | null, createdMinute: number): PersonalTask =>
   ({ taskId, threadId, createdAt: at(createdMinute) }) as unknown as PersonalTask;
 
+/** A shell whose last message was at this minute of the test hour. */
+const activeAt = (id: string, minute: number) =>
+  shell(id, { latestUserMessageAt: new Date(Date.UTC(2026, 9, 1, 10, minute, 0)).toISOString() });
+
 const seen = (overrides: Partial<ChatSeenState> = {}): ChatSeenState => ({
   ...NO_CHAT_SEEN,
   ...overrides,
@@ -81,18 +85,26 @@ function build(input: {
 }
 
 describe("chat chip list: which chats get a chip", () => {
-  it("lists only the owner's open chats with this bot, oldest first", () => {
+  it("lists only the owner's open chats with this bot, newest activity first (not oldest created)", () => {
+    const links = [
+      link("c", 30),
+      link("a", 10),
+      link("b", 20),
+      link("other-bot", 15, {}, "bot-frontend"),
+      link("old-archived", 5, { archivedAt: at(40) }),
+    ];
     const model = build({
-      links: [
-        link("c", 30),
-        link("a", 10),
-        link("b", 20),
-        link("other-bot", 15, {}, "bot-frontend"),
-        link("old-archived", 5, { archivedAt: at(40) }),
+      links,
+      shells: [
+        activeAt("a", 5),
+        activeAt("b", 50),
+        activeAt("c", 30),
+        activeAt("other-bot", 59),
+        activeAt("old-archived", 58),
       ],
       current: "b",
     });
-    expect(model.chips.map((chip) => chip.threadId)).toEqual(["a", "b", "c"]);
+    expect(model.chips.map((chip) => chip.threadId)).toEqual(["b", "c", "a"]);
     expect(model.chips.find((chip) => chip.current)?.threadId).toBe("b");
     expect(model.openCount).toBe(3);
     expect(model.visible).toBe(true);
@@ -164,7 +176,7 @@ describe("chat chip list: which chats get a chip", () => {
     expect(model.visible).toBe(false);
   });
 
-  it("keeps a stable order: activity and state never move a chip", () => {
+  it("a chip's state (needs you, working) never moves it; only activity does", () => {
     const links = [link("a", 10), link("b", 20), link("c", 30)];
     const quiet = build({ links, current: "a" });
     const busy = build({
@@ -182,9 +194,40 @@ describe("chat chip list: which chats get a chip", () => {
     expect(busy.chips.map((chip) => chip.threadId)).toEqual(["a", "b", "c"]);
   });
 
-  it("breaks a creation tie by thread id", () => {
-    const model = build({ links: [link("b", 10), link("a", 10)], current: "a" });
-    expect(model.chips.map((chip) => chip.threadId)).toEqual(["a", "b"]);
+  it("is the order of the All chats list, minus task chats", () => {
+    const links = [link("a", 10), link("b", 20), link("task-chat", 25), link("c", 30)];
+    const shells = [
+      activeAt("a", 12),
+      activeAt("b", 40),
+      activeAt("task-chat", 55),
+      activeAt("c", 20),
+    ];
+    const model = build({ links, shells, tasks: [task("t1", "task-chat", 24)], current: "a" });
+    const list = botThreadRows(BOT, links, shells, new Set()).active.map(
+      (row) => row.link.threadId,
+    );
+    expect(list).toEqual(["task-chat", "b", "c", "a"]);
+    expect(model.chips.map((chip) => chip.threadId)).toEqual(
+      list.filter((id) => id !== "task-chat"),
+    );
+  });
+
+  it("puts the chat with the newest message first, then pinned ahead of it", () => {
+    const links = [link("a", 10), link("b", 20), link("c", 30, { pinnedAt: at(31) })];
+    const shells = [activeAt("a", 50), activeAt("b", 55), activeAt("c", 5)];
+    const model = build({ links, shells, current: "a" });
+    expect(model.chips.map((chip) => chip.threadId)).toEqual(["c", "b", "a"]);
+  });
+
+  it("exposes the owner's chips and the temporary chip apart", () => {
+    const links = [link("a", 10), link("b", 20), link("task-chat", 30)];
+    const model = build({ links, tasks: [task("t1", "task-chat", 29)], current: "task-chat" });
+    expect(model.temporary?.threadId).toBe("task-chat");
+    expect(model.ownerChips.map((chip) => chip.threadId)).toEqual(["a", "b"]);
+    expect(model.chips.map((chip) => chip.threadId)).toEqual(["task-chat", "a", "b"]);
+    const plain = build({ links: [link("a", 10), link("b", 20)], current: "a" });
+    expect(plain.temporary).toBeNull();
+    expect(plain.chips).toEqual(plain.ownerChips);
   });
 });
 
@@ -210,7 +253,7 @@ describe("chat chip list: the temporary chip", () => {
       text: "Task · Weight chart fix",
       label: "Task: Weight chart fix, current chat",
     });
-    expect(model.chips.slice(1).map((chip) => chip.threadId)).toEqual(["old", "a", "b"]);
+    expect(model.chips.slice(1).map((chip) => chip.threadId)).toEqual(["a", "b", "old"]);
     // "All N" counts every open chat with the bot (the task chat too), like the menu and the list.
     expect(model.openCount).toBe(4);
     expect(model.visible).toBe(true);

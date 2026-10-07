@@ -121,7 +121,7 @@ function sameLocalDay(left: Date, right: Date): boolean {
  * The words after "Wakes": "today 18:00", "tomorrow 09:00", "Mon 12 Oct 09:00"
  * (the year is added when it is not this one).
  */
-function whenWords(untilMs: number, nowMs: number): string {
+export function whenWords(untilMs: number, nowMs: number): string {
   const until = new Date(untilMs);
   const now = new Date(nowMs);
   if (sameLocalDay(until, now)) return `today ${clock(until)}`;

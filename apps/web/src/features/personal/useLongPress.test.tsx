@@ -7,8 +7,14 @@ let handlers: LongPressHandlers | null = null;
 let renderer: ReactTestRenderer | null = null;
 const listeners = new Map<string, Set<(event: unknown) => void>>();
 
-function Probe({ onLongPress }: { onLongPress: () => void }) {
-  handlers = useLongPress(onLongPress);
+function Probe({
+  onLongPress,
+  onPressChange,
+}: {
+  onLongPress: () => void;
+  onPressChange?: ((pressing: boolean) => void) | undefined;
+}) {
+  handlers = useLongPress(onLongPress, true, { onPressChange });
   return null;
 }
 
@@ -45,9 +51,9 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function mount(onLongPress: () => void) {
+async function mount(onLongPress: () => void, onPressChange?: (pressing: boolean) => void) {
   await act(async () => {
-    renderer = create(<Probe onLongPress={onLongPress} />);
+    renderer = create(<Probe onLongPress={onLongPress} onPressChange={onPressChange} />);
   });
   return handlers!;
 }
@@ -123,4 +129,75 @@ describe("useLongPress", () => {
     press.onContextMenu(menu as never);
     expect(menu.preventDefault).toHaveBeenCalled();
   });
+
+  describe("press feedback (onPressChange)", () => {
+    it("says a press started, then ended when it fires", async () => {
+      const events: string[] = [];
+      const onLongPress = vi.fn(() => events.push("hold"));
+      const press = await mount(onLongPress, (pressing) =>
+        events.push(pressing ? "press" : "release"),
+      );
+      press.onPointerDown(pointer(10, 10));
+      expect(events).toEqual(["press"]);
+      vi.advanceTimersByTime(LONG_PRESS_MS);
+      expect(onLongPress).toHaveBeenCalledTimes(1);
+      // The hold ran first, then the press ended: the cue can tell a fired hold from a cancel.
+      expect(events).toEqual(["press", "hold", "release"]);
+      // The lift after a fired hold ends nothing twice.
+      press.onPointerUp();
+      expect(events).toEqual(["press", "hold", "release"]);
+    });
+
+    it("says it ended when the finger lifts early, scrolls, or the browser takes the pan", async () => {
+      const onPressChange = vi.fn();
+      const press = await mount(vi.fn(), onPressChange);
+      press.onPointerDown(pointer(10, 10));
+      vi.advanceTimersByTime(100);
+      press.onPointerUp();
+      expect(onPressChange.mock.calls).toEqual([[true], [false]]);
+
+      onPressChange.mockClear();
+      press.onPointerDown(pointer(10, 10));
+      press.onPointerMove(pointer(30, 10));
+      expect(onPressChange.mock.calls).toEqual([[true], [false]]);
+
+      onPressChange.mockClear();
+      press.onPointerDown(pointer(10, 10));
+      press.onPointerCancel();
+      expect(onPressChange.mock.calls).toEqual([[true], [false]]);
+    });
+
+    it("says nothing for a right click, and a wobble keeps the press going", async () => {
+      const onPressChange = vi.fn();
+      const press = await mount(vi.fn(), onPressChange);
+      press.onPointerDown(pointer(10, 10, { pointerType: "mouse", button: 2 }));
+      expect(onPressChange).not.toHaveBeenCalled();
+      press.onPointerDown(pointer(10, 10));
+      press.onPointerMove(pointer(13, 12));
+      expect(onPressChange.mock.calls).toEqual([[true]]);
+    });
+
+    it("a second press while one is on does not announce twice", async () => {
+      const onPressChange = vi.fn();
+      const press = await mount(vi.fn(), onPressChange);
+      press.onPointerDown(pointer(10, 10));
+      press.onPointerDown(pointer(10, 10));
+      expect(onPressChange.mock.calls).toEqual([[true]]);
+    });
+
+    it("works without the option, as every existing caller does", async () => {
+      const onLongPress = vi.fn();
+      await act(async () => {
+        renderer = create(<Plain onLongPress={onLongPress} />);
+      });
+      handlers!.onPointerDown(pointer(10, 10));
+      vi.advanceTimersByTime(LONG_PRESS_MS);
+      expect(onLongPress).toHaveBeenCalledTimes(1);
+    });
+  });
 });
+
+function Plain({ onLongPress }: { onLongPress: () => void }) {
+  handlers = useLongPress(onLongPress);
+  return null;
+}

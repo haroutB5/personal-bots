@@ -149,7 +149,9 @@ NodeFS.writeFileSync(
 
 // Clean up the test chat.
 await page.getByRole("button", { name: "Chat options" }).click();
-await page.getByRole("menuitem", { name: "Delete chat" }).click();
+// The chat's own actions live in its settings sheet (1.66.4); the menu has the one door.
+await page.getByRole("menuitem", { name: /^Chat settings/ }).click();
+await page.getByRole("dialog").getByRole("button", { name: "Delete chat" }).click();
 const confirm = page.getByRole("button", { name: /^delete/i }).last();
 if (await confirm.isVisible({ timeout: 3000 }).catch(() => false)) await confirm.click();
 await page.waitForTimeout(2000);

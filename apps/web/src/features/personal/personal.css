@@ -929,6 +929,10 @@
   text-decoration: none;
   outline: none;
   -webkit-tap-highlight-color: transparent;
+  /* A hold opens the chat's settings: no iOS link preview, callout or text selection for it. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .personal-chip {
@@ -980,6 +984,36 @@
 .personal-chip-hit:focus-visible .personal-chip {
   outline: 2px solid var(--personal-text);
   outline-offset: 2px;
+}
+/* Hold cue (useLongPress onPressChange): after 150 ms of rest the chip dips and darkens, and it
+   pops back when the hold fires. A quick tap or a scroll never reaches the 150 ms. */
+.personal-chip-hit[data-holding="true"] .personal-chip {
+  transform: scale(0.92);
+  transition:
+    transform 350ms cubic-bezier(0.4, 0, 1, 1) 150ms,
+    background-color 350ms ease 150ms;
+}
+.personal-chip-hit[data-holding="true"]
+  .personal-chip:not([data-current="true"]):not([data-state="needs_you"]),
+.personal-chip-hit[data-held="true"] .personal-chip:not([data-current="true"]) {
+  background-color: var(--personal-border);
+}
+.personal-chip-hit[data-held="true"] .personal-chip {
+  transform: scale(1.04);
+  transition: transform 120ms ease-out;
+}
+/* The header's name block holds the same way, softer. */
+.personal-hold-target[data-holding="true"] {
+  transform: scale(0.98);
+  background-color: var(--personal-fill-muted);
+  transition:
+    transform 350ms cubic-bezier(0.4, 0, 1, 1) 150ms,
+    background-color 350ms ease 150ms;
+}
+.personal-hold-target[data-held="true"] {
+  transform: scale(1.01);
+  background-color: var(--personal-fill-muted);
+  transition: transform 120ms ease-out;
 }
 @media (hover: hover) {
   .personal-chip-hit:hover .personal-chip:not([data-current="true"]):not([data-state="needs_you"]) {
@@ -1038,6 +1072,13 @@
   .personal-chip-hit:active .personal-chip {
     transform: none;
   }
+  .personal-chip-hit[data-holding="true"] .personal-chip,
+  .personal-chip-hit[data-held="true"] .personal-chip,
+  .personal-hold-target[data-holding="true"],
+  .personal-hold-target[data-held="true"] {
+    transform: none;
+    transition: background-color 0ms;
+  }
   .personal-chip-in {
     animation: personal-chip-fade 120ms linear;
   }
@@ -1048,6 +1089,24 @@
     to {
       opacity: 1;
     }
+  }
+}
+
+/* The chat settings sheet swaps its rows and the snooze choices with a short fade. */
+.personal-sheet-step {
+  animation: personal-sheet-step 120ms ease-out;
+}
+@keyframes personal-sheet-step {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .personal-sheet-step {
+    animation: none;
   }
 }
 

@@ -33,3 +33,46 @@ export function rememberChipsShown(botId: string, shown: boolean): void {
 export function chipsShownFor(botId: string): boolean {
   return chipsShownByBot.get(botId) ?? false;
 }
+
+/**
+ * Wrapup on another chat from the chat settings sheet: it needs that chat's
+ * thread loaded, so the sheet opens the chat and leaves this mark; the chat
+ * that mounts sends the wrapup once its thread has loaded. The mark expires,
+ * so a chat opened by hand later never starts one by accident.
+ */
+const PENDING_WRAPUP_WINDOW_MS = 10_000;
+
+let pendingWrapup: { readonly threadId: string; readonly until: number } | null = null;
+
+export function markPendingWrapup(threadId: string, nowMs: number = Date.now()): void {
+  pendingWrapup = { threadId, until: nowMs + PENDING_WRAPUP_WINDOW_MS };
+}
+
+/** The chat a wrapup is waiting for, while the mark is alive. Does not spend it. */
+export function pendingWrapupFor(threadId: string, nowMs: number = Date.now()): boolean {
+  return (
+    pendingWrapup !== null && pendingWrapup.threadId === threadId && nowMs <= pendingWrapup.until
+  );
+}
+
+export function clearPendingWrapup(): void {
+  pendingWrapup = null;
+}
+
+/** What the chat that mounted should do about a pending wrapup. */
+export type PendingWrapupStep = "none" | "wait" | "start" | "fail";
+
+/**
+ * `wait`: the thread has not loaded yet. `start`: send it now. `fail`: the chat
+ * cannot take a turn (a turn runs, the bot is unavailable, the chat is
+ * archived), so the mark is spent and the usual error is shown.
+ */
+export function pendingWrapupStep(input: {
+  readonly pending: boolean;
+  readonly threadLoaded: boolean;
+  readonly canStart: boolean;
+}): PendingWrapupStep {
+  if (!input.pending) return "none";
+  if (!input.threadLoaded) return "wait";
+  return input.canStart ? "start" : "fail";
+}

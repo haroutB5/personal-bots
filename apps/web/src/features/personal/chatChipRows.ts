@@ -52,11 +52,17 @@ export interface ChatChip {
 
 export interface ChatChipModel {
   /**
-   * Temporary chip first (if any), then the pinned chats (newest activity
-   * first), then the owner's other chats, oldest first. Snoozed chats are not
-   * here (unless one is the open chat, as a temporary chip).
+   * Temporary chip first (if any), then the pinned chats, then the owner's
+   * other chats, each newest activity first: the order of the bot's chat list
+   * (botThreadRows), minus task and routine chats. Snoozed chats are not here
+   * (unless one is the open chat, as a temporary chip). The screen keeps the
+   * order still while the owner stays in the bot's chats (chatChipOrder.ts).
    */
   readonly chips: ReadonlyArray<ChatChip>;
+  /** The open chat's temporary chip (task, archived or snoozed chat), or null. It is `chips[0]`. */
+  readonly temporary: ChatChip | null;
+  /** The owner's own chats, in the order `chips` has them after the temporary chip. */
+  readonly ownerChips: ReadonlyArray<ChatChip>;
   /** Open chats the owner started with this bot: the N of "All N". */
   readonly openCount: number;
   /** The row shows (and the header takes its taller layout). */
@@ -116,7 +122,7 @@ export function chatChipState(input: {
   return "idle";
 }
 
-function stateWords(
+export function stateWords(
   state: ChatChipState,
   shell: EnvironmentThreadShell,
   waitingLabel: string | null,
@@ -143,16 +149,6 @@ function chipTitle(shell: EnvironmentThreadShell): string {
   return conversationChatTitle(shell.title) ?? UNTITLED_CHIP;
 }
 
-function byCreation(left: BotThreadRow, right: BotThreadRow): number {
-  const delta = epochMs(left.link.createdAt) - epochMs(right.link.createdAt);
-  if (delta !== 0) return delta;
-  return left.link.threadId < right.link.threadId
-    ? -1
-    : left.link.threadId > right.link.threadId
-      ? 1
-      : 0;
-}
-
 export function buildChatChips(input: {
   readonly botId: string;
   readonly currentThreadId: string;
@@ -177,12 +173,9 @@ export function buildChatChips(input: {
     active.map((row) => row.link),
     input.tasks,
   );
-  const ownerRows = active.filter((row) => !taskChats.has(row.link.threadId));
-  // `active` is pinned first and newest first: the pinned part keeps that order.
-  const owner = [
-    ...ownerRows.filter((row) => isChatPinned(row.link)),
-    ...ownerRows.filter((row) => !isChatPinned(row.link)).toSorted(byCreation),
-  ];
+  // `active` is pinned first, then newest activity first (the All chats list's order): the
+  // chips use it as it is.
+  const owner = active.filter((row) => !taskChats.has(row.link.threadId));
 
   const toChip = (row: BotThreadRow, kind: ChatChipKind): ChatChip => {
     const threadId = row.link.threadId as string;
@@ -212,7 +205,8 @@ export function buildChatChips(input: {
     };
   };
 
-  const chips = owner.map((row) => toChip(row, "chat"));
+  const ownerChips = owner.map((row) => toChip(row, "chat"));
+  let temporary: ChatChip | null = null;
   // The open chat is a task, routine or archived chat (opened from Team, a
   // notification or the task page): a temporary chip, first in the row, gone
   // once the owner switches away. Nothing stores it.
@@ -221,16 +215,19 @@ export function buildChatChips(input: {
     const archivedRow = archived.find((row) => row.link.threadId === input.currentThreadId);
     // A snoozed chat opened from the Snoozed section: an ordinary chip while it is open.
     const snoozedRow = snoozed.find((row) => row.link.threadId === input.currentThreadId);
-    if (snoozedRow !== undefined) chips.unshift(toChip(snoozedRow, "chat"));
-    else if (taskRow !== undefined) chips.unshift(toChip(taskRow, "task"));
-    else if (archivedRow !== undefined) chips.unshift(toChip(archivedRow, "archived"));
+    if (snoozedRow !== undefined) temporary = toChip(snoozedRow, "chat");
+    else if (taskRow !== undefined) temporary = toChip(taskRow, "task");
+    else if (archivedRow !== undefined) temporary = toChip(archivedRow, "archived");
   }
+  const chips = temporary === null ? ownerChips : [temporary, ...ownerChips];
   const turnsKey = owner
     .filter((row) => row.link.threadId !== input.currentThreadId)
     .map((row) => `${row.link.threadId}:${row.shell.latestTurn?.completedAt ?? ""}`)
     .join("|");
   return {
     chips,
+    temporary,
+    ownerChips,
     // The same number as "All chats N open" in the chat options menu and the rows of the bot's chat
     // list: every open chat with this bot, task and routine chats included (the strip itself only
     // lists the owner's chats). One definition, so the chip never disagrees with the list it opens.

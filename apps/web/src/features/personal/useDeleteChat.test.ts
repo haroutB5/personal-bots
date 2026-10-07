@@ -76,6 +76,30 @@ describe("deleteChatConfirmMessage", () => {
     expect(message).toContain("permanently");
     expect(message).toContain("can't be undone");
   });
+
+  it("keeps the open chat's text exactly as it was", () => {
+    expect(deleteChatConfirmMessage()).toBe(
+      "Delete this chat permanently?\nThe whole conversation is removed and can't be undone.",
+    );
+    expect(deleteChatConfirmMessage({})).toBe(deleteChatConfirmMessage());
+  });
+
+  it("names another chat in the question", () => {
+    expect(deleteChatConfirmMessage({ title: "Tennis" })).toBe(
+      "Delete “Tennis” permanently?\nThe whole conversation is removed and can't be undone.",
+    );
+  });
+
+  it("adds one line when a turn is running, for any chat", () => {
+    const line = "It is working right now; deleting it stops that too.";
+    expect(deleteChatConfirmMessage({ title: "Tennis", working: true }).split("\n")).toEqual([
+      "Delete “Tennis” permanently?",
+      "The whole conversation is removed and can't be undone.",
+      line,
+    ]);
+    expect(deleteChatConfirmMessage({ working: true }).endsWith(`\n${line}`)).toBe(true);
+    expect(deleteChatConfirmMessage({ working: false })).toBe(deleteChatConfirmMessage());
+  });
 });
 
 describe("useDeleteChat", () => {
@@ -134,5 +158,28 @@ describe("useDeleteChat", () => {
       "thread-a",
       "thread-b",
     ]);
+  });
+
+  it("names the chat when another chat's delete fails without a message", async () => {
+    stubWindow();
+    seedSnapshot();
+    command.result = { _tag: "Failure", cause: Cause.fail("nope") };
+
+    expect(
+      await useDeleteChat("env-1" as EnvironmentId)("thread-b" as ThreadId, { title: "Tennis" }),
+    ).toEqual({ status: "failed", message: "Couldn't delete “Tennis”. Try again." });
+  });
+
+  it("deletes another chat after the named confirm and drops it from the snapshot", async () => {
+    stubWindow();
+    seedSnapshot();
+
+    expect(
+      await useDeleteChat("env-1" as EnvironmentId)("thread-b" as ThreadId, {
+        title: "Tennis",
+        working: true,
+      }),
+    ).toEqual({ status: "done" });
+    expect(readChatsSnapshot("env-1")?.rows.map((row) => row.threadId)).toEqual(["thread-a"]);
   });
 });
