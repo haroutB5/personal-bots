@@ -1,14 +1,12 @@
 import type { CSSProperties, JSX } from "react";
-import { useRef } from "react";
+import { lazy, Suspense, useRef } from "react";
 
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 
 import { ColumnResizeHandle } from "./ColumnResizeHandle";
-import { ComputerScreen } from "./computer/ComputerScreen";
 import { ConversationRoutinesPanel } from "./ConversationRoutinesPanel";
 import {
-  CONVERSATION_SIDE_PANEL_ID,
   SIDE_PANEL_WIDTH,
   SIDEBAR_ID,
   sidePanelMaxWidth,
@@ -16,7 +14,14 @@ import {
 } from "./desktopColumns";
 import { setPersonalNumberPreference, usePersonalNumberPreference } from "./personalPreferences";
 
-export { CONVERSATION_SIDE_PANEL_ID };
+export const CONVERSATION_SIDE_PANEL_ID = "conversation-side-panel";
+
+// The Computer screen is most of this panel's weight (79 KB of JS) and a phone never opens the
+// panel, so it loads when the panel mounts, not with every chat (1.66.0). The panel itself stays
+// in the chat's own chunk: moving it out changed the first load's chunk graph (see perf README).
+const ComputerScreen = lazy(() =>
+  import("./computer/ComputerScreen").then((module) => ({ default: module.ComputerScreen })),
+);
 
 /**
  * Wide desktop only (the chat decides when it fits): the Computer pinned
@@ -76,16 +81,18 @@ export function ConversationSidePanel({
         measure={measure}
         onCommit={(next) => setPersonalNumberPreference("sidePanelWidth", next)}
       />
-      <ComputerScreen
-        variant="panel"
-        origin={{ botId, threadId }}
-        // No Back in the panel; kept for the screen's contract.
-        onBackToChat={(target) =>
-          void (target === null
-            ? navigate({ to: "/bots" })
-            : navigate({ to: "/bots/$botId/$threadId", params: target }))
-        }
-      />
+      <Suspense fallback={null}>
+        <ComputerScreen
+          variant="panel"
+          origin={{ botId, threadId }}
+          // No Back in the panel; kept for the screen's contract.
+          onBackToChat={(target) =>
+            void (target === null
+              ? navigate({ to: "/bots" })
+              : navigate({ to: "/bots/$botId/$threadId", params: target }))
+          }
+        />
+      </Suspense>
       {showRoutines ? (
         <ConversationRoutinesPanel
           environmentId={environmentId}
