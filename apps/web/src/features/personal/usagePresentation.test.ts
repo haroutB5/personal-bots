@@ -8,8 +8,10 @@ import {
   resetCreditsExpiresIn,
   resetCreditsHeadline,
   selectUsageCards,
+  usageAutoProbeDue,
   usageCardEmptyText,
   usageNeedsRefreshOnOpen,
+  usageRefreshFailureText,
   USAGE_STALE_AFTER_MS,
   type UsageCard,
 } from "./usagePresentation";
@@ -241,6 +243,80 @@ describe("selectUsageCards", () => {
     expect(cards[0]!.notice).toBe("Could not reach Codex.");
   });
 
+  it("keeps showing the last reading when the newest refresh failed, and says why", () => {
+    const cards = selectUsageCards(
+      [
+        provider({
+          driver: "claudeAgent",
+          instanceId: "claudeAgent",
+          status: "error",
+          message: "Claude Agent CLI is installed but failed to run.",
+          usageLimits: {
+            checkedAt: "2026-09-13T09:00:00Z",
+            windows: CLAUDE_WINDOWS,
+            refreshFailed: { at: "2026-09-13T11:59:00Z", message: "CLI timed out" },
+          },
+        }),
+      ],
+      NOW,
+    );
+    const claude = cards[0]!;
+    expect(claude.status).toBe("ready");
+    expect(claude.session?.usedPercent).toBe(42);
+    expect(claude.weeklies.length).toBeGreaterThan(0);
+    // The age is the reading's, not the failed probe's.
+    expect(claude.checkedAt).toBe(Date.parse("2026-09-13T09:00:00Z"));
+    expect(usageRefreshFailureText(claude)).toBe("Couldn't refresh · CLI timed out");
+    expect(usageRefreshFailureText({ ...claude, refreshFailure: "" })).toBe("Couldn't refresh");
+    expect(usageRefreshFailureText({ ...claude, refreshFailure: null })).toBeNull();
+  });
+
+  it("shows windows from an older server's probeFailed marker rather than hiding them", () => {
+    const [claude] = selectUsageCards(
+      [
+        provider({
+          driver: "claudeAgent",
+          instanceId: "claudeAgent",
+          usageLimits: {
+            checkedAt: "2026-09-13T11:59:00Z",
+            windows: CLAUDE_WINDOWS,
+            unavailable: { reason: "probeFailed", message: "401" },
+          },
+        }),
+      ],
+      NOW,
+    );
+    expect(claude!.status).toBe("ready");
+    expect(claude!.refreshFailure).toBe("401");
+  });
+
+  it("says why a provider that was never read has no bars", () => {
+    const placeholder = (overrides: Partial<ServerProvider>) =>
+      selectUsageCards(
+        [provider({ driver: "claudeAgent", instanceId: "claudeAgent", ...overrides })],
+        NOW,
+      )[0]!;
+    const signedOut = placeholder({ auth: { status: "unauthenticated" } });
+    expect(signedOut.status).toBe("unavailable");
+    expect(signedOut.notice).toBe(
+      "Not signed in to Claude. Sign in on this computer to see usage.",
+    );
+    const broken = placeholder({
+      status: "error",
+      message: "Claude Agent CLI is installed but failed to run. Timed out while running command.",
+    });
+    expect(broken.status).toBe("not-reported");
+    expect(broken.notice).toBe("Claude Agent CLI is installed but failed to run");
+    // Not probed yet: no reason to give, the card says it is checking.
+    const fresh = placeholder({});
+    expect(fresh.status).toBe("not-reported");
+    expect(fresh.notice).toBeNull();
+    expect(usageCardEmptyText(fresh, { checking: true })).toBe("Checking…");
+    expect(usageCardEmptyText(fresh, { checking: false })).toContain("Not read yet");
+    // A known reason is shown even while a new probe runs.
+    expect(usageCardEmptyText(broken, { checking: true })).toBe(broken.notice);
+  });
+
   it("leaves a missing weekly row empty rather than inventing one", () => {
     const cards = selectUsageCards(
       [
@@ -342,6 +418,7 @@ describe("usage refresh on open", () => {
     plan: "Max",
     status: "ready",
     notice: null,
+    refreshFailure: null,
     session: null,
     weeklies: [],
     checkedAt: 1_000_000,
@@ -401,7 +478,7 @@ describe("usage refresh on open", () => {
 
     expect(usageCardEmptyText(pending, { checking: true })).toBe("Checking…");
     expect(usageCardEmptyText(pending, { checking: false })).toBe(
-      "Usage is not reported for this account yet.",
+      "Not read yet. Usage shows once the first check finishes.",
     );
   });
 
@@ -411,5 +488,33 @@ describe("usage refresh on open", () => {
     expect(usageCardEmptyText(unavailable, { checking: true })).toBe(
       "This account has no subscription limits.",
     );
+  });
+});
+
+describe("auto probe", () => {
+  const card = (overrides: Partial<UsageCard> = {}): UsageCard => ({
+    driver: "claudeAgent",
+    title: "Claude",
+    plan: "Max",
+    status: "ready",
+    notice: null,
+    refreshFailure: null,
+    session: null,
+    weeklies: [],
+    checkedAt: 1_000_000,
+    resetCredits: null,
+    ...overrides,
+  });
+  const due = (cards: UsageCard[], lastProbeAt: number | null = null, firstLoad = false) =>
+    usageAutoProbeDue({ cards, now: 1_000_000 + 1_000, lastProbeAt, firstLoad });
+
+  it("asks again when the bars are an older reading after a failed refresh", () => {
+    expect(due([card({ refreshFailure: "CLI timed out" })])).toBe(true);
+    expect(due([card({ refreshFailure: "" })])).toBe(true);
+    expect(due([card()])).toBe(false);
+  });
+
+  it("still asks at most once per server probe interval", () => {
+    expect(due([card({ refreshFailure: "x" })], 1_000_000 - 60_000)).toBe(false);
   });
 });

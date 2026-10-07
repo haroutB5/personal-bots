@@ -456,6 +456,89 @@ Assert-Equal 'a checkout with no upstream remote gives an empty base, not a cras
 $upHead = Get-UpdatesGitText -Repo $upRepo -GitArgs @('rev-parse', 'HEAD')
 Assert-Equal 'with an upstream/main it is the first 12 characters of the merge-base' $upHead.Substring(0, 12) (Get-PbUpstreamBase -RepoRoot $upRepo)
 
+# 7 Oct: the 06:11 morning report got a 404 because another server had rewritten the
+# token file with its own routine's token. The pipeline now reads the live routine's
+# token from the database and repairs the file. Real node SQLite file, a real local
+# HTTP server that answers like the hook route (202 for its token, 404 for any other).
+Write-Host 'Morning report hook token (live routine first, file repaired; a stand-in hook server)'
+$hookDb = Join-Path $tempRoot 'hook-state.sqlite'
+$hookNode = Resolve-NodeExe
+$setHookDb = {
+    param([string[]]$Statements)
+    $env:PB_TEST_DB = $hookDb
+    $env:PB_TEST_SQL = ($Statements -join ';')
+    $r = Invoke-UpdatesProc -FilePath $hookNode -ArgList @('--disable-warning=ExperimentalWarning', '-e', 'const{DatabaseSync}=require("node:sqlite");const d=new DatabaseSync(process.env.PB_TEST_DB);d.exec(process.env.PB_TEST_SQL);d.close()') -WorkingDirectory $tempRoot -TimeoutSeconds 60
+    if ($r.Code -ne 0) { throw "test db write failed: $($r.Err)" }
+}
+$liveToken = 'LIVEtoken_0123456789abcdefghijklmnopqrstuv'
+$foreignToken = 'FOREIGNtoken_0123456789abcdefghijklmnopqrstu'
+& $setHookDb @(
+    'create table personal_routines (routine_id text, trigger_kind text, hook_token text, enabled integer)',
+    "insert into personal_routines values ('routine-claude-code-report', 'event', '$liveToken', 1)",
+    "insert into personal_routines values ('weekly-sync', 'event', 'SOMEOTHERtoken_0123456789abcdefghijklmnopqrs', 1)"
+)
+$hookFile = Join-Path $tempRoot 'report-hook-token'
+$hookPosted = Join-Path $tempRoot 'hook-posted.json'
+$probe = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, 0)
+$probe.Start(); $hookPort = $probe.LocalEndpoint.Port; $probe.Stop()
+$env:PB_TEST_HOOK_TOKEN = $liveToken
+$env:PB_TEST_HOOK_PORT = [string]$hookPort
+$env:PB_TEST_HOOK_OUT = $hookPosted
+$hookServerJs = 'const http=require("http");const fs=require("fs");http.createServer((q,s)=>{let b="";q.on("data",d=>b+=d);q.on("end",()=>{const ok=q.method==="POST"&&q.url==="/api/personal/hooks/"+process.env.PB_TEST_HOOK_TOKEN&&!fs.existsSync(process.env.PB_TEST_HOOK_OUT+".paused");if(ok)fs.writeFileSync(process.env.PB_TEST_HOOK_OUT,b);s.statusCode=ok?202:404;s.end(ok?"Accepted":"Not Found")})}).listen(Number(process.env.PB_TEST_HOOK_PORT),"127.0.0.1")'
+$hookServerFile = Join-Path $tempRoot 'hook-server.js'
+Set-Content -LiteralPath $hookServerFile -Value $hookServerJs -Encoding ASCII
+$hookServer = Start-Process -FilePath $hookNode -ArgumentList @($hookServerFile) -PassThru -WindowStyle Hidden
+try {
+    for ($i = 0; $i -lt 40; $i++) {
+        $c = New-Object System.Net.Sockets.TcpClient
+        try { $c.Connect('127.0.0.1', $hookPort); $c.Close(); break } catch { Start-Sleep -Milliseconds 250 } finally { $c.Dispose() }
+    }
+    $hookLog = New-Object System.Collections.Generic.List[string]
+    $onHookLog = { param($t) $hookLog.Add($t) | Out-Null }
+    $send = { Send-UpdatesReport -Text 'Nightly update test: ok' -WaitMinutes 0.02 -Log $onHookLog -HookPort $hookPort -TokenFile $hookFile -StateDb $hookDb }
+
+    Set-Content -LiteralPath $hookFile -Value $foreignToken -NoNewline -Encoding ASCII
+    Assert-Equal 'the token the file used to hold (a foreign server''s) is refused by the hook' $false (Send-UpdatesReport -Text 'x' -WaitMinutes 0.02 -Log $onHookLog -HookPort $hookPort -TokenFile $hookFile -StateDb (Join-Path $tempRoot 'no-such.sqlite'))
+    Assert-Equal '...and with the database unreadable the file stays what it was' $foreignToken ((Get-Content -LiteralPath $hookFile -Raw).Trim())
+    $hookLog.Clear()
+    $clobberedSent = & $send
+    if (-not $clobberedSent) { Write-Host ('       log: ' + ($hookLog -join ' || ')) }
+    Assert-Equal 'a clobbered file: the live routine''s token is used and the report posts' $true $clobberedSent
+    Assert-Equal '...the file is repaired to the live token' $liveToken ((Get-Content -LiteralPath $hookFile -Raw).Trim())
+    Assert-Equal '...the hook received the report text' 'Nightly update test: ok' ((Get-Content -LiteralPath $hookPosted -Raw | ConvertFrom-Json).message)
+    Assert-Equal '...the log says it repaired the file' $true (($hookLog -join '|') -like '*repairing the file*')
+    Assert-Equal '...and no log line carries a token' $false ((($hookLog -join '|') -like "*$liveToken*") -or (($hookLog -join '|') -like "*$foreignToken*"))
+    Assert-Equal 'the repaired file has no trailing newline or BOM (43-char token as the server writes it)' $liveToken ([System.IO.File]::ReadAllText($hookFile))
+
+    Remove-Item -LiteralPath $hookFile -Force
+    Remove-Item -LiteralPath $hookPosted -Force
+    Assert-Equal 'a missing file is recreated from the live routine and the report posts' $true (& $send)
+    Assert-Equal '...file recreated' $liveToken ((Get-Content -LiteralPath $hookFile -Raw).Trim())
+
+    Set-Content -LiteralPath $hookFile -Value $liveToken -NoNewline -Encoding ASCII
+    $hookLog.Clear()
+    Assert-Equal 'a matching file posts without any repair line' $true (& $send)
+    Assert-Equal '...nothing logged' 0 $hookLog.Count
+
+    & $setHookDb @("update personal_routines set enabled = 0 where routine_id = 'routine-claude-code-report'")
+    Set-Content -LiteralPath ($hookPosted + '.paused') -Value 'paused' -Encoding ASCII   # the stand-in answers 404 for a paused routine, as the server does
+    $hookLog.Clear()
+    Assert-Equal 'a paused routine: the hook refuses (404) and the run is told so' $false (& $send)
+    Assert-Equal '...with the paused reason in the log' $true (($hookLog -join '|') -like '*routine is paused*')
+
+    Remove-Item -LiteralPath ($hookPosted + '.paused') -Force
+    & $setHookDb @("delete from personal_routines where routine_id = 'routine-claude-code-report'")
+    Set-Content -LiteralPath $hookFile -Value $liveToken -NoNewline -Encoding ASCII
+    Assert-Equal 'a deleted routine falls back to the file token (here still the hook''s token)' $true (& $send)
+    Assert-Equal 'no token anywhere: nothing to post with' $null (Resolve-UpdatesReportToken -TokenFile (Join-Path $tempRoot 'absent') -StateDb (Join-Path $tempRoot 'no-such.sqlite') -Log $onHookLog)
+} catch {
+    Write-Host "  FAIL report hook test threw: $($_.Exception.Message)"
+    $script:failures++
+} finally {
+    if ($hookServer -and -not $hookServer.HasExited) { Stop-Process -Id $hookServer.Id -Force }
+    Remove-Item Env:PB_TEST_HOOK_TOKEN, Env:PB_TEST_HOOK_PORT, Env:PB_TEST_HOOK_OUT -ErrorAction SilentlyContinue
+}
+
 # Only our own temp folder, never followed through a junction (there are none in it).
 & $env:ComSpec /d /s /c ('rmdir /s /q "' + $tempRoot + '"') 2>&1 | Out-Null
 

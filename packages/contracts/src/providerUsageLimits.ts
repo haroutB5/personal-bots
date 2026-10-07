@@ -46,6 +46,11 @@ export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
  * `unavailable` distinguishes an account that can never report windows (API
  * key, Bedrock) from a probe that failed this time, so clients can keep the
  * last good bars for the latter and clear them for the former.
+ *
+ * `refreshFailed` rides on a kept reading: the windows are the last good ones
+ * (`checkedAt` says how old), and the newest probe could not read usage, at the
+ * time and for the short reason given. A successful read replaces the whole
+ * object, so it never outlives the failure.
  */
 export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
@@ -54,6 +59,12 @@ export const ServerProviderUsageLimits = Schema.Struct({
   unavailable: Schema.optional(
     Schema.Struct({
       reason: Schema.Literals(["unsupported", "probeFailed"]),
+      message: Schema.optional(TrimmedNonEmptyString),
+    }),
+  ),
+  refreshFailed: Schema.optional(
+    Schema.Struct({
+      at: IsoDateTime,
       message: Schema.optional(TrimmedNonEmptyString),
     }),
   ),

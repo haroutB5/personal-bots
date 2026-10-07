@@ -9,12 +9,14 @@ import { primaryServerProvidersAtom, serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { formatRelativeTime } from "./relativeTime";
+import { trackUsageRefresh, useUsageRefreshing } from "./usageRefresh";
 import { usePersonalEnvironmentId } from "./usePersonalBots";
 import {
   selectUsageCards,
   usageCardEmptyText,
   usageAutoProbeDue,
   usageNeedsRefreshOnOpen,
+  usageRefreshFailureText,
   type UsageCard,
   type UsageWindowRow,
 } from "./usagePresentation";
@@ -144,6 +146,44 @@ function MissingRow({ label }: { readonly label: string }) {
   );
 }
 
+/**
+ * Under a card: how old its reading is, a small "Refreshing" beside that while
+ * a probe runs (the bars stay), and, once a refresh has failed, why the bars
+ * are older than they should be.
+ */
+function UsageCardFooter({
+  card,
+  now,
+  checking,
+}: {
+  readonly card: UsageCard;
+  readonly now: number;
+  readonly checking: boolean;
+}): JSX.Element | null {
+  const failure = checking ? null : usageRefreshFailureText(card);
+  if (card.checkedAt === null && !checking && failure === null) return null;
+  return (
+    <div className="flex flex-col gap-0.5 text-[13px] text-[var(--personal-text-secondary)]">
+      {card.checkedAt !== null || checking ? (
+        <span className="flex items-center gap-2">
+          {card.checkedAt !== null ? (
+            <span>Updated {formatRelativeTime(card.checkedAt, now)}</span>
+          ) : null}
+          {checking ? (
+            <span role="status" className="inline-flex items-center gap-1">
+              <RefreshCw aria-hidden="true" className="size-3 animate-spin" strokeWidth={2} />
+              Refreshing
+            </span>
+          ) : null}
+        </span>
+      ) : null}
+      {failure !== null ? (
+        <span className="text-[var(--personal-review-text)]">{failure}</span>
+      ) : null}
+    </div>
+  );
+}
+
 function UsageCardView({
   card,
   now,
@@ -207,11 +247,7 @@ function UsageCardView({
           />
         </Suspense>
       ) : null}
-      {card.checkedAt !== null ? (
-        <span className="text-[13px] text-[var(--personal-text-secondary)]">
-          Updated {formatRelativeTime(card.checkedAt, now)}
-        </span>
-      ) : null}
+      <UsageCardFooter card={card} now={now} checking={checking} />
     </article>
   );
 }
@@ -233,6 +269,8 @@ function UsageSheetBody({
     reportFailure: false,
   });
   const [refreshing, setRefreshing] = useState(false);
+  // Any probe on the page, including the strip's own first reading.
+  const probing = useUsageRefreshing();
   // The sheet opens on whatever snapshot the app already had. Before this, a
   // snapshot taken before any probe rendered as "not reported", which is why
   // the refresh button looked like it fixed a bug: it was doing the first
@@ -243,7 +281,7 @@ function UsageSheetBody({
     if (environmentId === null || refreshing) return;
     setRefreshing(true);
     try {
-      await refreshProviders({ environmentId, input: { refreshUsage: true } });
+      await trackUsageRefresh(refreshProviders({ environmentId, input: { refreshUsage: true } }));
     } finally {
       setRefreshing(false);
     }
@@ -292,7 +330,7 @@ function UsageSheetBody({
             key={card.driver}
             card={card}
             now={now}
-            checking={refreshing}
+            checking={refreshing || probing}
             environmentId={environmentId}
             onRedeemed={() => void onRefresh()}
           />
@@ -336,7 +374,7 @@ export function PersonalUsageStrip({ now }: { readonly now: number }): JSX.Eleme
     if (providers.length > 0) autoProbe.firstLoadSeen = true;
     if (!due) return;
     autoProbe.lastProbeAt = at;
-    void refreshProviders({ environmentId, input: { refreshUsage: true } });
+    void trackUsageRefresh(refreshProviders({ environmentId, input: { refreshUsage: true } }));
     // Each new provider snapshot is a chance; `refreshProviders` only wraps the RPC.
   }, [environmentId, providers]);
 

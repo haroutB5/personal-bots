@@ -708,7 +708,8 @@ describe("makeManagedServerProvider", () => {
         assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, persistedLimits);
 
         // That probe cannot read usage: the carried-over reading stays, with
-        // its real (older) checkedAt rather than the probe's.
+        // its real (older) checkedAt rather than the probe's, and says the
+        // refresh failed.
         const afterFailure = yield* Stream.take(provider.streamChanges, 1).pipe(
           Stream.runCollect,
           Effect.forkChild,
@@ -716,7 +717,10 @@ describe("makeManagedServerProvider", () => {
         yield* Effect.yieldNow;
         yield* Deferred.succeed(releaseFirstProbe, undefined);
         const [failedProbe] = Array.from(yield* Fiber.join(afterFailure));
-        assert.deepStrictEqual(failedProbe?.usageLimits, persistedLimits);
+        assert.deepStrictEqual(failedProbe?.usageLimits, {
+          ...persistedLimits,
+          refreshFailed: { at: failedLimits.checkedAt },
+        });
 
         // A probe that reads usage replaces it, and a late seed cannot undo that.
         assert.deepStrictEqual((yield* provider.refresh).usageLimits, freshLimits);
@@ -727,6 +731,68 @@ describe("makeManagedServerProvider", () => {
         assert.deepStrictEqual((yield* provider.refresh).usageLimits, unsupportedLimits);
         yield* seedUsageLimits(persistedLimits);
         assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, unsupportedLimits);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
+  /**
+   * 7 Oct, after the 1.66.0 restart: the boot probe ran into a startup stall,
+   * `claude --version` timed out, and the snapshot came back with no usage
+   * field at all. That is not a `probeFailed` marker, so it used to replace
+   * the reading carried over the restart with nothing, and the Usage sheet
+   * showed only "Checking…" for Claude until the phone opened it.
+   */
+  it.effect("keeps the carried-over reading when the boot probe returns no usage at all", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const releaseFirstProbe = yield* Deferred.make<void>();
+        const probes = yield* Ref.make(0);
+        const timedOut: ServerProvider = {
+          ...refreshedSnapshot,
+          installed: true,
+          status: "error",
+          message: "CLI is installed but failed to run. Timed out while running command.",
+        };
+        const { usageLimits: _none, ...timedOutWithoutUsage } = timedOut;
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(probes, (count) => count + 1).pipe(
+            Effect.flatMap((count): Effect.Effect<ServerProvider> =>
+              count === 1
+                ? Deferred.await(releaseFirstProbe).pipe(Effect.as(timedOutWithoutUsage))
+                : Effect.succeed({ ...refreshedSnapshotSecond, usageLimits: freshLimits }),
+            ),
+          ),
+          refreshInterval: "1 hour",
+        });
+        yield* provider.seedUsageLimits!(persistedLimits);
+
+        const afterFailure = yield* Stream.take(provider.streamChanges, 1).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseFirstProbe, undefined);
+        const [failedProbe] = Array.from(yield* Fiber.join(afterFailure));
+        assert.strictEqual(failedProbe?.status, "error");
+        assert.deepStrictEqual(failedProbe?.usageLimits, {
+          ...persistedLimits,
+          refreshFailed: {
+            at: timedOut.checkedAt,
+            message: "CLI is installed but failed to run",
+          },
+        });
+        // Asking again later is served from the same state, not a blank one.
+        assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits?.windows, [
+          ...persistedLimits.windows,
+        ]);
+
+        // The next probe that reads usage clears the failure note with the rest.
+        assert.deepStrictEqual((yield* provider.refresh).usageLimits, freshLimits);
       }),
     ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );

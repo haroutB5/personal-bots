@@ -21,6 +21,10 @@
 //     pieces. A key saved as an environment variable (PB_SECRET_<NAME>) must come out masked; a brokered
 //     key is not in the process, so the shell prints nothing.
 //   anything else  "Got it." plus the reply quote it received, if any.
+// Usage-probe flags (files in <pidDir>, so a test flips them while the server runs; all off by default):
+//   usage-weekly  adds a seven_day window (31%, resets in 3 days) beside the five-hour one.
+//   usage-fail    get_usage answers with an error: the SDK probe cannot read usage.
+//   version-hang  `--version` takes 15 s (the server gives up after 4 s: the 7 Oct boot-probe failure).
 // State and log: FAKE_CLAUDE_PID_DIR (set by the script; default the OS temp folder).
 import * as NodeFS from "node:fs";
 import * as NodeChildProcess from "node:child_process";
@@ -45,6 +49,7 @@ const log = (line) =>
   );
 const args = process.argv.slice(2);
 if (args.includes("--version") || args.includes("-v")) {
+  if (flag("version-hang") !== "") await new Promise((resolve) => setTimeout(resolve, 15000));
   console.log("2.1.290 (Claude Code)");
   process.exit(0);
 }
@@ -237,6 +242,16 @@ lines.on("line", async (line) => {
       });
     }
     if (subtype === "get_usage") {
+      if (flag("usage-fail") !== "") {
+        return out({
+          type: "control_response",
+          response: {
+            subtype: "error",
+            request_id: message.request_id,
+            error: "usage is not available right now",
+          },
+        });
+      }
       return respond(message, {
         session: {},
         subscription_type: "max",
@@ -246,6 +261,14 @@ lines.on("line", async (line) => {
             utilization: flag("usage-full") !== "" && NAME === "fakeok" ? 100 : 10,
             resets_at: new Date(Date.now() + 3600e3).toISOString(),
           },
+          ...(flag("usage-weekly") !== ""
+            ? {
+                seven_day: {
+                  utilization: 31,
+                  resets_at: new Date(Date.now() + 3 * 86400e3).toISOString(),
+                },
+              }
+            : {}),
         },
         behaviors: null,
       });

@@ -124,6 +124,15 @@ export interface PersonalClaudeCodeReviewDeps {
   readonly excerptDir: string;
   /** The ship pipeline's home: runs, lock, the report hook token. */
   readonly updatesHome: string;
+  /**
+   * Whether this server may write the pipeline's copy of the report hook
+   * token. Only the live server that owns the pipeline's data root may:
+   * `updatesHome` is under the user's profile whatever data root a server
+   * runs on, and any other server with the review on (a hand-made test server
+   * that inherited T3CODE_ENVIRONMENT_LABEL=Bots from a bot's shell) would put
+   * its own routine's token there and make the next report 404. Default true.
+   */
+  readonly ownsReportTokenFile?: boolean;
   /** The SDK version hbots is built with. */
   readonly pinnedSdk: string | null;
   readonly fetchText: (url: string) => Effect.Effect<string, DepFailure>;
@@ -522,7 +531,11 @@ export const makeWith = (deps: PersonalClaudeCodeReviewDeps) =>
         );
       }
       const report = yield* deps.getRoutine(UPDATES_REPORT_ROUTINE_ID);
-      if (Option.isSome(report) && report.value.hookToken !== null) {
+      if (deps.ownsReportTokenFile === false) {
+        yield* Effect.logInfo("claude code review left the report hook token file alone", {
+          reason: "this server does not own the pipeline's data root",
+        });
+      } else if (Option.isSome(report) && report.value.hookToken !== null) {
         const current = Option.getOrNull(yield* deps.readFile(tokenFile));
         if (current?.trim() !== report.value.hookToken) {
           yield* deps.writeFile(tokenFile, report.value.hookToken);
@@ -590,6 +603,39 @@ export const installedVersionWithFallback = (
 
 const CLI_VERSION_TIMEOUT_MS = 30_000;
 
+/**
+ * Whether a server running on `baseDir` is the live Bots server whose routine
+ * the nightly pipeline posts to. The pipeline's files live in one profile
+ * folder (`updatesHome`) and read the live data root's database, so the owner
+ * is the `dev` or `prod` root that sits next to that folder. A server on any
+ * other root (a throwaway in %TEMP%, a QA root, a restored backup) is not,
+ * whatever its environment label says. An explicit `PB_UPDATES_HOME` is the
+ * operator saying "this server drives that folder", so it owns it.
+ *
+ * On 7 Oct a server that was not the live one rewrote the token file at about
+ * 06:10; the 06:11 morning report then posted with a token no routine had and
+ * got a 404.
+ */
+export function ownsUpdatesHome(input: {
+  readonly baseDir: string;
+  readonly updatesHome: string;
+  readonly explicitHome: boolean;
+  readonly caseInsensitive?: boolean;
+}): boolean {
+  if (input.explicitHome) return true;
+  const norm = (value: string) => {
+    const slashed = value.replaceAll("\\", "/").replace(/\/+$/, "");
+    return input.caseInsensitive === false ? slashed : slashed.toLowerCase();
+  };
+  const base = norm(input.baseDir);
+  const last = base.lastIndexOf("/");
+  const name = base.slice(last + 1);
+  const parent = last < 0 ? "" : base.slice(0, last);
+  const profile = norm(input.updatesHome);
+  const profileParent = profile.slice(0, Math.max(profile.lastIndexOf("/"), 0));
+  return (name === "dev" || name === "prod") && parent === profileParent;
+}
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
@@ -606,11 +652,18 @@ export const make = Effect.gen(function* () {
     process.env.PB_UPDATES_HOME ??
     path.join(NodeOS.homedir(), ".personal-bots", "claude-code-updates")
   ).replaceAll("\\", "/");
+  const ownsReportTokenFile = ownsUpdatesHome({
+    baseDir: config.baseDir,
+    updatesHome,
+    explicitHome: process.env.PB_UPDATES_HOME !== undefined,
+    caseInsensitive: path.sep === "\\",
+  });
   return yield* makeWith({
     enabled: claudeCodeReviewEnabled(process.env),
     paths,
     excerptDir: path.join(config.stateDir, "claude-code-updates").replaceAll("\\", "/"),
     updatesHome,
+    ownsReportTokenFile,
     pinnedSdk: normalizeVersion(packageJson.dependencies["@anthropic-ai/claude-agent-sdk"]),
     fetchText,
     installedClaudeCode: installedVersionWithFallback(

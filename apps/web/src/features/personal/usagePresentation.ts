@@ -31,11 +31,15 @@ export interface UsageWindowRow {
 }
 
 export type UsageCardStatus =
-  /** Bars to draw. Individual missing rows still read "not reported". */
+  /**
+   * Bars to draw: the provider's last known windows, however old (`checkedAt`
+   * says how old), even while a probe runs or after one failed. Individual
+   * missing rows still read "not reported".
+   */
   | "ready"
-  /** API-key style account that can never report windows. */
+  /** No windows, and asking again will not help: API-key style account, or signed out. */
   | "unavailable"
-  /** Probe failed, or the provider reported no windows at all. */
+  /** Never read: no reading has ever come back for this provider. */
   | "not-reported";
 
 export interface UsageCard {
@@ -44,8 +48,14 @@ export interface UsageCard {
   /** Plan label from provider auth, when the server names one. */
   readonly plan: string | undefined;
   readonly status: UsageCardStatus;
-  /** Why there are no bars (unavailable message or probe notice). */
+  /** Why there are no bars (unavailable message, signed out, or the probe's reason). */
   readonly notice: string | null;
+  /**
+   * The newest refresh failed while the bars above are an older reading: the
+   * short reason, or "" when the server named none. Null when the last
+   * refresh did not fail (or there are no bars).
+   */
+  readonly refreshFailure: string | null;
   readonly session: UsageWindowRow | null;
   readonly weeklies: readonly UsageWindowRow[];
   /** Epoch millis the snapshot was checked, or null when unknown. */
@@ -186,10 +196,48 @@ function newestInstance(
   return best;
 }
 
+/** First sentence of a provider message, for a one-line reason. */
+function firstSentence(message: string | undefined): string | null {
+  const text = message?.replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const sentence = /^(.+?[.!?])(?:\s|$)/.exec(text)?.[1] ?? text;
+  return sentence.replace(/[.!?]+$/, "") || null;
+}
+
+/**
+ * Why a provider that has never been read shows no bars, said plainly: signed
+ * out, the API-key kind of account, the probe's own failure, else null (a
+ * probe has simply not come back yet).
+ */
+function placeholderNotice(provider: ServerProvider, title: string): string | null {
+  const limits = provider.usageLimits;
+  if (limits?.unavailable?.reason === "unsupported") {
+    return limits.unavailable.message ?? "This account has no subscription limits.";
+  }
+  if (provider.auth.status === "unauthenticated") {
+    return `Not signed in to ${title}. Sign in on this computer to see usage.`;
+  }
+  if (limits?.unavailable?.reason === "probeFailed") {
+    return (
+      limits.unavailable.message ?? firstSentence(provider.message) ?? "Could not read limits."
+    );
+  }
+  if (provider.status === "error") {
+    return firstSentence(provider.message) ?? `${title} could not be checked.`;
+  }
+  if (limits !== undefined && limits.windows.length === 0) return limitsNotice(limits);
+  return null;
+}
+
 /**
  * One card per driver (Claude, Codex) from the providers the config stream
- * already publishes. Drivers with no configured instance get no card;
- * everything else degrades to `unavailable` or `not-reported`, never 0%.
+ * already publishes. Drivers with no configured instance get no card.
+ *
+ * A provider with windows always shows them: the server keeps the last good
+ * reading through a failed probe, a restart and a first probe still running,
+ * so the card says how old it is and, when the newest refresh failed, why.
+ * Only a provider never read falls back to `unavailable` or `not-reported`,
+ * with the reason, and never 0%.
  */
 export function selectUsageCards(
   providers: ReadonlyArray<ServerProvider>,
@@ -199,37 +247,56 @@ export function selectUsageCards(
   for (const driver of USAGE_CARD_DRIVERS) {
     const provider = newestInstance(providers, driver);
     if (!provider) continue;
+    const title = USAGE_CARD_TITLES[driver];
     const limits = provider.usageLimits;
-    const notice = limits ? limitsNotice(limits) : null;
-    if (!limits || notice !== null) {
+    if (limits && limits.unavailable?.reason !== "unsupported" && limits.windows.length > 0) {
+      const failure =
+        limits.refreshFailed !== undefined
+          ? (limits.refreshFailed.message ?? "")
+          : limits.unavailable?.reason === "probeFailed"
+            ? (limits.unavailable.message ?? "")
+            : null;
       cards.push({
         driver,
-        title: USAGE_CARD_TITLES[driver],
+        title,
         plan: provider.auth.label,
-        status: limits?.unavailable?.reason === "unsupported" ? "unavailable" : "not-reported",
-        notice,
-        session: null,
-        weeklies: [],
-        checkedAt: parseCheckedAt(limits?.checkedAt),
-        resetCredits: null,
+        status: "ready",
+        notice: null,
+        refreshFailure: failure,
+        session: pickSession(limits.windows, now),
+        weeklies: pickWeeklies(limits.windows, now),
+        checkedAt: parseCheckedAt(limits.checkedAt),
+        resetCredits: limits.resetCredits
+          ? { credits: limits.resetCredits, input: { instanceId: provider.instanceId } }
+          : null,
       });
       continue;
     }
+    const notice = placeholderNotice(provider, title);
+    const final =
+      limits?.unavailable?.reason === "unsupported" || provider.auth.status === "unauthenticated";
     cards.push({
       driver,
-      title: USAGE_CARD_TITLES[driver],
+      title,
       plan: provider.auth.label,
-      status: "ready",
-      notice: null,
-      session: pickSession(limits.windows, now),
-      weeklies: pickWeeklies(limits.windows, now),
-      checkedAt: parseCheckedAt(limits.checkedAt),
-      resetCredits: limits.resetCredits
-        ? { credits: limits.resetCredits, input: { instanceId: provider.instanceId } }
-        : null,
+      status: final ? "unavailable" : "not-reported",
+      notice,
+      refreshFailure: null,
+      session: null,
+      weeklies: [],
+      checkedAt: parseCheckedAt(limits?.checkedAt),
+      resetCredits: null,
     });
   }
   return cards;
+}
+
+/** "Couldn't refresh · <reason>" for a card showing an older reading, else null. */
+export function usageRefreshFailureText(card: UsageCard): string | null {
+  if (card.refreshFailure === null) return null;
+  return card.refreshFailure === ""
+    ? "Couldn't refresh"
+    : `Couldn't refresh · ${card.refreshFailure}`;
 }
 
 /**
@@ -291,17 +358,21 @@ export function usageAutoProbeDue(input: {
   }
   // A probe that failed just now still carries a fresh `checkedAt`, so the
   // sheet's staleness rule alone would call it current: a card with no
-  // reading is due whenever it is seen.
-  if (input.cards.some((card) => card.status === "not-reported")) return true;
+  // reading, or one whose newest refresh failed, is due whenever it is seen.
+  if (input.cards.some((card) => card.status === "not-reported" || card.refreshFailure !== null)) {
+    return true;
+  }
   return input.firstLoad && usageNeedsRefreshOnOpen(input.cards, input.now);
 }
 
 /**
- * What a card with no bars should say.
+ * What a card that has never been read should say (a card with a reading keeps
+ * its bars; see `selectUsageCards`).
  *
  * A probe in flight says so rather than reporting an absence as a fact: the
  * two are indistinguishable in the snapshot, and only one of them is something
- * the owner can act on.
+ * the owner can act on. A reason the provider gave (signed out, the probe's
+ * failure) is shown as it is, not hidden behind "Checking…" once it is known.
  */
 export function usageCardEmptyText(
   card: UsageCard,
@@ -310,6 +381,6 @@ export function usageCardEmptyText(
   if (card.status === "unavailable") {
     return card.notice ?? "This account has no subscription limits.";
   }
-  if (options.checking) return "Checking…";
-  return card.notice ?? "Usage is not reported for this account yet.";
+  if (options.checking && card.notice === null) return "Checking…";
+  return card.notice ?? "Not read yet. Usage shows once the first check finishes.";
 }

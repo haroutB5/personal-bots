@@ -6,6 +6,7 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { PersonalUsageStrip, resetUsageAutoProbe } from "./PersonalUsageStrip";
+import { resetUsageRefresh } from "./usageRefresh";
 
 const NOW = Date.parse("2026-09-13T12:00:00Z");
 
@@ -103,6 +104,7 @@ let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
   resetUsageAutoProbe();
+  resetUsageRefresh();
   state.refresh = vi.fn(async () => ({ _tag: "Success", value: undefined }));
   state.consume = vi.fn(async () => ({ _tag: "Success", value: { outcome: "reset" } }));
 });
@@ -455,5 +457,114 @@ describe("PersonalUsageStrip", () => {
       expect(json).toContain(warning);
       expect(json).not.toContain("Your windows have cleared.");
     });
+  });
+});
+
+describe("usage values never disappear", () => {
+  /** Visible text only, so a failed assertion prints a line, not the whole tree. */
+  function visibleText(): string {
+    const parts: string[] = [];
+    const walk = (node: unknown): void => {
+      if (typeof node === "string") parts.push(node);
+      else if (Array.isArray(node)) node.forEach(walk);
+      else if (node && typeof node === "object") walk((node as { children?: unknown }).children);
+    };
+    walk(renderer!.toJSON());
+    return parts.join(" ").replace(/\s+/g, " ");
+  }
+
+  async function settle() {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  async function openSheet() {
+    await act(async () => {
+      renderer!.root.findAllByType("button")[0]!.props.onClick();
+    });
+  }
+
+  it("keeps the last reading on screen with Refreshing beside Updated while a probe runs", async () => {
+    // 7 Oct 08:21: Claude had no reading, so its card said only "Checking…".
+    // Now the reading persisted across the restart is old but present.
+    const finishers: Array<() => void> = [];
+    state.refresh = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finishers.push(() => resolve({ _tag: "Success", value: undefined }));
+        }),
+    );
+    const oldReading = new Date(NOW - 7 * 60 * 60_000).toISOString();
+    state.providers = [
+      provider("claudeAgent", { checkedAt: oldReading, windows: CLAUDE_WINDOWS }),
+      provider("codex", { checkedAt: oldReading, windows: CODEX_WINDOWS }),
+    ];
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+    // The strip's own first read is in flight (the reading is past a minute).
+    expect(state.refresh).toHaveBeenCalledTimes(1);
+    await openSheet();
+
+    const during = visibleText();
+    expect(during).toContain("26% used");
+    expect(during).toContain("8% used");
+    expect(during).toContain("Updated");
+    expect(during).toContain("Refreshing");
+    expect(during).not.toContain("Checking");
+
+    await act(async () => {
+      for (const finish of finishers) finish();
+    });
+    await settle();
+    const after = visibleText();
+    expect(after).not.toContain("Refreshing");
+    expect(after).toContain("26% used");
+  });
+
+  it("shows the last values plus Couldn't refresh and its age after a failed probe", async () => {
+    const reading = new Date(NOW - 3 * 60 * 60_000).toISOString();
+    state.providers = [
+      provider("claudeAgent", {
+        checkedAt: reading,
+        windows: CLAUDE_WINDOWS,
+        refreshFailed: { at: new Date(NOW).toISOString(), message: "CLI timed out" },
+      }),
+      provider("codex", { checkedAt: new Date(NOW).toISOString(), windows: CODEX_WINDOWS }),
+    ];
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+    await openSheet();
+    // Let the probes the strip and the sheet asked for settle.
+    await settle();
+
+    const text = visibleText();
+    expect(text).toContain("26% used");
+    expect(text).toContain("Updated 3h");
+    expect(text).toContain("Couldn't refresh · CLI timed out");
+    expect(text).not.toContain("Checking");
+    // Codex read fine: no failure line for it.
+    expect(text.split("Couldn't refresh").length - 1).toBe(1);
+    // The strip still carries the numbers too.
+    expect(renderer!.root.findAllByType("button")[0]!.props["aria-label"]).toContain(
+      "Claude, Session 26 percent used, Weekly 8 percent used",
+    );
+  });
+
+  it("gives a reason, not a bare placeholder, for a provider that has never been read", async () => {
+    state.providers = [
+      { ...provider("claudeAgent", undefined), auth: { status: "unauthenticated" } },
+      provider("codex", { checkedAt: new Date(NOW).toISOString(), windows: CODEX_WINDOWS }),
+    ] as ServerProvider[];
+    await act(async () => {
+      renderer = create(<PersonalUsageStrip now={NOW} />);
+    });
+    await openSheet();
+    await settle();
+    const text = visibleText();
+    expect(text).toContain("Not signed in to Claude");
+    expect(text).not.toContain("Checking");
   });
 });

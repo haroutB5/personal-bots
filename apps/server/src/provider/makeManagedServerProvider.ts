@@ -184,6 +184,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           resolveUsageLimitsAfterProbe({
             published: state.snapshot.usageLimits,
             probed: probedSnapshot.usageLimits,
+            context: {
+              checkedAt: probedSnapshot.checkedAt,
+              message: probedSnapshot.message,
+              enabled: probedSnapshot.enabled,
+              installed: probedSnapshot.installed,
+            },
           }),
         );
         return [

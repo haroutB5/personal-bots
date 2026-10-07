@@ -88,7 +88,14 @@ export function applyUsageLimitsUpdate(input: {
       changed = true;
     }
   }
-  if (!changed && previous !== undefined && previous.unavailable === undefined) {
+  // A live reading also settles an earlier failed refresh: rebuild so the
+  // "couldn't refresh" note goes with it, even when no number moved.
+  if (
+    !changed &&
+    previous !== undefined &&
+    previous.unavailable === undefined &&
+    previous.refreshFailed === undefined
+  ) {
     return previous;
   }
   return {
@@ -108,11 +115,45 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
   );
 }
 
+/** What the probe that just finished says about itself, for a kept reading's failure note. */
+export interface UsageProbeContext {
+  readonly checkedAt: string;
+  /** The provider's own probe message (CLI missing, timed out, signed out...). */
+  readonly message?: string | undefined;
+  readonly enabled?: boolean | undefined;
+  readonly installed?: boolean | undefined;
+}
+
+const REASON_MAX_CHARS = 120;
+
 /**
- * Choose what to publish after a status probe finishes. A probe that failed
- * this time must not wipe bars a previous probe or a turn already
- * established, so the last good snapshot stays; `unsupported` is
- * authoritative and replaces them.
+ * One short line for "Couldn't refresh · <reason>": the first sentence of the
+ * probe's message, capped. Undefined when there is nothing to say.
+ */
+export function shortProbeFailureReason(message: string | undefined): string | undefined {
+  const text = message?.replace(/\s+/g, " ").trim();
+  if (!text) return undefined;
+  const sentence = /^(.+?[.!?])(?:\s|$)/.exec(text)?.[1] ?? text;
+  const trimmed = sentence.replace(/[.!?]+$/, "");
+  if (trimmed.length === 0) return undefined;
+  return trimmed.length <= REASON_MAX_CHARS
+    ? trimmed
+    : `${trimmed.slice(0, REASON_MAX_CHARS - 1)}…`;
+}
+
+/**
+ * Choose what to publish after a status probe finishes. A probe that could not
+ * read usage this time must not wipe bars a previous probe or a turn already
+ * established, so the last good reading stays and says that the newest refresh
+ * failed (`refreshFailed`), with its own `checkedAt` so clients can show its
+ * age. That covers every way a probe can come back without a reading: a
+ * `probeFailed` snapshot, a snapshot that carries no usage at all (the CLI
+ * health check timed out or errored before usage was ever asked for: on
+ * 7 Oct the boot probe hit a startup stall, returned exactly that, and wiped
+ * the reading carried over the restart), and one that read no windows.
+ *
+ * Authoritative answers still replace it: `unsupported` (an account that
+ * cannot have windows), a disabled provider and an uninstalled CLI.
  *
  * A successful probe replaces the published windows outright, including any
  * runtime update that landed while it was running. That is a deliberate
@@ -125,12 +166,28 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
   readonly probed: ServerProviderUsageLimits | undefined;
+  readonly context?: UsageProbeContext | undefined;
 }): ServerProviderUsageLimits | undefined {
-  const { published, probed } = input;
-  if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
-    return published;
-  }
-  return probed;
+  const { published, probed, context } = input;
+  if (probed?.unavailable?.reason === "unsupported") return probed;
+  if (context?.enabled === false || context?.installed === false) return probed;
+  const read =
+    probed !== undefined && probed.unavailable === undefined && probed.windows.length > 0;
+  if (read) return probed;
+  const lastGood =
+    published !== undefined && published.unavailable === undefined && published.windows.length > 0;
+  if (!lastGood) return probed;
+  const reason =
+    shortProbeFailureReason(probed?.unavailable?.message) ??
+    shortProbeFailureReason(context?.message) ??
+    (probed !== undefined && probed.unavailable === undefined
+      ? "usage came back empty"
+      : undefined);
+  const at = context?.checkedAt ?? probed?.checkedAt ?? published.checkedAt;
+  return {
+    ...published,
+    refreshFailed: { at, ...(reason ? { message: reason } : {}) },
+  };
 }
 
 /**
@@ -150,7 +207,10 @@ export function seedUsageLimits(input: {
     return published;
   }
   if (published === undefined || published.unavailable?.reason === "probeFailed") {
-    return seed;
+    // A failure note belongs to the run that saw it; the next probe decides.
+    if (seed.refreshFailed === undefined) return seed;
+    const { refreshFailed: _carried, ...reading } = seed;
+    return reading;
   }
   return published;
 }

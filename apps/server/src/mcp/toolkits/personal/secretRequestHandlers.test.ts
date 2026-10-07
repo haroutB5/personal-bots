@@ -162,6 +162,11 @@ describe("secret_request tool", () => {
       const text = encode(yield* refusal(call({ exposure: ["https://bank.example"] })));
       expect(text).toMatch(/sensitive/i);
       expect(received).toEqual([]);
+      // Its own wording: about API keys and a new chat, not the search tools.
+      expect(text).toContain("API keys cannot be used in this chat");
+      expect(text).toContain("https://bank.example");
+      expect(text).toContain("start a new chat");
+      expect(text).not.toMatch(/research tools|search provider|look it up|search it/i);
     }),
   );
 

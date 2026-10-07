@@ -48,6 +48,7 @@ function card(overrides: Partial<UsageCard> & { driver: UsageCardDriver }): Usag
     plan: undefined,
     status: "ready",
     notice: null,
+    refreshFailure: null,
     session: null,
     weeklies: [],
     checkedAt: null,

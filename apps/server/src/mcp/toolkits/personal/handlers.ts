@@ -293,6 +293,12 @@ const make = Effect.gen(function* () {
           ),
         );
 
+  const researchClosedMessage = (sites: string): string =>
+    `Blocked: this chat has had ${sites} open, a site the user marked sensitive, so the research tools are closed for the rest of it. They send text to an outside search provider and there is no approval that reopens them; retrying with different words will not work. Say in one sentence what you wanted to look up and ask the user to search it, or open a public page in the browser yourself.`;
+
+  const secretRequestClosedMessage = (sites: string): string =>
+    `Blocked: this chat has had ${sites} open, a site the user marked sensitive, so API keys cannot be used in this chat. A key request sends a message to an outside service, and nothing read on that site may leave this chat; there is no approval that reopens it, and rewording the request will not work. Ask the user to start a new chat for this request, and do not open the sensitive site in it.`;
+
   /**
    * The sensitive-site egress guard, for the one channel it cannot see.
    *
@@ -311,12 +317,12 @@ const make = Effect.gen(function* () {
    */
   const refuseWhileCarryingSensitiveData = Effect.fn("personal.researchEgressGuard")(function* (
     threadId: ThreadId,
+    /** The text the bot gets, given the sites; the research tools' wording unless a tool names its own. */
+    refusal: (sites: string) => string = researchClosedMessage,
   ) {
     const carrying = yield* browser.sensitiveExposure(threadId);
     if (carrying.length === 0) return;
-    return yield* refuse(
-      `Blocked: this chat has had ${carrying.join(", ")} open, a site the user marked sensitive, so the research tools are closed for the rest of it. They send text to an outside search provider and there is no approval that reopens them; retrying with different words will not work. Say in one sentence what you wanted to look up and ask the user to search it, or open a public page in the browser yourself.`,
-    );
+    return yield* refuse(refusal(carrying.join(", ")));
   });
 
   /**
@@ -504,7 +510,7 @@ const make = Effect.gen(function* () {
     secret_request: (input) =>
       Effect.gen(function* () {
         const { scope } = yield* requireBotThread;
-        yield* refuseWhileCarryingSensitiveData(scope.threadId);
+        yield* refuseWhileCarryingSensitiveData(scope.threadId, secretRequestClosedMessage);
         if (!secretBrokerEnabled()) {
           return yield* refuse("The secret broker is switched off on this server.");
         }

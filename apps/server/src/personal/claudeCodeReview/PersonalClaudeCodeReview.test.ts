@@ -20,6 +20,7 @@ import {
   CLAUDE_CODE_CHANGELOG,
   CLAUDE_CODE_REVIEW_SETUP_KEY,
   claudeCodeReviewEnabled,
+  ownsUpdatesHome,
   installedVersionWithFallback,
   makeWith,
   nightlyRunId,
@@ -262,6 +263,50 @@ it.effect("fresh setup: the bot, a daily 04:00 London routine and the report rel
     assert.strictEqual(state.botsCreated, 1);
   }),
 );
+
+it.effect(
+  "a server that does not own the pipeline's folder leaves the report token file alone",
+  () =>
+    Effect.gen(function* () {
+      // 7 Oct: a test server with its own routine put that routine's token in the
+      // live pipeline's file, and the 06:11 morning report posted with it and 404'd.
+      const { state, deps } = makeHarness();
+      state.files.set(`${HOME}/report-hook-token`, "the-live-token");
+      const service = yield* makeWith({ ...deps, ownsReportTokenFile: false });
+      yield* service.setup;
+      // It still sets itself up (its own bot and routines)...
+      assert.ok(state.routines.has(UPDATES_REPORT_ROUTINE_ID));
+      // ...but the file the live pipeline reads is untouched.
+      assert.strictEqual(state.files.get(`${HOME}/report-hook-token`), "the-live-token");
+      // The live server's own copy still follows its routine.
+      const live = makeHarness();
+      live.state.files.set(`${HOME}/report-hook-token`, "stale");
+      yield* (yield* makeWith({ ...live.deps, ownsReportTokenFile: true })).setup;
+      assert.strictEqual(live.state.files.get(`${HOME}/report-hook-token`), "report-token-1");
+    }),
+);
+
+it("owns the pipeline's folder only on the live dev or prod data root", () => {
+  const home = "C:/Users/Ht/.personal-bots/claude-code-updates";
+  const owns = (
+    baseDir: string,
+    extra: { explicitHome?: boolean; caseInsensitive?: boolean } = {},
+  ) => ownsUpdatesHome({ baseDir, updatesHome: home, explicitHome: false, ...extra });
+  assert.strictEqual(owns(String.raw`C:\Users\Ht\.personal-bots\dev`), true);
+  assert.strictEqual(owns("C:/Users/Ht/.personal-bots/prod/"), true);
+  assert.strictEqual(owns("c:/users/ht/.personal-bots/DEV", { caseInsensitive: true }), true);
+  // Throwaways, QA roots and restores are not the pipeline's server.
+  assert.strictEqual(owns("C:/Users/Ht/AppData/Local/Temp/hbots-tw-qa1"), false);
+  assert.strictEqual(owns("C:/Users/Ht/AppData/Local/Temp/hbots-hunt16044c/dev"), false);
+  assert.strictEqual(owns("C:/Users/Ht/.personal-bots/qa"), false);
+  assert.strictEqual(owns("C:/Users/Ht/.personal-bots/qa/backend-1640/rootB"), false);
+  assert.strictEqual(owns("C:/Users/Ht/.personal-bots/dev/userdata"), false);
+  assert.strictEqual(owns("C:/Users/Ht/.personal-bots/devx"), false);
+  // Case matters where the file system says so.
+  assert.strictEqual(owns("c:/users/ht/.personal-bots/dev", { caseInsensitive: false }), false);
+  // PB_UPDATES_HOME is the operator choosing the folder for this server.
+  assert.strictEqual(owns("D:/elsewhere/root", { explicitHome: true }), true);
+});
 
 it.effect(
   "from 1.33.0: untouched instructions replaced, the event routine replaced by the nightly one",

@@ -727,19 +727,73 @@ function Save-UpdatesOutcome([string]$RunDir, $Outcome) {
     Set-Content -LiteralPath $UpdatesLastOutcomeFile -Value $json -Encoding UTF8
 }
 
+# The "Morning report" routine's own hook token, read from the live data root's
+# database (read-only). The token file is only a copy of it, and a copy can be
+# overwritten: on 7 Oct a server that was not the live one rewrote it, and the
+# 06:11 report posted with a token no routine had and got a 404. Prints
+# "enabled <token>", "paused <token>" or "none".
+$UpdatesHookTokenQuery = 'const{DatabaseSync}=require("node:sqlite");const db=new DatabaseSync(process.env.PB_UPDATES_HOOK_DB,{readOnly:true});db.exec("PRAGMA busy_timeout=5000");const r=db.prepare("select hook_token t, enabled e from personal_routines where routine_id=''routine-claude-code-report'' and trigger_kind=''event''").get();db.close();console.log(!r||!r.t?"none":(r.e?"enabled ":"paused ")+r.t)'
+
+<#
+.SYNOPSIS
+The live Morning report routine's token and whether it is enabled, or $null when
+the database cannot say (unreadable, no such routine).
+#>
+function Get-UpdatesLiveHookToken {
+    param([string]$StateDb)
+    if (-not $StateDb) { $StateDb = Join-Path (Get-PbPaths -Root dev).StateDir 'state.sqlite' }
+    $env:PB_UPDATES_HOOK_DB = $StateDb
+    try {
+        $res = Invoke-UpdatesProc -FilePath (Resolve-NodeExe) -ArgList @('--disable-warning=ExperimentalWarning', '-e', $UpdatesHookTokenQuery) -WorkingDirectory $UpdatesHome -TimeoutSeconds 60
+    } catch { return $null }
+    $text = $res.Out.Trim()
+    if ($res.Code -ne 0 -or $text -notmatch '^(enabled|paused) (\S{20,})$') { return $null }
+    return [pscustomobject]@{ Enabled = ($Matches[1] -eq 'enabled'); Token = $Matches[2] }
+}
+
+<#
+.SYNOPSIS
+The token to post the report with. The live routine's own token wins over the
+file copy; a file that disagrees (or is missing) is rewritten from it, so the
+next run starts right. Falls back to the file when the database cannot be read.
+Returns $null when neither source has a token. Never logs a token.
+#>
+function Resolve-UpdatesReportToken {
+    param([string]$TokenFile, [string]$StateDb, [scriptblock]$Log)
+    if (-not $TokenFile) { $TokenFile = $UpdatesTokenFile }
+    $fileToken = $null
+    if (Test-Path -LiteralPath $TokenFile -PathType Leaf) { $fileToken = (Get-Content -LiteralPath $TokenFile -Raw).Trim() }
+    $live = Get-UpdatesLiveHookToken -StateDb $StateDb
+    if ($null -eq $live) { return $fileToken }
+    if (-not $live.Enabled) { & $Log 'report hook: the Morning report routine is paused, so the hook will refuse the post' }
+    if ($fileToken -ne $live.Token) {
+        $why = 'differs from'
+        if (-not $fileToken) { $why = 'is missing, unlike' }
+        & $Log "report hook token file $why the live routine's token (another server probably rewrote it); using the live routine's token and repairing the file"
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $TokenFile) | Out-Null
+            [System.IO.File]::WriteAllText($TokenFile, $live.Token, (New-Object System.Text.UTF8Encoding($false)))
+        } catch { & $Log "could not repair the token file: $($_.Exception.Message)" }
+    }
+    return $live.Token
+}
+
 # POSTs the report to the "Morning report" relay routine on loopback. Retries a
-# down server (right after a restart) for up to $WaitMinutes.
+# down server (right after a restart) for up to $WaitMinutes. $HookPort, $TokenFile
+# and $StateDb point it elsewhere (the tests do); by default it is the live
+# server and its own routine.
 function Send-UpdatesReport {
-    param([string]$Text, [int]$WaitMinutes = 10, [scriptblock]$Log)
+    param([string]$Text, [int]$WaitMinutes = 10, [scriptblock]$Log, [int]$HookPort = 0, [string]$TokenFile, [string]$StateDb)
     if ($env:PB_UPDATES_NO_REPORT) {
         & $Log 'report not posted: PB_UPDATES_NO_REPORT is set (a test of the refusal paths)'
         return $false
     }
-    if (-not (Test-Path -LiteralPath $UpdatesTokenFile -PathType Leaf)) {
-        & $Log "no report hook token at $UpdatesTokenFile"
+    if (-not $TokenFile) { $TokenFile = $UpdatesTokenFile }
+    $token = Resolve-UpdatesReportToken -TokenFile $TokenFile -StateDb $StateDb -Log $Log
+    if (-not $token) {
+        & $Log "no report hook token at $TokenFile and none readable from the live routine"
         return $false
     }
-    $token = (Get-Content -LiteralPath $UpdatesTokenFile -Raw).Trim()
     if ($Text.Length -gt 7900) { $Text = $Text.Substring(0, 7890) + ' [...]' }
     $body = [System.Text.Encoding]::UTF8.GetBytes((@{ message = $Text } | ConvertTo-Json -Compress))
     $paths = Get-PbPaths -Root dev
@@ -748,6 +802,7 @@ function Send-UpdatesReport {
         $port = 38472
         $runtime = Read-PbRuntimeState -BaseDir $paths.BaseDir
         if ($runtime -and $runtime.port) { $port = [int]$runtime.port }
+        if ($HookPort -gt 0) { $port = $HookPort }
         $uri = 'http://127.0.0.1:{0}/api/personal/hooks/{1}' -f $port, $token
         try {
             $response = Invoke-WebRequest -UseBasicParsing -Method Post -Uri $uri -Body $body -ContentType 'application/json' -TimeoutSec 20
@@ -757,7 +812,7 @@ function Send-UpdatesReport {
         } catch {
             $status = $null
             if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
-            if ($status -eq 404) { & $Log 'report hook: 404 (the Morning report routine is paused, deleted or its token changed)'; return $false }
+            if ($status -eq 404) { & $Log 'report hook: 404 (the Morning report routine is paused or deleted, or the token is not its own; the live database was checked first, see the lines above)'; return $false }
             & $Log "report hook not reachable yet ($status $($_.Exception.Message)); retrying"
             Start-Sleep -Seconds 35
         }
