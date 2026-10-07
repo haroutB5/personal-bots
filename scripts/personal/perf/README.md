@@ -304,3 +304,64 @@ deferring the theme engine (77 KB) risks a theme flash.
 127 KB counted, two cross-origin scripts, two calls and a 400 per launch (blocking them cut script time 5% and post-mark long tasks 10%),
 and every launch tells `clerk.t3.codes`. It is one chunk reached only by a dynamic import in `main.tsx`, so it does not reshuffle the
 chunk graph. Budgets are unchanged: with no JS cut there is nothing to ratchet.
+
+## 1.66.3: Bots launches boot without Clerk (7 Oct 2026)
+
+Brief: cut the warm open's JavaScript (2.26 MB, 123 requests at 1.66.1) and decide whether Clerk has to load on the Bots routes.
+Rig: one throwaway server (`throwaway-server.ps1`, the 1.66.1 `dist`, the fake CLI, four seeded chats), the web client folder swapped under
+it between runs (one bench run per Chrome, builds in rotation, an identical-code control), 390x844 at DPR 3, 4x CPU, laptop 4 to 25% busy
+at the start of each run. Tools and every raw result: `C:/Users/Ht/.personal-bots/qa/fastopen/` (`swap.sh`, `summ.mjs`, `pool.mjs`,
+`clerkproof.mjs`, `deepab.mjs`, `deepprof.mjs`). `bench.mjs` now also counts requests to other origins (`extRequests`, `extKB`, from CDP):
+resource timing hides their sizes, which is why Clerk's CDN scripts and calls never showed in `requests` and `jsKB`.
+
+**The change: `skip-clerk`.** A browser launch on a Bots path (`/bots`, `/tasks`, `/computer`, `/files`) does not load or mount the Clerk
+shell. Nothing in the Bots shell reads Clerk: the phone signs in with a pairing link and a session cookie. The decision is `cloud/managedAuthBoot.ts`
+and rides on `PROVIDER_WORKSPACE_DATA_OMITTED`, whose only exits from the shell (Developer view, Answer in Developer view) already reload
+the document, so settings, the welcome wizard, `/connect` and the T3 Connect screens boot with Clerk as before. The root onboarding dialog is not
+mounted when Clerk is skipped. Kill switch (phone, no release): `localStorage bots:perf-off=skip-clerk`.
+
+| Median, 1.66.1 -> this build (p75 in brackets) | 1.66.1 (42 runs) | skip-clerk (26 runs) |
+| ---------------------------------------------- | ---------------- | -------------------- |
+| J1-cold: wall                                  | 2690 (3159) ms   | 2507 (2729) ms       |
+| J1-cold: requests, JS                          | 134, 2423 KB     | 122, 2131 KB         |
+| J1-cold: requests to other origins             | 4 (127.3 KB)     | 0                    |
+| J1-warm: wall                                  | 1504 (1648) ms   | 1539 (1626) ms       |
+| J1-warm: requests, JS                          | 123, 2261.0 KB   | 120, 2130.9 KB       |
+| J1-warm: requests to other origins             | 2                | 0                    |
+| J1-deep (notification tap): wall               | 2531 (2725) ms   | 2547 (2839) ms       |
+| J1-deep: requests, JS                          | 182, 3601.6 KB   | 178, 3471.5 KB       |
+| J1-deep: requests to other origins             | 2                | 0                    |
+| J2 (chat open): wall, chatShell                | 950, 110 ms      | 950, 107 ms          |
+
+Requests and JS bytes are exact (no spread across runs). Wall clock is inside the run-to-run noise: the same 1.66.1 code measured against itself
+differs by up to 200 ms between two 8-run sets. Cold open is faster in 18 of 26 same-round pairs (median -60 ms), warm +28 ms (noise), chat open -6 ms.
+Notification open: the 26 full-bench pairs read +90 ms (slower in 19 of 26), but a dedicated J1-deep-only test of 30 interleaved pairs reads
+2438 -> 2475 ms p50, paired median +12 ms, faster in 15 of 30, so no regression is shown; watch it. The local rig understates the gain: the bench's
+Clerk fetches go over the laptop's fast line, the phone's go through the relay.
+
+**Proof Clerk is still there where it is needed** (`clerkproof.mjs`, own Chrome contexts, dark, a throwaway server, 1.66.1 and this build run
+through the same script):
+
+- Pairing: a fresh browser opened on `/bots` is sent to `/pair`; the one-time link signs it in (session cookie set), lands on `/bots` with the chat list,
+  and a reload keeps it signed in. Same on 1.66.1. The `/pair` document itself still loads Clerk (a launch off the Bots paths).
+- With the build on a signed-in phone context, `/bots`, a chat, `/bots/team`, `/bots/settings`, `/tasks`, `/computer`, `/files` all render with 0 requests
+  to other origins and 0 page or console errors (1.66.1: 15 requests to `clerk.t3.codes` and a Clerk 400 on the console).
+- `/settings/connections` and `/settings`: `window.Clerk` present and the same 6 requests to `clerk.t3.codes` as 1.66.1. Developer view from
+  `/bots/settings` reloads the document and Clerk loads. `bots:perf-off=skip-clerk` brings Clerk back on `/bots`.
+- Not proved: a real T3 Connect sign-in. On `127.0.0.1` the Clerk instance answers 400 and "Sign in to T3 Connect" never renders, on 1.66.1 too,
+  and a real sign-in needs Harout's account. The relay is a proxy to the same server and client origin, so relay pairing is the pairing flow above.
+
+**Tried and dropped.**
+
+- The provider-update popover loaded only off the Bots routes (`ProviderUpdateLaunchNotification`, the Icons chunk): JS 2131 -> 2031 KB, requests 120 -> 117, but
+  10 interleaved rounds against the Clerk-only build read J1-deep 2502 -> 2601 ms, J1-cold 2449 -> 2620 ms, J2.chatShell 119 -> 148 ms. The same finding as 1.66.0.
+  Reverted, not committed.
+- A CPU profile of J1-deep on 1.66.1 and this build (8 pairs, 0.5 ms sampling) shows no single chunk behind a difference; it is spread thin.
+- Everything dropped in the 1.66.0 section above stays dropped.
+- Not tried: taking `jose`, the relay client and `composerDraftStore` out of the first load (about 55 + 46 KB, entangled with the connection layer and
+  the chunk graph that 1.66.0 found fragile) and the theme engine (77 KB, flash risk).
+
+**Gate.** `budget.json` is lowered to the new exact counters (J1-warm requests 126 -> 124, jsKB 2289 -> 2195; J1-deep requests 185 -> 183, jsKB 3642 -> 3576)
+and gets a budget of 0 for requests to other origins on J1-cold, J1-warm and J1-deep. No wall or long-task ceiling was touched. On this laptop in this session
+the committed gate fails the J1-deep ceilings (2656 ms, 2202 ms) on the 1.66.1 build itself too (p50 2781 and 3086 ms for 1.66.1 against 3097 and 3293 ms for this
+build, in the same alternating runs, with the laptop shared with other builds), and passed on both builds in the third pair (2650 and 2625 ms).

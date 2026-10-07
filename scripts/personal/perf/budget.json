@@ -18,14 +18,19 @@
         "headroom": 0.4
       },
       "requests": {
-        "max": 126,
+        "max": 124,
         "headroom": 0.03,
         "slack": 4
       },
       "jsKB": {
-        "max": 2289,
+        "max": 2195,
         "headroom": 0.03,
         "slack": 40
+      },
+      "extRequests": {
+        "max": 0,
+        "headroom": 0,
+        "slack": 0
       }
     },
     "J2": {
@@ -54,19 +59,32 @@
         "headroom": 0.4
       },
       "requests": {
-        "max": 185,
+        "max": 183,
         "headroom": 0.03,
         "slack": 4
       },
       "jsKB": {
-        "max": 3642,
+        "max": 3576,
         "headroom": 0.03,
         "slack": 40
+      },
+      "extRequests": {
+        "max": 0,
+        "headroom": 0,
+        "slack": 0
+      }
+    },
+    "J1-cold": {
+      "extRequests": {
+        "max": 0,
+        "headroom": 0,
+        "slack": 0
       }
     }
   },
-  "ratchetedAt": "2026-10-06",
-  "ratchetedFrom": "2026-10-06 (1.64.1, 1e2d1a02d7a0): only the four deterministic counters were lowered, to observed x (1 + headroom): J1-warm requests 196 -> 126 (122 in every run), J1-warm jsKB 3632 -> 2289 (2221.7 to 2222.5 KB), J1-deep requests 246 -> 185 (180 in every run), J1-deep jsKB 4321 -> 3642 (3534.6 to 3535.5 KB). 16 runs of 1.64.0 and 16 of 1.64.1 gave the same counts (no cv). No wall or long-task ceiling was touched: on this rig J2.chatShell fails its 237 ceiling on 1.64.0 itself (p50 309 and 315.6) and on 1.64.1 (276.5, 281.9, 278), and J1-warm.wall (1785) sits at its edge (1.64.0: 1631 to 2008, 1.64.1: 1564 to 2008). Evidence: qa/perf1641/check-both.log, final/check-ratchet.log, final/summary.txt. Earlier: J2.chatShell: median of 5 committed-gate runs of 1.59.5 bf1e6cebf0c4 (169.3 ms) x 1.4 = 237, measured interleaved with 5 runs of 1.60.0 47f1670e01f9 (median 189.2, not lower); earlier J1 ratchet from 1.59.4 4db8bb035114",
+  "ratchetedAt": "2026-10-07",
+  "ratchetedFrom": "2026-10-07 (1.66.3, skip-clerk): only deterministic counters were lowered, to observed x (1 + headroom) from 26 candidate runs (no run differed; 42 runs of 1.66.1 gave 123 / 2261 KB and 182 / 3601.6 KB, also with no spread): J1-warm requests 126 -> 124 (120 in every run) and jsKB 2289 -> 2195 (2130.9 KB), J1-deep requests 185 -> 183 (178) and jsKB 3642 -> 3576 (3471.5 KB). New budgets of 0 for requests to other origins (extRequests) on J1-cold, J1-warm and J1-deep (1.66.1 medians: 4, 2 and 2 requests, 127.3 KB of Clerk scripts on a cold open). No wall or long-task ceiling was touched: the J1-deep ceilings (2656, 2202) fail on the 1.66.1 build itself on this laptop in this session (gate p50 2781 to 3086 ms, loaded laptop), and wall in the A/B is inside noise. Evidence: qa/fastopen/summ s1,s2,s3 (interleaved swaps), gate-*.log, deepab-raw.json; docs/releases/HANDOFF-1663.md. Earlier: 2026-10-06 (1.64.1, 1e2d1a02d7a0): only the four deterministic counters were lowered, to observed x (1 + headroom): J1-warm requests 196 -> 126 (122 in every run), J1-warm jsKB 3632 -> 2289 (2221.7 to 2222.5 KB), J1-deep requests 246 -> 185 (180 in every run), J1-deep jsKB 4321 -> 3642 (3534.6 to 3535.5 KB). 16 runs of 1.64.0 and 16 of 1.64.1 gave the same counts (no cv). No wall or long-task ceiling was touched: on this rig J2.chatShell fails its 237 ceiling on 1.64.0 itself (p50 309 and 315.6) and on 1.64.1 (276.5, 281.9, 278), and J1-warm.wall (1785) sits at its edge (1.64.0: 1631 to 2008, 1.64.1: 1564 to 2008). Evidence: qa/perf1641/check-both.log, final/check-ratchet.log, final/summary.txt. Earlier: J2.chatShell: median of 5 committed-gate runs of 1.59.5 bf1e6cebf0c4 (169.3 ms) x 1.4 = 237, measured interleaved with 5 runs of 1.60.0 47f1670e01f9 (median 189.2, not lower); earlier J1 ratchet from 1.59.4 4db8bb035114",
   "recalibratedAt": "2026-09-30",
-  "recalibration": "J1-warm.wall, J1-warm.longTaskMs, J1-deep.wall and J1-deep.longTaskMs were set from 1.30.1 on 2026-09-23. Re-measured 2026-09-30 with the same bench (5 runs + warm-up, 4x CPU, 390x844, throwaway server, fake CLI), 1.30.1 itself gave 1834.5/1729 and 2655.9/2202 (repeat: 1874.2/1851, 2641.2/2196): the old ceilings (1138/960, 1478/1130) were out of date for this laptop and Chrome, not beaten by a regression (1.53.1 to 1.59.2 were flat and faster than 1.30.1). These four were raised to 1.30.1's first re-measure, once, by CTO decision; every other ceiling is unchanged. Evidence: ~/.personal-bots/qa/frontend-1593/check-v1301.log, check-v1301b.log and HANDOFF-1591.md (1.59.3/1.59.4). Budgets go down only from here. 2026-09-30 (1.59.5): J2.chatShell's mark was fixed (probe.js: a click task landing between a frame's rAF and its post-paint check made the mark read the earlier frame, so 228 had been set on a partly early reading). Re-measured with the fixed probe on the same live-shaped SYNTHETIC data (20 bots, 391 chats, 258 archived, 16.2k messages; seeded by qa/frontend-1593/seed.mjs, never a live copy): 1.30.1 p50 630.2 and 682.2 ms, so the ceiling was reset once to 630, then ratcheted to 1.59.5 (bf1e6cebf0c4) p50 132.3 x 1.4 = 185. The other ten ceilings are unchanged. Evidence: qa/frontend-1593/check-cal1301a.log, check-cal1301b.log, check-cal1595.log. 2026-09-30 (CTO decision): 185 came from a single 1.59.5 reading, which 1.59.5 itself failed about half the time (chatShell is bimodal per run). Re-ratcheted from a median: the committed gate 5x on 1.59.5 and 5x on 1.60.0, interleaved, same synthetic data, quiet laptop (CPU < 12% at each run's start and end, no build/test/bench running). Per-run chatShell p50 (ms): 1.59.5 196.8, 186.0, 147.4, 169.3, 159.2 (median 169.3); 1.60.0 287.6, 128.1, 248.5, 189.2, 154.9 (median 189.2). Ceiling = 169.3 x 1.4 = 237. The other ten ceilings unchanged. Evidence: qa/frontend-160/calib.json, calib.log, check-cal-*.log."
+  "recalibration": "J1-warm.wall, J1-warm.longTaskMs, J1-deep.wall and J1-deep.longTaskMs were set from 1.30.1 on 2026-09-23. Re-measured 2026-09-30 with the same bench (5 runs + warm-up, 4x CPU, 390x844, throwaway server, fake CLI), 1.30.1 itself gave 1834.5/1729 and 2655.9/2202 (repeat: 1874.2/1851, 2641.2/2196): the old ceilings (1138/960, 1478/1130) were out of date for this laptop and Chrome, not beaten by a regression (1.53.1 to 1.59.2 were flat and faster than 1.30.1). These four were raised to 1.30.1's first re-measure, once, by CTO decision; every other ceiling is unchanged. Evidence: ~/.personal-bots/qa/frontend-1593/check-v1301.log, check-v1301b.log and HANDOFF-1591.md (1.59.3/1.59.4). Budgets go down only from here. 2026-09-30 (1.59.5): J2.chatShell's mark was fixed (probe.js: a click task landing between a frame's rAF and its post-paint check made the mark read the earlier frame, so 228 had been set on a partly early reading). Re-measured with the fixed probe on the same live-shaped SYNTHETIC data (20 bots, 391 chats, 258 archived, 16.2k messages; seeded by qa/frontend-1593/seed.mjs, never a live copy): 1.30.1 p50 630.2 and 682.2 ms, so the ceiling was reset once to 630, then ratcheted to 1.59.5 (bf1e6cebf0c4) p50 132.3 x 1.4 = 185. The other ten ceilings are unchanged. Evidence: qa/frontend-1593/check-cal1301a.log, check-cal1301b.log, check-cal1595.log. 2026-09-30 (CTO decision): 185 came from a single 1.59.5 reading, which 1.59.5 itself failed about half the time (chatShell is bimodal per run). Re-ratcheted from a median: the committed gate 5x on 1.59.5 and 5x on 1.60.0, interleaved, same synthetic data, quiet laptop (CPU < 12% at each run's start and end, no build/test/bench running). Per-run chatShell p50 (ms): 1.59.5 196.8, 186.0, 147.4, 169.3, 159.2 (median 169.3); 1.60.0 287.6, 128.1, 248.5, 189.2, 154.9 (median 189.2). Ceiling = 169.3 x 1.4 = 237. The other ten ceilings unchanged. Evidence: qa/frontend-160/calib.json, calib.log, check-cal-*.log.",
+  "ratchetHistory": []
 }
