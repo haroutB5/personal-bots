@@ -2459,6 +2459,8 @@ export class OrchestrationDispatchCommandError extends Schema.TaggedError<Orches
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
     bootstrapThreadDisposition: Schema.optional(Schema.Literals(["deleted", "not-created"])),
+    /** Set to `chat_name_taken` when a typed bot-chat name is refused as a duplicate. */
+    code: Schema.optional(Schema.Literal("chat_name_taken")),
   },
 ) {}
 

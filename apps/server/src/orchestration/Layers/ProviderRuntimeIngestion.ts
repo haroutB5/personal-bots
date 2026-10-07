@@ -60,6 +60,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { canReplaceThreadTitle } from "../threadTitles.ts";
 import * as PersonalBotRepository from "../../personal/PersonalBotRepository.ts";
+import { uniqueAutomaticTitle, withChatTitleLock } from "../../personal/personalChatTitles.ts";
 import { personalProviderTitleAllowed } from "../../personal/personalThreadTitles.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
@@ -2593,15 +2594,24 @@ const make = Effect.gen(function* () {
           thread.titleState?.source !== "manual" &&
           (yield* providerTitleMayRename(thread.id, thread.title, thread.titleState))
         ) {
-          yield* orchestrationEngine.dispatch({
-            type: "thread.title.generate.complete",
-            commandId: yield* providerCommandId(event, "thread-meta-update"),
-            threadId: thread.id,
-            title: event.payload.name,
-            expectedTitle: thread.title,
-            expectedVersion: thread.titleState?.version ?? null,
-            needsRefinement: false,
-          });
+          // A bot's open chats have unique names: a taken provider title gets a number.
+          yield* withChatTitleLock(
+            Effect.gen(function* () {
+              const title = yield* uniqueAutomaticTitle(personalBots, {
+                threadId: thread.id,
+                title: event.payload.name!,
+              });
+              yield* orchestrationEngine.dispatch({
+                type: "thread.title.generate.complete",
+                commandId: yield* providerCommandId(event, "thread-meta-update"),
+                threadId: thread.id,
+                title,
+                expectedTitle: thread.title,
+                expectedVersion: thread.titleState?.version ?? null,
+                needsRefinement: false,
+              });
+            }),
+          );
         }
       }
 

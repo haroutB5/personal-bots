@@ -267,6 +267,28 @@ export class PersonalBotRepository extends Context.Service<
       PersonalBotRepositoryError
     >;
     /**
+     * Titles of the bot's open chats (not archived, not deleted, not a group
+     * relay), optionally without one chat. What a chat name has to differ from.
+     */
+    readonly listOpenChatTitles: (input: {
+      readonly botId: PersonalBotId;
+      readonly exceptThreadId?: ThreadId;
+    }) => Effect.Effect<ReadonlyArray<string>, PersonalBotRepositoryError>;
+    /**
+     * The naming scope of one existing chat: its bot, whether the chat is
+     * archived, and the titles of the bot's other open chats. None when the
+     * chat is not a bot chat that has to be unique (no link, a group relay or
+     * a deleted thread).
+     */
+    readonly getChatTitleScope: (input: { readonly threadId: ThreadId }) => Effect.Effect<
+      Option.Option<{
+        readonly botId: PersonalBotId;
+        readonly archived: boolean;
+        readonly peerTitles: ReadonlyArray<string>;
+      }>,
+      PersonalBotRepositoryError
+    >;
+    /**
      * Per live bot: the live groups it sits in, and whether it has a private
      * chat of its own. What `personalBots.list` derives `groupOnly` from.
      */
@@ -1385,6 +1407,45 @@ export const make = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("PersonalBotRepository.searchMessages:query")),
     );
 
+  const listOpenChatTitles: PersonalBotRepository["Service"]["listOpenChatTitles"] = (input) =>
+    sql<{ readonly title: string }>`
+      SELECT p.title AS "title"
+      FROM personal_bot_threads t
+      JOIN projection_threads p ON p.thread_id = t.thread_id
+      WHERE t.bot_id = ${input.botId}
+        AND t.thread_id <> ${input.exceptThreadId ?? ""}
+        AND t.archived_at IS NULL
+        AND p.archived_at IS NULL
+        AND p.deleted_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM personal_group_members relay WHERE relay.thread_id = t.thread_id
+        )
+    `.pipe(
+      Effect.map((rows) => rows.map((row) => row.title)),
+      Effect.mapError(toPersistenceSqlError("PersonalBotRepository.listOpenChatTitles:query")),
+    );
+
+  const getChatTitleScope: PersonalBotRepository["Service"]["getChatTitleScope"] = (input) =>
+    Effect.gen(function* () {
+      const [self] = yield* sql<{ readonly botId: string; readonly archived: number }>`
+        SELECT
+          t.bot_id AS "botId",
+          (t.archived_at IS NOT NULL OR p.archived_at IS NOT NULL) AS "archived"
+        FROM personal_bot_threads t
+        JOIN projection_threads p ON p.thread_id = t.thread_id AND p.deleted_at IS NULL
+        WHERE t.thread_id = ${input.threadId}
+          AND NOT EXISTS (
+            SELECT 1 FROM personal_group_members relay WHERE relay.thread_id = t.thread_id
+          )
+      `.pipe(
+        Effect.mapError(toPersistenceSqlError("PersonalBotRepository.getChatTitleScope:query")),
+      );
+      if (self === undefined) return Option.none();
+      const botId = self.botId as PersonalBotId;
+      const peerTitles = yield* listOpenChatTitles({ botId, exceptThreadId: input.threadId });
+      return Option.some({ botId, archived: Number(self.archived) === 1, peerTitles });
+    });
+
   const listFallbackStates: PersonalBotRepository["Service"]["listFallbackStates"] = () =>
     sql<{
       readonly botId: string;
@@ -1628,6 +1689,8 @@ export const make = Effect.gen(function* () {
     searchMessages,
     deleteThreadLink,
     listThreadLinks,
+    listOpenChatTitles,
+    getChatTitleScope,
     listGroupPresence,
     getMeta,
     setMeta,

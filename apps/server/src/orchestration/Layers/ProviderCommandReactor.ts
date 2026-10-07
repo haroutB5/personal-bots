@@ -77,6 +77,7 @@ import {
   type ThreadTitleMessage,
 } from "../../textGeneration/ThreadTitleContext.ts";
 import { canReplaceThreadTitle, DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
+import { uniqueAutomaticTitle, withChatTitleLock } from "../../personal/personalChatTitles.ts";
 import {
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
@@ -1434,16 +1435,26 @@ const make = Effect.gen(function* () {
           return;
         }
 
-        yield* orchestrationEngine.dispatch({
-          type: "thread.title.generate.complete",
-          commandId: yield* serverCommandId("thread-title-rename"),
-          threadId: input.threadId,
-          title: generated.title === DEFAULT_THREAD_TITLE ? input.expectedTitle : generated.title,
-          expectedTitle: input.expectedTitle,
-          expectedVersion: input.expectedVersion,
-          needsRefinement:
-            generated.needsRefinement === true || generated.title === DEFAULT_THREAD_TITLE,
-        });
+        // A bot's open chats have unique names: a taken AI title gets a number.
+        yield* withChatTitleLock(
+          Effect.gen(function* () {
+            const title = yield* uniqueAutomaticTitle(personalBots, {
+              threadId: input.threadId,
+              title:
+                generated.title === DEFAULT_THREAD_TITLE ? input.expectedTitle : generated.title,
+            });
+            yield* orchestrationEngine.dispatch({
+              type: "thread.title.generate.complete",
+              commandId: yield* serverCommandId("thread-title-rename"),
+              threadId: input.threadId,
+              title,
+              expectedTitle: input.expectedTitle,
+              expectedVersion: input.expectedVersion,
+              needsRefinement:
+                generated.needsRefinement === true || generated.title === DEFAULT_THREAD_TITLE,
+            });
+          }),
+        );
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("provider command reactor failed to generate or rename thread title", {
@@ -1486,15 +1497,25 @@ const make = Effect.gen(function* () {
       ) {
         return thread;
       }
-      yield* orchestrationEngine.dispatch({
-        type: "thread.title.generate.complete",
-        commandId: yield* serverCommandId(PERSONAL_TITLE_SEED_COMMAND_TAG),
-        threadId: thread.id,
-        title: titleSeed,
-        expectedTitle: thread.title,
-        expectedVersion: thread.titleState?.version ?? null,
-        needsRefinement: false,
-      });
+      // The first message names the chat; a name another open chat of the bot
+      // already has gets a number after it.
+      yield* withChatTitleLock(
+        Effect.gen(function* () {
+          const title = yield* uniqueAutomaticTitle(personalBots, {
+            threadId: thread.id,
+            title: titleSeed,
+          });
+          yield* orchestrationEngine.dispatch({
+            type: "thread.title.generate.complete",
+            commandId: yield* serverCommandId(PERSONAL_TITLE_SEED_COMMAND_TAG),
+            threadId: thread.id,
+            title,
+            expectedTitle: thread.title,
+            expectedVersion: thread.titleState?.version ?? null,
+            needsRefinement: false,
+          });
+        }),
+      );
       return (yield* resolveThreadShell(thread.id)) ?? null;
     },
     (effect, input) =>
@@ -1593,13 +1614,24 @@ const make = Effect.gen(function* () {
     readonly requestId: CommandId;
     readonly title?: string;
   }) {
-    yield* orchestrationEngine.dispatch({
-      type: "thread.title.regeneration.complete",
-      commandId: yield* serverCommandId("thread-title-regeneration-complete"),
-      threadId: input.threadId,
-      requestId: input.requestId,
-      ...(input.title !== undefined ? { title: input.title } : {}),
-    });
+    yield* withChatTitleLock(
+      Effect.gen(function* () {
+        const title =
+          input.title === undefined
+            ? undefined
+            : yield* uniqueAutomaticTitle(personalBots, {
+                threadId: input.threadId,
+                title: input.title,
+              });
+        yield* orchestrationEngine.dispatch({
+          type: "thread.title.regeneration.complete",
+          commandId: yield* serverCommandId("thread-title-regeneration-complete"),
+          threadId: input.threadId,
+          requestId: input.requestId,
+          ...(title !== undefined ? { title } : {}),
+        });
+      }),
+    );
   });
   const findPendingThreadTitles = Effect.fn("findPendingThreadTitles")(function* () {
     const readModel = yield* projectionSnapshotQuery.getCommandReadModel();
@@ -1853,10 +1885,15 @@ const make = Effect.gen(function* () {
         messageId: event.payload.messageId,
         titleSeed: event.payload.titleSeed,
       });
+      // The seed may have been written with a number after it to stay unique;
+      // the chat's own title is then the seed the AI title replaces.
+      const seedWasApplied =
+        titleThread !== null && titleThread !== thread && titleThread.title !== thread.title;
+      const titleSeed = seedWasApplied ? titleThread.title : event.payload.titleSeed;
       if (
         titleThread !== null &&
         titleThread.titleState?.source !== "manual" &&
-        canReplaceThreadTitle(titleThread.title, event.payload.titleSeed)
+        canReplaceThreadTitle(titleThread.title, titleSeed)
       ) {
         yield* maybeGenerateThreadTitleForFirstTurn({
           threadId: event.payload.threadId,
@@ -1864,6 +1901,7 @@ const make = Effect.gen(function* () {
           expectedTitle: titleThread.title,
           expectedVersion: titleThread.titleState?.version ?? null,
           ...generationInput,
+          ...(seedWasApplied ? { titleSeed: titleThread.title } : {}),
         }).pipe(Effect.forkScoped);
       }
     }

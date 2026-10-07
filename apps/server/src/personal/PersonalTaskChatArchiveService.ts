@@ -1,4 +1,6 @@
-import type { ThreadId } from "@t3tools/contracts";
+import * as NodeCrypto from "node:crypto";
+
+import { CommandId, type ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -16,6 +18,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { forkParked } from "../serverActivation.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
+import { unarchivedChatTitle, withChatTitleLock } from "./personalChatTitles.ts";
 import {
   ARCHIVED_BUSY_CHATS_SQL,
   decideTaskChatArchive,
@@ -135,19 +138,45 @@ export const make = Effect.gen(function* () {
 
   const unarchiveForTurn: PersonalTaskChatArchiveShape["unarchiveForTurn"] = (threadId) =>
     Effect.gen(function* () {
-      const rows = yield* sql<{ readonly threadId: string }>`
-        UPDATE personal_bot_threads
-        SET archived_at = NULL, auto_archived_at = NULL
-        WHERE thread_id = ${threadId}
-          AND archived_at IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM personal_group_members gm WHERE gm.thread_id = ${threadId}
-          )
-        RETURNING thread_id AS "threadId"
-      `;
-      if (rows.length === 0) return false;
-      yield* Effect.logInfo("personal chat unarchived: a turn started in it", { threadId });
-      return true;
+      // Every turn start lands here; only an archived chat has anything to do.
+      const link = yield* repository.getThreadLink({ threadId });
+      if (Option.isNone(link) || link.value.archivedAt === null) return false;
+      return yield* withChatTitleLock(
+        Effect.gen(function* () {
+          // Another open chat of the bot may have taken the name while this one
+          // was archived: it comes back with the lowest free number after it.
+          const shell = yield* projections.getThreadShellById(threadId);
+          const renamedTo = Option.isSome(shell)
+            ? yield* unarchivedChatTitle(repository, { threadId, title: shell.value.title })
+            : null;
+          if (renamedTo !== null) {
+            yield* engine.dispatch({
+              type: "thread.meta.update",
+              commandId: CommandId.make(
+                `personal-bots:thread.unarchive-title:${threadId}:${NodeCrypto.randomUUID()}`,
+              ),
+              threadId,
+              title: renamedTo,
+            });
+          }
+          const rows = yield* sql<{ readonly threadId: string }>`
+            UPDATE personal_bot_threads
+            SET archived_at = NULL, auto_archived_at = NULL
+            WHERE thread_id = ${threadId}
+              AND archived_at IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM personal_group_members gm WHERE gm.thread_id = ${threadId}
+              )
+            RETURNING thread_id AS "threadId"
+          `;
+          if (rows.length === 0) return false;
+          yield* Effect.logInfo("personal chat unarchived: a turn started in it", {
+            threadId,
+            renamed: renamedTo !== null,
+          });
+          return true;
+        }),
+      );
     }).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)

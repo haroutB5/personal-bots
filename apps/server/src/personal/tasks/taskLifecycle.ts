@@ -131,19 +131,15 @@ export const makeTaskLifecycle = (
       );
       const messageId = MessageId.make(`personal-relay-${digest.slice(0, 32)}`);
       const title = input.title.trim().length > 0 ? input.title.trim() : "Routine";
+      // The chat is named at creation (a taken title gets a number, the bot's
+      // open chats are unique) and the name is fixed, as a metadata title is.
       yield* bots
-        .createThread({ botId: input.botId, threadId })
+        .createThread({ botId: input.botId, threadId, title, lockTitle: true })
         .pipe(Effect.mapError((cause) => fail("The relay could not open a chat.", cause)));
       const createdAt = DateTime.formatIso(yield* DateTime.now);
       const commandId = (step: string) =>
         CommandId.make(`personal-relay:${digest.slice(0, 32)}:${step}`);
       yield* Effect.gen(function* () {
-        yield* engine.dispatch({
-          type: "thread.meta.update",
-          commandId: commandId("title"),
-          threadId,
-          title,
-        });
         yield* engine.dispatch({
           type: "thread.message.assistant.delta",
           commandId: commandId("delta"),

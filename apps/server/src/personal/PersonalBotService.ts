@@ -55,6 +55,14 @@ import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEng
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
+import {
+  isPlaceholderChatTitle,
+  requireFreeOwnerTitle,
+  requireFreeOwnerTitleForBot,
+  unarchivedChatTitle,
+  uniqueAutomaticTitleForBot,
+  withChatTitleLock,
+} from "./personalChatTitles.ts";
 import { withGroupPresence } from "./groupOnlyBots.ts";
 import {
   asciiLower,
@@ -184,11 +192,21 @@ export class PersonalBotService extends Context.Service<
      * Creates the bot's thread, or returns its link when it already exists.
      * `title` names a thread this call creates (a task or routine run's own
      * chat); an existing thread keeps its title. Default: the placeholder.
+     * The bot's open chats have unique names: a machine-made `title` (the
+     * default, `titleSource: "automatic"`) gets " 2", " 3", ... when taken; a
+     * name the owner typed (`titleSource: "owner"`) fails with the
+     * `chat_name_taken` code instead, and the chat is not created.
      */
     readonly createThread: (input: {
       readonly botId: PersonalBotId;
       readonly threadId: ThreadId;
       readonly title?: string;
+      readonly titleSource?: "owner" | "automatic";
+      /**
+       * Marks a named chat's title as set by hand, so a first message or an AI
+       * title never replaces it. Always on for an owner's name.
+       */
+      readonly lockTitle?: boolean;
     }) => Effect.Effect<PersonalBotThread, PersonalBotsError>;
     /**
      * Creates a thread in the Personal project with NO bot-thread link row.
@@ -204,10 +222,25 @@ export class PersonalBotService extends Context.Service<
       /** Required by `thread.create`; unused, since no turn ever starts here. */
       readonly modelSelection: PersonalBot["modelSelection"];
     }) => Effect.Effect<ThreadId, PersonalBotsError>;
+    /**
+     * Unarchiving gives the chat its name back, or the name plus the lowest free
+     * number when another open chat of the bot has taken it since (`renamedTo`
+     * on the result).
+     */
     readonly archiveThread: (input: {
       readonly threadId: ThreadId;
       readonly archived: boolean;
     }) => Effect.Effect<PersonalBotThread, PersonalBotsError>;
+    /**
+     * Runs `write`, a rename the owner typed for this chat, after checking that
+     * no other open chat of the same bot has the name, in one step with the write.
+     * Fails with the `chat_name_taken` code and does not run `write` when it
+     * is taken. A chat that is not a bot chat is not checked.
+     */
+    readonly withOwnerChatTitle: <A, E, R>(
+      input: { readonly threadId: ThreadId; readonly title: string },
+      write: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | PersonalBotsError, R>;
     /**
      * Pin, snooze or mark one chat unread (see `PersonalBotUpdateThreadsInput`).
      * Fails for a chat that is gone, archived or a group relay, and for a snooze
@@ -607,36 +640,70 @@ export const make = Effect.gen(function* () {
       const projectId = yield* ensurePersonalProject();
       const now = yield* DateTime.now;
       const createdAt = DateTime.formatIso(now);
-      yield* engine
-        .dispatch({
-          type: "thread.create",
-          // Deterministic per thread: a retried createThread reuses the
-          // command receipt instead of creating the thread twice.
-          commandId: CommandId.make(`personal-bots:thread.create:${input.threadId}`),
-          threadId: input.threadId,
-          projectId,
-          title: input.title?.trim() || PERSONAL_THREAD_TITLE,
-          modelSelection: bot.modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          createdAt,
-        })
-        .pipe(Effect.mapError(toPersonalBotsError("Personal bots thread creation failed.")));
-      const stored = yield* repository
-        .insertThreadLink({ botId: input.botId, threadId: input.threadId, createdAt: now })
-        .pipe(
-          Effect.mapError(repositoryError("thread link")),
-          Effect.as(true),
-          // A concurrent createThread won the insert; the dispatch above
-          // deduped on the command receipt, so read back the winner's link.
-          Effect.catch(() =>
-            repository
-              .getThreadLink({ threadId: input.threadId })
-              .pipe(Effect.mapError(repositoryError("thread link")), Effect.map(Option.isSome)),
-          ),
-        );
+      const wantedTitle = input.title?.trim() || PERSONAL_THREAD_TITLE;
+      const named = !isPlaceholderChatTitle(wantedTitle);
+      const ownerTitle = input.titleSource === "owner" && named;
+      const lockTitle = named && (ownerTitle || input.lockTitle === true);
+      // The bot's open chat names are read and the chat is linked in one step,
+      // so two chats made at the same moment cannot take the same name.
+      const stored = yield* withChatTitleLock(
+        Effect.gen(function* () {
+          if (ownerTitle) {
+            yield* requireFreeOwnerTitleForBot(repository, {
+              botId: input.botId,
+              title: wantedTitle,
+            });
+          }
+          const title = ownerTitle
+            ? wantedTitle
+            : yield* uniqueAutomaticTitleForBot(repository, {
+                botId: input.botId,
+                title: wantedTitle,
+              });
+          yield* engine
+            .dispatch({
+              type: "thread.create",
+              // Deterministic per thread: a retried createThread reuses the
+              // command receipt instead of creating the thread twice.
+              commandId: CommandId.make(`personal-bots:thread.create:${input.threadId}`),
+              threadId: input.threadId,
+              projectId,
+              title,
+              modelSelection: bot.modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+            })
+            .pipe(Effect.mapError(toPersonalBotsError("Personal bots thread creation failed.")));
+          if (lockTitle) {
+            // A metadata title is manual, so the first message or an AI title
+            // never replaces it.
+            yield* engine
+              .dispatch({
+                type: "thread.meta.update",
+                commandId: CommandId.make(`personal-bots:thread.title:${input.threadId}`),
+                threadId: input.threadId,
+                title,
+              })
+              .pipe(Effect.mapError(toPersonalBotsError("Personal bots thread creation failed.")));
+          }
+          return yield* repository
+            .insertThreadLink({ botId: input.botId, threadId: input.threadId, createdAt: now })
+            .pipe(
+              Effect.mapError(repositoryError("thread link")),
+              Effect.as(true),
+              // A concurrent createThread won the insert; the dispatch above
+              // deduped on the command receipt, so read back the winner's link.
+              Effect.catch(() =>
+                repository
+                  .getThreadLink({ threadId: input.threadId })
+                  .pipe(Effect.mapError(repositoryError("thread link")), Effect.map(Option.isSome)),
+              ),
+            );
+        }),
+      );
       if (!stored) {
         return yield* notFound(
           `Personal bot thread '${input.threadId}' could not be read after creation.`,
@@ -682,6 +749,9 @@ export const make = Effect.gen(function* () {
       return input.threadId;
     });
 
+  const withOwnerChatTitle: PersonalBotService["Service"]["withOwnerChatTitle"] = (input, write) =>
+    withChatTitleLock(requireFreeOwnerTitle(repository, input).pipe(Effect.andThen(write)));
+
   const archiveThread: PersonalBotService["Service"]["archiveThread"] = (input) =>
     Effect.gen(function* () {
       const linked = yield* repository
@@ -691,14 +761,50 @@ export const make = Effect.gen(function* () {
         return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
       }
       const now = yield* DateTime.now;
-      const updated = yield* repository
-        .setThreadArchived({ threadId: input.threadId, archivedAt: input.archived ? now : null })
-        .pipe(Effect.mapError(repositoryError("thread archive")));
-      if (Option.isNone(updated)) {
-        return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
+      if (input.archived || linked.value.archivedAt === null) {
+        const updated = yield* repository
+          .setThreadArchived({ threadId: input.threadId, archivedAt: input.archived ? now : null })
+          .pipe(Effect.mapError(repositoryError("thread archive")));
+        if (Option.isNone(updated)) {
+          return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
+        }
+        if (input.archived) yield* stopArchivedSession(input.threadId, now);
+        return updated.value;
       }
-      if (input.archived) yield* stopArchivedSession(input.threadId, now);
-      return updated.value;
+      // Unarchive: another open chat of the bot may have taken the name since.
+      // The chat comes back with the name plus the lowest free number.
+      return yield* withChatTitleLock(
+        Effect.gen(function* () {
+          const shell = yield* snapshots
+            .getThreadShellById(input.threadId)
+            .pipe(Effect.mapError(repositoryError("thread lookup")));
+          const renamedTo = Option.isSome(shell)
+            ? yield* unarchivedChatTitle(repository, {
+                threadId: input.threadId,
+                title: shell.value.title,
+              })
+            : null;
+          if (renamedTo !== null) {
+            yield* engine
+              .dispatch({
+                type: "thread.meta.update",
+                commandId: CommandId.make(
+                  `personal-bots:thread.unarchive-title:${input.threadId}:${NodeCrypto.randomUUID()}`,
+                ),
+                threadId: input.threadId,
+                title: renamedTo,
+              })
+              .pipe(Effect.mapError(toPersonalBotsError("Personal bots chat rename failed.")));
+          }
+          const updated = yield* repository
+            .setThreadArchived({ threadId: input.threadId, archivedAt: null })
+            .pipe(Effect.mapError(repositoryError("thread archive")));
+          if (Option.isNone(updated)) {
+            return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
+          }
+          return renamedTo === null ? updated.value : { ...updated.value, renamedTo };
+        }),
+      );
     });
 
   const updateThread: PersonalBotService["Service"]["updateThread"] = (input) =>
@@ -985,6 +1091,7 @@ export const make = Effect.gen(function* () {
     createThread,
     createSharedThread,
     archiveThread,
+    withOwnerChatTitle,
     updateThread,
     searchMessages,
     deleteThread,

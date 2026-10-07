@@ -322,6 +322,12 @@ export const PersonalBotThread = Schema.Struct({
   threadId: ThreadId,
   createdAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  /**
+   * Only on an unarchive result, and only when the chat's name was taken by
+   * another open chat meanwhile: the name it was given (the old one plus a
+   * number), so the owner can be told.
+   */
+  renamedTo: Schema.optional(Schema.String),
   /** Only on `personalBots.list`; absent on create/archive results. */
   newestMessage: Schema.optional(Schema.NullOr(PersonalBotThreadNewestMessage)),
   /**
@@ -413,9 +419,30 @@ export const PersonalBotDeleteInput = Schema.Struct({
 });
 export type PersonalBotDeleteInput = typeof PersonalBotDeleteInput.Type;
 
+/** The `code` a refused duplicate chat name carries on `PersonalBotsError` and the dispatch error. */
+export const CHAT_NAME_TAKEN_CODE = "chat_name_taken" as const;
+
+/** What the owner reads when a typed chat name is already used by another open chat of the bot. */
+export const chatNameTakenMessage = (name: string): string =>
+  `A chat called "${name}" already exists`;
+
+/**
+ * Two chat names are the same name when they match after trimming, collapsing
+ * inner whitespace and ignoring case. The server and the clients compare with
+ * this one function.
+ */
+export const normalizeChatName = (name: string): string =>
+  name.replace(/\s+/g, " ").trim().toLowerCase();
+
 export const PersonalBotCreateThreadInput = Schema.Struct({
   botId: PersonalBotId,
   threadId: ThreadId,
+  /**
+   * A name the owner typed. Refused with `code: "chat_name_taken"` when another
+   * open chat of this bot already has it; the chat is then not created. Absent
+   * keeps the placeholder title until the first message names the chat.
+   */
+  title: Schema.optional(Schema.String),
 });
 export type PersonalBotCreateThreadInput = typeof PersonalBotCreateThreadInput.Type;
 
@@ -524,6 +551,15 @@ export const PersonalBotThreadsBatchResult = Schema.Struct({
       threadId: ThreadId,
       message: Schema.String,
     }),
+  ),
+  /** Only on a bulk unarchive, and only when some chat had to be renamed to stay unique. */
+  renamed: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        threadId: ThreadId,
+        title: Schema.String,
+      }),
+    ),
   ),
 });
 export type PersonalBotThreadsBatchResult = typeof PersonalBotThreadsBatchResult.Type;
@@ -760,5 +796,7 @@ export class PersonalBotsError extends Schema.TaggedError<PersonalBotsError>()(
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
+    /** Set to `chat_name_taken` when a typed chat name is refused as a duplicate. */
+    code: Schema.optional(Schema.Literal(CHAT_NAME_TAKEN_CODE)),
   },
 ) {}

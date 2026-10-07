@@ -24,6 +24,7 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { PersonalBotRepository } from "./PersonalBotRepository.ts";
+import { uniqueAutomaticTitle, withChatTitleLock } from "./personalChatTitles.ts";
 import { PERSONAL_THREAD_TITLE, personalTaskThreadTitle } from "./personalThreadTitles.ts";
 
 export const TASK_TITLE_BACKFILL_META_KEY = "task-title-backfill-v1";
@@ -129,6 +130,7 @@ export const renameTaskTitleBackfill = Effect.fn("renameTaskTitleBackfill")(func
 ) {
   const engine = yield* OrchestrationEngineService;
   const snapshots = yield* ProjectionSnapshotQuery;
+  const repository = yield* PersonalBotRepository;
   const crypto = yield* Crypto.Crypto;
   let renamed = 0;
   let failed = 0;
@@ -137,18 +139,28 @@ export const renameTaskTitleBackfill = Effect.fn("renameTaskTitleBackfill")(func
   for (const candidate of candidates) {
     const outcome = yield* Effect.gen(function* () {
       const uuid = yield* crypto.randomUUIDv4;
-      yield* engine.dispatch({
-        type: "thread.title.generate.complete",
-        commandId: CommandId.make(`server:${COMMAND_TAG}:${uuid}`),
-        threadId: candidate.threadId,
-        title: candidate.title,
-        expectedTitle: PERSONAL_THREAD_TITLE,
-        expectedVersion: candidate.expectedVersion,
-        needsRefinement: false,
-      });
+      // A bot's open chats have unique names: a taken task title gets a number.
+      const title = yield* withChatTitleLock(
+        Effect.gen(function* () {
+          const unique = yield* uniqueAutomaticTitle(repository, {
+            threadId: candidate.threadId,
+            title: candidate.title,
+          });
+          yield* engine.dispatch({
+            type: "thread.title.generate.complete",
+            commandId: CommandId.make(`server:${COMMAND_TAG}:${uuid}`),
+            threadId: candidate.threadId,
+            title: unique,
+            expectedTitle: PERSONAL_THREAD_TITLE,
+            expectedVersion: candidate.expectedVersion,
+            needsRefinement: false,
+          });
+          return unique;
+        }),
+      );
       const after = yield* snapshots.getThreadShellById(candidate.threadId);
       if (Option.isNone(after)) return "gone" as const;
-      if (after.value.title === candidate.title && after.value.titleState?.source === "generated") {
+      if (after.value.title === title && after.value.titleState?.source === "generated") {
         return "renamed" as const;
       }
       return after.value.titleState?.source === "manual"

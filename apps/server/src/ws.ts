@@ -2032,7 +2032,28 @@ const makeWsRpcLayer = (
                     ),
                   )
                 : false;
-              const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
+              // A name the owner typed for a bot chat must be free among the bot's
+              // open chats; the check and the write are one step.
+              const dispatchEffect =
+                normalizedCommand.type === "thread.meta.update" &&
+                normalizedCommand.title !== undefined
+                  ? personalBots
+                      .withOwnerChatTitle(
+                        { threadId: normalizedCommand.threadId, title: normalizedCommand.title },
+                        dispatchNormalizedCommand(normalizedCommand),
+                      )
+                      .pipe(
+                        Effect.mapError((cause) =>
+                          cause._tag === "PersonalBotsError"
+                            ? new OrchestrationDispatchCommandError({
+                                message: cause.message,
+                                ...(cause.code === undefined ? {} : { code: cause.code }),
+                              })
+                            : cause,
+                        ),
+                      )
+                  : dispatchNormalizedCommand(normalizedCommand);
+              const result = yield* dispatchEffect.pipe(
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
               );
               yield* recordClientCommandAnalytics(normalizedCommand);
@@ -3221,9 +3242,17 @@ const makeWsRpcLayer = (
             },
           ),
         [WS_METHODS.personalBotsCreateThread]: (input) =>
-          observeRpcEffect(WS_METHODS.personalBotsCreateThread, personalBots.createThread(input), {
-            "rpc.aggregate": "server",
-          }),
+          observeRpcEffect(
+            WS_METHODS.personalBotsCreateThread,
+            // A title on this call is a name the owner typed.
+            personalBots.createThread({
+              botId: input.botId,
+              threadId: input.threadId,
+              ...(input.title === undefined ? {} : { title: input.title }),
+              titleSource: "owner",
+            }),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.personalBotsArchiveThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.personalBotsArchiveThread,
