@@ -20,6 +20,8 @@ versioned release under %USERPROFILE%\.personal-bots\releases\<sha>.
    externals.
 4. Writes releases\<sha>\VERSION and makes it the active release
    (releases\current.txt) unless -NoActivate is given.
+   -E2E first runs the phone e2e smoke (e2e-smoke.ps1, five journeys, about 35 s)
+   against the staged release; a failure exits non-zero before activation.
 
 Touches no data root. The running server keeps using its own release until
 restart.ps1.
@@ -32,7 +34,8 @@ param(
     [string]$Node,
     [switch]$SkipBuild,
     [switch]$NoActivate,
-    [switch]$CopyExternals
+    [switch]$CopyExternals,
+    [switch]$E2E
 )
 
 . (Join-Path $PSScriptRoot 'common.ps1')
@@ -171,6 +174,18 @@ Set-Content -LiteralPath (Join-Path $releaseDir 'VERSION') -Value $version -Enco
 $indexHtml = Get-Content -LiteralPath (Join-Path $releaseDist 'client\index.html') -Raw
 $clientEntry = if ($indexHtml -match '/assets/(index-[A-Za-z0-9_-]+\.js)') { $Matches[1] } else { '' }
 Set-Content -LiteralPath (Join-Path $releaseDist 'client\version.txt') -Value ($version + @("client=$clientEntry")) -Encoding ASCII
+
+if ($E2E) {
+    # Opt-in gate: the phone smoke journeys (scripts\personal\e2e-smoke.ps1) run against this staged release on a
+    # throwaway server. A failure stops here, before the release could become the active one.
+    Write-Host ''
+    Write-Host "Running the e2e smoke on $releaseDir ..."
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'e2e-smoke.ps1') -Release $releaseDir
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "E2E smoke FAILED (exit $LASTEXITCODE). Release $releaseName is staged but was not activated; do not ship it."
+        exit $LASTEXITCODE
+    }
+}
 
 if (-not $NoActivate) {
     Set-Content -LiteralPath $paths.CurrentFile -Value $releaseName -Encoding ASCII

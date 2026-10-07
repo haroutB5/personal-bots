@@ -1,6 +1,7 @@
 // hbots perf bench: phone-sized headless Chrome against the running server.
 //
 //   node scripts/personal/perf/bench.mjs [--origin local|relay|<url>] [--runs 5]
+//        [--origins <urlA>,<urlB>]
 //        [--journeys J1,J2] [--cpu 4] [--bot "<bot name>"] [--out <file.json>]
 //        [--off flag1,flag2] [--ab flag] [--rum]
 //
@@ -8,6 +9,9 @@
 //          apps/web/src/features/personal/perfFlags.ts)
 //   --ab   alternates runs with <flag> on and off in the same build; the
 //          summary splits every journey into name@on / name@off
+//   --origins  A/B two builds on two throwaway servers in one invocation: runs alternate
+//          A, B, A, B (so machine drift hits both alike) and every journey is filed under
+//          name@A / name@B. Each needs its login.mjs state. Replaces --origin.
 //   --rum  leaves the app's real-user beacons on (off by default so bench
 //          runs do not fill the server log)
 //
@@ -36,7 +40,11 @@ import {
 import * as NodePath from "node:path";
 
 const args = parseArgs(process.argv.slice(2));
-const origin = resolveOrigin(args.origin ?? "local");
+const originList =
+  typeof args.origins === "string"
+    ? args.origins.split(",").filter(Boolean).map(resolveOrigin)
+    : null;
+let origin = originList ? originList[0] : resolveOrigin(args.origin ?? "local");
 const runs = Number(args.runs ?? 5);
 const cpuRate = Number(args.cpu ?? 4);
 const journeys = new Set((args.journeys ?? "J1,J2").split(","));
@@ -45,9 +53,9 @@ const offFlags = typeof args.off === "string" ? args.off.split(",").filter(Boole
 const abFlag = typeof args.ab === "string" ? args.ab : null;
 const PERF_OFF_KEY = "bots:perf-off";
 const probeSource = NodeFS.readFileSync(new URL("./probe.js", import.meta.url), "utf8");
-const statePath = authStatePath(origin);
-if (!NodeFS.existsSync(statePath)) {
-  console.error(`No signed-in state for ${origin}. Run login.mjs with a pairing URL first.`);
+for (const checked of originList ?? [origin]) {
+  if (NodeFS.existsSync(authStatePath(checked))) continue;
+  console.error(`No signed-in state for ${checked}. Run login.mjs with a pairing URL first.`);
   process.exit(2);
 }
 
@@ -212,7 +220,7 @@ async function waitForServiceWorkerCache(page) {
 }
 
 async function oneRun(browser, index, off) {
-  const context = await browser.newContext({ ...PHONE, storageState: statePath });
+  const context = await browser.newContext({ ...PHONE, storageState: authStatePath(origin) });
   await context.addInitScript(probeSource);
   await context.addInitScript(
     ({ key, value }) => {
@@ -334,7 +342,10 @@ function summarize(results) {
 }
 
 const load = await machineLoad();
-console.log(`origin=${origin} runs=${runs} cpu=${cpuRate}x`, load);
+console.log(
+  `origin=${originList ? originList.join(" vs ") : origin} runs=${runs} cpu=${cpuRate}x`,
+  load,
+);
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 const results = [];
 const version = await fetch(`${origin}/version.txt`)
@@ -342,8 +353,20 @@ const version = await fetch(`${origin}/version.txt`)
   .then((t) => t.split("\n").slice(0, 2).join(" "))
   .catch(() => "unknown");
 for (let i = 0; i < runs; i += 1) {
-  const variant = abFlag === null ? null : i % 2 === 0 ? "on" : "off";
-  const off = [...offFlags, ...(args.rum ? [] : ["rum"]), ...(variant === "off" ? [abFlag] : [])];
+  // --origins: runs alternate between the servers; --ab: between a flag on and off.
+  if (originList) origin = originList[i % originList.length];
+  const variant = originList
+    ? String.fromCharCode(65 + (i % originList.length))
+    : abFlag === null
+      ? null
+      : i % 2 === 0
+        ? "on"
+        : "off";
+  const off = [
+    ...offFlags,
+    ...(args.rum ? [] : ["rum"]),
+    ...(!originList && variant === "off" ? [abFlag] : []),
+  ];
   const raw = await oneRun(browser, i, off);
   // A/B runs: every journey is filed under name@on / name@off.
   const r =
@@ -363,7 +386,7 @@ await browser.close();
 const summary = summarize(results);
 const report = {
   at: new Date().toISOString(),
-  origin,
+  origin: originList ? originList.join(",") : origin,
   version,
   cpuRate,
   runs,
