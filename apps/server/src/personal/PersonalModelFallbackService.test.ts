@@ -612,8 +612,9 @@ it.effect(
         expect.objectContaining({ botId: "bot-missing", source: "task", reason: "no_bot" }),
       ]);
     }).pipe(
-      Effect.provide(makeLayer(harness)),
-      Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+      Effect.provide(
+        Layer.merge(makeLayer(harness), Logger.layer([logger], { mergeWithExisting: false })),
+      ),
     );
   },
 );

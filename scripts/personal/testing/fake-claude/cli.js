@@ -22,24 +22,24 @@
 //     key is not in the process, so the shell prints nothing.
 //   anything else  "Got it." plus the reply quote it received, if any.
 // State and log: FAKE_CLAUDE_PID_DIR (set by the script; default the OS temp folder).
-import { appendFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
-import { spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
-import { createInterface } from "node:readline";
+import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeOS from "node:os";
+import * as NodeCrypto from "node:crypto";
+import * as NodeReadline from "node:readline";
 
-const pidDir = process.env.FAKE_CLAUDE_PID_DIR ?? `${tmpdir()}/fake-claude-pids`;
+const pidDir = process.env.FAKE_CLAUDE_PID_DIR ?? `${NodeOS.tmpdir()}/fake-claude-pids`;
 const flag = (name) => {
   try {
-    return readFileSync(`${pidDir}/${name}`, "utf8").trim();
+    return NodeFS.readFileSync(`${pidDir}/${name}`, "utf8").trim();
   } catch {
     return "";
   }
 };
 const NAME = process.argv[1].includes("fakelimit") ? "fakelimit" : "fakeok";
-mkdirSync(pidDir, { recursive: true });
+NodeFS.mkdirSync(pidDir, { recursive: true });
 const log = (line) =>
-  appendFileSync(
+  NodeFS.appendFileSync(
     `${pidDir}/fake-claude.log`,
     `${new Date().toISOString()} ${process.pid} ${line}\n`,
   );
@@ -51,7 +51,11 @@ if (args.includes("--version") || args.includes("-v")) {
 const sessionIndex = args.findIndex((a) => a === "--session-id");
 const resumeArg = args.find((a) => a.startsWith("--resume="));
 const sessionId =
-  sessionIndex >= 0 ? args[sessionIndex + 1] : resumeArg ? resumeArg.slice(9) : randomUUID();
+  sessionIndex >= 0
+    ? args[sessionIndex + 1]
+    : resumeArg
+      ? resumeArg.slice(9)
+      : NodeCrypto.randomUUID();
 log(`start session=${sessionId}`);
 
 // The permission rules the server handed this session (`--settings`, JSON text or a file path).
@@ -60,7 +64,7 @@ const denyRules = (() => {
   if (index < 0) return [];
   try {
     const raw = args[index + 1] ?? "";
-    const parsed = JSON.parse(raw.trim().startsWith("{") ? raw : readFileSync(raw, "utf8"));
+    const parsed = JSON.parse(raw.trim().startsWith("{") ? raw : NodeFS.readFileSync(raw, "utf8"));
     return Array.isArray(parsed?.permissions?.deny) ? parsed.permissions.deny : [];
   } catch {
     return [];
@@ -100,7 +104,7 @@ const init = () => {
     type: "system",
     subtype: "init",
     session_id: sessionId,
-    uuid: randomUUID(),
+    uuid: NodeCrypto.randomUUID(),
     model: "claude-sonnet-5-5",
     tools: ["Bash"],
     mcp_servers: [],
@@ -115,10 +119,10 @@ const assistant = (text, stop = "end_turn") =>
   out({
     type: "assistant",
     session_id: sessionId,
-    uuid: randomUUID(),
+    uuid: NodeCrypto.randomUUID(),
     parent_tool_use_id: null,
     message: {
-      id: `msg_${randomUUID()}`,
+      id: `msg_${NodeCrypto.randomUUID()}`,
       type: "message",
       role: "assistant",
       model: "claude-sonnet-5-5",
@@ -140,7 +144,7 @@ const finish = (text, isError) =>
     total_cost_usd: 0,
     usage: { input_tokens: 10, output_tokens: 5 },
     session_id: sessionId,
-    uuid: randomUUID(),
+    uuid: NodeCrypto.randomUUID(),
   });
 
 let askRequest = null;
@@ -152,7 +156,7 @@ const mcpConfigArg = (() => {
     return JSON.parse(raw);
   } catch {
     try {
-      return JSON.parse(readFileSync(raw, "utf8"));
+      return JSON.parse(NodeFS.readFileSync(raw, "utf8"));
     } catch {
       return null;
     }
@@ -212,7 +216,7 @@ async function mcpCall(name, toolArgs) {
     params: { name, arguments: toolArgs },
   });
 }
-const lines = createInterface({ input: process.stdin });
+const lines = NodeReadline.createInterface({ input: process.stdin });
 lines.on("line", async (line) => {
   let message;
   try {
@@ -282,7 +286,7 @@ lines.on("line", async (line) => {
     log(`LIMITED until ${new Date(until).toISOString()}`);
     out({
       type: "rate_limit_event",
-      uuid: randomUUID(),
+      uuid: NodeCrypto.randomUUID(),
       session_id: sessionId,
       rate_limit_info: {
         status: "rejected",
@@ -336,28 +340,28 @@ lines.on("line", async (line) => {
     const variable = printenv[1];
     // The platform shell, started with this process's own environment: exactly what a bot's Bash sees.
     const [shell, shellArgs] =
-      process.platform === "win32"
+      NodeOS.type() === "Windows_NT"
         ? ["cmd.exe", ["/d", "/s", "/c", `echo %${variable}%`]]
         : ["sh", ["-c", `echo "$${variable}"`]];
-    const printed = spawnSync(shell, shellArgs, {
+    const printed = NodeChildProcess.spawnSync(shell, shellArgs, {
       env: process.env,
       encoding: "utf8",
     }).stdout.trim();
-    const command = process.platform === "win32" ? `echo %${variable}%` : `echo "$${variable}"`;
-    const toolId = `toolu_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
+    const command = NodeOS.type() === "Windows_NT" ? `echo %${variable}%` : `echo "$${variable}"`;
+    const toolId = `toolu_${NodeCrypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
     const stream = (event) =>
       out({
         type: "stream_event",
         event,
         parent_tool_use_id: null,
-        uuid: randomUUID(),
+        uuid: NodeCrypto.randomUUID(),
         session_id: sessionId,
       });
     const full = (id, content, stop) =>
       out({
         type: "assistant",
         session_id: sessionId,
-        uuid: randomUUID(),
+        uuid: NodeCrypto.randomUUID(),
         parent_tool_use_id: null,
         message: {
           id,
@@ -382,7 +386,7 @@ lines.on("line", async (line) => {
           usage: { input_tokens: 10, output_tokens: 1 },
         },
       });
-    const first = `msg_${randomUUID()}`;
+    const first = `msg_${NodeCrypto.randomUUID()}`;
     start(first);
     full(
       first,
@@ -392,14 +396,14 @@ lines.on("line", async (line) => {
     out({
       type: "user",
       session_id: sessionId,
-      uuid: randomUUID(),
+      uuid: NodeCrypto.randomUUID(),
       parent_tool_use_id: null,
       message: {
         role: "user",
         content: [{ type: "tool_result", tool_use_id: toolId, content: printed, is_error: false }],
       },
     });
-    const second = `msg_${randomUUID()}`;
+    const second = `msg_${NodeCrypto.randomUUID()}`;
     const reply = `The value of ${variable} is: ${printed || "(empty)"}`;
     start(second);
     stream({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
@@ -456,7 +460,7 @@ lines.on("line", async (line) => {
     } else {
       let size = -1;
       try {
-        size = readFileSync(catFile[1]).length;
+        size = NodeFS.readFileSync(catFile[1]).length;
       } catch {
         // unreadable: reported below
       }
@@ -520,14 +524,14 @@ ${fence}`);
         type: "stream_event",
         event,
         parent_tool_use_id: null,
-        uuid: randomUUID(),
+        uuid: NodeCrypto.randomUUID(),
         session_id: sessionId,
       });
     const full = (id, content, stop) =>
       out({
         type: "assistant",
         session_id: sessionId,
-        uuid: randomUUID(),
+        uuid: NodeCrypto.randomUUID(),
         parent_tool_use_id: null,
         message: {
           id,
@@ -553,7 +557,7 @@ ${fence}`);
         },
       });
     // Like the real SDK: the text streams in, then the whole message lands.
-    const first = `msg_${randomUUID()}`;
+    const first = `msg_${NodeCrypto.randomUUID()}`;
     start(first);
     stream({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
     stream({
@@ -566,8 +570,8 @@ ${fence}`);
     log(`quiet for ${seconds}s`);
     // Then nothing at all for QUIET_SECONDS. After it the provider works again (a tool step), keeps going, then answers.
     setTimeout(() => {
-      const second = `msg_${randomUUID()}`;
-      const toolId = `toolu_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
+      const second = `msg_${NodeCrypto.randomUUID()}`;
+      const toolId = `toolu_${NodeCrypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
       start(second);
       stream({
         type: "content_block_start",
@@ -596,7 +600,7 @@ ${fence}`);
         "tool_use",
       );
       setTimeout(() => {
-        const third = `msg_${randomUUID()}`;
+        const third = `msg_${NodeCrypto.randomUUID()}`;
         start(third);
         stream({
           type: "content_block_start",
@@ -616,14 +620,14 @@ ${fence}`);
     return;
   }
   if (text.includes("ASKQ")) {
-    askRequest = `ask-${randomUUID()}`;
+    askRequest = `ask-${NodeCrypto.randomUUID()}`;
     out({
       type: "control_request",
       request_id: askRequest,
       request: {
         subtype: "can_use_tool",
         tool_name: "AskUserQuestion",
-        tool_use_id: `toolu_${randomUUID().replaceAll("-", "").slice(0, 20)}`,
+        tool_use_id: `toolu_${NodeCrypto.randomUUID().replaceAll("-", "").slice(0, 20)}`,
         input: {
           questions: [
             {
