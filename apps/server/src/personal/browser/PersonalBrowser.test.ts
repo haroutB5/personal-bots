@@ -4611,10 +4611,35 @@ describe("PersonalBrowser", () => {
           const page = fake.state.page;
           page.historyTargets = { back: "https://example.com/a", forward: "https://example.com/b" };
           page.pointer.length = 0;
+
+          // A page script can click, type or submit, so evaluate is guarded too, and it
+          // must never reach the page while refused.
+          const scripts: string[] = [];
+          const snapshotShape = () => ({
+            url: page.currentUrl,
+            title: "Fake page",
+            loading: false,
+            visibleText: "",
+            interactiveElements: [],
+          });
+          const pageImpl = async (expression: string) => {
+            if (expression.includes("__submitForm")) {
+              scripts.push(expression);
+              return "ran";
+            }
+            return snapshotShape();
+          };
+          page.evaluateImpl = pageImpl;
+          // Evaluate is not refused while no hand-back is pending.
+          const evaluate = () => request("evaluate", { expression: "window.__submitForm()" });
+          yield* browser.handleAutomationRequest(evaluate());
+          expect(scripts).toHaveLength(1);
+          scripts.length = 0;
           yield* browser.takeControl("session-1");
           yield* browser.returnToAgent("session-1");
 
           const guarded = () => [
+            evaluate(),
             request("click", { locator: "text=Save" }),
             request("click", { x: 1, y: 1, button: "right", clicks: 2 }),
             request("type", { text: "typed" }),
@@ -4642,6 +4667,7 @@ describe("PersonalBrowser", () => {
               }
               expect(page.pointer, label).toEqual([]);
               expect(page.typed, label).toEqual([]);
+              expect(scripts, label).toEqual([]);
               expect(page.closed, label).toBe(false);
             });
 
@@ -4657,14 +4683,10 @@ describe("PersonalBrowser", () => {
           yield* refused(browser, request("snapshot"));
           yield* expectAllRefused("after a failed snapshot");
 
-          page.evaluateImpl = async () => ({
-            url: page.currentUrl,
-            title: "Fake page",
-            loading: false,
-            visibleText: "",
-            interactiveElements: [],
-          });
+          page.evaluateImpl = pageImpl;
           yield* browser.handleAutomationRequest(request("snapshot"));
+          yield* browser.handleAutomationRequest(evaluate());
+          expect(scripts).toHaveLength(1);
           yield* browser.handleAutomationRequest(request("history", { action: "reload" }));
           yield* browser.handleAutomationRequest(request("hover", { x: 1, y: 1 }));
           yield* browser.handleAutomationRequest(onTab(request("closeTab", {}), open.tabId!));

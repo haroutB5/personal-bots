@@ -229,7 +229,17 @@ describe("BrowserLease", () => {
   // 1.66.6 QA: the first refusal used to clear the flag, so the same action
   // went through on the second try with no snapshot in between.
   describe("the fresh-snapshot requirement after a hand-back", () => {
-    const GUARDED = ["click", "type", "press", "scroll", "hover", "drag", "history", "closeTab"];
+    const GUARDED = [
+      "click",
+      "type",
+      "press",
+      "scroll",
+      "hover",
+      "drag",
+      "history",
+      "closeTab",
+      "evaluate",
+    ];
 
     const handBack = Effect.gen(function* () {
       const lease = yield* BrowserLease.BrowserLease;
@@ -279,7 +289,7 @@ describe("BrowserLease", () => {
           expect(rejectionReason(yield* run(operation)), operation).toBe("snapshot-required");
         }
         // Refused again in the reverse order: nothing above consumed the flag.
-        for (const operation of [...GUARDED].reverse()) {
+        for (const operation of GUARDED.toReversed()) {
           expect(rejectionReason(yield* run(operation)), operation).toBe("snapshot-required");
         }
       }).pipe(Effect.provide(leaseLayer)),
@@ -312,12 +322,37 @@ describe("BrowserLease", () => {
         expect(rejectionReason(yield* run("snapshot"))).toBe("human-control");
         yield* lease.returnToAgent;
         // Not guarded, so they run; none of them counts as reading the page.
-        for (const operation of ["open", "navigate", "evaluate", "waitFor", "status"]) {
+        for (const operation of ["open", "navigate", "waitFor", "status"]) {
           expect(rejectionReason(yield* run(operation)), operation).toBe("succeeded");
         }
         for (const operation of GUARDED) {
           expect(rejectionReason(yield* run(operation)), operation).toBe("snapshot-required");
         }
+      }).pipe(Effect.provide(leaseLayer)),
+    );
+
+    it.effect("evaluate runs freely until a hand-back, and is refused after one", () =>
+      Effect.gen(function* () {
+        let ran = 0;
+        const effect = Effect.sync(() => {
+          ran++;
+        });
+        // No hand-back pending: evaluate is allowed, before and after a snapshot.
+        expect(rejectionReason(yield* run("evaluate", effect))).toBe("succeeded");
+        yield* run("snapshot");
+        expect(rejectionReason(yield* run("evaluate", effect))).toBe("succeeded");
+        expect(ran).toBe(2);
+
+        yield* handBack;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          expect(rejectionReason(yield* run("evaluate", effect)), `#${attempt}`).toBe(
+            "snapshot-required",
+          );
+        }
+        expect(ran).toBe(2);
+        yield* run("snapshot");
+        expect(rejectionReason(yield* run("evaluate", effect))).toBe("succeeded");
+        expect(ran).toBe(3);
       }).pipe(Effect.provide(leaseLayer)),
     );
 

@@ -37,7 +37,11 @@ export const RESTART_GRACE_MS = 5 * 60_000;
 /** Take control waits this long for an in-flight agent op before taking over anyway. */
 export const TAKEOVER_WAIT_MS = 10_000;
 
-/** After a human hands back control these act on page state the agent has not seen. */
+/**
+ * After a human hands back control these act on page state the agent has not
+ * seen. `evaluate` is in the set because a page script can click, type or
+ * submit just as an action can.
+ */
 const ACTIONS_NEEDING_FRESH_SNAPSHOT: ReadonlySet<string> = new Set([
   "click",
   "type",
@@ -47,6 +51,7 @@ const ACTIONS_NEEDING_FRESH_SNAPSHOT: ReadonlySet<string> = new Set([
   "drag",
   "history",
   "closeTab",
+  "evaluate",
 ]);
 
 export type BrowserLeaseRejectionReason =
@@ -343,7 +348,7 @@ export const make = Effect.gen(function* () {
             reason: acquired.reason,
             message:
               acquired.reason === "snapshot-required"
-                ? "The user just returned control of the shared browser and the page may have changed. Call preview_snapshot first; every click, hover, drag, type, press, scroll, history and close-tab action stays refused until a snapshot succeeds."
+                ? "The user just returned control of the shared browser and the page may have changed. Call preview_snapshot first; every click, hover, drag, type, press, scroll, history, close-tab and evaluate action stays refused until a snapshot succeeds."
                 : humanControlMessage,
           });
         }
