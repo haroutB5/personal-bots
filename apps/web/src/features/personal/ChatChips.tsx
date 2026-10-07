@@ -11,7 +11,11 @@ import { Pin, Plus } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
-import { CURRENT_CHIP_SELECTOR, chatSwitchNavigation } from "./chatChipNavigation";
+import {
+  CURRENT_CHIP_SELECTOR,
+  chatSwitchNavigation,
+  scrollLeftToReveal,
+} from "./chatChipNavigation";
 import type { ChatChip } from "./chatChipRows";
 import { markChatSwitched } from "./chatChipHandoff";
 import { CHAT_SETTINGS_HINT } from "./chatSettingsModel";
@@ -177,26 +181,53 @@ export function ChatChips({
 
   // The open chat sits in the middle of the row: at once when the row first
   // shows (and when the order was re-taken after the app came back), smoothly
-  // after every switch.
+  // after every switch. A chat that was pinned or unpinned while the owner
+  // stays moves, so the row follows it instead: that chip is scrolled fully
+  // into view (smoothly, or at once under reduced motion).
   const chipsKey = chips.map((chip) => chip.threadId).join("|");
+  const pinKey = chips
+    .filter((chip) => chip.pinned)
+    .map((chip) => chip.threadId)
+    .join("|");
+  const chipsNow = useRef(chips);
+  const pinnedSeen = useRef<ReadonlyMap<string, boolean> | null>(null);
+  useLayoutEffect(() => {
+    chipsNow.current = chips;
+  });
   useLayoutEffect(() => {
     const row = rowRef.current;
     if (row === null) return;
-    const target = row.querySelector<HTMLElement>(CURRENT_CHIP_SELECTOR);
-    if (target !== null && typeof row.scrollTo === "function") {
-      const left = target.offsetLeft - (row.clientWidth - target.offsetWidth) / 2;
-      row.scrollTo({
-        left: Math.max(0, left),
-        behavior:
-          firstCentre.current || lastEpoch.current !== resortEpoch || reducedMotion()
-            ? "instant"
-            : "smooth",
-      });
-      firstCentre.current = false;
-      lastEpoch.current = resortEpoch;
+    const before = pinnedSeen.current;
+    pinnedSeen.current = new Map(chipsNow.current.map((chip) => [chip.threadId, chip.pinned]));
+    const epochMoved = lastEpoch.current !== resortEpoch;
+    // The first chip whose pin changed (a chip not in the row before is new, not pinned).
+    const followed =
+      before === null || firstCentre.current || epochMoved
+        ? null
+        : (chipsNow.current.find(
+            (chip) => before.has(chip.threadId) && before.get(chip.threadId) !== chip.pinned,
+          )?.threadId ?? null);
+    const followTarget =
+      followed === null || followed === currentId
+        ? null
+        : row.querySelector<HTMLElement>(`[data-chip-id="${followed}"]`);
+    if (followTarget !== null && typeof row.scrollTo === "function") {
+      const left = scrollLeftToReveal(row, followTarget);
+      if (left !== null) row.scrollTo({ left, behavior: reducedMotion() ? "instant" : "smooth" });
+    } else {
+      const target = row.querySelector<HTMLElement>(CURRENT_CHIP_SELECTOR);
+      if (target !== null && typeof row.scrollTo === "function") {
+        const left = target.offsetLeft - (row.clientWidth - target.offsetWidth) / 2;
+        row.scrollTo({
+          left: Math.max(0, left),
+          behavior: firstCentre.current || epochMoved || reducedMotion() ? "instant" : "smooth",
+        });
+        firstCentre.current = false;
+        lastEpoch.current = resortEpoch;
+      }
     }
     updateFade();
-  }, [currentId, chipsKey, resortEpoch, updateFade]);
+  }, [currentId, chipsKey, pinKey, resortEpoch, updateFade]);
   useEffect(() => {
     const row = rowRef.current;
     if (row === null || typeof ResizeObserver === "undefined") return;

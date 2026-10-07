@@ -170,6 +170,42 @@ describe("useDeleteChat", () => {
     ).toEqual({ status: "failed", message: "Couldn't delete “Tennis”. Try again." });
   });
 
+  it("names the chat and keeps the server's reason, as Archive does", async () => {
+    stubWindow();
+    seedSnapshot();
+    command.result = { _tag: "Failure", cause: Cause.fail(new Error("Chat not found.")) };
+    const deleteChat = useDeleteChat("env-1" as EnvironmentId);
+
+    // Another chat (its title names it in the confirm too).
+    expect(await deleteChat("thread-b" as ThreadId, { title: "Tennis" })).toEqual({
+      status: "failed",
+      message: "Couldn't delete “Tennis”: Chat not found.",
+    });
+    // The open chat: only `name` is set, so the failure names it too.
+    expect(await deleteChat("thread-a" as ThreadId, { name: "Plans" })).toEqual({
+      status: "failed",
+      message: "Couldn't delete “Plans”: Chat not found.",
+    });
+    expect(readChatsSnapshot("env-1")?.rows.map((row) => row.threadId)).toEqual([
+      "thread-a",
+      "thread-b",
+    ]);
+  });
+
+  it("names the open chat when the failure carries no message", async () => {
+    stubWindow();
+    seedSnapshot();
+    command.result = { _tag: "Failure", cause: Cause.fail("nope") };
+
+    expect(
+      await useDeleteChat("env-1" as EnvironmentId)("thread-a" as ThreadId, { name: "Plans" }),
+    ).toEqual({ status: "failed", message: "Couldn't delete “Plans”. Try again." });
+  });
+
+  it("a name alone does not change the confirm's words", () => {
+    expect(deleteChatConfirmMessage({ name: "Plans" })).toBe(deleteChatConfirmMessage());
+  });
+
   it("deletes another chat after the named confirm and drops it from the snapshot", async () => {
     stubWindow();
     seedSnapshot();

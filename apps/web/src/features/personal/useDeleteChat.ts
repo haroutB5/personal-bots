@@ -3,6 +3,7 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { chatActionFailure } from "./chatSettingsModel";
 import { dropChatFromSnapshot } from "./chatsSnapshot";
 import { commandFailureMessage, type DestructiveOutcome } from "./commandFeedback";
 import { personalBotDeleteThread } from "./usePersonalBots";
@@ -12,6 +13,12 @@ export interface DeleteChatOptions {
   readonly title?: string | undefined;
   /** A turn is running in the chat: the confirm says deleting stops it too. */
   readonly working?: boolean | undefined;
+  /**
+   * The chat's name for the failure line only (the confirm names a chat through
+   * `title`, and says "this chat" for the open one). With a name the failure
+   * reads `Couldn't delete “X”: <reason>` like Archive's.
+   */
+  readonly name?: string | undefined;
 }
 
 /** Confirm copy, kept pure so the permanent-deletion wording is unit-tested. */
@@ -49,13 +56,20 @@ export function useDeleteChat(
       })) ?? window.confirm(message);
     if (!confirmed) return { status: "cancelled" };
     const result = await deleteThread({ environmentId, input: { threadId } });
-    const failure = commandFailureMessage(
-      result,
-      options?.title === undefined
-        ? "Couldn't delete this chat. Try again."
-        : `Couldn't delete “${options.title}”. Try again.`,
-    );
-    if (failure !== null) return { status: "failed", message: failure };
+    const name = options?.title ?? options?.name;
+    // An empty fallback tells "the server gave a reason" from "it gave none".
+    const reason = commandFailureMessage(result, "");
+    if (reason !== null) {
+      return {
+        status: "failed",
+        message:
+          name === undefined
+            ? reason === ""
+              ? "Couldn't delete this chat. Try again."
+              : reason
+            : chatActionFailure("delete", name, reason === "" ? undefined : reason),
+      };
+    }
     // The cold-start snapshot is only rewritten by the Chats screen, which is
     // not mounted here; without this the deleted chat keeps painting (name,
     // timestamp, deep link) on every offline launch until that screen runs.

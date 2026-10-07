@@ -75,13 +75,18 @@ async function renderChips(
     chips?: ChatChip[];
     onChipSettings?: (threadId: string, opener: HTMLElement | null) => void;
     onNewChat?: () => void;
+    /** Where each chip sits in the row (offsetLeft); the others sit at 0. */
+    offsets?: Record<string, number>;
+    row?: { scrollLeft: number };
+    /** The open chat's id, which the route carries (default t2). */
+    current?: string;
   } = {},
 ) {
   const anchors = new Map<string, FakeAnchor>();
   const scrollTo = vi.fn();
   const row = {
     clientWidth: 300,
-    scrollLeft: 0,
+    scrollLeft: options.row?.scrollLeft ?? 0,
     scrollWidth: 800,
     scrollTo,
     querySelector: (selector: string) => {
@@ -118,7 +123,7 @@ async function renderChips(
   );
   const router = createRouter({
     routeTree: root.addChildren(routes),
-    history: createMemoryHistory({ initialEntries: ["/bots/b1/t2"] }),
+    history: createMemoryHistory({ initialEntries: [`/bots/b1/${options.current ?? "t2"}`] }),
   });
   await router.load();
   // Stubbed once the router exists: with a window the router would try to be a browser's.
@@ -140,7 +145,15 @@ async function renderChips(
       createNodeMock: (element) => {
         if (element.type === "a") {
           const props = element.props as Record<string, unknown>;
-          const anchor: FakeAnchor = { offsetLeft: 0, offsetWidth: 80, props };
+          const id = String(props["data-chip-id"] ?? props["aria-label"]);
+          // Read live: a test moves a chip by changing its entry before it re-renders the row.
+          const anchor: FakeAnchor = {
+            get offsetLeft() {
+              return options.offsets?.[id] ?? 0;
+            },
+            offsetWidth: 80,
+            props,
+          };
           anchors.set(String(props["data-chip-id"] ?? props["aria-label"]), anchor);
           return anchor;
         }
@@ -383,5 +396,115 @@ describe("centring the open chip", () => {
     expect(scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ behavior: "instant" }));
     await act(async () => setHostChips([chip("t1"), chip("t2", true), chip("t3")]));
     expect(scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ behavior: "smooth" }));
+  });
+});
+
+describe("the row follows a pin", () => {
+  const pinned = (threadId: string, current = false): ChatChip => ({
+    ...chip(threadId, current),
+    pinned: true,
+  });
+  // Ten chats in a row 300 px wide, 86 px apart; the open one is t8, far from the front.
+  const ids = ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10"];
+  const place = (order: ReadonlyArray<string> = ids) =>
+    Object.fromEntries(order.map((id, at) => [id, 3 + at * 86]));
+  const row = (changed: ChatChip[] = []) =>
+    ids.map(
+      (id) => changed.find((candidate) => candidate.threadId === id) ?? chip(id, id === "t8"),
+    );
+  /** `lead` leads the row (pinned), the rest follow in order. */
+  const withFront = (lead: string) => [
+    pinned(lead, lead === "t8"),
+    ...row().filter((candidate) => candidate.threadId !== lead),
+  ];
+
+  it("scrolls a chip pinned to the front fully into view, smoothly", async () => {
+    const offsets = place();
+    const { scrollTo } = await renderChips({
+      chips: row(),
+      offsets,
+      row: { scrollLeft: 500 },
+      current: "t8",
+    });
+    scrollTo.mockClear();
+    // t5 is pinned and leads the row; the row is scrolled far to the right.
+    Object.assign(offsets, place(["t5", ...ids.filter((id) => id !== "t5")]));
+    await act(async () => setHostChips(withFront("t5")));
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenCalledWith({ left: 0, behavior: "smooth" });
+  });
+
+  it("scrolls at once under reduced motion", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    const offsets = place();
+    const { scrollTo } = await renderChips({
+      chips: row(),
+      offsets,
+      row: { scrollLeft: 500 },
+      current: "t8",
+    });
+    scrollTo.mockClear();
+    Object.assign(offsets, place(["t5", ...ids.filter((id) => id !== "t5")]));
+    await act(async () => setHostChips(withFront("t5")));
+    expect(scrollTo).toHaveBeenCalledWith({ left: 0, behavior: "instant" });
+  });
+
+  it("does not move the row when the pinned chip is already in view", async () => {
+    const { scrollTo } = await renderChips({
+      chips: row(),
+      offsets: place(),
+      row: { scrollLeft: 0 },
+      current: "t8",
+    });
+    scrollTo.mockClear();
+    // t1 is pinned and stays where it is: first, in view.
+    await act(async () => setHostChips(row([pinned("t1")])));
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("follows an unpinned chip that ends up off screen", async () => {
+    const offsets = place();
+    const { scrollTo } = await renderChips({
+      chips: [pinned("t1"), ...row().slice(1)],
+      offsets,
+      row: { scrollLeft: 0 },
+      current: "t8",
+    });
+    scrollTo.mockClear();
+    // t1 is unpinned and falls back to a slot 700 px along, out of the 300 px the row shows.
+    offsets["t1"] = 700;
+    await act(async () => setHostChips([...row().slice(1), chip("t1")]));
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenCalledWith({ left: 700 + 80 + 24 - 300, behavior: "smooth" });
+  });
+
+  it("keeps centring the open chat when the open chat itself was pinned", async () => {
+    const offsets = place();
+    const { scrollTo } = await renderChips({
+      chips: row(),
+      offsets,
+      row: { scrollLeft: 0 },
+      current: "t8",
+    });
+    scrollTo.mockClear();
+    // t8 leads the row now, at offset 3: centred, the row has no room to its left.
+    offsets["t8"] = 3;
+    await act(async () => setHostChips(withFront("t8")));
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenCalledWith({ left: 0, behavior: "smooth" });
+  });
+
+  it("a chat that is new in the row is not a pin", async () => {
+    const { scrollTo } = await renderChips({
+      chips: row(),
+      offsets: { ...place(), t11: 3 },
+      row: { scrollLeft: 500 },
+      current: "t8",
+    });
+    scrollTo.mockClear();
+    await act(async () => setHostChips([pinned("t11"), ...row()]));
+    // The usual re-centre on the open chat (t8 sits 605 px along: 605 - 110), not a jump to the front.
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenCalledWith({ left: 495, behavior: "smooth" });
   });
 });

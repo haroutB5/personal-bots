@@ -868,7 +868,7 @@ export function ConversationScreen({
     if (leaves) await goToChatList();
     else if (announceAs !== undefined) announce(chatActionAnnouncement("delete", announceAs));
   };
-  const onDeleteChat = () => deleteChatNow(threadId, undefined, true);
+  const onDeleteChat = () => deleteChatNow(threadId, { name: chatTitle }, true);
 
   const renameChat = useRenameChat(environmentId);
   /** The chat the Rename dialog is for (the open chat or another one). */
@@ -1137,7 +1137,11 @@ export function ConversationScreen({
       case "delete":
         await deleteChatNow(
           ThreadId.make(target.threadId),
-          { title: target.isOpenChat ? undefined : target.title, working: target.working },
+          {
+            title: target.isOpenChat ? undefined : target.title,
+            name: target.title,
+            working: target.working,
+          },
           target.isOpenChat,
           target.title,
         );

@@ -743,7 +743,7 @@ it("Delete goes through useDeleteChat and leaves for the bot's chats once done",
   await act(async () => {
     buttonsLabelled("Delete")[0]!.props.onClick();
   });
-  expect(state.deleteChat).toHaveBeenCalledWith("thread-1", undefined);
+  expect(state.deleteChat).toHaveBeenCalledWith("thread-1", { name: "Plans" });
   expect(state.navigate).toHaveBeenCalledWith({
     to: "/bots/$botId",
     params: { botId: "bot-a" },
@@ -758,7 +758,7 @@ it("a cancelled Delete stays on the chat", async () => {
   await act(async () => {
     buttonsLabelled("Delete")[0]!.props.onClick();
   });
-  expect(state.deleteChat).toHaveBeenCalledWith("thread-1", undefined);
+  expect(state.deleteChat).toHaveBeenCalledWith("thread-1", { name: "Plans" });
   expect(state.navigate).not.toHaveBeenCalled();
   expect(hasArchivedBar()).toBe(true);
 });
@@ -1072,7 +1072,11 @@ describe("the sheet on the open chat", () => {
     await renderScreen();
     await openOwnSheet();
     await chooseRow("delete");
-    expect(state.deleteChat).toHaveBeenCalledWith("thread-1", { title: undefined, working: false });
+    expect(state.deleteChat).toHaveBeenCalledWith("thread-1", {
+      title: undefined,
+      name: "Plans",
+      working: false,
+    });
     expect(state.navigate).toHaveBeenCalledWith({
       to: "/bots/$botId",
       params: { botId: "bot-a" },
@@ -1232,7 +1236,11 @@ describe("the sheet on another chat", () => {
     await renderScreen();
     await holdChip("thread-2");
     await chooseRow("delete");
-    expect(state.deleteChat).toHaveBeenCalledWith("thread-2", { title: "hbots", working: false });
+    expect(state.deleteChat).toHaveBeenCalledWith("thread-2", {
+      title: "hbots",
+      name: "hbots",
+      working: false,
+    });
     expect(state.navigate).not.toHaveBeenCalled();
     expect(announced()).toBe("hbots deleted.");
   });
@@ -1243,7 +1251,11 @@ describe("the sheet on another chat", () => {
     await renderScreen();
     await holdChip("thread-2");
     await chooseRow("delete");
-    expect(state.deleteChat).toHaveBeenCalledWith("thread-2", { title: "hbots", working: true });
+    expect(state.deleteChat).toHaveBeenCalledWith("thread-2", {
+      title: "hbots",
+      name: "hbots",
+      working: true,
+    });
   });
 
   it("a failed Delete shows the message and stays", async () => {

@@ -8,7 +8,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { backTargetOfState } from "./botsBackStack";
 import { keepBotsBehindChats } from "./botsBackStack";
-import { chatSwitchNavigation } from "./chatChipNavigation";
+import {
+  CHIP_EDGE_CLEARANCE,
+  chatSwitchNavigation,
+  scrollLeftToReveal,
+} from "./chatChipNavigation";
 
 // The same paths as the real tree (static segments win over the chat's params).
 const PATHS = [
@@ -111,5 +115,31 @@ describe("chat chip switching", () => {
     await open(router, `/bots/${BOT}/thread-a`);
     await switchTo(router, "thread-b");
     expect(await back(router)).toBe("/bots");
+  });
+});
+
+describe("scrollLeftToReveal", () => {
+  const row = (scrollLeft: number) => ({ scrollLeft, clientWidth: 300 });
+  const chip = (offsetLeft: number) => ({ offsetLeft, offsetWidth: 80 });
+
+  it("leaves a chip that is fully in view alone", () => {
+    expect(scrollLeftToReveal(row(100), chip(200))).toBeNull();
+    expect(scrollLeftToReveal(row(0), chip(3))).toBeNull();
+  });
+
+  it("brings a chip that moved to the front back to the start of the row", () => {
+    expect(scrollLeftToReveal(row(420), chip(3))).toBe(0);
+    // Partly hidden under the left fade counts as not in view.
+    expect(scrollLeftToReveal(row(100), chip(110))).toBe(110 - CHIP_EDGE_CLEARANCE);
+  });
+
+  it("scrolls the nearest edge when the chip is off to the right", () => {
+    expect(scrollLeftToReveal(row(0), chip(500))).toBe(500 + 80 + CHIP_EDGE_CLEARANCE - 300);
+    // Cut off at the right edge, clear of the fade there.
+    expect(scrollLeftToReveal(row(0), chip(250))).toBe(250 + 80 + CHIP_EDGE_CLEARANCE - 300);
+  });
+
+  it("never asks for a negative offset", () => {
+    expect(scrollLeftToReveal(row(50), chip(10))).toBe(0);
   });
 });
