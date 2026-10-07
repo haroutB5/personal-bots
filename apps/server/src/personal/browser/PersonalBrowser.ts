@@ -138,34 +138,60 @@ import {
   VIEWER_FLOW_LIMITS,
   ViewerFlow,
 } from "./viewerFlow.ts";
-
-/** Chrome did not start; `message` is Playwright's own error text. */
-class PersonalBrowserLaunchError extends Data.TaggedError("PersonalBrowserLaunchError")<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
-
-export interface ViewerHandle {
-  readonly id: number;
-  readonly sessionId: string;
-  readonly canOperate: boolean;
-  /**
-   * Control messages (rejections, focus, hidden notices). Unbounded so none is
-   * ever dropped; they are rare and tiny, and a closed socket shuts it down.
-   */
-  readonly outbox: Queue.Queue<string>;
-  /** Frames: only the newest unsent one is kept, and it is released at the link's pace. */
-  readonly flow: ViewerFlow;
-  /** What this viewer's stream measures about itself; null when the telemetry is switched off. */
-  readonly telemetry: ViewerTelemetry | null;
-  /** The sharp picture follows a lifted finger at once, so the client is asked to say when it lifts. */
-  readonly scrollEndHint?: boolean;
-}
-
-export interface ResolvedBrowserFile {
-  readonly path: string;
-  readonly name: string;
-}
+import {
+  ARTIFACT_SCAN_DEPTH,
+  CONTROL_CHECK_INTERVAL_MS,
+  CONTROL_GRACE_MS,
+  DRIVER_TIMEOUT_MARGIN_MS,
+  FILL_NAVIGATE_TIMEOUT_MS,
+  FRAMES_HIDDEN_REASON,
+  HELP_ENDED_BY_CLOSE,
+  HELP_ENDED_BY_CRASH,
+  HELP_ENDED_BY_SWITCH,
+  HOST_REPLY_MARGIN_MS,
+  IDLE_CHECK_INTERVAL_MS,
+  IDLE_CLOSE_AFTER_TICKS,
+  IDLE_CLOSE_SUMMARY,
+  LIVE_TASK_STATUSES,
+  MAX_LISTED_FILES,
+  MIN_DRIVER_TIMEOUT_MS,
+  PAGE_INFO_REFRESH_MS,
+  PHONE_DEVICE_SCALE_FACTOR,
+  PersonalBrowserLaunchError,
+  type Phase,
+  RECENT_ACTIVITY_LIMIT,
+  RESTORE_NAVIGATE_TIMEOUT_MS,
+  type ResolvedBrowserFile,
+  type ScannedFile,
+  TIMELINE_LIMIT,
+  type TabEntry,
+  UNSTICK_PROBE_MS,
+  type ViewerHandle,
+  decodeInputMessage,
+  describeDialog,
+  detectProfileLock,
+  dialogOpenError,
+  driverTimeoutFor,
+  encodeStreamLine,
+  encodeViewerMessage,
+  fileIdFor,
+  fileKind,
+  firstLine,
+  hostOf,
+  looksLikeLoginPage,
+  sameStatus,
+  scanArtifacts,
+  streamInputKind,
+} from "./browserShared.ts";
+export {
+  CONTROL_GRACE_MS,
+  HOST_REPLY_MARGIN_MS,
+  driverTimeoutFor,
+  dialogOpenError,
+  looksLikeLoginPage,
+  type ResolvedBrowserFile,
+  type ViewerHandle,
+} from "./browserShared.ts";
 
 /** The request with any saved key in text to be typed replaced by `[secret NAME]`. */
 const withoutTypedSecrets = (request: PreviewAutomationRequest): PreviewAutomationRequest => {
@@ -343,246 +369,10 @@ export const optionsFromEnvironment = (): PersonalBrowserOptions => ({
   ),
 });
 
-type Phase = "offline" | "starting" | "connected" | "crashed" | "locked";
-
-interface TabEntry {
-  readonly tabId: PreviewTabId;
-  readonly threadId: ThreadId;
-  readonly page: BrowserPage;
-  title: string;
-  readonly timeline: PreviewAutomationActionEvent[];
-  /** Model-readable operations are disabled while a credential is in this document. */
-  loginProtected: boolean;
-  /** The URL a saved login was filled on; null once the tab has left that form. */
-  credentialFormUrl: string | null;
-  /**
-   * A model-provided script has run in this tab since the last server-initiated
-   * navigation. Such a tab is never a fill target: `preview_evaluate` can leave
-   * an input listener behind that reads a value the tool result never returns.
-   */
-  scriptTainted: boolean;
-  /** The answer `preview_type` gave the open prompt dialog, sent with Enter. */
-  dialogPromptText: string | null;
-  loginOriginRevision: number;
-}
-
-const RECENT_ACTIVITY_LIMIT = 30;
-/**
- * A headed Chrome nobody is using costs 300-600 MB and a compositor, and
- * nothing ever closed it: the only shutdown paths were an explicit close, a
- * thread release and a crash, so one page a bot opened and forgot sat there
- * until someone noticed. After this long with no sign of use it closes itself,
- * and the next browser action or Take control starts it again exactly as
- * before. Checked once a tick, and any sign of use resets the count, so the
- * browser has to be idle for the whole stretch, not merely at the moment the
- * sweep happens to look.
- */
-/** A device that took control and then disconnected keeps it this long (see PersonalBrowserOptions.controlGraceMs). */
-export const CONTROL_GRACE_MS = 60_000;
-/** How often the disconnected-controller check runs. */
-const CONTROL_CHECK_INTERVAL_MS = 5_000;
-const IDLE_CLOSE_AFTER_TICKS = 10;
-const IDLE_CHECK_INTERVAL_MS = 60_000;
-const IDLE_CLOSE_SUMMARY = "Browser closed after 10 minutes with nobody using it";
-/** Statuses a task can still leave on its own; its thread may need the browser. */
-const LIVE_TASK_STATUSES = PersonalTaskStatus.literals.filter(
-  (status) => !PERSONAL_TASK_TERMINAL_STATUSES.includes(status),
-);
-const RESTORE_NAVIGATE_TIMEOUT_MS = 30_000;
-/** The server's own navigation of the fresh tab a saved login is filled into. */
-const FILL_NAVIGATE_TIMEOUT_MS = 20_000;
-const TIMELINE_LIMIT = 20;
-/**
- * The broker treats a request it has not heard back on within its timeout as
- * a dead host and evicts it, which fails every bot's next call until the host
- * re-registers. So the host always answers first: a whole request (lease wait
- * and Chrome start included) finishes this long before the broker's deadline,
- * and driver calls get a further margin so their own, more specific, timeout
- * message is what the bot sees.
- */
-export const HOST_REPLY_MARGIN_MS = 750;
-const DRIVER_TIMEOUT_MARGIN_MS = 1_500;
-const MIN_DRIVER_TIMEOUT_MS = 250;
-/** How long `unstick` waits for a page to answer before stopping its script. */
-const UNSTICK_PROBE_MS = 1_000;
-
-/** The driver's budget within a request's broker timeout. */
-export const driverTimeoutFor = (requestTimeoutMs: number, inputTimeoutMs?: number) =>
-  Math.max(
-    MIN_DRIVER_TIMEOUT_MS,
-    Math.min(inputTimeoutMs ?? requestTimeoutMs, requestTimeoutMs) - DRIVER_TIMEOUT_MARGIN_MS,
-  );
-
-const describeDialog = (dialog: PageDialog) => {
-  const text = dialog.message.replace(/\s+/g, " ").trim().slice(0, 300);
-  switch (dialog.type) {
-    case "beforeunload":
-      return "The page opened a leave-page dialog (it asks to confirm leaving)";
-    case "alert":
-      return `The page opened an alert dialog: '${text}'`;
-    default:
-      return `The page opened a ${dialog.type} dialog: '${text}'`;
-  }
-};
-
-/**
- * What a bot is told when a native dialog is (or becomes) open on its tab.
- * The dialog is left open on purpose: a destructive confirm is Harout's call.
- */
-export const dialogOpenError = (dialog: PageDialog) =>
-  new HostOperationError(
-    "PreviewAutomationExecutionError",
-    `${describeDialog(dialog)}. It is still open and the page is paused until it is answered. ` +
-      "Hand over to Harout with request_browser_help, or answer it with preview_press: " +
-      `key 'Enter' for OK or 'Escape' for Cancel${
-        dialog.type === "prompt" ? " (preview_type first sets the prompt's answer)" : ""
-      }.`,
-    { dialog },
-  );
-const PAGE_INFO_REFRESH_MS = 1_500;
-const MAX_LISTED_FILES = 300;
-/** A 390px phone gets 780px frames: exactly the screencast's maxWidth, so crisp and uncapped. */
-const PHONE_DEVICE_SCALE_FACTOR = 2;
-const ARTIFACT_SCAN_DEPTH = 3;
-
-// Continuations for a help request that ended without Return to bot. The bot's
-// task is parked on waiting_for_browser, and only a resume brings it back.
-const HELP_ENDED_BY_CLOSE =
-  "The shared browser was closed before the user finished helping, so your browser help request was cancelled. Tell the user in one sentence what you still need. Reopen the page only if the task still needs it, and call request_browser_help again if you get blocked.";
-const HELP_ENDED_BY_CRASH =
-  "Chrome exited before the user finished helping, so your browser help request was cancelled. Reopen the page and call request_browser_help again if you are still blocked, or tell the user in one sentence what you still need.";
-const HELP_ENDED_BY_SWITCH =
-  "Another chat started using the shared browser before the user finished helping, so your browser help request was cancelled. Tell the user in one sentence what you still need, or call request_browser_help again once you have the browser back.";
-
-const decodeInputMessage = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(PersonalBrowserInputMessage),
-);
-const encodeViewerMessage = Schema.encodeSync(Schema.fromJsonString(PersonalBrowserViewerMessage));
-const encodeStreamLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-
-/** Only the kind of input is ever recorded, never what it did or where. */
-const streamInputKind = (message: PersonalBrowserInputMessage): StreamInputKind => {
-  switch (message._tag) {
-    case "Pointer":
-      return message.action === "tap" ? "tap" : "other";
-    case "Wheel":
-      return "wheel";
-    case "Key":
-    case "InsertText":
-      return "key";
-    default:
-      return "other";
-  }
-};
-
-const FRAMES_HIDDEN_REASON =
-  "Hidden while a bot fills a saved password. The view returns when the page moves on, or when you take control.";
-
-const firstLine = (value: string) => value.split("\n")[0]?.trim() || "Unknown error";
-
-const hostOf = (url: string) => {
-  try {
-    return new URL(url).host || url;
-  } catch {
-    return url;
-  }
-};
-
-/** Real URL-derived signal only: known identity-provider hosts and sign-in paths. */
-export const looksLikeLoginPage = (url: string): boolean => {
-  try {
-    const parsed = new URL(url);
-    return (
-      /^(accounts|login|signin|auth|sso|id)\./i.test(parsed.hostname) ||
-      /\/(login|log-in|signin|sign-in|sign_in|oauth2?|authorize|sso)(\/|$|\?)/i.test(
-        parsed.pathname,
-      )
-    );
-  } catch {
-    return false;
-  }
-};
-
-async function detectProfileLock(
-  profileDir: string,
-): Promise<{ readonly locked: boolean; readonly pid: number | null }> {
-  try {
-    // POSIX Chrome: SingletonLock -> "<hostname>-<pid>".
-    const target = await NodeFSP.readlink(NodePath.join(profileDir, "SingletonLock"));
-    const pid = Number(/-(\d+)$/.exec(target)?.[1]);
-    return { locked: true, pid: Number.isInteger(pid) && pid > 0 ? pid : null };
-  } catch {
-    // fall through to the Windows lockfile probe
-  }
-  try {
-    const handle = await NodeFSP.open(NodePath.join(profileDir, "lockfile"), "r+");
-    await handle.close();
-    return { locked: false, pid: null };
-  } catch (cause) {
-    const code = (cause as { readonly code?: string }).code;
-    return code === "EBUSY" || code === "EPERM" || code === "EACCES"
-      ? { locked: true, pid: null }
-      : { locked: false, pid: null };
-  }
-}
-
-interface ScannedFile extends PersonalBrowserFile {
-  readonly path: string;
-}
-
-const fileKind = (relativePath: string): PersonalBrowserFile["kind"] => {
-  if (/^downloads[\\/]/i.test(relativePath)) return "download";
-  if (/\.(png|jpe?g|webp)$/i.test(relativePath)) return "screenshot";
-  if (/\.(webm|mp4|mov)$/i.test(relativePath)) return "recording";
-  return "other";
-};
-
-/** Ids are hashes of the relative path, so a client can never name a path directly. */
-const fileIdFor = (relativePath: string) =>
-  NodeCrypto.createHash("sha256").update(relativePath).digest("hex").slice(0, 32);
-
-async function scanArtifacts(root: string): Promise<ReadonlyArray<ScannedFile>> {
-  const found: ScannedFile[] = [];
-  const walk = async (directory: string, depth: number): Promise<void> => {
-    let entries: ReadonlyArray<import("node:fs").Dirent>;
-    try {
-      entries = await NodeFSP.readdir(directory, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const absolute = NodePath.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (depth < ARTIFACT_SCAN_DEPTH) await walk(absolute, depth + 1);
-        continue;
-      }
-      // Symlinks and special files are never listed or served.
-      if (!entry.isFile()) continue;
-      const stat = await NodeFSP.stat(absolute).catch(() => null);
-      if (stat === null) continue;
-      const relativePath = NodePath.relative(root, absolute);
-      found.push({
-        id: fileIdFor(relativePath),
-        name: entry.name,
-        kind: fileKind(relativePath),
-        sizeBytes: stat.size,
-        modifiedAt: stat.mtime.toISOString(),
-        path: absolute,
-      });
-    }
-  };
-  await walk(root, 0);
-  return found
-    .toSorted((left, right) => right.modifiedAt.localeCompare(left.modifiedAt))
-    .slice(0, MAX_LISTED_FILES);
-}
-
-const sameStatus = (left: PersonalBrowserStatus, right: PersonalBrowserStatus) =>
-  JSON.stringify(left) === JSON.stringify(right);
-
 /** @public Service construction is part of the canonical Effect module API. */
-export const make = (options: PersonalBrowserOptions) =>
+export const make = (rawOptions: PersonalBrowserOptions) =>
   Effect.gen(function* () {
+    const options = rawOptions;
     const config = yield* ServerConfig.ServerConfig;
     const previewManager = yield* PreviewManager.PreviewManager;
     const bots = yield* PersonalBotRepository.PersonalBotRepository;
@@ -688,22 +478,66 @@ export const make = (options: PersonalBrowserOptions) =>
 
     const pageTitles = new WeakMap<BrowserPage, string>();
     const viewers = new Map<number, ViewerHandle>();
-    let viewerSequence = 0;
+    // Mutable state the parts of the service share. One object, so a part that lives in another
+    // module reads and writes the same fields.
+    const st: {
+      viewerSequence: number;
+      /**
+       * Frames arrive on Playwright's callback, outside any effect, so the mask
+       * reads a plain copy of who holds the browser. Every lease change refreshes
+       * it; takeControl and returnToAgent also refresh it directly so the first
+       * frame after either already sees the new owner.
+       */
+      humanInControl: boolean;
+      /**
+       * Whether the device that holds control has had a viewer attached since it took it (a lease
+       * restored at boot counts: the restart cut its viewer). A person who took control and never
+       * opened a live view may be typing into the laptop's Chrome window, so only a device that was
+       * watching and then went away loses control.
+       */
+      controlViewerSeen: boolean;
+      controlAbsentSince: number | null;
+      /** One FramesHidden notice per hidden stretch; a forwarded frame ends it. */
+      framesHidden: boolean;
+      screencast: { readonly page: BrowserPage; readonly stop: () => Promise<void> } | null;
+      lastPageInfoRefresh: number;
+      /** What the controlling phone asked for, and where it is applied right now. */
+      humanViewport: {
+        readonly sessionId: string;
+        readonly viewerId: number;
+        readonly size: ViewportSize;
+      } | null;
+      appliedViewport: { readonly page: BrowserPage; readonly size: ViewportSize } | null;
+      activeHelp: {
+        readonly request: PersonalBrowserHelpRequest;
+        readonly taskId: PersonalTaskId;
+        /** Set when this request is the user's approval for a guarded destination. */
+        readonly approval: EgressApproval | null;
+      } | null;
+      sensitiveOrigins: ReadonlySet<string>;
+    } = {
+      viewerSequence: 0,
+      humanInControl: (yield* lease.view).ownerType === "human",
+      controlViewerSeen: false,
+      controlAbsentSince: null,
+      framesHidden: false,
+      screencast: null,
+      lastPageInfoRefresh: 0,
+      humanViewport: null,
+      appliedViewport: null,
+      activeHelp: null,
+      sensitiveOrigins: new Set(),
+    };
+    st.controlViewerSeen = st.humanInControl;
     // Frames arrive on Playwright's callback, outside any effect, so the mask
     // reads a plain copy of who holds the browser. Every lease change refreshes
     // it; takeControl and returnToAgent also refresh it directly so the first
     // frame after either already sees the new owner.
-    let humanInControl = (yield* lease.view).ownerType === "human";
     // Whether the device that holds control has had a viewer attached since it took it (a lease
     // restored at boot counts: the restart cut its viewer). A person who took control and never
     // opened a live view may be typing into the laptop's Chrome window, so only a device that was
     // watching and then went away loses control.
-    let controlViewerSeen = humanInControl;
-    let controlAbsentSince: number | null = null;
     // One FramesHidden notice per hidden stretch; a forwarded frame ends it.
-    let framesHidden = false;
-    let screencast: { readonly page: BrowserPage; readonly stop: () => Promise<void> } | null =
-      null;
     // While the person scrolls, the screencast is rougher and smaller; a sharp frame follows the
     // scroll. It always begins sharp: a new screencast resets it.
     const motion =
@@ -714,24 +548,17 @@ export const make = (options: PersonalBrowserOptions) =>
               ? {}
               : { settleMs: options.adaptiveSettleMs }),
             apply: (profile) => {
-              const current = screencast;
+              const current = st.screencast;
               return current?.page.setScreencastProfile?.(profile) ?? Promise.resolve();
             },
             onChange: (profile) => {
               for (const viewer of viewers.values()) viewer.telemetry?.motion(profile === "moving");
             },
           });
-    let lastPageInfoRefresh = 0;
     // The agent's own preview_resize per page, so a human's phone viewport is
     // undone back to exactly what the agent chose rather than to the window.
     const agentViewports = new WeakMap<BrowserPage, ViewportSize>();
     // What the controlling phone asked for, and where it is applied right now.
-    let humanViewport: {
-      readonly sessionId: string;
-      readonly viewerId: number;
-      readonly size: ViewportSize;
-    } | null = null;
-    let appliedViewport: { readonly page: BrowserPage; readonly size: ViewportSize } | null = null;
 
     const launchLock = yield* Semaphore.make(1);
     const screencastLock = yield* Semaphore.make(1);
@@ -739,12 +566,6 @@ export const make = (options: PersonalBrowserOptions) =>
     const statusDirty = yield* PubSub.unbounded<void>();
     const activityPubSub = yield* PubSub.unbounded<PersonalBrowserActivityEvent>();
     const recent: PersonalBrowserActivityEvent[] = [];
-    let activeHelp: {
-      readonly request: PersonalBrowserHelpRequest;
-      readonly taskId: PersonalTaskId;
-      /** Set when this request is the user's approval for a guarded destination. */
-      readonly approval: EgressApproval | null;
-    } | null = null;
 
     // Sensitive-site egress guard (policy in egressGuard.ts). What a bot has
     // had open is kept per thread and per delegation tree, since a delegated
@@ -753,7 +574,6 @@ export const make = (options: PersonalBrowserOptions) =>
     // restart, so a taint held in memory would be dropped while the model
     // still holds the page. It governs the shared browser and nothing else.
     const logins = yield* PersonalLoginRepository.PersonalLoginRepository;
-    let sensitiveOrigins: ReadonlySet<string> = new Set();
     const exposureStore = makeSensitiveExposureStore(yield* SqlClient.SqlClient);
     // The approval a thread was refused for, until its next request_browser_help
     // turns it into the question the user actually sees.
@@ -761,7 +581,7 @@ export const make = (options: PersonalBrowserOptions) =>
 
     const refreshSensitiveOrigins = logins.sensitiveOrigins().pipe(
       Effect.map((origins) => {
-        sensitiveOrigins = new Set(origins);
+        st.sensitiveOrigins = new Set(origins);
       }),
       Effect.catch((cause) =>
         Effect.logWarning("Sensitive sites could not be read; keeping the last known list.", {
@@ -858,7 +678,7 @@ export const make = (options: PersonalBrowserOptions) =>
     const exposeIfSensitive = (threadId: string, url: string) =>
       Effect.gen(function* () {
         const origin = webOrigin(url);
-        if (origin === null || !sensitiveOrigins.has(origin)) return;
+        if (origin === null || !st.sensitiveOrigins.has(origin)) return;
         const keys = yield* exposureKeys(threadId);
         yield* recordExposure(keys, "source", origin);
       });
@@ -885,7 +705,7 @@ export const make = (options: PersonalBrowserOptions) =>
         const approval = egressNeedingApproval({
           exposure: yield* exposureOf(keys),
           intent,
-          sensitive: sensitiveOrigins,
+          sensitive: st.sensitiveOrigins,
         });
         if (approval === null) return;
         pendingApprovals.set(threadId, approval);
@@ -910,9 +730,9 @@ export const make = (options: PersonalBrowserOptions) =>
      */
     const abandonHelp = (note: string) =>
       Effect.gen(function* () {
-        const pending = activeHelp;
+        const pending = st.activeHelp;
         if (pending === null) return;
-        activeHelp = null;
+        st.activeHelp = null;
         yield* tasks
           .resumeFromUser({
             taskId: pending.taskId,
@@ -1024,7 +844,8 @@ export const make = (options: PersonalBrowserOptions) =>
         // Survives the 90s agent TTL and a human takeover, so the Computer
         // tab's Back can still name the chat that opened the browser. A help
         // request outranks it: that chat is the one waiting on the user.
-        const backThreadId: string | null = activeHelp?.request.threadId ?? view.lastAgentThreadId;
+        const backThreadId: string | null =
+          st.activeHelp?.request.threadId ?? view.lastAgentThreadId;
         let lastAgent: PersonalBrowserStatus["lastAgent"] = null;
         if (backThreadId !== null) {
           const bot = yield* botForThread(backThreadId);
@@ -1052,7 +873,7 @@ export const make = (options: PersonalBrowserOptions) =>
           controller,
           generation: view.generation,
           page: pageInfo,
-          helpRequest: activeHelp?.request ?? null,
+          helpRequest: st.activeHelp?.request ?? null,
           dialog: page === null ? null : redactor.redact(page.pendingDialog()),
           lastAgent,
           viewers: viewers.size,
@@ -1069,6 +890,34 @@ export const make = (options: PersonalBrowserOptions) =>
       else pageTitles.set(page, title);
       if (previous !== title) yield* notify;
     });
+
+    const refreshCredentialProtection = (tab: TabEntry | undefined): void => {
+      if (tab === undefined || tab.credentialFormUrl === null || !openPage(tab.page)) return;
+      const current = tab.page.url();
+      if (current === tab.credentialFormUrl) return;
+      let parsed: URL;
+      try {
+        parsed = new URL(current);
+      } catch {
+        return;
+      }
+      if (parsed.search !== "" || parsed.hash !== "") return;
+      tab.credentialFormUrl = null;
+      tab.loginProtected = false;
+    };
+
+    /** Protected tabs never publish a query string: a GET login form puts the password there. */
+    const safeUrl = (tab: TabEntry, url: string): string => {
+      if (!tab.loginProtected) return url;
+      try {
+        const parsed = new URL(url);
+        parsed.search = "";
+        parsed.hash = "";
+        return parsed.toString();
+      } catch {
+        return url;
+      }
+    };
 
     /**
      * Hands a frame to every phone and returns what Chrome's ack for it waits for: the
@@ -1131,10 +980,10 @@ export const make = (options: PersonalBrowserOptions) =>
       refreshCredentialProtection(tab);
       let handedOff: Promise<void> | undefined;
       for (const viewer of viewers.values()) viewer.telemetry?.chromeFrame();
-      if (tab?.loginProtected === true && !humanInControl) {
+      if (tab?.loginProtected === true && !st.humanInControl) {
         for (const viewer of viewers.values()) viewer.telemetry?.frameHidden();
-        if (!framesHidden) {
-          framesHidden = true;
+        if (!st.framesHidden) {
+          st.framesHidden = true;
           const notice = encodeViewerMessage({
             _tag: "FramesHidden",
             reason: FRAMES_HIDDEN_REASON,
@@ -1144,15 +993,15 @@ export const make = (options: PersonalBrowserOptions) =>
         // A frame still waiting for the link was taken before the form was filled.
         for (const viewer of viewers.values()) viewer.flow.dropPending();
       } else {
-        framesHidden = false;
+        st.framesHidden = false;
         const frame = encodePersonalBrowserFrame(jpeg, meta);
         handedOff = offerToViewers(frame);
       }
       // Frames only arrive when the page repaints, so they double as a cheap
       // trigger for noticing human navigation (url/title) without polling.
       const now = performance.now();
-      if (now - lastPageInfoRefresh > PAGE_INFO_REFRESH_MS) {
-        lastPageInfoRefresh = now;
+      if (now - st.lastPageInfoRefresh > PAGE_INFO_REFRESH_MS) {
+        st.lastPageInfoRefresh = now;
         runFork(Effect.andThen(refreshPageInfo, notify));
       }
       return handedOff;
@@ -1162,18 +1011,18 @@ export const make = (options: PersonalBrowserOptions) =>
     const syncScreencast = screencastLock.withPermit(
       Effect.gen(function* () {
         const target = viewers.size > 0 && runtime.phase === "connected" ? viewportPage() : null;
-        if (screencast !== null && (target === null || screencast.page !== target)) {
-          const { stop } = screencast;
-          screencast = null;
+        if (st.screencast !== null && (target === null || st.screencast.page !== target)) {
+          const { stop } = st.screencast;
+          st.screencast = null;
           motion?.reset();
           yield* Effect.promise(() => stop().catch(() => undefined));
         }
         if (target !== null) watchDialogs(target);
-        if (target !== null && screencast === null) {
+        if (target !== null && st.screencast === null) {
           const stop = yield* Effect.tryPromise(() =>
             target.startScreencast((jpeg, meta) => onFrame(target, jpeg, meta)),
           ).pipe(Effect.option);
-          if (Option.isSome(stop)) screencast = { page: target, stop: stop.value };
+          if (Option.isSome(stop)) st.screencast = { page: target, stop: stop.value };
           motion?.reset();
         }
       }),
@@ -1188,9 +1037,9 @@ export const make = (options: PersonalBrowserOptions) =>
       screencastLock
         .withPermit(
           Effect.gen(function* () {
-            if (screencast === null || screencast.page !== page) return;
-            const { stop } = screencast;
-            screencast = null;
+            if (st.screencast === null || st.screencast.page !== page) return;
+            const { stop } = st.screencast;
+            st.screencast = null;
             motion?.reset();
             yield* Effect.promise(() => stop().catch(() => undefined));
           }),
@@ -1217,15 +1066,15 @@ export const make = (options: PersonalBrowserOptions) =>
       Effect.gen(function* () {
         const view = yield* lease.view;
         const held =
-          humanViewport !== null &&
+          st.humanViewport !== null &&
           view.ownerType === "human" &&
-          view.ownerId === humanViewport.sessionId &&
-          viewers.has(humanViewport.viewerId)
-            ? humanViewport
+          view.ownerId === st.humanViewport.sessionId &&
+          viewers.has(st.humanViewport.viewerId)
+            ? st.humanViewport
             : null;
-        humanViewport = held;
+        st.humanViewport = held;
         const target = held !== null && runtime.phase === "connected" ? viewportPage() : null;
-        const current = appliedViewport;
+        const current = st.appliedViewport;
         if (
           current !== null &&
           held !== null &&
@@ -1236,7 +1085,7 @@ export const make = (options: PersonalBrowserOptions) =>
           return;
         }
         if (current !== null) {
-          appliedViewport = null;
+          st.appliedViewport = null;
           if (current.page !== target && openPage(current.page)) {
             yield* setPageViewport(current.page, agentViewports.get(current.page) ?? null);
             yield* restartScreencastOn(current.page);
@@ -1248,7 +1097,7 @@ export const make = (options: PersonalBrowserOptions) =>
             deviceScaleFactor: PHONE_DEVICE_SCALE_FACTOR,
             mobile: true,
           });
-          if (applied) appliedViewport = { page: target, size: held.size };
+          if (applied) st.appliedViewport = { page: target, size: held.size };
           yield* restartScreencastOn(target);
         }
       }),
@@ -1279,9 +1128,9 @@ export const make = (options: PersonalBrowserOptions) =>
         runtime.context = null;
         runtime.tabs.clear();
         runtime.activeTabId = null;
-        screencast = null;
+        st.screencast = null;
         // Its page died with Chrome; a relaunch re-applies it if still wanted.
-        appliedViewport = null;
+        st.appliedViewport = null;
         motion?.reset();
         runtime.phase = runtime.closing ? "offline" : "crashed";
         runtime.detail = runtime.closing
@@ -1385,12 +1234,12 @@ export const make = (options: PersonalBrowserOptions) =>
     yield* lease.changes.pipe(
       Stream.runForEach((view) =>
         Effect.gen(function* () {
-          humanInControl = view.ownerType === "human";
+          st.humanInControl = view.ownerType === "human";
           if (
-            activeHelp !== null &&
+            st.activeHelp !== null &&
             view.ownerType === "agent" &&
             view.ownerId !== null &&
-            view.ownerId !== activeHelp.request.threadId
+            view.ownerId !== st.activeHelp.request.threadId
           ) {
             yield* abandonHelp(HELP_ENDED_BY_SWITCH);
           }
@@ -1416,7 +1265,7 @@ export const make = (options: PersonalBrowserOptions) =>
     };
 
     const clearHelpForAgentSwitch = (threadId: ThreadId) =>
-      activeHelp !== null && activeHelp.request.threadId !== threadId
+      st.activeHelp !== null && st.activeHelp.request.threadId !== threadId
         ? abandonHelp(HELP_ENDED_BY_SWITCH)
         : Effect.void;
 
@@ -1575,7 +1424,7 @@ export const make = (options: PersonalBrowserOptions) =>
           yield* onTabPageClosed(tab);
         }
         // Not a resume: the thread is being deleted, and the delete cancels its task.
-        if (activeHelp?.request.threadId === threadId) activeHelp = null;
+        if (st.activeHelp?.request.threadId === threadId) st.activeHelp = null;
         yield* lease.releaseThread(threadId);
         yield* notify;
       });
@@ -1591,34 +1440,6 @@ export const make = (options: PersonalBrowserOptions) =>
      * password in the URL, and a snapshot would report it, so a tab that
      * navigated to a URL carrying one stays closed.
      */
-    const refreshCredentialProtection = (tab: TabEntry | undefined): void => {
-      if (tab === undefined || tab.credentialFormUrl === null || !openPage(tab.page)) return;
-      const current = tab.page.url();
-      if (current === tab.credentialFormUrl) return;
-      let parsed: URL;
-      try {
-        parsed = new URL(current);
-      } catch {
-        return;
-      }
-      if (parsed.search !== "" || parsed.hash !== "") return;
-      tab.credentialFormUrl = null;
-      tab.loginProtected = false;
-    };
-
-    /** Protected tabs never publish a query string: a GET login form puts the password there. */
-    const safeUrl = (tab: TabEntry, url: string): string => {
-      if (!tab.loginProtected) return url;
-      try {
-        const parsed = new URL(url);
-        parsed.search = "";
-        parsed.hash = "";
-        return parsed.toString();
-      } catch {
-        return url;
-      }
-    };
-
     const statusOf = (tab: TabEntry | undefined): PreviewAutomationStatus => {
       refreshCredentialProtection(tab);
       return {
@@ -2348,9 +2169,11 @@ export const make = (options: PersonalBrowserOptions) =>
       Effect.gen(function* () {
         const before = yield* lease.view;
         yield* lease.takeControl(sessionId);
-        humanInControl = true;
-        controlViewerSeen = [...viewers.values()].some((viewer) => viewer.sessionId === sessionId);
-        controlAbsentSince = null;
+        st.humanInControl = true;
+        st.controlViewerSeen = [...viewers.values()].some(
+          (viewer) => viewer.sessionId === sessionId,
+        );
+        st.controlAbsentSince = null;
         // Another device taking over drops the previous controller's phone viewport.
         yield* syncHumanViewport;
         if (!(before.ownerType === "human" && before.ownerId === sessionId)) {
@@ -2387,7 +2210,7 @@ export const make = (options: PersonalBrowserOptions) =>
               ),
             );
           }
-          if (activeHelp?.request.threadId === input.threadId) return activeHelp.request;
+          if (st.activeHelp?.request.threadId === input.threadId) return st.activeHelp.request;
           yield* tasks
             .waitForBrowser({ taskId: input.taskId })
             .pipe(
@@ -2406,7 +2229,7 @@ export const make = (options: PersonalBrowserOptions) =>
             reason: approval === null ? input.reason : approvalQuestion(approval),
             requestedAt: yield* nowIso,
           };
-          activeHelp = { request, taskId: input.taskId, approval };
+          st.activeHelp = { request, taskId: input.taskId, approval };
           yield* recordActivity({
             kind: "control",
             summary: `${input.botName} asked for help: ${request.reason}`,
@@ -2424,14 +2247,14 @@ export const make = (options: PersonalBrowserOptions) =>
       Effect.gen(function* () {
         const before = yield* lease.view;
         yield* lease.returnToAgent;
-        humanInControl = (yield* lease.view).ownerType === "human";
-        controlViewerSeen = false;
-        controlAbsentSince = null;
+        st.humanInControl = (yield* lease.view).ownerType === "human";
+        st.controlViewerSeen = false;
+        st.controlAbsentSince = null;
         // The agent gets its own viewport back before it can run another op.
         yield* syncHumanViewport;
         if (before.ownerType === "human") {
-          const finishedHelp = activeHelp;
-          activeHelp = null;
+          const finishedHelp = st.activeHelp;
+          st.activeHelp = null;
           yield* recordActivity({
             kind: "control",
             summary:
@@ -2486,26 +2309,26 @@ export const make = (options: PersonalBrowserOptions) =>
     const controlWatchdog = Effect.gen(function* () {
       const view = yield* lease.view;
       if (controlGraceMs <= 0 || view.ownerType !== "human" || view.ownerId === null) {
-        controlAbsentSince = null;
+        st.controlAbsentSince = null;
         return;
       }
       const owner = view.ownerId;
       if ([...viewers.values()].some((viewer) => viewer.sessionId === owner)) {
-        controlViewerSeen = true;
-        controlAbsentSince = null;
+        st.controlViewerSeen = true;
+        st.controlAbsentSince = null;
         return;
       }
-      if (!controlViewerSeen || activeHelp !== null) {
-        controlAbsentSince = null;
+      if (!st.controlViewerSeen || st.activeHelp !== null) {
+        st.controlAbsentSince = null;
         return;
       }
       const now = yield* Clock.currentTimeMillis;
-      controlAbsentSince ??= now;
-      if (now - controlAbsentSince < controlGraceMs) return;
+      st.controlAbsentSince ??= now;
+      if (now - st.controlAbsentSince < controlGraceMs) return;
       yield* Effect.logInfo(
         "returning browser control to the agent: the device that had it disconnected",
         {
-          seconds: Math.round((now - controlAbsentSince) / 1_000),
+          seconds: Math.round((now - st.controlAbsentSince) / 1_000),
         },
       );
       yield* returnControl(
@@ -2553,15 +2376,15 @@ export const make = (options: PersonalBrowserOptions) =>
           runtime.contextSerial++;
           runtime.closing = true;
           // Every page is about to close: nothing to restore, nothing to move.
-          humanViewport = null;
-          appliedViewport = null;
+          st.humanViewport = null;
+          st.appliedViewport = null;
           for (const tab of tabs) {
             yield* Effect.promise(() => tab.page.close().catch(() => undefined));
             yield* onTabPageClosed(tab);
           }
-          if (screencast !== null) {
-            const { stop } = screencast;
-            screencast = null;
+          if (st.screencast !== null) {
+            const { stop } = st.screencast;
+            st.screencast = null;
             motion?.reset();
             yield* Effect.promise(() => stop().catch(() => undefined));
           }
@@ -2639,7 +2462,7 @@ export const make = (options: PersonalBrowserOptions) =>
      * holds its tab for as long as that takes.
      */
     const browserIsInUse = Effect.gen(function* () {
-      if (viewers.size > 0 || activeHelp !== null) return true;
+      if (viewers.size > 0 || st.activeHelp !== null) return true;
       const view = yield* lease.view;
       // A person keeps control until they hand it back, and they may be typing
       // into the Chrome window on the laptop with no viewer attached at all —
@@ -2738,7 +2561,7 @@ export const make = (options: PersonalBrowserOptions) =>
         Effect.gen(function* () {
           const outbox = yield* Queue.unbounded<string>();
           const viewer: ViewerHandle = {
-            id: ++viewerSequence,
+            id: ++st.viewerSequence,
             ...input,
             outbox,
             flow: new ViewerFlow({
@@ -2748,13 +2571,16 @@ export const make = (options: PersonalBrowserOptions) =>
             telemetry:
               options.streamTelemetry === false
                 ? null
-                : new ViewerTelemetry({ viewerId: viewerSequence, canOperate: input.canOperate }),
+                : new ViewerTelemetry({
+                    viewerId: st.viewerSequence,
+                    canOperate: input.canOperate,
+                  }),
             scrollEndHint: motion !== null,
           };
           if (viewer.telemetry !== null) viewer.flow.setObserver(viewer.telemetry);
           viewers.set(viewer.id, viewer);
           // A phone joining mid-stretch still gets the notice on the next frame.
-          framesHidden = false;
+          st.framesHidden = false;
           yield* syncScreencast;
           yield* notify;
           return viewer;
@@ -3045,7 +2871,7 @@ export const make = (options: PersonalBrowserOptions) =>
           return yield* refuse("Take control before interacting with the browser.");
         }
         if (message._tag === "Viewport") {
-          humanViewport = {
+          st.humanViewport = {
             sessionId: viewer.sessionId,
             viewerId: viewer.id,
             size: clampPersonalBrowserViewport(message),
