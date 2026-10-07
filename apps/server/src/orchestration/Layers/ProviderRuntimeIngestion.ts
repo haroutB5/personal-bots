@@ -1895,6 +1895,37 @@ const make = Effect.gen(function* () {
             Option.isSome(pendingTurnStart)
           : false;
 
+      // A turn.started replayed under a new event id after its own turn
+      // finished (a late or duplicated delivery) must not set the chat running
+      // again: nothing would end it. Narrow on purpose: it needs no active turn,
+      // no turn start pending on the server (a new turn that reuses the id is
+      // always asked for first), and a turn row of that id that already ended.
+      const replayedTurnStart =
+        event.type === "turn.started" &&
+        activeTurnId === null &&
+        eventTurnId !== undefined &&
+        Option.isNone(pendingTurnStart)
+          ? yield* projectionTurnRepository
+              .getByTurnId({ threadId: thread.id, turnId: eventTurnId })
+              .pipe(
+                Effect.map(
+                  Option.exists(
+                    (turn) =>
+                      turn.state === "completed" ||
+                      turn.state === "error" ||
+                      turn.state === "interrupted",
+                  ),
+                ),
+                Effect.orElseSucceed(() => false),
+              )
+          : false;
+      if (replayedTurnStart) {
+        yield* Effect.logDebug("provider runtime ingestion ignored a replayed turn.started", {
+          threadId: thread.id,
+          turnId: eventTurnId,
+        });
+      }
+
       // The exit of a session the thread has since moved off: a bot chat that
       // follows its bot to another provider stops the old session after the
       // thread already points at the new one. That exit says nothing about the
@@ -1931,7 +1962,10 @@ const make = Effect.gen(function* () {
           case "thread.started":
             return true;
           case "turn.started":
-            return !conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart;
+            return (
+              (!conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart) &&
+              !replayedTurnStart
+            );
           case "turn.completed":
           case "turn.aborted":
             if (conflictsWithActiveTurn || missingTurnForActiveTurn) {

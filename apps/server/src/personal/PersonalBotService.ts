@@ -802,7 +802,9 @@ export const make = Effect.gen(function* () {
           if (Option.isNone(updated)) {
             return yield* notFound(`Personal bot thread '${input.threadId}' was not found.`);
           }
-          return renamedTo === null ? updated.value : { ...updated.value, renamedTo };
+          return renamedTo === null || Option.isNone(shell)
+            ? updated.value
+            : { ...updated.value, renamedTo, renamedFrom: shell.value.title };
         }),
       );
     });

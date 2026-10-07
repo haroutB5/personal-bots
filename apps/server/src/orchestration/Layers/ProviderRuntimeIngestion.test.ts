@@ -513,6 +513,87 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("ignores a turn.started replayed under a new event id after its own turn completed", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-replayed");
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      turnId,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    harness.emit({ ...base, type: "turn.started", eventId: asEventId("evt-replay-started") });
+    harness.emit({
+      ...base,
+      type: "turn.completed",
+      eventId: asEventId("evt-replay-completed"),
+      payload: { state: "completed" },
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+      2_000,
+      threadId,
+    );
+
+    // The start of a turn that has already ended, delivered again with a new id.
+    harness.emit({ ...base, type: "turn.started", eventId: asEventId("evt-replay-started-again") });
+    await harness.drain();
+
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.session).toMatchObject({ status: "ready", activeTurnId: null });
+    expect(thread?.latestTurn).toMatchObject({ turnId, state: "completed" });
+  });
+
+  it("still runs a new turn that reuses the id of a finished turn once the server asked for it", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-reused");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const base = { provider: ProviderDriverKind.make("codex"), threadId, turnId, createdAt };
+    harness.emit({ ...base, type: "turn.started", eventId: asEventId("evt-reuse-started") });
+    harness.emit({
+      ...base,
+      type: "turn.completed",
+      eventId: asEventId("evt-reuse-completed"),
+      payload: { state: "completed" },
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+      2_000,
+      threadId,
+    );
+
+    // The next user message asks for a turn; the provider answers with the same id.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-reuse"),
+        threadId,
+        message: {
+          messageId: asMessageId("msg-reuse"),
+          role: "user",
+          text: "and again",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      }),
+    );
+    harness.emit({ ...base, type: "turn.started", eventId: asEventId("evt-reuse-started-2") });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "running" && entry.session?.activeTurnId === turnId,
+      2_000,
+      threadId,
+    );
+    expect(thread.session?.activeTurnId).toBe(turnId);
+  });
+
   it.each([
     { delivery: "buffered", responseStreamingMode: "paragraph" as const },
     { delivery: "streamed", responseStreamingMode: "token" as const },

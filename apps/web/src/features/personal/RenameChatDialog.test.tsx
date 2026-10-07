@@ -33,13 +33,18 @@ afterEach(() => {
   command.result = { _tag: "Success" };
 });
 
-function renderForm(initialTitle: string) {
+function renderForm(initialTitle: string, takenTitles?: ReadonlyArray<string>) {
   const onSave = vi.fn(async (_title: string): Promise<string | null> => null);
   const onCancel = vi.fn();
   let renderer!: ReactTestRenderer;
   act(() => {
     renderer = create(
-      <RenameChatForm initialTitle={initialTitle} onSave={onSave} onCancel={onCancel} />,
+      <RenameChatForm
+        initialTitle={initialTitle}
+        {...(takenTitles === undefined ? {} : { takenTitles })}
+        onSave={onSave}
+        onCancel={onCancel}
+      />,
     );
   });
   const root = renderer.root;
@@ -197,6 +202,41 @@ describe("RenameChatForm", () => {
   });
 });
 
+describe("RenameChatForm, unique names", () => {
+  it("flags a name another open chat has, with the case and spacing ignored, and turns Save off", async () => {
+    const form = renderForm("Trip plans", ["Main", "Weekly report"]);
+    for (const typed of ["Main", "main ", "  MAIN", "weekly    REPORT"]) {
+      form.type(typed);
+      const alert = form.renderer.root.findByProps({ role: "alert" });
+      expect(alert.children).toEqual([`A chat called "${typed.trim()}" already exists`]);
+      expect(form.input().props["aria-invalid"]).toBe(true);
+      expect(form.save().props.disabled).toBe(true);
+      await form.submit();
+      expect(form.onSave).not.toHaveBeenCalled();
+    }
+  });
+
+  it("clears the message and turns Save back on once the name is free", () => {
+    const form = renderForm("Trip plans", ["Main"]);
+    form.type("Main");
+    expect(form.save().props.disabled).toBe(true);
+    form.type("Main 2");
+    expect(form.renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+    expect(form.input().props["aria-invalid"]).toBe(false);
+    expect(form.save().props.disabled).toBe(false);
+  });
+
+  it("lets the chat keep its own name in other letters, and never flags an empty field", () => {
+    // The chat's own title is not in the list of the others.
+    const form = renderForm("Trip plans", ["Main"]);
+    form.type("TRIP PLANS");
+    expect(form.renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+    expect(form.save().props.disabled).toBe(false);
+    form.type("");
+    expect(form.renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+  });
+});
+
 describe("useRenameChat", () => {
   const environmentId = "env-1" as EnvironmentId;
   const threadId = "thread-7" as ThreadId;
@@ -211,6 +251,18 @@ describe("useRenameChat", () => {
     command.result = { _tag: "Failure", cause: Cause.fail({ message: "Thread not found." }) };
     const rename = useRenameChat(environmentId);
     await expect(rename(threadId, "Paris trip")).resolves.toBe("Thread not found.");
+  });
+
+  it("maps the typed duplicate-name refusal to the inline message", async () => {
+    command.result = {
+      _tag: "Failure",
+      cause: Cause.fail({
+        message: "Failed to dispatch orchestration command",
+        code: "chat_name_taken",
+      }),
+    };
+    const rename = useRenameChat(environmentId);
+    await expect(rename(threadId, "Main")).resolves.toBe('A chat called "Main" already exists');
   });
 
   it("refuses without a connection", async () => {

@@ -559,11 +559,11 @@ chainTest(
     }),
 );
 
-// KNOWN GAP (found by this test, reported in docs/releases/HANDOFF-evidence.md, not fixed: it is the core
-// ingestion path and no adapter is known to send it): ProviderRuntimeIngestion only rejects a turn.started that
-// CONFLICTS with the active turn. With no active turn, a turn.started replayed under a new event id for a turn
-// that already completed sets the thread session back to running with that turn active, and nothing ends it.
-// `fails: true` documents the wanted behaviour and starts failing the day the guard is added: then drop it.
+// Fixed in 1.66.5 (it was a known gap, docs/releases/HANDOFF-evidence.md): ProviderRuntimeIngestion rejected
+// a turn.started only when it CONFLICTED with the active turn. With no active turn, a turn.started replayed
+// under a new event id for a turn that already ended set the thread session back to running with that turn
+// active, and nothing ended it. Now such a replay is ignored (no active turn, no server turn start pending,
+// and the turn row of that id has ended); a turn that reuses an id after the server asked for it still runs.
 chainTest(
   "a turn.started that arrives after its own turn.completed does not leave the chat running",
   (h) =>
@@ -581,5 +581,4 @@ chainTest(
       expect([session?.status, session?.activeTurnId]).toEqual(["ready", null]);
       expect((yield* h.get(root)).task.status).toBe("completed");
     }),
-  { fails: true },
 );

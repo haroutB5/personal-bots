@@ -328,6 +328,8 @@ export const PersonalBotThread = Schema.Struct({
    * number), so the owner can be told.
    */
   renamedTo: Schema.optional(Schema.String),
+  /** With `renamedTo`: the name the chat had before. */
+  renamedFrom: Schema.optional(Schema.String),
   /** Only on `personalBots.list`; absent on create/archive results. */
   newestMessage: Schema.optional(Schema.NullOr(PersonalBotThreadNewestMessage)),
   /**
@@ -557,6 +559,7 @@ export const PersonalBotThreadsBatchResult = Schema.Struct({
     Schema.Array(
       Schema.Struct({
         threadId: ThreadId,
+        from: Schema.String,
         title: Schema.String,
       }),
     ),

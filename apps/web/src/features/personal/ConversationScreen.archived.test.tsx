@@ -515,12 +515,12 @@ beforeEach(() => {
   state.linkArchivedAt = "2026-09-30T10:00:00.000Z";
   state.thread = THREAD;
   state.navigate = vi.fn(async () => undefined);
-  state.archive = vi.fn(async () => ({ _tag: "Success", value: undefined }));
+  state.archive = vi.fn(async () => ({ _tag: "Success", value: {} }));
   state.otherCommand = vi.fn(async () => ({ _tag: "Success", value: undefined }));
   state.deleteChat = vi.fn(async (): Promise<Outcome> => ({ status: "done" }));
   state.retry = vi.fn(async () => true);
   state.sendWrapup = vi.fn(async () => true);
-  state.startNewChat = vi.fn(async () => undefined);
+  state.startNewChat = vi.fn(async () => ({ ok: true }));
   state.chipModel = null;
   state.bulk = vi.fn(async () => ({
     status: "settled",
@@ -851,7 +851,7 @@ it("takes the 72 px header and shows the chips from two chats", async () => {
   expect(text()).toContain("hbots");
 });
 
-it("+ opens the name sheet and Start chat creates it, replacing history and naming it", async () => {
+it("+ opens the name sheet and Start chat creates it, replacing history, already named", async () => {
   state.chipModel = CHIPS;
   await renderScreen();
   await act(async () => {
@@ -864,12 +864,13 @@ it("+ opens the name sheet and Start chat creates it, replacing history and nami
   const options = (state.startNewChat as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
     replace: boolean;
     keepState: boolean;
-    onCreated: (threadId: string) => Promise<unknown>;
+    title: string;
   };
   expect(options.replace).toBe(true);
   expect(options.keepState).toBe(true);
-  await options.onCreated("new-thread");
-  expect(state.renamed).toEqual([["new-thread", "Plan B"]]);
+  // The chat is created with its name: no rename afterwards, no "New chat" first.
+  expect(options.title).toBe("Plan B");
+  expect(state.renamed).toEqual([]);
 });
 
 const openChat = () => {

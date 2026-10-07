@@ -10,6 +10,7 @@ import {
 } from "~/components/ui/alert-dialog";
 import { Button } from "~/components/ui/button";
 
+import { chatNameClash } from "./chatNames";
 import { RENAME_CHAT_MAX_CHARS, renameChatDraftTitle } from "./renameChat";
 import { useKeyboardInset } from "./useKeyboardInset";
 
@@ -27,9 +28,12 @@ const keepFieldFocus = (event: React.SyntheticEvent) => event.preventDefault();
  * The field and its two buttons. Enter saves through the form, Escape
  * cancels; Save stays disabled while the trimmed draft is empty or unchanged.
  * A refusal keeps the dialog open with the server's message under the field.
+ * A name another open chat of the bot has (`takenTitles`, without this chat's
+ * own) is flagged under the field as it is typed and Save stays off.
  */
 export function RenameChatForm(props: {
   readonly initialTitle: string;
+  readonly takenTitles?: ReadonlyArray<string>;
   readonly inputRef?: React.Ref<HTMLInputElement>;
   readonly onSave: (title: string) => Promise<string | null>;
   readonly onCancel: () => void;
@@ -41,9 +45,11 @@ export function RenameChatForm(props: {
   const selectedRef = useRef(false);
   const errorId = useId();
   const title = renameChatDraftTitle(draft, initialTitle);
+  const clash = title === null ? null : chatNameClash(title, props.takenTitles ?? []);
+  const problem = clash ?? error;
 
   const submit = async (form: HTMLFormElement) => {
-    if (title === null || saving) return;
+    if (title === null || clash !== null || saving) return;
     setSaving(true);
     setError(null);
     const failure = await onSave(title);
@@ -72,8 +78,8 @@ export function RenameChatForm(props: {
           maxLength={RENAME_CHAT_MAX_CHARS}
           placeholder="Chat title"
           aria-label="Chat title"
-          aria-invalid={error !== null}
-          aria-describedby={error !== null ? errorId : undefined}
+          aria-invalid={problem !== null}
+          aria-describedby={problem !== null ? errorId : undefined}
           autoComplete="off"
           enterKeyHint="done"
           onChange={(event) => {
@@ -94,13 +100,13 @@ export function RenameChatForm(props: {
           // 16px keeps iOS from zooming the page when the field takes focus.
           className="h-11 w-full rounded-[var(--personal-radius-button)] border border-[var(--personal-border)] bg-[var(--personal-bg)] px-3 text-[16px] text-[var(--personal-text)] outline-none placeholder:text-[var(--personal-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]"
         />
-        {error !== null ? (
+        {problem !== null ? (
           <p
             id={errorId}
             role="alert"
             className="mt-2 text-[14px] leading-snug text-[var(--personal-error)]"
           >
-            {error}
+            {problem}
           </p>
         ) : null}
       </div>
@@ -117,7 +123,7 @@ export function RenameChatForm(props: {
         </Button>
         <Button
           type="submit"
-          disabled={title === null || saving}
+          disabled={title === null || clash !== null || saving}
           className={PHONE_BUTTON}
           onPointerDown={keepFieldFocus}
           onMouseDown={keepFieldFocus}
@@ -137,6 +143,8 @@ export function RenameChatForm(props: {
 export function RenameChatDialog(props: {
   readonly open: boolean;
   readonly initialTitle: string;
+  /** The names of the bot's other open chats (not the one being renamed). */
+  readonly takenTitles?: ReadonlyArray<string>;
   readonly onOpenChange: (open: boolean) => void;
   readonly onSave: (title: string) => Promise<string | null>;
 }): JSX.Element {
@@ -165,6 +173,7 @@ export function RenameChatDialog(props: {
         <RenameChatForm
           key={session}
           initialTitle={props.initialTitle}
+          {...(props.takenTitles === undefined ? {} : { takenTitles: props.takenTitles })}
           inputRef={inputRef}
           onCancel={() => props.onOpenChange(false)}
           onSave={async (title) => {

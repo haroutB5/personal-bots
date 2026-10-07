@@ -123,7 +123,7 @@ let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  state.archive = vi.fn(async () => ({ _tag: "Success", value: undefined }));
+  state.archive = vi.fn(async () => ({ _tag: "Success", value: {} }));
   state.otherCommand = vi.fn(async () => ({ _tag: "Success", value: undefined }));
   state.deleteChat = vi.fn(async () => ({ status: "cancelled" }));
 });
@@ -196,5 +196,23 @@ it("the archived row's buttons still unarchive and delete that chat", async () =
   await act(async () => {
     buttonsLabelled("Delete")[0]!.props.onClick();
   });
-  expect(state.deleteChat).toHaveBeenCalledWith("thread-archived");
+  // Named, so a refusal reads like the chat sheet's: Couldn't delete “Old plans”: <reason>.
+  expect(state.deleteChat).toHaveBeenCalledWith("thread-archived", { name: "Old plans" });
+});
+
+it("tells the owner when an unarchived chat came back under a number", async () => {
+  // The notice fades on a window timer; this suite has no DOM.
+  vi.stubGlobal("window", { setTimeout, clearTimeout });
+  state.archive = vi.fn(async () => ({
+    _tag: "Success",
+    value: { renamedTo: "Old plans 2" },
+  }));
+  await act(async () => {
+    renderer = create(<BotThreadsScreen botId="bot-a" />);
+  });
+  await act(async () => {
+    buttonsLabelled("Unarchive")[0]!.props.onClick();
+  });
+  const text = JSON.stringify(renderer!.toJSON());
+  expect(text).toContain("“Old plans” is in use now, so this chat is now “Old plans 2”.");
 });

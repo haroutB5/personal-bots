@@ -133,7 +133,7 @@ let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  state.archive = vi.fn(async () => ({ _tag: "Success", value: undefined }));
+  state.archive = vi.fn(async () => ({ _tag: "Success", value: {} }));
   state.otherCommand = vi.fn(async () => ({ _tag: "Success", value: undefined }));
   state.deleteChat = vi.fn(async () => ({ status: "cancelled" }));
   state.lead = true;

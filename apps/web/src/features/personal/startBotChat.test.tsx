@@ -1,4 +1,5 @@
 import type { EnvironmentId, PersonalBotId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { useEffect } from "react";
 import { act, create } from "react-test-renderer";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -9,6 +10,7 @@ const calls = vi.hoisted(() => ({
   created: [] as unknown[],
   navigated: [] as unknown[],
   release: null as (() => void) | null,
+  result: { _tag: "Success" } as { readonly _tag: string; readonly cause?: unknown },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -20,7 +22,7 @@ vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => async (args: unknown) => {
     calls.created.push(args);
     await new Promise<void>((resolve) => (calls.release = resolve));
-    return { _tag: "Success" };
+    return calls.result;
   },
 }));
 vi.mock("./usePersonalBots", () => ({ personalBotCreateThread: {} }));
@@ -39,6 +41,7 @@ beforeEach(() => {
   calls.created = [];
   calls.navigated = [];
   calls.release = null;
+  calls.result = { _tag: "Success" };
 });
 
 describe("useStartBotChat", () => {
@@ -46,8 +49,8 @@ describe("useStartBotChat", () => {
     act(() => {
       create(<Harness />);
     });
-    let first!: Promise<void>;
-    let second!: Promise<void>;
+    let first!: Promise<unknown>;
+    let second!: Promise<unknown>;
     act(() => {
       // Both calls see the same render: the state flag has not caught up yet.
       first = hook.latest.start();
@@ -59,5 +62,54 @@ describe("useStartBotChat", () => {
     });
     expect(calls.created).toHaveLength(1);
     expect(calls.navigated).toHaveLength(1);
+  });
+
+  it("creates the chat with the name the owner typed", async () => {
+    act(() => {
+      create(<Harness />);
+    });
+    let started!: Promise<unknown>;
+    act(() => {
+      started = hook.latest.start({ title: "Main" });
+    });
+    await act(async () => {
+      calls.release?.();
+      await started;
+    });
+    expect(calls.created).toEqual([
+      {
+        environmentId: "env",
+        input: { botId: "bot-1", threadId: expect.any(String), title: "Main" },
+      },
+    ]);
+    expect(calls.navigated).toHaveLength(1);
+  });
+
+  it("does not open the chat when the name is refused, and says why", async () => {
+    calls.result = {
+      _tag: "Failure",
+      cause: Cause.fail({
+        message: 'A chat called "Main" already exists',
+        code: "chat_name_taken",
+      }),
+    };
+    act(() => {
+      create(<Harness />);
+    });
+    let started!: Promise<unknown>;
+    act(() => {
+      started = hook.latest.start({ title: "Main" });
+    });
+    let outcome: unknown;
+    await act(async () => {
+      calls.release?.();
+      outcome = await started;
+    });
+    expect(outcome).toEqual({
+      ok: false,
+      message: 'A chat called "Main" already exists',
+      nameTaken: true,
+    });
+    expect(calls.navigated).toHaveLength(0);
   });
 });

@@ -50,18 +50,33 @@ export const archivePersonalChats = Effect.fn("archivePersonalChats")(function* 
   threadIds: ReadonlyArray<ThreadId>,
   archived: boolean,
 ) {
+  // A chat that comes back under a new name (its old one is in use now) is
+  // reported, so the owner is told which chats changed name.
+  const renamed: Array<{ threadId: ThreadId; from: string; title: string }> = [];
   const result = yield* forEachChat(
     threadIds,
     archived ? "Couldn't archive this chat." : "Couldn't unarchive this chat.",
-    (threadId) => bots.archiveThread({ threadId, archived }),
+    (threadId) =>
+      bots.archiveThread({ threadId, archived }).pipe(
+        Effect.tap((thread) =>
+          Effect.sync(() => {
+            if (thread.renamedTo !== undefined && thread.renamedFrom !== undefined) {
+              renamed.push({ threadId, from: thread.renamedFrom, title: thread.renamedTo });
+            }
+          }),
+        ),
+      ),
   );
   yield* Effect.logInfo("personal chats bulk archive", {
     archived,
     requested: threadIds.length,
     changed: result.done.length,
     failed: result.failed.length,
+    renamed: renamed.length,
   });
-  return result;
+  return renamed.length === 0
+    ? result
+    : ({ ...result, renamed } satisfies PersonalBotThreadsBatchResult);
 });
 
 /** Pins, snoozes or marks unread several chats, each through the bot service's `updateThread`. */

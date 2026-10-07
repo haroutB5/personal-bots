@@ -40,6 +40,7 @@ import {
   type ChatSection,
   selectedCountLabel,
   toggleChatSelection,
+  unarchiveRenamedNotice,
   visibleSelection,
 } from "./chatSelection";
 import { useBulkChatActions, type BulkChatOptions } from "./useBulkChatActions";
@@ -169,6 +170,7 @@ function ThreadRow({
   now,
   archived,
   onError,
+  onNotice,
   onLongPress,
   unread = false,
   onTogglePin,
@@ -182,6 +184,8 @@ function ThreadRow({
   archived: boolean;
   unread?: boolean;
   onError: (message: string | null) => void;
+  /** An unarchive that had to give the chat a new name (its old one is in use). */
+  onNotice?: ((text: string) => void) | undefined;
   /** Press and hold: select mode, starting with this chat. */
   onLongPress: (threadId: string) => void;
   /** Swipe right: Pin or Unpin (open chats). */
@@ -211,11 +215,15 @@ function ThreadRow({
           : "Couldn't unarchive this chat. Try again.",
       ),
     );
+    if (!next && result._tag === "Success" && result.value.renamedTo !== undefined) {
+      onNotice?.(unarchiveRenamedNotice(row.shell.title, result.value.renamedTo));
+    }
   };
   // The same confirm and delete path as "Delete chat" in the chat's menu.
   const onDelete = async () => {
     setBusy(true);
-    const outcome = await deleteChat(row.link.threadId);
+    // Named, so a refusal reads like the chat sheet's: Couldn't delete “X”: <reason>.
+    const outcome = await deleteChat(row.link.threadId, { name: row.shell.title });
     setBusy(false);
     if (outcome.status === "failed") onError(outcome.message);
     else if (outcome.status === "done") onError(null);
@@ -752,6 +760,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
                   now={now}
                   archived={false}
                   onError={setActionError}
+                  onNotice={(text) => setNotice({ text, failed: false })}
                   onLongPress={selectFromActive}
                   unread={unreadThreadIds.has(row.link.threadId)}
                   onTogglePin={onTogglePin}
@@ -776,6 +785,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
                     now={wakeClock}
                     archived={false}
                     onError={setActionError}
+                    onNotice={(text) => setNotice({ text, failed: false })}
                     onLongPress={ignoreLongPress}
                     onWake={onWake}
                   />
@@ -799,6 +809,7 @@ export function BotThreadsScreen({ botId }: { botId: string }): JSX.Element {
                     now={now}
                     archived
                     onError={setActionError}
+                    onNotice={(text) => setNotice({ text, failed: false })}
                     onLongPress={selectFromArchived}
                   />
                 ))}

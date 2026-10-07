@@ -191,6 +191,8 @@ import { useWrapupChat } from "./wrapupChat";
 import { type DeleteChatOptions, useDeleteChat } from "./useDeleteChat";
 import { hidesBotPreviews } from "./previewPrivacy";
 import { RenameChatDialog } from "./RenameChatDialog";
+import { unarchiveRenamedNotice } from "./chatSelection";
+import { useBotOpenChatNames } from "./useBotOpenChatNames";
 import { pendingForThread } from "./pendingOutgoing";
 import { renameChatInitialTitle, useRenameChat } from "./renameChat";
 import { findRetryTarget, useRetryFailedTurn } from "./retryFailedTurn";
@@ -836,6 +838,10 @@ export function ConversationScreen({
     const result = await archiveThread({ environmentId, input: { threadId, archived: false } });
     setUnarchiving(false);
     setActionError(commandFailureMessage(result, "Couldn't unarchive this chat. Try again."));
+    // Its name was taken while it was archived: the header already shows the new one.
+    if (result._tag === "Success" && result.value.renamedTo !== undefined) {
+      announce(unarchiveRenamedNotice(chatTitle ?? "This chat", result.value.renamedTo));
+    }
   };
 
   const { send: sendWrapup, sending: wrapupSending } = useWrapupChat(
@@ -871,6 +877,7 @@ export function ConversationScreen({
   const onDeleteChat = () => deleteChatNow(threadId, { name: chatTitle }, true);
 
   const renameChat = useRenameChat(environmentId);
+  const openChatNames = useBotOpenChatNames(environmentId, botId);
   /** The chat the Rename dialog is for (the open chat or another one). */
   const [renameTarget, setRenameTarget] = useState<{
     readonly threadId: ThreadId;
@@ -1432,6 +1439,9 @@ export function ConversationScreen({
       <RenameChatDialog
         open={renameOpen}
         initialTitle={renameChatInitialTitle(renameTarget?.title ?? chatTitle)}
+        takenTitles={openChatNames
+          .filter((chat) => chat.threadId !== (renameTarget?.threadId ?? threadId))
+          .map((chat) => chat.title)}
         onOpenChange={setRenameOpen}
         onSave={async (title) => {
           const target = renameTarget;

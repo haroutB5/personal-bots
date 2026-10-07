@@ -111,7 +111,22 @@ export function bulkResultNotice(
     result.failed.map((entry) => entry.message),
   );
   // "Marked 3 chats." reads as nothing: "3 chats marked unread."
-  return action === "markUnread"
-    ? { ...notice, text: notice.text.replace(/^Marked (\d+ chats?)\./, "$1 marked unread.") }
-    : notice;
+  if (action === "markUnread") {
+    return { ...notice, text: notice.text.replace(/^Marked (\d+ chats?)\./, "$1 marked unread.") };
+  }
+  // A chat whose name another open chat took while it was archived came back
+  // under a number: say so.
+  const renamed = action === "unarchive" ? (result.renamed ?? []) : [];
+  const [only] = renamed;
+  if (only === undefined) return notice;
+  const sentence =
+    renamed.length === 1
+      ? unarchiveRenamedNotice(only.from, only.title)
+      : `${renamed.length} chats got a number after their name because it is in use now.`;
+  return { ...notice, text: `${notice.text} ${sentence}` };
+}
+
+/** One chat unarchived under a number, for the notice: `“Main” is in use now, so this chat is now “Main 3”.` */
+export function unarchiveRenamedNotice(from: string, to: string): string {
+  return `“${from}” is in use now, so this chat is now “${to}”.`;
 }

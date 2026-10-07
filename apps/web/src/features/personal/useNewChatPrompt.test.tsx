@@ -7,8 +7,11 @@ import { useNewChatPrompt, type NewChatPromptOptions } from "./useNewChatPrompt"
 
 interface DialogProps {
   readonly open: boolean;
+  readonly botId: string;
   readonly botName: string;
   readonly starting: boolean;
+  readonly error: string | null;
+  readonly onDraftChange: () => void;
   readonly onOpenChange: (open: boolean) => void;
   readonly onStart: (title: string) => void;
 }
@@ -18,6 +21,7 @@ const log = vi.hoisted(() => ({
   startCalls: [] as unknown[],
   release: null as (() => void) | null,
   hold: false,
+  refuse: null as string | null,
   dialogProps: null as unknown,
 }));
 
@@ -27,23 +31,19 @@ vi.mock("./NewChatDialog", () => ({
     return <div data-dialog="" />;
   },
 }));
-vi.mock("./renameChat", async (importActual) => ({
-  ...(await importActual<typeof import("./renameChat")>()),
-  useRenameChat: () => async (threadId: string, title: string) => {
-    log.events.push(`rename ${threadId} ${title}`);
-    return null;
-  },
-}));
 vi.mock("./startBotChat", () => ({
-  // The real hook creates the thread, runs onCreated, then navigates.
+  // The real hook creates the thread (already named), then navigates.
   useStartBotChat: () => ({
     starting: false,
-    start: async (options?: { onCreated?: (threadId: string) => Promise<unknown> }) => {
+    start: async (options?: { title?: string }) => {
       log.startCalls.push(options);
-      log.events.push("create");
+      log.events.push(options?.title === undefined ? "create" : `create ${options.title}`);
       if (log.hold) await new Promise<void>((resolve) => (log.release = resolve));
-      await options?.onCreated?.("new-thread");
+      if (log.refuse !== null) {
+        return { ok: false as const, message: log.refuse, nameTaken: true };
+      }
       log.events.push("navigate");
+      return { ok: true as const };
     },
   }),
 }));
@@ -80,6 +80,7 @@ beforeEach(() => {
   log.startCalls = [];
   log.release = null;
   log.hold = false;
+  log.refuse = null;
   log.dialogProps = null;
 });
 
@@ -94,12 +95,29 @@ describe("useNewChatPrompt", () => {
     expect(log.startCalls).toHaveLength(0);
   });
 
-  it("names the chat before it opens when a name was typed", async () => {
+  it("creates the chat with the name that was typed, so it never shows New chat", async () => {
     render();
     open();
     await act(async () => dialog().onStart("  Plan B  "));
-    expect(log.events).toEqual(["create", "rename new-thread Plan B", "navigate"]);
+    expect(log.events).toEqual(["create Plan B", "navigate"]);
     // The sheet is gone once the chat is on its way.
+    expect(mounted()).toBe(false);
+  });
+
+  it("keeps the sheet open with the reason when the server refuses the name", async () => {
+    render();
+    open();
+    log.refuse = 'A chat called "Plan B" already exists';
+    await act(async () => dialog().onStart("Plan B"));
+    expect(log.events).toEqual(["create Plan B"]);
+    expect(mounted()).toBe(true);
+    expect(dialog().open).toBe(true);
+    expect(dialog().error).toBe('A chat called "Plan B" already exists');
+    // Changing the name clears the reason; a free name then opens the chat.
+    act(() => dialog().onDraftChange());
+    expect(dialog().error).toBeNull();
+    log.refuse = null;
+    await act(async () => dialog().onStart("Plan C"));
     expect(mounted()).toBe(false);
   });
 
@@ -148,8 +166,7 @@ describe("useNewChatPrompt", () => {
     await act(async () => {
       log.release?.();
     });
-    expect(log.events.filter((event) => event === "create")).toHaveLength(1);
-    expect(log.events.filter((event) => event.startsWith("rename"))).toHaveLength(1);
+    expect(log.events.filter((event) => event.startsWith("create"))).toHaveLength(1);
   });
 
   it("does nothing without a bot", () => {

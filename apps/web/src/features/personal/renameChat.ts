@@ -1,8 +1,9 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { chatNameTakenMessage, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { isChatNameTakenFailure } from "./chatNames";
 import { commandFailureMessage } from "./commandFeedback";
 import { conversationChatTitle } from "./ConversationHeaderName";
 
@@ -29,7 +30,9 @@ export function renameChatDraftTitle(draft: string, initial: string): string | n
  * the user's own title, so the AI title never overwrites it afterwards. Every
  * place that shows the title reads the thread shell, which the server's event
  * updates, so nothing here patches local state. Resolves to the server's
- * message when it refuses, null once the title is saved.
+ * message when it refuses, null once the title is saved. A bot's open chats
+ * have unique names: the server refuses a taken one with the `chat_name_taken`
+ * code, which reads `A chat called "X" already exists`.
  */
 export function useRenameChat(
   environmentId: EnvironmentId | null,
@@ -41,6 +44,7 @@ export function useRenameChat(
     if (environmentId === null) return "Not connected to your computer.";
     try {
       const result = await updateMetadata({ environmentId, input: { threadId, title } });
+      if (isChatNameTakenFailure(result)) return chatNameTakenMessage(title);
       return commandFailureMessage(result, "Couldn't rename this chat. Try again.");
     } catch {
       return "Couldn't rename this chat. Try again.";

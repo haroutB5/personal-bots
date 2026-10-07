@@ -126,3 +126,41 @@ describe("bulk pin, snooze and mark unread", () => {
     ).toBe("1 chat couldn't be snoozed: A chat can be snoozed for at most a year.");
   });
 });
+
+describe("bulk unarchive under a new name", () => {
+  it("says which chat came back under a number", () => {
+    expect(
+      bulkResultNotice("unarchive", {
+        done: ids("a"),
+        failed: [],
+        renamed: [{ threadId: "a" as ThreadId, from: "Main", title: "Main 3" }],
+      }).text,
+    ).toBe("Unarchived 1 chat. “Main” is in use now, so this chat is now “Main 3”.");
+  });
+
+  it("counts them when several came back under a number", () => {
+    expect(
+      bulkResultNotice("unarchive", {
+        done: ids("a", "b", "c"),
+        failed: [],
+        renamed: [
+          { threadId: "a" as ThreadId, from: "Main", title: "Main 2" },
+          { threadId: "b" as ThreadId, from: "Plan", title: "Plan 2" },
+        ],
+      }).text,
+    ).toBe("Unarchived 3 chats. 2 chats got a number after their name because it is in use now.");
+  });
+
+  it("adds nothing for other actions or when no chat was renamed", () => {
+    expect(bulkResultNotice("unarchive", { done: ids("a"), failed: [] }).text).toBe(
+      "Unarchived 1 chat.",
+    );
+    expect(
+      bulkResultNotice("archive", {
+        done: ids("a"),
+        failed: [],
+        renamed: [{ threadId: "a" as ThreadId, from: "Main", title: "Main 3" }],
+      }).text,
+    ).toBe("Archived 1 chat.");
+  });
+});
