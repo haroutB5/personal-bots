@@ -435,6 +435,56 @@ it.effect("shows the model the server browser's own words, never a desktop host'
   );
 });
 
+it.effect(
+  "tells the model why the server browser refused control, not just that it was cut off",
+  () => {
+    const hostText = "The user just returned control. Call preview_snapshot first.";
+    const answer =
+      (broker: PreviewAutomationBroker.PreviewAutomationBroker["Service"], clientId: string) =>
+      (request: RoutedRequest) =>
+        broker.respond({
+          clientId,
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: false,
+          error: { _tag: "PreviewAutomationControlInterruptedError", message: hostText },
+        });
+    const call = (broker: PreviewAutomationBroker.PreviewAutomationBroker["Service"]) =>
+      broker
+        .invoke<void>({ scope, operation: "click", input: { locator: "#b" } })
+        .pipe(Effect.flip);
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* makeBroker;
+        const desktop = requestsFrom(yield* broker.connect(makeHost()));
+        yield* Stream.runForEach(desktop, answer(broker, "client-1")).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        // A desktop host's words never reach the model.
+        expect((yield* call(broker)).message).toBe(
+          "Preview automation click was interrupted on client client-1.",
+        );
+      }),
+    ).pipe(
+      Effect.andThen(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const broker = yield* makeBroker;
+            const server = requestsFrom(
+              yield* broker.connect(makeHost({ clientId: "server-browser", kind: "server" })),
+            );
+            yield* Stream.runForEach(server, answer(broker, "server-browser")).pipe(
+              Effect.forkScoped,
+            );
+            yield* Effect.yieldNow;
+            expect((yield* call(broker)).message).toBe(hostText);
+          }),
+        ),
+      ),
+    );
+  },
+);
+
 it.effect("classifies a remote non-editable target without collapsing it to execution", () => {
   const remoteError = {
     _tag: "PreviewAutomationTargetNotEditableError",

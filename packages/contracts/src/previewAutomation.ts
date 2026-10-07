@@ -960,7 +960,10 @@ export class PreviewAutomationControlInterruptedError extends Schema.TaggedError
   },
 ) {
   override get message(): string {
-    return `Preview automation ${this.operation} was interrupted on client ${this.clientId}.`;
+    return (
+      this.hostMessage ??
+      `Preview automation ${this.operation} was interrupted on client ${this.clientId}.`
+    );
   }
 }
 

@@ -226,6 +226,140 @@ describe("BrowserLease", () => {
       }).pipe(Effect.provide(leaseLayer)),
   );
 
+  // 1.66.6 QA: the first refusal used to clear the flag, so the same action
+  // went through on the second try with no snapshot in between.
+  describe("the fresh-snapshot requirement after a hand-back", () => {
+    const GUARDED = ["click", "type", "press", "scroll", "hover", "drag", "history", "closeTab"];
+
+    const handBack = Effect.gen(function* () {
+      const lease = yield* BrowserLease.BrowserLease;
+      yield* lease.takeControl("session-1");
+      yield* lease.returnToAgent;
+    });
+
+    const run = (operation: string, effect: Effect.Effect<void, string> = Effect.void) =>
+      Effect.gen(function* () {
+        const lease = yield* BrowserLease.BrowserLease;
+        return yield* lease
+          .runAgentOp({ threadId: "thread-a", operation }, effect)
+          .pipe(Effect.exit);
+      });
+
+    it.effect("every guarded action stays refused when asked twice, and never runs", () =>
+      Effect.gen(function* () {
+        for (const operation of GUARDED) {
+          yield* handBack;
+          let ran = 0;
+          const effect = Effect.sync(() => {
+            ran++;
+          });
+          expect(rejectionReason(yield* run(operation, effect)), `${operation} #1`).toBe(
+            "snapshot-required",
+          );
+          expect(rejectionReason(yield* run(operation, effect)), `${operation} #2`).toBe(
+            "snapshot-required",
+          );
+          expect(rejectionReason(yield* run(operation, effect)), `${operation} #3`).toBe(
+            "snapshot-required",
+          );
+          expect(ran, operation).toBe(0);
+          expect(rejectionReason(yield* run("snapshot")), operation).toBe("succeeded");
+          expect(rejectionReason(yield* run(operation, effect)), `${operation} after`).toBe(
+            "succeeded",
+          );
+          expect(ran, operation).toBe(1);
+        }
+      }).pipe(Effect.provide(leaseLayer)),
+    );
+
+    it.effect("a refused action does not unlock a different guarded action", () =>
+      Effect.gen(function* () {
+        yield* handBack;
+        for (const operation of GUARDED) {
+          expect(rejectionReason(yield* run(operation)), operation).toBe("snapshot-required");
+        }
+        // Refused again in the reverse order: nothing above consumed the flag.
+        for (const operation of [...GUARDED].reverse()) {
+          expect(rejectionReason(yield* run(operation)), operation).toBe("snapshot-required");
+        }
+      }).pipe(Effect.provide(leaseLayer)),
+    );
+
+    it.effect("a snapshot that fails or is interrupted does not clear it", () =>
+      Effect.gen(function* () {
+        yield* handBack;
+        expect(rejectionReason(yield* run("snapshot", Effect.fail("page is gone")))).toBe(
+          "other-failure",
+        );
+        expect(rejectionReason(yield* run("snapshot", Effect.interrupt))).not.toBe("succeeded");
+        expect(rejectionReason(yield* run("snapshot", Effect.die(new Error("crash"))))).not.toBe(
+          "succeeded",
+        );
+        for (const operation of GUARDED) {
+          expect(rejectionReason(yield* run(operation)), operation).toBe("snapshot-required");
+        }
+        yield* run("snapshot");
+        for (const operation of GUARDED) {
+          expect(rejectionReason(yield* run(operation)), operation).toBe("succeeded");
+        }
+      }).pipe(Effect.provide(leaseLayer)),
+    );
+
+    it.effect("a snapshot refused during user control, or other actions, do not clear it", () =>
+      Effect.gen(function* () {
+        const lease = yield* BrowserLease.BrowserLease;
+        yield* lease.takeControl("session-1");
+        expect(rejectionReason(yield* run("snapshot"))).toBe("human-control");
+        yield* lease.returnToAgent;
+        // Not guarded, so they run; none of them counts as reading the page.
+        for (const operation of ["open", "navigate", "evaluate", "waitFor", "status"]) {
+          expect(rejectionReason(yield* run(operation)), operation).toBe("succeeded");
+        }
+        for (const operation of GUARDED) {
+          expect(rejectionReason(yield* run(operation)), operation).toBe("snapshot-required");
+        }
+      }).pipe(Effect.provide(leaseLayer)),
+    );
+
+    it.effect("a second hand-back asks for a snapshot again", () =>
+      Effect.gen(function* () {
+        yield* handBack;
+        yield* run("snapshot");
+        expect(rejectionReason(yield* run("click"))).toBe("succeeded");
+        yield* handBack;
+        expect(rejectionReason(yield* run("click"))).toBe("snapshot-required");
+        expect(rejectionReason(yield* run("click"))).toBe("snapshot-required");
+      }).pipe(Effect.provide(leaseLayer)),
+    );
+
+    it.effect("a snapshot still running when control changes hands does not clear it", () =>
+      Effect.gen(function* () {
+        const lease = yield* BrowserLease.BrowserLease;
+        yield* handBack;
+        const started = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        const snapshot = yield* lease
+          .runAgentOp(
+            { threadId: "thread-a", operation: "snapshot" },
+            Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(finish))),
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        // The user takes the browser mid-snapshot (after the wait for the op runs out)
+        // and hands it back again: what the snapshot read is already stale.
+        const takeover = yield* lease.takeControl("session-1").pipe(Effect.forkChild);
+        yield* TestClock.adjust(BrowserLease.TAKEOVER_WAIT_MS + 1);
+        yield* Fiber.join(takeover);
+        yield* lease.returnToAgent;
+        yield* Deferred.succeed(finish, undefined);
+        yield* Fiber.join(snapshot);
+        expect(rejectionReason(yield* run("click"))).toBe("snapshot-required");
+        yield* run("snapshot");
+        expect(rejectionReason(yield* run("click"))).toBe("succeeded");
+      }).pipe(Effect.provide(leaseLayer)),
+    );
+  });
+
   it.effect(
     "a persisted human lease is cleared at boot: its session id died with the restart",
     () =>

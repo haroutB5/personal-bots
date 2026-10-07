@@ -4597,6 +4597,83 @@ describe("PersonalBrowser", () => {
       }).pipe(Effect.provide(makeLayer(fake.driver)));
     });
 
+    // QA 1.66.6: the first refusal used to use up the "snapshot first" requirement, so
+    // repeating the same call after a hand-back went through.
+    it.effect(
+      "after a hand-back every page-changing action stays refused until a snapshot succeeds",
+      () => {
+        const fake = makeFakeDriver();
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          const open = (yield* browser.handleAutomationRequest(
+            request("navigate", { url: "example.com" }),
+          )) as PreviewAutomationStatus;
+          const page = fake.state.page;
+          page.historyTargets = { back: "https://example.com/a", forward: "https://example.com/b" };
+          page.pointer.length = 0;
+          yield* browser.takeControl("session-1");
+          yield* browser.returnToAgent("session-1");
+
+          const guarded = () => [
+            request("click", { locator: "text=Save" }),
+            request("click", { x: 1, y: 1, button: "right", clicks: 2 }),
+            request("type", { text: "typed" }),
+            request("press", { key: "Enter" }),
+            request("scroll", { deltaY: 100 }),
+            request("hover", { x: 1, y: 1 }),
+            request("hover", { locator: "text=Menu" }),
+            request("drag", { fromX: 1, fromY: 1, toX: 9, toY: 9 }),
+            request("history", { action: "reload" }),
+            request("history", { action: "back" }),
+            request("history", { action: "forward" }),
+            onTab(request("closeTab", {}), open.tabId!),
+          ];
+          const expectAllRefused = (label: string) =>
+            Effect.gen(function* () {
+              for (const operation of guarded()) {
+                const error = yield* refused(browser, operation);
+                expect(error.tag, `${label} ${operation.operation}`).toBe(
+                  "PreviewAutomationControlInterruptedError",
+                );
+                // The bot is told what to do, not just that it was interrupted.
+                expect(error.message, `${label} ${operation.operation}`).toContain(
+                  "preview_snapshot",
+                );
+              }
+              expect(page.pointer, label).toEqual([]);
+              expect(page.typed, label).toEqual([]);
+              expect(page.closed, label).toBe(false);
+            });
+
+          // Once, twice, and in a different order: the refusals use nothing up.
+          yield* expectAllRefused("first");
+          yield* expectAllRefused("second");
+          yield* expectAllRefused("third");
+
+          // A snapshot that fails is not a re-read of the page.
+          page.evaluateImpl = async () => {
+            throw new Error("page crashed");
+          };
+          yield* refused(browser, request("snapshot"));
+          yield* expectAllRefused("after a failed snapshot");
+
+          page.evaluateImpl = async () => ({
+            url: page.currentUrl,
+            title: "Fake page",
+            loading: false,
+            visibleText: "",
+            interactiveElements: [],
+          });
+          yield* browser.handleAutomationRequest(request("snapshot"));
+          yield* browser.handleAutomationRequest(request("history", { action: "reload" }));
+          yield* browser.handleAutomationRequest(request("hover", { x: 1, y: 1 }));
+          yield* browser.handleAutomationRequest(onTab(request("closeTab", {}), open.tabId!));
+          expect(page.pointer.map((entry) => entry.op)).toEqual(["reload", "mouseMove"]);
+          expect(page.closed).toBe(true);
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      },
+    );
+
     it.effect("closeTab closes only the named tab and lists the ones left", () => {
       const fake = makeFakeDriver();
       return Effect.gen(function* () {

@@ -314,15 +314,14 @@ export const make = Effect.gen(function* () {
             if (current.takeoverPending || current.row.ownerType === "human") {
               return [{ _tag: "rejected", reason: "human-control" }, current];
             }
-            let freshSnapshotRequired = current.freshSnapshotRequired;
-            if (freshSnapshotRequired && ACTIONS_NEEDING_FRESH_SNAPSHOT.has(input.operation)) {
-              // Reported once; the agent is told to snapshot before acting.
-              return [
-                { _tag: "rejected", reason: "snapshot-required" },
-                { ...current, freshSnapshotRequired: false },
-              ];
+            if (
+              current.freshSnapshotRequired &&
+              ACTIONS_NEEDING_FRESH_SNAPSHOT.has(input.operation)
+            ) {
+              // A refusal never clears the flag: every such action stays refused
+              // until a snapshot has actually succeeded (cleared after `effect`).
+              return [{ _tag: "rejected", reason: "snapshot-required" }, current];
             }
-            if (input.operation === "snapshot") freshSnapshotRequired = false;
             const sameOwner =
               current.row.ownerId === input.threadId && agentLeaseLive(current.row, now);
             const row: BrowserLeaseRow = {
@@ -335,7 +334,7 @@ export const make = Effect.gen(function* () {
             };
             return [
               { _tag: "acquired", row, changed: !sameOwner },
-              { ...current, row, freshSnapshotRequired, lastAgentThreadId: input.threadId },
+              { ...current, row, lastAgentThreadId: input.threadId },
             ];
           },
         );
@@ -344,7 +343,7 @@ export const make = Effect.gen(function* () {
             reason: acquired.reason,
             message:
               acquired.reason === "snapshot-required"
-                ? "The user just returned control of the shared browser and the page may have changed. Take a snapshot before acting."
+                ? "The user just returned control of the shared browser and the page may have changed. Call preview_snapshot first; every click, hover, drag, type, press, scroll, history and close-tab action stays refused until a snapshot succeeds."
                 : humanControlMessage,
           });
         }
@@ -368,6 +367,19 @@ export const make = Effect.gen(function* () {
           });
         }
         return yield* effect.pipe(
+          // Only a snapshot that came back successfully counts as the agent
+          // having re-read the page, and only if control did not change hands
+          // while it ran (a takeover or hand-back bumps the generation and
+          // sets the flag again).
+          Effect.tap(() =>
+            input.operation === "snapshot"
+              ? Ref.update(state, (current) =>
+                  current.row.generation === generation
+                    ? { ...current, freshSnapshotRequired: false }
+                    : current,
+                )
+              : Effect.void,
+          ),
           Effect.ensuring(
             Ref.update(state, (current) =>
               current.inFlight?.done === done ? { ...current, inFlight: null } : current,
