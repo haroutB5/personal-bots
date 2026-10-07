@@ -18,6 +18,7 @@ import type { BrowserCore } from "./browserCore.ts";
 import type { BrowserLaunch } from "./browserLaunch.ts";
 import type { BrowserTabs } from "./browserTabs.ts";
 import type { PersonalBrowser } from "./PersonalBrowser.ts";
+import { stepIdleTicks } from "./browserControlPolicy.ts";
 
 export const makeBrowserLifecycle = (core: BrowserCore, launch: BrowserLaunch, tabs: BrowserTabs) =>
   Effect.gen(function* () {
@@ -182,13 +183,15 @@ export const makeBrowserLifecycle = (core: BrowserCore, launch: BrowserLaunch, t
 
     let idleTicks = 0;
     const idleSweep = Effect.gen(function* () {
-      if (runtime.phase !== "connected" || (yield* browserIsInUse)) {
-        idleTicks = 0;
-        return;
-      }
-      idleTicks += 1;
-      if (idleTicks < IDLE_CLOSE_AFTER_TICKS) return;
-      idleTicks = 0;
+      const connected = runtime.phase === "connected";
+      const step = stepIdleTicks({
+        connected,
+        inUse: connected && (yield* browserIsInUse),
+        ticks: idleTicks,
+        closeAfterTicks: IDLE_CLOSE_AFTER_TICKS,
+      });
+      idleTicks = step.ticks;
+      if (!step.close) return;
       yield* lease.runExclusive(
         Effect.gen(function* () {
           // Re-read inside the lock: a takeover or an agent op can land between

@@ -11,6 +11,13 @@ import { HELP_ENDED_BY_SWITCH, type TabEntry } from "./browserShared.ts";
 import type { BrowserCore } from "./browserCore.ts";
 import type { BrowserLaunch } from "./browserLaunch.ts";
 import type { PersonalBrowser } from "./PersonalBrowser.ts";
+import {
+  helpEndsOnAgentSwitch,
+  latestOpenTab,
+  resolveTabForRequest,
+  tabsInCookieScope,
+} from "./browserTabPolicy.ts";
+import type { BrowserPage } from "./driver.ts";
 
 export const makeBrowserTabs = (core: BrowserCore, launch: BrowserLaunch) => {
   const {
@@ -38,28 +45,16 @@ export const makeBrowserTabs = (core: BrowserCore, launch: BrowserLaunch) => {
     run: () => Promise<A>,
   ) => Effect.tryPromise({ try: run, catch: (cause) => classifyPageError(cause, input) });
 
-  const latestTabForThread = (threadId: string): TabEntry | undefined => {
-    let latest: TabEntry | undefined;
-    for (const tab of runtime.tabs.values()) {
-      if (tab.threadId === threadId && openPage(tab.page)) latest = tab;
-    }
-    return latest;
-  };
+  const latestTabForThread = (threadId: string): TabEntry | undefined =>
+    latestOpenTab(runtime.tabs.values(), threadId, openPage);
 
   const clearHelpForAgentSwitch = (threadId: ThreadId) =>
-    st.activeHelp !== null && st.activeHelp.request.threadId !== threadId
+    helpEndsOnAgentSwitch(st.activeHelp?.request.threadId ?? null, threadId)
       ? abandonHelp(HELP_ENDED_BY_SWITCH)
       : Effect.void;
 
-  const tabForRequest = (request: PreviewAutomationRequest): TabEntry | undefined => {
-    if (request.tabId !== undefined) {
-      const tab = runtime.tabs.get(request.tabId);
-      if (tab !== undefined && tab.threadId === request.threadId && openPage(tab.page)) return tab;
-      // An explicit tab that is gone stays an error; an inherited one falls back.
-      if (request.tabIdExplicit === true) return undefined;
-    }
-    return latestTabForThread(request.threadId);
-  };
+  const tabForRequest = (request: PreviewAutomationRequest): TabEntry | undefined =>
+    resolveTabForRequest({ tabsById: runtime.tabs, request, isOpen: openPage });
 
   const requireTab = (request: PreviewAutomationRequest) => {
     const tab = tabForRequest(request);
@@ -177,12 +172,14 @@ export const makeBrowserTabs = (core: BrowserCore, launch: BrowserLaunch) => {
    */
   const retireTabsInCookieScope = (input: { readonly origin: string; readonly except: TabEntry }) =>
     Effect.gen(function* () {
-      const inScope = (url: string) =>
-        url !== "about:blank" && loginOriginCovering(url, [input.origin]) !== null;
       // Collected first: closing a tab reaps it out of the same map.
-      const doomed = [...runtime.tabs.values()].filter(
-        (tab) => tab !== input.except && openPage(tab.page) && inScope(tab.page.url()),
-      );
+      const doomed = tabsInCookieScope({
+        tabs: runtime.tabs.values(),
+        except: input.except,
+        isOpen: (page: BrowserPage) => openPage(page),
+        urlOf: (page: BrowserPage) => page.url(),
+        covers: (url) => loginOriginCovering(url, [input.origin]) !== null,
+      });
       for (const tab of doomed) {
         yield* Effect.promise(() => tab.page.close().catch(() => undefined));
         yield* onTabPageClosed(tab);
@@ -205,17 +202,6 @@ export const makeBrowserTabs = (core: BrowserCore, launch: BrowserLaunch) => {
       yield* notify;
     });
 
-  /**
-   * The tab a saved login was typed into is closed to the model while the
-   * credential form is still the document: the value is sitting in it. Once
-   * that tab has navigated away from the form the password is gone from the
-   * page, so it reads normally again — every bot shares the saved logins and
-   * the sessions they create, so no other tab is restricted at all.
-   *
-   * A query string is the exception. A `method="GET"` login form puts the
-   * password in the URL, and a snapshot would report it, so a tab that
-   * navigated to a URL carrying one stays closed.
-   */
   const statusOf = (tab: TabEntry | undefined): PreviewAutomationStatus => {
     refreshCredentialProtection(tab);
     return {

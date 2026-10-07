@@ -19,6 +19,7 @@ import type { BrowserLaunch } from "./browserLaunch.ts";
 import type { BrowserTabs } from "./browserTabs.ts";
 import type { BrowserOperations } from "./browserOperations.ts";
 import type { PersonalBrowser } from "./PersonalBrowser.ts";
+import { stepControlWatch } from "./browserControlPolicy.ts";
 
 export const makeBrowserControl = (
   core: BrowserCore,
@@ -367,31 +368,28 @@ export const makeBrowserControl = (
      */
     const controlWatchdog = Effect.gen(function* () {
       const view = yield* lease.view;
-      if (controlGraceMs <= 0 || view.ownerType !== "human" || view.ownerId === null) {
-        st.controlAbsentSince = null;
-        return;
-      }
-      const owner = view.ownerId;
-      if ([...viewers.values()].some((viewer) => viewer.sessionId === owner)) {
-        st.controlViewerSeen = true;
-        st.controlAbsentSince = null;
-        return;
-      }
-      if (!st.controlViewerSeen || st.activeHelp !== null) {
-        st.controlAbsentSince = null;
-        return;
-      }
-      const now = yield* Clock.currentTimeMillis;
-      st.controlAbsentSince ??= now;
-      if (now - st.controlAbsentSince < controlGraceMs) return;
+      // The effect clock (a test clock moves it); reading it has no side effect.
+      const nowMs = yield* Clock.currentTimeMillis;
+      const step = stepControlWatch({
+        graceMs: controlGraceMs,
+        ownerType: view.ownerType,
+        ownerId: view.ownerId,
+        viewerSessionIds: [...viewers.values()].map((viewer) => viewer.sessionId),
+        helpOpen: st.activeHelp !== null,
+        state: { viewerSeen: st.controlViewerSeen, absentSince: st.controlAbsentSince },
+        now: () => nowMs,
+      });
+      st.controlViewerSeen = step.state.viewerSeen;
+      st.controlAbsentSince = step.state.absentSince;
+      if (step.action !== "hand_back") return;
       yield* Effect.logInfo(
         "returning browser control to the agent: the device that had it disconnected",
         {
-          seconds: Math.round((now - st.controlAbsentSince) / 1_000),
+          seconds: Math.round(step.absentMs / 1_000),
         },
       );
       yield* returnControl(
-        owner,
+        view.ownerId!,
         "Control went back to the agent: the device that had it disconnected",
       );
     });

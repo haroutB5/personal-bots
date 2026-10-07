@@ -575,6 +575,17 @@ export const makeBrowserCore = (rawOptions: PersonalBrowserOptions) =>
       if (previous !== title) yield* notify;
     });
 
+    /**
+     * The tab a saved login was typed into is closed to the model while the
+     * credential form is still the document: the value is sitting in it. Once
+     * that tab has navigated away from the form the password is gone from the
+     * page, so it reads normally again — every bot shares the saved logins and
+     * the sessions they create, so no other tab is restricted at all.
+     *
+     * A query string is the exception. A `method="GET"` login form puts the
+     * password in the URL, and a snapshot would report it, so a tab that
+     * navigated to a URL carrying one stays closed.
+     */
     const refreshCredentialProtection = (tab: TabEntry | undefined): void => {
       if (tab === undefined || tab.credentialFormUrl === null || !openPage(tab.page)) return;
       const current = tab.page.url();
