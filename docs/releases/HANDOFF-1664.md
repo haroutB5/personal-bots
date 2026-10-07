@@ -33,9 +33,16 @@ showing) or "or hold the name", then New chat, All chats N and the mute group. W
 lives only in the sheet. The trigger is still named "Chat options". `scripts/personal/perf/stream.mjs` cleaned up its test chat through the old Delete row,
 so it now goes Chat options, Chat settings..., Delete chat in the sheet (same confirm).
 
+**5. Follow-ups after CTO review (same release).** (a) The chip row follows a pin: when pinning moves a chip to the front, or unpinning drops it
+elsewhere, the row scrolls so that chip is fully visible (clear of the edge fade), smoothly, or at once under reduced motion. Nothing moves when the
+chip is already in view; the open chat's own pin keeps the usual centring; a new chip is not a pin (`ChatChips.tsx`, `scrollLeftToReveal` in
+`chatChipNavigation.ts`). (b) Delete always names the chat on failure: `Couldn't delete "X"` plus the server's reason when it gives one, else
+"Try again.", for another chat and for the open chat (and the archived bar's Delete), like Archive's (`useDeleteChat.ts`, new `name` option; the
+confirm's words are unchanged).
+
 ## Proof
 
-- Web unit tests: 2195 (was 2064), 208 files (was 204). New or reworked: `chatChipOrder.test.tsx` (order and freeze, pin and unpin, new chat, woken snooze,
+- Web unit tests: 2208 (was 2064), 208 files (was 204). New or reworked: `chatChipOrder.test.tsx` (order and freeze, pin and unpin, new chat, woken snooze,
   chats leaving, the leave and re-enter rule, the 60 s return, the hook), `chatSettingsModel.test.ts` (open chat, another chat, archived, task chip, snoozed,
   unread, running turn, needs you, waiting, rate limited, previews hidden, announcements), `ChatSettingsSheet.test.tsx` (rows, disabled rows, snooze in
   place), `ChatChips.hold.test.tsx` (hold, tap, scroll and drift, composer guard, right-click, keys, hint, centring after a re-sort), `useLongPress.test.tsx`
@@ -50,9 +57,13 @@ so it now goes Chat options, Chat settings..., Delete chat in the sheet (same co
   Delete leave us on the open chat, Delete names the chat; the menu holds only the door and the hint; one chat: hold on the name opens the sheet and a tap
   still opens Edit bot; a two-line clamp for a long title; desktop 1280: right-click, a 430 px card, Shift+F10 and ContextMenu, and focus returns to the
   chip after Escape. No uncaught page errors.
+- Restage browser check (`qa/chatsettings-1664/part3.mjs`, shots in `shots2`; 390x844, dark, throwaway server on release `a60c35469edb`, 24 chats): with the row
+  scrolled 300+ px along, Pin on a visible chip put it first and the row scrolled back to the start with the chip fully in view; Unpin dropped it at the far
+  end and the row scrolled to it, fully in view; a pin of a chip already first and in view left it in view. 9 of 9 checks passed, no page errors. The failed-Delete
+  wording is covered by unit tests only (a refused delete cannot be forced on a throwaway server).
 - Test-harness note: a tap that lands within 350 ms of the finger lifting from a hold is eaten on purpose (`useLongPress`), so a script must wait about
   half a second after the sheet shows before tapping a row. A person does.
-- Release gates: see "Gate evidence" below (server 2304 tests, web 2195, both tsc, 233 PowerShell checks, e2e 5/5).
+- Release gates: see "Gate evidence" below (server 2304 tests, web 2208, both tsc, 233 PowerShell checks, e2e 5/5).
 
 ## Not tested / limits
 
@@ -60,7 +71,7 @@ so it now goes Chat options, Chat settings..., Delete chat in the sheet (same co
 - The perf script `stream.mjs` was edited for the new delete path but not run (it costs a model turn); the click path it uses (Chat options, Chat
   settings..., Delete chat in the dialog) was exercised by the browser check above.
 - Light mode was built from the same tokens and not checked (Harout's rule: dark only).
-- A pinned chip sits first in the row but the row does not scroll to it, so it can be just off screen to the left until he scrolls.
+- A chip moved by a pin or unpin made on another device while this screen is open scrolls into view the same way (the row follows any pin change it sees).
 - An archived chat's sheet (Rename, Unarchive, Delete) is covered by unit tests at screen level, not in the browser run.
 
 ## For QA
@@ -75,22 +86,22 @@ now). Regression: the All chats list long-press select mode and swipe, the archi
 
 ## Gate evidence
 
-<!-- gate-evidence:begin sha=96d379002fbcb0884b695c740cec95f1fdb815ec release=96d379002fbc json-sha256=d281916c851d56c54854bf9e56d4e2816eab1402c09a1fd107283336ff832d96 result=PASS -->
+<!-- gate-evidence:begin sha=a60c35469edbaa1fb7aab2e0b2e4d6fb64e53ca4 release=a60c35469edb json-sha256=a56a86ab447cd9df0cc3ec852f74f92a898bf47910893fbc0ff120eabaf77d6c result=PASS -->
 
-Written by `scripts/personal/gate-evidence.ps1` at 2026-10-07T16:35:04Z. Version 1.66.4, release `96d379002fbc`, commit `96d379002fbcb0884b695c740cec95f1fdb815ec` on `feat/hbots-1664`, working tree clean, result **PASS**.
+Written by `scripts/personal/gate-evidence.ps1` at 2026-10-07T16:56:06Z. Version 1.66.4, release `a60c35469edb`, commit `a60c35469edbaa1fb7aab2e0b2e4d6fb64e53ca4` on `feat/hbots-1664`, working tree clean, result **PASS**.
 
-Machine-readable copy: `releases\96d379002fbc\gate-evidence.json` (sha256 `d281916c851d56c54854bf9e56d4e2816eab1402c09a1fd107283336ff832d96`) and the full gate logs in `releases\96d379002fbc\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
+Machine-readable copy: `releases\a60c35469edb\gate-evidence.json` (sha256 `a56a86ab447cd9df0cc3ec852f74f92a898bf47910893fbc0ff120eabaf77d6c`) and the full gate logs in `releases\a60c35469edb\gate-evidence-logs\`. `check-gate-evidence.ps1` (release waiter, before arming) refuses a release whose evidence is missing, failed or recorded for another commit, and one with code changes after this commit; only `docs/releases` may change after it.
 
 | Gate         | Commands                                                                                                                                                                                                                                                                                                               | Exit | Result                                                     | Seconds |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- | ------- |
-| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2304 tests passed, 0 failed, 3 skipped, in 171 files | 220.3   |
-| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 47.9    |
-| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2195 tests passed, 0 failed, 0 skipped, in 208 files | 30.2    |
-| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 9.6     |
-| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 59.2    |
-| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-chatsettings\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\96d379002fbc" -Json` (in `.`)                                                                                                              | 0    | pass: 5/5 journeys passed                                  | 36.2    |
+| server-tests | `vp test run src/personal src/mcp` (in `apps\server`)                                                                                                                                                                                                                                                                  | 0    | pass: 2304 tests passed, 0 failed, 3 skipped, in 171 files | 215.3   |
+| server-tsc   | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\server`)                                                                                                                                                                                                                                                              | 0    | pass: exit code only                                       | 41.7    |
+| web-tests    | `vp test run --project unit src/features/personal` (in `apps\web`)                                                                                                                                                                                                                                                     | 0    | pass: 2208 tests passed, 0 failed, 0 skipped, in 208 files | 30.3    |
+| web-tsc      | `..\..\node_modules\.bin\tsc --noEmit` (in `apps\web`)                                                                                                                                                                                                                                                                 | 0    | pass: exit code only                                       | 9.5     |
+| ps-tests     | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\release-safety.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\gate-evidence.tests.ps1`; `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\personal\updates\updates.tests.ps1` (in `.`) | 0    | pass: 233 checks ok, 0 failed                              | 63.2    |
+| e2e          | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Claude\AI\_wt\hbots-chatsettings\scripts\personal\e2e-smoke.ps1" -Release "C:\Users\Ht\.personal-bots\releases\a60c35469edb" -Json` (in `.`)                                                                                                              | 0    | pass: 5/5 journeys passed                                  | 35.7    |
 
 E2E journeys: `bots-list-chat` ok, `new-chat-named` ok, `delegate-task` ok, `chats-search` ok, `long-press-reply` ok.
 
-Tree: HEAD at start `96d379002fbcb0884b695c740cec95f1fdb815ec`, at end `96d379002fbcb0884b695c740cec95f1fdb815ec`; tracked files modified: none. Staged release: version 1.66.4, sha 96d379002fbc, dirty False, externals copied; `dist/bin.mjs` sha256 `0fe8f7a9e03daa3d90d7589cc8f9f844dbfcbe36074fe4bcfae28f88fc5e53e4`.
+Tree: HEAD at start `a60c35469edbaa1fb7aab2e0b2e4d6fb64e53ca4`, at end `a60c35469edbaa1fb7aab2e0b2e4d6fb64e53ca4`; tracked files modified: none. Staged release: version 1.66.4, sha a60c35469edb, dirty False, externals copied; `dist/bin.mjs` sha256 `0fe8f7a9e03daa3d90d7589cc8f9f844dbfcbe36074fe4bcfae28f88fc5e53e4`.
 <!-- gate-evidence:end -->
