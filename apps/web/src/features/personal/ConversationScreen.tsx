@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -92,7 +92,7 @@ import { useCloseChatNotifications } from "./staleNotifications";
 import { useDesktopStatus } from "./computer/desktopState";
 import { useComputerFeed } from "./computer/computerState";
 import { ConversationRoutinesPanel } from "./ConversationRoutinesPanel";
-import { CONVERSATION_SIDE_PANEL_ID, ConversationSidePanel } from "./ConversationSidePanel";
+import { CONVERSATION_SIDE_PANEL_ID } from "./desktopColumns";
 import {
   buildConversationItems,
   contextBadgeLabel,
@@ -167,6 +167,13 @@ import { renameChatInitialTitle, useRenameChat } from "./renameChat";
 import { findRetryTarget, useRetryFailedTurn } from "./retryFailedTurn";
 import { usePersonalBackTarget } from "./usePersonalBackTarget";
 import { usePersonalGroupRelayThreadIds } from "./usePersonalGroups";
+
+// Wide desktop only: the Computer and routines panel beside the chat. A phone
+// never opens it, so its code (the whole Computer screen) stays out of the
+// chat's load (1.66.0).
+const ConversationSidePanel = lazy(() =>
+  import("./ConversationSidePanel").then((module) => ({ default: module.ConversationSidePanel })),
+);
 
 const ICON_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--personal-text)]";
@@ -1355,13 +1362,15 @@ export function ConversationScreen({
     <div className="flex h-full min-h-0">
       <div className="h-full min-w-0 flex-1">{chat}</div>
       {sidePanelOpen ? (
-        <ConversationSidePanel
-          environmentId={environmentId}
-          botId={botId}
-          threadId={threadId}
-          showRoutines={showRoutinesStrip}
-          onHideRoutines={() => setPersonalPreference("showRoutinesStrip", false)}
-        />
+        <Suspense fallback={null}>
+          <ConversationSidePanel
+            environmentId={environmentId}
+            botId={botId}
+            threadId={threadId}
+            showRoutines={showRoutinesStrip}
+            onHideRoutines={() => setPersonalPreference("showRoutinesStrip", false)}
+          />
+        </Suspense>
       ) : null}
     </div>
   );

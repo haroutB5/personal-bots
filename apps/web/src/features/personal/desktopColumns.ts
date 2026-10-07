@@ -30,6 +30,8 @@ export const RESIZE_STEP = 16;
 export const SIDE_PANEL_MIN_VIEWPORT = 1440;
 
 export const SIDEBAR_ID = "personal-bot-list";
+/** The side panel's element id; here so the chat can name it without loading the panel. */
+export const CONVERSATION_SIDE_PANEL_ID = "conversation-side-panel";
 
 export function clampWidth(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max));

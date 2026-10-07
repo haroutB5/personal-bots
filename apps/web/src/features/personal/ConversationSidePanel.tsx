@@ -8,6 +8,7 @@ import { ColumnResizeHandle } from "./ColumnResizeHandle";
 import { ComputerScreen } from "./computer/ComputerScreen";
 import { ConversationRoutinesPanel } from "./ConversationRoutinesPanel";
 import {
+  CONVERSATION_SIDE_PANEL_ID,
   SIDE_PANEL_WIDTH,
   SIDEBAR_ID,
   sidePanelMaxWidth,
@@ -15,7 +16,7 @@ import {
 } from "./desktopColumns";
 import { setPersonalNumberPreference, usePersonalNumberPreference } from "./personalPreferences";
 
-export const CONVERSATION_SIDE_PANEL_ID = "conversation-side-panel";
+export { CONVERSATION_SIDE_PANEL_ID };
 
 /**
  * Wide desktop only (the chat decides when it fits): the Computer pinned

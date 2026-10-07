@@ -19,7 +19,6 @@ import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
-import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useDefaultThemeAdoption } from "../hooks/useDefaultTheme";
@@ -104,6 +103,15 @@ const SshPasswordPromptDialog = lazy(() =>
 const ThemeEditorHost = lazy(() =>
   import("../components/settings/ThemeEditorHost").then((module) => ({
     default: module.ThemeEditorHost,
+  })),
+);
+
+// The provider-update popover never shows on the Bots routes (isPersonalPath
+// below), so its code, the provider icons and the model-trait picker behind it
+// load only where it can render (1.66.0).
+const ProviderUpdateLaunchNotification = lazy(() =>
+  import("../components/ProviderUpdateLaunchNotification").then((module) => ({
+    default: module.ProviderUpdateLaunchNotification,
   })),
 );
 
@@ -342,7 +350,9 @@ function RootRouteView() {
           ) : null}
           {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
           {primaryEnvironmentAuthenticated && !isPersonalPath(pathname) ? (
-            <ProviderUpdateLaunchNotification />
+            <Suspense fallback={null}>
+              <ProviderUpdateLaunchNotification />
+            </Suspense>
           ) : null}
           {appShell}
           {/* Above the router: a theme draft is judged by walking the app, so the
