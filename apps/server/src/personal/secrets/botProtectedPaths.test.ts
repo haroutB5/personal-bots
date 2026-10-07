@@ -25,14 +25,13 @@ const POSIX: BotProtectedPathsInput = {
 };
 
 describe("botProtectedPaths", () => {
-  it("lists the secrets folder, the database and its three sidecars, and the logs folder", () => {
+  it("lists the secrets folder (read-write) and the database with its three sidecars (write only), no logs", () => {
     assert.deepEqual(botProtectedPaths(WINDOWS), [
-      { path: WINDOWS.secretsDir, kind: "dir" },
-      { path: `${WINDOWS.dbPath}`, kind: "file" },
-      { path: `${WINDOWS.dbPath}-wal`, kind: "file" },
-      { path: `${WINDOWS.dbPath}-shm`, kind: "file" },
-      { path: `${WINDOWS.dbPath}-journal`, kind: "file" },
-      { path: WINDOWS.logsDir, kind: "dir" },
+      { path: WINDOWS.secretsDir, kind: "dir", access: "read-write" },
+      { path: `${WINDOWS.dbPath}`, kind: "file", access: "write" },
+      { path: `${WINDOWS.dbPath}-wal`, kind: "file", access: "write" },
+      { path: `${WINDOWS.dbPath}-shm`, kind: "file", access: "write" },
+      { path: `${WINDOWS.dbPath}-journal`, kind: "file", access: "write" },
     ]);
   });
 
@@ -78,23 +77,38 @@ describe("botProtectedPaths", () => {
       assert.equal(claudeFileRuleAnchor("C:\\Data [2024]\\secrets"), "//c/Data \\[2024\\]/secrets");
     });
 
-    it("denies Read and Edit on the folders, the database and every sidecar, on both anchors", () => {
+    it("denies Read and Edit on the secrets folder and Edit only on the database and sidecars, on both anchors", () => {
       const rules = buildClaudeBotPermissionDeny(WINDOWS);
-      for (const tool of ["Read", "Edit"]) {
-        for (const base of [
-          "//c/Users/Jo Doe/.personal-bots/userdata",
-          // The tail anchor: matches under any root, share or long-path prefix.
-          "//**/.personal-bots/userdata",
-        ]) {
-          // Folders: the folder itself (what a Grep or Glob path names) and everything under it.
-          for (const folder of ["secrets", "logs"]) {
-            assert.ok(rules.includes(`${tool}(${base}/${folder})`), `${tool} ${base}/${folder}`);
-            assert.ok(rules.includes(`${tool}(${base}/${folder}/**)`));
-          }
-          for (const suffix of ["", "-wal", "-shm", "-journal"]) {
-            assert.ok(rules.includes(`${tool}(${base}/state.sqlite${suffix})`));
-          }
+      for (const base of [
+        "//c/Users/Jo Doe/.personal-bots/userdata",
+        // The tail anchor: matches under any root, share or long-path prefix.
+        "//**/.personal-bots/userdata",
+      ]) {
+        // The folder itself (what a Grep or Glob path names) and everything under it.
+        for (const tool of ["Read", "Edit"]) {
+          assert.ok(rules.includes(`${tool}(${base}/secrets)`), `${tool} ${base}/secrets`);
+          assert.ok(rules.includes(`${tool}(${base}/secrets/**)`));
         }
+        for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+          assert.ok(rules.includes(`Edit(${base}/state.sqlite${suffix})`));
+          assert.ok(
+            !rules.includes(`Read(${base}/state.sqlite${suffix})`),
+            "the database stays readable",
+          );
+        }
+        assert.ok(!rules.some((rule) => rule.includes(`${base}/logs`)), "no rule on the logs");
+      }
+    });
+
+    it("leaves the database and logs readable from the shell", () => {
+      for (const paths of [WINDOWS, POSIX]) {
+        const rules = buildClaudeBotPermissionDeny(paths);
+        assert.ok(
+          !rules.some((rule) => /state\.sqlite|[\\/]logs/.test(rule) && !rule.startsWith("Edit(")),
+        );
+        assert.ok(!rules.some((rule) => /^(Bash|PowerShell)\(.*(sqlite|logs)/.test(rule)));
+        // The secrets folder keeps its command-text rules.
+        assert.ok(rules.some((rule) => rule.startsWith("Bash(*") && rule.includes("secrets")));
       }
     });
 
@@ -125,9 +139,9 @@ describe("botProtectedPaths", () => {
       assert.ok(!bash.some((rule) => rule.includes("/C/")), "no uppercase Git Bash drive");
       assert.ok(powershell.includes(`PowerShell(*C:\\${secrets.replaceAll("/", "\\")}*)`));
       assert.ok(!powershell.some((rule) => rule.includes("(*/c/")), "PowerShell never sees /c/");
-      // The database name catches a relative `cat state.sqlite-wal` from inside the folder.
-      assert.ok(bash.includes("Bash(*state.sqlite*)"));
-      assert.ok(powershell.includes("PowerShell(*state.sqlite*)"));
+      // The database is readable from the shell: no text rule names it.
+      assert.ok(!bash.some((rule) => rule.includes("state.sqlite")));
+      assert.ok(!powershell.some((rule) => rule.includes("state.sqlite")));
       // The tail catches a UNC share or \\?\ spelling of the same folder.
       assert.ok(bash.includes("Bash(*.personal-bots/userdata/secrets*)"));
       assert.ok(bash.includes("Bash(*.personal-bots\\userdata\\secrets*)"));
@@ -136,7 +150,8 @@ describe("botProtectedPaths", () => {
     it("gives a POSIX host one text form per path and no drive-letter variants", () => {
       const rules = buildClaudeBotPermissionDeny(POSIX);
       assert.ok(rules.includes("Bash(*/home/jo/.personal-bots/userdata/secrets*)"));
-      assert.ok(rules.includes("Read(//home/jo/.personal-bots/userdata/state.sqlite-shm)"));
+      assert.ok(rules.includes("Edit(//home/jo/.personal-bots/userdata/state.sqlite-shm)"));
+      assert.ok(rules.includes("Read(//home/jo/.personal-bots/userdata/secrets/**)"));
       assert.ok(!rules.some((rule) => /\*[A-Za-z]:/.test(rule)));
     });
 
@@ -188,20 +203,16 @@ describe("botProtectedPaths", () => {
           matches(input, rule.pattern, win32),
       );
 
-    it("denies read, edit and list on the folders, database and sidecars, backslashes or not", () => {
+    it("denies read, edit and list on the secrets folder and edit only on the database and sidecars, backslashes or not", () => {
       const rules = buildOpenCodeBotPermissionRules(WINDOWS);
       const secretFile =
         "C:\\Users\\Jo Doe\\.personal-bots\\userdata\\secrets\\data-encryption-key.json";
-      for (const permission of ["read", "edit"]) {
+      for (const permission of ["read", "edit", "list"]) {
         assert.ok(denies(rules, permission, secretFile, true));
         assert.ok(
           denies(rules, permission, secretFile.toLowerCase(), true),
           "win32 is case-insensitive",
         );
-        assert.ok(denies(rules, permission, `${WINDOWS.dbPath}-wal`, true));
-        assert.ok(denies(rules, permission, `${WINDOWS.dbPath}-shm`, true));
-        assert.ok(denies(rules, permission, `${WINDOWS.dbPath}-journal`, true));
-        assert.ok(denies(rules, permission, `${WINDOWS.logsDir}\\provider\\events.log`, true));
         assert.ok(
           denies(
             rules,
@@ -210,6 +221,20 @@ describe("botProtectedPaths", () => {
             true,
           ),
         );
+      }
+      for (const file of [
+        WINDOWS.dbPath,
+        `${WINDOWS.dbPath}-wal`,
+        `${WINDOWS.dbPath}-shm`,
+        `${WINDOWS.dbPath}-journal`,
+      ]) {
+        assert.ok(denies(rules, "edit", file, true), `edit ${file}`);
+        assert.ok(!denies(rules, "read", file, true), `read ${file} stays open`);
+        assert.ok(!denies(rules, "list", file, true));
+      }
+      const logFile = `${WINDOWS.logsDir}\\provider\\events.log`;
+      for (const permission of ["read", "edit", "list", "external_directory"]) {
+        assert.ok(!denies(rules, permission, logFile, true), `no ${permission} deny on logs`);
       }
       assert.ok(
         !denies(
@@ -225,7 +250,7 @@ describe("botProtectedPaths", () => {
     it("denies external_directory for the folders, which gates bash path arguments", () => {
       const rules = buildOpenCodeBotPermissionRules(WINDOWS);
       assert.ok(denies(rules, "external_directory", `${WINDOWS.secretsDir}\\*`, true));
-      assert.ok(denies(rules, "external_directory", `${WINDOWS.logsDir}\\*`, true));
+      assert.ok(!denies(rules, "external_directory", `${WINDOWS.logsDir}\\*`, true));
       // A file has no folder rule of its own: the state directory also holds allowed files.
       assert.ok(!denies(rules, "external_directory", `${WINDOWS.stateDir}\\*`, true));
     });
@@ -236,11 +261,16 @@ describe("botProtectedPaths", () => {
         'cat "C:/Users/Jo Doe/.personal-bots/userdata/secrets/x.bin"',
         'type "C:\\Users\\Jo Doe\\.personal-bots\\userdata\\secrets\\x.bin"',
         'cat "/c/Users/Jo Doe/.personal-bots/userdata/secrets/x.bin"',
-        "sqlite3 state.sqlite .dump",
       ]) {
         assert.ok(denies(rules, "bash", command, true), command);
       }
-      assert.ok(!denies(rules, "bash", "git status --porcelain", true));
+      for (const command of [
+        "git status --porcelain",
+        "sqlite3 state.sqlite .dump",
+        'tail -n 50 "C:/Users/Jo Doe/.personal-bots/userdata/logs/server.log"',
+      ]) {
+        assert.ok(!denies(rules, "bash", command, true), command);
+      }
     });
 
     it("is case-sensitive off Windows", () => {

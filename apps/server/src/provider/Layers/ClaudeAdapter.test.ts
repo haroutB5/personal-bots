@@ -702,7 +702,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("denies a bot the secrets, database and logs in every runtime mode", () => {
+  it.effect("denies a bot the secrets folder and database writes in every runtime mode", () => {
     // A real absolute base dir: a drive-less "/tmp" is not absolute on Windows.
     const harness = makeHarness({ baseDir: NodeOS.tmpdir() });
     return Effect.gen(function* () {
@@ -727,7 +727,9 @@ describe("ClaudeAdapterLive", () => {
       const names = (rule: string) => rule.replaceAll("\\", "/");
       assert.ok(expected.some((rule) => /^Read\(.*\/secrets\/\*\*\)$/.test(names(rule))));
       assert.ok(expected.some((rule) => /^Edit\(.*state\.sqlite-wal\)$/.test(names(rule))));
-      assert.ok(expected.some((rule) => /^Read\(.*\/logs\/\*\*\)$/.test(names(rule))));
+      // Database and logs stay readable: no Read rule on the database, no rule on the logs.
+      assert.ok(!expected.some((rule) => /^Read\(.*state\.sqlite/.test(names(rule))));
+      assert.ok(!expected.some((rule) => /\/logs/.test(names(rule))));
       // Only the tools whose path rules Claude Code actually consults.
       for (const rule of expected) {
         assert.match(rule, /^(Read|Edit|Bash|PowerShell)\(/);

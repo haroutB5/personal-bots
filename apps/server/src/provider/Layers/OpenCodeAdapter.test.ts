@@ -797,7 +797,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("appends deny rules for the secrets, database and logs to a bot's session only", () =>
+  it.effect("appends deny rules for secrets and database writes to a bot's session only", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig;
       const adapter = yield* makeOpenCodeAdapter(localOpenCodeSettings, {
@@ -836,10 +836,13 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const forward = (value: string) => value.replaceAll("\\", "/");
       for (const permission of ["read", "edit"]) {
         NodeAssert.ok(has(permission, `${forward(serverConfig.secretsDir)}/*`));
-        NodeAssert.ok(has(permission, forward(serverConfig.dbPath)));
-        NodeAssert.ok(has(permission, `${forward(serverConfig.dbPath)}-wal`));
-        NodeAssert.ok(has(permission, `${forward(serverConfig.logsDir)}/*`));
       }
+      // The database is write-denied only, and the logs have no rule.
+      NodeAssert.ok(has("edit", forward(serverConfig.dbPath)));
+      NodeAssert.ok(has("edit", `${forward(serverConfig.dbPath)}-wal`));
+      NodeAssert.ok(!has("read", forward(serverConfig.dbPath)));
+      NodeAssert.ok(!has("read", `${forward(serverConfig.logsDir)}/*`));
+      NodeAssert.ok(!has("edit", `${forward(serverConfig.logsDir)}/*`));
       NodeAssert.ok(has("external_directory", `${forward(serverConfig.secretsDir)}/*`));
       NodeAssert.ok(has("bash", `*${forward(serverConfig.secretsDir)}*`));
       // A normal thread keeps exactly the mode's rules.

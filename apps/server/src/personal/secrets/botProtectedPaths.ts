@@ -1,10 +1,17 @@
 /**
- * Server files a personal bot's coding session must not read or change: the
- * sealed secret files and data-encryption key (`secretsDir`), the SQLite
- * database and its sidecars, and the logs (server trace, provider event logs).
+ * Server files a personal bot's coding session must not read or change, and
+ * the ones it must not change:
+ * - `secretsDir` (the sealed secret files and the data-encryption key, which
+ *   lives inside it): no read, no write.
+ * - the SQLite database and its sidecars: no write (Edit/Write tools and the
+ *   file commands Claude Code recognizes). Reading stays open on purpose: the
+ *   dev team reads the live database and logs to confirm releases and debug.
+ * - the logs: no deny at all (they are masked before they are written).
  * Bots run as the same OS user as the server, so this is a best-effort deny
- * built on each provider's own permission engine, not an OS boundary. This
- * module is pure: it turns the paths into the rule syntax each provider reads.
+ * built on each provider's own permission engine, not an OS boundary: a shell
+ * command that writes the database is not stopped (a separate OS user for the
+ * server is the real fix). This module is pure: it turns the paths into the
+ * rule syntax each provider reads.
  *
  * Per provider (what is enforced is stated at each builder):
  * - Claude Code: `permissions.deny` rules, enforced in every permission mode.
@@ -27,9 +34,7 @@ import type { ServerDerivedPaths } from "../../config.ts";
 /**
  * Kill switch: `PERSONAL_BOT_STATE_DENY=off` (also 0 / false / no, and the
  * `T3CODE_` spelling) starts bot sessions without these deny rules. Read when a
- * session starts, so an idle restart applies it. It exists because the rules
- * also stop the dev-team bots from reading the live state database and logs for
- * their own work (e.g. a bot reading chat history from `state.sqlite`).
+ * session starts, so an idle restart applies it.
  */
 export const botStateDenyEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => {
   const raw = (env.PERSONAL_BOT_STATE_DENY ?? env.T3CODE_PERSONAL_BOT_STATE_DENY)
@@ -47,6 +52,8 @@ export interface BotProtectedPath {
   readonly path: string;
   /** A directory protects everything under it; a file protects only itself. */
   readonly kind: "dir" | "file";
+  /** `read-write` denies reading and changing; `write` denies changing only. */
+  readonly access: "read-write" | "write";
 }
 
 /** SQLite files next to the database: write-ahead log, shared memory, rollback journal. */
@@ -58,13 +65,13 @@ const TAIL_SEGMENT_COUNT = 3;
 /** The protected paths exactly as the server knows them (native separators). */
 export function botProtectedPaths(paths: BotProtectedPathsInput): ReadonlyArray<BotProtectedPath> {
   return [
-    { path: paths.secretsDir, kind: "dir" },
-    { path: paths.dbPath, kind: "file" },
+    { path: paths.secretsDir, kind: "dir", access: "read-write" },
+    { path: paths.dbPath, kind: "file", access: "write" },
     ...BOT_PROTECTED_DB_SIDECAR_SUFFIXES.map((suffix) => ({
       path: `${paths.dbPath}${suffix}`,
       kind: "file" as const,
+      access: "write" as const,
     })),
-    { path: paths.logsDir, kind: "dir" },
   ];
 }
 
@@ -179,18 +186,24 @@ export function claudeTailRuleAnchor(path: string): string | undefined {
  */
 export function buildClaudeBotPermissionDeny(paths: BotProtectedPathsInput): Array<string> {
   const rules: Array<string> = [];
-  for (const { path, kind } of botProtectedPaths(paths)) {
+  for (const { path, kind, access } of botProtectedPaths(paths)) {
     for (const anchor of [claudeFileRuleAnchor(path), claudeTailRuleAnchor(path)]) {
       if (anchor === undefined) continue;
       // A bare anchor matches the folder itself (what a Grep/Glob `path` names)
       // and, as a gitignore pattern, everything under it; `/**` states it plainly.
       const specifiers = kind === "dir" ? [anchor, `${anchor}/**`] : [anchor];
-      for (const specifier of specifiers) rules.push(`Read(${specifier})`, `Edit(${specifier})`);
+      for (const specifier of specifiers) {
+        // A Read deny also blocks Edit and Write; an Edit deny leaves reading open.
+        if (access === "read-write") rules.push(`Read(${specifier})`);
+        rules.push(`Edit(${specifier})`);
+      }
     }
   }
+  // Command-text rules would also stop reads (`sqlite3 state.sqlite`, `cat`), so
+  // they cover the secrets folder only.
   const bashPatterns = new Set<string>();
   const powershellPatterns = new Set<string>();
-  for (const path of [paths.secretsDir, paths.dbPath, paths.logsDir]) {
+  for (const path of [paths.secretsDir]) {
     const tail = tailSegments(path);
     const texts = [
       ...botProtectedCommandForms(path),
@@ -202,11 +215,6 @@ export function buildClaudeBotPermissionDeny(paths: BotProtectedPathsInput): Arr
       // is enough, and its tool never sees the Git Bash `/c/...` spelling.
       if (!/^\/[a-z]\//.test(text) && !/^[a-z]:/.test(text)) powershellPatterns.add(`*${text}*`);
     }
-  }
-  const dbName = paths.dbPath.split(/[\\/]/).at(-1);
-  if (dbName !== undefined && dbName.length > 0) {
-    bashPatterns.add(`*${dbName}*`);
-    powershellPatterns.add(`*${dbName}*`);
   }
   for (const pattern of bashPatterns) rules.push(`Bash(${pattern})`);
   for (const pattern of powershellPatterns) rules.push(`PowerShell(${pattern})`);
@@ -226,8 +234,10 @@ export interface OpenCodeDenyRule {
  * overridden). Patterns are full-string wildcards (`*` any text, `?` one
  * character); on win32 both sides have `\` turned into `/` and compare
  * case-insensitively (OpenCode `util/wildcard.ts`).
- * - `read`, `edit` (edit, write and patch), `list`: the path, `<dir>/*`, and
- *   the same for the tail segments (`*<tail>`, `*<tail>/*`).
+ * - `edit` (edit, write and patch): the path, `<dir>/*`, and the same for the
+ *   tail segments (`*<tail>`, `*<tail>/*`), for the secrets folder and the
+ *   database files. `read` and `list` get the same patterns for the secrets
+ *   folder only: the database and logs stay readable.
  * - `external_directory`: the folders and `<dir>/*`, which also gates the
  *   path arguments of the bash commands OpenCode parses and of glob and grep.
  *   A file in the state directory has no folder rule of its own, so the
@@ -245,22 +255,23 @@ export function buildOpenCodeBotPermissionRules(
   const rules: Array<OpenCodeDenyRule> = [];
   const deny = (permission: string, pattern: string) =>
     rules.push({ permission, pattern, action: "deny" });
-  for (const { path, kind } of botProtectedPaths(paths)) {
+  for (const { path, kind, access } of botProtectedPaths(paths)) {
     const parsed = parseAbsolutePath(path);
     if (!parsed) continue;
     const tail = tailSegments(path).join("/");
     const bases = [forwardSlashForm(parsed), ...(tail ? [`*${tail}`] : [])];
     for (const base of bases) {
       for (const pattern of kind === "dir" ? [base, `${base}/*`] : [base]) {
-        deny("read", pattern);
         deny("edit", pattern);
+        if (access === "write") continue;
+        deny("read", pattern);
         deny("list", pattern);
         if (kind === "dir") deny("external_directory", pattern);
       }
     }
   }
   const bashPatterns = new Set<string>();
-  for (const path of [paths.secretsDir, paths.dbPath, paths.logsDir]) {
+  for (const path of [paths.secretsDir]) {
     const parsed = parseAbsolutePath(path);
     if (!parsed) continue;
     bashPatterns.add(`*${forwardSlashForm(parsed)}*`);
@@ -271,8 +282,6 @@ export function buildOpenCodeBotPermissionRules(
     const tail = tailSegments(path).join("/");
     if (tail) bashPatterns.add(`*${tail}*`);
   }
-  const dbName = paths.dbPath.split(/[\\/]/).at(-1);
-  if (dbName !== undefined && dbName.length > 0) bashPatterns.add(`*${dbName}*`);
   for (const pattern of bashPatterns) deny("bash", pattern);
   return rules;
 }
