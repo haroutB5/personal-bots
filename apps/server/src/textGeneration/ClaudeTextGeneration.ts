@@ -49,6 +49,12 @@ import {
   scopeClaudeModelCatalog,
 } from "../provider/ClaudeModelCatalog.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
+import {
+  CLAUDE_TEXT_GENERATION_DEFAULT_MODEL,
+  resolveTextGenerationModel,
+  textGenerationBackgroundEffort,
+  textGenerationFallbackModel,
+} from "../provider/claudeBackgroundModels.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
 
@@ -122,7 +128,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
    * Spawn the Claude CLI with structured JSON output and return the parsed,
    * schema-validated result.
    */
-  const runClaudeJson = Effect.fn("runClaudeJson")(function* <S extends Schema.Top>({
+  const runClaudeJsonOnce = Effect.fn("runClaudeJson")(function* <S extends Schema.Top>({
     operation,
     cwd,
     prompt,
@@ -309,6 +315,52 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
             }),
           ),
       }),
+    );
+  });
+
+  /**
+   * Background text jobs (titles, branch names, commit and PR text) run on the
+   * Claude default model, Haiku 5.5, at low effort unless the job names an
+   * effort (a title must not lag). If that default fails or is refused, the job
+   * retries once on Haiku 4.5. A model the owner chose is used as it is, with no
+   * retry. Kill switches: PERSONAL_TEXTGEN_MODEL, PERSONAL_TEXTGEN_EFFORT.
+   */
+  const runClaudeJson = Effect.fn("runClaudeJson.withFallback")(function* <S extends Schema.Top>(
+    input: Parameters<typeof runClaudeJsonOnce<S>>[0],
+  ): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
+    const requested = input.modelSelection;
+    const model = resolveTextGenerationModel(requested.model);
+    const effort = textGenerationBackgroundEffort();
+    const hasEffort = getModelSelectionStringOptionValue(requested, "effort") !== undefined;
+    const primary: ModelSelection = {
+      ...requested,
+      model,
+      // Only the default model is sped up; a model the owner chose keeps its own effort.
+      ...(effort !== null && !hasEffort && model === CLAUDE_TEXT_GENERATION_DEFAULT_MODEL
+        ? { options: [...(requested.options ?? []), { id: "effort", value: effort }] }
+        : {}),
+    };
+    const fallbackModel = textGenerationFallbackModel(model);
+    if (fallbackModel === undefined) {
+      return yield* runClaudeJsonOnce({ ...input, modelSelection: primary });
+    }
+    return yield* runClaudeJsonOnce({ ...input, modelSelection: primary }).pipe(
+      Effect.catchTag("TextGenerationError", (error) =>
+        Effect.logWarning("Claude text generation failed on the default model; retrying", {
+          operation: input.operation,
+          model,
+          fallbackModel,
+          detail: error.detail.slice(0, 300),
+        }).pipe(
+          Effect.andThen(
+            // Haiku 4.5 has no effort setting: the retry sends the bare model.
+            runClaudeJsonOnce({
+              ...input,
+              modelSelection: { instanceId: requested.instanceId, model: fallbackModel },
+            }),
+          ),
+        ),
+      ),
     );
   });
 

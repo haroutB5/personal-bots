@@ -249,6 +249,11 @@ function resolveClaudeCatalogModel(
   );
 }
 
+/** Whether the catalog (manifest plus what the installed CLI knows) lists this model. */
+export function claudeCatalogHasModel(catalog: ClaudeModelCatalog, slug: string): boolean {
+  return resolveClaudeCatalogModel(catalog, slug) !== undefined;
+}
+
 export function resolveClaudeModelSlug(catalog: ClaudeModelCatalog, slugOrAlias: string): string {
   return resolveClaudeCatalogModel(catalog, slugOrAlias)?.model.slug ?? slugOrAlias;
 }

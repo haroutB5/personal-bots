@@ -114,9 +114,11 @@ import { claudeSignedOutMessage, makeClaudeEnvironment } from "../Drivers/Claude
 import { planClaudeSkillDispatch } from "../Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { buildRuntimeInstructions, withBotInstructions } from "../RuntimeInstructions.ts";
+import { exploreSubagentAgents } from "../claudeBackgroundModels.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
+  claudeCatalogHasModel,
   getClaudeCatalogModelCapabilities,
   isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
@@ -5337,6 +5339,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? [input.cwd] : []),
         serverConfig.attachmentsDir,
       ];
+      // A Claude bot on Opus or Sonnet searches with Explore on Haiku 5.5 (kill
+      // switch PERSONAL_EXPLORE_MODEL=off); its own model and every other
+      // subagent stay as they are.
+      const exploreAgents = exploreSubagentAgents({
+        personalBot,
+        mainModel: modelSelection?.model,
+        modelKnown: (slug) => claudeCatalogHasModel(modelCatalog, slug),
+      });
       // Remembers the CLI's PID so a deleted chat can end the commands it ran.
       const processHandle = claudeSdkSpawnDisabled() ? undefined : makeClaudeProcessHandle();
       const queryOptions: ClaudeQueryOptions = {
@@ -5417,6 +5427,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(mcpServers ? { mcpServers } : {}),
         ...(personalBot ? { strictMcpConfig: true } : {}),
         ...(plugins ? { plugins } : {}),
+        ...(exploreAgents ? { agents: { ...exploreAgents } } : {}),
       };
 
       yield* Effect.annotateCurrentSpan({
@@ -5432,6 +5443,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.cwd": input.cwd ?? "",
         "claude.query.model": apiModelId ?? "",
         "claude.query.effort": effectiveEffort ?? "",
+        "claude.query.explore_model": exploreAgents?.Explore?.model ?? "",
         "claude.query.permission_mode": permissionMode ?? "",
         "claude.query.allow_dangerously_skip_permissions": permissionMode === "bypassPermissions",
         "claude.query.resume": existingResumeSessionId ?? "",

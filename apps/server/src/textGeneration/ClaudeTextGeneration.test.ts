@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { expect } from "vite-plus/test";
+import { describe, expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import {
@@ -18,6 +18,7 @@ import {
   SYNTHETIC_CLAUDE_STANDARD_MODEL,
   SYNTHETIC_CLAUDE_THINKING_MODEL,
 } from "../provider/ClaudeModelCatalog.testFixtures.ts";
+import type { ClaudeModelCatalog } from "../provider/ClaudeModelCatalog.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
@@ -105,6 +106,17 @@ function makeFakeClaudeBinary(dir: string) {
         '  fail("CLAUDE_CONFIG_DIR was " + (process.env.CLAUDE_CONFIG_DIR ?? ""), 5);',
         "}",
         "",
+        'const modelIndex = argv.indexOf("--model");',
+        'const modelArg = modelIndex === -1 ? "" : argv[modelIndex + 1];',
+        "const callLog = process.env.T3_FAKE_CLAUDE_CALL_LOG;",
+        "if (callLog) {",
+        '  const { appendFileSync } = await import("node:fs");',
+        '  appendFileSync(callLog, modelArg + "\\n");',
+        "}",
+        "if (process.env.T3_FAKE_CLAUDE_FAIL_MODEL && modelArg === process.env.T3_FAKE_CLAUDE_FAIL_MODEL) {",
+        '  fail("model refused: " + modelArg, 1);',
+        "}",
+        "",
         "const stderrText = process.env.T3_FAKE_CLAUDE_STDERR;",
         "if (stderrText) {",
         '  process.stderr.write(stderrText + "\\n");',
@@ -130,6 +142,8 @@ function withFakeClaudeEnv<A, E, R>(
     configDirMustBe?: string;
     cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
+    /** Replaces the synthetic catalog the text generation resolves models with. */
+    catalog?: ClaudeModelCatalog;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -253,7 +267,7 @@ function withFakeClaudeEnv<A, E, R>(
     const textGeneration = yield* makeClaudeTextGeneration(
       config,
       undefined,
-      Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
+      Effect.succeed(input.catalog ?? SYNTHETIC_CLAUDE_MODEL_CATALOG),
     );
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
@@ -579,4 +593,223 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
         }),
     ),
   );
+
+  describe("background text jobs on Haiku 5.5", () => {
+    const HAIKU_5_5 = "claude-haiku-5-5";
+    const HAIKU_4_5 = "claude-haiku-4-5";
+    const catalogWithHaiku: ClaudeModelCatalog = {
+      models: [
+        {
+          model: {
+            slug: HAIKU_5_5,
+            name: "Claude Haiku 5.5",
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [
+                    { id: "low", label: "Low" },
+                    { id: "medium", label: "Medium", isDefault: true },
+                    { id: "high", label: "High" },
+                  ],
+                },
+              ],
+            },
+          },
+          runtime: {},
+          compatibility: {},
+        },
+      ],
+    };
+    const titleOutput = JSON.stringify({ structured_output: { title: "Weekly groceries" } });
+    const request = (model: string) => ({
+      cwd: process.cwd(),
+      message: "Plan the weekly grocery run.",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model,
+      },
+    });
+
+    /** Sets server env vars (and the fake CLI's call log) for one effect, then restores them. */
+    const withEnv = <A, E, R>(vars: Record<string, string>, effect: Effect.Effect<A, E, R>) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const previous = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+          Object.assign(process.env, vars);
+          return previous;
+        }),
+        () => effect,
+        (previous) =>
+          Effect.sync(() => {
+            for (const [key, value] of Object.entries(previous)) {
+              if (value === undefined) delete process.env[key];
+              else process.env[key] = value;
+            }
+          }),
+      );
+    const callLogOf = (dir: string) => `${dir}/calls.log`;
+    const calls = (file: string) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const text = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
+        return text.split("\n").filter((line) => line.length > 0);
+      });
+    const inTempDir = <A, E, R>(body: (dir: string) => Effect.Effect<A, E, R>) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        return yield* body(yield* fs.makeTempDirectoryScoped({ prefix: "t3code-haiku-calls-" }));
+      }).pipe(Effect.scoped);
+
+    it.effect("uses Haiku 5.5 with the low effort setting when the job names none", () =>
+      inTempDir((dir) =>
+        withEnv(
+          { T3_FAKE_CLAUDE_CALL_LOG: callLogOf(dir) },
+          withFakeClaudeEnv(
+            {
+              output: titleOutput,
+              catalog: catalogWithHaiku,
+              argsMustContain: `--model ${HAIKU_5_5} --effort low`,
+            },
+            (textGeneration) =>
+              Effect.gen(function* () {
+                const generated = yield* textGeneration.generateThreadTitle(request(HAIKU_5_5));
+                expect(generated.title).toBe("Weekly groceries");
+                expect(yield* calls(callLogOf(dir))).toEqual([HAIKU_5_5]);
+              }),
+          ),
+        ),
+      ),
+    );
+
+    it.effect("takes the effort from PERSONAL_TEXTGEN_EFFORT, and sends none when it is off", () =>
+      Effect.gen(function* () {
+        yield* withEnv(
+          { PERSONAL_TEXTGEN_EFFORT: "high" },
+          withFakeClaudeEnv(
+            {
+              output: titleOutput,
+              catalog: catalogWithHaiku,
+              argsMustContain: `--model ${HAIKU_5_5} --effort high`,
+            },
+            (textGeneration) =>
+              textGeneration.generateThreadTitle(request(HAIKU_5_5)).pipe(Effect.asVoid),
+          ),
+        );
+        yield* withEnv(
+          { PERSONAL_TEXTGEN_EFFORT: "off" },
+          withFakeClaudeEnv(
+            {
+              output: titleOutput,
+              catalog: catalogWithHaiku,
+              argsMustNotContain: "--effort",
+            },
+            (textGeneration) =>
+              textGeneration.generateThreadTitle(request(HAIKU_5_5)).pipe(Effect.asVoid),
+          ),
+        );
+      }),
+    );
+
+    it.effect("keeps an effort the job named", () =>
+      withFakeClaudeEnv(
+        {
+          output: titleOutput,
+          catalog: catalogWithHaiku,
+          argsMustContain: `--model ${HAIKU_5_5} --effort medium`,
+        },
+        (textGeneration) =>
+          textGeneration
+            .generateThreadTitle({
+              ...request(HAIKU_5_5),
+              modelSelection: createModelSelection(
+                ProviderInstanceId.make("claudeAgent"),
+                HAIKU_5_5,
+                [{ id: "effort", value: "medium" }],
+              ),
+            })
+            .pipe(Effect.asVoid),
+      ),
+    );
+
+    it.effect("retries once on Haiku 4.5, with no effort flag, when Haiku 5.5 is refused", () =>
+      inTempDir((dir) =>
+        withEnv(
+          { T3_FAKE_CLAUDE_CALL_LOG: callLogOf(dir), T3_FAKE_CLAUDE_FAIL_MODEL: HAIKU_5_5 },
+          withFakeClaudeEnv({ output: titleOutput, catalog: catalogWithHaiku }, (textGeneration) =>
+            Effect.gen(function* () {
+              const generated = yield* textGeneration.generateThreadTitle(request(HAIKU_5_5));
+              expect(generated.title).toBe("Weekly groceries");
+              expect(yield* calls(callLogOf(dir))).toEqual([HAIKU_5_5, HAIKU_4_5]);
+            }),
+          ),
+        ),
+      ),
+    );
+
+    it.effect("fails with the error when the fallback is refused too, after one retry", () =>
+      inTempDir((dir) =>
+        withEnv(
+          { T3_FAKE_CLAUDE_CALL_LOG: callLogOf(dir), T3_FAKE_CLAUDE_FAIL_MODEL: HAIKU_5_5 },
+          withFakeClaudeEnv(
+            // The fake exits non-zero for every model.
+            { output: titleOutput, catalog: catalogWithHaiku, exitCode: 1 },
+            (textGeneration) =>
+              Effect.gen(function* () {
+                const error = yield* Effect.flip(
+                  textGeneration.generateThreadTitle(request(HAIKU_5_5)),
+                );
+                expect(error._tag).toBe("TextGenerationError");
+                expect(yield* calls(callLogOf(dir))).toEqual([HAIKU_5_5, HAIKU_4_5]);
+              }),
+          ),
+        ),
+      ),
+    );
+
+    it.effect("PERSONAL_TEXTGEN_MODEL pins the old model and nothing retries", () =>
+      inTempDir((dir) =>
+        withEnv(
+          { T3_FAKE_CLAUDE_CALL_LOG: callLogOf(dir), PERSONAL_TEXTGEN_MODEL: HAIKU_4_5 },
+          withFakeClaudeEnv(
+            {
+              output: titleOutput,
+              catalog: catalogWithHaiku,
+              argsMustContain: `--model ${HAIKU_4_5}`,
+              argsMustNotContain: "--effort",
+            },
+            (textGeneration) =>
+              Effect.gen(function* () {
+                const generated = yield* textGeneration.generateThreadTitle(request(HAIKU_5_5));
+                expect(generated.title).toBe("Weekly groceries");
+                expect(yield* calls(callLogOf(dir))).toEqual([HAIKU_4_5]);
+              }),
+          ),
+        ),
+      ),
+    );
+
+    it.effect("a model the owner chose is used as it is: no effort added, no retry", () =>
+      inTempDir((dir) =>
+        withEnv(
+          {
+            T3_FAKE_CLAUDE_CALL_LOG: callLogOf(dir),
+            T3_FAKE_CLAUDE_FAIL_MODEL: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+          },
+          withFakeClaudeEnv({ output: titleOutput, catalog: catalogWithHaiku }, (textGeneration) =>
+            Effect.gen(function* () {
+              const error = yield* Effect.flip(
+                textGeneration.generateThreadTitle(request(SYNTHETIC_CLAUDE_STANDARD_MODEL)),
+              );
+              expect(error._tag).toBe("TextGenerationError");
+              expect(yield* calls(callLogOf(dir))).toEqual([SYNTHETIC_CLAUDE_STANDARD_MODEL]);
+            }),
+          ),
+        ),
+      ),
+    );
+  });
 });

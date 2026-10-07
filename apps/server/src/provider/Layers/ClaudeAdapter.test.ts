@@ -52,6 +52,7 @@ import {
   SYNTHETIC_CLAUDE_STANDARD_MODEL,
   SYNTHETIC_CLAUDE_THINKING_MODEL,
 } from "../ClaudeModelCatalog.testFixtures.ts";
+import type { ClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
@@ -185,6 +186,7 @@ function makeHarness(config?: {
   readonly environment?: ClaudeAdapterLiveOptions["environment"];
   readonly getSessionMessages?: ClaudeAdapterLiveOptions["getSessionMessages"];
   readonly forkSession?: ClaudeAdapterLiveOptions["forkSession"];
+  readonly modelCatalog?: ClaudeModelCatalog;
 }) {
   const query = new FakeClaudeQuery();
   const queries = [query];
@@ -199,7 +201,7 @@ function makeHarness(config?: {
     ...(config?.environment ? { environment: config.environment } : {}),
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
     ...(config?.scopedLimitNames ? { scopedLimitNames: config.scopedLimitNames } : {}),
-    modelCatalog: Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
+    modelCatalog: Effect.succeed(config?.modelCatalog ?? SYNTHETIC_CLAUDE_MODEL_CATALOG),
     ...(config?.getSessionMessages ? { getSessionMessages: config.getSessionMessages } : {}),
     ...(config?.forkSession ? { forkSession: config.forkSession } : {}),
     createQuery: (input) => {
@@ -669,6 +671,126 @@ describe("ClaudeAdapterLive", () => {
       Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
+    );
+  });
+
+  describe("Explore subagent on Haiku 5.5 for Claude bots", () => {
+    const claudeCapabilities = { optionDescriptors: [] };
+    const modelEntry = (slug: string) => ({
+      model: { slug, name: slug, isCustom: false, capabilities: claudeCapabilities },
+      runtime: {},
+      compatibility: {},
+    });
+    const catalog = (slugs: ReadonlyArray<string>): ClaudeModelCatalog => ({
+      models: slugs.map(modelEntry),
+    });
+    const ALL = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"];
+
+    const startBot = (input: {
+      readonly model: string;
+      readonly personalBot?: boolean;
+      readonly models?: ReadonlyArray<string>;
+      readonly env?: Record<string, string>;
+    }) => {
+      const threadId = ThreadId.make(`thread-explore-${input.model}-${input.personalBot ?? true}`);
+      const harness = makeHarness({ modelCatalog: catalog(input.models ?? ALL) });
+      const previous = Object.fromEntries(
+        Object.keys(input.env ?? {}).map((key) => [key, process.env[key]]),
+      );
+      return Effect.gen(function* () {
+        Object.assign(process.env, input.env ?? {});
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+          ...(input.personalBot === false ? {} : { personalBot: true }),
+          modelSelection: createModelSelection(ProviderInstanceId.make("claudeAgent"), input.model),
+        });
+        return harness.getLastCreateQueryInput()?.options;
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            for (const [key, value] of Object.entries(previous)) {
+              if (value === undefined) delete process.env[key];
+              else process.env[key] = value;
+            }
+          }),
+        ),
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    };
+
+    it.effect("runs Explore on Haiku 5.5 at medium effort for a bot on Sonnet", () =>
+      Effect.gen(function* () {
+        const options = yield* startBot({ model: "claude-sonnet-5-5" });
+        assert.deepEqual(Object.keys(options?.agents ?? {}), ["Explore"]);
+        const explore = options?.agents?.Explore;
+        assert.equal(explore?.model, "claude-haiku-5-5");
+        assert.equal(explore?.effort, "medium");
+        // Read-only, like Claude Code's own: no file changes and no further subagents.
+        assert.deepEqual(explore?.disallowedTools, [
+          "Agent",
+          "Task",
+          "ExitPlanMode",
+          "Edit",
+          "Write",
+          "NotebookEdit",
+        ]);
+        assert.equal(explore?.tools, undefined);
+        // The bot's own model is untouched, and no other subagent is defined.
+        assert.equal(options?.model, "claude-sonnet-5-5");
+      }),
+    );
+
+    it.effect("does the same for a bot on Opus", () =>
+      Effect.gen(function* () {
+        const options = yield* startBot({ model: "claude-opus-5-5" });
+        assert.equal(options?.agents?.Explore?.model, "claude-haiku-5-5");
+      }),
+    );
+
+    it.effect("leaves a Haiku bot, a Fable bot and a plain thread alone", () =>
+      Effect.gen(function* () {
+        assert.equal((yield* startBot({ model: "claude-haiku-5-5" }))?.agents, undefined);
+        assert.equal((yield* startBot({ model: "claude-fable-5-1" }))?.agents, undefined);
+        assert.equal(
+          (yield* startBot({ model: "claude-sonnet-5-5", personalBot: false }))?.agents,
+          undefined,
+        );
+      }),
+    );
+
+    it.effect("does nothing when the installed CLI does not know Haiku 5.5", () =>
+      Effect.gen(function* () {
+        const options = yield* startBot({
+          model: "claude-sonnet-5-5",
+          models: ["claude-sonnet-5-5", "claude-haiku-4-5"],
+        });
+        assert.equal(options?.agents, undefined);
+      }),
+    );
+
+    it.effect("PERSONAL_EXPLORE_MODEL=off is the kill switch; effort and model are settings", () =>
+      Effect.gen(function* () {
+        assert.equal(
+          (yield* startBot({ model: "claude-sonnet-5-5", env: { PERSONAL_EXPLORE_MODEL: "off" } }))
+            ?.agents,
+          undefined,
+        );
+        const high = yield* startBot({
+          model: "claude-sonnet-5-5",
+          env: { PERSONAL_EXPLORE_EFFORT: "high" },
+        });
+        assert.equal(high?.agents?.Explore?.effort, "high");
+        const none = yield* startBot({
+          model: "claude-sonnet-5-5",
+          env: { PERSONAL_EXPLORE_EFFORT: "off" },
+        });
+        assert.equal(none?.agents?.Explore?.effort, undefined);
+        assert.equal(none?.agents?.Explore?.model, "claude-haiku-5-5");
+      }),
     );
   });
 
