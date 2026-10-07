@@ -1,5 +1,4 @@
 import * as DateTime from "effect/DateTime";
-
 import {
   ComposerContextId,
   PERSONAL_TASK_MESSAGE_CONTEXT_KIND,
@@ -10,7 +9,6 @@ import {
   type PersonalTaskMessageMarker,
   type ThreadId,
 } from "@t3tools/contracts";
-
 import { personalTaskMessageId } from "../personalThreadTitles.ts";
 
 /** What the task service's parts share: its status types, timings and message ids. */
