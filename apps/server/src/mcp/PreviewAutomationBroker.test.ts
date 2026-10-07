@@ -915,6 +915,27 @@ it.effect("does not route new operations to legacy hosts that did not advertise 
   ),
 );
 
+it.effect(
+  "never sends hover, drag, history or closeTab to a host that did not advertise them",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* makeBroker;
+        // An older desktop host: it would ignore the extra click fields and misread the new operations.
+        const legacyEvents = yield* broker.connect(makeHost({ supportedOperations: ["click"] }));
+        yield* Stream.runDrain(legacyEvents).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        for (const operation of ["hover", "drag", "history", "closeTab"] as const) {
+          const error = yield* broker
+            .invoke<void>({ scope, operation, input: {} })
+            .pipe(Effect.flip);
+          expect(error).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
+          expect(error).toMatchObject({ operation });
+        }
+      }),
+    ),
+);
+
 it.effect("routes resize to a capable host instead of a newer legacy connection", () =>
   Effect.scoped(
     Effect.gen(function* () {

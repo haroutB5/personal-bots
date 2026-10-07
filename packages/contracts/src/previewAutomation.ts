@@ -43,6 +43,11 @@ export const PREVIEW_AUTOMATION_OPERATIONS = [
   ...PREVIEW_AUTOMATION_V1_OPERATIONS,
   "resize",
   "setColorScheme",
+  // 1.66.6: only the server-owned bots' browser serves these four.
+  "hover",
+  "drag",
+  "history",
+  "closeTab",
 ] as const;
 
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_OPERATIONS);
@@ -290,6 +295,14 @@ const LegacySelector = TrimmedNonEmptyString.annotate({
     "Legacy CSS selector such as button[type='submit']. Prefer locator for resilient role/text targeting.",
 });
 
+/** Keys held while a pointer action runs, the same names preview_press takes. */
+export const PreviewAutomationInputModifiers = Schema.Array(
+  Schema.Literals(["Alt", "Control", "Meta", "Shift"]),
+).annotate({
+  description:
+    'Keys held during the action: any of "Alt", "Control", "Meta", "Shift". Control-click on a link opens it in a new background tab.',
+});
+
 export const PreviewAutomationClickInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   selector: Schema.optional(LegacySelector).annotate({
@@ -310,6 +323,18 @@ export const PreviewAutomationClickInput = Schema.Struct({
       description: "Viewport-relative Y coordinate in CSS pixels. Must be paired with x.",
     }),
   ),
+  button: Schema.optional(
+    Schema.Literals(["left", "right", "middle"]).annotate({
+      description:
+        "Mouse button: left (default), right (fires the page's contextmenu event) or middle.",
+    }),
+  ),
+  clicks: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3 })).annotate({
+      description: "1 (default), 2 for a double click, 3 for a triple click.",
+    }),
+  ),
+  modifiers: Schema.optional(PreviewAutomationInputModifiers),
   timeoutMs: OptionalTimeoutMs,
 })
   .check(
@@ -325,9 +350,152 @@ export const PreviewAutomationClickInput = Schema.Struct({
   )
   .annotate({
     description:
-      "Clicks one target. Provide exactly one of locator, selector, or the x/y coordinate pair.",
+      "Clicks one target. Provide exactly one of locator, selector, or the x/y coordinate pair. Optional button, clicks (1-3) and modifiers apply to both forms.",
   });
 export type PreviewAutomationClickInput = typeof PreviewAutomationClickInput.Type;
+
+export const PreviewAutomationHoverInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  selector: Schema.optional(LegacySelector).annotate({
+    description:
+      "Legacy CSS selector for the element to hover. Prefer locator for resilient role/text targeting.",
+  }),
+  locator: Schema.optional(Locator).annotate({
+    description:
+      "Playwright selector for the element to hover, for example text=Menu. Use snapshot first to inspect the page.",
+  }),
+  x: Schema.optional(
+    Schema.Finite.annotate({
+      description: "Viewport-relative X coordinate in CSS pixels. Must be paired with y.",
+    }),
+  ),
+  y: Schema.optional(
+    Schema.Finite.annotate({
+      description: "Viewport-relative Y coordinate in CSS pixels. Must be paired with x.",
+    }),
+  ),
+  timeoutMs: OptionalTimeoutMs,
+})
+  .check(
+    Schema.makeFilter((input) => {
+      const selectorModes =
+        Number(input.selector !== undefined) + Number(input.locator !== undefined);
+      const hasX = input.x !== undefined;
+      const hasY = input.y !== undefined;
+      if (hasX !== hasY) return "Coordinates require both x and y.";
+      return selectorModes + (hasX && hasY ? 1 : 0) === 1 || "Provide exactly one hover target.";
+    }),
+  )
+  .annotate({
+    description:
+      "Moves the pointer onto one target without clicking. Provide exactly one of locator, selector, or the x/y coordinate pair.",
+  });
+export type PreviewAutomationHoverInput = typeof PreviewAutomationHoverInput.Type;
+
+export const PreviewAutomationDragInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  fromLocator: Schema.optional(Locator).annotate({
+    description:
+      "Playwright selector (CSS also works) for the element to pick up. Pair it with toLocator.",
+  }),
+  toLocator: Schema.optional(Locator).annotate({
+    description:
+      "Playwright selector (CSS also works) for the element to drop on. Pair it with fromLocator.",
+  }),
+  fromX: Schema.optional(
+    Schema.Finite.annotate({
+      description: "Viewport-relative X in CSS pixels to press at. Pair with fromY, toX and toY.",
+    }),
+  ),
+  fromY: Schema.optional(
+    Schema.Finite.annotate({
+      description: "Viewport-relative Y in CSS pixels to press at. Pair with fromX, toX and toY.",
+    }),
+  ),
+  toX: Schema.optional(
+    Schema.Finite.annotate({
+      description: "Viewport-relative X in CSS pixels to release at. Pair with toY, fromX, fromY.",
+    }),
+  ),
+  toY: Schema.optional(
+    Schema.Finite.annotate({
+      description: "Viewport-relative Y in CSS pixels to release at. Pair with toX, fromX, fromY.",
+    }),
+  ),
+  timeoutMs: OptionalTimeoutMs,
+})
+  .check(
+    Schema.makeFilter((input) => {
+      const hasLocators = input.fromLocator !== undefined || input.toLocator !== undefined;
+      const hasPoints =
+        input.fromX !== undefined ||
+        input.fromY !== undefined ||
+        input.toX !== undefined ||
+        input.toY !== undefined;
+      if (hasLocators === hasPoints) {
+        return "Provide either fromLocator and toLocator, or fromX, fromY, toX and toY.";
+      }
+      if (hasLocators) {
+        return (
+          (input.fromLocator !== undefined && input.toLocator !== undefined) ||
+          "Provide both fromLocator and toLocator."
+        );
+      }
+      return (
+        (input.fromX !== undefined &&
+          input.fromY !== undefined &&
+          input.toX !== undefined &&
+          input.toY !== undefined) ||
+        "Provide all of fromX, fromY, toX and toY."
+      );
+    }),
+  )
+  .annotate({
+    description:
+      "Presses on one point or element, moves to another and releases, for drag-and-drop and sliders. Use locator to locator, or x/y to x/y.",
+  });
+export type PreviewAutomationDragInput = typeof PreviewAutomationDragInput.Type;
+
+export const PreviewAutomationHistoryInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  action: Schema.Literals(["back", "forward", "reload"]).annotate({
+    description:
+      "back and forward move one step through the tab's history; reload loads the current page again.",
+  }),
+  readiness: Schema.optional(
+    Schema.Literals(["load", "domContentLoaded", "none"]).annotate({
+      description:
+        "Readiness milestone before returning. 'load' waits for loading to stop (default), 'domContentLoaded' waits for an interactive document, and 'none' returns immediately.",
+    }),
+  ),
+  timeoutMs: OptionalTimeoutMs,
+}).annotate({
+  description: "Steps back or forward through a tab's history, or reloads it.",
+});
+export type PreviewAutomationHistoryInput = typeof PreviewAutomationHistoryInput.Type;
+
+const CLOSE_TAB_ID_DESCRIPTION =
+  "The exact tab to close, as returned by preview_open or preview_status. Must be one of this agent session's own tabs.";
+
+export const PreviewAutomationCloseTabInput = Schema.Struct({
+  // A plain checked string, not PreviewTabId: a required branded field loses its description in the tool's JSON schema.
+  // The checks are PreviewTabId's own (trimmed, 1 to 128 characters), so the handler can brand it safely.
+  tabId: Schema.String.check(
+    Schema.isTrimmed(),
+    Schema.isNonEmpty({ description: CLOSE_TAB_ID_DESCRIPTION }),
+    Schema.isMaxLength(128),
+  ).annotateKey({ description: CLOSE_TAB_ID_DESCRIPTION }),
+}).annotate({ description: "Closes one collaborative browser tab." });
+export type PreviewAutomationCloseTabInput = typeof PreviewAutomationCloseTabInput.Type;
+
+export const PreviewAutomationCloseTabResult = Schema.Struct({
+  tabId: Schema.Null,
+  closedTabId: PreviewTabId,
+  remainingTabIds: Schema.Array(PreviewTabId).annotate({
+    description: "This agent session's tabs that are still open.",
+  }),
+});
+export type PreviewAutomationCloseTabResult = typeof PreviewAutomationCloseTabResult.Type;
 
 export const PreviewAutomationTypeInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,

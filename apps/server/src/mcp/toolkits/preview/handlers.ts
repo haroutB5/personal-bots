@@ -10,6 +10,7 @@ import {
   type ToolActivityIcon,
   type ThreadId,
   type PreviewAutomationOperation,
+  type PreviewAutomationCloseTabResult,
   type PreviewAutomationOpenInput,
   type PreviewAutomationRecordingStatus,
   type PreviewAutomationResizeResult,
@@ -203,6 +204,18 @@ const handlers = {
     return invokeTargeted<PreviewAutomationSnapshot>("snapshot", operationInput);
   },
   preview_click: (input) => invokeTargeted<object>("click", input, input.timeoutMs),
+  preview_hover: (input) => invokeTargeted<object>("hover", input, input.timeoutMs),
+  preview_drag: (input) => invokeTargeted<object>("drag", input, input.timeoutMs),
+  preview_history: (input) =>
+    invokeTargeted<PreviewAutomationStatus>("history", input, input.timeoutMs),
+  preview_close_tab: ({ tabId }) =>
+    // The input schema already enforced PreviewTabId's checks, so the brand is safe to apply.
+    invoke<PreviewAutomationCloseTabResult>("closeTab", {}, undefined, tabId as PreviewTabId).pipe(
+      Effect.map(({ result, toolIcon }) => ({
+        ...result,
+        ...(toolIcon ? { toolIcon } : {}),
+      })),
+    ),
   preview_type: (input) => invokeTargeted<object>("type", input, input.timeoutMs),
   preview_press: (input) => invokeTargeted<object>("press", input),
   preview_scroll: (input) => invokeTargeted<object>("scroll", input),

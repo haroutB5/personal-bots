@@ -48,6 +48,7 @@ import type {
   BrowserPage,
   ConsoleRecord,
   NetworkRecord,
+  PointerClickOptions,
   ScreencastMeta,
   ScreencastProfile,
   ViewportOverride,
@@ -93,13 +94,39 @@ class FakePage implements BrowserPage {
     if (new URL(this.currentUrl).origin !== new URL(url).origin) this.onOriginChangeListener?.();
     this.currentUrl = url;
   }
-  async goBack() {}
-  async goForward() {}
-  async reload() {}
-  async history() {
-    return { canGoBack: false, canGoForward: false };
+  /** Pointer-level calls in order, so a test can see what a tool did and what was released. */
+  readonly pointer: Array<{ readonly op: string; readonly detail?: unknown }> = [];
+  /** Where back and forward would land; null means no such entry. */
+  historyTargets: { back: string | null; forward: string | null } = { back: null, forward: null };
+  async goBack() {
+    this.pointer.push({ op: "goBack" });
+    if (this.historyTargets.back !== null) this.currentUrl = this.historyTargets.back;
   }
-  async clickLocator() {}
+  async goForward() {
+    this.pointer.push({ op: "goForward" });
+    if (this.historyTargets.forward !== null) this.currentUrl = this.historyTargets.forward;
+  }
+  async reload() {
+    this.pointer.push({ op: "reload" });
+  }
+  async history() {
+    return {
+      canGoBack: this.historyTargets.back !== null,
+      canGoForward: this.historyTargets.forward !== null,
+    };
+  }
+  async historyTarget(step: "back" | "forward") {
+    return this.historyTargets[step];
+  }
+  async clickLocator(locator?: string, _timeoutMs?: number, options?: PointerClickOptions) {
+    this.pointer.push({ op: "clickLocator", detail: { locator, options } });
+  }
+  async hoverLocator(locator: string) {
+    this.pointer.push({ op: "hoverLocator", detail: locator });
+  }
+  async dragLocators(from: string, to: string) {
+    this.pointer.push({ op: "dragLocators", detail: [from, to] });
+  }
   countLocatorImpl: ((locator: string) => number) | null = null;
   async countLocator(locator: string) {
     return this.countLocatorImpl?.(locator) ?? this.locatorCount;
@@ -150,10 +177,20 @@ class FakePage implements BrowserPage {
   }
   async setColorScheme() {}
   async bringToFront() {}
-  async mouseMove() {}
-  async mouseDown() {}
-  async mouseUp() {}
-  async mouseClick() {}
+  mouseMoveFails = false;
+  async mouseMove(x?: number, y?: number, steps?: number) {
+    this.pointer.push({ op: "mouseMove", detail: [x, y, steps] });
+    if (this.mouseMoveFails) throw new Error("mouse move failed");
+  }
+  async mouseDown() {
+    this.pointer.push({ op: "mouseDown" });
+  }
+  async mouseUp() {
+    this.pointer.push({ op: "mouseUp" });
+  }
+  async mouseClick(x?: number, y?: number, options?: PointerClickOptions) {
+    this.pointer.push({ op: "mouseClick", detail: { x, y, options } });
+  }
   async mouseWheel() {}
   readonly wheelsAt: Array<readonly [number, number, number, number]> = [];
   async mouseWheelAt(x: number, y: number, deltaX: number, deltaY: number) {
@@ -4237,6 +4274,415 @@ describe("PersonalBrowser", () => {
           ),
         ),
       );
+    });
+  });
+  // 1.66.6: right/middle/double clicks with held keys, hover, drag, back/forward/reload and
+  // closing one tab. Every new action goes through the same lease, sensitive-site guard and
+  // saved-login protection as the old ones.
+  describe("pointer actions, history and closing a tab (1.66.6)", () => {
+    const BANK = "https://bank.example";
+    type Browser = PersonalBrowser.PersonalBrowser["Service"];
+
+    const markSensitive = (origin: string) =>
+      Effect.gen(function* () {
+        const logins = yield* PersonalLoginRepository.PersonalLoginRepository;
+        const now = yield* DateTime.now;
+        const loginId = PersonalLoginId.make(`login-${origin}`);
+        yield* logins.create({
+          loginId,
+          label: origin,
+          origin,
+          username: "person",
+          secretRef: `ref-${origin}`,
+          sensitive: false,
+          createdAt: now,
+          updatedAt: now,
+        });
+        yield* logins.setSensitive({ loginId, sensitive: true, updatedAt: now });
+      });
+
+    const refused = (browser: Browser, operation: PreviewAutomationRequest) =>
+      browser.handleAutomationRequest(operation).pipe(Effect.asVoid, Effect.flip);
+
+    const onTab = (operation: PreviewAutomationRequest, tabId: string) =>
+      ({ ...operation, tabId, tabIdExplicit: true }) as PreviewAutomationRequest;
+
+    const lastOf = (page: FakePage, op: string) =>
+      page.pointer.findLast((entry) => entry.op === op)?.detail;
+
+    it.effect("click carries the button, the click count and the held keys to both forms", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const page = fake.state.page;
+
+        yield* browser.handleAutomationRequest(
+          request("click", {
+            locator: "text=Row",
+            button: "right",
+            clicks: 2,
+            modifiers: ["Control", "Shift"],
+          }),
+        );
+        expect(lastOf(page, "clickLocator")).toMatchObject({
+          locator: "text=Row",
+          options: { button: "right", clickCount: 2, modifiers: ["Control", "Shift"] },
+        });
+
+        yield* browser.handleAutomationRequest(
+          request("click", { x: 20, y: 30, button: "middle", clicks: 3, modifiers: ["Alt"] }),
+        );
+        expect(lastOf(page, "mouseClick")).toMatchObject({
+          x: 20,
+          y: 30,
+          options: { button: "middle", clickCount: 3, modifiers: ["Alt"] },
+        });
+
+        // A plain click asks for nothing extra.
+        yield* browser.handleAutomationRequest(request("click", { x: 1, y: 2 }));
+        const plain = lastOf(page, "mouseClick") as { options: PointerClickOptions };
+        expect(plain.options.button).toBeUndefined();
+        expect(plain.options.clickCount).toBeUndefined();
+        expect(plain.options.modifiers).toBeUndefined();
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect(
+      "hover moves onto a locator or a point, and a point outside the page is refused",
+      () => {
+        const fake = makeFakeDriver();
+        return Effect.gen(function* () {
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+          const page = fake.state.page;
+          yield* browser.handleAutomationRequest(request("hover", { locator: "text=Menu" }));
+          expect(lastOf(page, "hoverLocator")).toBe("text=Menu");
+          yield* browser.handleAutomationRequest(request("hover", { x: 40, y: 60 }));
+          expect(lastOf(page, "mouseMove")).toEqual([40, 60, undefined]);
+
+          const outside = yield* refused(browser, request("hover", { x: 5000, y: 5 }));
+          expect(outside.message).toContain("outside the 390x844 viewport");
+          // Nothing was pressed by a hover.
+          expect(page.pointer.some((entry) => entry.op === "mouseDown")).toBe(false);
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      },
+    );
+
+    it.effect("drag drops from one element to another, or from one point to another", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const page = fake.state.page;
+        yield* browser.handleAutomationRequest(
+          request("drag", { fromLocator: "#card", toLocator: "#column-2" }),
+        );
+        expect(lastOf(page, "dragLocators")).toEqual(["#card", "#column-2"]);
+
+        page.pointer.length = 0;
+        yield* browser.handleAutomationRequest(
+          request("drag", { fromX: 10, fromY: 20, toX: 200, toY: 300 }),
+        );
+        expect(page.pointer.map((entry) => entry.op)).toEqual([
+          "mouseMove",
+          "mouseDown",
+          "mouseMove",
+          "mouseMove",
+          "mouseUp",
+        ]);
+        expect(page.pointer[0]?.detail).toEqual([10, 20, undefined]);
+        expect(page.pointer[2]?.detail).toEqual([200, 300, 8]);
+        expect(page.pointer[3]?.detail).toEqual([200, 300, undefined]);
+
+        const outside = yield* refused(
+          browser,
+          request("drag", { fromX: 10, fromY: 20, toX: 9000, toY: 300 }),
+        );
+        expect(outside.message).toContain("Drag end");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("a drag that fails part way still lets go of the button", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const page = fake.state.page;
+        page.mouseMove = async (x?: number, y?: number, steps?: number) => {
+          page.pointer.push({ op: "mouseMove", detail: [x, y, steps] });
+          if (steps === 8) throw new Error("the page crashed mid-drag");
+        };
+        page.pointer.length = 0;
+        const error = yield* refused(
+          browser,
+          request("drag", { fromX: 10, fromY: 20, toX: 200, toY: 300 }),
+        );
+        expect(error.message).toContain("crashed mid-drag");
+        const ops = page.pointer.map((entry) => entry.op);
+        expect(ops.filter((op) => op === "mouseDown")).toHaveLength(1);
+        expect(ops.at(-1)).toBe("mouseUp");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("back, forward and reload move the tab and report where it is", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com/b" }));
+        const page = fake.state.page;
+        page.historyTargets = { back: "https://example.com/a", forward: "https://example.com/c" };
+
+        const back = (yield* browser.handleAutomationRequest(
+          request("history", { action: "back" }),
+        )) as PreviewAutomationStatus;
+        expect(back.url).toBe("https://example.com/a");
+        expect(page.loadStateWaits.at(-1)?.state).toBe("load");
+
+        const forward = (yield* browser.handleAutomationRequest(
+          request("history", { action: "forward", readiness: "domContentLoaded" }),
+        )) as PreviewAutomationStatus;
+        expect(forward.url).toBe("https://example.com/c");
+        expect(page.loadStateWaits.at(-1)?.state).toBe("domcontentloaded");
+
+        const waits = page.loadStateWaits.length;
+        yield* browser.handleAutomationRequest(
+          request("history", { action: "reload", readiness: "none" }),
+        );
+        expect(page.pointer.map((entry) => entry.op).filter((op) => /^go|reload/.test(op))).toEqual(
+          ["goBack", "goForward", "reload"],
+        );
+        expect(page.loadStateWaits).toHaveLength(waits);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("back and forward say so when the tab has nowhere to go", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        const noBack = yield* refused(browser, request("history", { action: "back" }));
+        expect(noBack.message).toContain("no earlier page");
+        const noForward = yield* refused(browser, request("history", { action: "forward" }));
+        expect(noForward.message).toContain("no later page");
+        expect(fake.state.page.pointer.some((entry) => entry.op.startsWith("go"))).toBe(false);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect(
+      "history is a navigation for the sensitive-site guard: the destination counts",
+      () => {
+        const fake = makeFakeDriver();
+        return Effect.gen(function* () {
+          yield* markSensitive(BANK);
+          const browser = yield* PersonalBrowser.PersonalBrowser;
+          // A tab on another site, opened before the bank was read.
+          const notes = (yield* browser.handleAutomationRequest(
+            request("navigate", { url: "https://notes.example/" }),
+          )) as PreviewAutomationStatus;
+          const notesPage = fake.state.page;
+          notesPage.historyTargets = { back: "https://elsewhere.example/", forward: null };
+          yield* browser.handleAutomationRequest(
+            request("open", { url: `${BANK}/accounts`, reuseExistingTab: false }),
+          );
+          const bankPage = fake.state.pages.at(-1)!;
+          bankPage.historyTargets = { back: `${BANK}/login`, forward: "https://evil.example/" };
+
+          // Back to another page of the same bank, and a reload of it, carry nothing anywhere.
+          yield* browser.handleAutomationRequest(request("history", { action: "reload" }));
+          yield* browser.handleAutomationRequest(request("history", { action: "back" }));
+          bankPage.currentUrl = `${BANK}/accounts`;
+          // Forward to a site that is not the bank pauses for the user; the page did not move.
+          const forward = yield* refused(browser, request("history", { action: "forward" }));
+          expect(forward.message).toContain("request_browser_help");
+          expect(forward.message).toContain("https://evil.example");
+          expect(bankPage.pointer.some((entry) => entry.op === "goForward")).toBe(false);
+
+          // Reloading or going back on the tab that is on another site is the same question.
+          for (const action of ["reload", "back"] as const) {
+            const paused = yield* refused(
+              browser,
+              onTab(request("history", { action }), notes.tabId!),
+            );
+            expect(paused.message).toContain("request_browser_help");
+          }
+          expect(notesPage.pointer.some((entry) => /^go|reload/.test(entry.op))).toBe(false);
+        }).pipe(Effect.provide(makeLayer(fake.driver)));
+      },
+    );
+
+    it.effect("history needs no approval when no site is marked sensitive", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://one.example/" }),
+        );
+        fake.state.page.historyTargets = { back: "https://two.example/", forward: null };
+        yield* browser.handleAutomationRequest(request("history", { action: "back" }));
+        expect(fake.state.page.url()).toBe("https://two.example/");
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("a tab with a saved login filled refuses locator hover and drag, and history", () => {
+      const fake = makeFakeDriver();
+      asLoginBrowser(fake);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.fillLogin({
+          threadId,
+          label: "Example",
+          expectedOrigin: "https://example.com",
+          username: "person@example.com",
+          password: "password-value",
+        });
+        const form = fake.state.pages.at(-1)!;
+        form.pointer.length = 0;
+        form.historyTargets = { back: "https://example.com/earlier", forward: null };
+
+        const blocked: Array<readonly [PreviewAutomationRequest, RegExp]> = [
+          [request("hover", { locator: "input" }), /Locator hovers are disabled/],
+          [request("hover", { selector: "input" }), /Locator hovers are disabled/],
+          [
+            request("drag", { fromLocator: "input", toLocator: "button" }),
+            /Locator drags are disabled/,
+          ],
+          [request("history", { action: "back" }), /contains a saved login/],
+          [request("history", { action: "reload" }), /contains a saved login/],
+          [request("click", { x: 1, y: 1, button: "right" }), /Only plain left clicks/],
+          [request("click", { x: 1, y: 1, modifiers: ["Control"] }), /Only plain left clicks/],
+          [request("click", { locator: "input", clicks: 2 }), /Locator clicks are disabled/],
+        ];
+        for (const [operation, message] of blocked) {
+          const error = yield* refused(browser, operation);
+          expect(error.message).toMatch(message);
+        }
+        // Nothing reached the page.
+        expect(form.pointer).toEqual([]);
+
+        // Coordinates cannot read the page, so they stay possible, as a click already was.
+        yield* browser.handleAutomationRequest(request("hover", { x: 5, y: 5 }));
+        yield* browser.handleAutomationRequest(
+          request("drag", { fromX: 1, fromY: 1, toX: 5, toY: 5 }),
+        );
+        yield* browser.handleAutomationRequest(request("click", { x: 1, y: 1, clicks: 2 }));
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("a person in control stops every new action before it touches the page", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const open = (yield* browser.handleAutomationRequest(
+          request("navigate", { url: "example.com" }),
+        )) as PreviewAutomationStatus;
+        const page = fake.state.page;
+        page.historyTargets = { back: "https://example.com/a", forward: null };
+        page.pointer.length = 0;
+        yield* browser.takeControl("session-1");
+
+        for (const operation of [
+          request("hover", { x: 1, y: 1 }),
+          request("drag", { fromX: 1, fromY: 1, toX: 9, toY: 9 }),
+          request("history", { action: "back" }),
+          request("click", { x: 1, y: 1, button: "right", clicks: 2 }),
+          onTab(request("closeTab", {}), open.tabId!),
+        ]) {
+          const error = yield* refused(browser, operation);
+          expect(error.tag, operation.operation).toBe("PreviewAutomationControlInterruptedError");
+        }
+        expect(page.pointer).toEqual([]);
+        expect(page.closed).toBe(false);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("closeTab closes only the named tab and lists the ones left", () => {
+      const fake = makeFakeDriver();
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const first = (yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://one.example/" }),
+        )) as PreviewAutomationStatus;
+        const second = (yield* browser.handleAutomationRequest(
+          request("open", { url: "https://two.example/", reuseExistingTab: false }),
+        )) as PreviewAutomationStatus;
+        expect(fake.state.pages).toHaveLength(2);
+
+        const closed = (yield* browser.handleAutomationRequest(
+          onTab(request("closeTab", {}), first.tabId!),
+        )) as { tabId: null; closedTabId: string; remainingTabIds: string[] };
+        expect(closed).toEqual({
+          tabId: null,
+          closedTabId: first.tabId,
+          remainingTabIds: [second.tabId],
+        });
+        expect(fake.state.pages[0]?.closed).toBe(true);
+        expect(fake.state.pages[1]?.closed).toBe(false);
+        // The browser itself is still up and the other tab still answers.
+        expect((yield* browser.status("session-1")).state).toBe("connected");
+        const status = (yield* browser.handleAutomationRequest(
+          request("click", { x: 1, y: 1 }),
+        )) as { tabId: string };
+        expect(status.tabId).toBe(second.tabId);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("closeTab needs an explicit tab of this chat's own", () => {
+      const fake = makeFakeDriver();
+      const other = ThreadId.make("thread-other");
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://one.example/" }),
+        );
+        const theirs = (yield* browser.handleAutomationRequest({
+          ...request("open", { url: "https://theirs.example/", reuseExistingTab: false }),
+          threadId: other,
+        } as PreviewAutomationRequest)) as PreviewAutomationStatus;
+
+        // The current tab is never closed by default.
+        const implicit = yield* refused(browser, request("closeTab", {}));
+        expect(implicit.tag).toBe("PreviewAutomationTabNotFoundError");
+        // Another chat's tab is not this chat's to close, and an unknown id is not found.
+        const foreign = yield* refused(browser, onTab(request("closeTab", {}), theirs.tabId!));
+        expect(foreign.tag).toBe("PreviewAutomationTabNotFoundError");
+        const unknown = yield* refused(browser, onTab(request("closeTab", {}), "tab-nope"));
+        expect(unknown.tag).toBe("PreviewAutomationTabNotFoundError");
+        expect(fake.state.pages.every((page) => !page.closed)).toBe(true);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
+    });
+
+    it.effect("closeTab closes a tab that has a native dialog open or a saved login filled", () => {
+      const fake = makeFakeDriver();
+      asLoginBrowser(fake);
+      return Effect.gen(function* () {
+        const browser = yield* PersonalBrowser.PersonalBrowser;
+        const plain = (yield* browser.handleAutomationRequest(
+          request("navigate", { url: "https://one.example/" }),
+        )) as PreviewAutomationStatus;
+        fake.state.page.openDialog({ type: "confirm", message: "Leave?", defaultValue: "" });
+        const closedDialog = (yield* browser.handleAutomationRequest(
+          onTab(request("closeTab", {}), plain.tabId!),
+        )) as { closedTabId: string };
+        expect(closedDialog.closedTabId).toBe(plain.tabId);
+        expect(fake.state.page.closed).toBe(true);
+
+        yield* browser.handleAutomationRequest(request("navigate", { url: "example.com" }));
+        yield* browser.fillLogin({
+          threadId,
+          label: "Example",
+          expectedOrigin: "https://example.com",
+          username: "person@example.com",
+          password: "password-value",
+        });
+        const form = fake.state.pages.at(-1)!;
+        const formTab = (yield* browser.handleAutomationRequest(request("status"))) as {
+          tabId: string;
+        };
+        yield* browser.handleAutomationRequest(onTab(request("closeTab", {}), formTab.tabId));
+        expect(form.closed).toBe(true);
+      }).pipe(Effect.provide(makeLayer(fake.driver)));
     });
   });
 });

@@ -38,6 +38,10 @@ export const SERVER_BROWSER_OPERATIONS: ReadonlyArray<PreviewAutomationOperation
   "waitFor",
   "resize",
   "setColorScheme",
+  "hover",
+  "drag",
+  "history",
+  "closeTab",
 ];
 
 export const toRemoteError = (

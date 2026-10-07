@@ -57,11 +57,17 @@ export const DesktopImageToolkitHandlersLive = DesktopImageToolkit.toLayer(
         act("screenshot", (context) => DesktopActions.captureShot(context, input.monitor)),
       computer_zoom: (input) => act("zoom", (context) => DesktopActions.zoomShot(context, input)),
       computer_click: (input) => act("click", (context) => DesktopActions.click(context, input)),
+      computer_mouse_down: (input) =>
+        act("mouse_down", (context) => DesktopActions.mouseDown(context, input)),
+      computer_mouse_up: (input) =>
+        act("mouse_up", (context) => DesktopActions.mouseUp(context, input)),
       computer_move: (input) => act("move", (context) => DesktopActions.move(context, input)),
       computer_drag: (input) => act("drag", (context) => DesktopActions.drag(context, input)),
       computer_scroll: (input) => act("scroll", (context) => DesktopActions.scroll(context, input)),
       computer_type: (input) => act("type", (context) => DesktopActions.typeText(context, input)),
       computer_key: (input) => act("key", (context) => DesktopActions.pressKeys(context, input)),
+      computer_hold_key: (input) =>
+        act("hold_key", (context) => DesktopActions.holdKey(context, input)),
     });
   }),
 );

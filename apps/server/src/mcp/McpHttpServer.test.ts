@@ -1,7 +1,13 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PREVIEW_AUTOMATION_OPERATIONS,
+  PreviewTabId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -746,6 +752,7 @@ it.effect("registers annotated tools and preserves authenticated request context
       const events = yield* broker.connect({
         clientId: "mcp-test-client",
         environmentId,
+        supportedOperations: [...PREVIEW_AUTOMATION_OPERATIONS],
       });
       yield* Stream.runForEach(events, (event) => {
         if (event.type === "connected") return Effect.void;
@@ -762,14 +769,16 @@ it.effect("registers annotated tools and preserves authenticated request context
                 ? ["Connect", "Continue"]
                 : event.request.operation === "press"
                   ? undefined
-                  : {
-                      available: true,
-                      visible: true,
-                      tabId,
-                      url: "http://example.test/",
-                      title: "Example",
-                      loading: false,
-                    },
+                  : event.request.operation === "closeTab"
+                    ? { tabId: null, closedTabId: tabId, remainingTabIds: [] }
+                    : {
+                        available: true,
+                        visible: true,
+                        tabId,
+                        url: "http://example.test/",
+                        title: "Example",
+                        loading: false,
+                      },
         });
       }).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
@@ -872,6 +881,71 @@ it.effect("registers annotated tools and preserves authenticated request context
         const text = result.content[0];
         expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual({ toolIcon });
       }
+
+      // 1.66.6: the four new browser tools are registered, annotated, and reach the host as their own operations.
+      for (const [name, destructive] of [
+        ["preview_hover", false],
+        ["preview_drag", true],
+        ["preview_history", true],
+        ["preview_close_tab", true],
+      ] as const) {
+        const registered = server.tools.find(({ tool }) => tool.name === name);
+        expect(registered, name).toBeDefined();
+        expect(registered?.tool.annotations?.destructiveHint, name).toBe(destructive);
+        expect(registered?.tool.annotations?.openWorldHint, name).toBe(true);
+      }
+      for (const [request, operation] of [
+        [{ name: "preview_hover", arguments: { x: 10, y: 10 } }, "hover"],
+        [{ name: "preview_drag", arguments: { fromX: 1, fromY: 2, toX: 30, toY: 40 } }, "drag"],
+        [{ name: "preview_click", arguments: { x: 5, y: 6, button: "right", clicks: 2 } }, "click"],
+      ] as const) {
+        const result = yield* server
+          .callTool(request)
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+        expect(result.isError, request.name).toBe(false);
+        expect(result.structuredContent).toEqual({ toolIcon });
+        expect(routedRequests.some((entry) => entry.operation === operation)).toBe(true);
+      }
+      const history = yield* server
+        .callTool({ name: "preview_history", arguments: { action: "back" } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(history.isError).toBe(false);
+      expect(history.structuredContent).toMatchObject({ url: "http://example.test/", tabId });
+      expect(routedRequests.some((entry) => entry.operation === "history")).toBe(true);
+
+      const closed = yield* server
+        .callTool({ name: "preview_close_tab", arguments: { tabId } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(closed.isError).toBe(false);
+      expect(closed.structuredContent).toMatchObject({
+        tabId: null,
+        closedTabId: tabId,
+        remainingTabIds: [],
+      });
+      // The tab id travelled as the request's explicit tab, which is what the host checks.
+      expect(routedRequests.find((entry) => entry.operation === "closeTab")?.tabId).toBe(tabId);
+
+      // A close_tab call without a tab id is refused before it reaches any host.
+      const before = routedRequests.length;
+      const missing = yield* server
+        .callTool({ name: "preview_close_tab", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+          Effect.flip,
+        );
+      expect(String(missing)).toContain("preview_close_tab");
+      expect(String(missing)).toContain("tabId");
+      expect(routedRequests).toHaveLength(before);
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

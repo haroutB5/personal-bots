@@ -96,3 +96,71 @@ export function parseKeyCombos(keys: string): ReadonlyArray<ReadonlyArray<KeyEnt
     return parts.map(keyEntry);
   });
 }
+
+export const MIN_HOLD_MS = 50;
+/** The longest any key or chord is held in one call. */
+export const MAX_HOLD_MS = 30_000;
+/** A letter, digit or symbol held without ctrl, alt or win (see {@link planHold}). */
+export const MAX_PLAIN_PRINTABLE_HOLD_MS = 2_000;
+
+const MODIFIER_CODES: ReadonlySet<number> = new Set([0x10, 0x11, 0x12, 0x5b]);
+/** Modifiers that turn a printable key into a shortcut rather than text. */
+const SHORTCUT_MODIFIER_CODES: ReadonlySet<number> = new Set([0x11, 0x12, 0x5b]);
+
+const isModifier = (entry: KeyEntry) => typeof entry === "number" && MODIFIER_CODES.has(entry);
+
+/** Keys that put a character in a text field: letters, digits, space, plus, minus, any symbol. */
+const isPrintable = (entry: KeyEntry) =>
+  typeof entry !== "number" ||
+  (entry >= 0x30 && entry <= 0x39) ||
+  (entry >= 0x41 && entry <= 0x5a) ||
+  entry === 0x20 ||
+  entry === 0xbb ||
+  entry === 0xbd;
+
+export interface HoldPlan {
+  readonly combo: ReadonlyArray<KeyEntry>;
+  /** Whether the held key auto-repeats, as a key held on a keyboard does. */
+  readonly repeat: boolean;
+}
+
+/**
+ * What `computer_hold_key` may hold, and how.
+ *
+ * Holding exists for shortcuts and navigation: shift or ctrl held while the
+ * mouse works, an arrow or page key held to keep scrolling, a game key. It
+ * must not become a second way to type, because the user enters passwords
+ * and the bot never does. So a letter, digit, space or symbol held without
+ * ctrl, alt or win is pressed once, never auto-repeats, and is held for at
+ * most {@link MAX_PLAIN_PRINTABLE_HOLD_MS}: a hold can put at most one
+ * character in a field. Every other hold is capped at {@link MAX_HOLD_MS}.
+ */
+export function planHold(keys: string, durationMs: number): HoldPlan {
+  if (!Number.isInteger(durationMs) || durationMs < MIN_HOLD_MS || durationMs > MAX_HOLD_MS) {
+    throw new DesktopKeyError(
+      `durationMs must be a whole number from ${MIN_HOLD_MS} to ${MAX_HOLD_MS} (${MAX_HOLD_MS / 1000} s at most).`,
+    );
+  }
+  const combos = parseKeyCombos(keys);
+  const combo = combos[0];
+  if (combos.length !== 1 || combo === undefined) {
+    throw new DesktopKeyError(
+      'Hold one key or one chord, such as "shift", "ctrl+shift" or "down". Use computer_key for a sequence.',
+    );
+  }
+  const others = combo.filter((entry) => !isModifier(entry));
+  if (others.length > 1) {
+    throw new DesktopKeyError(
+      "Hold at most one key besides the modifiers (ctrl, alt, shift, win).",
+    );
+  }
+  const plainPrintable =
+    others.some(isPrintable) &&
+    !combo.some((entry) => typeof entry === "number" && SHORTCUT_MODIFIER_CODES.has(entry));
+  if (plainPrintable && durationMs > MAX_PLAIN_PRINTABLE_HOLD_MS) {
+    throw new DesktopKeyError(
+      `A letter, digit or symbol held without ctrl, alt or win can be held for ${MAX_PLAIN_PRINTABLE_HOLD_MS} ms at most, and it is pressed once without repeating, so a hold cannot type text. Use computer_type to type.`,
+    );
+  }
+  return { combo, repeat: others.length === 1 && !plainPrintable };
+}

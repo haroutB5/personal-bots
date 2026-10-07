@@ -14,7 +14,7 @@ import {
   toPhysicalRect,
   fitImageSize,
 } from "./desktopGeometry.ts";
-import { DesktopKeyError, parseKeyCombos } from "./desktopKeys.ts";
+import { DesktopKeyError, parseKeyCombos, planHold } from "./desktopKeys.ts";
 import { DesktopHelperError } from "./DesktopHelper.ts";
 import type { DesktopActionContext } from "./PersonalDesktop.ts";
 import { STOPPED_REASON, PersonalDesktopActionError } from "./PersonalDesktop.ts";
@@ -173,12 +173,22 @@ async function afterAction(
   return captureShot(context);
 }
 
+/** ctrl, shift, alt and win: the only keys that may be held around a pointer action. */
+const MODIFIER_VKS: ReadonlySet<number> = new Set([0x10, 0x11, 0x12, 0x5b]);
+
+/**
+ * The keys held around a click, drag or scroll. Only real modifiers: holding a
+ * letter or Enter around a pointer action would be a way to press keys that
+ * computer_key and computer_hold_key have rules about.
+ */
 function modifierKeys(modifiers: string | undefined): number[] {
   if (modifiers === undefined || modifiers.trim().length === 0) return [];
   const combos = parseKeyCombos(modifiers.trim().replace(/\s+/g, "+"));
   const keys = combos.flat();
-  if (keys.some((key) => typeof key !== "number")) {
-    throw new DesktopKeyError("Modifiers must be named keys such as ctrl, shift, alt or win.");
+  if (keys.some((key) => typeof key !== "number" || !MODIFIER_VKS.has(key))) {
+    throw new DesktopKeyError(
+      'Modifiers must be ctrl, alt, shift or win, joined by "+", for example "ctrl+shift".',
+    );
   }
   return keys as number[];
 }
@@ -220,6 +230,7 @@ export async function drag(
     toX: number;
     toY: number;
     button?: "left" | "right" | "middle" | undefined;
+    modifiers?: string | undefined;
   },
 ): Promise<DesktopShot> {
   const frame = requireFrame(context);
@@ -231,6 +242,7 @@ export async function drag(
     toX: to.x,
     toY: to.y,
     button: input.button ?? "left",
+    modifiers: modifierKeys(input.modifiers),
   });
   return afterAction(context, input);
 }
@@ -242,6 +254,7 @@ export async function scroll(
     y?: number | undefined;
     direction: "up" | "down" | "left" | "right";
     amount?: number | undefined;
+    modifiers?: string | undefined;
   },
 ): Promise<DesktopShot> {
   const amount = Math.max(1, Math.min(30, input.amount ?? 3));
@@ -256,6 +269,7 @@ export async function scroll(
     ...point,
     dy: input.direction === "down" ? amount : input.direction === "up" ? -amount : 0,
     dx: input.direction === "right" ? amount : input.direction === "left" ? -amount : 0,
+    modifiers: modifierKeys(input.modifiers),
   });
   return afterAction(context, input);
 }
@@ -289,6 +303,86 @@ export async function pressKeys(
     { combos, repeat },
     Math.min(55_000, 10_000 + repeat * combos.length * 200),
   );
+  return afterAction(context, input);
+}
+
+/** A point given by both x and y, or by neither (then the pointer stays where it is). */
+function optionalPoint(
+  context: DesktopActionContext,
+  input: { x?: number | undefined; y?: number | undefined },
+): { x: number; y: number } | null {
+  if (input.x === undefined && input.y === undefined) return null;
+  if (input.x === undefined || input.y === undefined) {
+    throw new DesktopCoordinateError("Give both x and y, or neither.");
+  }
+  return toPhysical(requireFrame(context), { x: input.x, y: input.y });
+}
+
+/**
+ * Presses a mouse button and leaves it down, for long presses and drags in
+ * several steps. The button is recorded as held the moment before it is
+ * pressed, so any failure, timeout, release of the PC or end of the turn lets
+ * it go again (see PersonalDesktop).
+ */
+export async function mouseDown(
+  context: DesktopActionContext,
+  input: AfterAction & {
+    x?: number | undefined;
+    y?: number | undefined;
+    button?: "left" | "right" | "middle" | undefined;
+  },
+): Promise<DesktopShot> {
+  const button = input.button ?? "left";
+  if (context.heldButtons().has(button)) {
+    throw new DesktopKeyError(
+      `The ${button} button is already held down by you. Let it go with computer_mouse_up first.`,
+    );
+  }
+  const point = optionalPoint(context, input);
+  context.markButton(button, true);
+  await context.driver.request("button", { button, down: true, ...point });
+  return afterAction(context, input);
+}
+
+/** Lets go of a button pressed with computer_mouse_down, optionally after moving to a point. */
+export async function mouseUp(
+  context: DesktopActionContext,
+  input: AfterAction & {
+    x?: number | undefined;
+    y?: number | undefined;
+    button?: "left" | "right" | "middle" | undefined;
+  },
+): Promise<DesktopShot> {
+  const button = input.button ?? "left";
+  if (!context.heldButtons().has(button)) {
+    throw new DesktopKeyError(
+      `The ${button} button is not held down. If an earlier step failed, or you held it for over a minute, it was let go automatically.`,
+    );
+  }
+  const point = optionalPoint(context, input);
+  await context.driver.request("button", { button, down: false, ...point });
+  context.markButton(button, false);
+  return afterAction(context, input);
+}
+
+/**
+ * Holds a key or one chord for a set time and lets go. The helper releases it
+ * on every path; if the call times out or fails, the service tells the helper
+ * to release it too (`markKeysHeld` keeps that record until the hold is over).
+ */
+export async function holdKey(
+  context: DesktopActionContext,
+  input: AfterAction & { keys: string; durationMs: number },
+): Promise<DesktopShot> {
+  const plan = planHold(input.keys, input.durationMs);
+  context.markKeysHeld(true);
+  // The helper may wait several seconds for the user's own input to go quiet before it starts.
+  await context.driver.request(
+    "hold",
+    { keys: plan.combo, durationMs: input.durationMs, repeat: plan.repeat },
+    input.durationMs + 12_000,
+  );
+  context.markKeysHeld(false);
   return afterAction(context, input);
 }
 

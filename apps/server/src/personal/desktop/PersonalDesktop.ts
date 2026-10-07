@@ -64,6 +64,16 @@ export const DESKTOP_QUEUE_WAIT_MS = 45_000;
  */
 export const DESKTOP_LINE_GRACE_MS = 60_000;
 const IDLE_SWEEP_MS = 5_000;
+/**
+ * A mouse button a bot holds down with computer_mouse_down is let go after
+ * this long, even if the bot is still working: a long press or a drag in
+ * several steps takes seconds, and nothing legitimate holds a button a minute.
+ */
+export const DESKTOP_MOUSE_HOLD_MAX_MS = 60_000;
+/** How long the helper gets to let go of held input before the service moves on. */
+const RELEASE_TIMEOUT_MS = 5_000;
+export const HELD_RELEASED_NOTE =
+  "The mouse button or key you were holding was let go, so nothing stays pressed.";
 
 export type DesktopActionErrorKind =
   | "unavailable"
@@ -153,6 +163,16 @@ export interface DesktopActionContext {
   readonly setFrame: (frame: ScreenFrame) => void;
   /** False once the user stopped this bot or it lost the PC mid-action. */
   readonly stillHeld: () => boolean;
+  /** Mouse buttons this chat holds down right now (computer_mouse_down). */
+  readonly heldButtons: () => ReadonlySet<string>;
+  /**
+   * Records that a button is about to be pressed or was let go. A recorded
+   * button is released by the service when the action fails, the hold runs
+   * too long, the PC is released or the turn ends.
+   */
+  readonly markButton: (button: string, down: boolean) => void;
+  /** Records that a key hold is running (true) or finished (false). */
+  readonly markKeysHeld: (held: boolean) => void;
 }
 
 export interface PersonalDesktopShape {
@@ -211,6 +231,8 @@ export interface DesktopServiceOptions {
   readonly idleTimeoutMs?: number;
   readonly queueWaitMs?: number;
   readonly lineGraceMs?: number;
+  /** Longest a bot may keep a mouse button down (default {@link DESKTOP_MOUSE_HOLD_MAX_MS}). */
+  readonly mouseHoldMaxMs?: number;
   /** Overlay left visible to screenshots, for evidence captures. */
   readonly overlayCapturable?: boolean;
   /** The app's live view; null or absent where there is no desktop. */
@@ -347,6 +369,16 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
     }
     /** The owner's remote-control session, while they hold the PC. */
     let remote: RemoteState | null = null;
+    const mouseHoldMaxMs = options.mouseHoldMaxMs ?? DESKTOP_MOUSE_HOLD_MAX_MS;
+    interface HeldInput {
+      readonly buttons: Set<string>;
+      keys: boolean;
+      buttonsSince: number;
+    }
+    /** What each bot's actions left pressed (buttons by name, a key hold running), per chat. */
+    const held = new Map<string, HeldInput>();
+    /** Releases run in order and the next action waits for them, so a release never lands inside it. */
+    let releasing: Promise<unknown> = Promise.resolve();
     let lastStop: PersonalDesktopStop | null = null;
     let overlayShownFor: string | null = null;
     /** One action at a time, whoever holds the PC. */
@@ -434,8 +466,69 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
       driver?.request("abort").catch(() => undefined);
     };
 
+    const heldEntry = (threadId: string): HeldInput => {
+      let entry = held.get(threadId);
+      if (entry === undefined) {
+        entry = { buttons: new Set(), keys: false, buttonsSince: now() };
+        held.set(threadId, entry);
+      }
+      return entry;
+    };
+
+    const markButton = (threadId: string, button: string, down: boolean) => {
+      const entry = heldEntry(threadId);
+      if (down) {
+        if (entry.buttons.size === 0) entry.buttonsSince = now();
+        entry.buttons.add(button);
+      } else {
+        entry.buttons.delete(button);
+      }
+      if (entry.buttons.size === 0 && !entry.keys) held.delete(threadId);
+    };
+
+    const markKeysHeld = (threadId: string, keysHeld: boolean) => {
+      const entry = heldEntry(threadId);
+      entry.keys = keysHeld;
+      if (entry.buttons.size === 0 && !entry.keys) held.delete(threadId);
+    };
+
+    /**
+     * Lets go of every button and key this chat's actions left pressed. The
+     * helper does it on its own side too (an action's own cleanup, its exit,
+     * the stop key); this is the service's guarantee for every path where the
+     * PC stops being the chat's: a failed or timed-out action, the PC handed
+     * back, taken over or stopped, the turn ending, a button held too long.
+     * Resolves true when something was held.
+     */
+    const releaseHeld = (threadId: string, why: string): Promise<boolean> => {
+      const entry = held.get(threadId);
+      held.delete(threadId);
+      if (entry === undefined || (entry.buttons.size === 0 && !entry.keys)) {
+        return Promise.resolve(false);
+      }
+      const buttons = entry.buttons.size;
+      const run = releasing.then(async () => {
+        if (driver !== null) {
+          await driver.request("releaseAll", {}, RELEASE_TIMEOUT_MS).catch((error: unknown) => {
+            log(
+              `desktop: could not release held input (${why}): ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
+        }
+        log(
+          `desktop: let go of held input (${why}): ${buttons} mouse button(s), keys ${entry.keys}`,
+        );
+        return true;
+      });
+      releasing = run;
+      return run;
+    };
+
     const applyHandOver = (handOver: HandOver, userEnd: RemoteControlEnd = "idle") => {
       if (handOver.previous !== null) frames.delete(handOver.previous.threadId);
+      if (handOver.previous !== null && !isUser(handOver.previous)) {
+        void releaseHeld(handOver.previous.threadId, "the PC was handed back");
+      }
       if (isUser(handOver.previous)) finishRemote(userEnd);
       if (handOver.promoted !== null) {
         const promoted = handOver.promoted.threadId;
@@ -478,6 +571,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
       } else if (holder !== null) {
         stopped.set(holder.threadId, STOPPED_REASON);
         frames.delete(holder.threadId);
+        void releaseHeld(holder.threadId, "stopped by the user");
         lastStop = { threadId: holder.threadId, botName: holder.botName, by, at: iso(now()) };
         // The stop key already aborted the helper's action from inside it;
         // the app's Stop has to ask.
@@ -603,6 +697,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
           });
         }
         yield* acquire(claimant);
+        let releasedHeld = false;
         const result = yield* Effect.tryPromise({
           try: () =>
             runExclusive(async () => {
@@ -621,6 +716,8 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
                     });
               }
               lock.touch(claimant.threadId, now());
+              // A release that was already on its way finishes before this action starts.
+              await releasing;
               try {
                 return await run({
                   driver,
@@ -629,7 +726,14 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
                     frames.set(claimant.threadId, frame);
                   },
                   stillHeld: () => lock.isHolder(claimant.threadId),
+                  heldButtons: () => held.get(claimant.threadId)?.buttons ?? new Set<string>(),
+                  markButton: (button, down) => markButton(claimant.threadId, button, down),
+                  markKeysHeld: (keysHeld) => markKeysHeld(claimant.threadId, keysHeld),
                 });
+              } catch (error) {
+                // Any failure lets go of whatever was held, so a half-done drag or hold cannot stick.
+                if (await releaseHeld(claimant.threadId, "an action failed")) releasedHeld = true;
+                throw error;
               } finally {
                 lock.touch(claimant.threadId, now());
               }
@@ -637,12 +741,19 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
           catch: (error) => {
             const failure = helperFailure(error);
             // An abort from a takeover reads as the takeover, not the stop key.
-            return failure.kind === "stopped" && stopped.has(claimant.threadId)
+            const reported =
+              failure.kind === "stopped" && stopped.has(claimant.threadId)
+                ? new PersonalDesktopActionError({
+                    kind: "stopped",
+                    reason: stoppedReason(claimant.threadId),
+                  })
+                : failure;
+            return releasedHeld
               ? new PersonalDesktopActionError({
-                  kind: "stopped",
-                  reason: stoppedReason(claimant.threadId),
+                  kind: reported.kind,
+                  reason: `${reported.reason} ${HELD_RELEASED_NOTE}`,
                 })
-              : failure;
+              : reported;
           },
         }).pipe(Effect.withSpan(`PersonalDesktop.${operation}`));
         return result;
@@ -695,6 +806,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
           if (previous !== null) {
             stopped.set(previous.threadId, TAKEN_OVER_REASON);
             frames.delete(previous.threadId);
+            void releaseHeld(previous.threadId, "the owner took over");
             lastStop = {
               threadId: previous.threadId,
               botName: previous.botName,
@@ -776,6 +888,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
     const threadTurnEnded: PersonalDesktopShape["threadTurnEnded"] = (threadId) =>
       Effect.sync(() => {
         stopped.delete(threadId);
+        void releaseHeld(threadId, "the turn ended");
         const waiter = leaveLine(threadId);
         waiter?.reject(
           new PersonalDesktopActionError({ kind: "busy", reason: "Your turn ended." }),
@@ -807,6 +920,11 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
         const at = now();
         for (const [threadId, deadline] of lineDeadlines) {
           if (at >= deadline) leaveLine(threadId);
+        }
+        for (const [threadId, entry] of held) {
+          if (entry.buttons.size > 0 && at - entry.buttonsSince >= mouseHoldMaxMs) {
+            void releaseHeld(threadId, "a mouse button was held too long");
+          }
         }
         expireIdle();
       }),

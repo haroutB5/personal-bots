@@ -117,12 +117,59 @@ export const MoveInput = Schema.Struct({
   settleMs: SettleMs,
 });
 
+const Modifiers = Schema.optional(
+  Schema.String.annotate({
+    description: 'Keys held for the whole action, joined by "+", e.g. "ctrl" or "ctrl+shift".',
+  }),
+);
+
 export const DragInput = Schema.Struct({
   fromX: Coordinate,
   fromY: Coordinate,
   toX: Coordinate,
   toY: Coordinate,
   button: Schema.optional(Schema.Literals(["left", "right", "middle"])),
+  modifiers: Modifiers,
+  screenshot: ScreenshotAfter,
+  settleMs: SettleMs,
+});
+
+const PointerButton = Schema.optional(
+  Schema.Literals(["left", "right", "middle"]).annotate({
+    description: "Mouse button (default left).",
+  }),
+);
+
+const OptionalPoint = Schema.optional(Coordinate).annotate({
+  description:
+    "Pixel in your latest computer_screenshot (0,0 is its top-left). Give x and y together, or neither to use the pointer where it is.",
+});
+
+export const MouseDownInput = Schema.Struct({
+  x: OptionalPoint,
+  y: OptionalPoint,
+  button: PointerButton,
+  screenshot: ScreenshotAfter,
+  settleMs: SettleMs,
+});
+
+export const MouseUpInput = Schema.Struct({
+  x: OptionalPoint,
+  y: OptionalPoint,
+  button: PointerButton,
+  screenshot: ScreenshotAfter,
+  settleMs: SettleMs,
+});
+
+export const HoldKeyInput = Schema.Struct({
+  keys: Schema.String.annotate({
+    description:
+      'One key or one chord held together, joined by "+": "shift", "ctrl+shift", "down", "pagedown", "ctrl+z". Same key names as computer_key. At most one key besides the modifiers (ctrl, alt, shift, win).',
+  }),
+  durationMs: Schema.Int.annotate({
+    description:
+      "How long to hold it, in ms: 50 to 30000. A letter, digit or symbol without ctrl, alt or win is limited to 2000.",
+  }),
   screenshot: ScreenshotAfter,
   settleMs: SettleMs,
 });
@@ -132,6 +179,7 @@ export const ScrollInput = Schema.Struct({
   y: Schema.optional(Coordinate),
   direction: Schema.Literals(["up", "down", "left", "right"]),
   amount: Schema.optional(Schema.Int.annotate({ description: "Wheel notches, 1-30 (default 3)." })),
+  modifiers: Modifiers,
   screenshot: ScreenshotAfter,
   settleMs: SettleMs,
 });
@@ -213,6 +261,32 @@ export const ComputerClickTool = Tool.make("computer_click", {
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true);
 
+export const ComputerMouseDownTool = Tool.make("computer_mouse_down", {
+  description: `Press a mouse button and keep it down (left by default), after moving to x and y when given, for long presses and drags in several steps: computer_mouse_down, then computer_move to the destination (take a screenshot or two on the way), then computer_mouse_up. Always finish with computer_mouse_up. The button is let go automatically, and you are told so, if any step fails or times out, if you hold it for over 60 seconds, if you call computer_release, when your turn ends or when the user takes back control. One button of each kind at a time. ${SHARED}`,
+  parameters: MouseDownInput,
+  success: DesktopShotResult,
+  failure: DesktopToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Press and hold the mouse on the PC")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true);
+
+export const ComputerMouseUpTool = Tool.make("computer_mouse_up", {
+  description: `Let go of a mouse button that computer_mouse_down is holding (left by default), after moving to x and y when given: that point is where a drag drops. Fails if you are not holding that button (it may have been let go automatically after an error or a minute). ${SHARED}`,
+  parameters: MouseUpInput,
+  success: DesktopShotResult,
+  failure: DesktopToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Release the mouse on the PC")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true);
+
 export const ComputerMoveTool = Tool.make("computer_move", {
   description: `Move the mouse pointer without clicking, for hover menus and tooltips. ${SHARED}`,
   parameters: MoveInput,
@@ -227,7 +301,7 @@ export const ComputerMoveTool = Tool.make("computer_move", {
   .annotate(Tool.OpenWorld, true);
 
 export const ComputerDragTool = Tool.make("computer_drag", {
-  description: `Press the mouse at one point, drag to another and release: moving windows, sliders, selecting text. ${SHARED}`,
+  description: `Press the mouse at one point, drag to another and release: moving windows, sliders, selecting text. Optional modifiers (for example shift or ctrl) are held for the whole drag and let go afterwards. ${SHARED}`,
   parameters: DragInput,
   success: DesktopShotResult,
   failure: DesktopToolFailure,
@@ -240,7 +314,7 @@ export const ComputerDragTool = Tool.make("computer_drag", {
   .annotate(Tool.OpenWorld, true);
 
 export const ComputerScrollTool = Tool.make("computer_scroll", {
-  description: `Scroll with the mouse wheel, over a point when given (otherwise wherever the pointer is). ${SHARED}`,
+  description: `Scroll with the mouse wheel, over a point when given (otherwise wherever the pointer is). Optional modifiers are held while scrolling, for example ctrl to zoom. ${SHARED}`,
   parameters: ScrollInput,
   success: DesktopShotResult,
   failure: DesktopToolFailure,
@@ -278,6 +352,19 @@ export const ComputerKeyTool = Tool.make("computer_key", {
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true);
 
+export const ComputerHoldKeyTool = Tool.make("computer_hold_key", {
+  description: `Hold one key or one chord down for a set time, then let go: a modifier while you work, an arrow or page key to keep scrolling, a game key. durationMs is 50 to 30000 (30 s at most). The keys are always let go, even if the call fails or times out. It cannot type: a letter, digit or symbol held without ctrl, alt or win is pressed once, does not repeat and is capped at 2000 ms, and the user enters passwords, never you. Use computer_type for text and computer_key for presses. ${SHARED}`,
+  parameters: HoldKeyInput,
+  success: DesktopShotResult,
+  failure: DesktopToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Hold keys on the PC")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true);
+
 export const ComputerCursorTool = Tool.make("computer_cursor_position", {
   description: "Where the mouse pointer is, in your latest screenshot's pixels.",
   parameters: NoInput,
@@ -310,11 +397,14 @@ export const DesktopImageToolkit = Toolkit.make(
   ComputerScreenshotTool,
   ComputerZoomTool,
   ComputerClickTool,
+  ComputerMouseDownTool,
+  ComputerMouseUpTool,
   ComputerMoveTool,
   ComputerDragTool,
   ComputerScrollTool,
   ComputerTypeTool,
   ComputerKeyTool,
+  ComputerHoldKeyTool,
 );
 
 export const DesktopStandardToolkit = Toolkit.make(ComputerCursorTool, ComputerReleaseTool);
@@ -323,9 +413,12 @@ export const DESKTOP_IMAGE_TOOLS = [
   ComputerScreenshotTool,
   ComputerZoomTool,
   ComputerClickTool,
+  ComputerMouseDownTool,
+  ComputerMouseUpTool,
   ComputerMoveTool,
   ComputerDragTool,
   ComputerScrollTool,
   ComputerTypeTool,
   ComputerKeyTool,
+  ComputerHoldKeyTool,
 ] as const;

@@ -7,7 +7,10 @@
 import type {
   PreviewAutomationActionEvent,
   PreviewAutomationClickInput,
+  PreviewAutomationDragInput,
   PreviewAutomationEvaluateInput,
+  PreviewAutomationHistoryInput,
+  PreviewAutomationHoverInput,
   PreviewAutomationPressInput,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
@@ -15,7 +18,7 @@ import type {
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 
-import type { BrowserPage } from "./driver.ts";
+import type { BrowserPage, PointerClickOptions } from "./driver.ts";
 
 /** A failure the host reports back to the broker with a known remote tag. */
 export class HostOperationError extends Error {
@@ -574,6 +577,27 @@ export async function captureSnapshot(
   };
 }
 
+/** A pointer action's coordinates must land inside the page, or Chrome would drop them silently. */
+const requireInsideViewport = async (
+  page: BrowserPage,
+  point: { readonly x: number; readonly y: number },
+  what: string,
+) => {
+  const viewport = await page.viewportSize();
+  if (point.x < 0 || point.y < 0 || point.x > viewport.width || point.y > viewport.height) {
+    throw new HostOperationError(
+      "PreviewAutomationExecutionError",
+      `${what} at (${point.x}, ${point.y}) is outside the ${viewport.width}x${viewport.height} viewport.`,
+    );
+  }
+};
+
+const pointerOptions = (input: PreviewAutomationClickInput): PointerClickOptions => ({
+  button: input.button,
+  clickCount: input.clicks,
+  modifiers: input.modifiers,
+});
+
 export async function performClick(
   page: BrowserPage,
   input: PreviewAutomationClickInput,
@@ -581,19 +605,93 @@ export async function performClick(
 ): Promise<void> {
   const locator = locatorOf(input);
   if (locator !== null) {
-    await page.clickLocator(locator, timeoutMs);
+    await page.clickLocator(locator, timeoutMs, pointerOptions(input));
     return;
   }
-  const x = input.x ?? 0;
-  const y = input.y ?? 0;
-  const viewport = await page.viewportSize();
-  if (x < 0 || y < 0 || x > viewport.width || y > viewport.height) {
-    throw new HostOperationError(
-      "PreviewAutomationExecutionError",
-      `Click at (${x}, ${y}) is outside the ${viewport.width}x${viewport.height} viewport.`,
-    );
+  const point = { x: input.x ?? 0, y: input.y ?? 0 };
+  await requireInsideViewport(page, point, "Click");
+  await page.mouseClick(point.x, point.y, pointerOptions(input));
+}
+
+/** Moves the pointer onto a target, without pressing anything. */
+export async function performHover(
+  page: BrowserPage,
+  input: PreviewAutomationHoverInput,
+  timeoutMs: number,
+): Promise<void> {
+  const locator = locatorOf(input);
+  if (locator !== null) {
+    await page.hoverLocator(locator, timeoutMs);
+    return;
   }
-  await page.mouseClick(x, y);
+  const point = { x: input.x ?? 0, y: input.y ?? 0 };
+  await requireInsideViewport(page, point, "Hover");
+  await page.mouseMove(point.x, point.y);
+}
+
+/** Intermediate mouse moves on the way to the drop point, so drag handlers see a drag. */
+const DRAG_STEPS = 8;
+
+/**
+ * Drags from one element to another, or from one point to another. The button
+ * pressed at the start is always let go again, even when the move or the page
+ * fails part way, so a drag can never leave the shared browser holding a press.
+ */
+export async function performDrag(
+  page: BrowserPage,
+  input: PreviewAutomationDragInput,
+  timeoutMs: number,
+): Promise<void> {
+  if (input.fromLocator !== undefined && input.toLocator !== undefined) {
+    await page.dragLocators(input.fromLocator, input.toLocator, timeoutMs);
+    return;
+  }
+  const from = { x: input.fromX ?? 0, y: input.fromY ?? 0 };
+  const to = { x: input.toX ?? 0, y: input.toY ?? 0 };
+  await requireInsideViewport(page, from, "Drag start");
+  await requireInsideViewport(page, to, "Drag end");
+  await page.mouseMove(from.x, from.y);
+  await page.mouseDown();
+  let failure: { readonly cause: unknown } | null = null;
+  try {
+    await page.mouseMove(to.x, to.y, DRAG_STEPS);
+    // A second move onto the exact drop point makes the target see dragover before the drop.
+    await page.mouseMove(to.x, to.y);
+  } catch (cause) {
+    failure = { cause };
+  }
+  try {
+    await page.mouseUp();
+  } catch (cause) {
+    failure ??= { cause };
+  }
+  if (failure !== null) throw failure.cause;
+}
+
+/** Back, forward or reload; the guard has already looked at where the page is going. */
+export async function performHistory(
+  page: BrowserPage,
+  input: PreviewAutomationHistoryInput,
+  timeoutMs: number,
+): Promise<void> {
+  if (input.action !== "reload") {
+    const history = await page.history();
+    const possible = input.action === "back" ? history.canGoBack : history.canGoForward;
+    if (!possible) {
+      throw new HostOperationError(
+        "PreviewAutomationExecutionError",
+        input.action === "back"
+          ? "This tab has no earlier page to go back to."
+          : "This tab has no later page to go forward to.",
+      );
+    }
+  }
+  if (input.action === "back") await page.goBack();
+  else if (input.action === "forward") await page.goForward();
+  else await page.reload();
+  const readiness = input.readiness ?? "load";
+  if (readiness === "none") return;
+  await page.waitForLoadState?.(readiness === "load" ? "load" : "domcontentloaded", timeoutMs);
 }
 
 export function performType(

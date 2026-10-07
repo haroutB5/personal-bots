@@ -177,6 +177,17 @@ public static class PbDesktopHelper {
   // The tag the command being run injects with, and whether it is remote.
   static IntPtr injectTag = SelfTag;
   static bool remoteCmd = false;
+  // What a bot's commands left pressed, so releaseAll (and the helper's exit, and the
+  // stop key) can let go of it. Only the bot's own input is tracked: the owner's remote
+  // input is released by the server.
+  static readonly object heldLock = new object();
+  static readonly HashSet<string> heldButtons = new HashSet<string>();
+  static readonly HashSet<int> heldKeys = new HashSet<int>();
+  // A virtual machine key hold (VBoxManage make codes) that has no break code yet.
+  static string heldVm = null;
+  static List<int> heldVmKeys = null;
+  // Tests only, set through reflection: input is written here instead of being injected.
+  static List<string> dryLog = null;
   static readonly BlockingCollection<string> work = new BlockingCollection<string>();
   // "focus" asks, answered on their own thread so a slow app never holds up input.
   static readonly BlockingCollection<object> focusWork = new BlockingCollection<object>();
@@ -272,6 +283,8 @@ public static class PbDesktopHelper {
               swallowEscUp = true;
               Interlocked.Increment(ref abortGeneration);
               Emit(Dict("event", "kill"));
+              // Off the hook thread: a hook that takes too long is removed by Windows.
+              ThreadPool.QueueUserWorkItem(delegate(object state) { ReleaseAll(); });
             }
           } else {
             swallowEscUp = false;
@@ -349,6 +362,18 @@ public static class PbDesktopHelper {
           }
         } catch (Exception) { }
       }
+      if (line.IndexOf("\"releaseAll\"", StringComparison.Ordinal) >= 0) {
+        try {
+          Dictionary<string, object> req = json.Deserialize<Dictionary<string, object>>(line);
+          if (Str(req, "cmd") == "releaseAll") {
+            // Ends a hold that is still running, then lets go of whatever is pressed.
+            Interlocked.Increment(ref abortGeneration);
+            int released = ReleaseAll();
+            Emit(Dict("id", req.ContainsKey("id") ? req["id"] : null, "ok", true, "released", released));
+            continue;
+          }
+        } catch (Exception) { }
+      }
       if (line.IndexOf("\"abort\"", StringComparison.Ordinal) >= 0) {
         object id = null;
         try {
@@ -363,6 +388,9 @@ public static class PbDesktopHelper {
       }
       work.Add(line);
     }
+    // The server is gone: nothing a bot pressed may stay pressed.
+    Interlocked.Increment(ref abortGeneration);
+    ReleaseAll();
     work.CompleteAdding();
     worker.Join(5000);
     try { ui.BeginInvoke((MethodInvoker)delegate { Application.ExitThread(); }); } catch (Exception) { }
@@ -379,7 +407,7 @@ public static class PbDesktopHelper {
         id = req.ContainsKey("id") ? req["id"] : null;
         Dictionary<string, object> result = Handle(req);
         string cmd = Str(req, "cmd");
-        if (cmd == "click" || cmd == "button" || cmd == "keys" || cmd == "type" || cmd == "wheel")
+        if (cmd == "click" || cmd == "button" || cmd == "keys" || cmd == "hold" || cmd == "type" || cmd == "wheel")
           Interlocked.Exchange(ref regionsDirty, 1);
         result["id"] = id;
         result["ok"] = true;
@@ -622,11 +650,14 @@ public static class PbDesktopHelper {
       case "wheel": Guard(r); return Wheel(r);
       case "type": Guard(r); return TypeText(r);
       case "keys": Guard(r); return Keys(r);
+      case "hold": Guard(r); return Hold(r);
+      case "releaseAll": Interlocked.Increment(ref abortGeneration); return Dict("released", ReleaseAll());
       default: throw new HelperError("bad_command", "Unknown command " + cmd);
     }
   }
 
   static void Guard(Dictionary<string, object> r) {
+    if (dryLog != null) return;
     if (remoteCmd) GuardRemote(); else GuardUser(r);
   }
 
@@ -973,18 +1004,22 @@ public static class PbDesktopHelper {
     return Dict("shown", show);
   }
 
-  static void SendMouse(uint flags, int data) {
+  static void SendMouse(uint flags, int data) { SendMouseAs(flags, data, injectTag); }
+
+  static void SendMouseAs(uint flags, int data, IntPtr tag) {
+    if (dryLog != null) { lock (heldLock) { dryLog.Add("mouse:" + flags + ":" + data); } return; }
     Native.INPUT[] input = new Native.INPUT[1];
     input[0].type = 0;
     input[0].u.mi.dwFlags = flags;
     input[0].u.mi.mouseData = data;
-    input[0].u.mi.extra = injectTag;
+    input[0].u.mi.extra = tag;
     Native.SendInput(1, input, Marshal.SizeOf(typeof(Native.INPUT)));
   }
 
   // Absolute move over the virtual desktop, then SetCursorPos to land on the
   // exact pixel: the 0..65535 normalisation can round one pixel off.
   static void MoveTo(int x, int y) {
+    if (dryLog != null) { lock (heldLock) { dryLog.Add("move:" + x + "," + y); } return; }
     int vx = Native.GetSystemMetrics(76), vy = Native.GetSystemMetrics(77);
     int vw = Native.GetSystemMetrics(78), vh = Native.GetSystemMetrics(79);
     Native.INPUT[] input = new Native.INPUT[1];
@@ -1002,34 +1037,74 @@ public static class PbDesktopHelper {
   static uint DownFlag(string button) { return button == "right" ? 0x0008u : button == "middle" ? 0x0020u : 0x0002u; }
   static uint UpFlag(string button) { return button == "right" ? 0x0010u : button == "middle" ? 0x0040u : 0x0004u; }
 
+  // A button pressed by a bot is remembered until it is released, so releaseAll can find it.
+  static void HoldButton(string button) {
+    if (!remoteCmd) { lock (heldLock) { heldButtons.Add(button); } }
+    SendMouse(DownFlag(button), 0);
+  }
+
+  static void ReleaseButton(string button) {
+    SendMouse(UpFlag(button), 0);
+    if (!remoteCmd) { lock (heldLock) { heldButtons.Remove(button); } }
+  }
+
+  static void HoldKey(int vk) {
+    if (!remoteCmd) { lock (heldLock) { heldKeys.Add(vk); } }
+    KeyVk(vk, true);
+  }
+
+  static void ReleaseKey(int vk) {
+    KeyVk(vk, false);
+    if (!remoteCmd) { lock (heldLock) { heldKeys.Remove(vk); } }
+  }
+
+  static List<int> Modifiers(Dictionary<string, object> r) {
+    List<int> modifiers = new List<int>();
+    if (r.ContainsKey("modifiers") && r["modifiers"] is ArrayList) {
+      foreach (object vk in (ArrayList)r["modifiers"]) modifiers.Add(Convert.ToInt32(vk));
+    }
+    return modifiers;
+  }
+
+  static void HoldKeys(List<int> modifiers) {
+    foreach (int vk in modifiers) { HoldKey(vk); Thread.Sleep(15); }
+  }
+
+  // Every modifier is tried even when one fails; the first failure is raised afterwards.
+  static void ReleaseKeys(List<int> modifiers) {
+    Exception first = null;
+    for (int i = modifiers.Count - 1; i >= 0; i--) {
+      try { ReleaseKey(modifiers[i]); } catch (Exception e) { if (first == null) first = e; }
+    }
+    if (first != null) throw first;
+  }
+
   static Dictionary<string, object> Click(Dictionary<string, object> r) {
     string button = Str(r, "button") ?? "left";
     int count = Math.Max(1, Math.Min(3, IntOr(r, "count", 1)));
     if (r.ContainsKey("x") && r["x"] != null) { MoveTo(Int(r, "x"), Int(r, "y")); Thread.Sleep(40); }
     int gap = (int)Math.Min(120, Native.GetDoubleClickTime() / 4);
-    List<int> modifiers = new List<int>();
-    if (r.ContainsKey("modifiers") && r["modifiers"] is ArrayList) {
-      foreach (object vk in (ArrayList)r["modifiers"]) modifiers.Add(Convert.ToInt32(vk));
-    }
-    foreach (int vk in modifiers) { KeyVk(vk, true); Thread.Sleep(15); }
+    List<int> modifiers = Modifiers(r);
     try {
+      HoldKeys(modifiers);
       for (int i = 0; i < count; i++) {
-        SendMouse(DownFlag(button), 0);
-        Thread.Sleep(25);
-        SendMouse(UpFlag(button), 0);
+        HoldButton(button);
+        try { Thread.Sleep(25); } finally { ReleaseButton(button); }
         if (i + 1 < count) Thread.Sleep(gap);
       }
     } finally {
-      for (int i = modifiers.Count - 1; i >= 0; i--) KeyVk(modifiers[i], false);
+      ReleaseKeys(modifiers);
     }
     return Dict();
   }
 
+  // button: press or release one button, optionally after moving there. A press made by a
+  // bot stays pressed across commands, until it is released or releaseAll lets go of it.
   static Dictionary<string, object> ButtonCmd(Dictionary<string, object> r) {
     string button = Str(r, "button") ?? "left";
     bool down = BoolOr(r, "down", true);
     if (r.ContainsKey("x") && r["x"] != null) MoveTo(Int(r, "x"), Int(r, "y"));
-    SendMouse(down ? DownFlag(button) : UpFlag(button), 0);
+    if (down) HoldButton(button); else ReleaseButton(button);
     return Dict();
   }
 
@@ -1038,19 +1113,25 @@ public static class PbDesktopHelper {
     string button = Str(r, "button") ?? "left";
     int gen = abortGeneration;
     long start = DateTime.UtcNow.Ticks;
-    MoveTo(x1, y1);
-    Thread.Sleep(60);
-    SendMouse(DownFlag(button), 0);
+    List<int> modifiers = Modifiers(r);
     try {
-      int steps = 24;
-      for (int i = 1; i <= steps; i++) {
-        CheckInterrupted(gen, start);
-        MoveTo(x1 + (x2 - x1) * i / steps, y1 + (y2 - y1) * i / steps);
-        Thread.Sleep(15);
-      }
+      HoldKeys(modifiers);
+      MoveTo(x1, y1);
       Thread.Sleep(60);
+      HoldButton(button);
+      try {
+        int steps = 24;
+        for (int i = 1; i <= steps; i++) {
+          CheckInterrupted(gen, start);
+          MoveTo(x1 + (x2 - x1) * i / steps, y1 + (y2 - y1) * i / steps);
+          Thread.Sleep(15);
+        }
+        Thread.Sleep(60);
+      } finally {
+        ReleaseButton(button);
+      }
     } finally {
-      SendMouse(UpFlag(button), 0);
+      ReleaseKeys(modifiers);
     }
     return Dict();
   }
@@ -1060,8 +1141,14 @@ public static class PbDesktopHelper {
     int dy = IntOr(r, "dy", 0), dx = IntOr(r, "dx", 0);
     int gen = abortGeneration;
     long start = DateTime.UtcNow.Ticks;
-    for (int i = 0; i < Math.Abs(dy); i++) { CheckInterrupted(gen, start); SendMouse(0x0800, dy > 0 ? -120 : 120); Thread.Sleep(20); }
-    for (int i = 0; i < Math.Abs(dx); i++) { CheckInterrupted(gen, start); SendMouse(0x1000, dx > 0 ? 120 : -120); Thread.Sleep(20); }
+    List<int> modifiers = Modifiers(r);
+    try {
+      HoldKeys(modifiers);
+      for (int i = 0; i < Math.Abs(dy); i++) { CheckInterrupted(gen, start); SendMouse(0x0800, dy > 0 ? -120 : 120); Thread.Sleep(20); }
+      for (int i = 0; i < Math.Abs(dx); i++) { CheckInterrupted(gen, start); SendMouse(0x1000, dx > 0 ? 120 : -120); Thread.Sleep(20); }
+    } finally {
+      ReleaseKeys(modifiers);
+    }
     return Dict();
   }
 
@@ -1076,13 +1163,16 @@ public static class PbDesktopHelper {
     return Dict();
   }
 
-  static void SendKey(ushort vk, ushort scan, uint flags) {
+  static void SendKey(ushort vk, ushort scan, uint flags) { SendKeyAs(vk, scan, flags, injectTag); }
+
+  static void SendKeyAs(ushort vk, ushort scan, uint flags, IntPtr tag) {
+    if (dryLog != null) { lock (heldLock) { dryLog.Add("key:" + vk + ":" + flags); } return; }
     Native.INPUT[] input = new Native.INPUT[1];
     input[0].type = 1;
     input[0].u.ki.wVk = vk;
     input[0].u.ki.wScan = scan;
     input[0].u.ki.dwFlags = flags;
-    input[0].u.ki.extra = injectTag;
+    input[0].u.ki.extra = tag;
     Native.SendInput(1, input, Marshal.SizeOf(typeof(Native.INPUT)));
   }
 
@@ -1095,9 +1185,15 @@ public static class PbDesktopHelper {
     return false;
   }
 
-  static void KeyVk(int vk, bool down) {
+  static void KeyVk(int vk, bool down) { KeyVkAs(vk, down, injectTag); }
+
+  static void KeyVkAs(int vk, bool down, IntPtr tag) {
     uint flags = (IsExtended(vk) ? 0x0001u : 0u) | (down ? 0u : 0x0002u);
-    SendKey((ushort)vk, (ushort)Native.MapVirtualKey((uint)vk, 0), flags);
+    SendKeyAs((ushort)vk, (ushort)Native.MapVirtualKey((uint)vk, 0), flags, tag);
+  }
+
+  static bool IsModifier(int vk) {
+    return vk == 0x10 || vk == 0x11 || vk == 0x12 || vk == 0x5B || vk == 0x5C || (vk >= 0xA0 && vk <= 0xA5);
   }
 
   // Types one character as real key presses (virtual key + scan code) when the
@@ -1130,6 +1226,7 @@ public static class PbDesktopHelper {
 
   // The VM name when a VirtualBox VM window is in front ("<name> [Running] - Oracle VirtualBox"), else null.
   static string ForegroundVm() {
+    if (dryLog != null) return null;
     if (!File.Exists(VBoxManagePath)) return null;
     IntPtr hwnd = Native.GetForegroundWindow();
     if (hwnd == IntPtr.Zero) return null;
@@ -1163,20 +1260,31 @@ public static class PbDesktopHelper {
 
   static string ScanHex(int code) { return code.ToString("x2"); }
 
-  // Press then release a list of virtual keys as PC/AT scan codes, e.g. win+r -> "e0 5b 13 93 e0 db".
-  static string ScanCodesFor(List<int> vks) {
+  // The make (press) codes of a list of virtual keys as PC/AT scan codes, e.g. win+r -> "e0 5b 13".
+  static string ScanCodesDown(List<int> vks) {
     List<string> codes = new List<string>();
     foreach (int vk in vks) {
       int sc = (int)Native.MapVirtualKey((uint)vk, 0);
       if (IsExtended(vk)) codes.Add("e0");
       codes.Add(ScanHex(sc));
     }
+    return string.Join(" ", codes.ToArray());
+  }
+
+  // The break (release) codes, in reverse order: win+r -> "93 e0 db".
+  static string ScanCodesUp(List<int> vks) {
+    List<string> codes = new List<string>();
     for (int i = vks.Count - 1; i >= 0; i--) {
       int sc = (int)Native.MapVirtualKey((uint)vks[i], 0);
       if (IsExtended(vks[i])) codes.Add("e0");
       codes.Add(ScanHex(sc | 0x80));
     }
     return string.Join(" ", codes.ToArray());
+  }
+
+  // Press then release a list of virtual keys, e.g. win+r -> "e0 5b 13 93 e0 db".
+  static string ScanCodesFor(List<int> vks) {
+    return ScanCodesDown(vks) + " " + ScanCodesUp(vks);
   }
 
   static Dictionary<string, object> TypeTextInVm(string vm, string text) {
@@ -1223,6 +1331,28 @@ public static class PbDesktopHelper {
     return Dict("typed", typed);
   }
 
+  // One combination: virtual keys resolved by the server, or {"char": "/"} entries the
+  // helper resolves against the active keyboard layout.
+  static List<int> ResolveCombo(ArrayList entries) {
+    List<int> vks = new List<int>();
+    foreach (object entry in entries) {
+      if (entry is Dictionary<string, object>) {
+        string ch = Str((Dictionary<string, object>)entry, "char");
+        if (string.IsNullOrEmpty(ch)) throw new HelperError("bad_key", "Empty key");
+        short scan = Native.VkKeyScan(ch[0]);
+        if (scan == -1) throw new HelperError("bad_key", "No key on this keyboard layout types '" + ch + "'.");
+        int shiftState = (scan >> 8) & 0xFF;
+        if ((shiftState & 1) != 0 && !vks.Contains(0x10)) vks.Insert(0, 0x10);
+        if ((shiftState & 2) != 0 && !vks.Contains(0x11)) vks.Insert(0, 0x11);
+        if ((shiftState & 4) != 0 && !vks.Contains(0x12)) vks.Insert(0, 0x12);
+        vks.Add(scan & 0xFF);
+      } else {
+        vks.Add(Convert.ToInt32(entry));
+      }
+    }
+    return vks;
+  }
+
   // keys: [[vk, ...], ...] resolved by the server, or {"char": "/"} entries the
   // helper resolves against the active keyboard layout.
   static Dictionary<string, object> Keys(Dictionary<string, object> r) {
@@ -1232,22 +1362,7 @@ public static class PbDesktopHelper {
     for (int n = 0; n < repeat; n++) {
       foreach (object comboObj in combos) {
         if (abortGeneration != gen) throw new HelperError("aborted", "Stopped by the user.");
-        List<int> vks = new List<int>();
-        foreach (object entry in (ArrayList)comboObj) {
-          if (entry is Dictionary<string, object>) {
-            string ch = Str((Dictionary<string, object>)entry, "char");
-            if (string.IsNullOrEmpty(ch)) throw new HelperError("bad_key", "Empty key");
-            short scan = Native.VkKeyScan(ch[0]);
-            if (scan == -1) throw new HelperError("bad_key", "No key on this keyboard layout types '" + ch + "'.");
-            int shiftState = (scan >> 8) & 0xFF;
-            if ((shiftState & 1) != 0 && !vks.Contains(0x10)) vks.Insert(0, 0x10);
-            if ((shiftState & 2) != 0 && !vks.Contains(0x11)) vks.Insert(0, 0x11);
-            if ((shiftState & 4) != 0 && !vks.Contains(0x12)) vks.Insert(0, 0x12);
-            vks.Add(scan & 0xFF);
-          } else {
-            vks.Add(Convert.ToInt32(entry));
-          }
-        }
+        List<int> vks = ResolveCombo((ArrayList)comboObj);
         string vm = ForegroundVm();
         if (vm != null) {
           VBox(vm, "keyboardputscancode", ScanCodesFor(vks));
@@ -1259,6 +1374,87 @@ public static class PbDesktopHelper {
       }
     }
     return Dict();
+  }
+
+  // Waits out a hold. The user touching the mouse or keyboard, the stop key and releaseAll
+  // all end it early (CheckInterrupted throws, and the caller's finally lets go of the keys).
+  // A repeatKey is sent again like a held key on a keyboard: after 500 ms, then every 33 ms.
+  static void HoldFor(int durationMs, int gen, long start, int repeatKey) {
+    DateTime until = DateTime.UtcNow.AddMilliseconds(durationMs);
+    DateTime nextRepeat = DateTime.UtcNow.AddMilliseconds(500);
+    while (true) {
+      CheckInterrupted(gen, start);
+      DateTime now = DateTime.UtcNow;
+      if (now >= until) break;
+      if (repeatKey >= 0 && now >= nextRepeat) { KeyVk(repeatKey, true); nextRepeat = now.AddMilliseconds(33); }
+      Thread.Sleep((int)Math.Max(1, Math.Min(15, (until - now).TotalMilliseconds)));
+    }
+  }
+
+  // hold: presses the keys of one combination in order, holds them for durationMs (at most
+  // 30 s) and releases them in reverse, whatever happens in between. The key that is not a
+  // modifier repeats unless "repeat" is false.
+  static Dictionary<string, object> Hold(Dictionary<string, object> r) {
+    List<int> vks = ResolveCombo((ArrayList)r["keys"]);
+    int durationMs = Math.Max(0, Math.Min(30000, IntOr(r, "durationMs", 0)));
+    bool repeat = BoolOr(r, "repeat", true);
+    int gen = abortGeneration;
+    long start = DateTime.UtcNow.Ticks;
+    string vm = ForegroundVm();
+    if (vm != null) {
+      lock (heldLock) { heldVm = vm; heldVmKeys = vks; }
+      VBox(vm, "keyboardputscancode", ScanCodesDown(vks));
+      try {
+        HoldFor(durationMs, gen, start, -1);
+      } finally {
+        VBox(vm, "keyboardputscancode", ScanCodesUp(vks));
+        lock (heldLock) { heldVm = null; heldVmKeys = null; }
+      }
+      return Dict("held", durationMs, "via", "vm");
+    }
+    int repeatKey = -1;
+    if (repeat) {
+      for (int i = vks.Count - 1; i >= 0; i--) {
+        if (!IsModifier(vks[i])) { repeatKey = vks[i]; break; }
+      }
+    }
+    try {
+      foreach (int vk in vks) { HoldKey(vk); Thread.Sleep(15); }
+      HoldFor(durationMs, gen, start, repeatKey);
+    } finally {
+      ReleaseKeys(vks);
+    }
+    return Dict("held", durationMs);
+  }
+
+  // Lets go of everything a bot's commands left pressed. Safe from any thread and safe to
+  // repeat; never throws. Returns how many buttons and keys it released.
+  static int ReleaseAll() {
+    List<string> buttons;
+    List<int> keys;
+    string vm;
+    List<int> vmKeys;
+    lock (heldLock) {
+      buttons = new List<string>(heldButtons);
+      keys = new List<int>(heldKeys);
+      heldButtons.Clear();
+      heldKeys.Clear();
+      vm = heldVm;
+      vmKeys = heldVmKeys;
+      heldVm = null;
+      heldVmKeys = null;
+    }
+    int released = 0;
+    foreach (string button in buttons) {
+      try { SendMouseAs(UpFlag(button), 0, SelfTag); released++; } catch (Exception) { }
+    }
+    for (int i = keys.Count - 1; i >= 0; i--) {
+      try { KeyVkAs(keys[i], false, SelfTag); released++; } catch (Exception) { }
+    }
+    if (vm != null && vmKeys != null) {
+      try { VBox(vm, "keyboardputscancode", ScanCodesUp(vmKeys)); released++; } catch (Exception) { }
+    }
+    return released;
   }
 }
 `;

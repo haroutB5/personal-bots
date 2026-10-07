@@ -76,6 +76,16 @@ export interface NavigationHistory {
 
 export type WaitUntil = "load" | "domcontentloaded" | "commit";
 
+export type PointerButton = "left" | "right" | "middle";
+export type PointerModifier = "Alt" | "Control" | "Meta" | "Shift";
+
+/** Which button, how many presses in a row, and which keys are held, for one pointer click. */
+export interface PointerClickOptions {
+  readonly button?: PointerButton | undefined;
+  readonly clickCount?: number | undefined;
+  readonly modifiers?: ReadonlyArray<PointerModifier> | undefined;
+}
+
 /**
  * A native JavaScript dialog (alert, confirm, prompt, beforeunload). While one
  * is open the page's main thread is parked inside it, so every page read and
@@ -114,7 +124,16 @@ export interface BrowserPage {
   goForward(): Promise<void>;
   reload(): Promise<void>;
   history(): Promise<NavigationHistory>;
-  clickLocator(locator: string, timeoutMs: number): Promise<void>;
+  /**
+   * Where `goBack` / `goForward` would land, from the tab's own history, so a
+   * guard can look at the destination before the page moves. `null` when there
+   * is no such entry.
+   */
+  historyTarget(step: "back" | "forward"): Promise<string | null>;
+  clickLocator(locator: string, timeoutMs: number, options?: PointerClickOptions): Promise<void>;
+  hoverLocator(locator: string, timeoutMs: number): Promise<void>;
+  /** Picks up the first match of `from` and drops it on the first match of `to`. */
+  dragLocators(from: string, to: string, timeoutMs: number): Promise<void>;
   countLocator(locator: string): Promise<number>;
   /** `null` when nothing matched within the timeout. */
   resolveElement(locator: string, timeoutMs: number): Promise<BrowserElementHandle | null>;
@@ -136,10 +155,12 @@ export interface BrowserPage {
   viewportSize(): Promise<ViewportSize>;
   setColorScheme(scheme: "light" | "dark" | null): Promise<void>;
   bringToFront(): Promise<void>;
-  mouseMove(x: number, y: number): Promise<void>;
+  /** `steps` > 1 sends that many intermediate mouse moves, as a hand would. */
+  mouseMove(x: number, y: number, steps?: number): Promise<void>;
   mouseDown(): Promise<void>;
   mouseUp(): Promise<void>;
-  mouseClick(x: number, y: number): Promise<void>;
+  /** Held modifier keys are always let go again, whether the click worked or not. */
+  mouseClick(x: number, y: number, options?: PointerClickOptions): Promise<void>;
   mouseWheel(deltaX: number, deltaY: number): Promise<void>;
   /**
    * A wheel turn at a point in one call: the same `Input.dispatchMouseEvent` that
@@ -227,6 +248,17 @@ const safeDownloadName = (suggested: string): string => {
     .slice(0, 120);
   return `${Date.now()}-${base.length > 0 ? base : "download"}`;
 };
+
+/** Only what differs from a plain left click, so the common call stays exactly as it was. */
+const playwrightClickOptions = (options: PointerClickOptions | undefined) => ({
+  ...(options?.button !== undefined && options.button !== "left" ? { button: options.button } : {}),
+  ...(options?.clickCount !== undefined && options.clickCount > 1
+    ? { clickCount: options.clickCount }
+    : {}),
+  ...(options?.modifiers !== undefined && options.modifiers.length > 0
+    ? { modifiers: [...new Set(options.modifiers)] }
+    : {}),
+});
 
 function wrapPlaywrightPage(page: Playwright.Page, counter: AdblockCounter): BrowserPage {
   const consoleRing: ConsoleRecord[] = [];
@@ -503,8 +535,20 @@ function wrapPlaywrightPage(page: Playwright.Page, counter: AdblockCounter): Bro
         canGoForward: history.currentIndex < history.entries.length - 1,
       };
     },
-    clickLocator: (locator, timeoutMs) =>
-      page.locator(locator).first().click({ timeout: timeoutMs }),
+    historyTarget: async (step) => {
+      const history = await (await cdp()).send("Page.getNavigationHistory");
+      const entry = history.entries[history.currentIndex + (step === "back" ? -1 : 1)];
+      return entry?.url ?? null;
+    },
+    clickLocator: (locator, timeoutMs, options) =>
+      page
+        .locator(locator)
+        .first()
+        .click({ timeout: timeoutMs, ...playwrightClickOptions(options) }),
+    hoverLocator: (locator, timeoutMs) =>
+      page.locator(locator).first().hover({ timeout: timeoutMs }),
+    dragLocators: (from, to, timeoutMs) =>
+      page.locator(from).first().dragTo(page.locator(to).first(), { timeout: timeoutMs }),
     countLocator: (locator) => page.locator(locator).count(),
     resolveElement: async (locator, timeoutMs) => {
       const handle = await page
@@ -588,10 +632,23 @@ function wrapPlaywrightPage(page: Playwright.Page, counter: AdblockCounter): Bro
       )) as ViewportSize,
     setColorScheme: (scheme) => page.emulateMedia({ colorScheme: scheme }),
     bringToFront: () => page.bringToFront(),
-    mouseMove: (x, y) => page.mouse.move(x, y),
+    mouseMove: (x, y, steps) => page.mouse.move(x, y, steps === undefined ? {} : { steps }),
     mouseDown: () => page.mouse.down(),
     mouseUp: () => page.mouse.up(),
-    mouseClick: (x, y) => page.mouse.click(x, y),
+    mouseClick: async (x, y, options) => {
+      const modifiers = options?.modifiers ?? [];
+      const pressed: PointerModifier[] = [];
+      try {
+        for (const key of modifiers) {
+          if (pressed.includes(key)) continue;
+          await page.keyboard.down(key);
+          pressed.push(key);
+        }
+        await page.mouse.click(x, y, playwrightClickOptions({ ...options, modifiers: [] }));
+      } finally {
+        for (const key of pressed.toReversed()) await page.keyboard.up(key).catch(() => undefined);
+      }
+    },
     mouseWheel: (deltaX, deltaY) => page.mouse.wheel(deltaX, deltaY),
     mouseWheelAt: async (x, y, deltaX, deltaY) => {
       const session = await cdp();

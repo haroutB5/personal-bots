@@ -1,8 +1,13 @@
 import {
   ToolActivityIcon,
   PreviewAutomationClickInput,
+  PreviewAutomationCloseTabInput,
+  PreviewAutomationCloseTabResult,
+  PreviewAutomationDragInput,
   PreviewAutomationError,
   PreviewAutomationEvaluateInput,
+  PreviewAutomationHistoryInput,
+  PreviewAutomationHoverInput,
   PreviewAutomationNavigateInput,
   PreviewAutomationOpenInput,
   PreviewAutomationPressInput,
@@ -144,12 +149,58 @@ export const PreviewSnapshotTool = readonlyBrowserTool(
 const PreviewClickTool = browserTool(
   Tool.make("preview_click", {
     description:
-      "Click exactly one target in the tab selected by tabId, or this agent session's current tab when omitted. Prefer a Playwright locator; selector accepts legacy CSS; x and y must be supplied together. If the click opens a native dialog it fails at once saying so, and the dialog stays open until answered.",
+      "Click exactly one target in the tab selected by tabId, or this agent session's current tab when omitted. Prefer a Playwright locator; selector accepts legacy CSS; x and y must be supplied together. Optional button (left, right or middle), clicks (1 to 3: 2 is a double click) and modifiers (Alt, Control, Meta, Shift held during the click) work with a locator and with x/y. A right click fires the page's contextmenu event; the browser's own menu is not shown. A Control-click or middle-click on a link opens a background tab that the preview tools cannot drive: open that address yourself with preview_open or preview_navigate. In a tab where a saved login was filled only plain left clicks work, and only by x/y. If the click opens a native dialog it fails at once saying so, and the dialog stays open until answered.",
     parameters: PreviewAutomationClickInput,
     success: PreviewActionResult,
     failure: PreviewAutomationError,
     dependencies,
   }).annotate(Tool.Title, "Click preview page"),
+);
+
+const PreviewHoverTool = safeBrowserTool(
+  Tool.make("preview_hover", {
+    description:
+      "Move the pointer onto one target in the tab selected by tabId, or this agent session's current tab when omitted, without clicking: opens hover menus and tooltips. Give a Playwright locator (selector accepts legacy CSS) or an x and y pair together. The pointer stays there, so take a preview_snapshot afterwards to see what appeared. In a tab where a saved login was filled only x/y works.",
+    parameters: PreviewAutomationHoverInput,
+    success: PreviewActionResult,
+    failure: PreviewAutomationError,
+    dependencies,
+  }).annotate(Tool.Title, "Hover over preview page"),
+);
+
+const PreviewDragTool = browserTool(
+  Tool.make("preview_drag", {
+    description:
+      "Press on one place, move to another and let go, in the tab selected by tabId, or this agent session's current tab when omitted: drag and drop, sliders, reordering. Give fromLocator and toLocator (Playwright locators, CSS works too), or fromX, fromY, toX and toY together. Do not mix the two forms. The button is always released again, even when the move fails. Dragging files from the computer into a page is not available. In a tab where a saved login was filled only x/y works.",
+    parameters: PreviewAutomationDragInput,
+    success: PreviewActionResult,
+    failure: PreviewAutomationError,
+    dependencies,
+  }).annotate(Tool.Title, "Drag on preview page"),
+);
+
+// Upload is deliberately absent: no tool here sends a file from this computer to a website
+// (Harout's CTO, 1.66.6). A page's own file chooser stays closed to bots.
+const PreviewHistoryTool = browserTool(
+  Tool.make("preview_history", {
+    description:
+      "Go back or forward one step in the tab's history, or reload it, in the tab selected by tabId or this agent session's current tab when omitted. Returns the tab's status after the page settles (readiness load by default, domContentLoaded or none). It fails at once when there is no earlier or later page. A reload or a step that would move the tab to a site other than the sensitive site this chat has read needs the same approval as preview_navigate. Disabled in a tab where a saved login was filled: open a new tab instead.",
+    parameters: PreviewAutomationHistoryInput,
+    success: PreviewAutomationStatus,
+    failure: PreviewAutomationError,
+    dependencies,
+  }).annotate(Tool.Title, "Go back, forward or reload"),
+);
+
+const PreviewCloseTabTool = browserTool(
+  Tool.make("preview_close_tab", {
+    description:
+      "Close one of this agent session's own browser tabs, named by tabId (it is required: the current tab is never closed by default). The other tabs and the browser stay open; the result lists the tabs that remain. Fails while the user is controlling the browser, like close_browser, and for a tab that belongs to another chat. Use close_browser to shut the whole browser.",
+    parameters: PreviewAutomationCloseTabInput,
+    success: Schema.Struct({ ...PreviewAutomationCloseTabResult.fields, ...presentationFields }),
+    failure: PreviewAutomationError,
+    dependencies,
+  }).annotate(Tool.Title, "Close browser tab"),
 );
 
 const PreviewTypeTool = browserTool(
@@ -249,6 +300,10 @@ export const PreviewToolkit = Toolkit.make(
   PreviewSetAppearanceTool,
   PreviewSnapshotTool,
   PreviewClickTool,
+  PreviewHoverTool,
+  PreviewDragTool,
+  PreviewHistoryTool,
+  PreviewCloseTabTool,
   PreviewTypeTool,
   PreviewPressTool,
   PreviewScrollTool,
@@ -265,6 +320,10 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewResizeTool,
   PreviewSetAppearanceTool,
   PreviewClickTool,
+  PreviewHoverTool,
+  PreviewDragTool,
+  PreviewHistoryTool,
+  PreviewCloseTabTool,
   PreviewTypeTool,
   PreviewPressTool,
   PreviewScrollTool,

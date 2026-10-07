@@ -9,6 +9,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  PREVIEW_AUTOMATION_OPERATIONS,
   PreviewAutomationNoAvailableHostError,
   ProviderInstanceId,
   ThreadId,
@@ -245,3 +246,14 @@ it.effect("stops reconnecting once the layer scope closes", () =>
     }),
   ),
 );
+
+it("advertises the 1.66.6 operations and still leaves recording to the desktop app", () => {
+  for (const operation of ["click", "hover", "drag", "history", "closeTab"] as const) {
+    expect(ServerBrowserHost.SERVER_BROWSER_OPERATIONS).toContain(operation);
+  }
+  expect(ServerBrowserHost.SERVER_BROWSER_OPERATIONS).not.toContain("recordingStart");
+  // Every operation the host serves is one the broker knows.
+  expect(new Set(PREVIEW_AUTOMATION_OPERATIONS)).toEqual(
+    new Set([...ServerBrowserHost.SERVER_BROWSER_OPERATIONS, "recordingStart", "recordingStop"]),
+  );
+});
