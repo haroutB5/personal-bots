@@ -86,7 +86,7 @@ try {
     # 4. usage itself cannot be read
     Set-FakeFlag $pidDir 'version-hang' $false
     Set-FakeFlag $pidDir 'usage-fail' $true
-    Invoke-Phase 'failed' @('--expectFailure', 'yes', '--name', 'usage-fail')
+    Invoke-Phase 'failed' @('--expectFailure', 'yes', '--reason', 'did not return its usage', '--name', 'usage-fail')
 
     # 5. restart with every probe failing: the persisted numbers are served at once
     Set-FakeFlag $pidDir 'version-hang' $true

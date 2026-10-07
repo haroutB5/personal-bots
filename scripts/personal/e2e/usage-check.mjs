@@ -119,13 +119,24 @@ try {
   } else if (args.phase === "failed" || args.phase === "restart") {
     await stripButton.tap();
     await claudeCard().waitFor({ state: "visible" });
+    const settled = (timeout = 40000) =>
+      page.waitForFunction(() => !document.body.innerText.includes("Refreshing"), null, {
+        timeout,
+      });
     if (args.phase === "failed") {
+      // Probes the strip or the sheet already started finish first; then this one runs on its own
+      // (waiting for "Refreshing" to appear, so a stale screen cannot pass for the new probe).
+      await settled();
       await page.getByRole("button", { name: "Refresh usage" }).tap();
+      await page.waitForFunction(() => document.body.innerText.includes("Refreshing"), null, {
+        timeout: 8000,
+      });
+      await settled();
+    } else {
+      // After a restart the page asks for a fresh read itself: give it a moment to start, then let it finish.
+      await page.waitForTimeout(1500);
+      await settled();
     }
-    // Wait for any probe in flight (open, strip and button each may ask) to settle.
-    await page.waitForFunction(() => !document.body.innerText.includes("Refreshing"), null, {
-      timeout: 40000,
-    });
     const text = await cardText();
     check("Session value still shown", /10% used/.test(text), text);
     check("Weekly value still shown", /31% used/.test(text), text);

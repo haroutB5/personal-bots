@@ -45,4 +45,21 @@ The refusal reused the research tools' text ("research tools are closed ... outs
 - `testing/fake-claude/cli.js`: opt-in flags in `<pidDir>`: `usage-weekly` (adds a seven_day window), `usage-fail` (get_usage answers an error), `version-hang` (`--version` takes 15 s, the incident's timeout). Off by default.
 - `scripts/personal/e2e/usage-check.ps1` + `usage-check.mjs`: the 390 px dark scripted check of the Usage sheet on a throwaway server, including a slow probe, a failing probe, the incident's timed-out CLI check and a server restart on the same root.
 
-PROOF_PLACEHOLDER
+## Proof (builder, small-fix tier)
+
+Gates, all exit 0 on `fix/hbots-1661`: `apps/server` `vp test run src/personal` (145 files, 1942 tests), `apps/web` `vp test run --project unit src/features/personal` (204 files, 2064 tests), `tsc --noEmit` for contracts, shared, client-runtime, server and web, `vp lint` on the changed files (no errors), `updates.tests.ps1` ("All passed", including the new report-hook block). `src/provider` has 10 failing tests (CursorProvider symlink, AntigravityInstallation x3, OpenCodeProvider XDG, userInputAttachments, ProviderInstanceRegistryLive x4); the same 10 fail on 1.66.0 without this change (stashed and re-run), they need a real `claude` and symlinks on this laptop.
+
+Scripted 390 px dark check of the Usage sheet on a throwaway server (fake Claude CLIs, `scripts/personal/e2e/usage-check.ps1 -Release <sha12> -Out <dir>`; evidence in `C:\Users\Ht\.personal-bots\qa\backend-1661\final\`):
+
+- `01-values.png`: both windows read; strip and sheet show Session 10% and Weekly 31% with "Updated".
+- `02-refreshing.png`: a slow probe (the fake's `--version` takes 15 s): every number stays, a spinner and "Refreshing" sit beside Updated, never "Checking".
+- `04-cli-timed-out.png`: the incident's failure (CLI version check times out, snapshot has no usage): numbers stay, "Couldn't refresh · Claude Agent CLI is installed but failed to run", age shown.
+- `04-usage-fail.png`: the SDK cannot read usage: numbers stay, "Couldn't refresh · Claude did not return its usage".
+- `05-after-restart.png`: server stopped (recorded PID only) and started again on the same root and port with every probe failing: the persisted numbers are on screen at once, with the failure line and their age.
+- `transcript.txt`: every check of every phase.
+
+`e2e-smoke.ps1` (the five phone journeys) runs inside `build.ps1 -E2E` on the staged release; the build log is `C:\Users\Ht\.personal-bots\qa\backend-1661\build-final.log`.
+
+Release: staged, not active. Ship through the idle waiter; no migration, so no pre-migration backup is needed (the usual fresh backup applies). Rollback 1.66.0 = f410d82adab8: the new contract field is optional and the provider caches stay readable by 1.66.0 (an older server ignores or re-reads them and re-probes).
+
+Open for the CTO, not changed here: (1) the local checkout `C:/Claude/AI/personal-bots` has two unpushed nightly revert commits (`67a556c2b7`, `85c47a7804`; "push rejected (the reverts)" in the 7 Oct 06:11 run) on a base that diverged from origin, while origin keeps the 1.65.2 SDK bump (0.3.292) that live 1.66.0 runs. The morning report says the changes were reverted; on origin they were not. (2) The server trace logs carry the report hook token in `url.path` of the hook POSTs (loopback only); worth a Security look. (3) After a failed probe the card loses its plan label ("Claude Max Subscription") because the failed probe's auth is "unknown"; the numbers are unaffected.
