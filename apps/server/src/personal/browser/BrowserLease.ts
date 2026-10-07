@@ -43,6 +43,10 @@ const ACTIONS_NEEDING_FRESH_SNAPSHOT: ReadonlySet<string> = new Set([
   "type",
   "press",
   "scroll",
+  "hover",
+  "drag",
+  "history",
+  "closeTab",
 ]);
 
 export type BrowserLeaseRejectionReason =

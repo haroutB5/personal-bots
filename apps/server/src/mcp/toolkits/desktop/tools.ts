@@ -353,7 +353,7 @@ export const ComputerKeyTool = Tool.make("computer_key", {
   .annotate(Tool.OpenWorld, true);
 
 export const ComputerHoldKeyTool = Tool.make("computer_hold_key", {
-  description: `Hold one key or one chord down for a set time, then let go: a modifier while you work, an arrow or page key to keep scrolling, a game key. durationMs is 50 to 30000 (30 s at most). The keys are always let go, even if the call fails or times out. It cannot type: a letter, digit or symbol held without ctrl, alt or win is pressed once, does not repeat and is capped at 2000 ms, and the user enters passwords, never you. Use computer_type for text and computer_key for presses. ${SHARED}`,
+  description: `Hold one key or one chord down for a set time, then let go: a modifier while you work, an arrow or page key to keep scrolling, a game key. durationMs is 50 to 30000 (30 s at most). The keys are always let go, even if the call fails or times out. It cannot type: a letter, digit or symbol held without ctrl, alt or win is pressed once, does not repeat and is capped at 2000 ms, Backspace, Delete and Enter repeat while held and are limited to 3000 ms. The user enters passwords, never you. Use computer_type for text and computer_key for presses. ${SHARED}`,
   parameters: HoldKeyInput,
   success: DesktopShotResult,
   failure: DesktopToolFailure,

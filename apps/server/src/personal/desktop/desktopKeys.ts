@@ -102,6 +102,12 @@ export const MIN_HOLD_MS = 50;
 export const MAX_HOLD_MS = 30_000;
 /** A letter, digit or symbol held without ctrl, alt or win (see {@link planHold}). */
 export const MAX_PLAIN_PRINTABLE_HOLD_MS = 2_000;
+/**
+ * Backspace, Delete and Enter repeat about 30 times a second when held, which
+ * in 30 s is far more than computer_key allows (50 presses). They get a short cap.
+ */
+export const MAX_DESTRUCTIVE_REPEAT_HOLD_MS = 3_000;
+const DESTRUCTIVE_REPEAT_CODES: ReadonlySet<number> = new Set([0x08, 0x2e, 0x0d]);
 
 const MODIFIER_CODES: ReadonlySet<number> = new Set([0x10, 0x11, 0x12, 0x5b]);
 /** Modifiers that turn a printable key into a shortcut rather than text. */
@@ -160,6 +166,14 @@ export function planHold(keys: string, durationMs: number): HoldPlan {
   if (plainPrintable && durationMs > MAX_PLAIN_PRINTABLE_HOLD_MS) {
     throw new DesktopKeyError(
       `A letter, digit or symbol held without ctrl, alt or win can be held for ${MAX_PLAIN_PRINTABLE_HOLD_MS} ms at most, and it is pressed once without repeating, so a hold cannot type text. Use computer_type to type.`,
+    );
+  }
+  if (
+    durationMs > MAX_DESTRUCTIVE_REPEAT_HOLD_MS &&
+    others.some((entry) => typeof entry === "number" && DESTRUCTIVE_REPEAT_CODES.has(entry))
+  ) {
+    throw new DesktopKeyError(
+      `Backspace, Delete and Enter repeat while held, so they can be held for ${MAX_DESTRUCTIVE_REPEAT_HOLD_MS} ms at most. Use computer_key with repeat for a number of presses.`,
     );
   }
   return { combo, repeat: others.length === 1 && !plainPrintable };

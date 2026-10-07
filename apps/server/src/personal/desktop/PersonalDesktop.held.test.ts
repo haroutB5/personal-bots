@@ -205,6 +205,12 @@ describe("computer_mouse_down / computer_mouse_up", () => {
       expect(failureOf(exit)?.kind).toBe("user_active");
       expect(failureOf(exit)?.reason).toContain(HELD_RELEASED_NOTE);
       expect(driver.countOf("releaseAll")).toBe(1);
+      // The helper is told what the service thinks is down, so a restarted helper still lets go.
+      expect(driver.paramsOf("releaseAll")[0]).toEqual({
+        buttons: ["left"],
+        keys: false,
+        abort: true,
+      });
 
       // It is no longer held: releasing it again is refused, with the reason.
       const late = yield* service
@@ -223,6 +229,22 @@ describe("computer_mouse_down / computer_mouse_up", () => {
         .pipe(Effect.exit);
       expect(failureOf(exit)?.reason).not.toContain(HELD_RELEASED_NOTE);
       expect(driver.countOf("releaseAll")).toBe(0);
+    }),
+  );
+
+  it.live("a release that fails is tried once more", () =>
+    Effect.gen(function* () {
+      const { driver, service } = yield* setup();
+      yield* service.act(ada, "mouse_down", (context) =>
+        DesktopActions.mouseDown(context, NO_SHOT),
+      );
+      driver.failing.set(
+        "releaseAll",
+        new DesktopHelperError("helper_exited", "The helper stopped."),
+      );
+      yield* service.release(ada.threadId);
+      yield* tick();
+      expect(driver.countOf("releaseAll")).toBe(2);
     }),
   );
 
@@ -310,6 +332,12 @@ describe("computer_mouse_down / computer_mouse_up", () => {
       yield* sweep;
       yield* tick();
       expect(driver.countOf("releaseAll")).toBe(1);
+      // The cap lets go without ending the action the bot may be running at that moment.
+      expect(driver.paramsOf("releaseAll")[0]).toEqual({
+        buttons: ["left"],
+        keys: false,
+        abort: false,
+      });
       expect((yield* service.status).holder?.botName).toBe("Ada");
       // A sweep after that has nothing left to let go of.
       yield* sweep;

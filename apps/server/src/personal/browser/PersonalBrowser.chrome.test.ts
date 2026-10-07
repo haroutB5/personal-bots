@@ -249,7 +249,10 @@ describe.skipIf(!chromeAvailable)("bot browser actions in a real Chrome (1.66.6)
         const before = hits.get("/second") ?? 0;
         yield* run(request("history", { action: "reload" }));
         expect(hits.get("/second")).toBe(before + 1);
-        const nothing = yield* run(request("history", { action: "forward" })).pipe(Effect.flip);
+        const nothing = yield* run(request("history", { action: "forward" })).pipe(
+          Effect.asVoid,
+          Effect.flip,
+        );
         expect(nothing.message).toContain("no later page");
 
         // Closing one tab leaves the other.
@@ -264,7 +267,7 @@ describe.skipIf(!chromeAvailable)("bot browser actions in a real Chrome (1.66.6)
         expect(closed.remainingTabIds).toEqual([second.tabId]);
         const gone = yield* run(
           request("click", { x: 1, y: 1 }, { tabId: first.tabId!, tabIdExplicit: true }),
-        ).pipe(Effect.flip);
+        ).pipe(Effect.asVoid, Effect.flip);
         expect(gone.tag).toBe("PreviewAutomationTabNotFoundError");
         const stillThere = (yield* run(request("status"))) as PreviewAutomationStatus;
         expect(stillThere.tabId).toBe(second.tabId);

@@ -209,6 +209,24 @@ describe("BrowserLease", () => {
   );
 
   it.effect(
+    "after the user hands control back, hover, drag, history and closeTab also need a snapshot first",
+    () =>
+      Effect.gen(function* () {
+        const lease = yield* BrowserLease.BrowserLease;
+        for (const operation of ["hover", "drag", "history", "closeTab"]) {
+          yield* lease.takeControl("session-1");
+          yield* lease.returnToAgent;
+          const exit = yield* lease
+            .runAgentOp({ threadId: "thread-a", operation }, Effect.void)
+            .pipe(Effect.exit);
+          expect(rejectionReason(exit), operation).toContain("snapshot-required");
+          yield* lease.runAgentOp({ threadId: "thread-a", operation: "snapshot" }, Effect.void);
+          yield* lease.runAgentOp({ threadId: "thread-a", operation }, Effect.void);
+        }
+      }).pipe(Effect.provide(leaseLayer)),
+  );
+
+  it.effect(
     "a persisted human lease is cleared at boot: its session id died with the restart",
     () =>
       Effect.gen(function* () {

@@ -47,6 +47,12 @@ function Since { if ($log.Count -le $script:mark) { return @() } return @($log.G
 function Failure([hashtable]$h) {
   try { [void](Cmd $h); return 'none' } catch { return $_.Exception.InnerException.Message }
 }
+function Strs($values) {
+  $list = New-Object System.Collections.ArrayList
+  foreach ($v in $values) { [void]$list.Add([string]$v) }
+  return ,$list.psobject.BaseObject
+}
+function Gen { $t.GetField('abortGeneration', $bf).GetValue($null) }
 function SetPhysical([long]$ticks) { $t.GetField('lastPhysicalInput', $bf).SetValue($null, $ticks) }
 $r = [ordered]@{}
 
@@ -139,6 +145,16 @@ $res = Cmd @{ cmd = 'releaseAll' }
 $r.releasedTwoButtons = $res['released']
 $r.twoButtonsLog = @(Since)
 
+# A helper that remembers nothing (restarted after a crash) still lets go of what the server says is down.
+Mark
+$gen0 = Gen
+$res = Cmd @{ cmd = 'releaseAll'; buttons = (Strs @('left', 'bogus')); keys = $false; abort = $false }
+$r.toldReleased = $res['released']
+$r.toldLog = @(Since)
+$r.abortFalseKeepsGeneration = ((Gen) -eq $gen0)
+$res = Cmd @{ cmd = 'releaseAll' }
+$r.abortDefaultBumpsGeneration = ((Gen) -ne $gen0)
+
 $r | ConvertTo-Json -Compress -Depth 4
 `;
 
@@ -218,6 +234,11 @@ describe.skipIf(process.platform !== "win32")("desktop helper held input (dry ru
         "key:16:2",
       ]);
       expect(probe.releasedAfterInterruptedDrag).toBe(0);
+
+      expect(probe.toldReleased).toBe(1);
+      expect(probe.toldLog).toEqual(["mouse:4:0"]);
+      expect(probe.abortFalseKeepsGeneration).toBe(true);
+      expect(probe.abortDefaultBumpsGeneration).toBe(true);
 
       expect(probe.releasedTwoButtons).toBe(2);
       expect([...probe.twoButtonsLog].toSorted()).toEqual(

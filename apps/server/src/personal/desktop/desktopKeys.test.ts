@@ -59,6 +59,16 @@ describe("planHold", () => {
     }
   });
 
+  it("caps keys that repeat destructively: backspace, delete and enter", () => {
+    for (const keys of ["backspace", "delete", "enter", "ctrl+backspace", "shift+delete"]) {
+      expect(planHold(keys, 3000).repeat, keys).toBe(true);
+      expect(() => planHold(keys, 3001), keys).toThrow(/computer_key/);
+    }
+    // Navigation keys keep the full 30 s.
+    expect(planHold("tab", 30_000).repeat).toBe(true);
+    expect(planHold("left", 30_000).repeat).toBe(true);
+  });
+
   it("lets a shortcut hold a letter: ctrl, alt or win turn it into a command, not text", () => {
     expect(planHold("ctrl+z", 5000)).toEqual({ combo: [0x11, 0x5a], repeat: true });
     expect(planHold("alt+left", 5000)).toEqual({ combo: [0x12, 0x25], repeat: true });

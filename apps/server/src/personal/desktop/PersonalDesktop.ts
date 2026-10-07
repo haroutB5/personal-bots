@@ -500,23 +500,34 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
      * back, taken over or stopped, the turn ending, a button held too long.
      * Resolves true when something was held.
      */
-    const releaseHeld = (threadId: string, why: string): Promise<boolean> => {
+    const releaseHeld = (
+      threadId: string,
+      why: string,
+      options: { readonly abort?: boolean } = {},
+    ): Promise<boolean> => {
       const entry = held.get(threadId);
       held.delete(threadId);
       if (entry === undefined || (entry.buttons.size === 0 && !entry.keys)) {
         return Promise.resolve(false);
       }
-      const buttons = entry.buttons.size;
+      const buttons = [...entry.buttons];
+      // The helper is told what the service believes is down, so a restarted helper that
+      // remembers nothing still lets go. `abort: false` leaves an action that is running
+      // alone (the 60 s cap must not read to the bot as the user's stop).
+      const message = { buttons, keys: entry.keys, abort: options.abort ?? true };
       const run = releasing.then(async () => {
         if (driver !== null) {
-          await driver.request("releaseAll", {}, RELEASE_TIMEOUT_MS).catch((error: unknown) => {
-            log(
-              `desktop: could not release held input (${why}): ${error instanceof Error ? error.message : String(error)}`,
-            );
-          });
+          const attempt = () => driver.request("releaseAll", message, RELEASE_TIMEOUT_MS);
+          await attempt()
+            .catch(() => attempt())
+            .catch((error: unknown) => {
+              log(
+                `desktop: could not release held input (${why}): ${error instanceof Error ? error.message : String(error)}`,
+              );
+            });
         }
         log(
-          `desktop: let go of held input (${why}): ${buttons} mouse button(s), keys ${entry.keys}`,
+          `desktop: let go of held input (${why}): ${buttons.length} mouse button(s), keys ${entry.keys}`,
         );
         return true;
       });
@@ -923,7 +934,7 @@ export const makeDesktopService = (options: DesktopServiceOptions) =>
         }
         for (const [threadId, entry] of held) {
           if (entry.buttons.size > 0 && at - entry.buttonsSince >= mouseHoldMaxMs) {
-            void releaseHeld(threadId, "a mouse button was held too long");
+            void releaseHeld(threadId, "a mouse button was held too long", { abort: false });
           }
         }
         expireIdle();

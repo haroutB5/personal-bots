@@ -188,7 +188,15 @@ public static class PbDesktopHelper {
   static List<int> heldVmKeys = null;
   // Tests only, set through reflection: input is written here instead of being injected.
   static List<string> dryLog = null;
-  static readonly BlockingCollection<string> work = new BlockingCollection<string>();
+  // Each queued command remembers the abort counter it was read under: a stop or a
+  // releaseAll that came after it was queued drops it, so it can never press anything
+  // behind the release that was meant to end it.
+  class WorkItem {
+    public int Gen; public string Line;
+    public WorkItem(int gen, string line) { Gen = gen; Line = line; }
+  }
+  static readonly BlockingCollection<WorkItem> work = new BlockingCollection<WorkItem>();
+  static int commandGen = 0;
   // "focus" asks, answered on their own thread so a slow app never holds up input.
   static readonly BlockingCollection<object> focusWork = new BlockingCollection<object>();
   static long regionsUntil = 0;
@@ -268,6 +276,7 @@ public static class PbDesktopHelper {
     if (code >= 0) {
       Native.KBDLLHOOKSTRUCT k = (Native.KBDLLHOOKSTRUCT)Marshal.PtrToStructure(l, typeof(Native.KBDLLHOOKSTRUCT));
       if (Classify(k.extra) == 0) {
+        DropHeldForUser();
         int msg = w.ToInt32();
         bool down = msg == 0x0100 || msg == 0x0104;
         uint vk = k.vkCode;
@@ -299,9 +308,19 @@ public static class PbDesktopHelper {
   static IntPtr MouseHook(int code, IntPtr w, IntPtr l) {
     if (code >= 0) {
       Native.MSLLHOOKSTRUCT m = (Native.MSLLHOOKSTRUCT)Marshal.PtrToStructure(l, typeof(Native.MSLLHOOKSTRUCT));
-      if (Classify(m.extra) == 0) Interlocked.Exchange(ref lastPhysicalInput, DateTime.UtcNow.Ticks);
+      if (Classify(m.extra) == 0) {
+        Interlocked.Exchange(ref lastPhysicalInput, DateTime.UtcNow.Ticks);
+        DropHeldForUser();
+      }
     }
     return Native.CallNextHookEx(mouseHook, code, w, l);
+  }
+
+  // A button a bot left down between two commands would turn the person's next mouse move
+  // into a drag. Their own input lets it go, off the hook thread (a slow hook is removed).
+  static void DropHeldForUser() {
+    if (heldButtons.Count == 0 && heldKeys.Count == 0) return;
+    ThreadPool.QueueUserWorkItem(delegate(object state) { ReleaseAll(); });
   }
 
   static double MsSince(long last) {
@@ -366,9 +385,10 @@ public static class PbDesktopHelper {
         try {
           Dictionary<string, object> req = json.Deserialize<Dictionary<string, object>>(line);
           if (Str(req, "cmd") == "releaseAll") {
-            // Ends a hold that is still running, then lets go of whatever is pressed.
-            Interlocked.Increment(ref abortGeneration);
-            int released = ReleaseAll();
+            // Ends a hold that is still running (unless abort is false), then lets go of
+            // whatever is pressed, and of what the server says it left pressed.
+            if (BoolOr(req, "abort", true)) Interlocked.Increment(ref abortGeneration);
+            int released = ReleaseAll(req);
             Emit(Dict("id", req.ContainsKey("id") ? req["id"] : null, "ok", true, "released", released));
             continue;
           }
@@ -386,7 +406,7 @@ public static class PbDesktopHelper {
           }
         } catch (Exception) { }
       }
-      work.Add(line);
+      work.Add(new WorkItem(abortGeneration, line));
     }
     // The server is gone: nothing a bot pressed may stay pressed.
     Interlocked.Increment(ref abortGeneration);
@@ -400,7 +420,9 @@ public static class PbDesktopHelper {
 
   static void WorkLoop() {
     Native.SetThreadDpiAwarenessContext(new IntPtr(-4));
-    foreach (string line in work.GetConsumingEnumerable()) {
+    foreach (WorkItem item in work.GetConsumingEnumerable()) {
+      string line = item.Line;
+      commandGen = item.Gen;
       object id = null;
       try {
         Dictionary<string, object> req = json.Deserialize<Dictionary<string, object>>(line);
@@ -644,20 +666,23 @@ public static class PbDesktopHelper {
       case "overlay": return OverlayCmd(r);
       case "move": Guard(r); MoveTo(Int(r, "x"), Int(r, "y")); return Dict();
       case "click": Guard(r); return Click(r);
-      case "button": Guard(r); return ButtonCmd(r);
+      case "button": if (BoolOr(r, "down", true)) Guard(r); return ButtonCmd(r);
       case "drag": Guard(r); return Drag(r);
       case "scroll": Guard(r); return Scroll(r);
       case "wheel": Guard(r); return Wheel(r);
       case "type": Guard(r); return TypeText(r);
       case "keys": Guard(r); return Keys(r);
       case "hold": Guard(r); return Hold(r);
-      case "releaseAll": Interlocked.Increment(ref abortGeneration); return Dict("released", ReleaseAll());
+      case "releaseAll":
+        if (BoolOr(r, "abort", true)) Interlocked.Increment(ref abortGeneration);
+        return Dict("released", ReleaseAll(r));
       default: throw new HelperError("bad_command", "Unknown command " + cmd);
     }
   }
 
   static void Guard(Dictionary<string, object> r) {
     if (dryLog != null) return;
+    if (!remoteCmd && commandGen != abortGeneration) throw new HelperError("aborted", "Stopped by the user.");
     if (remoteCmd) GuardRemote(); else GuardUser(r);
   }
 
@@ -1402,6 +1427,10 @@ public static class PbDesktopHelper {
     long start = DateTime.UtcNow.Ticks;
     string vm = ForegroundVm();
     if (vm != null) {
+      // A guest repeats a key it sees held on its own, so a plain printable key (repeat
+      // false) is only tapped: one hold must never type more than one character there.
+      bool plainPrintable = !repeat && vks.Exists(delegate(int vk) { return !IsModifier(vk); });
+      if (plainPrintable) durationMs = Math.Min(durationMs, 150);
       lock (heldLock) { heldVm = vm; heldVmKeys = vks; }
       VBox(vm, "keyboardputscancode", ScanCodesDown(vks));
       try {
@@ -1429,7 +1458,11 @@ public static class PbDesktopHelper {
 
   // Lets go of everything a bot's commands left pressed. Safe from any thread and safe to
   // repeat; never throws. Returns how many buttons and keys it released.
-  static int ReleaseAll() {
+  static int ReleaseAll() { return ReleaseAll(null); }
+
+  // The told dictionary may carry the server's record: {"buttons": ["left"]} are let go even when this
+  // helper (a fresh process after a crash) has no memory of pressing them.
+  static int ReleaseAll(Dictionary<string, object> told) {
     List<string> buttons;
     List<int> keys;
     string vm;
@@ -1443,6 +1476,12 @@ public static class PbDesktopHelper {
       vmKeys = heldVmKeys;
       heldVm = null;
       heldVmKeys = null;
+    }
+    if (told != null && told.ContainsKey("buttons") && told["buttons"] is ArrayList) {
+      foreach (object named in (ArrayList)told["buttons"]) {
+        string name = Convert.ToString(named);
+        if ((name == "left" || name == "right" || name == "middle") && !buttons.Contains(name)) buttons.Add(name);
+      }
     }
     int released = 0;
     foreach (string button in buttons) {
