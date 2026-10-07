@@ -120,6 +120,28 @@ const ws = { framesIn: 0, bytesIn: 0, framesOut: 0, bytesOut: 0 };
 function resetWs() {
   ws.framesIn = ws.bytesIn = ws.framesOut = ws.bytesOut = 0;
 }
+/**
+ * Requests to other origins (Clerk's CDN and API calls) per journey. Resource
+ * timing hides their sizes and the page counters above cannot attribute them,
+ * so they are counted from CDP: finished requests whose URL is not the
+ * origin's, with their encoded bytes.
+ */
+const ext = { requests: 0, bytes: 0 };
+const extIds = new Map();
+function resetExt() {
+  ext.requests = ext.bytes = 0;
+}
+function watchExt(cdp) {
+  cdp.on("Network.requestWillBeSent", (e) => {
+    if (e.request.url.startsWith("data:") || e.request.url.startsWith(origin)) return;
+    extIds.set(e.requestId, true);
+    ext.requests += 1;
+  });
+  cdp.on("Network.loadingFinished", (e) => {
+    if (extIds.has(e.requestId)) ext.bytes += e.encodedDataLength ?? 0;
+  });
+}
+
 function watchWs(cdp) {
   cdp.on("Network.webSocketFrameReceived", (e) => {
     ws.framesIn += 1;
@@ -145,6 +167,8 @@ async function collect(page, mark, t0, settleMs = 1500) {
     wsFramesIn: ws.framesIn,
     wsKBIn: ws.bytesIn / 1024,
     wsFramesOut: ws.framesOut,
+    extRequests: ext.requests,
+    extKB: ext.bytes / 1024,
   };
   await page.waitForTimeout(settleMs);
   const probe = await page.evaluate(
@@ -190,6 +214,7 @@ async function collect(page, mark, t0, settleMs = 1500) {
 async function measureLoad(page, cdp, url, mark) {
   const m0 = await cdpMetrics(cdp);
   resetWs();
+  resetExt();
   await page.goto(url, { waitUntil: "commit", timeout: 90_000 });
   const probe = await collect(page, mark, 0);
   const m1 = await cdpMetrics(cdp);
@@ -235,6 +260,7 @@ async function oneRun(browser, index, off) {
   await cdp.send("Performance.enable");
   await cdp.send("Network.enable");
   watchWs(cdp);
+  watchExt(cdp);
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuRate });
   const out = { run: index };
   try {
@@ -267,6 +293,7 @@ async function oneRun(browser, index, off) {
       const t0 = await page.evaluate(() => window.__perf.t0);
       const m0 = await cdpMetrics(cdp);
       resetWs();
+      resetExt();
       await row.tap();
       const probe = await collect(page, "chat", t0);
       out.J2 = withCdp(probe, m0, await cdpMetrics(cdp));
@@ -278,6 +305,7 @@ async function oneRun(browser, index, off) {
         const t3 = await page.evaluate(() => window.__perf.t0);
         const m3 = await cdpMetrics(cdp);
         resetWs();
+        resetExt();
         await back.tap();
         out["J2-back"] = withCdp(await collect(page, "listBack", t3), m3, await cdpMetrics(cdp));
       }
@@ -312,6 +340,8 @@ const FIELDS = [
   "requests",
   "jsKB",
   "jsTransferKB",
+  "extRequests",
+  "extKB",
   "wsFramesIn",
   "wsKBIn",
   "wsFramesOut",
