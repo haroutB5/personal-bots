@@ -16,11 +16,9 @@
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-
 import type {
   BrowserProtectionRepositoryError,
   BrowserProtectionState,

@@ -21,6 +21,8 @@ import { type BrowserPage, type PageDialog } from "./driver.ts";
 import { HostOperationError } from "./pageOperations.ts";
 import { type StreamInputKind, ViewerTelemetry } from "./streamTelemetry.ts";
 import { ViewerFlow } from "./viewerFlow.ts";
+import { secretRedactor } from "../secrets/secretRedaction.ts";
+import type { PreviewAutomationRequest, PreviewAutomationTypeInput } from "@t3tools/contracts";
 
 /** Chrome did not start; `message` is Playwright's own error text. */
 export class PersonalBrowserLaunchError extends Data.TaggedError("PersonalBrowserLaunchError")<{
@@ -288,3 +290,13 @@ export async function scanArtifacts(root: string): Promise<ReadonlyArray<Scanned
 
 export const sameStatus = (left: PersonalBrowserStatus, right: PersonalBrowserStatus) =>
   JSON.stringify(left) === JSON.stringify(right);
+
+/** The request with any saved key in text to be typed replaced by `[secret NAME]`. */
+export const withoutTypedSecrets = (
+  request: PreviewAutomationRequest,
+): PreviewAutomationRequest => {
+  if (request.operation !== "type") return request;
+  const typed = request.input as PreviewAutomationTypeInput;
+  const masked = secretRedactor.redactText(typed.text);
+  return masked === typed.text ? request : { ...request, input: { ...typed, text: masked } };
+};

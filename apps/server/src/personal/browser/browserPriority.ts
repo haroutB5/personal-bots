@@ -22,7 +22,6 @@
  */
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-
 import { botProcessPriorityDisabled } from "../../provider/botProcessPriority.ts";
 import { descendantsOf, listProcesses, type ProcessEntry } from "../../provider/processTree.ts";
 
