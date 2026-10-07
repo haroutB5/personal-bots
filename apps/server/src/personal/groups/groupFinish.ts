@@ -22,10 +22,15 @@ import {
   UNREPORTED_THROTTLE_BACKOFF_MS,
   briefMessageId,
   isoAt,
-  windowMsFor,
 } from "./groupShared.ts";
 import type { GroupCore } from "./groupCore.ts";
 import type { GroupTurns } from "./groupTurns.ts";
+import {
+  decideThrottle,
+  memberDroppedText,
+  memberSkippedText,
+  verdictThrottledText,
+} from "./groupSchedulePolicy.ts";
 
 export const makeGroupFinish = (core: GroupCore, turns: GroupTurns) => {
   const {
@@ -306,9 +311,7 @@ export const makeGroupFinish = (core: GroupCore, turns: GroupTurns) => {
       yield* commitLimitHit(group, round, "verdict", botId, plan, origin);
       yield* endRound(group, round, "interrupted", {
         event: "round-interrupted",
-        text: scheduled
-          ? "The final verdict could not finish because its bot was rate limited. The contributions are still available; it will try again after the reset."
-          : "The final verdict could not finish because its bot was rate limited. The contributions are still available; send a follow-up to try again.",
+        text: verdictThrottledText(scheduled),
       });
       return;
     }
@@ -320,17 +323,23 @@ export const makeGroupFinish = (core: GroupCore, turns: GroupTurns) => {
     const name = botName(all, botId);
     yield* interruptActiveTurn(round, `throttle-${String(count)}`);
     yield* abandonActive(group, round);
-    // The turn produced nothing, so the budget it took is given back: the
-    // group's "six replies" has to mean six replies.
-    const budgetRemaining = round.budgetRemaining + 1;
+    const nowForThrottle = yield* DateTime.now;
+    const decision = decideThrottle({
+      count,
+      maxConsecutive: MAX_CONSECUTIVE_THROTTLES,
+      queueLength: round.queue.length,
+      budgetRemaining: round.budgetRemaining,
+      retryAtMs,
+      unreportedBackoffMs: UNREPORTED_THROTTLE_BACKOFF_MS,
+      nowMs: DateTime.toEpochMillis(nowForThrottle),
+      roundDeadlineMs: DateTime.toEpochMillis(round.deadlineAt),
+      verdictPending: round.verdictBotId !== null,
+    });
+    // The turn produced nothing, so the budget it took is given back.
+    const budgetRemaining = decision.budgetRemaining;
 
-    if (count >= MAX_CONSECUTIVE_THROTTLES) {
-      yield* writeSystemRow(
-        group,
-        round.roundId,
-        "member-dropped",
-        `${name} is still rate limited, so it is out of this round.`,
-      );
+    if (decision.kind === "drop") {
+      yield* writeSystemRow(group, round.roundId, "member-dropped", memberDroppedText(name));
       yield* writeRound(round, {
         ...clearActive,
         budgetRemaining,
@@ -347,13 +356,8 @@ export const makeGroupFinish = (core: GroupCore, turns: GroupTurns) => {
       );
       return;
     }
-    if (round.queue.length > 0) {
-      yield* writeSystemRow(
-        group,
-        round.roundId,
-        "member-skipped",
-        `${name} is rate limited, so the group moved on.`,
-      );
+    if (decision.kind === "skip") {
+      yield* writeSystemRow(group, round.roundId, "member-skipped", memberSkippedText(name));
       yield* writeRound(round, { ...clearActive, budgetRemaining, errorMessage: detail });
       yield* commitLimitHit(
         group,
@@ -365,26 +369,17 @@ export const makeGroupFinish = (core: GroupCore, turns: GroupTurns) => {
       );
       return;
     }
-    const now = yield* DateTime.now;
-    const availableAt =
-      retryAtMs === null
-        ? DateTime.add(now, { milliseconds: UNREPORTED_THROTTLE_BACKOFF_MS })
-        : DateTime.add(now, { milliseconds: retryAtMs - DateTime.toEpochMillis(now) });
+    const now = nowForThrottle;
     // The round's clock was set when it started and a usage limit resets hours
     // later: without a new window the wake-up below would find the round out of
     // time and end it instead of letting the member speak.
-    const windowEnd = DateTime.add(availableAt, {
-      milliseconds: windowMsFor(1 + (round.verdictBotId === null ? 0 : 1)),
-    });
     yield* writeRound(round, {
       ...clearActive,
       status: "waiting_provider",
       budgetRemaining,
       queue: [botId],
-      availableAt,
-      deadlineAt: DateTime.isGreaterThan(windowEnd, round.deadlineAt)
-        ? windowEnd
-        : round.deadlineAt,
+      availableAt: DateTime.makeUnsafe(decision.availableAtMs),
+      deadlineAt: DateTime.makeUnsafe(decision.deadlineAtMs),
       errorMessage: detail,
     });
     if (retryAtMs !== null) {

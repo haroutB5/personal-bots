@@ -34,6 +34,7 @@ import {
 } from "./groupShared.ts";
 import type { GroupCore } from "./groupCore.ts";
 import type { GroupVotes } from "./groupVotes.ts";
+import { loopEndedText, nextRound, pausedBudgetText } from "./groupSchedulePolicy.ts";
 
 export const makeGroupTurns = (core: GroupCore, votes: GroupVotes) => {
   const {
@@ -344,23 +345,21 @@ export const makeGroupTurns = (core: GroupCore, votes: GroupVotes) => {
   > = Effect.gen(function* () {
     while (true) {
       const live = yield* repository.listLiveRounds();
-      const speaking = live.filter((round) => round.activeBotId !== null).length;
-      if (speaking >= PERSONAL_GROUP_CONCURRENCY) {
-        // PERSONAL_GROUP_CONCURRENCY = 1, and this slot is disjoint from the
-        // task system's five (PERSONAL_TASKS_CONCURRENCY), so the worst case
-        // stays six provider turns.
-        return;
-      }
       const now = yield* DateTime.now;
       const nowMs = DateTime.toEpochMillis(now);
-      const round = live.find(
-        (entry) =>
-          entry.status === "running" &&
-          (entry.availableAt === null || DateTime.toEpochMillis(entry.availableAt) <= nowMs),
+      // PERSONAL_GROUP_CONCURRENCY = 1, and this slot is disjoint from the
+      // task system's five (PERSONAL_TASKS_CONCURRENCY), so the worst case
+      // stays six provider turns.
+      const next = nextRound(
+        live,
+        (entry) => (entry.availableAt === null ? null : DateTime.toEpochMillis(entry.availableAt)),
+        nowMs,
+        PERSONAL_GROUP_CONCURRENCY,
       );
-      if (round === undefined) {
+      if (next.kind !== "round") {
         return;
       }
+      const round = next.round;
       const found = yield* repository.getGroup(round.groupId);
       if (Option.isNone(found)) {
         yield* closeRoundOfDeletedGroup(round);
@@ -408,7 +407,7 @@ export const makeGroupTurns = (core: GroupCore, votes: GroupVotes) => {
           const [first, second] = round.spoken.slice(-2);
           yield* endRound(group, round, "completed", {
             event: "round-ended-loop",
-            text: `${botName(all, second!)} and ${botName(all, first!)} were replying to each other, so the round ended.`,
+            text: loopEndedText(botName(all, second!), botName(all, first!)),
           });
           continue;
         }
@@ -437,7 +436,7 @@ export const makeGroupTurns = (core: GroupCore, votes: GroupVotes) => {
           });
           yield* endRound(group, round, "paused_budget", {
             event: "round-paused-budget",
-            text: `Paused after ${String(granted)} replies. Continue to give the group another ${String(granted)}.`,
+            text: pausedBudgetText(granted),
           });
           continue;
         }
